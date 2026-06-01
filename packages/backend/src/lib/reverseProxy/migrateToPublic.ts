@@ -135,6 +135,104 @@ interface NpmDeps {
 }
 
 /**
+ * Find the admin port for NPM given a service record.
+ */
+async function getNpmAdminPort(svc: { ports?: { containerPort?: number; hostPort?: number }[] }): Promise<string> {
+  const adminMapping = svc.ports?.find(p => p.containerPort === 81);
+  const portFromSvc = adminMapping?.hostPort?.toString();
+  if (portFromSvc) return portFromSvc;
+  const config = await getConfig();
+  return config.templateSettings?.NGINX_ADMIN_PORT || '81';
+}
+
+/**
+ * Derive the API host (loopback for Local, node IP otherwise).
+ */
+function getApiHost(nodeName: string, nodeIp: string): string {
+  return nodeName === 'Local' ? '127.0.0.1' : nodeIp;
+}
+
+/**
+ * Pick the first non-loopback IP from node, fall back to first IP or loopback.
+ */
+function selectNodeIp(t: { nodeIPs?: string[] }): string {
+  return t?.nodeIPs?.find((ip: string) => !ip.startsWith('127.')) ?? t?.nodeIPs?.[0] ?? '127.0.0.1';
+}
+
+/**
+ * Find and return NPM target (API URL + node info) by trying candidate nodes.
+ */
+async function resolveNpmTarget(nodeHint?: string): Promise<NpmTarget | null> {
+  const nodeNames = nodeHint ? [nodeHint] : getNodeIds();
+  if (nodeNames.length === 0) nodeNames.push('Local');
+  for (const nodeName of nodeNames) {
+    const services = await ServiceManager.listServices(nodeName);
+    const nginx = services.find(s => s.name === 'nginx' || (s.name.includes('nginx') && !s.name.startsWith('install-')));
+    if (!nginx?.active) continue;
+    const svc = nginx as { ports?: { containerPort?: number; hostPort?: number }[] };
+    const adminPort = await getNpmAdminPort(svc);
+    const t = getNodeTwin(nodeName);
+    const nodeIp = selectNodeIp(t);
+    const apiHost = getApiHost(nodeName, nodeIp);
+    return { apiUrl: `http://${apiHost}:${adminPort}`, nodeName, nodeIp };
+  }
+  return null;
+}
+
+/**
+ * Try each credential candidate to obtain an NPM API token.
+ */
+async function getNpmToken(baseUrl: string): Promise<string | null> {
+  const config = await getConfig();
+  const candidates: { identity: string; secret: string }[] = [];
+  const stored = config.reverseProxy?.npm;
+  if (stored?.email && stored?.password) candidates.push({ identity: stored.email, secret: stored.password });
+  candidates.push({ identity: 'admin@example.com', secret: 'changeme' });
+  for (const cred of candidates) {
+    try {
+      const res = await fetch(`${baseUrl}/api/tokens`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cred),
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const data = await res.json() as { token?: string };
+        if (data.token) return data.token;
+      }
+    } catch { /* try next */ }
+  }
+  return null;
+}
+
+/**
+ * Request a Let's Encrypt certificate via NPM and extract the issued cert ID.
+ */
+async function npmRequestAndReturnCertId(baseUrl: string, token: string, domain: string): Promise<number> {
+  const res = await fetch(`${baseUrl}/api/nginx/certificates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      provider: 'letsencrypt',
+      domain_names: [domain],
+      meta: { dns_challenge: false },
+    }),
+    // ACME exchange blocks until LE either issues or times out; budget
+    // generously per the existing proxy-hosts/route precedent.
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`NPM cert-request HTTP ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await res.json() as { id?: number };
+  if (typeof data.id !== 'number') {
+    throw new Error('NPM accepted the cert request but returned no id.');
+  }
+  return data.id;
+}
+
+/**
  * Lazy-loaded NPM bindings — kept behind a `deps` arg so tests can pass
  * an in-memory fake without touching `fetch`. The real implementation
  * mirrors the existing patterns in
@@ -142,49 +240,8 @@ interface NpmDeps {
  */
 async function realNpmDeps(): Promise<NpmDeps> {
   return {
-    resolveNpm: async (nodeHint) => {
-      const nodeNames = nodeHint ? [nodeHint] : getNodeIds();
-      if (nodeNames.length === 0) nodeNames.push('Local');
-      for (const nodeName of nodeNames) {
-        const services = await ServiceManager.listServices(nodeName);
-        const nginx = services.find(s => s.name === 'nginx' || (s.name.includes('nginx') && !s.name.startsWith('install-')));
-        if (!nginx?.active) continue;
-        const svc = nginx as { ports?: { containerPort?: number; hostPort?: number }[] };
-        const adminMapping = svc.ports?.find(p => p.containerPort === 81);
-        let adminPort = adminMapping?.hostPort?.toString();
-        if (!adminPort) {
-          const config = await getConfig();
-          adminPort = config.templateSettings?.NGINX_ADMIN_PORT || '81';
-        }
-        const t = getNodeTwin(nodeName);
-        const nodeIp = t?.nodeIPs?.find((ip: string) => !ip.startsWith('127.')) ?? t?.nodeIPs?.[0] ?? '127.0.0.1';
-        const apiHost = nodeName === 'Local' ? '127.0.0.1' : nodeIp;
-        return { apiUrl: `http://${apiHost}:${adminPort}`, nodeName, nodeIp };
-      }
-      return null;
-    },
-    getToken: async (baseUrl) => {
-      const config = await getConfig();
-      const candidates: { identity: string; secret: string }[] = [];
-      const stored = config.reverseProxy?.npm;
-      if (stored?.email && stored?.password) candidates.push({ identity: stored.email, secret: stored.password });
-      candidates.push({ identity: 'admin@example.com', secret: 'changeme' });
-      for (const cred of candidates) {
-        try {
-          const res = await fetch(`${baseUrl}/api/tokens`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(cred),
-            signal: AbortSignal.timeout(5000),
-          });
-          if (res.ok) {
-            const data = await res.json() as { token?: string };
-            if (data.token) return data.token;
-          }
-        } catch { /* try next */ }
-      }
-      return null;
-    },
+    resolveNpm: async (nodeHint) => resolveNpmTarget(nodeHint),
+    getToken: getNpmToken,
     listHosts: async (baseUrl, token) => {
       const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts?expand=owner,access_list,certificate`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -205,29 +262,7 @@ async function realNpmDeps(): Promise<NpmDeps> {
         throw new Error(`NPM update-host ${id} HTTP ${res.status}: ${body.slice(0, 200)}`);
       }
     },
-    requestCert: async (baseUrl, token, domain) => {
-      const res = await fetch(`${baseUrl}/api/nginx/certificates`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          provider: 'letsencrypt',
-          domain_names: [domain],
-          meta: { dns_challenge: false },
-        }),
-        // ACME exchange blocks until LE either issues or times out; budget
-        // generously per the existing proxy-hosts/route precedent.
-        signal: AbortSignal.timeout(120_000),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`NPM cert-request HTTP ${res.status}: ${body.slice(0, 200)}`);
-      }
-      const data = await res.json() as { id?: number };
-      if (typeof data.id !== 'number') {
-        throw new Error('NPM accepted the cert request but returned no id.');
-      }
-      return data.id;
-    },
+    requestCert: npmRequestAndReturnCertId,
     bindCert: async (baseUrl, token, hostId, certId) => {
       const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts/${hostId}`, {
         method: 'PUT',
@@ -516,84 +551,90 @@ export async function planMigrationToPublic(
 }
 
 /**
- * Plan + apply. Each step's failure lands as a `MigrationApplyError`
- * but does not abort subsequent steps — the design's "idempotent +
- * retryable, no rollback" contract means a re-run picks up exactly
- * the steps that failed.
+ * Handle a npm-dual-server-name step.
  */
-export async function applyMigrationToPublic(
-  options: MigrationOptions,
-  depsOverride?: Partial<MigrationDeps>,
-): Promise<MigrationResult> {
-  const deps: MigrationDeps = {
-    npm: depsOverride?.npm ?? (await realNpmDeps()),
-    authelia: depsOverride?.authelia ?? (await realAutheliaDeps()),
-    health: depsOverride?.health ?? (await realHealthDeps()),
-  };
-
-  const plan = await planMigrationToPublic(options, deps);
-  if (options.dryRun) {
-    // Dry-run never touches anything; report all steps as ok.
-    return {
-      plan,
-      applied: false,
-      errors: [],
-      stepResults: plan.steps.map(() => ({ ok: true })),
-    };
+async function handleNpmDualServerName(
+  step: ProxyHostStep,
+  deps: MigrationDeps,
+  npmTarget: NpmTarget | null,
+  npmToken: string | null,
+): Promise<void> {
+  if (step.skipped) return;
+  if (!npmTarget || !npmToken) {
+    throw new Error('NPM not reachable; cannot dual server_name.');
   }
+  await deps.npm.updateHost(npmTarget.apiUrl, npmToken, step.hostId, {
+    domain_names: step.after,
+  });
+}
 
+/**
+ * Handle an authelia-config step.
+ */
+async function handleAutheliaConfig(
+  step: AutheliaStep,
+  deps: MigrationDeps,
+  plan: MigrationPlan,
+): Promise<void> {
+  if (step.noop) return;
+  // Re-read + re-rewrite right before write to avoid TOCTOU on a
+  // config someone edited between plan and apply.
+  const loc = await deps.authelia.locateConfig();
+  if (!loc) throw new Error('Authelia config disappeared between plan and apply.');
+  const result = rewriteAutheliaConfig(loc.content, plan.lanRoot, plan.publicDomain);
+  if (result.yaml !== loc.content) {
+    await deps.authelia.writeConfig(loc.node, loc.path, result.yaml);
+    await deps.authelia.restartAuth(loc.node);
+  }
+}
+
+/**
+ * Handle a cert-request step.
+ */
+async function handleCertRequest(
+  step: CertRequestStep,
+  deps: MigrationDeps,
+  npmTarget: NpmTarget | null,
+  npmToken: string | null,
+): Promise<void> {
+  if (step.skipped) return;
+  if (!npmTarget || !npmToken) {
+    throw new Error('NPM not reachable; cannot request cert.');
+  }
+  const certId = await deps.npm.requestCert(npmTarget.apiUrl, npmToken, step.domain);
+  await deps.npm.bindCert(npmTarget.apiUrl, npmToken, step.hostId, certId);
+}
+
+/**
+ * Execute each migration step, collecting errors. Non-fatal: one step's
+ * failure does not abort subsequent steps. Returns step results and errors
+ * for the caller to report.
+ */
+async function executeSteps(
+  plan: MigrationPlan,
+  deps: MigrationDeps,
+  npmTarget: NpmTarget | null,
+  npmToken: string | null,
+): Promise<{ stepResults: { ok: boolean; error?: string }[]; errors: MigrationApplyError[] }> {
   const errors: MigrationApplyError[] = [];
   const stepResults: { ok: boolean; error?: string }[] = [];
-
-  // Resolve NPM once for the apply pass — same target the plan saw.
-  const npmTarget = await deps.npm.resolveNpm();
-  const npmToken = npmTarget ? await deps.npm.getToken(npmTarget.apiUrl) : null;
 
   for (const step of plan.steps) {
     try {
       if (step.kind === 'npm-dual-server-name') {
-        if (step.skipped) {
-          stepResults.push({ ok: true });
-          continue;
-        }
-        if (!npmTarget || !npmToken) {
-          throw new Error('NPM not reachable; cannot dual server_name.');
-        }
-        await deps.npm.updateHost(npmTarget.apiUrl, npmToken, step.hostId, {
-          domain_names: step.after,
-        });
+        await handleNpmDualServerName(step, deps, npmTarget, npmToken);
         stepResults.push({ ok: true });
         continue;
       }
 
       if (step.kind === 'authelia-config') {
-        if (step.noop) {
-          stepResults.push({ ok: true });
-          continue;
-        }
-        // Re-read + re-rewrite right before write to avoid TOCTOU on a
-        // config someone edited between plan and apply.
-        const loc = await deps.authelia.locateConfig();
-        if (!loc) throw new Error('Authelia config disappeared between plan and apply.');
-        const result = rewriteAutheliaConfig(loc.content, plan.lanRoot, plan.publicDomain);
-        if (result.yaml !== loc.content) {
-          await deps.authelia.writeConfig(loc.node, loc.path, result.yaml);
-          await deps.authelia.restartAuth(loc.node);
-        }
+        await handleAutheliaConfig(step, deps, plan);
         stepResults.push({ ok: true });
         continue;
       }
 
       if (step.kind === 'cert-request') {
-        if (step.skipped) {
-          stepResults.push({ ok: true });
-          continue;
-        }
-        if (!npmTarget || !npmToken) {
-          throw new Error('NPM not reachable; cannot request cert.');
-        }
-        const certId = await deps.npm.requestCert(npmTarget.apiUrl, npmToken, step.domain);
-        await deps.npm.bindCert(npmTarget.apiUrl, npmToken, step.hostId, certId);
+        await handleCertRequest(step, deps, npmTarget, npmToken);
         stepResults.push({ ok: true });
         continue;
       }
@@ -606,11 +647,17 @@ export async function applyMigrationToPublic(
     }
   }
 
-  // Persist the new public domain + refresh proxy host entries so the
-  // letsdebug + domain checks pick up the new public-twin domains on
-  // their next tick. We do this even when some steps errored — the
-  // operator's recovery path is re-running the migration, which is
-  // idempotent.
+  return { stepResults, errors };
+}
+
+/**
+ * Persist the new public domain and refresh proxy host entries + health checks.
+ */
+async function persistPublicDomain(
+  plan: MigrationPlan,
+  deps: MigrationDeps,
+  errors: MigrationApplyError[],
+): Promise<void> {
   try {
     const config = await getConfig();
     const existingHosts = config.reverseProxy?.hosts ?? [];
@@ -637,6 +684,47 @@ export async function applyMigrationToPublic(
     errors.push({ step: 'authelia-config', detail });
     logger.warn('migrate-to-public', detail);
   }
+}
+
+/**
+ * Plan + apply. Each step's failure lands as a `MigrationApplyError`
+ * but does not abort subsequent steps — the design's "idempotent +
+ * retryable, no rollback" contract means a re-run picks up exactly
+ * the steps that failed.
+ */
+export async function applyMigrationToPublic(
+  options: MigrationOptions,
+  depsOverride?: Partial<MigrationDeps>,
+): Promise<MigrationResult> {
+  const deps: MigrationDeps = {
+    npm: depsOverride?.npm ?? (await realNpmDeps()),
+    authelia: depsOverride?.authelia ?? (await realAutheliaDeps()),
+    health: depsOverride?.health ?? (await realHealthDeps()),
+  };
+
+  const plan = await planMigrationToPublic(options, deps);
+  if (options.dryRun) {
+    // Dry-run never touches anything; report all steps as ok.
+    return {
+      plan,
+      applied: false,
+      errors: [],
+      stepResults: plan.steps.map(() => ({ ok: true })),
+    };
+  }
+
+  // Resolve NPM once for the apply pass — same target the plan saw.
+  const npmTarget = await deps.npm.resolveNpm();
+  const npmToken = npmTarget ? await deps.npm.getToken(npmTarget.apiUrl) : null;
+
+  const { stepResults, errors } = await executeSteps(plan, deps, npmTarget, npmToken);
+
+  // Persist the new public domain + refresh proxy host entries so the
+  // letsdebug + domain checks pick up the new public-twin domains on
+  // their next tick. We do this even when some steps errored — the
+  // operator's recovery path is re-running the migration, which is
+  // idempotent.
+  await persistPublicDomain(plan, deps, errors);
 
   return {
     plan,
