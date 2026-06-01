@@ -7,5 +7,6 @@
   "blocked": [],
   "clusters": [],
   "box_verify": null,
+  "batch": null,
   "release_warnings": []
 }
