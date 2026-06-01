@@ -74,33 +74,6 @@ body {
   box-shadow: 0 12px 20px -8px rgba(0, 0, 0, 0.15);
 }
 
-@keyframes pulseGlowEmerald {
-  0%, 100% { box-shadow: 0 0 4px rgba(16, 185, 129, 0.2); }
-  50% { box-shadow: 0 0 12px rgba(16, 185, 129, 0.5); }
-}
-
-@keyframes pulseGlowRose {
-  0%, 100% { box-shadow: 0 0 4px rgba(239, 68, 68, 0.2); }
-  50% { box-shadow: 0 0 12px rgba(239, 68, 68, 0.5); }
-}
-
-@keyframes pulseGlowAmber {
-  0%, 100% { box-shadow: 0 0 4px rgba(245, 158, 11, 0.2); }
-  50% { box-shadow: 0 0 12px rgba(245, 158, 11, 0.5); }
-}
-
-.pulse-glow-emerald {
-  animation: pulseGlowEmerald 2s infinite ease-in-out;
-}
-
-.pulse-glow-rose {
-  animation: pulseGlowRose 2s infinite ease-in-out;
-}
-
-.pulse-glow-amber {
-  animation: pulseGlowAmber 2s infinite ease-in-out;
-}
-
 .step-transition-enter {
   opacity: 0;
   transform: translateY(10px);
