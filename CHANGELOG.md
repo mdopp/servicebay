@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.78.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.77.0...servicebay-v4.78.0) (2026-06-01)
+
+
+### Features
+
+* LAN-only 403 explainer, Settings IA reshape, browser-verify harness ([72421fb](https://github.com/mdopp/servicebay/commit/72421fbc5dbd30f18c5fba1e4c6943726abb0dee))
+* **reverseProxy:** branded LAN-only 403 explainer page ([#1415](https://github.com/mdopp/servicebay/issues/1415)) ([c38367b](https://github.com/mdopp/servicebay/commit/c38367b346c05209f1861e27810a115fd4898b4b))
+* **settings:** reshape Settings into concern-based tabs per decided IA ([c94d222](https://github.com/mdopp/servicebay/commit/c94d222fa6ab6b2ac9ade0596a50f39aacb55f32)), closes [#1427](https://github.com/mdopp/servicebay/issues/1427)
+* **tests:** headless Playwright browser-verify harness for autoloop Box-Verify ([9172232](https://github.com/mdopp/servicebay/commit/91722322aa6c813456112a8ef6b5dc78b2711746)), closes [#1473](https://github.com/mdopp/servicebay/issues/1473)
+
+
+### Bug Fixes
+
+* **autoloop:** epics stay blocked until children close, never reclassify out ([342a81b](https://github.com/mdopp/servicebay/commit/342a81bcafb1b3ea906678d85903e38a22e64a1f))
+* **autoloop:** epics stay blocked until children close, never reclassify out ([d842b2a](https://github.com/mdopp/servicebay/commit/d842b2a592f37a9780ae6f6b8e10a57daa556719))
+* **backend:** widen node-twin param types in extracted lint-sweep helpers ([871699f](https://github.com/mdopp/servicebay/commit/871699f91357a134666c3a4bba0c8ef46ad171f1))
+
 ## [4.77.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.76.0...servicebay-v4.77.0) (2026-06-01)
 
 
