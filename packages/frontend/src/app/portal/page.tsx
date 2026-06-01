@@ -1,6 +1,8 @@
 import { headers } from 'next/headers';
 import ServiceBayLogo from '@/components/ServiceBayLogo';
+import { getConfig } from '@/lib/config';
 import { buildPortalCards } from '@/lib/portal/services';
+import { isPortalBlockedForRequest } from '@/lib/portal/lanGate';
 import { verifyAutheliaSession } from '@/lib/portal/auth';
 import PortalGrid from './PortalGrid';
 import PortalLogoutLink from './PortalLogoutLink';
@@ -37,6 +39,17 @@ export const dynamic = 'force-dynamic';
  */
 export default async function PortalPage() {
   const hdrs = await headers();
+  const config = await getConfig();
+
+  // LAN-only gate (#1456): behind NPM the RSC's TCP peer is always
+  // loopback, so passing '127.0.0.1' makes the resolver trust the
+  // proxy's X-Real-IP / last-XFF hop (same rule as the MCP gate).
+  const headerMap: Record<string, string> = {};
+  hdrs.forEach((v, k) => { headerMap[k] = v; });
+  if (isPortalBlockedForRequest(config.portalLanOnly, headerMap, '127.0.0.1')) {
+    return <PortalLanOnlyNotice />;
+  }
+
   const [cards, visitor] = await Promise.all([
     buildPortalCards('Local'),
     verifyAutheliaSession(hdrs.get('cookie')),
@@ -79,6 +92,25 @@ export default async function PortalPage() {
       ) : (
         <PortalGrid cards={cards} />
       )}
+    </main>
+  );
+}
+
+/** Shown instead of the portal when `config.portalLanOnly` is on and the
+ *  visitor isn't on the home network (#1456). */
+function PortalLanOnlyNotice() {
+  return (
+    <main className="relative max-w-2xl mx-auto px-6 py-24 text-center">
+      <div className="flex items-center justify-center gap-3 mb-6">
+        <ServiceBayLogo size={36} className="text-blue-600 dark:text-blue-400 shrink-0" />
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Home</h1>
+      </div>
+      <p className="text-lg text-gray-700 dark:text-gray-300">
+        This page is available on the home network only.
+      </p>
+      <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+        Connect to the home Wi-Fi (or its VPN) and reload to request access or open a service.
+      </p>
     </main>
   );
 }
