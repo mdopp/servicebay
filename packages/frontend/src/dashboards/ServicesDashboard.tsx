@@ -12,7 +12,6 @@ import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import TemplateUpgradesPendingBanner from '@/components/TemplateUpgradesPendingBanner';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
-import SectionHelp from '@/components/SectionHelp';
 import FileViewerOverlay from '@/components/FileViewerOverlay';
 import RegistryDashboard from '@/dashboards/RegistryDashboard';
 import ServiceCard from '@/components/ServiceCard';
@@ -26,16 +25,12 @@ import type { EnrichedContainer } from '@servicebay/api-client';
 // We keep Service interface but recreate it or import from shared data if it matches?
 // SharedData Service is a complex UI object. digital twin ServiceUnit is simple.
 // WE NEED TO MAP TWIN -> UI SERVICE here.
-import { Plus, RefreshCw, Activity, Trash2, Power, Box, Search, X, AlertCircle, FileCode, ArrowRight, ShieldCheck, Terminal as TerminalIcon, Eraser } from 'lucide-react';
-import { ServiceBundle, BundleStackArtifacts, BundlePortSummary, BundleContainerSummary, BundleValidation, generateBundleStackArtifacts, sanitizeBundleName } from '@servicebay/api-client';
+import { Plus, RefreshCw, Trash2, Box, Search, X, AlertCircle, FileCode, Terminal as TerminalIcon, Eraser } from 'lucide-react';
+import { ServiceBundle, BundlePortSummary } from '@servicebay/api-client';
 import {
-    MERGE_HELP_ID,
     bundleSeverityClasses,
-    bundleWizardSteps,
-    dedupeValidations,
     type ApiLinkPayload,
     type LinkFormState,
-    type MigrationPlan,
     type RawLinkPort,
     type RawLinkVolume,
 } from './_lib/servicesDashboard';
@@ -50,18 +45,9 @@ export default function ServicesDashboard() {
     const [filteredBundles, setFilteredBundles] = useState<ServiceBundle[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     // Services are always sorted by name
-    const [discoveryLoading, setDiscoveryLoading] = useState(false);
     const [externalLinks, setExternalLinks] = useState<ServiceViewModel[]>([]);
     const [serviceBundles, setServiceBundles] = useState<ServiceBundle[]>([]);
-    const [selectedBundle, setSelectedBundle] = useState<ServiceBundle | null>(null);
     const [bundlePendingDelete, setBundlePendingDelete] = useState<ServiceBundle | null>(null);
-    const [bundleWizardStep, setBundleWizardStep] = useState<'assets' | 'stack' | 'backup'>('assets');
-    const [bundleTargetName, setBundleTargetName] = useState('');
-    const [bundlePlan, setBundlePlan] = useState<MigrationPlan | null>(null);
-    const [bundlePlanLoading, setBundlePlanLoading] = useState(false);
-    const [bundleStackArtifacts, setBundleStackArtifacts] = useState<BundleStackArtifacts | null>(null);
-    const [bundleValidations, setBundleValidations] = useState<BundleValidation[]>([]);
-    const [bundleActionLoading, setBundleActionLoading] = useState(false);
     const [bundleDeleteLoading, setBundleDeleteLoading] = useState(false);
     const [showLinkModal, setShowLinkModal] = useState(false);
     const [isEditingLink, setIsEditingLink] = useState(false);
@@ -69,15 +55,10 @@ export default function ServicesDashboard() {
     const [linkForm, setLinkForm] = useState<LinkFormState>({ name: '', url: '', description: '', monitor: false, ipTargetsText: '' });
     const [showRegistryOverlay, setShowRegistryOverlay] = useState(false);
     const [filePreview, setFilePreview] = useState<{ path: string; nodeName?: string } | null>(null);
-    const [handledBundleQuery, setHandledBundleQuery] = useState<string | null>(null);
     const [handledQueryContainer, setHandledQueryContainer] = useState<string | null>(null);
     const searchParams = useSearchParams();
-    const bundleQueryParam = searchParams?.get('bundle') || null;
-    const bundleNodeParam = searchParams?.get('bundleNode') || null;
     const containerIdParam = searchParams?.get('containerId') || null;
     const drawerParam = searchParams?.get('drawer') || null;
-
-    const wizardStepIndex = Math.max(0, bundleWizardSteps.findIndex(step => step.key === bundleWizardStep));
 
     const openFilePreview = useCallback((path: string, nodeName?: string) => {
         if (!path) return;
@@ -124,30 +105,6 @@ export default function ServicesDashboard() {
             return !normalized.startsWith('published ports') && !normalized.startsWith('joins pod');
         });
     }, []);
-
-    const selectedBundleHints = selectedBundle ? filterBundleHints(selectedBundle.hints) : [];
-
-    const containersById = useMemo(() => {
-        if (!selectedBundle) return new Map<string, BundleContainerSummary>();
-        const map = new Map<string, BundleContainerSummary>();
-        selectedBundle.containers.forEach(container => {
-            map.set(container.id, container);
-        });
-        return map;
-    }, [selectedBundle]);
-
-    const extraConfigAssets = useMemo(() => {
-        if (!selectedBundle) return [] as ServiceBundle['assets'];
-        const servicePaths = new Set(
-            selectedBundle.services.flatMap(svc => {
-                const entries: string[] = [];
-                if (svc.sourcePath) entries.push(svc.sourcePath);
-                if (svc.unitFile) entries.push(svc.unitFile);
-                return entries;
-            })
-        );
-        return selectedBundle.assets.filter(asset => !servicePaths.has(asset.path));
-    }, [selectedBundle]);
 
     const loadExternalLinks = useCallback(async () => {
         try {
@@ -425,73 +382,18 @@ export default function ServicesDashboard() {
         return aggregates;
     }, [twin]);
 
-    const discoverUnmanaged = useCallback(async () => {
-        setDiscoveryLoading(true);
-        await new Promise(r => setTimeout(r, 300));
-
+    const refreshBundles = useCallback(() => {
         try {
-            const bundles = collectBundlesFromTwin();
-            setServiceBundles(bundles);
+            setServiceBundles(collectBundlesFromTwin());
         } catch (error) {
-            logger.error('ServicesDashboard', 'Failed to discover services', error);
+            logger.error('ServicesDashboard', 'Failed to refresh bundles', error);
             setServiceBundles([]);
-        } finally {
-            setDiscoveryLoading(false);
         }
     }, [collectBundlesFromTwin]);
 
     useEffect(() => {
         setServiceBundles(collectBundlesFromTwin());
     }, [collectBundlesFromTwin]);
-
-    const openBundleWizard = useCallback((bundle: ServiceBundle) => {
-        const initialName = sanitizeBundleName(bundle.displayName);
-        setSelectedBundle(bundle);
-        setBundleWizardStep('assets');
-        setBundleTargetName(initialName);
-        setBundleStackArtifacts(generateBundleStackArtifacts(bundle, initialName));
-        setBundleValidations(bundle.validations);
-        setBundlePlan(null);
-    }, []);
-
-      useEffect(() => {
-          if (!bundleQueryParam) {
-              setHandledBundleQuery(null);
-              return;
-          }
-
-          if (handledBundleQuery === bundleQueryParam) {
-              return;
-          }
-
-          if (!serviceBundles.length) {
-              return;
-          }
-
-          const normalizedQuery = bundleQueryParam.trim().toLowerCase();
-          const normalizedNode = bundleNodeParam?.trim().toLowerCase();
-
-          const targetBundle = serviceBundles.find(bundle => {
-              const candidates = [bundle.id, bundle.derivedName, sanitizeBundleName(bundle.displayName)]
-                  .filter((value): value is string => Boolean(value))
-                  .map(value => value.toLowerCase());
-
-              if (!candidates.some(candidate => candidate === normalizedQuery)) {
-                  return false;
-              }
-
-              if (!normalizedNode) {
-                  return true;
-              }
-
-              return (bundle.nodeName || '').toLowerCase() === normalizedNode;
-          });
-
-          if (targetBundle) {
-              openBundleWizard(targetBundle);
-              setHandledBundleQuery(bundleQueryParam);
-          }
-      }, [bundleNodeParam, bundleQueryParam, handledBundleQuery, openBundleWizard, serviceBundles]);
 
     function handleEditLink(service: ServiceViewModel) {
         setLinkForm({
@@ -597,15 +499,6 @@ export default function ServicesDashboard() {
                     </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0 ml-auto bg-gray-50 dark:bg-gray-800/50 p-1 rounded-lg border border-gray-100 dark:border-gray-800">
-                    <button
-                        onClick={() => openBundleWizard(bundle)}
-                        className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
-                        title="Migrate bundle"
-                        aria-label={`Migrate ${bundle.displayName}`}
-                    >
-                        <ArrowRight size={16} />
-                        <span className="sr-only">Migrate bundle</span>
-                    </button>
                     <button
                         onClick={() => setBundlePendingDelete(bundle)}
                         className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors"
@@ -716,7 +609,6 @@ export default function ServicesDashboard() {
         const totalResults = filteredServices.length + filteredBundles.length;
         const totalInventory = services.length + serviceBundles.length;
         const hasSearch = searchQuery.trim().length > 0;
-        const hasBundles = serviceBundles.length > 0;
 
         if (totalResults === 0) {
             return (
@@ -765,38 +657,6 @@ export default function ServicesDashboard() {
 
         return (
             <div className="space-y-4">
-                <div className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 ${
-                    hasBundles
-                        ? 'border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-900/20'
-                        : 'border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40'
-                }`}>
-                    <div className="min-w-0">
-                        <p className={`text-xs uppercase tracking-widest font-semibold ${
-                            hasBundles ? 'text-amber-700 dark:text-amber-300' : 'text-gray-500 dark:text-gray-400'
-                        }`}>
-                            {hasBundles ? 'Containers running outside ServiceBay' : 'Unmanaged Bundles'}
-                        </p>
-                        <p className="text-sm text-gray-700 dark:text-gray-300 mt-0.5">
-                            {hasBundles
-                                ? `${serviceBundles.length} container ${serviceBundles.length === 1 ? 'group is' : 'groups are'} running on this host but not tracked by ServiceBay. Adopt ${serviceBundles.length === 1 ? 'it' : 'them'} below to manage updates, restarts and health checks from here — or dismiss to ignore.`
-                                : 'No untracked container groups detected. ServiceBay scans the host periodically; click rescan if you just imported a stack.'}
-                        </p>
-                    </div>
-                    <button
-                        onClick={discoverUnmanaged}
-                        disabled={discoveryLoading}
-                        className={`px-4 py-2 text-sm rounded-lg flex items-center gap-2 transition-colors disabled:opacity-60 shrink-0 ${
-                            hasBundles
-                                ? 'bg-amber-600 hover:bg-amber-700 text-white border border-amber-600'
-                                : 'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200'
-                        }`}
-                        title={hasBundles ? 'Re-scan the host for new or removed unmanaged container groups' : 'Scan the host for container groups not yet managed by ServiceBay'}
-                    >
-                        <RefreshCw size={16} className={discoveryLoading ? 'animate-spin' : ''} />
-                        {discoveryLoading ? 'Scanning…' : hasBundles ? 'Rescan now' : 'Scan for bundles'}
-                    </button>
-                </div>
-
                 <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-6 auto-rows-fr">
                     {combinedItems.map(entry => (
                         entry.type === 'service'
@@ -822,15 +682,6 @@ export default function ServicesDashboard() {
         );
     };
 
-  const closeBundleWizard = useCallback(() => {
-      setSelectedBundle(null);
-      setBundlePlan(null);
-      setBundleTargetName('');
-      setBundleStackArtifacts(null);
-      setBundleWizardStep('assets');
-      setBundlePlanLoading(false);
-  }, []);
-
   const handleDismissBundle = useCallback(async () => {
       if (!bundlePendingDelete) return;
       const targetBundle = bundlePendingDelete;
@@ -848,7 +699,7 @@ export default function ServicesDashboard() {
           }
           setServiceBundles(prev => prev.filter(bundle => bundle.id !== targetBundle.id));
           setBundlePendingDelete(null);
-          await discoverUnmanaged();
+          refreshBundles();
           const stoppedCount = Array.isArray(payload.stoppedUnits) ? payload.stoppedUnits.length : 0;
           const removedFilesCount = Array.isArray(payload.removedFiles) ? payload.removedFiles.length : 0;
           const summary = `${stoppedCount} service${stoppedCount === 1 ? '' : 's'} stopped · ${removedFilesCount} file${removedFilesCount === 1 ? '' : 's'} removed`;
@@ -859,7 +710,7 @@ export default function ServicesDashboard() {
       } finally {
           setBundleDeleteLoading(false);
       }
-  }, [bundlePendingDelete, addToast, updateToast, discoverUnmanaged]);
+  }, [bundlePendingDelete, addToast, updateToast, refreshBundles]);
 
   const handleEscape = useCallback(() => {
       if (containerDrawerMode) {
@@ -874,10 +725,6 @@ export default function ServicesDashboard() {
           closeOverlays();
           return;
       }
-      if (selectedBundle) {
-          closeBundleWizard();
-          return;
-      }
       if (showRegistryOverlay) {
           closeRegistryOverlay();
           return;
@@ -885,106 +732,10 @@ export default function ServicesDashboard() {
       if (showLinkModal) {
           setShowLinkModal(false);
       }
-  }, [closeBundleWizard, closeContainerActions, closeContainerDrawer, closeOverlays, closeRegistryOverlay, containerActionsOpen, containerDrawerMode, hasOpenOverlay, selectedBundle, showRegistryOverlay, showLinkModal]);
+  }, [closeContainerActions, closeContainerDrawer, closeOverlays, closeRegistryOverlay, containerActionsOpen, containerDrawerMode, hasOpenOverlay, showRegistryOverlay, showLinkModal]);
 
-  useEscapeKey(handleEscape, Boolean(containerDrawerMode || containerActionsOpen || hasOpenOverlay || selectedBundle || showRegistryOverlay || showLinkModal), true);
+  useEscapeKey(handleEscape, Boolean(containerDrawerMode || containerActionsOpen || hasOpenOverlay || showRegistryOverlay || showLinkModal), true);
   useEscapeKey(closeContainerDrawer, Boolean(containerDrawerMode), true);
-
-  const fetchBundlePlanForBundle = useCallback(async (bundle: ServiceBundle, target: string, dryRun = true) => {
-      if (!target) return;
-      const nodeParam = bundle.nodeName && bundle.nodeName !== 'Local' ? `?node=${bundle.nodeName}` : '';
-      const isMerge = bundle.services.length > 1;
-      const endpoint = isMerge ? '/api/system/discovery/merge' : '/api/system/discovery/migrate';
-      const body = isMerge
-          ? { services: bundle.services, newName: target, dryRun }
-          : { service: bundle.services[0], customName: target, dryRun };
-
-      setBundlePlanLoading(true);
-      try {
-          const res = await fetch(`${endpoint}${nodeParam}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body)
-          });
-          if (!res.ok) {
-              const data = await res.json().catch(() => ({}));
-              throw new Error(data.error || 'Unable to build merge plan');
-          }
-          const payload = await res.json();
-          const plan: MigrationPlan | null = payload.plan ?? null;
-          setBundlePlan(plan);
-          if (plan?.validations) {
-              const merged = dedupeValidations([...bundle.validations, ...plan.validations]);
-              setBundleValidations(merged);
-          } else {
-              setBundleValidations(bundle.validations);
-          }
-      } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : 'Failed to build merge plan';
-          addToast('error', message);
-          setBundlePlan(null);
-          setBundleValidations(bundle.validations);
-      } finally {
-          setBundlePlanLoading(false);
-      }
-  }, [addToast]);
-
-  useEffect(() => {
-      if (!selectedBundle) return;
-      const artifacts = generateBundleStackArtifacts(selectedBundle, bundleTargetName || selectedBundle.derivedName);
-      setBundleStackArtifacts(artifacts);
-      if (!bundlePlan || bundleWizardStep !== 'backup') {
-          setBundleValidations(selectedBundle.validations);
-      }
-  }, [selectedBundle, bundleTargetName, bundlePlan, bundleWizardStep]);
-
-  useEffect(() => {
-      if (selectedBundle && bundleWizardStep === 'backup' && bundleTargetName) {
-          fetchBundlePlanForBundle(selectedBundle, bundleTargetName, true);
-      }
-      if (bundleWizardStep !== 'backup') {
-          setBundlePlan(null);
-      }
-  }, [selectedBundle, bundleWizardStep, bundleTargetName, fetchBundlePlanForBundle]);
-
-  const executeBundleMerge = async () => {
-      if (!selectedBundle) return;
-      if (!bundleTargetName) {
-          addToast('error', 'Provide a target service name');
-          return;
-      }
-
-      const nodeParam = selectedBundle.nodeName && selectedBundle.nodeName !== 'Local' ? `?node=${selectedBundle.nodeName}` : '';
-      const isMerge = selectedBundle.services.length > 1;
-      const endpoint = isMerge ? '/api/system/discovery/merge' : '/api/system/discovery/migrate';
-      const body = isMerge
-          ? { services: selectedBundle.services, newName: bundleTargetName }
-          : { service: selectedBundle.services[0], customName: bundleTargetName };
-
-      setBundleActionLoading(true);
-      const toastId = addToast('loading', 'Applying bundle merge...', `Creating ${bundleTargetName}`, 0);
-      try {
-          const res = await fetch(`${endpoint}${nodeParam}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body)
-          });
-          if (!res.ok) {
-              const data = await res.json().catch(() => ({}));
-              throw new Error(data.error || 'Merge failed');
-          }
-
-          updateToast(toastId, 'success', 'Bundle merged', `Created ${bundleTargetName}`);
-          closeBundleWizard();
-          await discoverUnmanaged();
-          fetchData();
-      } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : 'Failed to merge bundle';
-          updateToast(toastId, 'error', 'Merge failed', message);
-      } finally {
-          setBundleActionLoading(false);
-      }
-  };
 
   useEffect(() => {
       const q = searchQuery.trim().toLowerCase();
@@ -1194,481 +945,6 @@ export default function ServicesDashboard() {
                         onClose={closeFilePreview}
                 />
             )}
-
-      {/* Bundle Wizard */}
-      {selectedBundle && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
-            <div className="w-full sm:max-w-5xl h-full border-l border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 shadow-2xl flex flex-col animate-in slide-in-from-right-10">
-                <div className="flex-1 overflow-y-auto">
-                    <div className="px-6 py-5 border-b border-gray-200 dark:border-gray-800 flex flex-col gap-4">
-                        <div className="flex items-start justify-between">
-                            <div>
-                                <p className="text-xs uppercase tracking-widest text-gray-500 dark:text-gray-400">Merge Wizard</p>
-                                <h3 className="text-2xl font-semibold text-gray-900 dark:text-white">{selectedBundle.displayName}</h3>
-                                <p className="text-sm text-gray-500 dark:text-gray-400">{selectedBundle.nodeName}</p>
-                            </div>
-                            <button onClick={closeBundleWizard} className="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-                            {bundleWizardSteps.map((step, index) => {
-                                const isActive = bundleWizardStep === step.key;
-                                const isComplete = wizardStepIndex > index;
-                                return (
-                                    <div
-                                        key={step.key}
-                                        className={`rounded-2xl border px-4 py-4 shadow-sm bg-white dark:bg-gray-900 min-h-[120px] ${
-                                            isActive
-                                                ? 'border-blue-500'
-                                                : isComplete
-                                                    ? 'border-emerald-500'
-                                                    : 'border-gray-200 dark:border-gray-800'
-                                        }`}
-                                        title={step.tooltip}
-                                    >
-                                        <div className="flex items-start gap-3">
-                                            <div
-                                                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-sm font-semibold ${
-                                                    isActive
-                                                        ? 'border-blue-500 text-blue-600 bg-blue-50 dark:border-blue-400 dark:text-blue-200 dark:bg-blue-950/30'
-                                                        : isComplete
-                                                            ? 'border-emerald-500 text-emerald-600 bg-emerald-50 dark:border-emerald-400 dark:text-emerald-200 dark:bg-emerald-950/30'
-                                                            : 'border-gray-300 text-gray-500 dark:border-gray-700 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/40'
-                                                }`}
-                                            >
-                                                {index + 1}
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <p className={`text-xs uppercase tracking-wide font-semibold ${
-                                                    isActive
-                                                        ? 'text-blue-600 dark:text-blue-300'
-                                                        : isComplete
-                                                            ? 'text-emerald-600 dark:text-emerald-300'
-                                                            : 'text-gray-500 dark:text-gray-400'
-                                                }`}>
-                                                    {step.label}
-                                                </p>
-                                                <p className="mt-1 text-xs leading-snug text-gray-500 dark:text-gray-400">
-                                                    {step.description}
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                        <div className="flex flex-col gap-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 px-4 py-3">
-                            <div className="flex items-start gap-3 text-sm text-gray-700 dark:text-gray-200">
-                                <ShieldCheck size={18} className="text-blue-600 dark:text-blue-300 mt-0.5" />
-                                <p className="leading-snug">
-                                    Every merge snapshots legacy files, runs <code className="font-mono text-xs">podman kube play --dry-run</code>, and records rollback metadata before enabling the managed Quadlet. Keep this in mind when reviewing plan details.
-                                </p>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-                                <SectionHelp helpId={MERGE_HELP_ID} label="Merge Workflow guide" />
-                                <span className="text-xs">Opens the full checklist if you need a refresher mid-migration.</span>
-                            </div>
-                        </div>
-                        <div className="flex flex-col gap-2">
-                            <label className="text-xs font-semibold text-gray-600 dark:text-gray-300">Target Service Name</label>
-                            <input
-                                value={bundleTargetName}
-                                onChange={(e) => setBundleTargetName(sanitizeBundleName(e.target.value))}
-                                placeholder="my-app-stack"
-                                className="px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 text-sm"
-                            />
-                            <p className="text-[11px] text-gray-500">This becomes the Quadlet unit and Pod name.</p>
-                        </div>
-                    </div>
-                    <div className="p-6 space-y-6">
-                    {bundleWizardStep === 'assets' && selectedBundle && (
-                        <div className="space-y-5">
-                            <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                                {[
-                                    { label: 'Systemd Units', value: selectedBundle.services.length, caption: 'Unit files detected in this bundle', Icon: Box, accent: 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-200' },
-                                    { label: 'Containers', value: selectedBundle.containers.length, caption: 'Runtime containers behind these units', Icon: Activity, accent: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-200' },
-                                    { label: 'Config Files', value: selectedBundle.assets.length, caption: 'Files that will be migrated', Icon: FileCode, accent: 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-200' },
-                                    { label: 'Hints & Warnings', value: selectedBundleHints.length + bundleValidations.length, caption: 'Signals to review before migrating', Icon: AlertCircle, accent: 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-200' }
-                                ].map(stat => {
-                                    const Icon = stat.Icon;
-                                    return (
-                                        <div key={stat.label} className="border border-gray-200 dark:border-gray-800 rounded-xl p-3 bg-white dark:bg-gray-900 flex items-center gap-3">
-                                            <div className={`p-2 rounded-lg ${stat.accent}`}>
-                                                <Icon size={18} />
-                                            </div>
-                                            <div>
-                                                <p className="text-xl font-semibold text-gray-900 dark:text-gray-100 leading-none">{stat.value}</p>
-                                                <p className="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400">{stat.label}</p>
-                                                <p className="text-[11px] text-gray-400 dark:text-gray-500 leading-tight">{stat.caption}</p>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </section>
-
-                            <section className="grid gap-4">
-                                <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
-                                    <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3">Systemd Units, Containers & Files</h4>
-                                    <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400">
-                                        {selectedBundle.services.map(service => {
-                                            const path = service.sourcePath || service.unitFile || '';
-                                            const attachedContainers = (service.containerIds || [])
-                                                .map(containerId => containersById.get(containerId))
-                                                .filter((container): container is BundleContainerSummary => Boolean(container));
-                                            const podShortId = service.podId ? service.podId.substring(0, 12) : null;
-                                            return (
-                                                <li key={service.serviceName} className="border border-gray-200 dark:border-gray-800 rounded-lg px-3 py-2 bg-white dark:bg-gray-950/40">
-                                                    <div className="flex flex-col gap-1">
-                                                        <div className="flex flex-wrap items-center justify-between gap-2">
-                                                            <p className="font-medium text-gray-900 dark:text-gray-100" data-testid="service-name">{service.serviceName}</p>
-                                                        </div>
-                                                        <div className="flex flex-col gap-0.5">
-                                                            <span className="text-[11px] font-semibold tracking-wide uppercase text-gray-400 dark:text-gray-500">Config File:</span>
-                                                            {path ? (
-                                                                <FileBadge path={path} nodeName={selectedBundle.nodeName} variant="inline" />
-                                                            ) : (
-                                                                <span className="text-xs text-gray-500 dark:text-gray-400">Unknown source</span>
-                                                            )}
-                                                        </div>
-                                                        {attachedContainers.length > 0 && (
-                                                            <div className="mt-2 space-y-2">
-                                                                {attachedContainers.map((container, containerIndex) => (
-                                                                    <div key={container.id} className="space-y-2">
-                                                                        <div className="flex flex-col gap-0.5">
-                                                                            <span className="text-[11px] font-semibold tracking-wide uppercase text-gray-400 dark:text-gray-500">Container Image:</span>
-                                                                            <span className="text-xs font-mono text-gray-700 dark:text-gray-200 block whitespace-normal break-all" title={container.image}>
-                                                                                {container.image}
-                                                                            </span>
-                                                                        </div>
-                                                                        {(container.ports.length > 0 || (containerIndex === 0 && podShortId)) && (
-                                                                            <div className="flex flex-wrap items-center gap-1.5">
-                                                                                {container.ports.map((port, portIdx) => {
-                                                                                    const protocol = (port.protocol || 'tcp').toLowerCase();
-                                                                                    const hostValue = typeof port.hostPort !== 'undefined' && port.hostPort !== null ? String(port.hostPort) : undefined;
-                                                                                    const containerValue = typeof port.containerPort !== 'undefined' && port.containerPort !== null ? String(port.containerPort) : undefined;
-                                                                                    const display = hostValue ? `:${hostValue}` : `${containerValue || '—'}/${protocol}`;
-                                                                                    const href = hostValue ? `http://${typeof window !== 'undefined' ? window.location.hostname : 'localhost'}:${hostValue}` : '#';
-                                                                                    const title = hostValue
-                                                                                        ? containerValue
-                                                                                            ? `Host ${hostValue} → Container ${containerValue}/${protocol}`
-                                                                                            : `Host port ${hostValue}/${protocol}`
-                                                                                        : `Container port ${containerValue || 'unknown'}/${protocol}`;
-                                                                                    return (
-                                                                                        <a
-                                                                                            key={`${container.id}-${display}-${portIdx}`}
-                                                                                            href={href}
-                                                                                            target={hostValue ? '_blank' : undefined}
-                                                                                            rel={hostValue ? 'noopener noreferrer' : undefined}
-                                                                                            className={`px-2 py-0.5 rounded text-[11px] font-mono border transition-colors ${
-                                                                                                hostValue
-                                                                                                    ? 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700'
-                                                                                                    : 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800/30'
-                                                                                            }`}
-                                                                                            title={title}
-                                                                                            onClick={event => {
-                                                                                                if (!hostValue) {
-                                                                                                    event.preventDefault();
-                                                                                                }
-                                                                                            }}
-                                                                                        >
-                                                                                            {display}
-                                                                                        </a>
-                                                                                    );
-                                                                                })}
-                                                                                {containerIndex === 0 && podShortId && (
-                                                                                    <span className="px-2 py-0.5 rounded text-[11px] font-mono border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300">
-                                                                                        Pod {podShortId}
-                                                                                    </span>
-                                                                                )}
-                                                                            </div>
-                                                                        )}
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        )}
-                                                        {attachedContainers.length === 0 && podShortId && (
-                                                            <div className="mt-2">
-                                                                <span className="px-2 py-0.5 rounded text-[11px] font-mono border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300">
-                                                                    Pod {podShortId}
-                                                                </span>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </li>
-                                            );
-                                        })}
-                                    </ul>
-                                </div>
-                            </section>
-
-                            <section className="grid md:grid-cols-2 gap-4">
-                                {extraConfigAssets.length > 0 && (
-                                    <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
-                                        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Additional Config Files</h4>
-                                        <ul className="space-y-1 text-xs font-mono text-gray-600 dark:text-gray-400 max-h-40 overflow-y-auto">
-                                            {extraConfigAssets.map(asset => (
-                                                <li key={asset.path}>
-                                                    <FileBadge path={asset.path} nodeName={selectedBundle.nodeName} variant="list" />
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                )}
-                                <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
-                                    <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Merge Hints</h4>
-                                    {selectedBundleHints.length === 0 ? (
-                                        <p className="text-sm text-gray-500">No additional hints from discovery.</p>
-                                    ) : (
-                                        <ul className="space-y-1 text-sm text-gray-600 dark:text-gray-400">
-                                            {selectedBundleHints.map((hint, idx) => (
-                                                <li key={idx} className="flex items-start gap-2">
-                                                    <AlertCircle size={14} className="text-amber-500 mt-0.5" />
-                                                    <span>{hint}</span>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    )}
-                                </div>
-                            </section>
-
-                            <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
-                                <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Dependency Relationships</h4>
-                                {selectedBundle.graph.length === 0 ? (
-                                    <p className="text-sm text-gray-500">No dependency hints detected.</p>
-                                ) : (
-                                    <ul className="space-y-1 text-sm text-gray-600 dark:text-gray-400">
-                                        {selectedBundle.graph.slice(0, 6).map(edge => (
-                                            <li key={`${edge.from}-${edge.to}-${edge.reason}`} className="flex items-center gap-2">
-                                                <span className="font-mono text-xs bg-white dark:bg-gray-950 px-2 py-0.5 rounded border border-gray-200 dark:border-gray-800">{edge.from}</span>
-                                                <ArrowRight size={14} className="text-gray-400" />
-                                                <span className="font-mono text-xs bg-white dark:bg-gray-950 px-2 py-0.5 rounded border border-gray-200 dark:border-gray-800">{edge.to}</span>
-                                                <span className="text-[10px] uppercase tracking-wide text-gray-400">{edge.reason}</span>
-                                            </li>
-                                        ))}
-                                        {selectedBundle.graph.length > 6 && (
-                                            <li className="text-[11px] text-gray-500">+{selectedBundle.graph.length - 6} additional relationships</li>
-                                        )}
-                                    </ul>
-                                )}
-                            </section>
-
-                            <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
-                                <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3">Pre-flight Validations</h4>
-                                {bundleValidations.length === 0 ? (
-                                    <p className="text-sm text-gray-500">No warnings detected.</p>
-                                ) : (
-                                    <ul className="space-y-2 text-sm">
-                                        {bundleValidations.map((validation, idx) => (
-                                            <li key={`${validation.level}-${idx}`} className={`px-3 py-2 rounded border ${validation.level === 'error' ? 'border-red-200 text-red-700 bg-red-50 dark:border-red-900/40 dark:text-red-300 dark:bg-red-950/40' : validation.level === 'warning' ? 'border-amber-200 text-amber-700 bg-amber-50 dark:border-amber-900/40 dark:text-amber-300 dark:bg-amber-950/40' : 'border-green-200 text-green-700 bg-green-50 dark:border-green-900/40 dark:text-green-300 dark:bg-green-950/40'}`}>
-                                                {validation.message}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                )}
-                            </section>
-                        </div>
-                    )}
-                    {bundleWizardStep === 'stack' && (
-                        <div className="space-y-4">
-                            {bundleStackArtifacts && (
-                                <>
-                                    <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
-                                        <div className="flex justify-between items-center mb-2">
-                                            <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200">Quadlet (.kube) Unit</h4>
-                                            <button
-                                                onClick={() => {
-                                                    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                                                        navigator.clipboard.writeText(bundleStackArtifacts.kubeUnit);
-                                                        addToast('success', '.kube unit copied');
-                                                    } else {
-                                                        addToast('error', 'Clipboard API unavailable');
-                                                    }
-                                                }}
-                                                className="text-xs text-blue-600 hover:underline"
-                                            >
-                                                Copy Unit
-                                            </button>
-                                        </div>
-                                        <pre className="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto max-h-80">
-{bundleStackArtifacts.kubeUnit}
-                                        </pre>
-                                    </section>
-                                    <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
-                                        <div className="flex justify-between items-center mb-2">
-                                            <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200">Pod Specification</h4>
-                                            <button
-                                                onClick={() => {
-                                                    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                                                        navigator.clipboard.writeText(bundleStackArtifacts.podYaml);
-                                                        addToast('success', 'Pod YAML copied');
-                                                    } else {
-                                                        addToast('error', 'Clipboard API unavailable');
-                                                    }
-                                                }}
-                                                className="text-xs text-blue-600 hover:underline"
-                                            >
-                                                Copy YAML
-                                            </button>
-                                        </div>
-                                        <pre className="bg-gray-900 text-gray-100 text-xs rounded-lg p-4 overflow-x-auto max-h-80">
-{bundleStackArtifacts.podYaml}
-                                        </pre>
-                                    </section>
-                                    {bundleStackArtifacts.configPaths.length > 0 && (
-                                        <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
-                                            <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Referenced Config Files</h4>
-                                            <ul className="text-xs font-mono text-gray-600 dark:text-gray-400 space-y-1">
-                                                {bundleStackArtifacts.configPaths.map(path => (
-                                                    <li key={path}>
-                                                        <FileBadge path={path} nodeName={selectedBundle?.nodeName} variant="list" />
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        </section>
-                                    )}
-                                </>
-                            )}
-                            {!bundleStackArtifacts && (
-                                <p className="text-sm text-gray-500">Unable to generate stack artifacts. Provide a target name to continue.</p>
-                            )}
-                        </div>
-                    )}
-                    {bundleWizardStep === 'backup' && (
-                        <div className="space-y-4">
-                            {bundlePlanLoading ? (
-                                <div className="flex flex-col items-center justify-center py-10 text-gray-500">
-                                    <RefreshCw className="animate-spin mb-2" />
-                                    Building plan...
-                                </div>
-                            ) : bundlePlan ? (
-                                <>
-                                    <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
-                                        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Backup Directory</h4>
-                                        <code className="text-xs bg-white dark:bg-gray-950 px-2 py-1 rounded border border-gray-200 dark:border-gray-800">{bundlePlan.backupDir}</code>
-                                    </section>
-                                    {bundlePlan.backupArchive && (
-                                        <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
-                                            <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Archive Pattern</h4>
-                                            <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">Each execution produces a timestamped archive using this pattern.</p>
-                                            <code className="text-xs bg-gray-50 dark:bg-gray-950 px-2 py-1 rounded border border-gray-200 dark:border-gray-800">{bundlePlan.backupArchive}</code>
-                                        </section>
-                                    )}
-                                    <section className="grid md:grid-cols-2 gap-4">
-                                        <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
-                                            <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Files To Create</h5>
-                                            <ul className="text-xs font-mono space-y-1">
-                                                {bundlePlan.filesToCreate.map(file => (
-                                                    <li key={file}>
-                                                        <FileBadge path={file} nodeName={selectedBundle?.nodeName} variant="list" />
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        </div>
-                                        <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
-                                            <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Files To Backup</h5>
-                                            <ul className="text-xs font-mono space-y-1">
-                                                {bundlePlan.filesToBackup.length === 0 ? (
-                                                    <li className="text-gray-500">No overwrites expected.</li>
-                                                ) : (
-                                                    bundlePlan.filesToBackup.map(file => (
-                                                        <li key={file}>
-                                                            <FileBadge path={file} nodeName={selectedBundle?.nodeName} variant="list" />
-                                                        </li>
-                                                    ))
-                                                )}
-                                            </ul>
-                                        </div>
-                                    </section>
-                                    {bundlePlan.fileMappings && bundlePlan.fileMappings.length > 0 && (
-                                        <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50 dark:bg-gray-900/40">
-                                            <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">File Mapping</h5>
-                                            <table className="w-full text-xs">
-                                                <thead>
-                                                    <tr className="text-left text-gray-500">
-                                                        <th className="py-1">Source</th>
-                                                        <th className="py-1">Action</th>
-                                                        <th className="py-1">Target</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {bundlePlan.fileMappings.map((mapping, idx) => (
-                                                        <tr key={`${mapping.source}-${idx}`} className="border-t border-gray-200 dark:border-gray-800">
-                                                            <td className="py-1 pr-2">
-                                                                <FileBadge path={mapping.source} nodeName={selectedBundle?.nodeName} variant="inline" />
-                                                            </td>
-                                                            <td className="py-1 capitalize">{mapping.action}</td>
-                                                            <td className="py-1">
-                                                                {mapping.target ? (
-                                                                    <FileBadge path={mapping.target} nodeName={selectedBundle?.nodeName} variant="inline" />
-                                                                ) : (
-                                                                    <span className="text-gray-500">—</span>
-                                                                )}
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </section>
-                                    )}
-                                    {bundlePlan.servicesToStop.length > 0 && (
-                                        <section className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
-                                            <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">Services To Stop</h5>
-                                            <ul className="text-sm text-red-600 dark:text-red-400 space-y-1">
-                                                {bundlePlan.servicesToStop.map(service => (
-                                                    <li key={service} className="flex items-center gap-2"><Power size={14} /> {service}</li>
-                                                ))}
-                                            </ul>
-                                        </section>
-                                    )}
-                                </>
-                            ) : (
-                                <p className="text-sm text-gray-500">No plan available. Adjust the target name or try again.</p>
-                            )}
-                        </div>
-                    )}
-                </div>
-                </div>
-                <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between">
-                    <div className="text-xs text-gray-500 dark:text-gray-400">Step {wizardStepIndex + 1} of {bundleWizardSteps.length}</div>
-                    <div className="flex gap-3">
-                        <button
-                            onClick={() => {
-                                if (bundleWizardStep === 'assets') {
-                                    closeBundleWizard();
-                                } else if (bundleWizardStep === 'stack') {
-                                    setBundleWizardStep('assets');
-                                } else {
-                                    setBundleWizardStep('stack');
-                                }
-                            }}
-                            className="px-4 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700"
-                        >
-                            {bundleWizardStep === 'assets' ? 'Cancel' : 'Back'}
-                        </button>
-                        {bundleWizardStep !== 'backup' ? (
-                            <button
-                                onClick={() => setBundleWizardStep(bundleWizardStep === 'assets' ? 'stack' : 'backup')}
-                                disabled={!bundleTargetName || (bundleWizardStep === 'stack' && bundleValidations.some(v => v.level === 'error'))}
-                                className="px-4 py-2 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white"
-                            >
-                                Next
-                            </button>
-                        ) : (
-                            <button
-                                onClick={executeBundleMerge}
-                                disabled={bundleActionLoading || !bundlePlan}
-                                className="px-4 py-2 text-sm rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white flex items-center gap-2"
-                            >
-                                {bundleActionLoading ? <RefreshCw className="animate-spin" size={16} /> : <ArrowRight size={16} />}
-                                Execute Merge
-                            </button>
-                        )}
-                    </div>
-                </div>
-            </div>
-        </div>
-      )}
 
       {/* Link Modal */}
       <ExternalLinkModal 
