@@ -313,6 +313,62 @@ raw image counts don't.
 
 ---
 
+## Portal access: user-cap + LAN-only gate are config toggles, not code gates
+
+**What.** Two optional access controls, both off by default, live under
+**Settings → Portal Access**:
+- **Max users** — portal access-request approvals stop when approved +
+  pending reaches `config.portal.maxUsers` (default 20). Prevents
+  runaway user provisioning without an explicit quota.
+- **LAN-only portal** — when enabled, `/portal` submissions are rejected
+  from non-RFC-1918 source IPs. Prevents public internet exposure of the
+  family-portal registration page without firewall changes.
+
+**Why.** Both controls are appropriate for a family homelab but wrong as
+hardcoded defaults — a user installing ServiceBay on a VPS or behind a
+CGNAT should be able to set a different cap or disable the LAN gate. The
+guard lives server-side (`packages/backend/src/lib/portal/lanGate.ts`,
+`userCap.ts`) so it survives a frontend replacement.
+
+**Where enforced.**
+- `packages/backend/src/lib/portal/lanGate.ts` + `userCap.ts` — the
+  server-side gate. Both functions are injected (testable without real
+  config).
+- `packages/frontend/src/app/(dashboard)/settings/_lib/sections/PortalAccessSection.tsx`
+  — the Settings UI.
+- Config flags: `config.portal.maxUsers` (number, default 20),
+  `config.portal.lanOnly` (boolean, default false).
+
+Landed in #1464 (2026-06-01).
+
+---
+
+## MCP bootstrap token: re-activatable from Settings
+
+**What.** The bootstrap MCP token (created during onboarding) expires after
+~30 minutes. It is now re-activatable from **Settings → API Tokens** with
+a single click — same token identity and scope, fresh 30-minute expiry,
+LAN-only. There is no "extend indefinitely" option; long-lived access uses
+named API tokens (Settings → MCP).
+
+**Why.** Bootstrap token is meant for the onboarding agent, not for ongoing
+use — so the 30-minute hard expiry is intentional. The re-activate flow is
+the operator asking "I'm still onboarding" — not a workaround for the expiry
+policy. The "no permanent bootstrap" rule is upheld; extending returns a
+bounded fresh window, not a long-lived token.
+
+**Where enforced.**
+- `packages/backend/src/lib/mcp/bootstrapToken.ts:reactivateBootstrapToken`
+  — re-keys the expiry; never promotes the token to a different scope.
+- `packages/frontend/src/app/(dashboard)/settings/_lib/sections/ApiTokensSection.tsx`
+  — renders the Re-activate button only for the bootstrap token.
+- `packages/frontend/src/app/api/system/mcp-bootstrap/route.ts` — enforces
+  LAN-only origin on the reactivate endpoint.
+
+Landed in #1457 (2026-06-01).
+
+---
+
 ## Maintaining this doc
 
 Add an entry when:
