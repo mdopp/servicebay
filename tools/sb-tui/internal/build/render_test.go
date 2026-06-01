@@ -98,6 +98,26 @@ func TestRenderButane_SubstitutesAndPreserves(t *testing.T) {
 	}
 }
 
+func TestRenderButane_FactoryFresh(t *testing.T) {
+	base := RenderInputs{Settings: Settings{ServerName: "OSCAR", HostUser: "core", ServicebayChannel: "stable"}}
+
+	// Default (unset) renders as the safe "off" and leaves no placeholder.
+	off := base.Butane()
+	if strings.Contains(off, "${FACTORY_FRESH}") {
+		t.Error("FACTORY_FRESH placeholder left unsubstituted")
+	}
+	if !strings.Contains(off, `"off" == "wipe-all-data"`) {
+		t.Error("default factory-fresh should render the literal off into the guard")
+	}
+
+	// Chosen level is baked into the install-time guard.
+	in := base
+	in.Settings.FactoryFresh = "wipe-configs"
+	if got := in.Butane(); !strings.Contains(got, `"wipe-configs" == "wipe-configs"`) {
+		t.Error("wipe-configs not substituted into the setup-raid guard")
+	}
+}
+
 func TestRenderPreInstall_OnlyServerName(t *testing.T) {
 	in := RenderInputs{Settings: Settings{ServerName: "OSCAR"}}
 	out := in.PreInstall()

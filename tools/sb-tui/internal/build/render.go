@@ -36,7 +36,7 @@ var butaneVars = []string{
 	"SERVER_NAME", "HOST_USER", "SSH_AUTHORIZED_KEY", "PASSWORD_HASH", "NET_INTERFACE",
 	"STATIC_IP", "STATIC_PREFIX", "GATEWAY", "DNS_SERVERS", "DATA_ROOT", "SERVICEBAY_PORT",
 	"SERVICEBAY_VERSION", "SERVICEBAY_CONFIG_JSON", "SERVICEBAY_SSH_PUB", "SERVICEBAY_SSH_PRIV",
-	"AUTH_SECRET", "SERVICEBAY_ADMIN_USER", "SERVICEBAY_ADMIN_PASSWORD",
+	"AUTH_SECRET", "SERVICEBAY_ADMIN_USER", "SERVICEBAY_ADMIN_PASSWORD", "FACTORY_FRESH",
 }
 
 func butaneVarSet() map[string]bool {
@@ -180,6 +180,18 @@ func (in RenderInputs) vars() map[string]string {
 		"AUTH_SECRET":               "", // no-op (template self-generates on first boot)
 		"SERVICEBAY_ADMIN_USER":     s.ServicebayAdminUser,
 		"SERVICEBAY_ADMIN_PASSWORD": in.Secrets.AdminPassword,
+		"FACTORY_FRESH":             factoryFreshOrOff(s.FactoryFresh),
+	}
+}
+
+// factoryFreshOrOff normalises the baked factory-fresh flag so the install-time
+// setup-raid script always sees one of off/wipe-configs/wipe-all-data (#1496).
+func factoryFreshOrOff(v string) string {
+	switch v {
+	case "wipe-configs", "wipe-all-data":
+		return v
+	default:
+		return "off"
 	}
 }
 

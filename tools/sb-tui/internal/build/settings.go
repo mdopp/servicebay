@@ -43,6 +43,12 @@ type Settings struct {
 	EmailFrom           string
 	EmailRecipients     string
 	AuthSecret          string
+	// FactoryFresh controls how much of the persistent /mnt/data the install
+	// wipes (#1496). "off" = normal reinstall (config merged back, data kept);
+	// "wipe-configs" = clear ServiceBay's own identity (config.json, secret.key,
+	// tokens) so the box comes up as a fresh ServiceBay, keeping service data;
+	// "wipe-all-data" = reformat the whole data disk (blank box). Defaults off.
+	FactoryFresh string
 }
 
 // DefaultPort is the ServiceBay HTTP port baked into a build when the operator
