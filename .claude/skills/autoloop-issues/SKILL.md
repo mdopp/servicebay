@@ -11,9 +11,34 @@ The user's recurring rules (in `~/.claude/projects/-home-mdopp-servicebay/memory
 
 **The ServiceBay box is a dev/test target for this loop, not production — exercise it freely.** Use SSH, the MCP token, the HTTP API, and Playwright/Chrome to implement and verify changes, and flip the `:dev` channel without hesitation — a brief service restart is expected and fine. **Do not ask the user for permission to use or flip the box**; driving the box is the loop's job, not a decision to escalate. (Access: memory `reference_mcp_servicebay_access`.)
 
+## Batch model — the loop's prime directive (ENFORCED, read before anything else)
+
+The expensive pipeline — CI, release-please, real-box `/verify` — must run **once per batch of 8 issues, never once per issue**. Paying it per issue (8× CI + 8 releases + 8 verifies for 8 issues) is the single biggest waste this loop exists to kill (#1432 / #1433 / #1434). A firing that ships **one** issue as its own PR+release is a **failure of this skill**, not progress.
+
+### Persistent integration branch
+All fixes accumulate on ONE long-lived branch `batch/<id>` recorded in `state.batch`. **It survives across `/loop` firings** — a firing that runs low on context commits what it has and the next firing continues on the *same* branch. The branch is pushed / PR'd / CI'd / merged / released / verified **only when it holds 8 closed issues OR the eligible queue is empty.**
+
+### Per issue — cheap, local only
+Implement on the integration branch → run **local** gates (`npm run lint`, `npm run check:arch`, `npm test`) → commit with `Closes #N` (conventional). **No push, no PR, no CI, no release, no `/verify`.** Then immediately take the next issue onto the *same* branch. Group related issues into adjacent commit-runs; split oversized epics into children first (grooming is mandatory — see below).
+
+### Per batch — expensive, exactly once
+When `state.batch.count >= 8` **or** the eligible queue is empty:
+1. `git rebase origin/main` the batch branch, push it.
+2. Open **one** PR listing every issue it closes (`Closes #a` … one line each).
+3. **One** CI run. Red → bisect the offending commit (commits are per-issue; the box is a dev/test target so "red → bisect" is accepted, [[feedback_autoloop_throughput]]), fix, re-push.
+4. On green, merge once. release-please rolls the whole batch into **one** release PR.
+5. Run **one** batched `:dev` `/verify` (Step 4.5) covering every path-mandated change in the batch.
+6. Merge the release PR once. Reset `state.batch`.
+
+### The hard gate (this is what "enforced" means)
+**You MUST NOT push, open a PR, trigger CI, merge a release PR, or run `/verify` while `state.batch.count < 8` AND eligible issues remain.** Before any of those actions, assert `batch.count >= 8 || queueEmpty`; if it fails, **stop and go back to Step 1** to work the next issue onto the same branch. Treat the urge to "just ship this one" as the bug. The only ways to end a batch early are: the eligible queue is empty, or a single groomed cluster legitimately drains it.
+
+### Grouping & splitting are mandatory
+Every firing with ≥2 survivors runs the grooming pass (Step 1 §Grooming) — dedup-at-HEAD, cluster by code region, split oversized epics into dependency-ordered children — and records clusters in `state.clusters`. The batch is assembled from the groomed, clustered queue, not raw issue order.
+
 ## Per-invocation budget
 
-- **Work until 8 PRs *or* the eligible queue is empty — never stop after just 1.** Shipping a single PR and then sleeping wastes the whole firing. After each merge, immediately select the next head and work it, back-to-back **in the same turn**, until you hit the 8-PR budget or run out of eligible issues. Then `/loop` re-fires you.
+- **8 issues per batch, not per PR — see the Batch model above.** A batch = up to 8 closed issues on ONE integration branch → ONE PR → ONE CI → ONE release → ONE `/verify`. Accumulate fixes across firings on the same branch; only run the expensive pipeline when the branch holds 8 fixes or the queue is empty. A 1-issue PR while the queue is non-empty is a process violation.
 - This still counts security-gate drafts toward the budget — a draft PR is still one PR's worth of work.
 - **A cluster (grouped issues, Step 1 grooming) counts as one PR** toward the budget, even though it closes several issues — that's the whole point: fewer pipeline runs for the same backlog drain.
 - If you've spent >40 minutes on a single issue without a green PR, stop, post a comment on the issue explaining what's blocking, and move on.
@@ -51,9 +76,12 @@ Track progress at `.claude/state/autoloop-state.json`. Shape:
   "clusters": [
     {"id": "fe-layout", "theme": "frontend layout", "issues": [1420, 1424, 1427, 1428], "region": "packages/frontend/src/dashboards", "gate": "normal", "status": "open"}
   ],
-  "box_verify": {"sha": "abc1234", "status": "green", "verified_at": "2026-06-01T04:00:00Z"}
+  "box_verify": {"sha": "abc1234", "status": "green", "verified_at": "2026-06-01T04:00:00Z"},
+  "batch": {"branch": "batch/2026-06-01a", "issues": [1418, 1419], "count": 2, "started": "2026-06-01T09:00:00Z"}
 }
 ```
+
+`batch` (Batch model) is the persistent integration branch's state: which issues are already committed to it and the running `count`. It persists across firings; the expensive pipeline only fires at `count >= 8` or empty queue. Reset to `null` after the batch's release PR merges.
 
 `clusters[]` is the groomed output (Step 1 grooming): each entry bundles related issues worked as one branch/PR. `gate` is inherited (strongest member: `security` ⇒ draft, any path-mandated member ⇒ `/verify`). `status` is `open | in_progress | done`. A cluster's member issues do **not** also appear as standalone queue units — the cluster is the unit.
 
@@ -330,7 +358,9 @@ _(Optional, dev-box only) integration-image staging:_ instead of merge-then-veri
 
 If lint warnings increased, fix or rebase. If a test fails, diagnose root cause — **do not** mock around it or skip it. Memory `feedback_vitest_fetch_response_reuse` and `feedback_test_local_node_match_ci` apply.
 
-## Step 4 — Open the PR
+## Step 4 — Open the PR (batch boundary only)
+
+> **GATE:** only reach this step when `state.batch.count >= 8` or the eligible queue is empty (Batch model). Otherwise you are mid-batch — commit the current fix to the integration branch and return to Step 1. One PR per *batch*, closing all its issues.
 
 ### Commit
 - Conventional Commits format. Scope mirrors the path (`fix(portal):`, `refactor(dashboards):`, `feat(backend):`, `docs(install):`, `test(shellQuote):`).
