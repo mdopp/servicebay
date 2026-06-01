@@ -1,0 +1,9 @@
+{
+  "started": null,
+  "last_invocation": null,
+  "cursor": { "last_merged_pr": null, "last_merged_at": null },
+  "reconciled": [],
+  "no_doc_impact": [],
+  "drift_flags": [],
+  "blocked": []
+}
