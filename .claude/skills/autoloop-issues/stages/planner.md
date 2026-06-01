@@ -17,6 +17,28 @@ gh issue list --state open --limit 100 --json number,title,labels,body
 - Number already in queue's `completed[]`, `review[]`, `blocked[]`, `awaiting_user[]`, `needs_refinement[]`, or a current `queue[]` unit.
 - **Unaddressed external comment.** Fetch `gh api repos/mdopp/servicebay/issues/<N>/comments`; if the chronologically-last comment is by a non-owner (`login != mdopp`), non-`Bot` account and its body lacks `<!-- sb-ai-comment -->`, move the issue to `awaiting_user[]` (`{issue, comment_url, author, since}`) and skip. **Never reply** — that's `/comment-responder`'s job (no human here to confirm a draft). Re-checked every run, so it auto-clears once an owner reply lands.
 
+(Blocked issues are excluded here on purpose — they're handled separately in Step 1b, which re-injects any that unblocked.)
+
+## Step 1b — Recheck the parked list (EVERY run, before triage)
+
+`blocked[]` is **not** permanent, and this is the memory `feedback_autoloop_unpark_recheck` lesson ("re-examine every run; the stale label hid #1327"). Each entry carries a **structured unblock condition** so the recheck is cheap and precise:
+
+`blocked[]` entry schema: `{issue, blocked_by, reason, since, comment_url?}` where `blocked_by` is one of:
+- `"#<N>"` — depends on another issue; clears when **#N closes**.
+- `"capability:browser-verify"` — needs the headless browser-verify harness; clears when **#1473 merges** (one check clears the whole class: #1288/#1252/#1253/#1218/#1233/#1423).
+- `"capability:real-box-verify"` — needs a human-driven real-box `/verify` session; clears only when a relevant merge/edit lands or a human runs it.
+- `"decomposition"` — too big for one unit, needs a decomposition ticket (e.g. lint-sweep size-guard); clears when a human/the planner files children.
+- `"epic"` — a tracking umbrella (e.g. #1190); **not really blocked** → reclassify (don't carry `autoloop:blocked`, keep as an open tracker, don't re-examine as workable).
+
+**Tier 1 — cheap condition check, ALL blocked entries, every run** (just `gh`/`git` queries, no code reading):
+- `"#N"` → `gh issue view N --json state` ⇒ tripped if `CLOSED`.
+- `"capability:browser-verify"` → tripped if #1473 is `CLOSED`/merged (or the harness is present in-repo).
+- any entry whose issue was **edited since `since`** (`updatedAt > since`), or a **merge since `since` touched its named region/files** → tripped.
+- issue is itself `CLOSED` → drop from `blocked[]` (already done).
+- **Missing `blocked_by`** (legacy entry) → treat as **tripped** (migration: deep-examine once, then re-park *with* a structured `blocked_by`).
+
+**Tier 2 — deep re-examine, ONLY the tripped entries:** open the issue + referenced code and decide per `feedback_autoloop_unpark_recheck` — ship now (make a unit, it flows through Steps 2–4 with fresh work), **carve off a non-path-mandated sub-part** and ship that half, send a `needs_refinement[]` question, or close if already done. On promotion, remove from `blocked[]`. If still blocked, **re-park with an updated `{blocked_by, reason, since}`** (never leave a bare prose reason). Prefer un-parking a real issue over lint filler.
+
 ## Step 2 — Triage each survivor (actionable vs needs-refinement)
 
 For each survivor, decide if it's **build-ready**. Build-ready means: a clear symptom + a discernible acceptance/goal + at least a starting-point file or subsystem you can name from the body or a quick `git grep`. Memory `feedback_issue_scope`: a good issue is symptom + repro + starting files (+ optional acceptance), **not** a fix-plan.
@@ -24,6 +46,7 @@ For each survivor, decide if it's **build-ready**. Build-ready means: a clear sy
 - **Build-ready** → it becomes (or joins) a unit in Step 3.
 - **Needs a human decision** (ambiguous requirement, competing options, unclear desired behaviour, missing acceptance you can't infer) → **do not work it, do not guess.** Post one short, specific question on the issue (with the AI marker), and add `{issue, question, comment_url, since}` to `needs_refinement[]` (Step 6 mirrors it to the `autoloop:needs-refinement` label). Phrase the question so the human can answer in a sentence. This is the high-value output — be precise, not vague ("which of A/B?" beats "please clarify").
 - **Multi-PR scope / epic** ("audit", "strategy", "epic", or obviously spans many changes) → **decompose** it (Step 2a). Don't park it as "needs scoping" if you can break it down mechanically; only send to `needs_refinement[]` if the decomposition itself needs a product decision.
+- **Genuinely blocked by an external condition** (a dependency not yet merged, a capability not yet available like browser-verify, a real-box verify session you can't run) → park in `blocked[]` with a **structured** `{issue, blocked_by, reason, since}` (schema in Step 1b). **Always carve first:** if only a sub-part is path-mandated/verify-gated, ship the non-path-mandated half now and park the rest. A block is never free-text-only and never a substitute for a human decision — *human decisions go to `needs_refinement[]`, not `blocked[]`*.
 
 ### Step 2a — Decomposing an epic
 Break it into bite-size child issues, filed in the repo, so the pipeline ships it incrementally:
@@ -59,7 +82,7 @@ A unit sorts into the highest-priority bucket any member would land in:
 ## Step 5 — Queue empty? Choose a filler track
 
 If no build-ready survivors remain, **do not exit and do not auto-default to lint.** Pick one:
-- **(b) Refine & unblock** — walk `blocked[]`: for each, re-check whether a recent merge or a smaller scoping makes it actionable now (don't trust the stale label — memory `feedback_autoloop_unpark_recheck`); if so, remove it and make a unit (or a `needs_refinement[]` question). Re-run the dedup/cluster pass. (Removing it from `blocked[]` clears its `autoloop:blocked` label in Step 6.)
+- **(b) Deep-unpark sweep** — Step 1b already ran the cheap *condition* check on every parked entry this run; with nothing else to build, now spend the budget on a **deep pass over the entries Step 1b did *not* trip**: re-read the issue + code, hunt a carve-off (a non-path-mandated half to ship), a smaller scoping, or an already-done close — don't trust the stale reason (memory `feedback_autoloop_unpark_recheck`). Promote what you can (remove from `blocked[]` → clears its `autoloop:blocked` label in Step 6); re-park the rest with an updated `{blocked_by, reason, since}`. Re-run the dedup/cluster pass on anything promoted.
 - **(c) Codebase eval** — run the standing eval (below) against HEAD and **file Category-2 findings as new issues** (symptom-style, no patch plan — memory `feedback_issue_scope`) so the queue refills. Record Category-1 in `notes[]` only. Set `last_codebase_eval`. This is the one sanctioned exception to "don't file new issues".
 - **(a) Lint sweep** — enqueue **lint-sweep units** for the builder: run `npm run lint 2>&1 | tee /tmp/lint.out` then `grep -oE "[a-zA-Z@/][a-zA-Z0-9@/-]*$" /tmp/lint.out | sort | uniq -c | sort -rn`. For the most-warned file (skipping any file an open non-loop PR or a non-blocked open issue already touches), add a unit `{id, kind:"lint-sweep", file, rule, scope, gate, status:"planned"}`. Bulk is fine — enqueue **10–20 warnings' worth** of units per run (memory `feedback_lint_sweep_bulk`), one file/rule per unit. `gate` is `verify` only if the file is path-mandated.
 

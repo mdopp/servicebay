@@ -25,6 +25,10 @@ export default defineConfig({
       { find: '@servicebay/api-client', replacement: path.resolve(__dirname, './packages/api-client/src/index.ts') },
       { find: /^@\//, replacement: path.resolve(__dirname, './packages/frontend/src/') + '/' },
     ],
-    exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**'],
+    // `**/*-worktree/**` keeps vitest (and the husky pre-push `npm test`)
+    // from crawling into sibling git worktrees at the repo root — e.g. the
+    // docs-coherence skill's `.docs-coherence-worktree/`, which carries a
+    // stale, separate-branch copy of the test tree (#1476).
+    exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**', '**/*-worktree/**'],
   },
 })
