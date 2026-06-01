@@ -4,8 +4,8 @@
 
 ```mermaid
 flowchart TD
-    subgraph "Developer Workstation"
-        A[run install-fedora-coreos.sh] --> B[Interactive Prompts]
+    subgraph "Your machine — sb-tui"
+        A["sb-tui build (or Express)"] --> B[Build form: settings + secrets]
         B --> C[Generate SSH Keypair<br/>RSA 4096]
         B --> D[Hash Console Password<br/>openssl passwd -6]
         B --> E[Render config.json<br/>auth + gateway + email + registries]
@@ -25,7 +25,9 @@ flowchart TD
     style K fill:#c8e6c9
 ```
 
-## 2. FCOS Installer Prompts
+## 2. Install settings (the `sb-tui build` form)
+
+These are collected by the `sb-tui build` form — a 5-step Bubble Tea wizard (Settings → Image → Secrets → Flash → Review) — and persisted to `build/fcos/install-settings.env`, so a rebuild (and Express) pre-fills them. (The old interactive `install-fedora-coreos.sh` shell prompts were retired with the Go TUI.)
 
 ```
 ┌─────────────┬──────────────────────────────┬────────────┬────────────┐
@@ -409,8 +411,8 @@ doesn't answer — but each has a distinct cause and a different fix.
 **Symptom (from network):** ping cycles UP / DOWN with a ~90-second
 period. The installer keeps re-running.
 
-**Root cause:** `install-fedora-coreos.sh`'s `disable-usb-boot.sh` runs
-under `WantedBy=multi-user.target`, so it only fires *after* the install
+**Root cause:** the `disable-usb-boot.sh` baked into the ISO by `sb-tui build`
+runs under `WantedBy=multi-user.target`, so it only fires *after* the install
 chain finishes. On hardware where `install-nvidia` reboots mid-stage
 (see 13.2), `disable-usb-boot` never runs and the BIOS keeps booting
 from the still-inserted USB.
