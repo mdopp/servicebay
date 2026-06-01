@@ -22,7 +22,7 @@ vi.mock('@/lib/registry', () => ({
   getTemplateSettingsSchema: () => getTemplateSettingsSchema(),
 }));
 
-const getConfig = vi.fn<() => Promise<{ templateSettings?: Record<string, string> }>>();
+const getConfig = vi.fn<() => Promise<{ templateSettings?: Record<string, string>; reverseProxy?: { publicDomain?: string } }>>();
 vi.mock('@/lib/config', () => ({
   getConfig: () => getConfig(),
 }));
@@ -129,6 +129,60 @@ describe('assembleManifest', () => {
     const v = r.variables.find(x => x.name === 'PUBLIC_DOMAIN')!;
     expect(v.value).toBe('dopp.cloud');
     expect(v.global).toBe(true);
+  });
+
+  it('pre-fills PUBLIC_DOMAIN from reverseProxy.publicDomain when templateSettings is empty (#1252)', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', [], '    # {{PUBLIC_DOMAIN}}'));
+    getTemplateVariables.mockResolvedValue({ PUBLIC_DOMAIN: { type: 'text' } });
+    getConfig.mockResolvedValue({ templateSettings: {}, reverseProxy: { publicDomain: 'dopp.cloud' } });
+
+    const r = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      templateSource: 'Built-in',
+    });
+    const v = r.variables.find(x => x.name === 'PUBLIC_DOMAIN')!;
+    expect(v.value).toBe('dopp.cloud');
+    expect(v.global).toBe(true);
+  });
+
+  it('templateSettings / prefilled PUBLIC_DOMAIN wins over reverseProxy.publicDomain', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', [], '    # {{PUBLIC_DOMAIN}}'));
+    getTemplateVariables.mockResolvedValue({ PUBLIC_DOMAIN: { type: 'text' } });
+    getConfig.mockResolvedValue({
+      templateSettings: { PUBLIC_DOMAIN: 'settings.example' },
+      reverseProxy: { publicDomain: 'dopp.cloud' },
+    });
+
+    const r = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      templateSource: 'Built-in',
+    });
+    expect(r.variables.find(x => x.name === 'PUBLIC_DOMAIN')?.value).toBe('settings.example');
+  });
+
+  it('injects help text for PUBLIC_DOMAIN when the template declares no description (#1252)', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', [], '    # {{PUBLIC_DOMAIN}}'));
+    getTemplateVariables.mockResolvedValue({ PUBLIC_DOMAIN: { type: 'text' } });
+
+    const r = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      templateSource: 'Built-in',
+    });
+    const v = r.variables.find(x => x.name === 'PUBLIC_DOMAIN')!;
+    expect((v.meta as VariableMeta | undefined)?.description).toMatch(/base public domain/i);
+  });
+
+  it('does not override an existing PUBLIC_DOMAIN description', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', [], '    # {{PUBLIC_DOMAIN}}'));
+    getTemplateVariables.mockResolvedValue({
+      PUBLIC_DOMAIN: { type: 'text', description: 'Template-specific help' },
+    });
+
+    const r = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      templateSource: 'Built-in',
+    });
+    expect((r.variables.find(x => x.name === 'PUBLIC_DOMAIN')?.meta as VariableMeta | undefined)?.description).toBe('Template-specific help');
   });
 
   it('generates and persists a fresh secret when none is saved', async () => {

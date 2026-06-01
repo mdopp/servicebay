@@ -184,6 +184,35 @@ async function hostHasNvidiaCdi(): Promise<boolean> {
 }
 
 /**
+ * Per-variable help text for well-known global variables that templates
+ * reference but rarely declare a `description` for (so the wizard would
+ * otherwise show a bare, unlabelled input). Keyed by variable name.
+ */
+const GLOBAL_VAR_HELP: Record<string, string> = {
+  PUBLIC_DOMAIN:
+    'Base public domain for this box (e.g. dopp.cloud). Services are ' +
+    'exposed at <service>.<this domain>. Enter the bare domain, not a ' +
+    'subdomain.',
+};
+
+/**
+ * Ensure a variable carries help text so the wizard never renders a bare,
+ * unlabelled input (#1252). Falls back to a known global hint
+ * ({@link GLOBAL_VAR_HELP}) when `meta.description` is absent — e.g.
+ * PUBLIC_DOMAIN, which templates reference for subdomain FQDNs but don't
+ * declare a description for. Existing descriptions are left untouched.
+ */
+function withHelpText(
+  name: string,
+  meta: VariableMeta | undefined,
+): VariableMeta | undefined {
+  const help = GLOBAL_VAR_HELP[name];
+  if (!help) return meta;
+  if (meta?.description) return meta;
+  return { ...(meta ?? {}), description: help };
+}
+
+/**
  * Assemble a stack-install manifest server-side.
  *
  * Faithful port of `useStackInstall.startConfigure`. The variable
@@ -307,6 +336,17 @@ export async function assembleManifest(
       value = globalSettings[name];
       isGlobal = true;
     }
+    // PUBLIC_DOMAIN is the box's base domain — already configured at
+    // `config.reverseProxy.publicDomain` (set during onboarding / by the
+    // baked config.json). Pre-fill from there so the operator isn't
+    // re-typing a value the system already knows (#1252). Otherwise the
+    // wizard surfaced PUBLIC_DOMAIN as a blank "Other" field, which is
+    // exactly the value templates like OSCAR's ollama/hermes need for
+    // their subdomain FQDNs.
+    if (name === 'PUBLIC_DOMAIN' && !value && config.reverseProxy?.publicDomain) {
+      value = config.reverseProxy.publicDomain;
+      isGlobal = true;
+    }
     if (name === 'LLDAP_HOST') {
       value = 'localhost';
       isGlobal = true;
@@ -340,7 +380,7 @@ export async function assembleManifest(
       }
     }
 
-    variables.push({ name, value, global: isGlobal, meta });
+    variables.push({ name, value, global: isGlobal, meta: withHelpText(name, meta) });
   }
 
   // RSA private keys — reuse a stored key over generating a new one
