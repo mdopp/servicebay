@@ -369,6 +369,73 @@ Landed in #1457 (2026-06-01).
 
 ---
 
+## Diagnose probes live in the Health Checks tab, not a separate Self-Diagnose tab
+
+**What.** The "Self-Diagnose" tab that previously appeared alongside "Checks" in
+the Health dashboard has been removed. Diagnose probes are now surfaced as
+*synthetic rows* inside the Health Checks tab — they appear alongside scheduled
+checks, use the same four-way `ok / warn / fail / unknown` counters, and open a
+**Self-Repair popup** (wrench icon) instead of Edit/Delete buttons. The popup
+reuses `DiagnoseProbeList`'s action machinery so the recovery UI is identical
+to Settings and the wizard.
+
+**Why.** The separate tab created two fragmented views of the same runtime
+state — operators had to visit "Checks" to see monitoring results and "Self-Diagnose"
+to see recovery actions. Merging them into one surface with a single status filter
+means every unhealthy signal (scheduled check or probe) shows up in the same
+filtered list. The "warn" counter is new (previously warn was folded into fail),
+surfacing probes that need attention without implying a hard failure.
+
+**Where enforced.**
+- `packages/frontend/src/dashboards/HealthDashboard.tsx` — `HealthTab` union no
+  longer includes `'diagnose'`; `SelfDiagnoseSection` is gone.
+- `packages/frontend/src/components/HealthChecks.tsx` — `isDiagnoseRow()` detects
+  synthetic rows (check carries a `.diagnose` field); wrench button replaces
+  Edit/Delete; `rowStatus()` projects the four-way probe status.
+- `packages/frontend/src/components/HealthChecks.tsx` — grid changed from 3 to
+  4 counter columns; `StatusFilter` now includes `'warn'`.
+- `packages/backend/src/lib/health/init.ts` — health probe rows are injected
+  into the standard checks list at boot.
+
+Landed in #1470 (2026-06-01). Closes #1423 (self-repair popup) and #1454/#1455.
+
+---
+
+## SSO verify runs automatically post-install, result surfaced as a diagnose probe
+
+**What.** After any install that includes an auth template, the install runner
+triggers `verifySso` in the background. The result is stored in a persistent
+`ssoVerifyStore` and exposed as the `sso_verify` diagnose probe (in the Health
+Checks tab, per the decision above). The probe is a *reader* in steady state;
+an on-demand "Run SSO check" action re-runs the full create → login → domain →
+admin-reject → delete cycle.
+
+**Status mapping:**
+- No report yet → `info` ("has not run yet")
+- Auth template not installed → `info` ("nothing to verify — skipped")
+- `report.ok === true` → `ok`
+- `report.ok === false` → `fail`
+
+**Why.** SSO is the most common post-install failure vector and previously had
+no automated coverage — the operator had to discover broken SSO by trying to log
+in. Auto-running the verify immediately after install catches the common failure
+cases (wrong LLDAP group, Authelia unreachable, domain not proxied) while the
+install context is still fresh, without requiring the operator to manually trigger
+a check.
+
+**Where enforced.**
+- `packages/backend/src/lib/install/runner.ts` — post-install SSO verify trigger.
+- `packages/backend/src/lib/diagnose/ssoVerify.ts` — end-to-end SSO check spine.
+- `packages/backend/src/lib/diagnose/ssoVerifyStore.ts` — persistent store for the
+  latest report.
+- `packages/backend/src/lib/diagnose/probes/ssoVerify.ts` — probe reader +
+  `run_now` action.
+
+Landed in #1470 (2026-06-01). Closes #1453 (verifySso), #1454 (auto-run post-install),
+#1455 (sso_verify probe).
+
+---
+
 ## Maintaining this doc
 
 Add an entry when:
