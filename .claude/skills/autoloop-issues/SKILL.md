@@ -16,8 +16,13 @@ Why this shape: each sub-agent starts cold and returns only a one-line summary, 
  PLANNER ──fills──▶ work-queue.json ──┬─▶ BUILDER ──merges, sets box_verify=owed──┐
  groom/cluster/                       │   fast gates, batch seal,                  │
  decompose/refine                     │   push→CI→merge                            ▼
-                                      └────────────────────────────────────  BOX-VERIFY ──gates──▶ release PR
-                                                                              :dev flip-verify-flipback
+                                      └─▶ BUILDER build-aheads     BOX-VERIFY (background) ──gates──▶ release PR
+                                          next batch concurrently  :dev flip-verify-flipback
+                                          (no main, no box)         writes box-verify.json result file
+  BOX-VERIFY runs in the BACKGROUND (Agent run_in_background) and writes its result to its OWN file
+  (.claude/state/box-verify.json); the orchestrator folds it into box_verify at preflight (single writer).
+  While it runs, the builder keeps BUILDING the next batch. Only the seal→release→verify critical
+  section serializes; building is concurrent with it.
   DOCS-COHERENCE runs as a separate parallel /loop (own worktree, disjoint fileset) — not dispatched here.
 ```
 
@@ -35,7 +40,7 @@ Key fields:
 - `needs_refinement[]` — **the human's worklist.** `{issue, question, comment_url, since}`. The planner parks any issue it can't make actionable without a human decision here, with the *specific* question. This is the one queue a human is expected to drain.
 - `awaiting_user[]` — external human comment unanswered; `/comment-responder`'s job, never the pipeline's.
 - `review[]` — **your post-deploy review list**: `{issue, pr, flag, merged_at}` for shipped `security:true` (and other sensitive) changes. Informational — the loop merges and deploys them like anything else; this is just what you eyeball after the fact. **Not** a merge gate.
-- `box_verify` — `{sha, status: "owed"|"red"|"green", detail, since}`. Gates the release PR.
+- `box_verify` — `{sha, status: "owed"|"verifying"|"red"|"green", detail, since}`. Gates the release PR. State machine: `owed` (path-mandated change merged, not yet verified) → `verifying` (a background Box-Verify agent is in flight) → `green`|`red`. You set `verifying` when you launch the background agent; the agent writes its verdict to `.claude/state/box-verify.json` (its own file, **not** the shared queue), and you fold that verdict back into this field at preflight. A `verifying` entry whose `since` is >20 min old with no result file = the agent died → reset to `owed` (it'll relaunch).
 - `blocked[]`, `completed[]`, `lint_sweep[]`, `release_warnings[]`, `last_codebase_eval`, `notes[]` — as before.
 
 ## Batch economy — the prime directive (ENFORCED)
@@ -44,42 +49,60 @@ The expensive pipeline — full `npm test`, CI, release-please, real-box `/verif
 
 The builder enforces the per-issue side (fast gates only, commit to the batch branch, no push). You enforce the batch side: **never dispatch a seal/verify/release step while `batch.count < 8` AND planned units remain.**
 
+**Build-ahead is allowed; seal-ahead is not.** Box-Verify runs in the background (it touches only the box and its own result file). The builder may keep **building** the next batch onto a fresh `batch/<id>` branch while a prior batch is being verified — building writes neither `main` nor the box, so it's safe to overlap. What must **not** overlap is the singleton critical section: there is one `main`, one release PR, and one `box_verify` field, so **a new batch may not be *sealed* while `box_verify.status` is `owed`/`verifying`/`red`** (a prior batch is still in release/verify). Build up to 8 and then *wait* for the verify to clear before sealing. This caps in-flight to one batch in the critical section while keeping the builder busy.
+
 ## Step 0 — Preflight (every firing)
 
 1. **Working tree clean?** `git status --porcelain`. If dirty, exit — another session owns this tree. Don't stash or switch branches.
 2. **On `main`, up to date?** `git fetch origin && git checkout main && git pull --ff-only`. If FF fails, exit and report.
 3. **Lock check.** If `.claude/state/autoloop.lock` exists with mtime < 10 min, another firing is running — exit. Otherwise touch it.
 4. **Read the work queue.** Create from `work-queue-template.json` if absent. Seed `started`/`last_invocation`.
-5. **Release-PR gate.** `gh pr list --head release-please--branches--main--components--servicebay --state open --json number,title`. If a release PR is open:
-   - If `box_verify.status` is `"owed"` or `"red"` → a path-mandated change is on `main` but unverified on `:dev`. **Do not merge the release PR.** Make the next dispatch a **Box-Verify** (see dispatch). Only proceed once `box_verify.status` is `"green"` (or nothing path-mandated is pending).
+5. **Fold in any background Box-Verify result.** If `.claude/state/box-verify.json` exists, the background agent finished: copy its `{sha, status, detail, verified_at}` into `box_verify` (you are the single writer of the shared queue's `box_verify` field), then **delete the result file**. If `box_verify.status == "verifying"` but no result file exists and `since` is >20 min old, the agent died — reset `box_verify.status` to `"owed"` so it relaunches.
+6. **Release-PR gate.** `gh pr list --head release-please--branches--main--components--servicebay --state open --json number,title`. If a release PR is open:
+   - If `box_verify.status` is `"owed"`, `"verifying"`, or `"red"` → a path-mandated change is on `main` but not yet `:dev`-verified green. **Do not merge the release PR.** Don't block the firing on it either — fall through to dispatch (which launches/awaits the background Box-Verify and keeps building). Only merge the release PR once `box_verify.status` is `"green"` (or nothing path-mandated is pending).
    - Else wait for its CI (`gh pr checks <PR#> --watch`). Green → `gh pr merge <PR#> --merge --delete-branch`, then `git pull --ff-only`, then reset `batch` to `null`. Red → post the failing-job link on the release PR (with the AI marker) and **stop** (hard exit #2 territory — a regression is hiding under the version bump). **Never edit the release PR's contents** — release-please owns version/CHANGELOG/manifest (memory: *"NEVER manually bump versions"*).
 
 ## Step 1 — Dispatch (the loop body)
 
-Pick **exactly one** stage this tick, by the first rule that matches, and spawn it (Step 2). Then re-read the queue and loop.
+**First, a non-blocking side-action (does NOT consume the tick):** if `box_verify.status == "owed"`, launch Box-Verify **in the background** (Step 2, `run_in_background: true`), set `box_verify.status = "verifying"` and `since = now`, and **fall through** to pick a foreground stage below. If `box_verify.status == "verifying"`, an agent is already in flight — don't relaunch; just fall through. The background verify clears the release gate on its own time; you don't wait on it here.
 
-1. **Box-Verify** — if `box_verify.status == "owed"` (a path-mandated change merged but isn't `:dev`-verified). Verifying clears the release gate, so it comes first.
-2. **Builder — seal** — if a `batch` exists and (`batch.count >= 8` **or** `queue[]` has no `status:"planned"` unit) and the batch isn't already merged. The builder pushes the accumulated branch, runs full gates + CI, merges, and sets `box_verify=owed` if any merged file was path-mandated.
-3. **Builder — build** — if `queue[]` has a `planned` unit and `batch.count < 8`. The builder implements the next unit onto the batch branch with fast gates only.
-4. **Planner** — if there is no actionable unit (queue has no `planned` units and no open batch to seal). The planner refills the queue: groom + cluster open issues, decompose epics, park refinement/awaiting-user (security issues become normal `security:true` units, not parked), or (queue genuinely dry) enqueue lint-sweep units or run a codebase eval.
+Then pick **exactly one** foreground stage this tick, by the first rule that matches, and spawn it (Step 2). Then re-read the queue and loop.
 
-If a rule's preconditions are met but you're mid-batch (`batch.count < 8` and planned units remain), **never** jump to seal/verify/release — that's the prime-directive violation. Keep building.
+1. **Builder — seal** — if a `batch` exists and (`batch.count >= 8` **or** `queue[]` has no `status:"planned"` unit) and the batch isn't already merged **and `box_verify.status` is clear** (`green` or `null` — *not* `owed`/`verifying`/`red`). The builder pushes the accumulated branch, runs full gates + CI, merges, and sets `box_verify=owed` if any merged file was path-mandated. **Seal-ahead is forbidden:** if `box_verify` is `owed`/`verifying`/`red`, a prior batch is still in the release/verify critical section — do **not** seal; build-ahead instead (rule 2), or if nothing to build, idle-wait for the verify (Step 3).
+2. **Builder — build** — if `queue[]` has a `planned` unit and `batch.count < 8`. The builder implements the next unit onto the batch branch with fast gates only. **This is the build-ahead path** — it's eligible even while a background Box-Verify runs, because building touches neither `main` nor the box.
+3. **Planner** — if there is no actionable unit (queue has no `planned` units and no open batch to seal). The planner refills the queue: groom + cluster open issues, decompose epics, park refinement/awaiting-user (security issues become normal `security:true` units, not parked), or (queue genuinely dry) enqueue lint-sweep units or run a codebase eval.
+
+If a rule's preconditions are met but you're mid-batch (`batch.count < 8` and planned units remain), **never** jump to seal/verify/release — that's the prime-directive violation. Keep building. If the only thing left to do is wait on a background Box-Verify (batch built out to 8, nothing to plan), don't dispatch a foreground stage — go to Step 3 and schedule a short wakeup.
 
 ## Step 2 — Spawning a stage agent
 
-Use the **Agent** tool, `subagent_type: "general-purpose"` (it needs Bash, gh, the box MCP tools, Edit/Write). Run **foreground** (blocking) — stages serialize because they share the batch branch, `main`, and the box. Prompt template:
+Use the **Agent** tool, `subagent_type: "general-purpose"` (it needs Bash, gh, the box MCP tools, Edit/Write).
+
+**Planner and Builder run foreground (blocking)** — they share `main`, the batch branch, and the shared queue file, so only the seal→release→verify critical section serializes; one foreground stage per tick keeps that file single-writer. **Box-Verify runs in the background** (`run_in_background: true`) — it touches only the box and its own result file, so it overlaps with the builder safely.
+
+Foreground (Planner / Builder) prompt template — they read & write the shared queue:
 
 ```
-Read .claude/skills/autoloop-issues/stages/<planner|builder|box-verify>.md and follow it exactly.
-Context for this run: <the specific unit id / batch state / box_verify entry it should act on>.
+Read .claude/skills/autoloop-issues/stages/<planner|builder>.md and follow it exactly.
+Context for this run: <the specific unit id / batch state it should act on>.
 The shared queue is .claude/state/work-queue.json — read it, write your results back into it
-(update unit status, append to completed/review/needs_refinement/etc., set box_verify), and
+(update unit status, append to completed/review/needs_refinement/etc., set box_verify=owed at seal), and
 return ONE line: what you did + the queue mutations you made. Do not narrate.
+```
+
+Background (Box-Verify) prompt template — it does **not** touch the shared queue (avoids a write-race with the concurrent builder); it writes its verdict to its own file:
+
+```
+Read .claude/skills/autoloop-issues/stages/box-verify.md and follow it exactly.
+Context for this run: verify SHA <box_verify.sha>, path-mandated paths: <box_verify.detail>.
+Do NOT write .claude/state/work-queue.json. Write your verdict to .claude/state/box-verify.json as
+{sha, status:"green"|"red"|"owed", detail, verified_at}. The orchestrator folds it into the queue.
+Return ONE line: the verdict + any revert PR you opened. Do not narrate.
 ```
 
 Builder mode (`build` vs `seal`) is passed in the context line. For the builder, also pass the unit's `gate` (`normal`/`verify`) and `security` flag.
 
-After the agent returns: **re-read `work-queue.json`** (the agent is authoritative; trust the file, not the summary), append the agent's one-liner to your own running tally, and go back to Step 1.
+After a **foreground** agent returns: **re-read `work-queue.json`** (the agent is authoritative; trust the file, not the summary), append the agent's one-liner to your own running tally, and go back to Step 1. The **background** Box-Verify does not block — you proceed immediately; its result is folded in at the next preflight (Step 0, the fold-in step), and the harness re-invokes the loop when it completes.
 
 ### Model per stage — match the model to the cost of being wrong
 
@@ -96,8 +119,9 @@ Set `model` on each Agent call. The principle: a weak model on real code *costs*
 
 ## Step 3 — Cadence (dynamic /loop mode)
 
-**Never sleep while there is eligible work** — go straight to the next dispatch in the same turn. Schedule a wakeup (`ScheduleWakeup`) only when:
+**Never sleep while there is eligible work** — go straight to the next dispatch in the same turn. A **background Box-Verify in flight is not a reason to sleep** if there's still a unit to build: launch/leave it running and keep building the next batch. Schedule a wakeup (`ScheduleWakeup`) only when:
 - **Mid-pipeline, waiting on an external gate** (release-please CI running, a `:dev` image still building / box restarting) → `delaySeconds ≤ 480`, prefer ~60s if you expect it imminently.
+- **Build-ahead exhausted, only a background Box-Verify outstanding** (batch built out, nothing left to plan, can't seal until verify clears) → `delaySeconds ≤ 480`. The harness also re-invokes you when the background agent completes, so this is just a fallback heartbeat.
 - **Queue empty and planner found nothing** → idle heartbeat `delaySeconds ≤ 480`.
 
 Every `ScheduleWakeup` from this loop stays **≤480s** (memory `feedback_autoloop_wakeup_cap`). Pass the same `/loop /autoloop-issues` input back. Do **not** insert an 8-minute nap between dispatches when work remains (memory `feedback_autoloop_throughput`).
@@ -121,7 +145,7 @@ When you sleep or exit, print a tally to stdout:
 Autoloop firing complete.
   Built this firing: <unit ids> → batch/<id> (count N/8)
   Merged batches:    PR #<n> (closes #a #b …)
-  Box-verify:        green @ <sha> | owed | red (<detail>)
+  Box-verify:        green @ <sha> | verifying (background) | owed | red (<detail>)
   Review post-deploy: #<issue> (#<pr>) — security-flagged, shipped   ← eyeball these
   Needs refinement:  #<issue> — "<question>"   ← your worklist
   Awaiting user:     #<issue> (external comment)
@@ -144,7 +168,9 @@ The **Needs refinement** line is the point of the whole pipeline — it's what y
 - Does not write code, groom issues, or run `/verify` itself — it only dispatches stage agents.
 - Does not run `gh pr merge --auto` (no branch protection on this repo — it silently no-ops).
 - Does not bump versions or edit the release-please PR's contents.
-- Does not dispatch a seal/verify/release step while mid-batch (prime directive).
+- Does not dispatch a seal/release step while mid-batch (prime directive).
+- Does not **seal** a new batch while a prior batch's `box_verify` is `owed`/`verifying`/`red` (seal-ahead forbidden — one batch in the release/verify critical section at a time). It *may* build-ahead.
+- Does not block the loop on Box-Verify — that runs in the background; the builder keeps building while it does.
 - Does not ship a path-mandated change to `:latest` without a green `:dev` box `/verify` (release gate via `box_verify`).
 - Does not reply to external human commenters, and never posts a comment without the AI marker.
 

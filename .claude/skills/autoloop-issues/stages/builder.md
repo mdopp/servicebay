@@ -58,7 +58,7 @@ Implement the one file/rule named in the unit. Size guard: **≤2 source files**
 
 ## Mode: `seal` — ship the accumulated batch (expensive pipeline, once)
 
-Precondition (the orchestrator checked it, re-assert anyway): `batch.count >= 8` **or** `queue[]` has no `planned` unit. If neither holds, you're mid-batch — do nothing, return "not ready to seal".
+Precondition (the orchestrator checked it, re-assert anyway): (`batch.count >= 8` **or** `queue[]` has no `planned` unit) **and** `box_verify.status` is clear (`green` or `null` — *not* `owed`/`verifying`/`red`). If you're mid-batch, do nothing, return "not ready to seal". If `box_verify` is `owed`/`verifying`/`red`, a prior batch is still in the release/verify critical section — **do not seal** (seal-ahead forbidden); return "blocked on box_verify, not sealing".
 
 ### 1. Full gate
 ```bash
