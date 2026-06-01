@@ -441,6 +441,29 @@ export class ServiceListing {
     // deploy with several large images would block the SSH channel for
     // minutes and cause subsequent agent commands (write_file for the next
     // service's .kube file) to time out and never get sent.
+    /**
+     * Extract host ports from a parsed YAML container ports list.
+     */
+    private static extractPortsFromContainers(containers: unknown[]): Set<number> {
+        const ports = new Set<number>();
+        for (const c of containers) {
+            if (!c || typeof c !== 'object') continue;
+            const portsField = (c as { ports?: unknown }).ports;
+            if (!Array.isArray(portsField)) continue;
+            for (const p of portsField) {
+                if (!p || typeof p !== 'object') continue;
+                const hp = (p as { hostPort?: unknown }).hostPort;
+                if (typeof hp === 'number' && Number.isFinite(hp) && hp > 0) {
+                    ports.add(hp);
+                } else if (typeof hp === 'string') {
+                    const n = parseInt(hp, 10);
+                    if (Number.isFinite(n) && n > 0) ports.add(n);
+                }
+            }
+        }
+        return ports;
+    }
+
     static extractHostPorts(yamlContent: string): number[] {
         const ports = new Set<number>();
         try {
@@ -449,21 +472,8 @@ export class ServiceListing {
                 if (!doc || typeof doc !== 'object') continue;
                 const spec = (doc as { spec?: unknown }).spec as { containers?: unknown } | undefined;
                 const containers = Array.isArray(spec?.containers) ? spec.containers : [];
-                for (const c of containers) {
-                    if (!c || typeof c !== 'object') continue;
-                    const portsField = (c as { ports?: unknown }).ports;
-                    if (!Array.isArray(portsField)) continue;
-                    for (const p of portsField) {
-                        if (!p || typeof p !== 'object') continue;
-                        const hp = (p as { hostPort?: unknown }).hostPort;
-                        if (typeof hp === 'number' && Number.isFinite(hp) && hp > 0) {
-                            ports.add(hp);
-                        } else if (typeof hp === 'string') {
-                            const n = parseInt(hp, 10);
-                            if (Number.isFinite(n) && n > 0) ports.add(n);
-                        }
-                    }
-                }
+                const containerPorts = ServiceListing.extractPortsFromContainers(containers);
+                for (const p of containerPorts) ports.add(p);
             }
         } catch {
             // Fallback: regex out hostPort: <num>. Better to under-detect than crash.
@@ -535,6 +545,54 @@ export class ServiceListing {
     // live in `quadletDirectives.ts` so other kube-write paths can use the
     // same transform without importing this whole class.
 
+    /**
+     * Read kube file content from twin cache or agent.
+     */
+    private static async readKubeContent(
+        agent: import('../agent/handler').AgentHandler,
+        twin: import('../store/twin').NodeTwin | null,
+        serviceName: string,
+        kubePath: string,
+    ): Promise<string> {
+        const fullKubePath = twin ? Object.keys(twin.files).find(p => p.endsWith(`${serviceName}.kube`)) : null;
+        if (twin && fullKubePath && twin.files[fullKubePath]?.content) {
+            return twin.files[fullKubePath].content;
+        }
+
+        if (twin && twin.services?.length) {
+            const exists = twin.services.some((s: { name: string }) => s.name === serviceName);
+            if (!exists) {
+                throw new Error(`Service ${serviceName} not found on ${twin}`);
+            }
+        }
+
+        const res = await agent.sendCommand('read_file', { path: `~/${kubePath}` });
+        return extractFileContent(res);
+    }
+
+    /**
+     * Read YAML file content from twin cache or agent.
+     */
+    private static async readYamlContent(
+        agent: import('../agent/handler').AgentHandler,
+        twin: import('../store/twin').NodeTwin | null,
+        yamlFileName: string,
+        yamlPath: string,
+    ): Promise<string> {
+        const fullYamlPath = twin ? Object.keys(twin.files).find(p => p.endsWith(yamlFileName)) : null;
+        if (twin && fullYamlPath && twin.files[fullYamlPath]?.content) {
+            return twin.files[fullYamlPath].content;
+        }
+
+        try {
+            const res = await agent.sendCommand('read_file', { path: `~/${yamlPath}` });
+            return extractFileContent(res);
+        } catch (e) {
+            logger.warn('ServiceManager', `Could not read yaml file ${yamlPath}`, e);
+            return '';
+        }
+    }
+
     /** Pre-pull container images so systemd start doesn't timeout */
     static async getServiceFiles(nodeName: string, serviceName: string) {
         const agent = await agentManager.ensureAgent(nodeName);
@@ -546,48 +604,16 @@ export class ServiceListing {
         let servicePath = '';
 
         try {
-            // First try reading from the Digital Twin cache
             const { getNodeTwin } = await import('../store/repository');
             const twin = getNodeTwin(nodeName);
 
-            const fullKubePath = twin ? Object.keys(twin.files).find(p => p.endsWith(`${serviceName}.kube`)) : null;
-
-            if (twin && fullKubePath && twin.files[fullKubePath]?.content) {
-                kubeContent = twin.files[fullKubePath].content;
-            } else {
-                // Don't blindly read_file unknown service names. When a network
-                // map ghost node (e.g. "Local Service 3000") gets clicked and
-                // its display label leaks into here, the read_file fails on
-                // the agent and the failure surfaces as the agent's
-                // user-visible `lastError`. Validate that the service is
-                // actually known to systemd before paying that cost.
-                if (twin && twin.services?.length) {
-                    const exists = twin.services.some((s: { name: string }) => s.name === serviceName);
-                    if (!exists) {
-                        throw new Error(`Service ${serviceName} not found on ${nodeName}`);
-                    }
-                }
-                const res = await agent.sendCommand('read_file', { path: `~/${kubePath}` });
-                kubeContent = extractFileContent(res);
-            }
+            kubeContent = await ServiceListing.readKubeContent(agent, twin, serviceName, kubePath);
 
             const yamlMatch = kubeContent.match(/Yaml=(.+)/);
             if (yamlMatch) {
                 const yamlFileName = yamlMatch[1].trim();
                 yamlPath = yamlFileName.startsWith('/') ? yamlFileName : path.join(SYSTEMD_DIR, yamlFileName);
-
-                // Try twin first
-                const fullYamlPath = twin ? Object.keys(twin.files).find(p => p.endsWith(yamlFileName)) : null;
-                if (twin && fullYamlPath && twin.files[fullYamlPath]?.content) {
-                    yamlContent = twin.files[fullYamlPath].content;
-                } else {
-                    try {
-                        const res = await agent.sendCommand('read_file', { path: `~/${yamlPath}` });
-                        yamlContent = extractFileContent(res);
-                    } catch (e) {
-                        logger.warn('ServiceManager', `Could not read yaml file ${yamlPath}`, e);
-                    }
-                }
+                yamlContent = await ServiceListing.readYamlContent(agent, twin, yamlFileName, yamlPath);
             }
 
             ({ serviceContent, servicePath } = await loadSystemdUnitInfo(agent, serviceName));

@@ -340,6 +340,118 @@ export class ServiceLifecycle {
      * via the diagnose probe instead.
      */
     /**
+     * Build migration script env file content with SB metadata.
+     */
+    private static async buildMigrationEnvLines(
+        nodeName: string,
+        script: { fromVersion: number; toVersion: number },
+        env: Record<string, string>,
+    ): Promise<string> {
+        const sbPort = process.env.PORT || '5888';
+        const sbApiUrl = `http://localhost:${sbPort}`;
+        const { getInternalApiToken } = await import('@/lib/auth/internalToken');
+        const sbApiToken = getInternalApiToken();
+        const dataDir = env.DATA_DIR || env.NEW_DATA_DIR || '/mnt/data';
+        const envLines = [
+            `SB_NODE=${nodeName}`,
+            `SB_API_URL=${sbApiUrl}`,
+            `SB_API_TOKEN=${sbApiToken}`,
+            `OLD_DATA_DIR=${env.OLD_DATA_DIR || dataDir}`,
+            `NEW_DATA_DIR=${env.NEW_DATA_DIR || dataDir}`,
+            `OLD_SCHEMA_VERSION=${script.fromVersion}`,
+            `NEW_SCHEMA_VERSION=${script.toVersion}`,
+            ...Object.entries(env).map(([k, v]) => {
+                if (k === 'OLD_DATA_DIR' || k === 'NEW_DATA_DIR' || k === 'OLD_SCHEMA_VERSION' || k === 'NEW_SCHEMA_VERSION') return null;
+                if (typeof v !== 'string') return null;
+                const esc = v.replace(/'/g, `'\\''`);
+                return `${k}='${esc}'`;
+            }).filter((l): l is string => l !== null),
+        ].join('\n');
+        return envLines;
+    }
+
+    /**
+     * Persist migration audit to config.
+     */
+    private static async persistMigrationAudit(
+        serviceName: string,
+        script: { filename: string; fromVersion: number; toVersion: number },
+        result: { code: number; stdout: string },
+    ): Promise<void> {
+        try {
+            const cfg = await getConfig();
+            const existing = cfg.serviceMigrations?.[serviceName] ?? [];
+            const stdoutTail = (result.stdout ?? '').slice(-1024) || undefined;
+            const next = [
+                {
+                    ranAt: new Date().toISOString(),
+                    fromVersion: script.fromVersion,
+                    toVersion: script.toVersion,
+                    exitCode: result.code,
+                    stdoutTail,
+                },
+                ...existing,
+            ].slice(0, 20);
+            await updateConfig({
+                serviceMigrations: {
+                    ...(cfg.serviceMigrations ?? {}),
+                    [serviceName]: next,
+                },
+            });
+        } catch (e) {
+            logger.warn('ServiceManager', `Could not persist migration audit for ${serviceName} ${script.filename}:`, e);
+        }
+    }
+
+    /**
+     * Execute a migration script and stream output.
+     */
+    private static async executeMigrationScript(
+        agent: import('../agent/handler').AgentHandler,
+        scriptPath: string,
+        envPath: string,
+        scriptFilename: string,
+        serviceName: string,
+        onProgress?: (message: string) => void,
+    ): Promise<{ code: number; stdout: string; stderr: string }> {
+        let streamed = false;
+        let result: { code: number; stdout: string; stderr: string };
+        try {
+            result = await agent.sendCommand(
+                'exec_stream',
+                {
+                    command: `set -a; source ${envPath}; set +a; python3 ${scriptPath} 2>&1`,
+                    timeout: 1200,
+                },
+                {
+                    timeoutMs: 1_200_000,
+                    onChunk: (line: string) => {
+                        streamed = true;
+                        if (line.length > 0) onProgress?.(line);
+                    },
+                },
+            );
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (/exec_stream|Unknown|action/i.test(msg)) {
+                result = await agent.sendCommand('exec', {
+                    command: `set -a; source ${envPath}; set +a; python3 ${scriptPath} 2>&1`,
+                    timeout: 1200,
+                }, { timeoutMs: 1_200_000 });
+            } else {
+                throw e;
+            }
+        }
+        if (!streamed) {
+            const stdout = (result.stdout || '').replace(/\r/g, '');
+            for (const line of stdout.split('\n')) {
+                if (line.length > 0) onProgress?.(line);
+            }
+        }
+        return result;
+    }
+
+    /**
      * Run a single template migration script on the host (#352 phase 3).
      *
      * Mirrors `runPostDeployScript` for transport (env file → bash
@@ -390,34 +502,7 @@ export class ServiceLifecycle {
             throw new Error(`migration ${script.filename}: write_file failed: ${msg}`);
         }
 
-        // Mirror the post-deploy env shape — same wizard variables, same
-        // SB_NODE / SB_API_URL / SB_API_TOKEN. Adds OLD/NEW DATA_DIR +
-        // SCHEMA_VERSION so the script can branch on which hop it's
-        // running. DATA_DIR slot stays the same for OLD and NEW today;
-        // future migrations that move data between roots can pass distinct
-        // values via the env arg.
-        const sbPort = process.env.PORT || '5888';
-        const sbApiUrl = `http://localhost:${sbPort}`;
-        const { getInternalApiToken } = await import('@/lib/auth/internalToken');
-        const sbApiToken = getInternalApiToken();
-        const dataDir = env.DATA_DIR || env.NEW_DATA_DIR || '/mnt/data';
-        const envLines = [
-            `SB_NODE=${nodeName}`,
-            `SB_API_URL=${sbApiUrl}`,
-            `SB_API_TOKEN=${sbApiToken}`,
-            `OLD_DATA_DIR=${env.OLD_DATA_DIR || dataDir}`,
-            `NEW_DATA_DIR=${env.NEW_DATA_DIR || dataDir}`,
-            `OLD_SCHEMA_VERSION=${script.fromVersion}`,
-            `NEW_SCHEMA_VERSION=${script.toVersion}`,
-            ...Object.entries(env).map(([k, v]) => {
-                // Skip the OLD/NEW slots we've already written explicitly,
-                // and skip anything non-string (same filter as post-deploy).
-                if (k === 'OLD_DATA_DIR' || k === 'NEW_DATA_DIR' || k === 'OLD_SCHEMA_VERSION' || k === 'NEW_SCHEMA_VERSION') return null;
-                if (typeof v !== 'string') return null;
-                const esc = v.replace(/'/g, `'\\''`);
-                return `${k}='${esc}'`;
-            }).filter((l): l is string => l !== null),
-        ].join('\n');
+        const envLines = await ServiceLifecycle.buildMigrationEnvLines(nodeName, script, env);
         const envPath = `${scriptDir}/${script.filename}.env`;
         const envWrite = await agent.sendCommand('write_file', { path: envPath, content: envLines + '\n' });
         if (envWrite !== 'ok') {
@@ -427,6 +512,77 @@ export class ServiceLifecycle {
         }
 
         onProgress?.(`Running ${serviceName} migration ${script.filename} (v${script.fromVersion}→v${script.toVersion})...`);
+        const result = await ServiceLifecycle.executeMigrationScript(agent, scriptPath, envPath, script.filename, serviceName, onProgress);
+
+        // Persist the audit entry before deciding whether to throw — even
+        // failed migrations should land in the log.
+        await ServiceLifecycle.persistMigrationAudit(serviceName, script, result);
+
+        if (result.code !== 0) {
+            const msg = `migration ${script.filename} (v${script.fromVersion}→v${script.toVersion}) exited ${result.code}; deploy aborted to avoid landing the new container on un-migrated data. Investigate the log above, fix the on-disk state, then re-run the install.`;
+            onProgress?.(`❌ ${msg}`);
+            throw new Error(msg);
+        }
+        onProgress?.(`✅ Migration ${script.filename} complete.`);
+    }
+
+    /**
+     * Build post-deploy script env file content with SB metadata.
+     */
+    private static async buildPostDeployEnvLines(
+        nodeName: string,
+        env: Record<string, string>,
+    ): Promise<string> {
+        const sbPort = process.env.PORT || '5888';
+        const sbApiUrl = `http://localhost:${sbPort}`;
+        const { getInternalApiToken } = await import('@/lib/auth/internalToken');
+        const sbApiToken = getInternalApiToken();
+        const envLines = [
+            `SB_NODE=${nodeName}`,
+            `SB_API_URL=${sbApiUrl}`,
+            `SB_API_TOKEN=${sbApiToken}`,
+            ...Object.entries(env).map(([k, v]) => {
+                if (typeof v !== 'string') return null;
+                const esc = v.replace(/'/g, `'\\''`);
+                return `${k}='${esc}'`;
+            }).filter((l): l is string => l !== null),
+        ].join('\n');
+        return envLines;
+    }
+
+    /**
+     * Persist post-deploy run result to config.
+     */
+    private static async persistPostDeployResult(
+        name: string,
+        result: { code: number; stdout: string },
+    ): Promise<void> {
+        try {
+            const stdoutTail = (result.stdout ?? '').slice(-1024) || undefined;
+            await updateConfig({
+                servicePostDeploy: {
+                    [name]: {
+                        lastRunAt: new Date().toISOString(),
+                        exitCode: result.code,
+                        stdoutTail,
+                    },
+                },
+            });
+        } catch (e) {
+            logger.warn('ServiceManager', `Could not persist post-deploy result for ${name}:`, e);
+        }
+    }
+
+    /**
+     * Execute a post-deploy script and stream output.
+     */
+    private static async executePostDeployScript(
+        agent: import('../agent/handler').AgentHandler,
+        scriptPath: string,
+        envPath: string,
+        name: string,
+        onProgress?: (message: string) => void,
+    ): Promise<{ code: number; stdout: string; stderr: string }> {
         let streamed = false;
         let result: { code: number; stdout: string; stderr: string };
         try {
@@ -461,40 +617,7 @@ export class ServiceLifecycle {
                 if (line.length > 0) onProgress?.(line);
             }
         }
-
-        // Persist the audit entry before deciding whether to throw — even
-        // failed migrations should land in the log.
-        const stdoutTail = (result.stdout ?? '').slice(-1024) || undefined;
-        try {
-            const cfg = await getConfig();
-            const existing = cfg.serviceMigrations?.[serviceName] ?? [];
-            // Most-recent-first; cap at 20 so config.json stays small.
-            const next = [
-                {
-                    ranAt: new Date().toISOString(),
-                    fromVersion: script.fromVersion,
-                    toVersion: script.toVersion,
-                    exitCode: result.code,
-                    stdoutTail,
-                },
-                ...existing,
-            ].slice(0, 20);
-            await updateConfig({
-                serviceMigrations: {
-                    ...(cfg.serviceMigrations ?? {}),
-                    [serviceName]: next,
-                },
-            });
-        } catch (e) {
-            logger.warn('ServiceManager', `Could not persist migration audit for ${serviceName} ${script.filename}:`, e);
-        }
-
-        if (result.code !== 0) {
-            const msg = `migration ${script.filename} (v${script.fromVersion}→v${script.toVersion}) exited ${result.code}; deploy aborted to avoid landing the new container on un-migrated data. Investigate the log above, fix the on-disk state, then re-run the install.`;
-            onProgress?.(`❌ ${msg}`);
-            throw new Error(msg);
-        }
-        onProgress?.(`✅ Migration ${script.filename} complete.`);
+        return result;
     }
 
     private static async runPostDeployScript(
@@ -521,49 +644,7 @@ export class ServiceLifecycle {
             return;
         }
 
-        // Build a sourceable env file alongside the script so we don't have
-        // to worry about quoting every value through the shell. `set -a` +
-        // `source` exports each line to the python child. The ServiceBay
-        // node identity is added so scripts can self-identify in multi-node
-        // installs.
-        //
-        // SB_API_URL is critical: scripts call back into ServiceBay to
-        // probe LLDAP, persist credentials, etc. Without it the script
-        // defaults to http://localhost:3000 which is *not* ServiceBay
-        // (the container listens on PORT, default 5888 from the install
-        // script's Quadlet). On the FCoS host where the script runs,
-        // ServiceBay is reachable as http://localhost:${PORT} thanks to
-        // Network=host. This was the silent reason auth's post-deploy
-        // hit its 10-minute LLDAP-wait deadline on every install — the
-        // probe couldn't reach back, even though LLDAP itself came up
-        // in <1 s.
-        //
-        // SB_API_TOKEN authenticates server-to-server calls. The
-        // scripts attach it as `X-SB-Internal-Token` so proxy.ts can
-        // bypass the browser-flow CSRF + session checks (urllib has
-        // no Origin header, so the same-origin guard rejected every
-        // POST with 403 — even though the call was reaching the
-        // ServiceBay container as intended).
-        const sbPort = process.env.PORT || '5888';
-        const sbApiUrl = `http://localhost:${sbPort}`;
-        const { getInternalApiToken } = await import('@/lib/auth/internalToken');
-        const sbApiToken = getInternalApiToken();
-        const envLines = [
-            `SB_NODE=${nodeName}`,
-            `SB_API_URL=${sbApiUrl}`,
-            `SB_API_TOKEN=${sbApiToken}`,
-            ...Object.entries(env).map(([k, v]) => {
-                // Only export string-shaped values; skip empty entries the
-                // wizard sometimes carries for variables the user hasn't
-                // resolved yet (the deploy step's strict-render check
-                // catches the cases where empty values would actually
-                // matter).
-                if (typeof v !== 'string') return null;
-                // Single-quote escape for bash `source`: replace ' with '\''
-                const esc = v.replace(/'/g, `'\\''`);
-                return `${k}='${esc}'`;
-            }).filter((l): l is string => l !== null),
-        ].join('\n');
+        const envLines = await ServiceLifecycle.buildPostDeployEnvLines(nodeName, env);
         const envPath = `${scriptDir}/${name}.env`;
         const envWrite = await agent.sendCommand('write_file', { path: envPath, content: envLines + '\n' });
         if (envWrite !== 'ok') {
@@ -573,89 +654,64 @@ export class ServiceLifecycle {
         }
 
         onProgress?.(`Running ${name} post-deploy script...`);
-        // Long timeout — scripts wait for HTTP services that can take a
-        // minute or two to come up after image pull. The auth script's
-        // LLDAP wait deadline is 10 min on its own (image pull on a
-        // fresh install + database init); we give a 20 min client
-        // timeout so it outlasts the agent-side process budget plus
-        // generous slack.
-        //
-        // NB on the unquoted paths: scriptPath / envPath start with `~/`.
-        // Bash only expands `~` when it's an *unquoted* token at the
-        // beginning of a word — `'~/x'` and `"~/x"` both stay literal.
-        // The earlier single-quoted form failed every script with
-        // `sh: line 1: ~/.local/share/...: No such file or directory` and
-        // every migrated stack reported `post-deploy exited 1`. Paths are
-        // framework-controlled (no spaces, no shell metas) so unquoted is
-        // safe and the simplest form that does the right thing.
-        //
-        // exec_stream forwards each stdout line to onProgress as soon
-        // as the script prints it — without it, ServiceBay buffered the
-        // whole 10-min run and the wizard sat showing "Running auth
-        // post-deploy script..." with no signal that LLDAP was actually
-        // coming up. Falls back to the legacy `exec` action if the
-        // remote agent is older than 3.8.2.
-        let streamed = false;
-        let result: { code: number; stdout: string; stderr: string };
-        try {
-            result = await agent.sendCommand(
-                'exec_stream',
-                {
-                    command: `set -a; source ${envPath}; set +a; python3 ${scriptPath} 2>&1`,
-                    timeout: 1200,
-                },
-                {
-                    timeoutMs: 1_200_000,
-                    onChunk: (line: string) => {
-                        streamed = true;
-                        if (line.length > 0) onProgress?.(line);
-                    },
-                },
-            );
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            // Older agent that doesn't know exec_stream — fall back.
-            if (/exec_stream|Unknown|action/i.test(msg)) {
-                result = await agent.sendCommand('exec', {
-                    command: `set -a; source ${envPath}; set +a; python3 ${scriptPath} 2>&1`,
-                    timeout: 1200,
-                }, { timeoutMs: 1_200_000 });
-            } else {
-                throw e;
-            }
-        }
-        // If we didn't get any chunks (legacy fallback path or empty
-        // stream), surface the buffered stdout the way we used to.
-        if (!streamed) {
-            const stdout = (result.stdout || '').replace(/\r/g, '');
-            for (const line of stdout.split('\n')) {
-                if (line.length > 0) onProgress?.(line);
-            }
-        }
+        const result = await ServiceLifecycle.executePostDeployScript(agent, scriptPath, envPath, name, onProgress);
         if (result.code !== 0) {
             onProgress?.(`⚠️ ${name} post-deploy exited ${result.code}. Service is deployed; the seed step did not finish — check the log lines above for the cause.`);
         }
 
-        // Persist the run so the diagnose page can surface failed seeds
-        // long after the install log scrolled away (#252). Bound the
-        // stdout tail to ~1KB so config.json stays small. Failures here
-        // are best-effort — the seed result itself was already logged
-        // and shown to the user; losing the persistence just means B8
-        // can't surface this run later.
+        await ServiceLifecycle.persistPostDeployResult(name, result);
+    }
+
+    /**
+     * Validate that template config files match sent extraFiles (sanity check).
+     */
+    private static async validateTemplateConfigFiles(
+        name: string,
+        extraFiles?: { path: string; content: string }[],
+    ): Promise<void> {
         try {
-            const stdoutTail = (result.stdout ?? '').slice(-1024) || undefined;
-            await updateConfig({
-                servicePostDeploy: {
-                    [name]: {
-                        lastRunAt: new Date().toISOString(),
-                        exitCode: result.code,
-                        stdoutTail,
-                    },
-                },
-            });
+            const { getTemplateConfigFiles } = await import('@/lib/registry');
+            const expected = await getTemplateConfigFiles(name);
+            if (expected.length > 0) {
+                const got = new Set((extraFiles ?? []).map(f => f.path.split('/').pop()).filter(Boolean));
+                const missing = expected.filter(e => !got.has(e.filename));
+                if (missing.length > 0) {
+                    throw new Error(
+                        `Template "${name}" ships ${expected.length} mustache config file(s) but ${missing.length} weren't sent to the deploy step:\n  ${missing.map(m => m.filename).join(', ')}\n\n` +
+                        `This usually means the wizard's resolver couldn't map a config file to a hostPath — check that the pod manifest declares servicebay.config-mount: <mountPath> and that the mountPath has a matching volume.`,
+                    );
+                }
+            }
+            const relative = (extraFiles ?? []).filter(f => !f.path.startsWith('/'));
+            if (relative.length > 0) {
+                throw new Error(
+                    `Template "${name}" extraFiles include ${relative.length} relative path(s) — the agent will resolve these under ~ and the file will land in the wrong place:\n  ${relative.map(f => f.path).join('\n  ')}\n\n` +
+                    `This usually means the wizard's resolver substituted a Mustache placeholder (e.g. {{DATA_DIR}}) with junk before parsing. Check that targetPath preserves the {{...}} placeholder until deploy-time render.`,
+                );
+            }
         } catch (e) {
-            logger.warn('ServiceManager', `Could not persist post-deploy result for ${name}:`, e);
+            if (e instanceof Error && e.message.startsWith('Template "')) throw e;
+            logger.debug('ServiceManager', 'Could not verify template configFiles parity:', e);
         }
+    }
+
+    /**
+     * Format image pull progress updates for the install log.
+     */
+    private static formatImagePullProgress(
+        image: string,
+        idx: number,
+        total: number,
+        evt: { id?: string; status?: string; total?: number; current?: number },
+    ): string | null {
+        if (!evt.id || !evt.status) return null;
+        if (evt.total && evt.current !== undefined) {
+            const pct = Math.round(evt.current / evt.total * 100);
+            const currentMB = (evt.current / 1048576).toFixed(1);
+            const totalMB = (evt.total / 1048576).toFixed(1);
+            return `Pulling image ${idx + 1}/${total}: ${image} — ${evt.id.slice(0, 12)}: ${evt.status} ${currentMB} MB / ${totalMB} MB (${pct}%)`;
+        }
+        return `Pulling image ${idx + 1}/${total}: ${image} — ${evt.id.slice(0, 12)}: ${evt.status}`;
     }
 
     static async deployKubeService(
@@ -726,51 +782,8 @@ export class ServiceLifecycle {
         await ServiceLifecycle.writeFile(nodeName, `${name}.kube`, kubeContent);
         await ServiceLifecycle.ensurePodmanSocket(nodeName);
 
-        // Defensive: if the template ships any *.mustache config files but the
-        // caller (wizard / MCP / installer) didn't pass them through as
-        // extraFiles, abort the deploy. The live failure mode this guards
-        // against: the OnboardingWizard's resolver returns an empty
-        // configFiles list (e.g. transient template-fetch error) and the
-        // wizard happily writes the kube + yaml without the rendered config.
-        // The container starts, finds /config/ empty, and either crashes
-        // (radicale-shape) or auto-creates an upstream-sample default
-        // (authelia-shape, 71KB of commented-out boilerplate). Both leave
-        // the operator with a permanently-failed pod and no breadcrumb to
-        // the missing seed.
-        try {
-            const { getTemplateConfigFiles } = await import('@/lib/registry');
-            const expected = await getTemplateConfigFiles(name);
-            if (expected.length > 0) {
-                const got = new Set((extraFiles ?? []).map(f => f.path.split('/').pop()).filter(Boolean));
-                const missing = expected.filter(e => !got.has(e.filename));
-                if (missing.length > 0) {
-                    throw new Error(
-                        `Template "${name}" ships ${expected.length} mustache config file(s) but ${missing.length} weren't sent to the deploy step:\n  ${missing.map(m => m.filename).join(', ')}\n\n` +
-                        `This usually means the wizard's resolver couldn't map a config file to a hostPath — check that the pod manifest declares servicebay.config-mount: <mountPath> and that the mountPath has a matching volume.`,
-                    );
-                }
-            }
-            // Belt-and-suspenders: every extraFile path must be absolute. The
-            // earlier failure mode (#PR for this) had the wizard's resolver
-            // poison `{{DATA_DIR}}` to the literal `0`, producing a relative
-            // path like `0/auth/authelia-config/configuration.yml`. The
-            // agent's `mkdir -p` resolved it under ~ — so configs landed at
-            // `/var/home/core/0/...` and the actual mount stayed empty.
-            // Authelia's image then auto-created a 71KB upstream sample
-            // there, crash-looped, and the operator had no obvious cause.
-            const relative = (extraFiles ?? []).filter(f => !f.path.startsWith('/'));
-            if (relative.length > 0) {
-                throw new Error(
-                    `Template "${name}" extraFiles include ${relative.length} relative path(s) — the agent will resolve these under ~ and the file will land in the wrong place:\n  ${relative.map(f => f.path).join('\n  ')}\n\n` +
-                    `This usually means the wizard's resolver substituted a Mustache placeholder (e.g. {{DATA_DIR}}) with junk before parsing. Check that targetPath preserves the {{...}} placeholder until deploy-time render.`,
-                );
-            }
-        } catch (e) {
-            // Re-throw deploy-blocking errors; swallow only registry-level
-            // issues (e.g. node-side template dir missing in the container).
-            if (e instanceof Error && e.message.startsWith('Template "')) throw e;
-            logger.debug('ServiceManager', 'Could not verify template configFiles parity:', e);
-        }
+        // Defensive: validate template config files sanity.
+        await ServiceLifecycle.validateTemplateConfigFiles(name, extraFiles);
 
         // Write extra config files (e.g. Authelia configuration.yml) to the
         // node filesystem. Failures are FATAL (see writeExtraConfigFiles).
@@ -788,16 +801,8 @@ export class ServiceLifecycle {
 
         // Pre-pull all images before starting to avoid systemd timeout
         await ServiceLifecycle.prePullImages(nodeName, images, onProgress ? (image, idx, total, evt) => {
-            if (evt.id && evt.status) {
-                if (evt.total && evt.current !== undefined) {
-                    const pct = Math.round(evt.current / evt.total * 100);
-                    const currentMB = (evt.current / 1048576).toFixed(1);
-                    const totalMB = (evt.total / 1048576).toFixed(1);
-                    onProgress(`Pulling image ${idx + 1}/${total}: ${image} — ${evt.id.slice(0, 12)}: ${evt.status} ${currentMB} MB / ${totalMB} MB (${pct}%)`);
-                } else {
-                    onProgress(`Pulling image ${idx + 1}/${total}: ${image} — ${evt.id.slice(0, 12)}: ${evt.status}`);
-                }
-            }
+            const msg = ServiceLifecycle.formatImagePullProgress(image, idx, total, evt);
+            if (msg) onProgress(msg);
         } : undefined);
 
         // Fix volume ownership for containers running as non-root UIDs
@@ -981,6 +986,101 @@ export class ServiceLifecycle {
      * Run pre-start hooks for known images that need initialization (e.g. filebrowser DB).
      * This runs AFTER files are written and images are pulled, but BEFORE the service starts.
      */
+    /**
+     * FileBrowser DB initialization hook.
+     */
+    private static async runFileBrowserHook(
+        agent: import('../agent/handler').AgentHandler,
+        image: string,
+        dbHostPath: string,
+        dbFile: string,
+    ): Promise<void> {
+        logger.info('ServiceManager', `Initializing FileBrowser DB at ${dbHostPath}/${dbFile} (config init + auth.method=proxy + admin user)`);
+        await agent.sendCommand('exec', { command: `mkdir -p ${dbHostPath}` });
+
+        const initCmd = [
+            `podman run --rm --user 0:0`,
+            `-v ${dbHostPath}:/db`,
+            `${image}`,
+            `config init --database /db/${dbFile}`,
+        ].join(' ');
+        const initRes = await agent.sendCommand('exec', { command: initCmd, timeout: 60 });
+        if (initRes.code !== 0) {
+            logger.warn('ServiceManager', `FileBrowser config init failed (code ${initRes.code}): ${initRes.stderr || initRes.stdout}`);
+            return;
+        }
+
+        const setCmd = [
+            `podman run --rm --user 0:0`,
+            `-v ${dbHostPath}:/db`,
+            `${image}`,
+            `config set --auth.method=proxy --auth.header=Remote-User --database /db/${dbFile}`,
+        ].join(' ');
+        const setRes = await agent.sendCommand('exec', { command: setCmd, timeout: 60 });
+        if (setRes.code !== 0) {
+            logger.warn('ServiceManager', `FileBrowser config set --auth.method=proxy failed (code ${setRes.code}): ${setRes.stderr || setRes.stdout}`);
+        }
+
+        const userCmd = [
+            `podman run --rm --user 0:0`,
+            `-v ${dbHostPath}:/db`,
+            `${image}`,
+            `users add admin admin1234admin --perm.admin --database /db/${dbFile}`,
+        ].join(' ');
+        const result = await agent.sendCommand('exec', { command: userCmd, timeout: 60 });
+        if (result.code === 0) {
+            logger.info('ServiceManager', 'FileBrowser DB initialized: proxy-auth + admin user (password unused under proxy auth).');
+        } else {
+            logger.warn('ServiceManager', `FileBrowser users add failed: ${result.stderr || result.stdout}`);
+        }
+    }
+
+    /**
+     * Home Assistant trusted_proxies self-healing hook.
+     */
+    private static async runHomeAssistantHook(
+        agent: import('../agent/handler').AgentHandler,
+        cfgFile: string,
+    ): Promise<void> {
+        // Only act when the file already exists. On a first-install the
+        // template's mustache config is about to be written by the deploy flow
+        // — let that path own initial seeding. On every subsequent deploy
+        // (including post-restore), the file is there and we get to fix it.
+        const exists = await agent.sendCommand('exec', { command: `test -f ${cfgFile} && echo yes` });
+        if (exists.stdout?.trim() !== 'yes') return;
+
+        // grep -E for an unindented `http:` key. Multiline anchors would be
+        // cleaner but the shell context here is simpler.
+        const probe = await agent.sendCommand('exec', { command: `grep -E '^http:' ${cfgFile} || echo MISSING` });
+        if (!probe.stdout?.includes('MISSING')) {
+            logger.debug('ServiceManager', `HA configuration.yaml already has http: block, leaving it alone`);
+            return;
+        }
+
+        logger.info('ServiceManager', `HA configuration.yaml has no http: block — appending trusted_proxies (likely after a backup-restore)`);
+        const trustedProxiesBlock = [
+            '',
+            '# Re-added by ServiceBay: NPM forwards X-Forwarded-For; HA needs',
+            '# trusted_proxies to accept proxied requests. Safe to edit, but',
+            '# ServiceBay will re-append this block on every deploy when the',
+            '# `http:` key is missing (e.g. after a HA backup-restore).',
+            'http:',
+            '  use_x_forwarded_for: true',
+            '  trusted_proxies:',
+            '    - 127.0.0.1',
+            '    - 192.168.0.0/16',
+            '    - 10.0.0.0/8',
+            '    - 172.16.0.0/12',
+        ].join('\n');
+        const appendCmd = `cat >> ${cfgFile} <<'EOF'\n${trustedProxiesBlock}\nEOF`;
+        const res = await agent.sendCommand('exec', { command: appendCmd, timeout: 10 });
+        if (res.code === 0) {
+            logger.info('ServiceManager', 'HA trusted_proxies block appended');
+        } else {
+            logger.warn('ServiceManager', `HA trusted_proxies append failed: ${res.stderr || res.stdout}`);
+        }
+    }
+
     private static async runPreStartHooks(nodeName: string, name: string, yamlContent: string) {
         try {            const docs = yaml.loadAll(yamlContent) as PodLikeDoc[];
             for (const doc of docs) {
@@ -997,92 +1097,31 @@ export class ServiceLifecycle {
                     const image = container.image || '';
 
                     // Home Assistant self-healing trusted_proxies hook.
-                    // HA's `http.forwarded` middleware rejects every
-                    // reverse-proxied request with HTTP 400 unless
-                    // configuration.yaml contains an `http:` block with
-                    // `use_x_forwarded_for: true` and a trusted_proxies
-                    // list including NPM's source IP.
-                    //
-                    // We seed this block at install time via the template's
-                    // configuration.yaml.mustache (template v3+), but a
-                    // backup-restore via HA's UI overwrites
-                    // /config/configuration.yaml with the snapshot version
-                    // — which usually has no `http:` block. The result:
-                    // home.<domain> goes back to 400 after every restore.
-                    //
-                    // Run on every deploy: if configuration.yaml is missing
-                    // an `http:` block, append our default. Idempotent —
-                    // skips when the block already exists. Self-heals after
-                    // restores at the next service redeploy.
                     if (image.includes('home-assistant') && container.name !== 'matter-server' && container.name !== 'zwave-js') {
-                        const configMount = (container.volumeMounts || []).find(                            (m: PodLikeVolumeMount) => m.mountPath === '/config'
+                        const configMount = (container.volumeMounts || []).find(
+                            (m: PodLikeVolumeMount) => m.mountPath === '/config'
                         );
                         const configHostPath = configMount ? volumePaths.get(configMount.name!) : null;
                         if (!configHostPath) continue;
                         const cfgFile = `${configHostPath}/configuration.yaml`;
-
                         const agent = await agentManager.ensureAgent(nodeName);
-
-                        // Only act when the file already exists. On a
-                        // first-install the template's mustache config is
-                        // about to be written by the deploy flow — let that
-                        // path own initial seeding. On every subsequent
-                        // deploy (including post-restore), the file is
-                        // there and we get to fix it.
-                        const exists = await agent.sendCommand('exec', { command: `test -f ${cfgFile} && echo yes` });
-                        if (exists.stdout?.trim() !== 'yes') continue;
-
-                        // grep -E for an unindented `http:` key. Multiline
-                        // anchors would be cleaner but the shell context
-                        // here is simpler.
-                        const probe = await agent.sendCommand('exec', { command: `grep -E '^http:' ${cfgFile} || echo MISSING` });
-                        if (!probe.stdout?.includes('MISSING')) {
-                            logger.debug('ServiceManager', `HA configuration.yaml already has http: block, leaving it alone`);
-                            continue;
-                        }
-
-                        logger.info('ServiceManager', `HA configuration.yaml has no http: block — appending trusted_proxies (likely after a backup-restore)`);
-                        const trustedProxiesBlock = [
-                            '',
-                            '# Re-added by ServiceBay: NPM forwards X-Forwarded-For; HA needs',
-                            '# trusted_proxies to accept proxied requests. Safe to edit, but',
-                            '# ServiceBay will re-append this block on every deploy when the',
-                            '# `http:` key is missing (e.g. after a HA backup-restore).',
-                            'http:',
-                            '  use_x_forwarded_for: true',
-                            '  trusted_proxies:',
-                            '    - 127.0.0.1',
-                            '    - 192.168.0.0/16',
-                            '    - 10.0.0.0/8',
-                            '    - 172.16.0.0/12',
-                        ].join('\n');
-                        // Heredoc keeps the YAML indentation intact and
-                        // avoids shell-quote escaping. >> appends, so any
-                        // restored content above stays untouched.
-                        const appendCmd = `cat >> ${cfgFile} <<'EOF'\n${trustedProxiesBlock}\nEOF`;
-                        const res = await agent.sendCommand('exec', { command: appendCmd, timeout: 10 });
-                        if (res.code === 0) {
-                            logger.info('ServiceManager', 'HA trusted_proxies block appended');
-                        } else {
-                            logger.warn('ServiceManager', `HA trusted_proxies append failed: ${res.stderr || res.stdout}`);
-                        }
+                        await ServiceLifecycle.runHomeAssistantHook(agent, cfgFile);
                         continue;
                     }
 
                     if (!image.includes('filebrowser')) continue;
 
                     // Find the database volume mount. file-share/template.yml
-                    // mounts the DB at `/database` (legacy templates used
-                    // `/db`); accept either so a wider set of layouts hit
-                    // this hook.
-                    const dbMount = (container.volumeMounts || []).find(                        (m: PodLikeVolumeMount) => m.mountPath === '/db' || m.mountPath === '/database'
+                    // mounts the DB at `/database` (legacy templates used `/db`);
+                    // accept either so a wider set of layouts hit this hook.
+                    const dbMount = (container.volumeMounts || []).find(
+                        (m: PodLikeVolumeMount) => m.mountPath === '/db' || m.mountPath === '/database'
                     );
                     const dbHostPath = dbMount ? volumePaths.get(dbMount.name!) : null;
                     if (!dbHostPath) continue;
 
                     const dbFile = 'filebrowser.db';
                     const fullDbPath = `${dbHostPath}/${dbFile}`;
-
                     const agent = await agentManager.ensureAgent(nodeName);
 
                     // Check if DB already exists (don't overwrite on redeploy)
@@ -1092,62 +1131,7 @@ export class ServiceLifecycle {
                         continue;
                     }
 
-                    // Initialize the FileBrowser BoltDB *before* the main
-                    // container starts. Three steps inside a transient
-                    // container that mounts the host DB dir at /db:
-                    //
-                    //   1. `config init` — creates the empty DB schema.
-                    //   2. `config set --auth.method=proxy --auth.header=Remote-User`
-                    //      switches the DB's runtime auth method to
-                    //      proxy mode. Without this step the FileBrowser
-                    //      v2 binary ignores the `.filebrowser.json` JSON
-                    //      file's `auth.method` field (that field is
-                    //      legacy v1) and falls back to password ('json')
-                    //      auth, which makes every Remote-User header
-                    //      mute and /api/login return 403 for the
-                    //      install-time admin-promote call.
-                    //   3. `users add admin <known-pwd> --perm.admin` —
-                    //      seeds an admin user the proxy-auth path can
-                    //      look up when ServiceBay's filebrowser/init
-                    //      handler comes calling with `Remote-User: admin`.
-                    logger.info('ServiceManager', `Initializing FileBrowser DB at ${fullDbPath} (config init + auth.method=proxy + admin user)`);
-                    await agent.sendCommand('exec', { command: `mkdir -p ${dbHostPath}` });
-
-                    const initCmd = [
-                        `podman run --rm --user 0:0`,
-                        `-v ${dbHostPath}:/db`,
-                        `${image}`,
-                        `config init --database /db/${dbFile}`,
-                    ].join(' ');
-                    const initRes = await agent.sendCommand('exec', { command: initCmd, timeout: 60 });
-                    if (initRes.code !== 0) {
-                        logger.warn('ServiceManager', `FileBrowser config init failed (code ${initRes.code}): ${initRes.stderr || initRes.stdout}`);
-                        continue;
-                    }
-
-                    const setCmd = [
-                        `podman run --rm --user 0:0`,
-                        `-v ${dbHostPath}:/db`,
-                        `${image}`,
-                        `config set --auth.method=proxy --auth.header=Remote-User --database /db/${dbFile}`,
-                    ].join(' ');
-                    const setRes = await agent.sendCommand('exec', { command: setCmd, timeout: 60 });
-                    if (setRes.code !== 0) {
-                        logger.warn('ServiceManager', `FileBrowser config set --auth.method=proxy failed (code ${setRes.code}): ${setRes.stderr || setRes.stdout}`);
-                    }
-
-                    const userCmd = [
-                        `podman run --rm --user 0:0`,
-                        `-v ${dbHostPath}:/db`,
-                        `${image}`,
-                        `users add admin admin1234admin --perm.admin --database /db/${dbFile}`,
-                    ].join(' ');
-                    const result = await agent.sendCommand('exec', { command: userCmd, timeout: 60 });
-                    if (result.code === 0) {
-                        logger.info('ServiceManager', 'FileBrowser DB initialized: proxy-auth + admin user (password unused under proxy auth).');
-                    } else {
-                        logger.warn('ServiceManager', `FileBrowser users add failed: ${result.stderr || result.stdout}`);
-                    }
+                    await ServiceLifecycle.runFileBrowserHook(agent, image, dbHostPath, dbFile);
                 }
             }
         } catch (e) {
