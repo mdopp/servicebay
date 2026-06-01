@@ -397,6 +397,12 @@ export interface AppConfig {
    */
   accessRequests?: AccessRequest[];
   /**
+   * Max users allowed = approved LLDAP users + pending access requests.
+   * New portal access requests are rejected once the count reaches this.
+   * Default 20 when unset; set lower (e.g. 5) for a small household. (#1426)
+   */
+  maxUsers?: number;
+  /**
    * Per-job log caps (#1098 Phase 1). Long-running installs and noisy
    * mass deploys can balloon `logs.db` without bound; these limits
    * give the logger a hard ceiling per job. Phase 2 wires the rotation
