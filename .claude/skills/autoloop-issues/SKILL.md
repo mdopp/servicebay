@@ -45,11 +45,14 @@ Track progress at `.claude/state/autoloop-state.json`. Shape:
   ],
   "clusters": [
     {"id": "fe-layout", "theme": "frontend layout", "issues": [1420, 1424, 1427, 1428], "region": "packages/frontend/src/dashboards", "gate": "normal", "status": "open"}
-  ]
+  ],
+  "box_verify": {"sha": "abc1234", "status": "green", "verified_at": "2026-06-01T04:00:00Z"}
 }
 ```
 
 `clusters[]` is the groomed output (Step 1 grooming): each entry bundles related issues worked as one branch/PR. `gate` is inherited (strongest member: `security` ⇒ draft, any path-mandated member ⇒ `/verify`). `status` is `open | in_progress | done`. A cluster's member issues do **not** also appear as standalone queue units — the cluster is the unit.
+
+`box_verify` (#1433) tracks the batched `:dev` box-verify owed by path-mandated merges. `status`: `"owed"` (merged, not yet verified — release blocked), `"red"` (verify failed — release blocked until reverted+re-verified), `"green"` (clear to release). Preflight Step 0.3 reads it before merging the release PR.
 
 Update it at every state transition. If the file doesn't exist, create it with empty arrays.
 
@@ -71,6 +74,7 @@ Before touching any issue:
 1. **Working tree clean?** `git status --porcelain`. If not, exit — another session is working here. Do not stash, do not switch branches.
 2. **On `main` and up to date?** `git fetch origin && git checkout main && git pull --ff-only`. If the FF fails, exit and report.
 3. **Release-please PR open? Merge it before doing anything else.** Run `gh pr list --head release-please--branches--main--components--servicebay --state open --json number,title`. If non-empty:
+   - **Box-verify gate (#1433):** if `state.box_verify.status` is `"red"` or `"owed"`, a path-mandated change is on `main` but unverified on `:dev` — do **not** merge the release PR yet (it would ship unverified install-path code to `:latest`). Run the Step 4.5 batched `:dev` verify first; only proceed once `state.box_verify.status` is `"green"` (or no path-mandated changes are pending). If the verify is red and the culprit isn't reverted yet, post on the release PR and **stop**.
    - Wait for CI: `gh pr checks <PR#> --watch`.
    - If CI is green: `gh pr merge <PR#> --merge --delete-branch`, then `git pull --ff-only`. Continue to step 4.
    - If CI is red: post a comment on the release PR with the failing job link and **stop**. The user needs to look — the release PR rolling up commits the loop made is the loop's responsibility to keep mergeable, but a red CI here usually means a real regression that piling more commits on top will hide.
@@ -296,17 +300,28 @@ npm test                    # all unit tests. Must pass.
 - `packages/frontend/src/dashboards/`
 - `packages/frontend/src/components/OnboardingWizard.tsx` (or its decomposition)
 
-then invoke `/verify` against `<SERVICEBAY_BOX>` per `reference_mcp_servicebay_access` **before merge**. CI green is necessary but not sufficient — dev-container can't catch install-path regressions.
+then it needs a real-box `/verify` — CI green is necessary but not sufficient; the dev-container can't catch install-path regressions.
 
-If `/verify` fails, treat it like CI-red: stop, post the failure summary on the PR, leave it open, move on to the next issue.
+**The box can now run the just-merged code, so verification is no longer deferred (#1433).** The box runs a frozen released image on the `:latest` channel, so it can't exercise *un*merged code — which is why install-path verifies used to be deferred to a later reinstall (the `project_463_deferred_verifies` pattern). Since 4.67/4.68 the box has a runtime channel switch (`sb-tui channel dev` / `sb-tui channel latest`, equivalently `GET·POST /api/system/channel`; see `tools/sb-tui/internal/rest/channel.go`, `tools/sb-tui/internal/ui/channel.go`, `packages/backend/src/lib/servicebayChannel.ts` for the exact invocation/payload), and `release.yml` auto-publishes every non-release `main` commit as `ghcr.io/mdopp/servicebay:dev`. So the flow becomes **merge → flip box to `:dev` → `/verify` the merged code → flip back to `:latest`**, all *before* the change ships to `:latest` via the release. No more deferral for these paths.
 
-**Narrow, deliberately-logged exception to the pre-merge `/verify`.** You MAY merge a path-mandated change on CI-green + a strong unit test and *defer* the real-box `/verify` — but ONLY when ALL of these hold:
-1. the user has explicitly prioritized it, or a downstream/dependent repo is blocked waiting on it (e.g. `mdopp/oscar` waiting on a ServiceBay install-path fix);
-2. the change adds **no new runtime logic** — it reuses an already-tested, pre-existing code path (removing a coercion, threading an existing-contract value, a docs/string change), so there's nothing the dev-container couldn't already exercise;
-3. a unit test covers the new behaviour;
-4. you document the deferral in the PR body **and** `state` (which check was skipped and why), and the full real-environment check happens at the next natural opportunity (e.g. when the dependent feature is installed/exercised).
+The verify gate therefore splits in two:
+- **Code gate (per PR/cluster, Step 4 merge gate):** CI green ⇒ merge to `main`. Safe even for install-path changes — only the `:dev` test channel gets the code; `:latest` users are unaffected until the release PR merges.
+- **Box gate (batched, Step 4.5):** one `:dev` flip-verify-flipback per invocation covering every path-mandated change merged this run. The release PR (preflight Step 0.3) must not merge while a path-mandated change is unverified or its `:dev` verify is red — that's the gate that keeps unverified code off `:latest`.
 
-Absent that explicit priority/blocked-downstream signal, the default stands: **path-mandated ⇒ `/verify` before merge.** Never apply this exception to a `security`-gated change (those never auto-merge anyway). This is a logged judgement call, not a general loosening — when unsure, don't use it.
+#### Step 4.5 — Batched `:dev` box verify (end of invocation, before scheduling the next firing)
+
+If any path-mandated change merged this invocation:
+
+1. **Flip:** `sb-tui channel dev` (or `POST /api/system/channel`). Because `:dev` always tracks latest `main`, **one flip covers every path-mandated change merged this run** — and a #1434 cluster is already one merged PR, so a cluster is one verify by construction (the #1433 × #1434 win: N per-issue flips collapse to one).
+2. **Wait (bounded):** wait for the `:dev` image built from the newest merged SHA to publish and the box to pull + restart onto it — poll the box's running image/version, **timeout ≤15 min** (release.yml build + pull). If it never lands, treat as a verify failure (step 5, reason "dev image didn't land").
+3. **Verify:** run `/verify` against `<SERVICEBAY_BOX>` (memory `reference_mcp_servicebay_access`), exercising the merged path-mandated changes.
+4. **Always flip back:** `sb-tui channel latest` — on success, failure, *and* timeout. The box must never be left on `:dev` (bounded + reverts even on failure, per #1433 acceptance). The flip-back is mandatory cleanup; if it itself fails, that's a **hard exit** — alert the user, don't leave the box stranded.
+5. **On verify red:** the change is already on `main`. Identify the culprit (a cluster keeps it attributable to one theme; an unrelated dev-box batch needs a bisect), open a **revert PR**, merge it on CI-green, and re-run this batched verify. **Block the release:** set `state.box_verify = {sha, status: "red", detail, since}` so preflight Step 0.3 holds the release PR until it's green.
+6. **On verify green:** set `state.box_verify = {sha, status: "green", verified_at}`. The release PR is clear to merge next preflight.
+
+If a path-mandated change can't be `:dev`-verified this invocation (box unreachable, etc.), do **not** silently fall back to deferral: set `state.box_verify.status: "owed"` so the release stays blocked, and flag it.
+
+_(Optional, dev-box only) integration-image staging:_ instead of merge-then-verify, stage several green-CI branches into one integration `:dev` build, one verify pass, then merge only the passers (accepting "red → bisect"). Use only when explicitly chosen; the default above keeps `:latest` clean via the release gate.
 
 If lint warnings increased, fix or rebase. If a test fails, diagnose root cause — **do not** mock around it or skip it. Memory `feedback_vitest_fetch_response_reuse` and `feedback_test_local_node_match_ci` apply.
 
@@ -368,9 +383,8 @@ Proceed to merge gate below.
 `main` is **not** branch-protected on this repo (verified via `gh api repos/mdopp/servicebay/branches/main/protection` → 404), so `--auto` silently no-ops. Use the manual gate:
 
 1. Wait for CI: `gh pr checks <PR#> --watch`.
-2. If the PR diff hit any path in Step 3's mandatory list, invoke `/verify` against the FCoS box. Block merge until it returns green.
-3. If both green: `gh pr merge <PR#> --merge --delete-branch`.
-4. If CI red twice on the same SHA, or `/verify` red: stop, post a comment with the failing job link, leave the PR open, move to the next issue. **Do not retry indefinitely.**
+2. If CI green: `gh pr merge <PR#> --merge --delete-branch`. **Path-mandated changes merge here too** — the box `/verify` is now post-merge on `:dev` (Step 4.5), not a pre-merge blocker (#1433). If the diff touched a Step 3 path, record that the invocation owes a box verify: `state.box_verify = {status: "owed", sha: "<merge SHA>"}`.
+3. If CI red twice on the same SHA: stop, post a comment with the failing job link, leave the PR open, move to the next issue. **Do not retry indefinitely.**
 
 Update state file: move the issue — or, for a cluster, every member issue — from `in_progress` to `completed`, and mark the cluster `done` in `clusters[]`.
 
@@ -389,7 +403,7 @@ If a release PR appeared, leave it for the **next invocation's preflight** to me
 
 After 8 PRs (any mix of merged + security-gate drafts) — stop.
 
-Write a summary to stdout for the user:
+**Before stopping, run Step 4.5** (batched `:dev` box verify) if any path-mandated change merged this invocation and `state.box_verify.status` isn't already `"green"` for the current `main` SHA — flip once, verify, flip back. Then write a summary to stdout for the user:
 ```
 Autoloop iteration complete.
   Merged: #1094 (PR #1110), #1096 (PR #1111)
@@ -418,7 +432,7 @@ Tell the user and **do not schedule another /loop firing** if any of these hit:
 - Does not bump versions or write to `package.json`/`CHANGELOG.md`/`.release-please-manifest.json` — release-please owns those (memory: *"NEVER manually bump versions"*).
 - Does not edit the release-please PR's contents (it's machine-generated). It *does* merge that PR in preflight Step 0.3 once CI is green — leaving it open blocks the loop and stalls releases.
 - Does not auto-merge any issue carrying the `security` label (opens as draft) or filter-in any `postponed` issue (still excluded). `oscar`-labelled issues are no longer excluded — they run through normal flow (triage-to-`mdopp/oscar` first per Step 1's classification note), subject to the same scope/`/verify`/blocked gates.
-- Does not skip the real-box `/verify` step on path-mandated PRs.
+- Does not ship a path-mandated change to `:latest` without a `:dev` box `/verify` — verification is post-merge on the `:dev` channel and gates the release PR, never deferred (#1433). Always flips the box back to `:latest`, even on verify failure.
 - Does not file new issues to track follow-ups; comments on the existing issue instead.
 - Does not cluster unrelated issues onto one branch by default — clusters are region-coherent so a red CI stays attributable; the unrelated-batch escape hatch is dev-box + explicit "red -> bisect" only.
 - Does not post a comment without the AI marker (memory `feedback_ai_comment_marker`), and does not reply to external human commenters — it parks those tickets on `state.awaiting_user[]` for `/comment-responder` + human confirm.
@@ -432,3 +446,4 @@ Tell the user and **do not schedule another /loop firing** if any of these hit:
 - Architecture invariants: `docs/ARCHITECTURE_INVARIANTS.md`
 - Real-box access: memory `reference_mcp_servicebay_access`. `<SERVICEBAY_BOX>` (used above) is the box's SSH/HTTP/MCP address; it lives in that local memory entry, not in this public repo.
 - Release flow: release-please PR on branch `release-please--branches--main--components--servicebay`
+- Channel switch (`:dev`/`:latest`) for the batched box verify: `tools/sb-tui/internal/rest/channel.go`, `tools/sb-tui/internal/ui/channel.go`, `packages/backend/src/lib/servicebayChannel.ts`; `release.yml` publishes `ghcr.io/mdopp/servicebay:dev` per non-release `main` commit.
