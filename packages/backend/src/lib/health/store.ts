@@ -60,6 +60,30 @@ export class HealthStore {
     fs.writeFileSync(CHECKS_FILE, JSON.stringify(checks, null, 2));
   }
 
+  /**
+   * Remove the auto-created per-service health check(s) for a service that
+   * is being uninstalled. Matches the shape `addServiceChecks` /
+   * `deployStack` create: `type:'service'` with `target === serviceName`,
+   * or the legacy `name === 'Service: <serviceName>'` row. Returns the
+   * number of checks removed.
+   *
+   * Per-service checks are gated on actual deployment (#1506): a stack is
+   * the only thing that creates its check (on deploy) and uninstall is the
+   * only thing that removes it. An un-installed service must show no check,
+   * never a red "failing" one.
+   */
+  static deleteServiceCheck(serviceName: string): number {
+    ensureDirs();
+    const all = this.getChecks();
+    const remaining = all.filter(c =>
+      !((c.type === 'service' && c.target === serviceName) ||
+        c.name === `Service: ${serviceName}`));
+    if (remaining.length !== all.length) {
+      fs.writeFileSync(CHECKS_FILE, JSON.stringify(remaining, null, 2));
+    }
+    return all.length - remaining.length;
+  }
+
   static saveResult(result: CheckResult) {
     ensureDirs();
     const resultFile = path.join(RESULTS_DIR, `${result.check_id}.json`);
