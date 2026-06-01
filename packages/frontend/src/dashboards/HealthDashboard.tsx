@@ -595,7 +595,7 @@ export default function HealthDashboard() {
                                                     key={i}
                                                     className={`flex-1 min-w-[2px] rounded-t-sm hover:opacity-80 transition-opacity relative group ${
                                                       !h.hasData ? 'bg-transparent' :
-                                                      h.status === 'ok' ? 'bg-emerald-500 dark:bg-emerald-400' : 'bg-emerald-900 dark:bg-emerald-700'
+                                                      h.status === 'ok' ? 'bg-emerald-500 dark:bg-emerald-400' : 'bg-rose-500 dark:bg-rose-400'
                                                     }`}
                                                     style={{ height: h.hasData ? `${Math.max(5, ((h.latency || 0) / maxLatency) * 100)}%` : '0%' }}
                                                 >
