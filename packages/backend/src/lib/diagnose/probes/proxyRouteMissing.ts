@@ -79,25 +79,7 @@ async function findEntry(domain: string): Promise<ProxyHostEntry | null> {
  * Exported (not just registered) so the sibling probe can mount it
  * under its own action namespace.
  */
-export async function retryCreate({
-  node,
-  itemId,
-}: {
-  node: string;
-  itemId?: string;
-}): Promise<ProbeActionResult> {
-  if (!itemId) {
-    return { ok: false, message: 'No domain supplied.', refresh: false };
-  }
-  const entry = await findEntry(itemId);
-  if (!entry) {
-    return { ok: false, message: `No proxy host entry for ${itemId} — it may have been removed.`, refresh: true };
-  }
-
-  // Re-derive forward host from the running nginx service so the
-  // entry can be retried with whatever the install-time defaults are.
-  // Mirrors what /api/system/nginx/proxy-hosts does for entries that
-  // omit forwardHost.
+async function checkNginxDeployed(node: string): Promise<ProbeActionResult | null> {
   const services = await ServiceManager.listServices(node).catch(() => []);
   const nginx = services.find(
     s => s.name === 'nginx' || s.name === 'nginx-web' || (s.name.includes('nginx') && !s.name.startsWith('install-')),
@@ -109,19 +91,17 @@ export async function retryCreate({
       refresh: false,
     };
   }
+  return null;
+}
 
-  // The /api/system/nginx/proxy-hosts route accepts cross-process
-  // calls with internal-token auth. We import the helper so the
-  // diagnose-handler can act as a server-internal caller without
-  // needing a session token.
+async function callProxyHostsApi(node: string, entry: ProxyHostEntry): Promise<Response> {
   const { getInternalApiToken } = await import('@/lib/auth/internalToken');
   const token = getInternalApiToken();
   const port = process.env.PORT || '5888';
   const url = `http://localhost:${port}/api/system/nginx/proxy-hosts`;
 
-  let res: Response;
   try {
-    res = await fetch(url, {
+    return await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -139,9 +119,36 @@ export async function retryCreate({
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Could not reach the proxy-hosts API: ${msg}. ${pointerForFetchError(msg)}`);
+  }
+}
+
+export async function retryCreate({
+  node,
+  itemId,
+}: {
+  node: string;
+  itemId?: string;
+}): Promise<ProbeActionResult> {
+  if (!itemId) {
+    return { ok: false, message: 'No domain supplied.', refresh: false };
+  }
+  const entry = await findEntry(itemId);
+  if (!entry) {
+    return { ok: false, message: `No proxy host entry for ${itemId} — it may have been removed.`, refresh: true };
+  }
+
+  const nginxCheck = await checkNginxDeployed(node);
+  if (nginxCheck) return nginxCheck;
+
+  let res: Response;
+  try {
+    res = await callProxyHostsApi(node, entry);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
     return {
       ok: false,
-      message: `Could not reach the proxy-hosts API: ${msg}. ${pointerForFetchError(msg)}`,
+      message: msg,
       refresh: false,
     };
   }
@@ -170,11 +177,12 @@ export async function retryCreate({
   }
   const failure = (data.failed ?? []).find(f => f.domain === entry.domain);
   logger.warn('diagnose:proxy_route_missing', `Retry create for ${entry.domain} failed: ${failure?.error ?? 'unknown'}`);
+  const failureMsg = failure?.error
+    ? `NPM rejected the route: ${failure.error.slice(0, 200)} ${pointerForNpmError(failure.error)}`.trimEnd()
+    : `Retry returned HTTP ${res.status} without a domain-specific error. See failed_units / pods_and_engine for NPM container health.`;
   return {
     ok: false,
-    message: failure?.error
-      ? `NPM rejected the route: ${failure.error.slice(0, 200)} ${pointerForNpmError(failure.error)}`.trimEnd()
-      : `Retry returned HTTP ${res.status} without a domain-specific error. See failed_units / pods_and_engine for NPM container health.`,
+    message: failureMsg,
     refresh: false,
   };
 }

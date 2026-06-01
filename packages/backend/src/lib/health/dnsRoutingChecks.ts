@@ -68,6 +68,15 @@ function buildCheck(entry: ProxyHostEntry, now: string): CheckConfig {
  * external-reachability checks are nice-to-have observability, not
  * load-bearing functionality.
  */
+function checkNeedsRefresh(current: CheckConfig, next: CheckConfig): boolean {
+  return !(
+    current.type === next.type
+    && current.target === next.target
+    && current.interval === next.interval
+    && current.enabled === next.enabled
+  );
+}
+
 export async function syncDnsRoutingChecks(): Promise<void> {
   try {
     const config = await getConfig();
@@ -82,21 +91,13 @@ export async function syncDnsRoutingChecks(): Promise<void> {
 
     const now = new Date().toISOString();
 
-    // Add or refresh
     for (const [id, host] of wanted) {
       const current = existing.find(c => c.id === id);
       const next = buildCheck(host, current?.created_at ?? now);
-      if (
-        current
-        && current.type === next.type
-        && current.target === next.target
-        && current.interval === next.interval
-        && current.enabled === next.enabled
-      ) continue;
+      if (current && !checkNeedsRefresh(current, next)) continue;
       HealthStore.saveCheck(next);
     }
 
-    // Remove orphans + legacy letsdebug checks
     for (const check of existing) {
       if (check.type === 'dns_routing' && check.id.startsWith(DNS_ROUTING_CHECK_PREFIX)) {
         if (!wanted.has(check.id)) HealthStore.deleteCheck(check.id);

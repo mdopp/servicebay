@@ -94,6 +94,34 @@ function asInt(value: unknown): number | null {
   return null;
 }
 
+function parseDurations(obj: Record<string, unknown>): { intervalMs: number; timeoutMs: number; startupTimeoutMs: number; errors: string[] } {
+  const errors: string[] = [];
+  let intervalMs = DEFAULT_INTERVAL_MS;
+  if (obj.interval !== undefined && obj.interval !== null) {
+    const ms = parseDuration(obj.interval);
+    if (ms === null) {
+      errors.push(`field \`interval\` must be a duration like "30s", "2m", "500ms"; got ${JSON.stringify(obj.interval)}`);
+    } else if (ms < 1000) {
+      errors.push(`field \`interval\` must be ≥ 1s to avoid spamming the service; got ${JSON.stringify(obj.interval)}`);
+    } else {
+      intervalMs = ms;
+    }
+  }
+  let timeoutMs = DEFAULT_TIMEOUT_MS;
+  if (obj.timeout !== undefined && obj.timeout !== null) {
+    const ms = parseDuration(obj.timeout);
+    if (ms === null) errors.push(`field \`timeout\` must be a duration; got ${JSON.stringify(obj.timeout)}`);
+    else timeoutMs = ms;
+  }
+  let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
+  if (obj.startup_timeout !== undefined && obj.startup_timeout !== null) {
+    const ms = parseDuration(obj.startup_timeout);
+    if (ms === null) errors.push(`field \`startup_timeout\` must be a duration; got ${JSON.stringify(obj.startup_timeout)}`);
+    else startupTimeoutMs = ms;
+  }
+  return { intervalMs, timeoutMs, startupTimeoutMs, errors };
+}
+
 /**
  * Parse the raw block-scalar body of `servicebay.healthcheck`.
  *
@@ -183,31 +211,8 @@ export function parseHealthcheckYaml(
     }
   }
 
-  let intervalMs = DEFAULT_INTERVAL_MS;
-  if (obj.interval !== undefined && obj.interval !== null) {
-    const ms = parseDuration(obj.interval);
-    if (ms === null) {
-      errors.push(`field \`interval\` must be a duration like "30s", "2m", "500ms"; got ${JSON.stringify(obj.interval)}`);
-    } else if (ms < 1000) {
-      errors.push(`field \`interval\` must be ≥ 1s to avoid spamming the service; got ${JSON.stringify(obj.interval)}`);
-    } else {
-      intervalMs = ms;
-    }
-  }
-
-  let timeoutMs = DEFAULT_TIMEOUT_MS;
-  if (obj.timeout !== undefined && obj.timeout !== null) {
-    const ms = parseDuration(obj.timeout);
-    if (ms === null) errors.push(`field \`timeout\` must be a duration; got ${JSON.stringify(obj.timeout)}`);
-    else timeoutMs = ms;
-  }
-
-  let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
-  if (obj.startup_timeout !== undefined && obj.startup_timeout !== null) {
-    const ms = parseDuration(obj.startup_timeout);
-    if (ms === null) errors.push(`field \`startup_timeout\` must be a duration; got ${JSON.stringify(obj.startup_timeout)}`);
-    else startupTimeoutMs = ms;
-  }
+  const { intervalMs, timeoutMs, startupTimeoutMs, errors: durationErrors } = parseDurations(obj);
+  errors.push(...durationErrors);
 
   if (errors.length > 0) return { ok: false, errors };
   return { ok: true, config: { kind, url, host, port, intervalMs, timeoutMs, startupTimeoutMs } };

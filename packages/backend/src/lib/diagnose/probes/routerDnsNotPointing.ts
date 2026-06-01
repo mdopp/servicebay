@@ -225,49 +225,13 @@ function okRoutingDetail(dhcpOk: boolean, upstreamOk: boolean, lanIp: string): s
   return detail.join(' ');
 }
 
-export async function checkRouterDnsNotPointing(): Promise<RouterDnsProbeResult> {
-  const config = await getConfig();
-  const lanIp = config.reverseProxy?.lanIp;
-  if (!lanIp) {
-    return {
-      status: 'info',
-      detail: 'No LAN IP recorded yet — install-time detection hasn\'t run. The router-DNS probe needs an IP to compare DHCP option-6 against.',
-    };
-  }
-
-  // Skip nagging if the operator dismissed the check within the window.
-  const dismissed = recentlyDismissedDetail(config.reverseProxy?.routerDnsDismissedAt);
-  if (dismissed) return { status: 'info', detail: dismissed };
-
-  // Signal A — AdGuard query-log heuristic. Positive when AdGuard
-  // has logged any non-localhost client (LAN device OR the FritzBox
-  // itself, in the FritzBox-as-upstream pattern) within the window.
-  const adguard = await adguardCreds();
-  let adguardOk = false;
-  if (adguard) {
-    adguardOk = await adguardSeesLanClients(adguard.url, adguard.username, adguard.password);
-  }
-
-  // Signals B & C — FritzBox DHCP option-6 / its own WAN-upstream DNS includes
-  // ServiceBay's IP. Two valid topologies ("AdGuard as LAN DNS" via DHCP, or
-  // "FritzBox as LAN DNS, AdGuard upstream"); recognise either as OK.
-  const dhcp = await gatewayDnsHasLanIp(config.gateway, lanIp, fritzBoxDhcpDns);
-  const upstream = await gatewayDnsHasLanIp(config.gateway, lanIp, fritzBoxWanDns);
-  const dhcpOk = dhcp.ok;
-  const dhcpDns = dhcp.dns;
-  const upstreamOk = upstream.ok;
-  const upstreamDns = upstream.dns;
-
-  // Pattern detection — explain which valid topology is in effect so
-  // operators reading the self-test result see the probe understood
-  // their deliberate setup choice (not just "ok, trust me").
-  if (dhcpOk || upstreamOk || adguardOk) {
-    return { status: 'ok', detail: okRoutingDetail(dhcpOk, upstreamOk, lanIp) };
-  }
-
-  // All three signals negative — true fail. Show the operator both
-  // their FritzBox's current config values AND the two fix paths so
-  // they can pick the topology they prefer.
+async function buildWarnDetail(
+  config: Awaited<ReturnType<typeof getConfig>>,
+  lanIp: string,
+  dhcpDns: string | null,
+  upstreamDns: string | null,
+  adguard: { url: string; username: string; password: string } | null,
+): Promise<string> {
   const detailParts: string[] = [];
   if (config.gateway?.type === 'fritzbox') {
     if (dhcpDns) {
@@ -286,10 +250,43 @@ export async function checkRouterDnsNotPointing(): Promise<RouterDnsProbeResult>
   } else {
     detailParts.push('AdGuard credentials not configured; query-log signal unavailable.');
   }
+  return detailParts.join(' ');
+}
 
+export async function checkRouterDnsNotPointing(): Promise<RouterDnsProbeResult> {
+  const config = await getConfig();
+  const lanIp = config.reverseProxy?.lanIp;
+  if (!lanIp) {
+    return {
+      status: 'info',
+      detail: 'No LAN IP recorded yet — install-time detection hasn\'t run. The router-DNS probe needs an IP to compare DHCP option-6 against.',
+    };
+  }
+
+  const dismissed = recentlyDismissedDetail(config.reverseProxy?.routerDnsDismissedAt);
+  if (dismissed) return { status: 'info', detail: dismissed };
+
+  const adguard = await adguardCreds();
+  let adguardOk = false;
+  if (adguard) {
+    adguardOk = await adguardSeesLanClients(adguard.url, adguard.username, adguard.password);
+  }
+
+  const dhcp = await gatewayDnsHasLanIp(config.gateway, lanIp, fritzBoxDhcpDns);
+  const upstream = await gatewayDnsHasLanIp(config.gateway, lanIp, fritzBoxWanDns);
+  const dhcpOk = dhcp.ok;
+  const dhcpDns = dhcp.dns;
+  const upstreamOk = upstream.ok;
+  const upstreamDns = upstream.dns;
+
+  if (dhcpOk || upstreamOk || adguardOk) {
+    return { status: 'ok', detail: okRoutingDetail(dhcpOk, upstreamOk, lanIp) };
+  }
+
+  const detail = await buildWarnDetail(config, lanIp, dhcpDns, upstreamDns, adguard);
   return {
     status: 'warn',
-    detail: detailParts.join(' '),
+    detail,
     hint: 'Two ways to fix this — pick whichever fits your setup. (1) "AdGuard as LAN DNS" — click Configure DHCP to ServiceBay; clients query AdGuard directly on next lease renewal. (2) "FritzBox as LAN DNS, AdGuard upstream" — click Configure FritzBox upstream; FritzBox keeps handing itself out but forwards every query through AdGuard. Either gives household-wide filtering.',
   };
 }
