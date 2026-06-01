@@ -13,6 +13,7 @@ The user's recurring rules (in `~/.claude/projects/-home-mdopp-servicebay/memory
 
 - **At most 8 PRs per invocation.** Then exit cleanly. `/loop` re-fires you.
 - This still counts security-gate drafts toward the budget — a draft PR is still one PR's worth of work.
+- **A cluster (grouped issues, Step 1 grooming) counts as one PR** toward the budget, even though it closes several issues — that's the whole point: fewer pipeline runs for the same backlog drain.
 - If you've spent >40 minutes on a single issue without a green PR, stop, post a comment on the issue explaining what's blocking, and move on.
 
 ## Wakeup cadence (dynamic /loop mode)
@@ -41,9 +42,14 @@ Track progress at `.claude/state/autoloop-state.json`. Shape:
   ],
   "awaiting_user": [
     {"issue": 1311, "comment_url": "https://github.com/mdopp/servicebay/issues/1311#issuecomment-…", "author": "wenghuiming1987", "since": "2026-05-30T07:23:19Z"}
+  ],
+  "clusters": [
+    {"id": "fe-layout", "theme": "frontend layout", "issues": [1420, 1424, 1427, 1428], "region": "packages/frontend/src/dashboards", "gate": "normal", "status": "open"}
   ]
 }
 ```
+
+`clusters[]` is the groomed output (Step 1 grooming): each entry bundles related issues worked as one branch/PR. `gate` is inherited (strongest member: `security` ⇒ draft, any path-mandated member ⇒ `/verify`). `status` is `open | in_progress | done`. A cluster's member issues do **not** also appear as standalone queue units — the cluster is the unit.
 
 Update it at every state transition. If the file doesn't exist, create it with empty arrays.
 
@@ -96,7 +102,27 @@ Two buckets — both produce a code PR; the difference is what happens at merge 
 
 **`oscar`-labelled issues:** OSCAR feature work now lives in its own repo (`mdopp/oscar`, which has its own autoloop skill). So an `oscar`-labelled issue *in this repo* should first be triaged: if it's actually OSCAR-side work (Hermes skills, `oscar-household` template, voice-gatekeeper), migrate it to `mdopp/oscar` and close it here; only keep it if it's genuinely ServiceBay-side glue (install path, asset-transport, MCP wiring that SB owns). For anything kept, normal flow applies — and since it'll touch install paths, the path-mandated `/verify` rules in Step 3 apply.
 
+### Grooming & clustering (run once per invocation, before selection)
+
+Before picking the head, run a fast grooming pass over the survivors so the builder consumes a **groomed, ordered, clustered** queue. The payoff is **collapsing N full pipeline runs into 1 per cluster** — today 8 issues = 8 PRs = 8× (CI + box `/verify` flip + merge); a coherent cluster worked as **one branch → one PR** runs the whole pipeline **once** and rolls into the already-batched release (issue #1434).
+
+Grooming runs every invocation that has **≥2 survivors** (skip it for a single survivor — nothing to cluster). It's cheap: issue metadata + a few `git grep`s. Steps:
+
+1. **Dedup / close-at-HEAD.** For each survivor, sanity-check it isn't already fixed at `HEAD` — the symptom file/line no longer matches, or a merged PR already resolved it. If the code plainly shows it resolved, close the issue with a one-line comment linking the fixing commit/PR (+ AI marker) and drop it from the queue. Don't guess; only close on clear evidence.
+
+2. **Cluster by code region / theme.** Group survivors that touch the **same files or subsystem** (e.g. a frontend-layout cluster like #1420/#1424/#1427/#1428, an install/credential cluster, a diagnose-probe cluster). A cluster is worked in **one context and one branch/PR** when the changes are genuinely related — shared understanding, one CI run, one verify flip, one merge. Cap a cluster at what stays reviewable (rule of thumb: ≤4 issues / ≤~400 LOC net / one coherent theme); beyond that, split into two clusters.
+
+   - **Attribution must survive.** Only cluster issues whose changes are *in-scope of each other*, so a red CI on the cluster points at its one theme — not a random bisect. Do **not** cluster unrelated issues just to share a pipeline run by default.
+   - **Unrelated-batch escape hatch (dev-box only).** You *may* stage several unrelated green-CI changes on one branch purely to share a CI run / verify flip, but only with "red → bisect" explicitly accepted. The default is region-coherent clusters.
+   - **Gate inheritance.** A cluster's gate is the *strongest* of its members: if any member touches a Step 3 path-mandated path, the whole cluster's PR needs `/verify` (one flip covers it — this is the #1433 batch-verify win); if any member carries the `security` label, the **whole cluster** opens as a draft and never auto-merges (so don't cluster a security issue with normal ones unless you want the normal ones to wait on human review — usually keep security issues solo).
+
+3. **Split oversized.** An issue that's multi-PR scope is decomposed into dependency-ordered bite-size children (the existing track-b "Decomposing an epic" move) and the children are **re-interleaved** into the queue. File children so ascending issue number == dependency order.
+
+4. **Emit the groomed queue.** Record clusters in `state.clusters[]` (see shape below) so the work is resumable across firings. The selection order treats each cluster as a **single unit**.
+
 ### Selection order within survivors
+
+A unit below is either a **single issue** or a **cluster** (from grooming). A cluster sorts into the highest-priority bucket any of its members would land in, and within a bucket sorts by its lowest member issue number. `state.priority[]` may list either an issue or a cluster id.
 
 0. **Priority overrides — jump the whole queue.** Two ways to pin work ahead of the normal buckets (use either or both; the operator sets these to front-load force-multiplier/infra work that speeds everything after):
    - **Explicit, ordered:** any open issue whose number is listed in `state.priority[]`, worked **in the order listed there**. The loop does not mutate this list — completed issues simply stop matching (they're no longer open). This is the way to pin a specific sequence, e.g. `"priority": [1433, 1434, 1435]`.
@@ -115,7 +141,7 @@ Pick the head. Update state: `in_progress = {issue, branch, gate: "security"|"no
 If Step 1 returns no survivors, **do not auto-default to lint and do not exit.** Decide which of three tracks to run this invocation:
 
 - **a) Lint problems** — fall through to **Step 1b (lint sweep)** below: drive the ESLint warning count down with small, single-file extractions.
-- **b) Refine & unblock issues** — walk `state.blocked[]` and the open issues. For each blocked entry, re-check whether a recent merge or a smaller scoping makes it actionable now; if so, remove it from `blocked[]` and either work it (back to Step 2) or carve off a bite-sized first PR. Also tighten thin/ambiguous issue bodies (symptom + repro + starting-point files per memory `feedback_issue_scope`). Deliverable: a refreshed, actionable queue — then pick the head and work it.
+- **b) Refine & unblock issues** — walk `state.blocked[]` and the open issues. For each blocked entry, re-check whether a recent merge or a smaller scoping makes it actionable now; if so, remove it from `blocked[]` and either work it (back to Step 2) or carve off a bite-sized first PR. Also tighten thin/ambiguous issue bodies (symptom + repro + starting-point files per memory `feedback_issue_scope`), and run the full **grooming & clustering pass** (Step 1): dedup/close issues already fixed at HEAD, cluster by code region, decompose oversized issues. Deliverable: a refreshed, actionable, **clustered** queue — then pick the head and work it.
 
   **Decomposing an epic** is a first-class track-b move (and the better alternative to parking a multi-PR issue as `needs scoping`): break it into bite-sized child issues filed in the repo so the loop can actually ship it incrementally. Rules:
     - Each child is an independently-shippable PR-unit; land **foundational modules first** (pure data/helpers, clients), then their consumers. No dead-code-only stubs — every child must be a genuine, testable unit.
@@ -225,9 +251,12 @@ Update state file: append `{file, rule, pr, merged_at}` to `lint_sweep[]` (initi
 
 ### Branch
 ```bash
-git checkout -b fix/issue-<N>-<kebab-summary>
+git checkout -b fix/issue-<N>-<kebab-summary>          # single issue
+git checkout -b fix/cluster-<theme>-<N1>-<N2>...       # cluster (grooming output)
 ```
 (State `in_progress` was set in Step 1; nothing to update here.)
+
+**Working a cluster:** read *every* member issue and its `Relevant Files` first, then implement all members on the one branch as a coherent change. Keep the diff organized by theme, not by issue, since the members share a code region. The cluster still obeys scope discipline as a whole — its theme is the boundary; don't drift into unrelated files just because you're already in there.
 
 ### Read the issue and the referenced files
 - Open the issue body. Note the `Relevant Files` section.
@@ -286,7 +315,7 @@ If lint warnings increased, fix or rebase. If a test fails, diagnose root cause 
 ### Commit
 - Conventional Commits format. Scope mirrors the path (`fix(portal):`, `refactor(dashboards):`, `feat(backend):`, `docs(install):`, `test(shellQuote):`).
 - **No parens in the subject line beyond the conventional `(scope)`**. Memory `feedback_release_please_commit_parens`: parens-heavy subjects break release-please.
-- Body: brief summary, then `Closes #<N>` on its own line.
+- Body: brief summary, then `Closes #<N>` on its own line. **For a cluster, one `Closes #<N>` line per member issue** (each on its own line) so merging the single PR closes them all.
 
 ### Push
 ```bash
@@ -343,7 +372,7 @@ Proceed to merge gate below.
 3. If both green: `gh pr merge <PR#> --merge --delete-branch`.
 4. If CI red twice on the same SHA, or `/verify` red: stop, post a comment with the failing job link, leave the PR open, move to the next issue. **Do not retry indefinitely.**
 
-Update state file: move issue from `in_progress` to `completed`.
+Update state file: move the issue — or, for a cluster, every member issue — from `in_progress` to `completed`, and mark the cluster `done` in `clusters[]`.
 
 ### Post-merge
 ```bash
@@ -391,6 +420,7 @@ Tell the user and **do not schedule another /loop firing** if any of these hit:
 - Does not auto-merge any issue carrying the `security` label (opens as draft) or filter-in any `postponed` issue (still excluded). `oscar`-labelled issues are no longer excluded — they run through normal flow (triage-to-`mdopp/oscar` first per Step 1's classification note), subject to the same scope/`/verify`/blocked gates.
 - Does not skip the real-box `/verify` step on path-mandated PRs.
 - Does not file new issues to track follow-ups; comments on the existing issue instead.
+- Does not cluster unrelated issues onto one branch by default — clusters are region-coherent so a red CI stays attributable; the unrelated-batch escape hatch is dev-box + explicit "red -> bisect" only.
 - Does not post a comment without the AI marker (memory `feedback_ai_comment_marker`), and does not reply to external human commenters — it parks those tickets on `state.awaiting_user[]` for `/comment-responder` + human confirm.
 - Does not exceed the lint-sweep size guard (≤2 source files, ≤120 LOC net diff). Structural warnings are fair game when a *bite-sized* extraction clears them; the loop never attempts a 2000-LOC dashboard decomposition in one PR — that's still the user's job.
 - Does not touch a file that an open non-loop PR or a non-blocked open issue is already working — collision avoidance check runs before every lint-sweep file selection.
