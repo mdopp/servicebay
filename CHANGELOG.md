@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.73.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.72.0...servicebay-v4.73.0) (2026-06-01)
+
+
+### Features
+
+* **diagnose:** fold self-diagnose probes into Checks list, scheduled daily ([4a84e96](https://github.com/mdopp/servicebay/commit/4a84e960a8760caf57ac25677183baa0c2e05dc2)), closes [#1423](https://github.com/mdopp/servicebay/issues/1423)
+* **diagnose:** in-process ephemeral-user SSO verification module ([229e87f](https://github.com/mdopp/servicebay/commit/229e87f69c2fefd3e4d734eabbb17765c457eb0e)), closes [#1453](https://github.com/mdopp/servicebay/issues/1453)
+* **external-backup:** register FritzBox NAS as a backup source + surface NAS backups in Settings ([08d9f0a](https://github.com/mdopp/servicebay/commit/08d9f0aca3737a21f88450e144893ee54c2339fa)), closes [#1440](https://github.com/mdopp/servicebay/issues/1440)
+* **portal:** settings UI for max-users limit + LAN-only portal toggle ([6c2de2a](https://github.com/mdopp/servicebay/commit/6c2de2ae797b18fde10f31c1ebedc75a540b1171)), closes [#1456](https://github.com/mdopp/servicebay/issues/1456)
+* SSO verify, Home polish, portal cap/LAN-gate, NAS backup UI, admin-hash reconcile, diagnose-fold slice ([df6c941](https://github.com/mdopp/servicebay/commit/df6c941cf5f6bbde759d003e49b13c4e3076646e))
+
+
+### Bug Fixes
+
+* **auth:** reconcile stored admin hash with new SERVICEBAY_PASSWORD on reinstall ([f0be08e](https://github.com/mdopp/servicebay/commit/f0be08ecb13987ee1665c475ebb28870db1ce407)), closes [#1438](https://github.com/mdopp/servicebay/issues/1438)
+* **dashboards:** align Home cards and health banner with app palette ([cf1b53a](https://github.com/mdopp/servicebay/commit/cf1b53abf0648b165ba24dc8dc44ee6b71a2edba)), closes [#1420](https://github.com/mdopp/servicebay/issues/1420)
+
 ## [4.72.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.71.0...servicebay-v4.72.0) (2026-06-01)
 
 
