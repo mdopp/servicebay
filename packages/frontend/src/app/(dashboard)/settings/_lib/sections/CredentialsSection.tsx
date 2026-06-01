@@ -1,17 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Eye, EyeOff, Key, Loader2, Trash2 } from 'lucide-react';
+import { Download, Eye, EyeOff, Key, Loader2, Trash2 } from 'lucide-react';
+import { buildBitwardenCsv, type Credential } from '@servicebay/api-client';
 import { useToast } from '@/providers/ToastProvider';
-
-interface Credential {
-  service: string;
-  url: string;
-  username: string;
-  password: string;
-  importance: 'critical' | 'system';
-  notes?: string;
-}
 
 interface Manifest {
   savedAt: string;
@@ -68,6 +60,17 @@ export default function CredentialsSection() {
     }
   };
 
+  const downloadCsv = () => {
+    if (!manifest || manifest.credentials.length === 0) return;
+    const blob = new Blob([buildBitwardenCsv(manifest.credentials)], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `servicebay-credentials-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    addToast('success', 'Credentials CSV downloaded', 'Re-import it into Bitwarden/Vaultwarden, then consider wiping the server copy.');
+  };
+
   if (busy === 'load') {
     return (
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 text-sm text-gray-500 dark:text-gray-400">
@@ -92,15 +95,25 @@ export default function CredentialsSection() {
           </p>
         </div>
         {manifest && manifest.credentials.length > 0 && (
-          <button
-            onClick={onWipe}
-            disabled={busy === 'wipe'}
-            className="shrink-0 inline-flex items-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg disabled:opacity-50"
-            title="Remove the saved credentials from the server. Useful once you've stored them safely in your password manager."
-          >
-            {busy === 'wipe' ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-            Wipe from server
-          </button>
+          <div className="shrink-0 flex items-center gap-2">
+            <button
+              onClick={downloadCsv}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
+              title="Download the saved credentials as a Bitwarden/Vaultwarden-importable CSV."
+            >
+              <Download size={14} />
+              Download CSV
+            </button>
+            <button
+              onClick={onWipe}
+              disabled={busy === 'wipe'}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg disabled:opacity-50"
+              title="Remove the saved credentials from the server. Useful once you've stored them safely in your password manager."
+            >
+              {busy === 'wipe' ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+              Wipe from server
+            </button>
+          </div>
         )}
       </div>
 
