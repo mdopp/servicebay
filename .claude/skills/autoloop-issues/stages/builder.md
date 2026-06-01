@@ -27,7 +27,7 @@ Set the unit's `status` to `"in_progress"` and `in_progress` to the unit id.
 - For a **cluster**: read *every* member issue + its `Relevant Files`, then implement all members as one coherent themed change. Organize the diff by theme, not by issue.
 - For a single **issue**: read the body, the `Relevant Files`, and ~50 lines around any line reference.
 - For a **lint-sweep** unit: see §Lint-sweep below.
-- If the body turns out **ambiguous** (the planner missed it): do **not** guess. Post the specific question on the issue (AI marker), move the unit to the queue's `needs_refinement[]` as `{issue, question, comment_url, since}`, revert any partial work, and return. Refinement is the human's job.
+- If the body turns out **ambiguous** (the planner missed it): do **not** guess. Post the specific question on the issue (AI marker), move the unit to the queue's `needs_refinement[]` as `{issue, question, comment_url, since}`, add the `autoloop:needs-refinement` label (`gh issue edit <N> --add-label autoloop:needs-refinement` — instant human visibility; the planner reconcile keeps it consistent), revert any partial work, and return. Refinement is the human's job.
 
 ### 3. Implement — scope discipline
 - Smallest change that satisfies the unit's `acceptance`. **No** drive-by refactors, **no** new abstractions, **no** "improve while I'm here." CLAUDE.md: *"Three similar lines is better than a premature abstraction."*
