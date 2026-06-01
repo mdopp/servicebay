@@ -4,11 +4,11 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  BookOpen, Bot, Calendar, CalendarDays, Camera,
+  BookOpen, Bot, Calendar, CalendarDays, Camera, Check, Copy,
   Download, ExternalLink, Files, Film, Folder, FolderOpen, Globe,
   Headphones, House, Image as ImageIcon, Images, KeyRound, Lightbulb,
   Lightbulb as LightbulbIcon, Loader2, Lock, Mail, MessageSquare,
-  Music, Package, QrCode, RefreshCw, Router, Shield, Smartphone, Video,
+  Music, Package, QrCode, RefreshCw, Router, Shield, Smartphone, Terminal, Video,
   Sparkles, X,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -232,6 +232,10 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
                 </div>
               )}
 
+              {card.manualPairing.length > 0 && (
+                <ManualPairingPanel steps={card.manualPairing} />
+              )}
+
               {card.recommendedApps.length > 0 && (
                 <div className="pt-2 space-y-1.5">
                   <div className="text-[11px] uppercase tracking-wide font-medium text-gray-500 dark:text-gray-400">
@@ -343,6 +347,70 @@ function CardHelpModal({ card, onClose }: { card: PortalCard; onClose: () => voi
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Static "manual action required" panel (#1253). Lists the
+ * inherently-interactive setup steps a template declared via
+ * `manual_pairing` (e.g. Signal `signal-cli link` QR pairing — it
+ * needs a TTY, so the web portal can only point at it, not run it).
+ * Each step shows its title, an optional why-note, and the exact
+ * command in a copyable monospace block.
+ */
+function ManualPairingPanel({ steps }: { steps: PortalCard['manualPairing'] }) {
+  return (
+    <div className="pt-2 space-y-2 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 p-3">
+      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide font-semibold text-amber-700 dark:text-amber-300">
+        <Terminal size={12} className="shrink-0" /> Manual setup needed
+      </div>
+      {steps.map(step => (
+        <div key={step.title} className="space-y-1">
+          <p className="text-xs font-medium text-amber-900 dark:text-amber-100">{step.title}</p>
+          {step.why && (
+            <p className="text-[11px] text-amber-800/90 dark:text-amber-200/80 leading-snug">{step.why}</p>
+          )}
+          <CommandBlock command={step.command} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Read-only command line for a `manual_pairing` step (#1253) — the
+ * operator has to run an interactive `podman exec -it … signal-cli
+ * link` in a real shell (the QR can't be driven from the web), so we
+ * show the exact command in monospace with a one-click copy. Copy
+ * falls back gracefully when the Clipboard API is unavailable
+ * (non-secure context / older browser): the text stays selectable.
+ */
+function CommandBlock({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard unavailable — the command stays selectable for a
+      // manual copy, so we just don't flash the confirmation.
+    }
+  };
+  return (
+    <div className="flex items-stretch gap-1.5">
+      <code className="flex-1 min-w-0 overflow-x-auto rounded bg-amber-100/70 dark:bg-amber-950/40 px-2 py-1.5 text-[11px] font-mono text-amber-900 dark:text-amber-100 whitespace-pre">
+        {command}
+      </code>
+      <button
+        type="button"
+        onClick={onCopy}
+        aria-label={copied ? 'Copied' : 'Copy command'}
+        className="shrink-0 inline-flex items-center justify-center w-8 rounded bg-amber-200/70 dark:bg-amber-800/40 text-amber-800 dark:text-amber-200 hover:bg-amber-300/70 dark:hover:bg-amber-700/50 transition-colors"
+      >
+        {copied ? <Check size={14} /> : <Copy size={14} />}
+      </button>
     </div>
   );
 }

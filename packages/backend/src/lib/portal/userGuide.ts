@@ -83,6 +83,33 @@ export interface SetupAsset {
 }
 
 /**
+ * A one-off interactive setup step the operator has to run by hand,
+ * surfaced as a static "manual action required" panel on the card
+ * (#1253). The canonical case is Signal pairing for a messaging
+ * gateway: `podman exec -it <hermes> signal-cli link -n HermesAgent`
+ * renders a QR in *that terminal* and can't be driven from the web
+ * (it needs a TTY). We don't try to automate it — we just tell the
+ * operator the step exists, why, and the exact command to copy.
+ *
+ * Distinct from `setup_assets`, which are things the portal can *do*
+ * for the visitor (download a profile, render a QR server-side). A
+ * `manual_pairing` entry is purely informational: copy the command,
+ * run it in a shell.
+ */
+export interface ManualPairing {
+  /** Short heading, e.g. "Pair the Signal account". */
+  title: string;
+  /** The exact shell command to run, e.g.
+   *  `podman exec -it hermes signal-cli link -n HermesAgent`.
+   *  Rendered in a monospace block with a copy button. */
+  command: string;
+  /** Optional one-line "why this is needed / what to expect" note
+   *  (e.g. "Scan the QR shown in the terminal with Signal on your
+   *  phone — Settings → Linked devices → Link new device"). */
+  why?: string;
+}
+
+/**
  * Curated allowlist of Lucide icon names usable on portal cards.
  * Lucide is the same line-art icon set the dashboard sidebar uses,
  * so picking from this set keeps the portal visually consistent
@@ -130,6 +157,7 @@ export interface UserGuideCard {
   tagline?: string;
   recommended_apps?: RecommendedApp[];
   setup_assets?: SetupAsset[];
+  manual_pairing?: ManualPairing[];
 }
 
 export interface UserGuideFrontmatter {
@@ -156,6 +184,10 @@ export interface UserGuideFrontmatter {
   mobile_apps?: { name: string; url: string }[];
   /** Per-template setup artifacts (iOS profile, deep links, …). */
   setup_assets?: SetupAsset[];
+  /** Manual, inherently-interactive setup steps the operator runs by
+   *  hand (e.g. `signal-cli link` QR pairing). Surfaced as a static
+   *  "manual action required" panel — informational only (#1253). */
+  manual_pairing?: ManualPairing[];
 }
 
 export interface ParsedUserGuide {
@@ -226,6 +258,68 @@ function liftMobileApps(input: unknown): RecommendedApp[] {
     .filter((e): e is RecommendedApp => e !== null);
 }
 
+/** Parse a `manual_pairing[]` list. Each entry needs a non-empty
+ *  `title` + `command` (both template-author strings, rendered as
+ *  text — never executed); `why` is optional. Entries missing either
+ *  required field are dropped so a malformed one doesn't render a
+ *  blank panel. */
+function parseManualPairing(input: unknown): ManualPairing[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((entry: unknown): ManualPairing | null => {
+      if (!entry || typeof entry !== 'object') return null;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.title !== 'string' || !e.title.trim()) return null;
+      if (typeof e.command !== 'string' || !e.command.trim()) return null;
+      const out: ManualPairing = { title: e.title.trim(), command: e.command.trim() };
+      if (typeof e.why === 'string' && e.why.trim()) out.why = e.why.trim();
+      return out;
+    })
+    .filter((e): e is ManualPairing => e !== null);
+}
+
+/** Parse a `setup_assets[]` list down to whitelisted-kind entries.
+ *  Shared by the top-level frontmatter and the per-card `cards[]`
+ *  path. Unknown/non-string kinds drop silently. */
+function parseSetupAssets(input: unknown): SetupAsset[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((entry: unknown): SetupAsset | null => {
+      if (!entry || typeof entry !== 'object') return null;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.kind !== 'string' || !KNOWN_ASSET_KINDS.has(e.kind as SetupAssetKind)) return null;
+      const out: SetupAsset = { kind: e.kind as SetupAssetKind };
+      if (typeof e.label === 'string' && e.label.trim()) out.label = e.label.trim();
+      if (typeof e.description === 'string' && e.description.trim()) out.description = e.description.trim();
+      return out;
+    })
+    .filter((a): a is SetupAsset => a !== null);
+}
+
+/** Parse one `cards[]` entry (per-subdomain card). Returns null when
+ *  the entry is malformed or lacks a valid `*_SUBDOMAIN` var. */
+function parseCardEntry(entry: unknown): UserGuideCard | null {
+  if (!entry || typeof entry !== 'object') return null;
+  const e = entry as Record<string, unknown>;
+  if (typeof e.subdomain_var !== 'string' || !/^[A-Z][A-Z0-9_]*_SUBDOMAIN$/.test(e.subdomain_var)) {
+    return null;
+  }
+  const card: UserGuideCard = { subdomain_var: e.subdomain_var };
+  if (typeof e.label === 'string' && e.label.trim()) card.label = e.label.trim();
+  if (typeof e.icon === 'string') card.icon = e.icon;
+  if (typeof e.lucide_icon === 'string' && PORTAL_ICON_SET.has(e.lucide_icon)) {
+    card.lucide_icon = e.lucide_icon as PortalIconName;
+  }
+  if (typeof e.tagline === 'string') card.tagline = e.tagline;
+  const apps = parseRecommendedApps(e.recommended_apps);
+  if (apps.length > 0) card.recommended_apps = apps;
+  const assets = parseSetupAssets(e.setup_assets);
+  if (assets.length > 0) card.setup_assets = assets;
+  const pairing = parseManualPairing(e.manual_pairing);
+  if (pairing.length > 0) card.manual_pairing = pairing;
+  return card;
+}
+
 /** Extract frontmatter fields from parsed YAML data. */
 function parseUserGuideSection(data: Record<string, unknown>): UserGuideFrontmatter {
   const fm: UserGuideFrontmatter = {};
@@ -247,58 +341,16 @@ function parseUserGuideSection(data: Record<string, unknown>): UserGuideFrontmat
 
   if (Array.isArray(data.cards)) {
     const cards = data.cards
-      .map((entry: unknown): UserGuideCard | null => {
-        if (!entry || typeof entry !== 'object') return null;
-        const e = entry as Record<string, unknown>;
-        if (typeof e.subdomain_var !== 'string' || !/^[A-Z][A-Z0-9_]*_SUBDOMAIN$/.test(e.subdomain_var)) {
-          return null;
-        }
-        const card: UserGuideCard = { subdomain_var: e.subdomain_var };
-        if (typeof e.label === 'string' && e.label.trim()) card.label = e.label.trim();
-        if (typeof e.icon === 'string') card.icon = e.icon;
-        if (typeof e.lucide_icon === 'string' && PORTAL_ICON_SET.has(e.lucide_icon)) {
-          card.lucide_icon = e.lucide_icon as PortalIconName;
-        }
-        if (typeof e.tagline === 'string') card.tagline = e.tagline;
-        if (Array.isArray(e.recommended_apps)) {
-          const apps = parseRecommendedApps(e.recommended_apps);
-          if (apps.length > 0) card.recommended_apps = apps;
-        }
-        if (Array.isArray(e.setup_assets)) {
-          const assets = (e.setup_assets as unknown[])
-            .map((a): SetupAsset | null => {
-              if (!a || typeof a !== 'object') return null;
-              const ae = a as Record<string, unknown>;
-              if (typeof ae.kind !== 'string' || !KNOWN_ASSET_KINDS.has(ae.kind as SetupAssetKind)) return null;
-              const out: SetupAsset = { kind: ae.kind as SetupAssetKind };
-              if (typeof ae.label === 'string' && ae.label.trim()) out.label = ae.label.trim();
-              if (typeof ae.description === 'string' && ae.description.trim()) out.description = ae.description.trim();
-              return out;
-            })
-            .filter((a): a is SetupAsset => a !== null);
-          if (assets.length > 0) card.setup_assets = assets;
-        }
-        return card;
-      })
+      .map(parseCardEntry)
       .filter((c): c is UserGuideCard => c !== null);
     if (cards.length > 0) fm.cards = cards;
   }
 
-  if (Array.isArray(data.setup_assets)) {
-    const assets = data.setup_assets
-      .map((entry: unknown): SetupAsset | null => {
-        if (!entry || typeof entry !== 'object') return null;
-        const e = entry as Record<string, unknown>;
-        if (typeof e.kind !== 'string') return null;
-        if (!KNOWN_ASSET_KINDS.has(e.kind as SetupAssetKind)) return null;
-        const out: SetupAsset = { kind: e.kind as SetupAssetKind };
-        if (typeof e.label === 'string' && e.label.trim()) out.label = e.label.trim();
-        if (typeof e.description === 'string' && e.description.trim()) out.description = e.description.trim();
-        return out;
-      })
-      .filter((e): e is SetupAsset => e !== null);
-    if (assets.length > 0) fm.setup_assets = assets;
-  }
+  const assets = parseSetupAssets(data.setup_assets);
+  if (assets.length > 0) fm.setup_assets = assets;
+
+  const pairing = parseManualPairing(data.manual_pairing);
+  if (pairing.length > 0) fm.manual_pairing = pairing;
 
   return fm;
 }

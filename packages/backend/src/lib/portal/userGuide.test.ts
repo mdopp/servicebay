@@ -177,6 +177,56 @@ lucide_icon: "<script>"
     expect(result!.frontmatter.lucide_icon).toBeUndefined();
   });
 
+  it('parses manual_pairing with title, command, and optional why', () => {
+    const raw = `---
+manual_pairing:
+  - title: "Pair the Signal account"
+    command: "podman exec -it hermes signal-cli link -n HermesAgent"
+    why: "Scan the QR shown in the terminal with Signal on your phone."
+  - title: "No-why step"
+    command: "podman exec -it hermes do-thing"
+---
+`;
+    const result = parseUserGuide(raw, 'hermes');
+    expect(result!.frontmatter.manual_pairing).toHaveLength(2);
+    expect(result!.frontmatter.manual_pairing?.[0]).toEqual({
+      title: 'Pair the Signal account',
+      command: 'podman exec -it hermes signal-cli link -n HermesAgent',
+      why: 'Scan the QR shown in the terminal with Signal on your phone.',
+    });
+    expect(result!.frontmatter.manual_pairing?.[1].why).toBeUndefined();
+  });
+
+  it('drops manual_pairing entries missing title or command', () => {
+    const raw = `---
+manual_pairing:
+  - title: "Has no command"
+  - command: "has-no-title"
+  - title: "   "
+    command: "blank-title"
+  - title: "Valid"
+    command: "podman exec -it x link"
+---
+`;
+    const result = parseUserGuide(raw, 'x');
+    expect(result!.frontmatter.manual_pairing).toHaveLength(1);
+    expect(result!.frontmatter.manual_pairing?.[0].title).toBe('Valid');
+  });
+
+  it('parses per-card manual_pairing', () => {
+    const raw = `---
+cards:
+  - subdomain_var: "HERMES_SUBDOMAIN"
+    manual_pairing:
+      - title: "Pair Signal"
+        command: "podman exec -it hermes signal-cli link"
+---
+`;
+    const result = parseUserGuide(raw, 'hermes');
+    expect(result!.frontmatter.cards?.[0].manual_pairing).toHaveLength(1);
+    expect(result!.frontmatter.cards?.[0].manual_pairing?.[0].command).toBe('podman exec -it hermes signal-cli link');
+  });
+
   it('returns null on YAML parse error', () => {
     const raw = `---
 icon: "📷
