@@ -187,16 +187,19 @@ export async function revokeBootstrapToken(): Promise<boolean> {
   return true;
 }
 
-/** Surface state for the Settings UI. */
+/** Surface state for the Settings UI. `present` is true whenever the
+ *  bootstrap entry still exists (hash set) even if its window has lapsed —
+ *  the UI uses it to offer re-activation (#1419). Once a named token is
+ *  minted the entry is deleted, so `present` goes false permanently. */
 export async function getBootstrapTokenStatus(): Promise<
-  | { active: false }
-  | { active: true; expiresAt: string | null; minutesRemaining: number | null }
+  | { active: false; present: boolean }
+  | { active: true; present: true; expiresAt: string | null; minutesRemaining: number | null }
 > {
   const config = await getConfig();
   const bt = config.auth?.bootstrapToken;
-  if (!bt?.hash) return { active: false };
+  if (!bt?.hash) return { active: false, present: false };
   if (!bt.expiresAt) {
-    return { active: true, expiresAt: null, minutesRemaining: null };
+    return { active: true, present: true, expiresAt: null, minutesRemaining: null };
   }
   const remainingMs = Date.parse(bt.expiresAt) - Date.now();
   if (remainingMs <= 0) {
@@ -206,14 +209,35 @@ export async function getBootstrapTokenStatus(): Promise<
       const { wasInstallActiveWithin } = await import('@/lib/install/jobStore');
       const isRecent = await wasInstallActiveWithin(30 * 60 * 1000);
       if (isRecent) {
-        return { active: true, expiresAt: null, minutesRemaining: null };
+        return { active: true, present: true, expiresAt: null, minutesRemaining: null };
       }
     } catch {}
-    return { active: false };
+    // Hash still present but the window lapsed — re-activatable.
+    return { active: false, present: true };
   }
   return {
     active: true,
+    present: true,
     expiresAt: bt.expiresAt,
     minutesRemaining: Math.floor(remainingMs / 60_000),
   };
+}
+
+/** Re-activate (un-expire) the existing bootstrap token for another TTL_MIN
+ *  window — same hash/identity, so an already-configured MCP client keeps
+ *  working after it. No-op if the entry was already revoked (the first
+ *  named-token mint deletes it). The token stays LAN-only + read-scope: its
+ *  own verify gate (isLanIp) is unchanged, so re-activation only resets the
+ *  clock. (#1419) */
+export async function reactivateBootstrapToken(): Promise<
+  | { ok: true; expiresAt: string; minutesRemaining: number }
+  | { ok: false; reason: 'no-bootstrap-token' }
+> {
+  const config = await getConfig();
+  const bt = config.auth?.bootstrapToken;
+  if (!bt?.hash) return { ok: false, reason: 'no-bootstrap-token' };
+  const expiresAt = new Date(Date.now() + TTL_MIN * 60 * 1000).toISOString();
+  await updateConfig({ auth: { bootstrapToken: { ...bt, expiresAt } } });
+  logger.info('mcp:bootstrap', `Re-activated bootstrap token; expiresAt=${expiresAt} (${TTL_MIN} min).`);
+  return { ok: true, expiresAt, minutesRemaining: TTL_MIN };
 }

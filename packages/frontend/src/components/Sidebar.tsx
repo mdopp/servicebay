@@ -286,10 +286,12 @@ export default function Sidebar() {
                     )}
                 </div>
             )}
-            {/* Where this ServiceBay lives — "<user> on <domain>" (#249,
-                relocated here from the page header's ModeBadge). */}
+            {/* Where this ServiceBay lives — just the domain. The signed-in
+                username is already shown in the chip above, so pass null to drop
+                the redundant "<user> on " prefix (#1424). Explicit null is
+                honoured (no self-fetch). */}
             <div className={isCollapsed ? '' : 'px-3.5 py-0.5'}>
-                <DomainTag username={currentUser ? currentUser.username : null} collapsed={isCollapsed} />
+                <DomainTag username={null} collapsed={isCollapsed} />
             </div>
             {currentUser && (
                 <button

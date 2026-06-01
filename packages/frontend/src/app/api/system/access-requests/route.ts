@@ -3,6 +3,7 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import { getConfig, saveConfig, getAdminBaseUrl, type AccessRequest } from '@/lib/config';
 import { sendEmailAlert } from '@/lib/email';
+import { isOverUserLimit, DEFAULT_MAX_USERS } from '@/lib/portal/userCap';
 import { logger } from '@/lib/logger';
 import { withApiHandler } from '@/lib/api/handler';
 
@@ -54,6 +55,31 @@ const PostBody = z.object({
   lastName: z.string().trim().min(1).max(60).optional(),
 });
 
+/**
+ * Rate-limit / capacity guard for the public access-request endpoint (#1426).
+ * Returns a 429 response when either cap is hit, else null:
+ *   - MAX_PENDING pending requests (anti-spam, config-free), or
+ *   - approved LLDAP users + pending >= config.maxUsers (default 20). The
+ *     LLDAP count is best-effort: if LLDAP is unreachable we can't size the
+ *     user cap, so we fall back to the pending guard rather than block
+ *     legitimate requests on an LLDAP hiccup.
+ */
+async function rejectIfCapped(maxUsers: number, pendingCount: number): Promise<NextResponse | null> {
+  if (pendingCount >= MAX_PENDING) {
+    return NextResponse.json(
+      { error: 'Too many pending requests right now. The family admin needs to review the existing ones first.' },
+      { status: 429 },
+    );
+  }
+  if (await isOverUserLimit(maxUsers, pendingCount)) {
+    return NextResponse.json(
+      { error: `This home server has reached its user limit (${maxUsers}). Ask the admin to remove an inactive account or raise the limit in Settings.` },
+      { status: 429 },
+    );
+  }
+  return null;
+}
+
 export const POST = withApiHandler({ skipAuth: true }, async ({ request }) => {
   // Cap raw body size so a hostile client can't push gigabytes.
   // Next.js doesn't enforce this by default for route handlers.
@@ -75,12 +101,8 @@ export const POST = withApiHandler({ skipAuth: true }, async ({ request }) => {
   const config = await getConfig();
   const existing = config.accessRequests ?? [];
   const pending = existing.filter(r => r.status === 'pending');
-  if (pending.length >= MAX_PENDING) {
-    return NextResponse.json(
-      { error: 'Too many pending requests right now. The family admin needs to review the existing ones first.' },
-      { status: 429 },
-    );
-  }
+  const capResponse = await rejectIfCapped(config.maxUsers ?? DEFAULT_MAX_USERS, pending.length);
+  if (capResponse) return capResponse;
 
   // Compose display name from firstName/lastName when both are
   // provided (new clients); otherwise fall back to the free-text

@@ -18,6 +18,7 @@ import {
   verifyBootstrapToken,
   revokeBootstrapToken,
   getBootstrapTokenStatus,
+  reactivateBootstrapToken,
 } from './bootstrapToken';
 import { getConfig, updateConfig } from '@/lib/config';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
@@ -209,7 +210,7 @@ describe('revokeBootstrapToken', () => {
 describe('getBootstrapTokenStatus', () => {
   it('returns inactive when no token', async () => {
     mockGetConfig.mockResolvedValue({ auth: {} });
-    expect(await getBootstrapTokenStatus()).toEqual({ active: false });
+    expect(await getBootstrapTokenStatus()).toEqual({ active: false, present: false });
   });
 
   it('returns active + minutes remaining when within window', async () => {
@@ -238,7 +239,7 @@ describe('getBootstrapTokenStatus', () => {
         },
       },
     });
-    expect(await getBootstrapTokenStatus()).toEqual({ active: false });
+    expect(await getBootstrapTokenStatus()).toEqual({ active: false, present: true });
   });
 
   it('returns active when expired but a setup job was active recently', async () => {
@@ -252,7 +253,29 @@ describe('getBootstrapTokenStatus', () => {
       },
     });
     mockWasInstallActiveWithin.mockResolvedValue(true);
-    expect(await getBootstrapTokenStatus()).toEqual({ active: true, expiresAt: null, minutesRemaining: null });
+    expect(await getBootstrapTokenStatus()).toEqual({ active: true, present: true, expiresAt: null, minutesRemaining: null });
+  });
+});
+
+describe('reactivateBootstrapToken (#1419)', () => {
+  it('re-issues the same token with a fresh ~30 min window', async () => {
+    mockGetConfig.mockResolvedValue({ auth: { bootstrapToken: { hash: 'abc', scope: 'read', expiresAt: new Date(Date.now() - 60_000).toISOString() } } });
+    const r = await reactivateBootstrapToken();
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.minutesRemaining).toBe(30);
+      expect(Date.parse(r.expiresAt)).toBeGreaterThan(Date.now());
+    }
+    const arg = mockUpdateConfig.mock.calls[0][0];
+    expect(arg.auth.bootstrapToken.hash).toBe('abc');
+    expect(Date.parse(arg.auth.bootstrapToken.expiresAt)).toBeGreaterThan(Date.now());
+  });
+
+  it('is a no-op (no-bootstrap-token) once the entry was revoked', async () => {
+    mockGetConfig.mockResolvedValue({ auth: {} });
+    const r = await reactivateBootstrapToken();
+    expect(r).toEqual({ ok: false, reason: 'no-bootstrap-token' });
+    expect(mockUpdateConfig).not.toHaveBeenCalled();
   });
 });
 

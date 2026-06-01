@@ -67,6 +67,7 @@ const AppConfigSchema = z.object({
   serviceMigrations: z.record(z.string(), looseArray).optional(),
   installManifest: looseObject.optional(),
   accessRequests: looseArray.optional(),
+  maxUsers: z.number().int().positive().max(100000).optional(),
 }).strict();
 
 /**

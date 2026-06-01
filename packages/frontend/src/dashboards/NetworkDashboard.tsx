@@ -233,11 +233,25 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
     const dedupedPorts = Array.from(uniquePortsMap.values());
 
     const uniqueIps = Array.from(new Set(dedupedPorts.map((p) => p.ip).filter(Boolean))) as string[];
-    // If exactly one unique IP is found across all ports, show it globally. 
-    // Otherwise (0 or >1), show IPs on tags individually.
+    // If exactly one unique IP is found across all ports, show it globally.
+    // Otherwise (0 or >1) we tag IPs per port — but #1428: when a node's ports
+    // span multiple bind addresses (e.g. file-share's mix of localhost + LAN),
+    // showing the prefix on EVERY port balloons the card. Group ports by IP and
+    // show each prefix once per group: sort to cluster groups, mark the first
+    // port of each group with `showIp`. No info lost (loopback vs LAN still clear).
     const globalIp = uniqueIps.length === 1 ? uniqueIps[0] : null;
 
-    return { globalIp, portMap: dedupedPorts };
+    const sortedPorts = globalIp
+      ? dedupedPorts
+      : [...dedupedPorts].sort((a, b) => String(a.ip ?? '').localeCompare(String(b.ip ?? '')));
+    let prevIp: string | null | undefined;
+    const portMap = sortedPorts.map((pp) => {
+      const showIp = pp.ip != null && pp.ip !== prevIp;
+      prevIp = pp.ip;
+      return { ...pp, showIp };
+    });
+
+    return { globalIp, portMap };
   };
 
   const { globalIp, portMap } = extractIpInfo();
@@ -427,7 +441,7 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                                 hostname = data.node;
                             }
 
-                            const showIpInTag = !globalIp && p.ip;
+                            const showIpInTag = !globalIp && p.ip && p.showIp;
 
                             return (
                                 <div key={idx} className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-1">
@@ -584,7 +598,7 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                                 }
                             }
 
-                            const showIpInTag = !globalIp && p.ip;
+                            const showIpInTag = !globalIp && p.ip && p.showIp;
                             const link = `http://${hostname}:${p.host}`;
 
                             const content = (

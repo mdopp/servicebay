@@ -19,8 +19,8 @@ interface TokenView {
 }
 
 type BootstrapStatus =
-  | { active: false }
-  | { active: true; expiresAt: string | null; minutesRemaining: number | null };
+  | { active: false; present?: boolean }
+  | { active: true; present?: boolean; expiresAt: string | null; minutesRemaining: number | null };
 
 const SCOPE_BADGE: Record<ApiScope, string> = {
   destroy: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300',
@@ -30,27 +30,38 @@ const SCOPE_BADGE: Record<ApiScope, string> = {
   read: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300',
 };
 
-function BootstrapBanner({ status, revoking, onRevoke }: { status: BootstrapStatus; revoking: boolean; onRevoke: () => void }) {
-  if (!status.active) return null;
+function BootstrapBanner({ status, revoking, reactivating, onRevoke, onReactivate }: { status: BootstrapStatus; revoking: boolean; reactivating: boolean; onRevoke: () => void; onReactivate: () => void }) {
+  // Show whenever the bootstrap entry still exists — including after its
+  // window lapsed — so an expired token can be re-activated (#1419).
+  if (!status.active && !status.present) return null;
+  const btnClass = 'text-xs font-medium px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-100 bg-white dark:bg-amber-900/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 disabled:opacity-50';
   return (
     <div className="mt-4 rounded-lg border border-amber-200 dark:border-amber-700/40 bg-amber-50/80 dark:bg-amber-900/20 px-4 py-3 flex items-start justify-between gap-4">
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-amber-900 dark:text-amber-200">Bootstrap token active</p>
+        <p className="text-sm font-medium text-amber-900 dark:text-amber-200">{status.active ? 'Bootstrap token active' : 'Bootstrap token expired'}</p>
         <p className="text-xs text-amber-800/90 dark:text-amber-200/80 mt-0.5">
-          {status.minutesRemaining !== null
-            ? `LAN-only, read scope, ${status.minutesRemaining} min remaining.`
-            : 'LAN-only, read scope. Expiry will be set on next server boot.'}
+          {status.active
+            ? (status.minutesRemaining !== null
+                ? `LAN-only, read scope, ${status.minutesRemaining} min remaining.`
+                : 'LAN-only, read scope. Expiry will be set on next server boot.')
+            : 'LAN-only, read scope. Re-activate to reconnect an MCP client for ~30 min — same token, no new credential.'}
           {' '}Auto-revokes when you mint your first regular token below.
         </p>
       </div>
-      <button
-        type="button"
-        disabled={revoking}
-        onClick={onRevoke}
-        className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-100 bg-white dark:bg-amber-900/40 hover:bg-amber-100 dark:hover:bg-amber-900/60 disabled:opacity-50"
-      >
-        {revoking ? 'Revoking…' : 'Revoke now'}
-      </button>
+      <div className="shrink-0 flex items-center gap-2">
+        <button
+          type="button"
+          disabled={reactivating}
+          onClick={onReactivate}
+          className={btnClass}
+          title="Re-issue the existing LAN-only bootstrap token for another ~30 minutes so an MCP client can reconnect — same token value."
+        >
+          {reactivating ? 'Re-activating…' : 'Re-activate (30 min)'}
+        </button>
+        <button type="button" disabled={revoking} onClick={onRevoke} className={btnClass}>
+          {revoking ? 'Revoking…' : 'Revoke now'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -171,6 +182,7 @@ function CreateTokenForm(props: CreateTokenFormProps) {
 export default function ApiTokensSection() {
   const [bootstrap, setBootstrap] = useState<BootstrapStatus | null>(null);
   const [revokingBootstrap, setRevokingBootstrap] = useState(false);
+  const [reactivatingBootstrap, setReactivatingBootstrap] = useState(false);
   const [tokens, setTokens] = useState<TokenView[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
@@ -209,6 +221,18 @@ export default function ApiTokensSection() {
       loadBootstrap();
     } finally {
       setRevokingBootstrap(false);
+    }
+  };
+
+  // Re-issue the existing bootstrap token for another ~30 min (#1419) — same
+  // token value, so an MCP client reconnects without a fresh credential.
+  const reactivateBootstrap = async () => {
+    setReactivatingBootstrap(true);
+    try {
+      await fetch('/api/system/mcp-bootstrap', { method: 'POST' });
+      loadBootstrap();
+    } finally {
+      setReactivatingBootstrap(false);
     }
   };
 
@@ -271,7 +295,7 @@ export default function ApiTokensSection() {
         </div>
       </div>
 
-      {bootstrap && <BootstrapBanner status={bootstrap} revoking={revokingBootstrap} onRevoke={revokeBootstrap} />}
+      {bootstrap && <BootstrapBanner status={bootstrap} revoking={revokingBootstrap} reactivating={reactivatingBootstrap} onRevoke={revokeBootstrap} onReactivate={reactivateBootstrap} />}
 
       <div className="mt-4 space-y-3">
         <p className="text-xs text-gray-500 dark:text-gray-400">

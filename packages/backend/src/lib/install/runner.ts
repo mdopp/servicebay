@@ -1326,6 +1326,30 @@ async function runJob(jobId: string): Promise<void> {
     }
   }
 
+  // NPM admin self-heal (#1268, credential-reconciliation ARCH-15) — must run
+  // BEFORE proxy-host + portal provisioning (both need a working NPM admin
+  // login) and on EVERY install, not just when nginx is freshly installed.
+  // The failing case (#1268): a new stack with an internal subdomain installed
+  // onto a box whose nginx was already present with an empty/diverged NPM
+  // password — the old gate (fresh-nginx only, and positioned after this step)
+  // skipped the heal, so per-service proxy hosts + portal routing failed with
+  // no recovery on every (re)install. npmAdminCredStatus self-skips ('unknown')
+  // when NPM isn't reachable, so this is a cheap no-op for NPM-less installs.
+  // Best-effort; never fatal (the npm_data_stale diagnose action is the manual
+  // fallback). rekeyNpmAdmin writes NPM's admin hash directly, so it recovers
+  // even when ServiceBay's stored password is empty.
+  try {
+    const npmNode = input.node || 'Local';
+    const status = await npmAdminCredStatus(npmNode);
+    if (status === 'rejected' || status === 'no-creds') {
+      await log(jobId, '🔑 NPM is rejecting/missing the stored admin credentials — re-keying in place (proxy routes preserved)…');
+      const r = await rekeyNpmAdmin(npmNode);
+      await log(jobId, (r.ok ? '✅ ' : '⚠️ ') + r.message);
+    }
+  } catch (e) {
+    await log(jobId, `(note) NPM admin reconcile skipped: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   // #807 — guarantee every service subdomain has an NPM proxy host,
   // regardless of whether each per-template `feature.installed` emit
   // created its own. Idempotent: re-creating an existing host no-ops.
@@ -1381,27 +1405,6 @@ async function runJob(jobId: string): Promise<void> {
   // containers, which on a fresh install reported a misleading failure
   // (the proxy/DNS *were* being installed, just not up yet).
   await settleWait(jobId, ctx.deployed, input.node || 'Local');
-
-  // NPM admin self-heal (credential-reconciliation, ARCH-15). If nginx is
-  // in this install and its persisted DB holds an admin password
-  // ServiceBay can't authenticate with (empty/diverged across a
-  // reinstall), re-key it in place — non-destructive, every proxy route
-  // preserved — so the portal provisioning below can actually manage NPM.
-  // Best-effort; never fatal (the npm_data_stale diagnose action is the
-  // manual fallback).
-  if (selected.some(s => s.name === 'nginx' && !s.alreadyInstalled)) {
-    try {
-      const node = input.node || 'Local';
-      const status = await npmAdminCredStatus(node);
-      if (status === 'rejected' || status === 'no-creds') {
-        await log(jobId, '🔑 NPM is rejecting/missing the stored admin credentials — re-keying in place (proxy routes preserved)…');
-        const r = await rekeyNpmAdmin(node);
-        await log(jobId, (r.ok ? '✅ ' : '⚠️ ') + r.message);
-      }
-    } catch (e) {
-      await log(jobId, `(note) NPM admin reconcile skipped: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
 
   // Portal routing — apex + wildcard rewrites for the active domain.
   // Always runs after a successful install (#707). Pre-fix this was
