@@ -27,6 +27,7 @@ import { checkDomainExternalReachability } from '@/lib/diagnose/probes/domainExt
 import { checkDomainUnreachable } from '@/lib/diagnose/probes/domainUnreachable';
 import { checkOidcProviderReachable } from '@/lib/diagnose/probes/oidcProviderReachable';
 import { checkNasBackupReachable } from '@/lib/diagnose/probes/nasBackupReachable';
+import { checkSsoVerify } from '@/lib/diagnose/probes/ssoVerify';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
 import '@/lib/diagnose/probes/register';
 
@@ -100,6 +101,30 @@ const trimOutput = (s: string | undefined, maxLines = 20): string => {
 export interface DiagnoseResult {
   node: string;
   probes: DiagnoseProbe[];
+}
+
+/** Build the `sso_verify` probe row from the persisted report (#1455).
+ *  Extracted from the orchestrator so the try/catch + push shape doesn't
+ *  add to `runDiagnose`'s already-large complexity budget. */
+async function buildSsoVerifyProbe(): Promise<DiagnoseProbe> {
+  try {
+    const sso = await checkSsoVerify();
+    return {
+      id: 'sso_verify',
+      label: 'SSO end-to-end',
+      status: sso.status,
+      detail: sso.detail,
+      hint: sso.hint,
+      _items: sso.items,
+    };
+  } catch (e) {
+    return {
+      id: 'sso_verify',
+      label: 'SSO end-to-end',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
 }
 
 /** Run the diagnose probe battery against `nodeName`. Pure orchestrator —
@@ -694,6 +719,15 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
   }
+
+  // 14a-2) End-to-end SSO verification (#1455). Reads the report persisted
+  //     by the post-install auto-run (#1454) or the operator's last
+  //     on-demand "Run SSO check" click — it does NOT re-spin an ephemeral
+  //     user on every diagnose tick (that's the action's job). Sister to
+  //     oidc_provider_reachable: that probe confirms Authelia *answers*;
+  //     this one confirms a real family-group login can reach every
+  //     user-facing domain and is blocked from admin-only ones.
+  probes.push(await buildSsoVerifyProbe());
 
   // 14b) Proxy route create-failures (B12). Surfaces config entries
   //     where install-time NPM creation came back unconfirmed; per-item
