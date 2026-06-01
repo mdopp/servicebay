@@ -20,6 +20,28 @@ const encode = (payload: Payload) => ({
 
 const WARN_DAYS = 14;
 
+function buildCertItems(leCerts: NpmCert[]): { items: CertItem[]; expired: number; expiringSoon: number } {
+  const now = Date.now();
+  const items: CertItem[] = [];
+  let expiringSoon = 0;
+  let expired = 0;
+  for (const c of leCerts) {
+    if (!c.expires_on) continue;
+    const exp = Date.parse(c.expires_on);
+    if (!Number.isFinite(exp)) continue;
+    const daysLeft = Math.floor((exp - now) / (1000 * 60 * 60 * 24));
+    const domains = (c.domain_names ?? []).join(', ') || `cert ${c.id}`;
+    if (daysLeft < 0) {
+      expired += 1;
+      items.push({ id: String(c.id), label: domains, detail: `EXPIRED ${-daysLeft} day${daysLeft === -1 ? '' : 's'} ago — services served via this cert show browser warnings.`, status: 'fail', actionIds: ['renew_cert'] });
+    } else if (daysLeft <= WARN_DAYS) {
+      expiringSoon += 1;
+      items.push({ id: String(c.id), label: domains, detail: `Expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`, status: 'warn', actionIds: ['renew_cert'] });
+    }
+  }
+  return { items, expired, expiringSoon };
+}
+
 registerProbe({
   type: 'cert_expiry',
   async run(check) {
@@ -47,24 +69,7 @@ registerProbe({
       const leCerts = (certs ?? []).filter(c => c.provider === 'letsencrypt');
       if (leCerts.length === 0) return encode({ status: 'info', detail: "No Let's Encrypt certificates managed by NPM." });
 
-      const now = Date.now();
-      const items: CertItem[] = [];
-      let expiringSoon = 0;
-      let expired = 0;
-      for (const c of leCerts) {
-        if (!c.expires_on) continue;
-        const exp = Date.parse(c.expires_on);
-        if (!Number.isFinite(exp)) continue;
-        const daysLeft = Math.floor((exp - now) / (1000 * 60 * 60 * 24));
-        const domains = (c.domain_names ?? []).join(', ') || `cert ${c.id}`;
-        if (daysLeft < 0) {
-          expired += 1;
-          items.push({ id: String(c.id), label: domains, detail: `EXPIRED ${-daysLeft} day${daysLeft === -1 ? '' : 's'} ago — services served via this cert show browser warnings.`, status: 'fail', actionIds: ['renew_cert'] });
-        } else if (daysLeft <= WARN_DAYS) {
-          expiringSoon += 1;
-          items.push({ id: String(c.id), label: domains, detail: `Expires in ${daysLeft} day${daysLeft === 1 ? '' : 's'}.`, status: 'warn', actionIds: ['renew_cert'] });
-        }
-      }
+      const { items, expired, expiringSoon } = buildCertItems(leCerts);
       if (items.length === 0) {
         return encode({ status: 'ok', detail: `${leCerts.length} Let's Encrypt cert${leCerts.length === 1 ? '' : 's'} managed; none expiring in ${WARN_DAYS} days.` });
       }

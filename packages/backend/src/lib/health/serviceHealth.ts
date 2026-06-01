@@ -161,6 +161,23 @@ export class ServiceHealthPoller {
   }
 }
 
+function buildHealthFromBody(body: HealthBody, ts: string): ServiceHealth {
+  const ready = body.ready ?? true;
+  const health: ServiceHealth = { ready, lastCheckedAt: ts };
+  if (body.degraded) health.degraded = true;
+  if (typeof body.message === 'string' && body.message) {
+    health.message = body.message.slice(0, 512);
+  }
+  if (body.deps && typeof body.deps === 'object') {
+    const cleaned: Record<string, 'ok' | 'degraded' | 'unreachable'> = {};
+    for (const [k, v] of Object.entries(body.deps)) {
+      if (v === 'ok' || v === 'degraded' || v === 'unreachable') cleaned[k] = v;
+    }
+    if (Object.keys(cleaned).length > 0) health.deps = cleaned;
+  }
+  return health;
+}
+
 async function probeHttp(url: string, timeoutMs: number, ts: string): Promise<ServiceHealth> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -169,9 +186,6 @@ async function probeHttp(url: string, timeoutMs: number, ts: string): Promise<Se
     if (!res.ok) {
       return { ready: false, lastCheckedAt: ts, message: `HTTP ${res.status}` };
     }
-    // Some services ship `/healthz` as plain text "ok" or empty body;
-    // tolerate both. Only parse JSON when the response declares it,
-    // otherwise treat a 2xx as success-with-no-detail.
     const ct = res.headers.get('content-type') ?? '';
     if (!ct.includes('application/json')) {
       return { ready: true, lastCheckedAt: ts };
@@ -182,22 +196,7 @@ async function probeHttp(url: string, timeoutMs: number, ts: string): Promise<Se
     } catch {
       return { ready: true, lastCheckedAt: ts };
     }
-    const ready = body.ready ?? true; // 2xx without `ready` defaults to true
-    const health: ServiceHealth = { ready, lastCheckedAt: ts };
-    if (body.degraded) health.degraded = true;
-    // Trim message to a reasonable length so a misbehaving service can't
-    // pump megabytes of error text into the twin.
-    if (typeof body.message === 'string' && body.message) {
-      health.message = body.message.slice(0, 512);
-    }
-    if (body.deps && typeof body.deps === 'object') {
-      const cleaned: Record<string, 'ok' | 'degraded' | 'unreachable'> = {};
-      for (const [k, v] of Object.entries(body.deps)) {
-        if (v === 'ok' || v === 'degraded' || v === 'unreachable') cleaned[k] = v;
-      }
-      if (Object.keys(cleaned).length > 0) health.deps = cleaned;
-    }
-    return health;
+    return buildHealthFromBody(body, ts);
   } catch (e) {
     const aborted = e instanceof Error && e.name === 'AbortError';
     return {

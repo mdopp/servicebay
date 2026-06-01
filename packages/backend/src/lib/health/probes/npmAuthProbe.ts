@@ -19,6 +19,31 @@ const encode = (payload: Payload) => ({
   message: `${NPM_AUTH_MESSAGE_PREFIX}${JSON.stringify(payload)}`,
 });
 
+async function checkNpmAuth(adminUrl: string, email: string, password: string) {
+  try {
+    const res = await fetch(`${adminUrl}/api/tokens`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identity: email, secret: password }),
+      signal: AbortSignal.timeout(4000),
+    });
+    if (res.ok) return encode({ status: 'ok', detail: 'NPM accepts the stored admin credentials.' });
+    if (res.status === 401 || (res.status === 400 && (await isInvalidAuth(res)))) {
+      return encode({
+        status: 'fail',
+        detail: 'Nginx Proxy Manager is rejecting the stored admin credentials. This usually means a previous install left an admin password in the NPM database that no longer matches.',
+        hint: 'Click "Re-key NPM admin (keep data)" to set a fresh password in place — no proxy routes are lost and you don\'t need the current one. (If you DO know the password NPM is using, "Use existing password" saves it; "Reset NPM data" is the last resort — it wipes the database.)',
+      });
+    }
+    return encode({ status: 'info', detail: `NPM auth probe returned HTTP ${res.status} — assuming transient.` });
+  } catch (e) {
+    return encode({
+      status: 'info',
+      detail: `Could not reach NPM at ${adminUrl}: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+}
+
 registerProbe({
   type: 'npm_auth',
   async run(check) {
@@ -36,32 +61,7 @@ registerProbe({
       if (admin.kind === 'nginx-not-found') {
         return encode({ status: 'info', detail: 'Nginx Proxy Manager not deployed on this node — nothing to check.' });
       }
-      const adminUrl = admin.url;
-      try {
-        const res = await fetch(`${adminUrl}/api/tokens`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identity: npm.email, secret: npm.password }),
-          signal: AbortSignal.timeout(4000),
-        });
-        if (res.ok) return encode({ status: 'ok', detail: 'NPM accepts the stored admin credentials.' });
-        // NPM (jc21) returns HTTP 400 `error.invalid-auth` — NOT 401 — for a
-        // wrong password. Treat either as the stale-credentials failure;
-        // otherwise a real stale-creds box never flags (found via on-box verify).
-        if (res.status === 401 || (res.status === 400 && (await isInvalidAuth(res)))) {
-          return encode({
-            status: 'fail',
-            detail: 'Nginx Proxy Manager is rejecting the stored admin credentials. This usually means a previous install left an admin password in the NPM database that no longer matches.',
-            hint: 'Click "Re-key NPM admin (keep data)" to set a fresh password in place — no proxy routes are lost and you don\'t need the current one. (If you DO know the password NPM is using, "Use existing password" saves it; "Reset NPM data" is the last resort — it wipes the database.)',
-          });
-        }
-        return encode({ status: 'info', detail: `NPM auth probe returned HTTP ${res.status} — assuming transient.` });
-      } catch (e) {
-        return encode({
-          status: 'info',
-          detail: `Could not reach NPM at ${adminUrl}: ${e instanceof Error ? e.message : String(e)}`,
-        });
-      }
+      return checkNpmAuth(admin.url, npm.email, npm.password);
     } catch (e) {
       return { status: 'fail', message: `npm_auth error: ${e instanceof Error ? e.message : String(e)}` };
     }

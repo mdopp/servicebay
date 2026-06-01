@@ -32,6 +32,15 @@ import type { SetupAssetKind } from './userGuide';
  * `application/x-apple-aspen-config` Content-Type that triggers the
  * "Install Profile" prompt on download.
  */
+function buildProfileUuids(hostname: string, serviceName: string): { profileUuid: string; calUuid: string; cardUuid: string; orgId: string } {
+  const seed = `servicebay:${hostname}:${serviceName}`;
+  const profileUuid = `00000000-0000-0000-0000-${crypto.createHash('sha1').update(seed).digest('hex').slice(0, 12)}`;
+  const calUuid = `00000000-0000-0000-0000-${crypto.createHash('sha1').update(seed + ':cal').digest('hex').slice(0, 12)}`;
+  const cardUuid = `00000000-0000-0000-0000-${crypto.createHash('sha1').update(seed + ':card').digest('hex').slice(0, 12)}`;
+  const orgId = `com.servicebay.${hostname.replace(/\./g, '-')}`;
+  return { profileUuid, calUuid, cardUuid, orgId };
+}
+
 export async function generateIosCalendarProfile(serviceName: string, subdomainVar?: string): Promise<string | null> {
   const config = await getConfig();
   const url = await resolveServiceUrl(config, serviceName, subdomainVar);
@@ -39,18 +48,7 @@ export async function generateIosCalendarProfile(serviceName: string, subdomainV
   const parsed = new URL(url);
   const hostname = parsed.hostname;
   const useSsl = parsed.protocol === 'https:';
-  // iOS profile UUIDs: deterministic-ish per server so a re-install
-  // updates the same profile rather than creating a duplicate.
-  const seed = `servicebay:${hostname}:${serviceName}`;
-  const profileUuid = `00000000-0000-0000-0000-${crypto.createHash('sha1').update(seed).digest('hex').slice(0, 12)}`;
-  const calUuid = `00000000-0000-0000-0000-${crypto.createHash('sha1').update(seed + ':cal').digest('hex').slice(0, 12)}`;
-  const cardUuid = `00000000-0000-0000-0000-${crypto.createHash('sha1').update(seed + ':card').digest('hex').slice(0, 12)}`;
-
-  // Note: PayloadIdentifier is the stable user-visible name. iOS
-  // groups payloads by it; reusing `com.servicebay.<host>` means
-  // re-installing the profile updates the same accounts rather
-  // than duplicating them.
-  const orgId = `com.servicebay.${hostname.replace(/\./g, '-')}`;
+  const { profileUuid, calUuid, cardUuid, orgId } = buildProfileUuids(hostname!, serviceName);
 
   // CalDAV / CardDAV "PrincipalURL" left empty — iOS will discover
   // it via the well-known endpoints CardDAV (.well-known/carddav)

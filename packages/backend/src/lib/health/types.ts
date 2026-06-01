@@ -82,11 +82,29 @@ export interface CheckResult {
   message?: string;
 }
 
+/**
+ * Self-repair payload a synthetic `diagnose:<probeId>` check carries on
+ * its enriched row (#1423). Mirrors the frontend `DiagnoseProbe` shape so
+ * the Checks tab can render the four-way status badge and open the
+ * self-repair popup straight from the row, without re-running the suite.
+ * Declared structurally here (no import) to avoid a health⇄diagnose cycle.
+ */
+export interface DiagnoseCheckPayload {
+  status: 'ok' | 'warn' | 'fail' | 'info';
+  label?: string;
+  detail?: string;
+  hint?: string;
+  actions?: unknown[];
+  items?: unknown[];
+}
+
 // Extended type for UI
 export interface Check extends CheckConfig {
   status: 'ok' | 'fail' | 'unknown';
   lastRun: string | null;
   lastResult: string | null;
-  message?: string; 
+  message?: string;
   history: { status: 'ok' | 'fail'; latency: number; timestamp: string }[];
+  /** Present only on synthetic diagnose rows (#1423). */
+  diagnose?: DiagnoseCheckPayload;
 }

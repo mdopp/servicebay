@@ -23,6 +23,29 @@ const FRESHNESS_HOURS = 24;
 const TAIL_BYTES = 65_536;
 const safePath = (p: string) => /^\/[A-Za-z0-9_./-]+$/.test(p);
 
+function buildHint(categories: Set<FailureCategory>): string {
+  if (categories.size === 1) {
+    const [only] = Array.from(categories);
+    switch (only) {
+      case 'rate-limit':
+        return "Let's Encrypt blocks repeated identical requests. Wait the window out (1h for failed-auth, 168h for duplicate-certs) before retrying — and fix the underlying cause first.";
+      case 'port-80':
+        return 'ACME HTTP-01 needs port 80 reachable from the public internet. Check router port-forwarding to this LAN IP and any upstream ISP block.';
+      case 'dns':
+        return 'The domain must resolve from public DNS to your gateway IP. Check the A record at your registrar — `domain_external_reachability` shows what public resolvers see today.';
+      case 'caa':
+        return "A CAA record at your domain forbids Let's Encrypt from issuing. Add `0 issue \"letsencrypt.org\"` at your registrar (or remove the restrictive CAA record entirely).";
+      case 'dnssec':
+        return "DNSSEC chain is broken — the validator can't verify your A record. Fix DS / DNSKEY at your registrar, or disable DNSSEC for this zone until you can.";
+      case 'tls-sni':
+        return 'Legacy TLS-SNI challenge type — NPM should be using HTTP-01 by default. Re-create the certificate entry in NPM to force HTTP-01.';
+      case 'other':
+        return "Read the detail line — certbot's wording usually names the exact cause. Run letsdebug.net for an external view of what the ACME server sees.";
+    }
+  }
+  return 'Multiple failure types in the log — see each row for its category. Run letsdebug.net for an external view of what the ACME server sees, then click Retry once the underlying cause is fixed.';
+}
+
 registerProbe({
   type: 'cert_request_failure',
   async run(check) {
@@ -89,28 +112,7 @@ registerProbe({
         });
       }
 
-      const hint = ((): string => {
-        if (categories.size === 1) {
-          const [only] = Array.from(categories);
-          switch (only) {
-            case 'rate-limit':
-              return "Let's Encrypt blocks repeated identical requests. Wait the window out (1h for failed-auth, 168h for duplicate-certs) before retrying — and fix the underlying cause first.";
-            case 'port-80':
-              return 'ACME HTTP-01 needs port 80 reachable from the public internet. Check router port-forwarding to this LAN IP and any upstream ISP block.';
-            case 'dns':
-              return 'The domain must resolve from public DNS to your gateway IP. Check the A record at your registrar — `domain_external_reachability` shows what public resolvers see today.';
-            case 'caa':
-              return "A CAA record at your domain forbids Let's Encrypt from issuing. Add `0 issue \"letsencrypt.org\"` at your registrar (or remove the restrictive CAA record entirely).";
-            case 'dnssec':
-              return "DNSSEC chain is broken — the validator can't verify your A record. Fix DS / DNSKEY at your registrar, or disable DNSSEC for this zone until you can.";
-            case 'tls-sni':
-              return 'Legacy TLS-SNI challenge type — NPM should be using HTTP-01 by default. Re-create the certificate entry in NPM to force HTTP-01.';
-            case 'other':
-              return "Read the detail line — certbot's wording usually names the exact cause. Run letsdebug.net for an external view of what the ACME server sees.";
-          }
-        }
-        return 'Multiple failure types in the log — see each row for its category. Run letsdebug.net for an external view of what the ACME server sees, then click Retry once the underlying cause is fixed.';
-      })();
+      const hint = buildHint(categories);
 
       return encode({
         status: 'fail',

@@ -29,5 +29,6 @@ import './domainExternalReachability';
 import './domainUnreachable';
 import './lanIpChanged';
 import './oidcProviderReachable';
+import './ssoVerify';
 
 export {};
