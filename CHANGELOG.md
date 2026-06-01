@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.70.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.69.3...servicebay-v4.70.0) (2026-06-01)
+
+
+### Features
+
+* **settings:** re-download the credentials CSV from Saved credentials ([e9fba8d](https://github.com/mdopp/servicebay/commit/e9fba8dd00c3084deb97ce55424394ee7e5236fe))
+* **settings:** re-download the credentials CSV from Saved credentials ([9055ebc](https://github.com/mdopp/servicebay/commit/9055ebcaf534bd00dc47dc1f124996d1047ad427))
+
 ## [4.69.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.69.2...servicebay-v4.69.3) (2026-06-01)
 
 
