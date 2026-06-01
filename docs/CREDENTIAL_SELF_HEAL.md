@@ -13,6 +13,7 @@ some drift, one is a known foot-gun.
 
 | Service | Stored cred | On-disk state | Self-heal path | Status |
 |---|---|---|---|---|
+| **ServiceBay admin login** | `config.auth.passwordHash` (bcrypt) | NextAuth session store (no separate DB) | At login time, if the stored hash rejects the candidate but `SERVICEBAY_PASSWORD` (env) accepts it, the login succeeds and the stored hash is re-keyed to the new password. Operator-changed passwords always win; the env fallback only fires when the stored hash is stale. | ✅ |
 | **NPM** | `config.reverseProxy.npm.password` | sqlite DB at `nginx-proxy-manager/data/database.sqlite` | post-deploy `bootstrapNpmAdmin` re-rotates via NPM API using the previous-pw fallback chain | ✅ |
 | **AdGuard** | `config.adguard.password` | `adguard/conf/AdGuardHome.yaml` (bcrypt in plain YAML) | Mustache renders `AdGuardHome.yaml.mustache` on every deploy → bcrypt with new pw → `extraFiles` writes overwrite the on-disk YAML → AdGuard reads new config on next restart | ✅ |
 | **Authelia** | `AUTHELIA_STORAGE_ENCRYPTION_KEY` (`enc:` in `config.json`) | `auth/authelia-data/db.sqlite3` (rows encrypted with the key) | Runner detects fresh key + non-empty data dir → wipes `authelia-data/` only (#619). LLDAP users at sibling `auth/lldap` host path are preserved. | ✅ |
