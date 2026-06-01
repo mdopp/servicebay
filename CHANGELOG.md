@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.79.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.78.0...servicebay-v4.79.0) (2026-06-01)
+
+
+### Features
+
+* **install:** render post-deploy progress as a user-facing bar ([9221d10](https://github.com/mdopp/servicebay/commit/9221d10c5827bd4bc442efde56f7ecb01d14303a)), closes [#1288](https://github.com/mdopp/servicebay/issues/1288)
+* **portal:** surface a manual-action card for interactive Signal pairing ([8e41508](https://github.com/mdopp/servicebay/commit/8e4150863c35e16d69f8fde8d3c1ac698f87a0be)), closes [#1253](https://github.com/mdopp/servicebay/issues/1253)
+* post-deploy progress bar consumer and Signal-pairing portal card ([96432a5](https://github.com/mdopp/servicebay/commit/96432a59988aea9c46d1004c1ccf74f839a4aa2e))
+
+
+### Bug Fixes
+
+* **tests:** e2e login helper targets placeholder + gitignore playwright artifacts ([e9b7629](https://github.com/mdopp/servicebay/commit/e9b762927f3adb7e2e0c81946286a2e84bba9d11))
+
 ## [4.78.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.77.0...servicebay-v4.78.0) (2026-06-01)
 
 
