@@ -27,6 +27,7 @@ import {
   isBackupRunning,
 } from '@/lib/backup/service';
 import { restoreSystemBackup } from '@/lib/systemBackup';
+import { getServicebayChannel, setServicebayChannel } from '@/lib/servicebayChannel';
 import { guardMutation, guardExec, snapshotBeforeMutation } from './safety';
 import { recordAudit } from './audit';
 import { notifyDestructiveOp } from './notify';
@@ -72,6 +73,7 @@ const MUTATING_TOOLS = new Set([
   'update_config', 'exec_command', 'refresh_agent',
   'merge_unmanaged_bundle',
   'set_boot_next_usb', 'reboot_node', 'factory_reset',
+  'set_channel',
 ]);
 
 /**
@@ -98,10 +100,12 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   verify_usb_boot: 'read',
   list_trashed_services: 'read',
   get_unmanaged_bundles: 'read',
+  get_channel: 'read',
   // lifecycle
   start_service: 'lifecycle', stop_service: 'lifecycle', restart_service: 'lifecycle',
   run_check_now: 'lifecycle', refresh_agent: 'lifecycle',
   run_backup: 'lifecycle',
+  set_channel: 'lifecycle',
   // mutate
   deploy_service: 'mutate', update_service_yaml: 'mutate', rename_service: 'mutate',
   add_proxy_route: 'mutate', create_health_check: 'mutate',
@@ -388,6 +392,28 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
       await ServiceManager.restartService(nodeName, name);
       const status = await ServiceManager.getServiceStatus(nodeName, name);
       return textResult(status);
+    },
+  );
+
+  // --- Release channel (#1459): lets the autoloop flip the box to :dev to
+  // verify a just-merged batch, then back to :latest, without a human. ---
+  server.tool(
+    'get_channel',
+    'Get the ServiceBay release channel the box is currently running (latest | dev | test).',
+    {},
+    async () => {
+      const channel = await getServicebayChannel();
+      return textResult({ channel });
+    },
+  );
+
+  server.tool(
+    'set_channel',
+    'Switch the ServiceBay release channel and restart onto it. latest = last release; dev = latest non-release main commit (use to verify a just-merged change on the box, then set back to latest); test = test image. Pull + restart run in the background, so this returns before the box restarts (~1-2 min) and the MCP connection drops during the restart — reconnect and poll get_channel after.',
+    { channel: z.enum(['latest', 'dev', 'test']) },
+    async ({ channel }) => {
+      await setServicebayChannel(channel);
+      return textResult({ ok: true, channel, note: 'Pull + restart triggered in the background. The box will be on the new channel after it restarts; this MCP connection drops during the restart — reconnect, then poll get_channel.' });
     },
   );
 
