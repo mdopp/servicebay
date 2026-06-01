@@ -6,6 +6,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,15 @@ import (
 	"servicebay-tui/internal/fritz"
 	"servicebay-tui/internal/habackup"
 )
+
+// nasRegistrar registers the FritzBox NAS as the box's external-backup source
+// after an upload, so the staged backup is discoverable by install/restore
+// (#1440). Best-effort: nil (no box / no token yet) or an error is non-fatal —
+// the FTP upload already succeeded and the source can be registered later from
+// Settings → Backups. The rest.Client satisfies this via RegisterNasSource.
+type nasRegistrar interface {
+	RegisterNasSource(ctx context.Context, host, username, password string) error
+}
 
 // haServiceTar is the on-NAS name the box's restore flow (#1363) reads back.
 const haServiceTar = "sb-backup/home-assistant.tar"
@@ -51,6 +61,10 @@ type NasUploadModel struct {
 	filtered   []habackup.Candidate // those matching the current path filter
 	candCursor int
 	scanning   bool
+
+	// registrar, when non-nil, registers the NAS as the box's backup source
+	// after a successful upload so install/restore can find it (#1440).
+	registrar nasRegistrar
 }
 
 const nasUploadFields = 4
@@ -72,6 +86,15 @@ func NewNasUpload() NasUploadModel {
 	}
 }
 
+// WithRegistrar wires a box client so a successful upload also registers the
+// NAS as the box's external-backup source (#1440). Optional: when the upload
+// runs before a box exists (or without a token) the registrar is left nil and
+// registration happens later from Settings → Backups.
+func (m NasUploadModel) WithRegistrar(r nasRegistrar) NasUploadModel {
+	m.registrar = r
+	return m
+}
+
 // scanCmd runs the backup-file discovery off the UI thread.
 func scanCmd() tea.Cmd {
 	return func() tea.Msg { return candidatesMsg{list: habackup.FindCandidates()} }
@@ -88,6 +111,7 @@ var fieldHints = [nasUploadFields]string{
 
 func (m NasUploadModel) uploadCmd() tea.Cmd {
 	path, host, user, pass := resolvePath(m.path.Value()), m.ftpHost.Value(), m.ftpUser.Value(), m.ftpPass.Value()
+	registrar := m.registrar
 	return func() tea.Msg {
 		tar, err := habackup.ExtractAndFilter(path, habackup.HomeAssistantIncludes)
 		if err != nil {
@@ -97,7 +121,18 @@ func (m NasUploadModel) uploadCmd() tea.Cmd {
 			return nasUploadResultMsg{err: err}
 		}
 		_ = fritz.SaveCreds(fritz.Creds{Host: host, User: user, Password: pass})
-		return nasUploadResultMsg{detail: fmt.Sprintf("home-assistant.tar (%d KB)", (len(tar)+1023)/1024)}
+		detail := fmt.Sprintf("home-assistant.tar (%d KB)", (len(tar)+1023)/1024)
+		// Best-effort: tell the box where its backup now lives so install/restore
+		// can find it (#1440). A nil registrar (no box yet) or an error is fine —
+		// the upload succeeded and Settings → Backups can register the source later.
+		if registrar != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := registrar.RegisterNasSource(ctx, host, user, pass); err == nil {
+				detail += " · registered with the box"
+			}
+		}
+		return nasUploadResultMsg{detail: detail}
 	}
 }
 
