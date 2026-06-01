@@ -5,9 +5,10 @@
 // interactive stdin wizard, not a Bubble Tea program; this model only renders
 // the plan and reports the operator's confirm/cancel choice.
 //
-// The post-boot restore + stack-install steps are deliberately NOT chained
-// here: they need a reachable box and a minted SB_TOKEN that only exist after
-// first boot, so they stay as the dedicated panels (#1276/#1277).
+// The post-boot restore + stack-install steps ARE chained too, but by the
+// entrypoint (runExpress) after first boot — they need a reachable box and a
+// minted token that only exist once the box is up, so the sequence signs in,
+// then drives the restore (#1277) and stack-install (#1276) panels in order.
 //
 // One optional pre-boot step IS offered up front: staging an existing backup on
 // the NAS (step ① of the journey). It's toggled here and, when on, the
@@ -91,6 +92,9 @@ func (m ExpressModel) View() string {
 		"Build + flash a ServiceBay install ISO to a USB stick",
 		"Pause so you can boot the box from that USB",
 		"Watch the install live until the setup wizard takes over",
+		"Sign in to the box (one-time — mints a saved token)",
+		"Restore your config from the NAS",
+		"Install your stacks",
 	)
 	for i, s := range steps {
 		b.WriteString(normalStyle.Render("  "+stepNum(i+1)+" "+s) + "\n")
@@ -101,7 +105,7 @@ func (m ExpressModel) View() string {
 		target = m.host + ":" + m.port
 	}
 	b.WriteString(detailStyle.Render("Target: "+target) + "\n")
-	b.WriteString(detailStyle.Render(cfgEmptyStyle.Render("After first boot, use Edit config / Install stacks / Backups to finish setup.")) + "\n\n")
+	b.WriteString(detailStyle.Render(cfgEmptyStyle.Render("Sign-in, restore + install run after first boot, once the box is reachable.")) + "\n\n")
 	b.WriteString(footerStyle.Render("space toggle backup · enter start · q cancel"))
 	return frame(b.String(), m.width, m.height)
 }

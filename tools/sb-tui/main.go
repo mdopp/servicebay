@@ -214,9 +214,9 @@ func boxClient() (*rest.Client, int) {
 }
 
 // runExpress runs the guided Express setup (#1233): a confirm screen, then the
-// auto-sequenceable pre-boot legs — build + flash, a boot pause, then watch.
-// The post-boot restore/install steps stay as the dedicated panels since they
-// need a reachable box + token. Any leg failing aborts the sequence.
+// pre-boot legs — build + flash, a boot pause, watch — and finally the post-boot
+// legs once the box is reachable: sign in (mint a saved token), restore config
+// from the NAS, and install stacks. Any leg failing aborts the rest.
 func runExpress() int {
 	t := probes.ResolveTarget()
 	final, err := tea.NewProgram(ui.NewExpress(t.Host, t.Port), tea.WithAltScreen()).Run()
@@ -249,7 +249,39 @@ func runExpress() int {
 	_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 
 	// 3) Watch the install through to the wizard handoff.
-	return runWatch()
+	if code := runWatch(); code != 0 {
+		return code
+	}
+
+	// 4) Post-boot continuation (#1233): the box is up now — sign in (mint a
+	//    saved token if needed), restore config from the NAS, then install the
+	//    stacks. This is the token-gated tail the pre-boot legs couldn't reach.
+	return runExpressPostBoot()
+}
+
+// runExpressPostBoot drives the token-gated tail of Express once the box is
+// reachable: ensure a scoped token (sign in + mint if none is saved), restore
+// NAS config backups, then install stacks. Each leg failing aborts the rest.
+func runExpressPostBoot() int {
+	t := probes.ResolveTarget()
+	if probes.ResolveToken(t.Host) == "" {
+		fmt.Print("\n→ Sign in to the box to finish setup (one-time)…\n")
+		ok, err := ui.RunLogin(t.Host, t.Port, probes.SaveToken)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if !ok {
+			fmt.Println("Sign-in skipped — run `sb-tui` later to restore + install your stacks.")
+			return 0
+		}
+	}
+	// Restore config from the NAS, then install stacks. On a fresh data dir the
+	// install also re-seeds config via the server-side auto-restore (#1218).
+	if code := runBackups(); code != 0 {
+		return code
+	}
+	return runInstallStacks()
 }
 
 // runNasUpload opens the direct-FTP backup-staging panel (#1367). It talks only

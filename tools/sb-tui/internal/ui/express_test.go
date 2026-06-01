@@ -60,3 +60,12 @@ func TestExpressViewShowsPlanAndTarget(t *testing.T) {
 		t.Error("empty-target view should show the discovery hint")
 	}
 }
+
+func TestExpressViewShowsPostBootSteps(t *testing.T) {
+	v := NewExpress("box.local", "5888").View()
+	for _, want := range []string{"Sign in", "Restore your config from the NAS", "Install your stacks"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("express view missing post-boot step %q", want)
+		}
+	}
+}
