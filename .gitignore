@@ -64,3 +64,6 @@ __pycache__/
 !/.claude/skills/
 secret.key
 *.local.json
+
+# docs-coherence parallel agent worktree (see .claude/skills/docs-coherence)
+.docs-coherence-worktree/
