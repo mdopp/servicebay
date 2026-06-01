@@ -6,6 +6,7 @@ import { checkRateLimit, recordFailure, clearAttempts, clientKeyFromHeaders } fr
 import { isRequestSecure } from '@/lib/auth/requestSecurity';
 import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
+import { reconcileLogin } from './reconcile';
 
 // Pre-hashed sentinel used when the supplied username does not match. Verifying
 // against this hash is intentionally indistinguishable in timing from verifying
@@ -70,33 +71,38 @@ export const POST = withApiHandler({ skipAuth: true }, async ({ request }) => {
 
     // Always run scrypt verify regardless of whether the username matched, so
     // a wrong-username response takes the same wall-clock time as a wrong-password
-    // response. We discard the verify result if the username didn't match.
+    // response. On a username miss we verify against a dummy hash and discard it.
     const usernameMatches = username === configUsername;
 
-    let referenceHash: string;
-    let tempBootstrapHash: string | null = null;
-    if (usernameMatches && configHash) {
-      referenceHash = configHash;
-    } else if (usernameMatches && bootstrapPassword) {
-      tempBootstrapHash = await hashPassword(bootstrapPassword);
-      referenceHash = tempBootstrapHash;
+    let authenticated = false;
+    let newStoredHash: string | undefined;
+    if (usernameMatches) {
+      // Reconcile the reinstall-over-persisted-data lockout: a stored hash from
+      // a prior install must not shadow the fresh SERVICEBAY_PASSWORD that
+      // sb-tui handed the operator (issue #1438). The stored hash is tried
+      // first, so an operator-changed password is never overridden — the env
+      // password only wins (and re-keys the stored hash) when the stored
+      // credential rejects the request.
+      const result = await reconcileLogin(
+        { candidate: password, storedHash: configHash ?? null, bootstrapPassword: bootstrapPassword ?? null },
+        { verifyPassword, hashPassword },
+      );
+      authenticated = result.authenticated;
+      newStoredHash = result.newStoredHash;
     } else {
-      referenceHash = await getDummyHash();
+      await verifyPassword(password, await getDummyHash());
     }
 
-    const verifyOk = await verifyPassword(password, referenceHash);
-    const ok = usernameMatches && verifyOk;
-
-    if (!ok) {
+    if (!authenticated) {
       recordFailure(clientKey);
       recordFailure(uKey);
       logger.warn('auth:login', 'failed login', { ip: clientKey, username });
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 });
     }
 
-    if (tempBootstrapHash) {
+    if (newStoredHash) {
       const { updateConfig } = await import('@/lib/config');
-      await updateConfig({ auth: { username: configUsername, passwordHash: tempBootstrapHash } });
+      await updateConfig({ auth: { username: configUsername, passwordHash: newStoredHash } });
     }
 
     clearAttempts(clientKey);
