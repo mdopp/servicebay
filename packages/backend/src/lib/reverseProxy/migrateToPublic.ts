@@ -155,7 +155,7 @@ function getApiHost(nodeName: string, nodeIp: string): string {
 /**
  * Pick the first non-loopback IP from node, fall back to first IP or loopback.
  */
-function selectNodeIp(t: { nodeIPs?: string[] }): string {
+function selectNodeIp(t: { nodeIPs?: string[] } | undefined): string {
   return t?.nodeIPs?.find((ip: string) => !ip.startsWith('127.')) ?? t?.nodeIPs?.[0] ?? '127.0.0.1';
 }
 

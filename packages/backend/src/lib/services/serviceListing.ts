@@ -550,7 +550,7 @@ export class ServiceListing {
      */
     private static async readKubeContent(
         agent: import('../agent/handler').AgentHandler,
-        twin: import('../store/twin').NodeTwin | null,
+        twin: import('../store/twin').NodeTwin | null | undefined,
         serviceName: string,
         kubePath: string,
     ): Promise<string> {
@@ -575,7 +575,7 @@ export class ServiceListing {
      */
     private static async readYamlContent(
         agent: import('../agent/handler').AgentHandler,
-        twin: import('../store/twin').NodeTwin | null,
+        twin: import('../store/twin').NodeTwin | null | undefined,
         yamlFileName: string,
         yamlPath: string,
     ): Promise<string> {
