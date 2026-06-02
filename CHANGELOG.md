@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.90.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.90.0...servicebay-v4.90.1) (2026-06-02)
+
+
+### Bug Fixes
+
+* **diagnose:** scope sso_verify probes to installed services ([bd3af4e](https://github.com/mdopp/servicebay/commit/bd3af4e4a7a48b3b48ccab51435faf9964efd061))
+* **diagnose:** scope sso_verify probes to installed services ([78636f7](https://github.com/mdopp/servicebay/commit/78636f751f3987c560b270beaf01a90176b70157)), closes [#1591](https://github.com/mdopp/servicebay/issues/1591)
+
 ## [4.90.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.89.0...servicebay-v4.90.0) (2026-06-02)
 
 
