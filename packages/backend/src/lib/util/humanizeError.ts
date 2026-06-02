@@ -51,8 +51,9 @@ function humanizeDomainError(err: DomainError): HumanizedError | null {
           };
         case 'other':
           return { title: 'SSH connection failed', detail: e.message };
+        default:
+          return null;
       }
-      return null;
     }
     case 'agent_timeout':
       return {
