@@ -22,6 +22,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getConfig } from '../config';
 import { logger } from '../logger';
+import { agentManager } from '../agent/manager';
 import { nasUpload, nasDownload, nasList } from './nasClient';
 import {
   getServiceManifest,
@@ -123,7 +124,10 @@ export async function stageServiceBackup(
       ? await collectDirFiles(serviceDataDir, include, manifest.exclude)
       : [include];
     for (const rel of relFiles) {
-      const dest = path.join(stagingDir, rel);
+      // A collector may stage a snapshot file under a canonical name (e.g.
+      // database.sqlite.sb-backup → database.sqlite) so restore lands it right.
+      const tarRel = manifest.renames?.[rel] ?? rel;
+      const dest = path.join(stagingDir, tarRel);
       await fs.mkdir(path.dirname(dest), { recursive: true });
       const hasStrip = manifest.strip?.some(r => r.file === rel);
       if (hasStrip) {
@@ -134,7 +138,7 @@ export async function stageServiceBackup(
       } else {
         await fs.copyFile(path.join(serviceDataDir, rel), dest);
       }
-      staged.push(rel);
+      staged.push(tarRel);
     }
   }
   return staged.sort();
@@ -160,10 +164,72 @@ export async function buildServiceBackupTar(
   }
 }
 
-/** Resolve a service's on-disk config dir from the configured DATA_DIR. */
+/** Resolve a service's on-disk config dir from the configured DATA_DIR. Honors
+ *  a manifest's `dataSubdir` override (NPM stores under `nginx-proxy-manager/`
+ *  though its template/service name is `nginx`). */
 export async function resolveServiceDataDir(service: string): Promise<string> {
   const dataDir = (await getConfig()).templateSettings?.DATA_DIR || DEFAULT_STACKS_DIR;
-  return path.join(dataDir, service);
+  const subdir = getServiceManifest(service)?.dataSubdir ?? service;
+  return path.join(dataDir, subdir);
+}
+
+// Runs inside the NPM container: a consistent snapshot of the live WAL-mode
+// /data/database.sqlite to /data/database.sqlite.sb-backup using sqlite3's
+// online `.backup`, then `mv` over the canonical name so the file-copy producer
+// reads a torn-free copy. NPM's image bundles sqlite3.
+const NPM_SQLITE_SNAPSHOT_SH = [
+  'set -e',
+  "DB=/data/database.sqlite",
+  'if [ ! -f "$DB" ]; then echo "nodb"; exit 0; fi',
+  // `.backup` produces a transactionally-consistent copy even mid-write.
+  'sqlite3 "$DB" ".backup \'$DB.sb-snap\'"',
+  'mv -f "$DB.sb-snap" "$DB.sb-backup"',
+  'echo "ok"',
+].join('\n');
+
+/**
+ * Run a manifest's `collector` (in-container snapshot) before the file-copy
+ * producer reads the data dir. For NPM: takes a consistent `sqlite3 .backup`
+ * of the live database.sqlite to `database.sqlite.sb-backup` on disk, then
+ * remaps the manifest's `data/database.sqlite` include to that snapshot path so
+ * the producer stages the consistent copy under the original name. Returns a
+ * possibly-rewritten manifest. Best-effort: if the snapshot can't be taken the
+ * original manifest is returned (the producer copies the live file and logs).
+ */
+export async function runBackupCollector(
+  manifest: ServiceBackupManifest,
+  node: string,
+): Promise<ServiceBackupManifest> {
+  if (manifest.collector?.kind !== 'npm-sqlite') return manifest;
+  try {
+    const agent = await agentManager.ensureAgent(node);
+    const find = await agent.sendCommand('exec', {
+      command: `podman ps --format '{{.Names}} {{.Image}}' | awk '/proxy-manager/{print $1; exit}'`,
+    }, { timeoutMs: 15_000 });
+    const container = ((find as { stdout?: string }).stdout || '').trim().split(/\s+/)[0];
+    if (!container) {
+      logger.warn('ExternalBackup', 'NPM container not found — backing up database.sqlite as-is (may be inconsistent)');
+      return manifest;
+    }
+    const b64 = Buffer.from(NPM_SQLITE_SNAPSHOT_SH).toString('base64');
+    const res = await agent.sendCommand('exec', {
+      command: `echo ${b64} | base64 -d | podman exec -i ${container} sh -`,
+    }, { timeoutMs: 30_000 });
+    const out = ((res as { stdout?: string }).stdout || '').trim();
+    if ((res as { code?: number }).code !== 0 || (out !== 'ok' && out !== 'nodb')) {
+      logger.warn('ExternalBackup', `NPM sqlite snapshot failed (${out || 'unknown'}) — backing up database.sqlite as-is`);
+      return manifest;
+    }
+    // Stage the snapshot in place of the live DB, under the original rel path.
+    return {
+      ...manifest,
+      include: manifest.include.map(p => (p === 'data/database.sqlite' ? 'data/database.sqlite.sb-backup' : p)),
+      renames: { 'data/database.sqlite.sb-backup': 'data/database.sqlite' },
+    };
+  } catch (e) {
+    logger.warn('ExternalBackup', `NPM sqlite snapshot errored (${e instanceof Error ? e.message : String(e)}) — backing up database.sqlite as-is`);
+    return manifest;
+  }
 }
 
 /**
@@ -174,11 +240,17 @@ export async function resolveServiceDataDir(service: string): Promise<string> {
  */
 export async function backupServiceToNas(
   service: string,
-  opts: { serviceDataDir?: string } = {},
+  opts: { serviceDataDir?: string; node?: string } = {},
 ): Promise<ServiceBackupResult> {
-  const manifest = getServiceManifest(service);
+  let manifest = getServiceManifest(service);
   if (!manifest) {
     throw new Error(`No backup manifest for service "${service}"`);
+  }
+  // Run any in-container snapshot collector (e.g. NPM's consistent sqlite copy)
+  // before reading the data dir — only for a live box backup, never for the
+  // arbitrary-dir CLI seed (which has no running container to exec into).
+  if (manifest.collector && !opts.serviceDataDir) {
+    manifest = await runBackupCollector(manifest, opts.node || 'Local');
   }
   const serviceDataDir = opts.serviceDataDir ?? (await resolveServiceDataDir(service));
   const tar = await buildServiceBackupTar(serviceDataDir, manifest);

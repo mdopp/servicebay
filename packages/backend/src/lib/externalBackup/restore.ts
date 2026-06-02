@@ -28,6 +28,48 @@ export interface RestoreResult {
   dataDir: string;
   files: number;
   meta: ServiceBackupMeta | null;
+  /** Set when a restore touched a service whose DB carries its own admin
+   *  credential (NPM, #1529) — the outcome of reconciling ServiceBay's stored
+   *  credential with the restored DB. Absent for services with no credential
+   *  reconciliation. */
+  credentialReconcile?: { ok: boolean; message: string };
+}
+
+/**
+ * After restoring a service whose DB carries an admin credential, reconcile
+ * ServiceBay's stored credential with the restored DB (#1529). NPM's
+ * database.sqlite ships its own admin password hash, so a restore leaves
+ * ServiceBay's stored `reverseProxy.npm` credential pointing at the OLD
+ * password — SB then silently 401s on every proxy auto-sync, the same
+ * credential-reconciliation lockout the install runner already self-heals.
+ *
+ * Mirrors the install-runner self-heal: `npmAdminCredStatus` → on
+ * `rejected`/`no-creds` run `rekeyNpmAdmin`, which reads the real admin email
+ * from the restored DB and persists a fresh verified password. Best-effort and
+ * non-throwing (a restore must not be undone by a reconcile hiccup), but the
+ * outcome is surfaced on the result — never masked — so the manual re-key
+ * affordance remains the fallback. No-op (`status: 'unknown'`) when NPM isn't
+ * running yet, e.g. the reinstall path where the runner heals post-deploy.
+ */
+async function reconcileNpmCredentialAfterRestore(
+  node: string,
+): Promise<RestoreResult['credentialReconcile']> {
+  try {
+    const { npmAdminCredStatus, rekeyNpmAdmin } = await import('../reverseProxy/npmAdminRekey');
+    const status = await npmAdminCredStatus(node);
+    if (status !== 'rejected' && status !== 'no-creds') return undefined;
+    const r = await rekeyNpmAdmin(node);
+    if (!r.ok) {
+      logger.warn('ExternalBackup', `NPM credential reconcile after restore failed: ${r.message}`);
+    } else {
+      logger.info('ExternalBackup', 'Reconciled NPM admin credential with the restored database.');
+    }
+    return { ok: r.ok, message: r.message };
+  } catch (e) {
+    const message = `NPM credential reconcile after restore errored: ${e instanceof Error ? e.message : String(e)}`;
+    logger.warn('ExternalBackup', message);
+    return { ok: false, message };
+  }
 }
 
 /** True if `dir` is empty or doesn't exist — the safe-to-seed condition. */
@@ -60,7 +102,7 @@ async function countFiles(dir: string): Promise<number> {
  */
 export async function restoreServiceBackup(
   service: string,
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; node?: string | null } = {},
 ): Promise<RestoreResult> {
   if (!getServiceManifest(service)) {
     throw new Error(`No backup manifest for service "${service}"`);
@@ -87,7 +129,14 @@ export async function restoreServiceBackup(
 
   const files = await countFiles(dataDir);
   logger.info('ExternalBackup', `Restored "${service}" from NAS into ${dataDir} (${files} files)`);
-  return { service, dataDir, files, meta };
+
+  // #1529 — NPM's restored database.sqlite carries its own admin hash, so
+  // reconcile ServiceBay's stored credential with it (no-op for other services
+  // and when NPM isn't running yet).
+  const credentialReconcile =
+    service === 'nginx' ? await reconcileNpmCredentialAfterRestore(opts.node || 'Local') : undefined;
+
+  return { service, dataDir, files, meta, credentialReconcile };
 }
 
 /**
@@ -114,8 +163,14 @@ export async function autoRestoreServiceOnReinstall(
     if (!hasBackup) return;
     if (!(await isFreshDataDir(await resolveServiceDataDir(service)))) return;
     await log(`💾 ${service}: found a config backup on the FritzBox NAS and the data dir is empty — restoring before first start…`);
-    const r = await restoreServiceBackup(service);
+    const r = await restoreServiceBackup(service, { node: opts.node });
     await log(`✅ ${service}: restored ${r.files} config file(s) from the NAS${r.meta ? ` (backed up ${r.meta.createdAt.slice(0, 10)} from ${r.meta.nodeId})` : ''}.`);
+    // On a reinstall the pod isn't up yet, so credentialReconcile is normally
+    // a no-op here (the install runner's post-deploy self-heal re-keys NPM once
+    // it's running); surface it only when it actually fired.
+    if (r.credentialReconcile) {
+      await log(`${r.credentialReconcile.ok ? '🔑 ' : '⚠️ '}${service}: ${r.credentialReconcile.message}`);
+    }
   } catch (e) {
     // A restore failure must never block the deploy — log a breadcrumb and continue.
     await log(`(note) ${service}: NAS config restore skipped — ${e instanceof Error ? e.message : String(e)}.`);
