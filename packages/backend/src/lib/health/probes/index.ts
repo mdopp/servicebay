@@ -14,4 +14,6 @@ import './lanIpDrift';
 import './npmAuthProbe';
 import './certExpiry';
 import './certRequestFailure';
-import './dnsRouting';
+// dnsRouting no longer self-registers a probe type (#1564 collapsed the
+// per-domain `dns_routing` rows into the canonical `domain` check). Its
+// `resolveDnsRouting` helper is imported directly by the `domain` probe.

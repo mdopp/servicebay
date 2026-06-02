@@ -4,7 +4,7 @@ import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { BackupConfig, BackupRunResult, BackupTarget } from './types';
+import { BackupConfig, BackupRunResult, BackupSource, BackupTarget, resolveBackupSources } from './types';
 import { getConfig, updateConfig } from '../config';
 import { logger } from '../logger';
 import { DATA_DIR } from '../dirs';
@@ -56,7 +56,25 @@ async function appendHistory(result: BackupRunResult): Promise<void> {
 
 // ─── Target Resolution ───────────────────────────────────────────────
 
-function buildRsyncArgs(source: string, target: BackupTarget, excludePatterns: string[]): { args: string[]; mountPath?: string; cleanup?: () => Promise<void> } {
+function withTrailingSlash(p: string): string {
+    return p.endsWith('/') ? p : `${p}/`;
+}
+
+// Append a per-source subfolder to a target path. With a single source we
+// keep the legacy flat layout (subFolder undefined) so existing backups
+// aren't orphaned; with multiple sources each gets its own subdirectory so
+// rsync `--delete` can't wipe a sibling source's data.
+function joinTargetPath(base: string, subFolder?: string): string {
+    return subFolder ? path.posix.join(base, subFolder) : base;
+}
+
+export function buildRsyncArgs(
+    source: string,
+    target: BackupTarget,
+    excludePatterns: string[],
+    subFolder?: string,
+    mountPath?: string,
+): { args: string[]; mountPath?: string } {
     const args = [
         '-az',
         '--delete',
@@ -70,28 +88,30 @@ function buildRsyncArgs(source: string, target: BackupTarget, excludePatterns: s
     }
 
     // Ensure source ends with /
-    const src = source.endsWith('/') ? source : `${source}/`;
+    const src = withTrailingSlash(source);
 
     switch (target.type) {
         case 'local': {
-            args.push(src, target.path.endsWith('/') ? target.path : `${target.path}/`);
+            args.push(src, withTrailingSlash(joinTargetPath(target.path, subFolder)));
             return { args };
         }
         case 'ssh': {
             const sshCmd = buildSSHCommand(target);
             args.push('-e', sshCmd);
-            const remotePath = target.path.endsWith('/') ? target.path : `${target.path}/`;
+            const remotePath = withTrailingSlash(joinTargetPath(target.path, subFolder));
             args.push(src, `${target.user}@${target.host}:${remotePath}`);
             return { args };
         }
         case 'smb':
         case 'nfs': {
-            // These get mounted first; rsync targets the mount point
-            const mountPath = path.join(SMB_MOUNT_BASE, `backup-${Date.now()}`);
-            const subPath = target.type === 'smb' ? target.path : target.path;
-            const fullTarget = subPath ? path.join(mountPath, subPath) : mountPath;
-            args.push(src, fullTarget.endsWith('/') ? fullTarget : `${fullTarget}/`);
-            return { args, mountPath };
+            // These get mounted first; rsync targets the mount point. The
+            // mount is shared across sources within one run (passed in).
+            const resolvedMount = mountPath ?? path.join(SMB_MOUNT_BASE, `backup-${Date.now()}`);
+            const subPath = target.path;
+            const baseTarget = subPath ? path.join(resolvedMount, subPath) : resolvedMount;
+            const fullTarget = joinTargetPath(baseTarget, subFolder);
+            args.push(src, withTrailingSlash(fullTarget));
+            return { args, mountPath: resolvedMount };
         }
     }
 }
@@ -184,67 +204,52 @@ async function ensureTargetDir(target: BackupTarget): Promise<void> {
 
 // ─── Main Run ────────────────────────────────────────────────────────
 
-async function executeRsyncBackup(
-    args: string[],
-    config: BackupConfig,
-    startedAt: Date,
-    mountPath?: string,
-    previousStatus?: 'success' | 'error'
-): Promise<{ result: BackupRunResult; mountCleanup?: () => Promise<void> }> {
-    let mountCleanup: (() => Promise<void>) | undefined;
-
-    try {
-        // Mount if needed
-        if (mountPath && (config.target.type === 'smb' || config.target.type === 'nfs')) {
-            logger.info('Backup', `Mounting ${config.target.type} target at ${mountPath}`);
-            await mountTarget(config.target, mountPath);
-            mountCleanup = () => unmountTarget(mountPath);
-        }
-
-        // Ensure target directory exists
-        await ensureTargetDir(config.target);
-
-        // Run rsync
-        logger.info('Backup', `Running: rsync ${args.join(' ')}`);
-        const { stdout, stderr } = await execFileAsync('rsync', args, {
-            timeout: 24 * 60 * 60 * 1000, // 24h max
-            maxBuffer: 10 * 1024 * 1024, // 10MB
-        });
-
-        const completedAt = new Date();
-        const duration = Math.round((completedAt.getTime() - startedAt.getTime()) / 1000);
-        const stats = parseRsyncStats(stdout);
-
-        if (stderr && stderr.trim()) {
-            logger.warn('Backup', `rsync stderr: ${stderr.trim()}`);
-        }
-
-        const result: BackupRunResult = {
-            success: true,
-            startedAt: startedAt.toISOString(),
-            completedAt: completedAt.toISOString(),
-            duration,
-            message: `Backup completed. ${stats.filesTransferred ?? '?'} files synced.`,
-            ...stats,
-        };
-
-        logger.info('Backup', result.message);
-        await appendHistory(result);
-        await updateBackupStatus(true, result.message, duration);
-
-        // Send recovery email if previous run failed
-        if (previousStatus === 'error') {
-            sendEmailAlert(
-                'Backup Recovered',
-                `Backup sync has recovered.\n\n${result.message}\nDuration: ${duration}s\nTarget: ${describeTarget(config.target)}`
-            ).catch(e => logger.warn('Backup', `Failed to send recovery email: ${e}`));
-        }
-
-        return { result, mountCleanup };
-    } catch (error) {
-        if (mountCleanup) await mountCleanup();
-        throw error;
+// Assign each source a stable, unique subfolder name under the target.
+// With a single source we keep the legacy flat layout (no subfolder).
+// With multiple sources we use the basename, disambiguating collisions
+// (e.g. two `data` dirs) with a numeric suffix.
+export function assignSourceSubFolders(sources: BackupSource[]): { source: BackupSource; subFolder?: string }[] {
+    if (sources.length <= 1) {
+        return sources.map(source => ({ source }));
     }
+    const used = new Set<string>();
+    return sources.map(source => {
+        const base = path.basename(source.path.replace(/\/+$/, '')) || 'root';
+        let name = base;
+        let n = 2;
+        while (used.has(name)) {
+            name = `${base}-${n++}`;
+        }
+        used.add(name);
+        return { source, subFolder: name };
+    });
+}
+
+// Run rsync for one source and return its parsed stats. Mounting and the
+// shared mount cleanup are the caller's responsibility.
+async function rsyncOneSource(
+    source: BackupSource,
+    target: BackupTarget,
+    subFolder: string | undefined,
+    mountPath: string | undefined,
+): Promise<{ bytesTransferred?: number; filesTransferred?: number }> {
+    try {
+        await fs.access(source.path);
+    } catch {
+        throw new Error(`Source path does not exist: ${source.path}`);
+    }
+
+    const { args } = buildRsyncArgs(source.path, target, source.excludePatterns || [], subFolder, mountPath);
+
+    logger.info('Backup', `Running: rsync ${args.join(' ')}`);
+    const { stdout, stderr } = await execFileAsync('rsync', args, {
+        timeout: 24 * 60 * 60 * 1000, // 24h max
+        maxBuffer: 10 * 1024 * 1024, // 10MB
+    });
+    if (stderr && stderr.trim()) {
+        logger.warn('Backup', `rsync stderr: ${stderr.trim()}`);
+    }
+    return parseRsyncStats(stdout);
 }
 
 async function runBackupItems(
@@ -252,29 +257,73 @@ async function runBackupItems(
     startedAt: Date,
     previousStatus: 'success' | 'error' | undefined
 ): Promise<BackupRunResult> {
-    logger.info('Backup', `Starting backup: ${config.sourcePath} → ${describeTarget(config.target)}`);
+    const sources = resolveBackupSources(config);
+    if (sources.length === 0) {
+        throw new Error('No backup sources configured');
+    }
+    logger.info('Backup', `Starting backup: ${sources.map(s => s.path).join(', ')} → ${describeTarget(config.target)}`);
 
-    // Verify source exists
-    try {
-        await fs.access(config.sourcePath);
-    } catch {
-        throw new Error(`Source path does not exist: ${config.sourcePath}`);
+    const assigned = assignSourceSubFolders(sources);
+
+    // Mount once per run (smb/nfs); reused across every source.
+    let mountCleanup: (() => Promise<void>) | undefined;
+    let sharedMountPath: string | undefined;
+    if (config.target.type === 'smb' || config.target.type === 'nfs') {
+        sharedMountPath = path.join(SMB_MOUNT_BASE, `backup-${Date.now()}`);
+        logger.info('Backup', `Mounting ${config.target.type} target at ${sharedMountPath}`);
+        await mountTarget(config.target, sharedMountPath);
+        mountCleanup = () => unmountTarget(sharedMountPath!);
     }
 
-    // Build rsync command
-    const { args, mountPath } = buildRsyncArgs(
-        config.sourcePath,
-        config.target,
-        config.excludePatterns || []
-    );
-
-    const { result, mountCleanup } = await executeRsyncBackup(args, config, startedAt, mountPath, previousStatus);
-
     try {
-        return result;
+        await ensureTargetDir(config.target);
+
+        let totalBytes = 0;
+        let totalFiles = 0;
+        for (const { source, subFolder } of assigned) {
+            const stats = await rsyncOneSource(source, config.target, subFolder, sharedMountPath);
+            totalBytes += stats.bytesTransferred ?? 0;
+            totalFiles += stats.filesTransferred ?? 0;
+        }
+
+        return await recordBackupSuccess(config, startedAt, sources.length, totalBytes, totalFiles, previousStatus);
     } finally {
         if (mountCleanup) await mountCleanup();
     }
+}
+
+async function recordBackupSuccess(
+    config: BackupConfig,
+    startedAt: Date,
+    sourceCount: number,
+    totalBytes: number,
+    totalFiles: number,
+    previousStatus: 'success' | 'error' | undefined,
+): Promise<BackupRunResult> {
+    const completedAt = new Date();
+    const duration = Math.round((completedAt.getTime() - startedAt.getTime()) / 1000);
+    const result: BackupRunResult = {
+        success: true,
+        startedAt: startedAt.toISOString(),
+        completedAt: completedAt.toISOString(),
+        duration,
+        message: `Backup completed. ${totalFiles} files synced from ${sourceCount} source${sourceCount === 1 ? '' : 's'}.`,
+        bytesTransferred: totalBytes,
+        filesTransferred: totalFiles,
+    };
+
+    logger.info('Backup', result.message);
+    await appendHistory(result);
+    await updateBackupStatus(true, result.message, duration);
+
+    if (previousStatus === 'error') {
+        sendEmailAlert(
+            'Backup Recovered',
+            `Backup sync has recovered.\n\n${result.message}\nDuration: ${duration}s\nTarget: ${describeTarget(config.target)}`
+        ).catch(e => logger.warn('Backup', `Failed to send recovery email: ${e}`));
+    }
+
+    return result;
 }
 
 async function loadBackupConfig(config?: BackupConfig): Promise<{ config: BackupConfig; previousStatus?: 'success' | 'error' }> {

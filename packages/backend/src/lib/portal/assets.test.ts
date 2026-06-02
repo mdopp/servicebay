@@ -162,4 +162,9 @@ describe('resolveSetupAsset', () => {
     expect(out?.kind).toBe('syncthing_qr');
     expect(out?.data).toBe(VALID);
   });
+
+  it('returns null for basicsync_install_qr (rendered client-side, no server artifact)', async () => {
+    const out = await resolveSetupAsset('basicsync_install_qr', 'file-share');
+    expect(out).toBeNull();
+  });
 });

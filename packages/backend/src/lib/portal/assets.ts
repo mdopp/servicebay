@@ -217,6 +217,11 @@ export async function resolveSetupAsset(
       const deviceId = await fetchSyncthingDeviceId('Local');
       return deviceId ? { kind, data: deviceId } : null;
     }
+    case 'basicsync_install_qr':
+      // Pure client-side render — the portal builds the QR from the
+      // static `/api/system/downloads/basicsync` URL, no server
+      // artifact to resolve. Nothing to fetch here.
+      return null;
   }
 }
 

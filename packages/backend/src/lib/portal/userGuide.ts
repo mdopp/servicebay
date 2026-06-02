@@ -59,17 +59,27 @@ export interface RecommendedApp {
  *    - `audiobookshelf_deeplink` — `abs://` URL the official
  *      Audiobookshelf app picks up to pre-configure the server.
  *    - `syncthing_qr` — encodes the file-share container's
- *      device ID into a QR; the Android Syncthing app's "Add
- *      Device" → "Scan QR" reads it directly. The server fetches
- *      the device ID at request time via `podman exec` against the
- *      running syncthing container.
+ *      device ID into a QR; the BasicSync (Syncthing-compatible)
+ *      app's "Add Device" → "Scan QR" reads it directly. The server
+ *      fetches the device ID at request time via `podman exec`
+ *      against the running syncthing container.
+ *    - `basicsync_install_qr` — a QR/link to the BasicSync APK
+ *      download so the operator can install the recommended sync
+ *      client straight onto the phone (point the phone camera at it
+ *      → the APK download opens). Pure client-side render of the
+ *      `/api/system/downloads/basicsync` URL — no server round-trip.
  */
-export type SetupAssetKind = 'ios_calendar_profile' | 'audiobookshelf_deeplink' | 'syncthing_qr';
+export type SetupAssetKind =
+  | 'ios_calendar_profile'
+  | 'audiobookshelf_deeplink'
+  | 'syncthing_qr'
+  | 'basicsync_install_qr';
 
 const KNOWN_ASSET_KINDS: ReadonlySet<SetupAssetKind> = new Set([
   'ios_calendar_profile',
   'audiobookshelf_deeplink',
   'syncthing_qr',
+  'basicsync_install_qr',
 ]);
 
 export interface SetupAsset {

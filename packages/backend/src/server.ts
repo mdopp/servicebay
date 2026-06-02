@@ -633,12 +633,12 @@ app.prepare().then(() => {
       setInterval(() => { void runDomainCheckSync(); }, 60_000);
     }
 
-    // Per-public-domain DNS routing health checks (15 min interval).
-    // Replaces the old continuous letsdebug sweep (#letsdebug-429) —
-    // uses Cloudflare DoH for a free, rate-limit-free "does my domain
-    // still point at me?" signal. Boot-time sync creates a
-    // `dns_routing:<domain>` check per public proxy host AND cleans
-    // up any legacy `letsdebug:<domain>` checks from prior versions.
+    // #1564 — the per-domain `dns_routing:<domain>` rows were collapsed
+    // into the canonical `domain` check (which now runs the DoH
+    // "does my domain still point at me?" logic itself). This boot-time
+    // call is now migration-only: it prunes any leftover `dns_routing:*`
+    // rows and legacy `letsdebug:*` rows so upgraders don't keep stale
+    // duplicate rows in Settings → Health.
     (async () => {
       try {
         const { syncDnsRoutingChecks } = await import('./lib/health/dnsRoutingChecks');

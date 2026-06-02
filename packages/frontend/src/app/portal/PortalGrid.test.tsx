@@ -9,7 +9,7 @@
  * path directly by passing a card with `manualPairing` populated.
  */
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import PortalGrid from './PortalGrid';
 import type { PortalCard } from '@/lib/portal/services';
 
@@ -118,5 +118,36 @@ describe('PortalGrid', () => {
     expect(screen.getByText('cmd-two')).toBeDefined();
     // Two copy buttons — one per step.
     expect(screen.getAllByRole('button', { name: /copy command/i })).toHaveLength(2);
+  });
+
+  describe('BasicSync install QR asset (#1560)', () => {
+    const basicSyncCard: PortalCard = {
+      ...baseCard,
+      id: 'file-share:SYNCTHING_SUBDOMAIN',
+      name: 'file-share',
+      label: 'File Share',
+      setupAssets: [{ kind: 'basicsync_install_qr', description: 'Open-source Syncthing client.' }],
+    };
+
+    it('renders the install button (closed by default, no modal)', () => {
+      render(<PortalGrid cards={[basicSyncCard]} />);
+      expect(screen.getByRole('button', { name: /install basicsync on your phone/i })).toBeDefined();
+      expect(screen.getByText('Open-source Syncthing client.')).toBeDefined();
+      // Modal heading is not present until the button is clicked.
+      expect(screen.queryByRole('heading', { name: /install basicsync/i })).toBeNull();
+    });
+
+    it('opens the QR modal on click and closes it on backdrop click', () => {
+      render(<PortalGrid cards={[basicSyncCard]} />);
+      fireEvent.click(screen.getByRole('button', { name: /install basicsync on your phone/i }));
+      // Modal now shows: heading + the direct-download link.
+      expect(screen.getByRole('heading', { name: /install basicsync/i })).toBeDefined();
+      const link = screen.getByRole('link', { name: /open the download link directly/i });
+      expect(link.getAttribute('href')).toContain('/api/system/downloads/basicsync');
+
+      // Clicking the backdrop (the outermost overlay div) closes the modal.
+      fireEvent.click(screen.getByRole('heading', { name: /install basicsync/i }).closest('div')!.parentElement!);
+      expect(screen.queryByRole('heading', { name: /install basicsync/i })).toBeNull();
+    });
   });
 });

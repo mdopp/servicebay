@@ -75,7 +75,10 @@ export default function FactoryResetSection() {
         <div className="text-sm text-gray-700 dark:text-gray-300 space-y-2">
           <p>This deletes every installed service (photos, vault, identity, proxy, all of it) and clears the saved credentials in ServiceBay&apos;s config. The next wizard run goes through the full first-install flow with no pre-filled values.</p>
           <p className="font-medium text-red-700 dark:text-red-400">
-            Not what you want for a normal re-install. Use Clean install in the wizard for that — it&apos;s granular.
+            Not what you want for a normal re-install. To rebuild from a USB stick, pick a Factory-fresh option in the build form instead — &quot;wipe-configs&quot; keeps your app data on disk; this button does not.
+          </p>
+          <p className="text-xs text-gray-700 dark:text-gray-300">
+            Your app data (Home Assistant&apos;s <span className="font-mono">.storage</span>, Z-Wave, the Immich library) is <span className="font-semibold">not</span> pulled back automatically — restore it from a System Backup (include and select Service Data) afterwards, or services come up blank.
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400">
             Family members will need to re-create their LLDAP accounts. NPM&apos;s Let&apos;s Encrypt certs are wiped (LE has a rate limit on re-issuance, so don&apos;t do this repeatedly).
