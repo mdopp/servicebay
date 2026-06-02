@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ChevronLeft, Github, Users, ExternalLink, Sparkles, Home, User as UserIcon, LogOut } from 'lucide-react';
+import { ChevronLeft, Code, Users, ExternalLink, Sparkles, Home, User as UserIcon, LogOut } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
 import DomainTag from './DomainTag';
@@ -262,7 +262,7 @@ export default function Sidebar() {
                 className={`w-full flex items-center px-3.5 py-3 rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] transition-all border border-transparent ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
                 title="View on GitHub"
             >
-                <Github size={20} className="shrink-0" />
+                <Code size={20} className="shrink-0" />
                 {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">GitHub Repo</span>}
             </a>
         </div>

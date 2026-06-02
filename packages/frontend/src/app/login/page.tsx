@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import ServiceBayLogo from '@/components/ServiceBayLogo';
-import { Github, ArrowRight, Loader2, Shield, AlertTriangle } from 'lucide-react';
+import { Code, ArrowRight, Loader2, Shield, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import pkg from '../../../package.json';
 
@@ -175,7 +175,7 @@ export default function LoginPage() {
             rel="noopener noreferrer"
             className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 dark:hover:text-gray-300 transition-colors"
           >
-            <Github size={16} />
+            <Code size={16} />
             <span>View on GitHub</span>
           </a>
         </div>

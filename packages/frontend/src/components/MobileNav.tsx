@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Github, Settings, Wrench } from 'lucide-react';
+import { Code, Settings, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import DomainTag from './DomainTag';
 import { NAVIGATION_ENTRIES, isNavActive } from '@/config/navigation';
@@ -110,7 +110,7 @@ export function MobileTopBar() {
              <Settings size={20} />
           </button>
           <a href="https://github.com/mdopp/servicebay" target="_blank" rel="noreferrer" className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
-             <Github size={20} />
+             <Code size={20} />
           </a>
        </div>
     </div>
