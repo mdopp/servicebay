@@ -31,7 +31,7 @@ describe('useInstallPlan', () => {
       blocked: [{ stack: 'basic', reason: 'core stack — uninstall via Factory Reset, not here' }],
       templatesToDeploy: ['immich'],
     };
-    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => Promise.resolve(new Response(JSON.stringify(plan), {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify(plan), {
       status: 200, headers: { 'content-type': 'application/json' },
     })));
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -64,7 +64,7 @@ describe('useInstallPlan', () => {
   });
 
   it('uninstall posts the WIPE-<stack> confirmation token', async () => {
-    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => Promise.resolve(new Response(JSON.stringify({ ok: true, deleted: ['immich'] }), {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ ok: true, deleted: ['immich'] }), {
       status: 200, headers: { 'content-type': 'application/json' },
     })));
     global.fetch = fetchMock as unknown as typeof fetch;
