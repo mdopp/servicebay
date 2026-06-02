@@ -43,6 +43,25 @@ export interface GatewayConfig {
   ssl?: boolean;
 }
 
+/**
+ * Destination for the config-survival backups (#1527). Mirrors the spirit of
+ * Backup Sync's `BackupTarget`, but constrained to the transports the
+ * config-survival layer actually speaks (it transfers in-memory tar buffers,
+ * not an rsync of a mounted path):
+ *  - `fritzbox` — the FritzBox USB NAS over FTP. Host/credentials default to
+ *    `config.gateway`; the optional `host`/`username`/`password` fields let an
+ *    operator override them (e.g. a dedicated FRITZ.NAS user) without touching
+ *    the TR-064 gateway creds.
+ *  - `ftp` — a standalone FTP(S) server (not the FritzBox).
+ *  - `ssh` — an SFTP server (key- or password-auth).
+ * `dir` is the remote base directory under which `sb-backup/` is created
+ * (defaults to the server's login directory when omitted).
+ */
+export type ExternalBackupTarget =
+  | { type: 'fritzbox'; host?: string; username?: string; password?: string; secure?: boolean }
+  | { type: 'ftp'; host: string; port?: number; username: string; password: string; secure?: boolean; dir?: string }
+  | { type: 'ssh'; host: string; port?: number; username: string; password?: string; privateKey?: string; dir?: string };
+
 export interface ProxyHostEntry {
   /** Full domain, e.g. "vault.dopp.cloud" */
   domain: string;
@@ -294,16 +313,22 @@ export interface AppConfig {
   };
   backup?: BackupConfig;
   /**
-   * Nightly per-service config backup to the FritzBox NAS (#1217, epic #1190).
+   * Nightly per-service config backup to an external NAS (#1217, epic #1190).
    * Separate from `backup` (the full snapshot to the local backup target): this
-   * is the lightweight config-survival push that uses `config.gateway` as the
-   * NAS. Defaults to enabled at 03:30 UTC; the cron skips quietly when the
-   * gateway/NAS isn't configured (nothing to push to yet).
+   * is the lightweight config-survival push. Defaults to enabled at 03:30 UTC;
+   * the cron skips quietly when no reachable target is configured.
+   *
+   * `target` is the destination (#1527). When absent it defaults to the
+   * FritzBox NAS over FTP derived from `config.gateway` — so existing boxes are
+   * unaffected. An explicit `fritzbox` target can override the gateway's
+   * host/credentials (#1525: one place to enter FritzBox creds, NAS defaults to
+   * the gateway). An `ftp` target points at a separate FTP host.
    */
   externalBackup?: {
     enabled: boolean;
     /** Daily run time in 24h `HH:MM` UTC. */
     time?: string;
+    target?: ExternalBackupTarget;
   };
   /**
    * LLDAP admin credentials, persisted by the install wizard so the user can

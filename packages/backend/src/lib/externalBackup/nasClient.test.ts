@@ -17,8 +17,20 @@ const { mockClient, mockGetConfig } = vi.hoisted(() => ({
 
 vi.mock('basic-ftp', () => ({ Client: vi.fn(function () { return mockClient; }) }));
 vi.mock('../config', () => ({ getConfig: () => mockGetConfig() }));
+// ssh2 is exercised only via resolveBackupTarget/testCandidateTarget shape tests
+// here; a connection-level stub keeps these unit tests transport-free.
+vi.mock('ssh2', () => ({ Client: vi.fn(function () { return { on() {}, connect() {}, end() {} }; }) }));
 
-import { getNasTarget, testNasConnection, nasUpload, nasDownload, nasList, nasRemove } from './nasClient';
+import {
+  getNasTarget,
+  resolveBackupTarget,
+  testCandidateTarget,
+  testNasConnection,
+  nasUpload,
+  nasDownload,
+  nasList,
+  nasRemove,
+} from './nasClient';
 
 const GW = { gateway: { type: 'fritzbox', host: '192.168.178.1', username: 'fritz9746', password: 'pw' } };
 
@@ -46,6 +58,79 @@ describe('getNasTarget', () => {
   it('returns null when there is no gateway', async () => {
     mockGetConfig.mockResolvedValue({});
     expect(await getNasTarget()).toBeNull();
+  });
+});
+
+describe('resolveBackupTarget — configurable destination (#1525/#1527)', () => {
+  it('defaults to the gateway FritzBox FTP when no target is set', async () => {
+    expect(await resolveBackupTarget()).toEqual({
+      transport: 'ftp', host: '192.168.178.1', user: 'fritz9746', password: 'pw', secure: false,
+    });
+  });
+
+  it('an explicit fritzbox target inherits unset fields from the gateway', async () => {
+    mockGetConfig.mockResolvedValue({ ...GW, externalBackup: { enabled: true, target: { type: 'fritzbox', secure: true } } });
+    expect(await resolveBackupTarget()).toEqual({
+      transport: 'ftp', host: '192.168.178.1', user: 'fritz9746', password: 'pw', secure: true,
+    });
+  });
+
+  it('a fritzbox target can override the gateway host/user/password', async () => {
+    mockGetConfig.mockResolvedValue({
+      ...GW,
+      externalBackup: { enabled: true, target: { type: 'fritzbox', username: 'nasuser', password: 'naspw' } },
+    });
+    expect(await resolveBackupTarget()).toEqual({
+      transport: 'ftp', host: '192.168.178.1', user: 'nasuser', password: 'naspw', secure: false,
+    });
+  });
+
+  it('resolves a standalone FTP target', async () => {
+    mockGetConfig.mockResolvedValue({
+      externalBackup: { enabled: true, target: { type: 'ftp', host: 'ftp.example.com', port: 2121, username: 'u', password: 'p', dir: 'backups' } },
+    });
+    expect(await resolveBackupTarget()).toEqual({
+      transport: 'ftp', host: 'ftp.example.com', user: 'u', password: 'p', secure: false, port: 2121, dir: 'backups',
+    });
+  });
+
+  it('resolves an SSH target with password auth', async () => {
+    mockGetConfig.mockResolvedValue({
+      externalBackup: { enabled: true, target: { type: 'ssh', host: 'nas.local', username: 'u', password: 'p' } },
+    });
+    expect(await resolveBackupTarget()).toEqual({
+      transport: 'ssh', host: 'nas.local', port: 22, user: 'u', password: 'p', privateKey: undefined, dir: undefined,
+    });
+  });
+
+  it('returns null for an incomplete FTP target (no password)', async () => {
+    mockGetConfig.mockResolvedValue({ externalBackup: { enabled: true, target: { type: 'ftp', host: 'h', username: 'u', password: '' } } });
+    expect(await resolveBackupTarget()).toBeNull();
+  });
+
+  it('returns null for an SSH target with neither password nor key', async () => {
+    mockGetConfig.mockResolvedValue({ externalBackup: { enabled: true, target: { type: 'ssh', host: 'h', username: 'u' } } });
+    expect(await resolveBackupTarget()).toBeNull();
+  });
+
+  it('getNasTarget returns null for an SSH destination (not an FTP shape)', async () => {
+    mockGetConfig.mockResolvedValue({ externalBackup: { enabled: true, target: { type: 'ssh', host: 'h', username: 'u', password: 'p' } } });
+    expect(await getNasTarget()).toBeNull();
+  });
+});
+
+describe('testCandidateTarget — probe before persisting', () => {
+  it('probes a fritzbox candidate over FTP using gateway creds', async () => {
+    expect(await testCandidateTarget({ type: 'fritzbox' })).toEqual({ ok: true });
+    expect(mockClient.access).toHaveBeenCalledWith(
+      expect.objectContaining({ host: '192.168.178.1', user: 'fritz9746', secure: false }),
+    );
+  });
+  it('rejects an incomplete candidate without connecting', async () => {
+    const r = await testCandidateTarget({ type: 'ftp', host: '', username: '', password: '' });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/incomplete/i);
+    expect(mockClient.access).not.toHaveBeenCalled();
   });
 });
 
