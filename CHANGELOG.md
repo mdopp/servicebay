@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.81.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.80.2...servicebay-v4.81.0) (2026-06-02)
+
+
+### Features
+
+* **access-requests:** skip doomed admin approval for an already-registered email ([830cfd7](https://github.com/mdopp/servicebay/commit/830cfd73a82beade08bfd956958e8019fa03a649)), closes [#1510](https://github.com/mdopp/servicebay/issues/1510)
+* **install:** move rootless podman image store to /mnt/data RAID ([09ae040](https://github.com/mdopp/servicebay/commit/09ae040a24395e562973247f566896ad78e690dc)), closes [#1494](https://github.com/mdopp/servicebay/issues/1494)
+* **install:** persist image store on RAID and skip doomed access-request approvals ([bd28b25](https://github.com/mdopp/servicebay/commit/bd28b25263698c5647a42e3fcfae61dd9f72b079))
+
 ## [4.80.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.80.1...servicebay-v4.80.2) (2026-06-02)
 
 
