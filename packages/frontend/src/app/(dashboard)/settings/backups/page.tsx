@@ -1387,6 +1387,9 @@ export default function BackupsSettingsPage() {
                       </button>
                       {restoreExpandedSections.serviceData && (
                         <div className="px-4 pb-4 pt-1 border-t border-gray-100 dark:border-gray-800/50 space-y-3">
+                          <p className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-2">
+                            This is your actual app data — Home Assistant&apos;s <span className="font-mono">.storage</span>, Z-Wave, the Immich library, and so on. A &quot;configs löschen&quot; / wipe-configs reinstall keeps it on disk but does <span className="font-semibold">not</span> pull it back automatically. Select it here to recover it, or services come up blank.
+                          </p>
                           {restorePreview.serviceData.map(sd => {
                             const label = sd.name.replace(/-/g, '/').replace(/^\//, '');
                             const fileCategories = groupServiceDataFiles(sd.files);
