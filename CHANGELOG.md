@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.86.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.85.0...servicebay-v4.86.0) (2026-06-02)
+
+
+### Features
+
+* **diagnose,installer:** typed probe shape + persisted history + desired-state wizard ([ddd5c37](https://github.com/mdopp/servicebay/commit/ddd5c3726e3037047f04b6d067172364119d3e86))
+* **diagnose:** persist every on-demand probe result to HealthStore ([1868f8d](https://github.com/mdopp/servicebay/commit/1868f8d8eb274e77cad19c75611fe4c4c46eefb2)), closes [#1540](https://github.com/mdopp/servicebay/issues/1540)
+* **diagnose:** uniform first-seen/last-ok/trend history per probe row ([3d868ce](https://github.com/mdopp/servicebay/commit/3d868ce0d1265766978dffcdad87a0de4aadf3c6)), closes [#1541](https://github.com/mdopp/servicebay/issues/1541)
+* **installer:** wizard stack picker as desired-state editor via /install/plan ([d29cbdb](https://github.com/mdopp/servicebay/commit/d29cbdbd722b58d2b005d4768e30a9078588cef8)), closes [#1537](https://github.com/mdopp/servicebay/issues/1537)
+
 ## [4.85.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.84.0...servicebay-v4.85.0) (2026-06-02)
 
 
