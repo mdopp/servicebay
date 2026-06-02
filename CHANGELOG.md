@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.86.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.86.0...servicebay-v4.86.1) (2026-06-02)
+
+
+### Bug Fixes
+
+* **fe-lint:** fix tsc type errors in useInstallPlan.test.ts mock.calls ([cd3fd82](https://github.com/mdopp/servicebay/commit/cd3fd82c4c995b4d80a5ae0b99805ed2a398daa4))
+* **fe-lint:** fix TypeScript build errors from lint-sweep extractions ([b96840e](https://github.com/mdopp/servicebay/commit/b96840ea2d096f72a9aef72def11b68627b9e675))
+* **hooks:** remove unused variables in useInstallPlan.test.ts ([39875cf](https://github.com/mdopp/servicebay/commit/39875cf46ba093fa82a29d364a2732e88b0c0b37))
+
 ## [4.86.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.85.0...servicebay-v4.86.0) (2026-06-02)
 
 
