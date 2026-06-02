@@ -20,14 +20,25 @@ import {
   extractAutheliaCookie,
   makeEphemeralUsername,
   USER_APP_SIGNATURES,
+  SUBDOMAIN_TEMPLATE,
   ADMIN_ONLY_HOSTS,
+  probeableUserSubdomains,
   type SsoVerifyDeps,
   type DomainProbe,
 } from './ssoVerify';
 
+const tmpl = (n: string) => ({ [n]: { schemaVersion: 1, installedAt: '2026-05-01T00:00:00Z' } });
+
+// A "full" install: auth + every template that backs a user subdomain. Used
+// by the happy-path tests so all USER_APP_SIGNATURES hosts are probed.
+const fullTemplates = Object.assign(
+  { auth: { schemaVersion: 1, installedAt: '2026-05-01T00:00:00Z' } },
+  ...[...new Set(Object.values(SUBDOMAIN_TEMPLATE))].map(tmpl),
+);
+
 const okConfig = {
   reverseProxy: { publicDomain: 'dopp.cloud' },
-  installedTemplates: { auth: { schemaVersion: 1, installedAt: '2026-05-01T00:00:00Z' } },
+  installedTemplates: fullTemplates,
 };
 
 /** Deps where every step succeeds and every domain behaves correctly. */
@@ -157,6 +168,47 @@ describe('verifySso orchestrator', () => {
     expect(deps.createUser).not.toHaveBeenCalled();
   });
 
+  it('only probes installed services on a non-full install — does not false-fail (#1591)', async () => {
+    // Minimal install: auth + home-assistant + file-share. Vaultwarden,
+    // Immich, media, radicale are NOT installed, so their subdomains
+    // (vault/photos/music/books/caldav) must not be probed.
+    mockGetConfig.mockResolvedValue({
+      reverseProxy: { publicDomain: 'dopp.cloud' },
+      installedTemplates: Object.assign(tmpl('auth'), tmpl('home-assistant'), tmpl('file-share')),
+    });
+    const { deps } = happyDeps();
+    // If an uninstalled service WERE probed, NPM's dead host would 404 → fail.
+    deps.probeDomain = vi.fn(async (_pd, host, _c, follow) => {
+      if (!follow) return { code: 302, body: '' };
+      if (['home', 'files', 'sync'].includes(host)) {
+        return { code: 200, body: USER_APP_SIGNATURES[host] || 'ok' };
+      }
+      return { code: 404, body: 'dead host' }; // would fail if probed
+    });
+
+    const report = await verifySso({ deps });
+
+    expect(report.ok).toBe(true);
+    const probed = report.userDomains.map(d => d.domain).sort();
+    expect(probed).toEqual(['files.dopp.cloud', 'home.dopp.cloud', 'sync.dopp.cloud']);
+    // none of the uninstalled-service subdomains were touched
+    expect(report.userDomains.some(d => /^(vault|photos|music|books|caldav)\./.test(d.domain))).toBe(false);
+  });
+
+  it('passes an auth-only install with zero installed user apps (#1591)', async () => {
+    mockGetConfig.mockResolvedValue({
+      reverseProxy: { publicDomain: 'dopp.cloud' },
+      installedTemplates: tmpl('auth'),
+    });
+    const { deps } = happyDeps();
+
+    const report = await verifySso({ deps });
+
+    expect(report.ok).toBe(true);
+    expect(report.userDomains).toHaveLength(0);
+    expect(report.adminDomains).toHaveLength(ADMIN_ONLY_HOSTS.length);
+  });
+
   it('cleans up even if an injected dep throws unexpectedly', async () => {
     const { deps, calls } = happyDeps();
     deps.autheliaFirstFactor = vi.fn(async () => { throw new Error('kaboom'); });
@@ -166,6 +218,33 @@ describe('verifySso orchestrator', () => {
     expect(report.ok).toBe(false);
     expect(report.steps.some(s => s.id === 'unexpected_error')).toBe(true);
     expect(calls.deleted).toEqual([report.ephemeralUser]);
+  });
+});
+
+describe('probeableUserSubdomains (#1591)', () => {
+  it('returns only subdomains whose backing template is installed', () => {
+    const installed = Object.assign(tmpl('vaultwarden'), tmpl('radicale'));
+    expect(probeableUserSubdomains(installed).sort()).toEqual(['caldav', 'vault']);
+  });
+
+  it('maps file-share to both files and sync when installed', () => {
+    expect(probeableUserSubdomains(tmpl('file-share')).sort()).toEqual(['files', 'sync']);
+  });
+
+  it('is empty when no user-app template is installed', () => {
+    expect(probeableUserSubdomains(tmpl('auth'))).toEqual([]);
+    expect(probeableUserSubdomains({})).toEqual([]);
+  });
+
+  it('every USER_APP_SIGNATURES host has a known backing template', () => {
+    for (const host of Object.keys(USER_APP_SIGNATURES)) {
+      expect(SUBDOMAIN_TEMPLATE[host], `${host} must map to a template`).toBeDefined();
+    }
+  });
+
+  it('no longer includes the untemplated hermes subdomain', () => {
+    expect(USER_APP_SIGNATURES).not.toHaveProperty('hermes');
+    expect(SUBDOMAIN_TEMPLATE).not.toHaveProperty('hermes');
   });
 });
 
