@@ -45,6 +45,7 @@ import {
   type BackupStreamEvent,
   type SystemBackupEntrySummary,
 } from '../_lib/helpers';
+import ExternalBackupDestinationSection from '../_lib/sections/ExternalBackupDestinationSection';
 
 type RestoreSelectionState = {
   nodes: Record<string, boolean>;
@@ -987,8 +988,8 @@ export default function BackupsSettingsPage() {
               <Network size={20} />
             </div>
             <div>
-              <h3 className="font-bold text-gray-900 dark:text-white">NAS Backups (FritzBox)</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Config backups staged on the FritzBox USB NAS — including a Home Assistant backup uploaded from the installer — that a fresh install can restore.</p>
+              <h3 className="font-bold text-gray-900 dark:text-white">NAS Backups</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Config backups staged for a fresh install to restore — on the FritzBox USB NAS by default, or a separate FTP/SSH destination you set below.</p>
             </div>
           </div>
           <button
@@ -999,15 +1000,19 @@ export default function BackupsSettingsPage() {
             {nasLoading ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />} Verify connection
           </button>
         </div>
-        <div className="p-6">
+        <div className="p-6 space-y-6">
+          {/* Destination config (#1525/#1527): FritzBox NAS creds defaulting to
+              the gateway, or a separate FTP/SSH host — settable from the web UI. */}
+          <ExternalBackupDestinationSection onSaved={() => void fetchNasOverview()} />
+
+          <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
           {nasLoading ? (
             <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
               <Loader2 className="animate-spin" size={18} /> Checking NAS…
             </div>
           ) : !nasOverview?.configured ? (
             <div className="text-sm text-gray-500 dark:text-gray-400">
-              No NAS backup source registered. Upload a backup from the ServiceBay installer (TUI), or set the FritzBox gateway in{' '}
-              <span className="font-medium">Settings → Networking &amp; Access</span>, and the box will discover backups staged on the NAS here.
+              No backup destination configured yet. Set one above (it defaults to the FritzBox gateway credentials), and the box will list backups staged there for a fresh install to restore.
             </div>
           ) : nasOverview.connection && !nasOverview.connection.ok ? (
             <div className="flex items-start gap-2 text-sm text-red-600 dark:text-red-300">
@@ -1057,6 +1062,7 @@ export default function BackupsSettingsPage() {
               )}
             </>
           )}
+          </div>
         </div>
       </div>
 

@@ -23,6 +23,22 @@ describe('service backup manifests', () => {
   it('excludes the recorder DB from home-assistant', () => {
     expect(getServiceManifest('home-assistant')!.exclude).toContain('home-assistant_v2.db');
   });
+
+  it('backs up NPM as a first-class entry: db + certs, no strip, in-container collector (#1528)', () => {
+    const npm = getServiceManifest('nginx')!;
+    expect(npm).toBeDefined();
+    // Template name is `nginx` but data lives under nginx-proxy-manager/.
+    expect(npm.dataSubdir).toBe('nginx-proxy-manager');
+    expect(npm.include).toEqual(
+      expect.arrayContaining(['data/database.sqlite', 'letsencrypt', 'data/custom_ssl']),
+    );
+    // Certs + admin hash are kept verbatim — no strip rules (trusted-NAS decision).
+    expect(npm.strip).toBeUndefined();
+    // database.sqlite is WAL-mode → needs a consistent in-container snapshot.
+    expect(npm.collector).toEqual({ kind: 'npm-sqlite' });
+    // ACME renewal logs are noise; conf.d server blocks regenerate from the DB.
+    expect(npm.exclude).toContain('letsencrypt/logs');
+  });
 });
 
 describe('stripYamlKeys', () => {

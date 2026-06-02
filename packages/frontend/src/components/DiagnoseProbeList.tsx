@@ -42,6 +42,22 @@ export interface ProbeItem {
   actions: ProbeAction[];
 }
 
+/** Problem-domain card a probe belongs to (#1534). Mirrors the backend
+ *  `ProbeGroup` union in `lib/diagnose/runDiagnose.ts` — kept structural
+ *  (no shared import) to match the existing duplicated `DiagnoseProbe`
+ *  shape across the package boundary. */
+export type ProbeGroup =
+  | 'services'
+  | 'reverse-proxy'
+  | 'proxy-admin'
+  | 'domains'
+  | 'dns-network'
+  | 'tls'
+  | 'sso'
+  | 'storage-backups'
+  | 'system-info'
+  | 'other';
+
 export interface DiagnoseProbe {
   id: string;
   label: string;
@@ -50,6 +66,35 @@ export interface DiagnoseProbe {
   hint?: string;
   actions?: ProbeAction[];
   items?: ProbeItem[];
+  /** Problem-domain card (#1534). Set by the backend; older payloads
+   *  without it fall through to the ungrouped flat list. */
+  group?: ProbeGroup;
+}
+
+/** Card metadata for the problem-domain grouping (#1534). `order` fixes
+ *  the card sequence; `info` marks the collapsed "System info" panel
+ *  (probes that are information, not problems). */
+const GROUP_META: Record<ProbeGroup, { label: string; order: number; info?: boolean }> = {
+  services:          { label: 'Services running',     order: 0 },
+  'reverse-proxy':   { label: 'Reverse-proxy routes', order: 1 },
+  'proxy-admin':     { label: 'Proxy admin',          order: 2 },
+  domains:           { label: 'Domains reachable',    order: 3 },
+  'dns-network':     { label: 'DNS & network',        order: 4 },
+  tls:               { label: 'TLS certificates',     order: 5 },
+  sso:               { label: 'Login / SSO',          order: 6 },
+  'storage-backups': { label: 'Storage & backups',    order: 7 },
+  other:             { label: 'Other checks',         order: 8 },
+  'system-info':     { label: 'System info',          order: 9, info: true },
+};
+
+/** Worst status across a card's probes — drives the card header tint
+ *  (fail > warn > info > ok). */
+function worstStatus(probes: DiagnoseProbe[]): ProbeStatus {
+  const rank: Record<ProbeStatus, number> = { ok: 0, info: 1, warn: 2, fail: 3 };
+  return probes.reduce<ProbeStatus>(
+    (worst, p) => (rank[p.status] > rank[worst] ? p.status : worst),
+    'ok',
+  );
 }
 
 /**
@@ -173,9 +218,7 @@ export default function DiagnoseProbeList({
   // would be noise.
   const visible = compact ? probes.filter(p => p.status !== 'ok') : probes;
 
-  return (
-    <div className={compact ? 'space-y-2' : 'space-y-3'}>
-      {visible.map(probe => {
+  const renderProbeRow = (probe: DiagnoseProbe) => {
         const meta = STATUS_META[probe.status];
         const Icon = meta.Icon;
         return (
@@ -368,7 +411,56 @@ export default function DiagnoseProbeList({
             </div>
           </div>
         );
-      })}
+  };
+
+  // #1534 — group rows into problem-domain cards. Probes carry a `group`
+  // field from the backend; bucket by it, order by GROUP_META, and render
+  // the info-only `system-info` group as a collapsed panel. A payload
+  // without `group` (older backend) lands every probe in `other`, so the
+  // list degrades to one flat card rather than disappearing.
+  const buckets = new Map<ProbeGroup, DiagnoseProbe[]>();
+  for (const probe of visible) {
+    const g = probe.group ?? 'other';
+    const arr = buckets.get(g);
+    if (arr) arr.push(probe);
+    else buckets.set(g, [probe]);
+  }
+  const orderedGroups = Array.from(buckets.entries())
+    .filter(([, ps]) => ps.length > 0)
+    .sort((a, b) => GROUP_META[a[0]].order - GROUP_META[b[0]].order);
+
+  // Problem cards lead; the collapsed System-info panel trails.
+  const problemGroups = orderedGroups.filter(([g]) => !GROUP_META[g].info);
+  const infoGroups = orderedGroups.filter(([g]) => GROUP_META[g].info);
+
+  const renderCard = ([group, ps]: [ProbeGroup, DiagnoseProbe[]]) => {
+    const cardMeta = STATUS_META[worstStatus(ps)];
+    return (
+      <div key={group} className={`rounded-lg border ${cardMeta.ring} ${cardMeta.bg} ${compact ? 'p-2.5' : 'p-3'}`}>
+        <div className={`flex items-center gap-2 mb-2 text-sm font-semibold ${cardMeta.color}`}>
+          <cardMeta.Icon size={compact ? 14 : 16} className="shrink-0" />
+          {GROUP_META[group].label}
+        </div>
+        <div className={compact ? 'space-y-2' : 'space-y-3'}>
+          {ps.map(renderProbeRow)}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className={compact ? 'space-y-2' : 'space-y-3'}>
+      {problemGroups.map(renderCard)}
+      {infoGroups.map(([group, ps]) => (
+        <details key={group} className={`rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/40 ${compact ? 'p-2.5' : 'p-3'}`}>
+          <summary className="cursor-pointer text-sm font-semibold text-gray-600 dark:text-gray-300 select-none">
+            {GROUP_META[group].label} ({ps.length})
+          </summary>
+          <div className={`mt-2 ${compact ? 'space-y-2' : 'space-y-3'}`}>
+            {ps.map(renderProbeRow)}
+          </div>
+        </details>
+      ))}
     </div>
   );
 }

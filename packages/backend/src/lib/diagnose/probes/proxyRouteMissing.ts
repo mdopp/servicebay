@@ -21,7 +21,11 @@ import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
 
-const PROBE_ID = 'proxy_route_missing';
+// #1535 — folded into the consolidated `dangling_proxy` ("Reverse-proxy
+// routes") diagnose row: dangling routes (extra) + missing routes (this
+// probe). The `retry_create` action therefore registers under the
+// canonical `dangling_proxy` probe id so item rows resolve their button.
+const PROBE_ID = 'dangling_proxy';
 
 export interface ProxyRouteMissingResult {
   status: 'ok' | 'warn' | 'info';

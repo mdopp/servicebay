@@ -11,6 +11,7 @@
  */
 
 import { agentManager } from '@/lib/agent/manager';
+import { logger } from '@/lib/logger';
 import { HealthStore } from '@/lib/health/store';
 import { getNodeTwin } from '@/lib/store/repository';
 import { actionsForProbe, resolveItemActions, type ProbeAction, type ProbeItem, type ResolvedProbeItem } from '@/lib/diagnose/actions';
@@ -34,12 +35,87 @@ import '@/lib/diagnose/probes/register';
 
 type ProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
 
+/**
+ * Problem-domain grouping (#1534). The diagnose suite emits ~20 probe
+ * rows framed by *technical mechanism*; the UI re-groups them into a
+ * handful of user-facing "is this OK?" cards (one root cause = one
+ * prominent card) plus a collapsed "System info" panel for the
+ * info-only probes (serial / ports / first-boot / health-check
+ * coverage) that aren't really problems.
+ *
+ * The grouping lives here (not the frontend) so every diagnose surface
+ * — the wizard, /setup self-test, the MCP `diagnose` tool — sees the
+ * same cards without each re-deriving the mapping. A probe with no
+ * mapping falls back to `other` so a newly-added probe is never
+ * silently dropped from the UI.
+ */
+export type ProbeGroup =
+  | 'services'        // is everything running?
+  | 'reverse-proxy'   // routes reach a real backend
+  | 'proxy-admin'     // NPM admin auth healthy
+  | 'domains'         // domains reachable
+  | 'dns-network'     // DNS / LAN routing
+  | 'tls'             // certificates
+  | 'sso'             // login / SSO
+  | 'storage-backups' // disk + backup target
+  | 'system-info'     // info-only, collapsed (not a "problem")
+  | 'other';          // unmapped fallback
+
+/** Probe id → problem-domain card. Drives the UI grouping (#1534).
+ *  A single root cause (a crashed service) lands every mechanism row
+ *  (`podman`/`pods`/`failed_units`/`crash_loop`/`post_deploy_failed`)
+ *  in the one "Services running" card so it reads as one issue. */
+const PROBE_GROUP: Record<string, ProbeGroup> = {
+  // Services running
+  agent: 'services',
+  podman: 'services',
+  pods: 'services',
+  failed_units: 'services',
+  crash_loop: 'services',
+  post_deploy_failed: 'services',
+  // Reverse-proxy routes
+  dangling_proxy: 'reverse-proxy',
+  // Proxy admin reachable
+  npm_data_stale: 'proxy-admin',
+  // Domains reachable
+  domain_unreachable: 'domains',
+  // DNS & network routing
+  lan_ip_changed_since_install: 'dns-network',
+  router_dns_not_pointing: 'dns-network',
+  adguard_rewrites_missing: 'dns-network',
+  // TLS certificates
+  cert_expiry: 'tls',
+  // Login / SSO
+  sso_verify: 'sso',
+  // Storage & backups
+  disk: 'storage-backups',
+  nas_backup_reachable: 'storage-backups',
+  // System info (collapsed — not a problem)
+  serial: 'system-info',
+  ports: 'system-info',
+  first_boot: 'system-info',
+  health_checks: 'system-info',
+};
+
+/** Map a probe id to its problem-domain group, defaulting unmapped
+ *  probes to `other` so a new probe is still rendered (just outside
+ *  the curated cards) rather than dropped. */
+export function groupForProbe(id: string): ProbeGroup {
+  return PROBE_GROUP[id] ?? 'other';
+}
+
 export interface DiagnoseProbe {
   id: string;
   label: string;
   status: ProbeStatus;
   detail: string;
   hint?: string;
+  /**
+   * Problem-domain card this probe belongs to (#1534). Populated by
+   * `runDiagnose` from the `PROBE_GROUP` map; the UI buckets rows into
+   * cards by this field and renders the `system-info` group collapsed.
+   */
+  group?: ProbeGroup;
   /**
    * Fix-buttons the UI renders next to this probe's status. Populated
    * automatically from the probe-action registry (see
@@ -103,24 +179,54 @@ export interface DiagnoseResult {
   probes: DiagnoseProbe[];
 }
 
-/** Build the `sso_verify` probe row from the persisted report (#1455).
- *  Extracted from the orchestrator so the try/catch + push shape doesn't
+/** Build the consolidated `sso_verify` ("Login / SSO") probe row
+ *  (#1455 + #1535).
+ *
+ *  Two layers in one row:
+ *    - **headline**: live OIDC reachability (`oidc_provider_reachable`) —
+ *      the cheap per-tick "does Authelia answer `/.well-known`" check.
+ *      A broken provider is the most urgent failure (every SSO-gated
+ *      service is 502-ing), so when it's down its status + cause drive
+ *      the row.
+ *    - **detail**: the persisted end-to-end login report (`checkSsoVerify`)
+ *      with per-domain rows; the on-demand "Run SSO check" action re-runs
+ *      it (no per-tick ephemeral-user spin).
+ *
+ *  All remediation actions (run_now, show_recent_logs, restart_authelia)
+ *  resolve under the canonical `sso_verify` probe id.
+ *
+ *  Extracted from the orchestrator so the try/catch + merge shape doesn't
  *  add to `runDiagnose`'s already-large complexity budget. */
-async function buildSsoVerifyProbe(): Promise<DiagnoseProbe> {
+async function buildSsoVerifyProbe(nodeName: string): Promise<DiagnoseProbe> {
   try {
-    const sso = await checkSsoVerify();
+    const [oidc, sso] = await Promise.all([
+      checkOidcProviderReachable(nodeName).catch((e): Awaited<ReturnType<typeof checkOidcProviderReachable>> => ({
+        status: 'info',
+        detail: `OIDC reachability check skipped: ${e instanceof Error ? e.message : String(e)}`,
+      })),
+      checkSsoVerify(),
+    ]);
+    const rank = { ok: 0, info: 0, warn: 1, fail: 2 } as const;
+    // OIDC-provider-down outranks an SSO-report finding: if Authelia
+    // can't answer discovery, the end-to-end report is moot.
+    const status: ProbeStatus = rank[oidc.status] >= rank[sso.status] ? oidc.status : sso.status;
+    const detailParts: string[] = [];
+    if (oidc.status === 'warn' || oidc.status === 'fail') detailParts.push(`OIDC provider: ${oidc.detail}`);
+    detailParts.push(sso.detail);
     return {
       id: 'sso_verify',
-      label: 'SSO end-to-end',
-      status: sso.status,
-      detail: sso.detail,
-      hint: sso.hint,
+      label: 'Login / SSO',
+      status,
+      detail: detailParts.join(' · '),
+      // OIDC's category hint (config/ldap/storage recovery) wins when the
+      // provider is down, since that's the actionable failure.
+      hint: (oidc.status === 'warn' || oidc.status === 'fail') ? (oidc.hint ?? sso.hint) : sso.hint,
       _items: sso.items,
     };
   } catch (e) {
     return {
       id: 'sso_verify',
-      label: 'SSO end-to-end',
+      label: 'Login / SSO',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     };
@@ -606,19 +712,42 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
         });
       }
     }
+
+    // #1535 — fold the inverse direction (routes that should exist but
+    // weren't created) into the same "Reverse-proxy routes" row. Extra
+    // routes get a Delete-route button; missing routes get Retry-create.
+    // Both action ids resolve under the canonical `dangling_proxy` probe.
+    let missingItems: ProbeItem[] = [];
+    let missingCount = 0;
+    try {
+      const prm = await checkProxyRouteMissing();
+      missingItems = prm.items ?? [];
+      missingCount = missingItems.length;
+    } catch (e) {
+      logger.warn('diagnose:dangling_proxy', `proxy_route_missing fold-in failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    const routeItems = [...danglingItems, ...missingItems];
+    const detailParts: string[] = [];
+    if (danglingItems.length) detailParts.push(`${danglingItems.length} dangling (target not served)`);
+    if (missingCount) detailParts.push(`${missingCount} missing (creation failed on install)`);
     probes.push({
       id: 'dangling_proxy',
       label: 'Reverse-proxy routes',
-      status: !proxyService ? 'info' : (danglingItems.length === 0 ? 'ok' : 'warn'),
+      status: !proxyService
+        ? (missingCount > 0 ? 'warn' : 'info')
+        : (routeItems.length === 0 ? 'ok' : 'warn'),
       detail: !proxyService
-        ? 'No managed reverse proxy yet (or its config is not synced to the twin).'
-        : danglingItems.length === 0
+        ? (missingCount > 0
+            ? `${missingCount} proxy host(s) failed to create on install — traffic hits NPM's default 404.`
+            : 'No managed reverse proxy yet (or its config is not synced to the twin).')
+        : routeItems.length === 0
           ? `${proxyConfig.length} proxy route(s), all reach a known service.`
-          : `${danglingItems.length} dangling route(s) — proxy_pass target not published by any managed service or container.`,
-      hint: danglingItems.length > 0
-        ? 'Click "Delete route" on a row to remove it from NPM. Most often caused by a removed/renamed service.'
+          : `${detailParts.join(' · ')}.`,
+      hint: routeItems.length > 0
+        ? 'Each row has a fix: "Delete route" removes a dangling NPM host (target gone); "Retry create" pushes a missing route back into NPM (most often a wrong-creds failure — see npm_data_stale).'
         : undefined,
-      _items: danglingItems.length > 0 ? danglingItems : undefined,
+      _items: routeItems.length > 0 ? routeItems : undefined,
     });
   } catch (e) {
     probes.push({
@@ -695,61 +824,18 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
     });
   }
 
-  // 14a) OIDC provider reachability (#623). Sister-probe to crash_loop
-  //     and domain_external_reachability — closes the gap between
-  //     "container up" and "SSO actually works". Authelia in #622
-  //     was up + DNS routing fine, but /.well-known/openid-configuration
-  //     was 502 because the preserved DB's encryption key drifted from
-  //     the post-reinstall config; every OIDC-gated service was
-  //     surfacing 502 to the operator while diagnose said all green.
-  try {
-    const oidc = await checkOidcProviderReachable(nodeName);
-    probes.push({
-      id: 'oidc_provider_reachable',
-      label: 'OIDC provider (Authelia)',
-      status: oidc.status,
-      detail: oidc.detail,
-      hint: oidc.hint,
-    });
-  } catch (e) {
-    probes.push({
-      id: 'oidc_provider_reachable',
-      label: 'OIDC provider (Authelia)',
-      status: 'info',
-      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
-    });
-  }
+  // 14a) Login / SSO (#623 + #1455 + #1535 — consolidated). One row that
+  //     fronts live OIDC-provider reachability (does Authelia answer
+  //     `/.well-known/openid-configuration` — caught the #622 storage-key
+  //     drift where every SSO-gated service 502'd while diagnose was
+  //     green) and carries the persisted end-to-end login report (real
+  //     family-group login reaches every user domain, is blocked from
+  //     admin-only ones) with an on-demand "Run SSO check" action.
+  probes.push(await buildSsoVerifyProbe(nodeName));
 
-  // 14a-2) End-to-end SSO verification (#1455). Reads the report persisted
-  //     by the post-install auto-run (#1454) or the operator's last
-  //     on-demand "Run SSO check" click — it does NOT re-spin an ephemeral
-  //     user on every diagnose tick (that's the action's job). Sister to
-  //     oidc_provider_reachable: that probe confirms Authelia *answers*;
-  //     this one confirms a real family-group login can reach every
-  //     user-facing domain and is blocked from admin-only ones.
-  probes.push(await buildSsoVerifyProbe());
-
-  // 14b) Proxy route create-failures (B12). Surfaces config entries
-  //     where install-time NPM creation came back unconfirmed; per-item
-  //     "Retry create" action pushes the route into NPM again.
-  try {
-    const prm = await checkProxyRouteMissing();
-    probes.push({
-      id: 'proxy_route_missing',
-      label: 'Proxy hosts created',
-      status: prm.status,
-      detail: prm.detail,
-      hint: prm.hint,
-      _items: prm.items,
-    });
-  } catch (e) {
-    probes.push({
-      id: 'proxy_route_missing',
-      label: 'Proxy hosts created',
-      status: 'info',
-      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
-    });
-  }
+  // 14b) Proxy route create-failures (B12) are now folded into the
+  //     consolidated `dangling_proxy` ("Reverse-proxy routes") row above
+  //     (#1535) — missing routes carry the same "Retry create" action.
 
   // 15) Post-deploy seed failures (B8 / #252). Surfaces services whose
   //     last `post-deploy.py` exited non-zero so silent seed failures
@@ -774,48 +860,47 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
     });
   }
 
-  // 16) Let's Encrypt cert expiry. Silent (info) in LAN-domain mode
-  //     where no certs exist; warn at ≤14d, fail when expired. Per-row
-  //     "Renew now" action triggers NPM's ACME endpoint.
+  // 16) TLS certificates (#1535 — consolidated). One row covering both
+  //     failure modes of NPM-managed Let's Encrypt certs:
+  //       - expiry  (cert_expiry check): warn ≤14d / fail when expired;
+  //         per-row "Renew now" action.
+  //       - ACME request failure (cert_request_failure check): NPM's
+  //         opaque "Internal Error" decoded from letsencrypt.log; per-row
+  //         "Show log tail" + "Retry now" actions.
+  //     Both checks' items merge into this row; all three actions
+  //     (renew_cert, show_log_tail, retry_request) resolve under the
+  //     canonical `cert_expiry` probe id.
   try {
-    const ce = await checkCertExpiry();
+    const [ce, crf] = await Promise.all([
+      checkCertExpiry(),
+      checkCertRequestFailure().catch((e): Awaited<ReturnType<typeof checkCertRequestFailure>> => ({
+        status: 'info',
+        detail: `request-failure check skipped: ${e instanceof Error ? e.message : String(e)}`,
+      })),
+    ]);
+    const certItems = [...(ce.items ?? []), ...(crf.items ?? [])];
+    // Status = worst of the two; an expired cert (fail) outranks a recent
+    // ACME failure (warn/fail) outranks expiring-soon (warn).
+    const rank = { ok: 0, info: 0, warn: 1, fail: 2 } as const;
+    const worstStatus = (a: ProbeStatus, b: ProbeStatus): ProbeStatus =>
+      rank[a] >= rank[b] ? a : b;
+    const status = worstStatus(ce.status, crf.status);
+    const detailParts: string[] = [];
+    if (ce.status !== 'info' && ce.status !== 'ok') detailParts.push(ce.detail);
+    if (crf.status !== 'info' && crf.status !== 'ok') detailParts.push(crf.detail);
+    if (detailParts.length === 0) detailParts.push(ce.status === 'ok' ? ce.detail : crf.detail);
     probes.push({
       id: 'cert_expiry',
       label: 'TLS certificates',
-      status: ce.status,
-      detail: ce.detail,
-      hint: ce.hint,
-      _items: ce.items,
+      status,
+      detail: detailParts.join(' '),
+      hint: ce.hint ?? crf.hint,
+      _items: certItems.length > 0 ? certItems : undefined,
     });
   } catch (e) {
     probes.push({
       id: 'cert_expiry',
       label: 'TLS certificates',
-      status: 'info',
-      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
-    });
-  }
-
-  // 16b) Recent ACME failures from NPM's letsencrypt.log. NPM surfaces
-  //      cert-issuance failures as a generic "Internal Error"; this
-  //      probe parses the actual log tail and turns each failed domain
-  //      into a row with show_log_tail + retry_request actions. Silent
-  //      (info) when the log is missing, the last failure is older than
-  //      24h, or the file is unparseable.
-  try {
-    const crf = await checkCertRequestFailure();
-    probes.push({
-      id: 'cert_request_failure',
-      label: 'Let\'s Encrypt cert requests',
-      status: crf.status,
-      detail: crf.detail,
-      hint: crf.hint,
-      _items: crf.items,
-    });
-  } catch (e) {
-    probes.push({
-      id: 'cert_request_failure',
-      label: 'Let\'s Encrypt cert requests',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
@@ -867,51 +952,63 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
     });
   }
 
-  // Per-domain "why isn't this reachable" diagnosis. Cheap
-  // (single fetch + DNS lookup per host), runs both LAN and public
-  // domains, surfaces the per-row hint pointing at whichever
-  // existing probe carries the fix action.
+  // Domains reachable (#1535 — consolidated). One row covering both
+  // directions of "can this domain be reached":
+  //   - headline: cheap per-domain fetch+DNS diagnosis (LAN + public),
+  //     each broken domain a row with the matching inline fix action
+  //     (retry_create / reprovision / show DNS instructions).
+  //   - deep check: the slow DoH + letsdebug external view, demoted from
+  //     an always-listed second probe to per-row "Refresh DNS check" /
+  //     "Run letsdebug" actions (run on demand, letsdebug rate-limited).
+  // External rows merge into the same row; a domain present in both
+  // directions keeps one row with the union of its fix actions.
   try {
-    const du = await checkDomainUnreachable();
+    const [du, dr] = await Promise.all([
+      checkDomainUnreachable(),
+      checkDomainExternalReachability().catch((e): Awaited<ReturnType<typeof checkDomainExternalReachability>> => ({
+        status: 'info',
+        detail: `external reachability check skipped: ${e instanceof Error ? e.message : String(e)}`,
+      })),
+    ]);
+    const byDomain = new Map<string, ProbeItem>();
+    for (const it of [...(du.items ?? []), ...(dr.items ?? [])]) {
+      const existing = byDomain.get(it.id);
+      if (!existing) {
+        byDomain.set(it.id, { ...it, actionIds: [...it.actionIds] });
+      } else {
+        // Same domain from both directions — merge the detail + the
+        // union of fix actions onto a single row; keep the worst status.
+        existing.detail = [existing.detail, it.detail].filter(Boolean).join('\n');
+        for (const a of it.actionIds) if (!existing.actionIds.includes(a)) existing.actionIds.push(a);
+        if (it.status === 'fail' || (it.status === 'warn' && existing.status === 'info')) existing.status = it.status;
+      }
+    }
+    const domainItems = Array.from(byDomain.values());
+    const rank = { ok: 0, info: 0, warn: 1, fail: 2 } as const;
+    const status: ProbeStatus = rank[du.status] >= rank[dr.status] ? du.status : dr.status;
+    const detailParts: string[] = [];
+    if (du.status !== 'ok' && du.status !== 'info') detailParts.push(du.detail);
+    if (dr.status !== 'ok' && dr.status !== 'info') detailParts.push(`External: ${dr.detail}`);
+    if (detailParts.length === 0) detailParts.push(du.status !== 'info' ? du.detail : dr.detail);
     probes.push({
       id: 'domain_unreachable',
-      label: 'Configured domains',
-      status: du.status,
-      detail: du.detail,
-      hint: du.hint,
-      _items: du.items,
+      label: 'Domains reachable',
+      status,
+      detail: detailParts.join(' · '),
+      hint: du.hint ?? dr.hint,
+      _items: domainItems.length > 0 ? domainItems : undefined,
     });
   } catch (e) {
     probes.push({
       id: 'domain_unreachable',
-      label: 'Configured domains',
+      label: 'Domains reachable',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
   }
 
-  // External reachability via letsdebug.net. Slow (10-30 s per
-  // domain) but cached for 24 h inside the probe, so re-runs only
-  // hammer letsdebug when results expire. Caught — a probe outage
-  // shouldn't block the rest of diagnose.
-  try {
-    const dr = await checkDomainExternalReachability();
-    probes.push({
-      id: 'domain_external_reachability',
-      label: 'External reachability',
-      status: dr.status,
-      detail: dr.detail,
-      hint: dr.hint,
-      _items: dr.items,
-    });
-  } catch (e) {
-    probes.push({
-      id: 'domain_external_reachability',
-      label: 'External reachability',
-      status: 'info',
-      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
-    });
-  }
-
-  return { node: nodeName, probes: probes.map(withActions) };
+  return {
+    node: nodeName,
+    probes: probes.map(withActions).map(p => ({ ...p, group: groupForProbe(p.id) })),
+  };
 }

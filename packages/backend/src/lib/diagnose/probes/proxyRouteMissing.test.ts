@@ -38,7 +38,7 @@ const ACTIVE_NGINX = [{ name: 'nginx', active: true, ports: [{ host: '8081', con
 describe('proxy_route_missing.retry_create', () => {
   it('rejects empty itemId', async () => {
     const result = await dispatchProbeAction({
-      probeId: 'proxy_route_missing',
+      probeId: 'dangling_proxy',
       actionId: 'retry_create',
       node: 'Local',
     });
@@ -49,7 +49,7 @@ describe('proxy_route_missing.retry_create', () => {
   it('returns failure when entry not in config', async () => {
     state.config ={ reverseProxy: { hosts: [] } };
     const result = await dispatchProbeAction({
-      probeId: 'proxy_route_missing',
+      probeId: 'dangling_proxy',
       actionId: 'retry_create',
       itemId: 'vault.example.com',
       node: 'Local',
@@ -66,7 +66,7 @@ describe('proxy_route_missing.retry_create', () => {
     };
     state.services = [];
     const result = await dispatchProbeAction({
-      probeId: 'proxy_route_missing',
+      probeId: 'dangling_proxy',
       actionId: 'retry_create',
       itemId: 'vault.example.com',
       node: 'Local',
@@ -89,7 +89,7 @@ describe('proxy_route_missing.retry_create', () => {
       json: () => Promise.resolve({ needsCredentials: true }),
     });
     const result = await dispatchProbeAction({
-      probeId: 'proxy_route_missing',
+      probeId: 'dangling_proxy',
       actionId: 'retry_create',
       itemId: 'vault.example.com',
       node: 'Local',
@@ -111,7 +111,7 @@ describe('proxy_route_missing.retry_create', () => {
       json: () => Promise.resolve({ success: true, created: ['vault.example.com'], failed: [] }),
     });
     const result = await dispatchProbeAction({
-      probeId: 'proxy_route_missing',
+      probeId: 'dangling_proxy',
       actionId: 'retry_create',
       itemId: 'vault.example.com',
       node: 'Local',
@@ -136,7 +136,7 @@ describe('proxy_route_missing.retry_create', () => {
       }),
     });
     const result = await dispatchProbeAction({
-      probeId: 'proxy_route_missing',
+      probeId: 'dangling_proxy',
       actionId: 'retry_create',
       itemId: 'vault.example.com',
       node: 'Local',

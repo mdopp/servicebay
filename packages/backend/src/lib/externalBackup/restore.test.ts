@@ -7,12 +7,18 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-const { mockNas, mockCfg } = vi.hoisted(() => ({
+const { mockNas, mockCfg, mockNpmCredStatus, mockRekeyNpm } = vi.hoisted(() => ({
   mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn() },
   mockCfg: { getConfig: vi.fn() },
+  mockNpmCredStatus: vi.fn(),
+  mockRekeyNpm: vi.fn(),
 }));
 vi.mock('./nasClient', () => mockNas);
 vi.mock('../config', () => mockCfg);
+vi.mock('../reverseProxy/npmAdminRekey', () => ({
+  npmAdminCredStatus: (...a: unknown[]) => mockNpmCredStatus(...a),
+  rekeyNpmAdmin: (...a: unknown[]) => mockRekeyNpm(...a),
+}));
 
 import { restoreServiceBackup, isFreshDataDir, autoRestoreServiceOnReinstall } from './restore';
 import { NAS_BACKUP_DIR } from './producer';
@@ -158,5 +164,61 @@ describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
     ).resolves.toBeUndefined();
     expect(await fs.readFile(path.join(dataDir, 'live.yaml'), 'utf8')).toBe('live'); // untouched
     expect(logs.some(l => l.includes('restored'))).toBe(false);
+  });
+});
+
+describe('NPM credential reconcile after restore (#1529)', () => {
+  /** Serve an nginx.tar (restored into tmpRoot/nginx-proxy-manager). */
+  async function serveNginxTar() {
+    const tar = await buildServiceTar({ 'data/database.sqlite': 'RESTORED-DB' });
+    mockNas.nasDownload.mockImplementation(async (p: string) => {
+      if (p === `${NAS_BACKUP_DIR}/nginx.tar`) return tar;
+      throw new Error('not found');
+    });
+  }
+
+  it('re-keys SB to the restored DB when NPM rejects the stored credential', async () => {
+    await serveNginxTar();
+    mockNpmCredStatus.mockResolvedValue('rejected');
+    mockRekeyNpm.mockResolvedValue({ ok: true, message: 'NPM admin password re-keyed and saved', email: 'a@x' });
+
+    const res = await restoreServiceBackup('nginx');
+    expect(res.dataDir).toBe(path.join(tmpRoot, 'nginx-proxy-manager'));
+    expect(mockRekeyNpm).toHaveBeenCalledWith('Local');
+    expect(res.credentialReconcile).toEqual({ ok: true, message: expect.stringContaining('re-keyed') });
+  });
+
+  it('does not re-key when the stored credential still authenticates', async () => {
+    await serveNginxTar();
+    mockNpmCredStatus.mockResolvedValue('ok');
+
+    const res = await restoreServiceBackup('nginx');
+    expect(mockRekeyNpm).not.toHaveBeenCalled();
+    expect(res.credentialReconcile).toBeUndefined();
+  });
+
+  it('is a no-op when NPM is not reachable (e.g. pre-pod-start reinstall)', async () => {
+    await serveNginxTar();
+    mockNpmCredStatus.mockResolvedValue('unknown');
+
+    const res = await restoreServiceBackup('nginx');
+    expect(mockRekeyNpm).not.toHaveBeenCalled();
+    expect(res.credentialReconcile).toBeUndefined();
+  });
+
+  it('surfaces a failed re-key rather than masking it', async () => {
+    await serveNginxTar();
+    mockNpmCredStatus.mockResolvedValue('no-creds');
+    mockRekeyNpm.mockResolvedValue({ ok: false, message: 'Could not find the running NPM container to re-key.' });
+
+    const res = await restoreServiceBackup('nginx');
+    expect(res.credentialReconcile).toEqual({ ok: false, message: expect.stringContaining('Could not find') });
+  });
+
+  it('never reconciles for a non-NPM service', async () => {
+    serveTar(await buildServiceTar({ 'configuration.yaml': 'x' }));
+    const res = await restoreServiceBackup('home-assistant');
+    expect(mockNpmCredStatus).not.toHaveBeenCalled();
+    expect(res.credentialReconcile).toBeUndefined();
   });
 });

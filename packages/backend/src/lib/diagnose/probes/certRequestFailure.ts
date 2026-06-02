@@ -33,13 +33,18 @@ import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../
 import { HealthStore } from '@/lib/health/store';
 import { CERT_REQUEST_FAILURE_MESSAGE_PREFIX } from '@/lib/health/runner';
 import { parseLetsencryptTail } from '@/lib/health/probes/letsencryptLogParser';
-import { registerRefreshNow } from './refreshHealthCheck';
 
 // Re-export so callers (and the existing unit test) can import the
 // parser via the old module path.
 export { parseLetsencryptTail };
 
-const PROBE_ID = 'cert_request_failure';
+// #1535 — folded into the consolidated `cert_expiry` ("TLS certificates")
+// diagnose row: expiry items (renew) + ACME request-failure items
+// (show-log / retry). The action handlers register under the canonical
+// `cert_expiry` probe id so the merged item rows resolve their buttons.
+// The underlying health CHECK id stays `cert_request_failure` (separate
+// scheduled check, see health/init.ts) — only the diagnose row merges.
+const PROBE_ID = 'cert_expiry';
 const CHECK_ID = 'cert_request_failure';
 
 export interface CertRequestFailureResult {
@@ -283,5 +288,3 @@ registerProbeAction(
   },
   retryRequest,
 );
-
-registerRefreshNow(PROBE_ID, CHECK_ID, 'Cert request failure');

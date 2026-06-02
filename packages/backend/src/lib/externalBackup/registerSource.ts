@@ -15,10 +15,106 @@
  * same creds, and `getNasBackupOverview` then lets Settings → Backups verify
  * the connection and list the staged tars (incl. `home-assistant.tar`).
  */
-import { getConfig, updateConfig, type GatewayConfig } from '../config';
+import { getConfig, updateConfig, type GatewayConfig, type ExternalBackupTarget } from '../config';
 import { logger } from '../logger';
-import { testNasConnection } from './nasClient';
+import { testNasConnection, resolveBackupTarget } from './nasClient';
 import { listServiceBackups, type ServiceBackupListEntry } from './producer';
+
+/**
+ * Settings → Backups destination view (#1525/#1527). Never echoes a stored
+ * password — only whether one is set — mirroring `GatewaySection`'s `hasPassword`.
+ */
+export interface ExternalBackupTargetView {
+  type: 'fritzbox' | 'ftp' | 'ssh';
+  host: string;
+  /** For `fritzbox`, this is the gateway host shown as the inherited default. */
+  username: string;
+  hasPassword: boolean;
+  hasPrivateKey: boolean;
+  port?: number;
+  secure?: boolean;
+  dir?: string;
+  /** True when type is `fritzbox` and no override host/creds are set — i.e. it
+   *  inherits `config.gateway` (the default; existing boxes land here). */
+  inheritsGateway: boolean;
+}
+
+/** Read the configured destination for the Settings form, with secrets masked. */
+export async function getExternalBackupTargetView(): Promise<ExternalBackupTargetView> {
+  const config = await getConfig();
+  const target = config.externalBackup?.target;
+  const gw = config.gateway;
+
+  if (!target || target.type === 'fritzbox') {
+    const override = target;
+    const inheritsGateway = !override || !(override.host || override.username || override.password);
+    return {
+      type: 'fritzbox',
+      host: override?.host ?? (gw?.type === 'fritzbox' ? gw.host : '') ?? '',
+      username: override?.username ?? (gw?.type === 'fritzbox' ? gw.username : '') ?? '',
+      hasPassword: Boolean(override?.password ?? (gw?.type === 'fritzbox' ? gw.password : undefined)),
+      hasPrivateKey: false,
+      secure: override?.secure ?? false,
+      inheritsGateway,
+    };
+  }
+  if (target.type === 'ftp') {
+    return {
+      type: 'ftp',
+      host: target.host,
+      username: target.username,
+      hasPassword: Boolean(target.password),
+      hasPrivateKey: false,
+      port: target.port,
+      secure: target.secure ?? false,
+      dir: target.dir,
+      inheritsGateway: false,
+    };
+  }
+  return {
+    type: 'ssh',
+    host: target.host,
+    username: target.username,
+    hasPassword: Boolean(target.password),
+    hasPrivateKey: Boolean(target.privateKey),
+    port: target.port,
+    dir: target.dir,
+    inheritsGateway: false,
+  };
+}
+
+/**
+ * Persist the external-backup destination (#1527). A blank password/privateKey
+ * on an `ftp`/`ssh` target means "keep the existing secret" (the form never
+ * receives the stored secret back), matching `GatewaySection`'s save semantics.
+ * For a `fritzbox` target, omitted override fields fall back to `config.gateway`
+ * at resolve time, so the operator can leave them blank to reuse the gateway.
+ */
+export async function saveExternalBackupTarget(incoming: ExternalBackupTarget): Promise<void> {
+  const config = await getConfig();
+  const existing = config.externalBackup?.target;
+  let target = incoming;
+
+  // Preserve a stored secret when the form sent a blank one for the same type.
+  if (incoming.type === 'ftp' && existing?.type === 'ftp' && !incoming.password) {
+    target = { ...incoming, password: existing.password };
+  } else if (incoming.type === 'ssh' && existing?.type === 'ssh') {
+    target = {
+      ...incoming,
+      password: incoming.password || existing.password,
+      privateKey: incoming.privateKey || existing.privateKey,
+    };
+  }
+
+  await updateConfig({
+    externalBackup: {
+      enabled: config.externalBackup?.enabled ?? true,
+      time: config.externalBackup?.time,
+      target,
+    },
+  });
+  logger.info('ExternalBackup', `Saved external-backup destination (${target.type})`);
+}
 
 export interface NasRegistration {
   host: string;
@@ -81,8 +177,9 @@ export interface NasBackupOverview {
  * connection error and offers a retry/verify.
  */
 export async function getNasBackupOverview(): Promise<NasBackupOverview> {
-  const gw = (await getConfig()).gateway;
-  const configured = gw?.type === 'fritzbox' && Boolean(gw.host && gw.username && gw.password);
+  // "Configured" now follows the resolved destination (#1527), not just the
+  // gateway: a separate FTP/SSH target counts even with no FritzBox gateway.
+  const configured = (await resolveBackupTarget()) !== null;
   if (!configured) {
     return { configured: false, connection: null, backups: [] };
   }

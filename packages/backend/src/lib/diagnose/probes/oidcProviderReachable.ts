@@ -47,7 +47,13 @@ import { getConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
 
-const PROBE_ID = 'oidc_provider_reachable';
+// #1535 — folded into the consolidated `sso_verify` ("Login / SSO")
+// diagnose row: live OIDC reachability is the headline, the persisted
+// end-to-end report is the detail. The remediation actions register
+// under the canonical `sso_verify` probe id. `LOG_PROBE_TAG` keeps the
+// log namespace stable for grep-ability.
+const PROBE_ID = 'sso_verify';
+const LOG_PROBE_TAG = 'oidc_provider_reachable';
 
 export type OidcFailCategory = 'config' | 'ldap' | 'storage' | 'unknown';
 
@@ -185,7 +191,7 @@ async function fetchAutheliaLogs(nodeName: string): Promise<string | null> {
     const out = (res.stdout ?? '').trim();
     return out || null;
   } catch (e) {
-    logger.info(`diagnose:${PROBE_ID}`, `log fetch failed: ${e instanceof Error ? e.message : String(e)}`);
+    logger.info(`diagnose:${LOG_PROBE_TAG}`, `log fetch failed: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 }
@@ -322,7 +328,7 @@ async function restartAuthelia({ node }: { node: string }): Promise<ProbeActionR
     };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    logger.warn(`diagnose:${PROBE_ID}`, `restart action threw: ${message}`);
+    logger.warn(`diagnose:${LOG_PROBE_TAG}`, `restart action threw: ${message}`);
     return {
       ok: false,
       message: `Restart failed: ${message}`,

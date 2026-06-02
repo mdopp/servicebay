@@ -217,7 +217,7 @@ describe('cert_request_failure.show_log_tail', () => {
     const lines = Array.from({ length: 200 }, (_, i) => `line${i}`).join('\n');
     mockAgent.sendCommand.mockResolvedValueOnce({ code: 0, stdout: lines, stderr: '' });
     const result = await dispatchProbeAction({
-      probeId: 'cert_request_failure',
+      probeId: 'cert_expiry',
       actionId: 'show_log_tail',
       node: 'Local',
     });
@@ -230,7 +230,7 @@ describe('cert_request_failure.show_log_tail', () => {
   it('reports failure when the log read fails', async () => {
     mockAgent.sendCommand.mockResolvedValueOnce({ code: 1, stdout: '', stderr: '' });
     const result = await dispatchProbeAction({
-      probeId: 'cert_request_failure',
+      probeId: 'cert_expiry',
       actionId: 'show_log_tail',
       node: 'Local',
     });
@@ -244,7 +244,7 @@ describe('cert_request_failure.show_log_tail', () => {
 describe('cert_request_failure.retry_request', () => {
   it('rejects empty itemId', async () => {
     const result = await dispatchProbeAction({
-      probeId: 'cert_request_failure',
+      probeId: 'cert_expiry',
       actionId: 'retry_request',
       node: 'Local',
     });
@@ -267,7 +267,7 @@ describe('cert_request_failure.retry_request', () => {
       // /api/nginx/certificates/7/renew
       .mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('') });
     const result = await dispatchProbeAction({
-      probeId: 'cert_request_failure',
+      probeId: 'cert_expiry',
       actionId: 'retry_request',
       itemId: 'vault.dopp.cloud',
       node: 'Local',
@@ -284,7 +284,7 @@ describe('cert_request_failure.retry_request', () => {
         json: () => Promise.resolve([{ id: 4, domain_names: ['other.dopp.cloud'] }]),
       });
     const result = await dispatchProbeAction({
-      probeId: 'cert_request_failure',
+      probeId: 'cert_expiry',
       actionId: 'retry_request',
       itemId: 'vault.dopp.cloud',
       node: 'Local',

@@ -16,9 +16,26 @@ export interface StripRule {
   dropYamlKeys: string[];
 }
 
+/**
+ * Identifies a service whose backup needs an in-container snapshot step before
+ * the file-copy producer reads its data dir — e.g. a live WAL-mode SQLite that
+ * a plain `cp` would tear. The producer runs the snapshot inside the service's
+ * own container (same exec pattern as `npmAdminRekey`) so it uses the
+ * container's bundled `sqlite3`, then stages the snapshot file as a normal
+ * include. Pure descriptor — the producer owns the actual exec.
+ */
+export interface BackupCollector {
+  /** Discriminator for which collector the producer runs. */
+  kind: 'npm-sqlite';
+}
+
 export interface ServiceBackupManifest {
-  /** ServiceBay template/service name. */
+  /** ServiceBay template/service name (also the `installedTemplates` key). */
   service: string;
+  /** On-disk data subdir under DATA_DIR, when it differs from `service`
+   *  (NPM ships as template `nginx` but stores under `nginx-proxy-manager/`).
+   *  Defaults to `service`. */
+  dataSubdir?: string;
   /** Relative paths/dirs that ARE config worth preserving across a reinstall. */
   include: string[];
   /** Relative paths/dirs to never back up — bulk data, logs, caches, and
@@ -26,6 +43,13 @@ export interface ServiceBackupManifest {
   exclude: string[];
   /** Per-file transforms applied before a file enters the tarball. */
   strip?: StripRule[];
+  /** Optional in-container snapshot step the producer runs before staging
+   *  (e.g. a consistent SQLite `.backup`). */
+  collector?: BackupCollector;
+  /** Stage a source rel-path under a different rel-path in the tarball. Set by
+   *  the collector so a snapshot file (`…sqlite.sb-backup`) lands under its
+   *  canonical name (`…sqlite`) on restore. Maps source → tarball path. */
+  renames?: Record<string, string>;
 }
 
 /**
@@ -77,6 +101,34 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     exclude: ['vectordb', 'embeddings', 'conversations', 'history'],
     // LLM API keys are re-entered after a restore.
     strip: [{ file: 'config.yaml', dropYamlKeys: ['api_key', 'apiKey', 'llm_api_key'] }],
+  },
+  {
+    // Nginx Proxy Manager (#1528). Template name is `nginx`; data lives under
+    // `nginx-proxy-manager/` (`data/` ← /data, `letsencrypt/` ← /etc/letsencrypt).
+    service: 'nginx',
+    dataSubdir: 'nginx-proxy-manager',
+    include: [
+      // proxy hosts, redirects, streams, access lists, the admin user/hash.
+      'data/database.sqlite',
+      // ACME account + every issued cert + private key.
+      'letsencrypt',
+      // operator-uploaded custom certs/keys.
+      'data/custom_ssl',
+    ],
+    exclude: [
+      // ACME renewal logs are noise; the regenerated nginx server blocks are
+      // rebuilt from database.sqlite, so the conf.d copy has no restore value.
+      'letsencrypt/logs', 'data/nginx', 'data/logs',
+    ],
+    // NO strip rules: certs + the admin hash are kept verbatim. The home NAS is
+    // the same trust class as the existing system backup, and these secrets are
+    // expensive/impossible to regenerate (Let's Encrypt rate limits, access
+    // lists) — consistent with HA keeping its zwave_js keys.
+
+    // database.sqlite is WAL-mode and live; a plain file-copy can tear it, so
+    // the producer takes a consistent in-container `sqlite3 .backup` snapshot
+    // over the same exec path npmAdminRekey uses.
+    collector: { kind: 'npm-sqlite' },
   },
 ];
 

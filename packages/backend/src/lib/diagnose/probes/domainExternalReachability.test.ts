@@ -297,7 +297,7 @@ describe('refresh_now action (DoH)', () => {
       message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     };
     const r = await dispatchProbeAction({
-      probeId: 'domain_external_reachability',
+      probeId: 'domain_unreachable',
       actionId: 'refresh_now', node: 'Local',
       itemId: 'one.example.com',
     });
@@ -313,7 +313,7 @@ describe('refresh_now action (DoH)', () => {
       message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['198.51.100.7'], matched: false }),
     };
     const r = await dispatchProbeAction({
-      probeId: 'domain_external_reachability',
+      probeId: 'domain_unreachable',
       actionId: 'refresh_now', node: 'Local',
       itemId: 'one.example.com',
     });
@@ -324,7 +324,7 @@ describe('refresh_now action (DoH)', () => {
   it('reports ok:false when the matching check does not exist', async () => {
     state.checks = state.checks.filter(c => c.id !== 'dns_routing:one.example.com');
     const r = await dispatchProbeAction({
-      probeId: 'domain_external_reachability',
+      probeId: 'domain_unreachable',
       actionId: 'refresh_now', node: 'Local',
       itemId: 'one.example.com',
     });
@@ -337,7 +337,7 @@ describe('run_letsdebug action', () => {
   it('invokes letsdebug client and saves the result', async () => {
     state.letsdebugResult = { problems: [], submissionUrl: 'https://letsdebug.net/one.example.com/99' };
     const r = await dispatchProbeAction({
-      probeId: 'domain_external_reachability',
+      probeId: 'domain_unreachable',
       actionId: 'run_letsdebug', node: 'Local',
       itemId: 'one.example.com',
     });
@@ -352,7 +352,7 @@ describe('run_letsdebug action', () => {
   it('surfaces a friendly 429 message when letsdebug rate-limits', async () => {
     state.letsdebugError = new Error('letsdebug submission HTTP 429');
     const r = await dispatchProbeAction({
-      probeId: 'domain_external_reachability',
+      probeId: 'domain_unreachable',
       actionId: 'run_letsdebug', node: 'Local',
       itemId: 'one.example.com',
     });

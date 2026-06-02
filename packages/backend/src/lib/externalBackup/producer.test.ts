@@ -7,17 +7,21 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-const { mockNas, mockGetConfig } = vi.hoisted(() => ({
+const { mockNas, mockGetConfig, mockSendCommand } = vi.hoisted(() => ({
   mockNas: {
     nasUpload: vi.fn(),
     nasDownload: vi.fn(),
     nasList: vi.fn(),
   },
   mockGetConfig: vi.fn(),
+  mockSendCommand: vi.fn(),
 }));
 
 vi.mock('./nasClient', () => mockNas);
 vi.mock('../config', () => ({ getConfig: () => mockGetConfig() }));
+vi.mock('../agent/manager', () => ({
+  agentManager: { ensureAgent: vi.fn(async () => ({ sendCommand: mockSendCommand })) },
+}));
 
 import {
   stageServiceBackup,
@@ -25,6 +29,7 @@ import {
   backupServiceToNas,
   stageUploadedServiceTar,
   resolveServiceDataDir,
+  runBackupCollector,
   listServiceBackups,
   fetchServiceBackup,
   getNextExternalBackupDelayMs,
@@ -101,6 +106,66 @@ describe('stageServiceBackup', () => {
     expect(stripped).toContain('a@x');
     // Non-targeted file is copied verbatim — the strip rule must not bleed.
     expect(await fs.readFile(path.join(staging, 'other.yml'), 'utf8')).toBe('password: keepme\n');
+  });
+
+  it('stages a collector snapshot file under its canonical tarball name via renames (#1528)', async () => {
+    const src = await mkTmp();
+    const staging = await mkTmp();
+    // The collector left a consistent snapshot beside the live DB.
+    await writeFile(src, 'data/database.sqlite.sb-backup', 'CONSISTENT-SNAPSHOT');
+    await writeFile(src, 'data/database.sqlite', 'LIVE-WAL-TORN');
+
+    const manifest: ServiceBackupManifest = {
+      service: 'nginx',
+      include: ['data/database.sqlite.sb-backup'],
+      exclude: [],
+      renames: { 'data/database.sqlite.sb-backup': 'data/database.sqlite' },
+    };
+    const staged = await stageServiceBackup(src, manifest, staging);
+
+    // Tarball carries the snapshot bytes under the canonical name.
+    expect(staged).toEqual(['data/database.sqlite']);
+    expect(await fs.readFile(path.join(staging, 'data/database.sqlite'), 'utf8')).toBe('CONSISTENT-SNAPSHOT');
+    // The torn live file never reaches the tarball.
+    await expect(fs.access(path.join(staging, 'data/database.sqlite.sb-backup'))).rejects.toThrow();
+  });
+});
+
+describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
+  const npm = getServiceManifest('nginx')!;
+
+  it('returns the manifest unchanged for a service with no collector', async () => {
+    const ha = getServiceManifest('home-assistant')!;
+    expect(await runBackupCollector(ha, 'Local')).toBe(ha);
+    expect(mockSendCommand).not.toHaveBeenCalled();
+  });
+
+  it('snapshots in-container and remaps the db include to the snapshot path', async () => {
+    mockSendCommand
+      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager docker.io/jc21/nginx-proxy-manager', code: 0 })
+      .mockResolvedValueOnce({ stdout: 'ok', code: 0 });
+
+    const out = await runBackupCollector(npm, 'Local');
+    expect(out.include).toContain('data/database.sqlite.sb-backup');
+    expect(out.include).not.toContain('data/database.sqlite');
+    expect(out.renames).toEqual({ 'data/database.sqlite.sb-backup': 'data/database.sqlite' });
+    // certs are untouched by the remap.
+    expect(out.include).toContain('letsencrypt');
+  });
+
+  it('falls back to the original manifest (live file) when the container is missing', async () => {
+    mockSendCommand.mockResolvedValueOnce({ stdout: '', code: 0 });
+    const out = await runBackupCollector(npm, 'Local');
+    expect(out).toBe(npm);
+    expect(out.include).toContain('data/database.sqlite');
+  });
+
+  it('falls back when the in-container snapshot command fails', async () => {
+    mockSendCommand
+      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
+      .mockResolvedValueOnce({ stdout: 'sqlite3: not found', code: 1 });
+    const out = await runBackupCollector(npm, 'Local');
+    expect(out).toBe(npm);
   });
 });
 
