@@ -83,7 +83,7 @@
     "eslint-plugin-unused-imports": "^4.3.0",
     "husky": "^9.1.7",
     "jsdom": "^27.4.0",
-    "knip": "^5.81.0",
+    "knip": "^6.15.0",
     "lint-staged": "^16.2.7",
     "msw": "^2.14.6",
     "postcss": "^8.5.10",
