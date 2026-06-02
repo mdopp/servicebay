@@ -4,7 +4,6 @@
 import { Globe, HardDrive, Layers, CheckCircle, AlertTriangle, Loader2, Monitor } from 'lucide-react';
 import type { Template } from '@servicebay/api-client';
 import { Input, Button } from '../WizardUI';
-import CleanInstallPanel from '../../CleanInstallPanel';
 
 type WizardStep = 'welcome' | 'network' | 'email' | 'install-confirm' | 'stacks' | 'finish';
 
@@ -38,13 +37,6 @@ interface MachineStepProps {
     operatorEmailIssue: (v: string) => string;
     detectedRaid: DetectedRaid | undefined;
     availableStacks: Template[];
-    cleanInstall: boolean;
-    setCleanInstall: (v: boolean) => void;
-    cleanInstallConfirm: string;
-    setCleanInstallConfirm: (v: string) => void;
-    preserve: string[] | undefined;
-    setPreserve: (v: string[] | undefined) => void;
-    stackSelectedNode: string | null;
     navigateTo: (step: WizardStep) => void;
     detectedDrives: DetectedDrive[];
     stackLoadingDevices: boolean;
@@ -61,13 +53,6 @@ export function MachineStep({
     operatorEmailIssue,
     detectedRaid,
     availableStacks,
-    cleanInstall,
-    setCleanInstall,
-    cleanInstallConfirm,
-    setCleanInstallConfirm,
-    preserve,
-    setPreserve,
-    stackSelectedNode,
     navigateTo,
     detectedDrives,
     stackLoadingDevices,
@@ -253,15 +238,6 @@ export function MachineStep({
                     </div>
                 </div>
 
-                <CleanInstallPanel
-                    cleanInstall={cleanInstall}
-                    setCleanInstall={setCleanInstall}
-                    cleanInstallConfirm={cleanInstallConfirm}
-                    setCleanInstallConfirm={setCleanInstallConfirm}
-                    preserve={preserve}
-                    setPreserve={setPreserve}
-                    node={stackSelectedNode || undefined}
-                />
             </div>
         </div>
     );

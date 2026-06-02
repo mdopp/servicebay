@@ -99,17 +99,6 @@ export interface UseStackInstallReturn {
   npmCredFallback: { email: string; password: string };
   error: string | null;
 
-  cleanInstall: boolean;
-  cleanInstallConfirm: string;
-  setCleanInstall: (b: boolean) => void;
-  setCleanInstallConfirm: (s: string) => void;
-  /** Per-group preserve flags for the clean-install wipe (#568). Each
-   *  entry left in the array means "keep this group". `undefined` =
-   *  defer to API default (keep secrets+certs+identity, wipe service-data).
-   *  Explicit `[]` = factory reset (wipe everything). */
-  preserve: string[] | undefined;
-  setPreserve: (p: string[] | undefined) => void;
-
   /** Toggle an item's checked state (used by select-step UIs in caller). */
   setItemChecked: (name: string, checked: boolean) => void;
   setItems: (items: StackItem[]) => void;
@@ -127,14 +116,14 @@ export interface UseStackInstallReturn {
    *  item, resolve placeholders, transition to 'configure'. `prefilled`
    *  is merged into globalSettings — wizard uses it for PUBLIC_DOMAIN /
    *  NGINX_ADMIN_EMAIL captured before this step; modal passes `{}`.
-   *  When `cleanInstall` is false, stored credential values (LLDAP
-   *  password, NPM password, etc.) are used instead of generating new
-   *  random secrets so that services with pre-existing data volumes
-   *  continue to accept the password they were initialised with. */
+   *  An install never wipes existing data (#1520): stored credential
+   *  values (LLDAP / NPM password, etc.) are reused server-side so
+   *  services with pre-existing data volumes keep authenticating; a
+   *  full wipe is the explicit Factory Reset, not an install option. */
   startConfigure: (
     items: StackItemInput[],
     prefilled: Record<string, string>,
-    options?: { node?: string; cleanInstall?: boolean },
+    options?: { node?: string },
   ) => Promise<{ items: StackItem[]; variables: StackVariable[] }>;
 
   /** POST the resolved items/variables to /api/install/start. The
@@ -208,9 +197,6 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
   const [npmCredPrompt, setNpmCredPrompt] = useState(false);
   const [npmCredFallback, setNpmCredFallback] = useState<{ email: string; password: string }>({ email: '', password: '' });
   const [error, setError] = useState<string | null>(null);
-  const [cleanInstall, setCleanInstall] = useState(false);
-  const [cleanInstallConfirm, setCleanInstallConfirm] = useState('');
-  const [preserve, setPreserve] = useState<string[] | undefined>(undefined);
   const [jobId, setJobId] = useState<string | null>(null);
 
   /** Latest node value. Cached in a ref so async runInstall sees fresh
@@ -261,8 +247,6 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     setNpmCredPrompt(false);
     setNpmCredFallback({ email: '', password: '' });
     setError(null);
-    setCleanInstall(false);
-    setCleanInstallConfirm('');
     setJobId(null);
     jobIdRef.current = null;
     logsOffsetRef.current = 0;
@@ -421,7 +405,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
   const startConfigure = useCallback(async (
     inputItems: StackItemInput[],
     prefilled: Record<string, string>,
-    opts?: { node?: string; cleanInstall?: boolean },
+    opts?: { node?: string },
   ): Promise<{ items: StackItem[]; variables: StackVariable[] }> => {
     setPhase('configure');
     setError(null);
@@ -508,9 +492,6 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
           meta: v.meta,
         })),
         node: node || undefined,
-        cleanInstall,
-        cleanInstallConfirm,
-        preserve,
         templateSource,
         host,
       },
@@ -550,7 +531,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
       setError(`Could not start install: ${msg}`);
       setPhase("error");
     }
-  }, [items, variables, cleanInstall, cleanInstallConfirm, preserve, templateSource, source, attachToJob]);
+  }, [items, variables, templateSource, source, attachToJob]);
 
   const retryNpmCredentials = useCallback(async (email: string, password: string): Promise<void> => {
     if (!email || !password) return;
@@ -593,12 +574,6 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     npmCredPrompt,
     npmCredFallback,
     error,
-    cleanInstall,
-    cleanInstallConfirm,
-    setCleanInstall,
-    setCleanInstallConfirm,
-    preserve,
-    setPreserve,
     setItemChecked,
     setItems,
     setVariableValue,

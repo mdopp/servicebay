@@ -20,10 +20,6 @@ function makeController(overrides: Partial<UseStackInstallReturn> = {}): UseStac
     npmCredPrompt: false,
     npmCredFallback: { email: '', password: '' },
     error: null,
-    cleanInstall: false,
-    cleanInstallConfirm: '',
-    setCleanInstall: noop,
-    setCleanInstallConfirm: noop,
     setItemChecked: noop,
     setItems: noop,
     setVariableValue: noop,
@@ -49,7 +45,6 @@ describe('StackInstallFlow phase dispatch', () => {
     render(<StackInstallFlow controller={controller} />);
     expect(screen.getByText('PUBLIC_DOMAIN')).toBeDefined();
     expect(screen.getByText('API_KEY')).toBeDefined();
-    expect(screen.getByText(/Clean install/)).toBeDefined();
   });
 
   it('renders progress component when phase is installing', () => {
@@ -91,24 +86,6 @@ describe('StackInstallFlow phase dispatch', () => {
 });
 
 describe('StackInstallConfigureForm', () => {
-  it('toggles cleanInstall via the checkbox', () => {
-    const setCleanInstall = vi.fn();
-    const controller = makeController({
-      phase: 'configure',
-      setCleanInstall,
-    });
-    render(<StackInstallConfigureForm controller={controller} />);
-    const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
-    fireEvent.click(checkbox);
-    expect(setCleanInstall).toHaveBeenCalledWith(true);
-  });
-
-  it('shows the RESET confirmation field only when cleanInstall is true', () => {
-    const controller = makeController({ phase: 'configure', cleanInstall: true });
-    render(<StackInstallConfigureForm controller={controller} />);
-    expect(screen.getByPlaceholderText('RESET')).toBeDefined();
-  });
-
   it('hides the node selector for single-node clusters', () => {
     const controller = makeController({ phase: 'configure' });
     render(

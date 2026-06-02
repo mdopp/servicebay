@@ -91,16 +91,12 @@ describe('useStackInstall', () => {
         useStackInstall({ templateSource: 'Built-in' }),
       );
       act(() => {
-        result.current.setCleanInstall(true);
-        result.current.setCleanInstallConfirm('RESET');
         result.current.appendLog('something');
       });
       expect(result.current.logs).toEqual(['something']);
       act(() => result.current.reset());
       expect(result.current.phase).toBe('idle');
       expect(result.current.logs).toEqual([]);
-      expect(result.current.cleanInstall).toBe(false);
-      expect(result.current.cleanInstallConfirm).toBe('');
     });
   });
 
