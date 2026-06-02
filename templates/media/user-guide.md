@@ -1,6 +1,6 @@
 ---
 # The `media` template hosts two services on different subdomains —
-# Audiobookshelf at <books>.<domain> and Navidrome at <music>.<domain>.
+# Audiobookshelf at <books>.<domain> and Jellyfin at <music>.<domain>.
 # One card per service so the family-portal "Open" button per row
 # routes to the right place.
 cards:
@@ -18,30 +18,30 @@ cards:
         platforms: ["ios", "android"]
         note: "Official audiobook + podcast player. Bookmarks + progress sync between phone and tablet."
 
-  - subdomain_var: "NAVIDROME_SUBDOMAIN"
+  - subdomain_var: "MEDIA_SUBDOMAIN"
     label: "Music"
     lucide_icon: "music"
-    tagline: "Stream your music collection — works with every Subsonic-compatible client."
+    tagline: "Stream your music collection — pair mobile apps with Quick Connect, no shared password needed."
     recommended_apps:
       - name: "Symfonium"
         url: "https://symfonium.app/"
         platforms: ["android"]
-        note: "Best Subsonic-compatible music client on Android — paid, but worth it for car audio + offline play."
-      - name: "play:Sub"
-        url: "https://apps.apple.com/app/play-sub-music-streamer/id955329386"
+        note: "Polished music client with first-class Jellyfin support — great for car audio + offline play. Paid, but worth it."
+      - name: "Streamyfin"
+        url: "https://apps.apple.com/app/streamyfin/id6593660679"
         platforms: ["ios"]
-        note: "Highly-rated Subsonic music client for iPhone — the iOS counterpart to Symfonium."
-      - name: "Sonixd"
-        url: "https://github.com/jeffvli/sonixd"
-        platforms: ["desktop"]
-        note: "Cross-platform Subsonic desktop client — great for big libraries on a laptop."
+        note: "Native Jellyfin client for iPhone — music and video, with Quick Connect pairing."
+      - name: "Findroid"
+        url: "https://github.com/jarnedemeulemeester/findroid"
+        platforms: ["android"]
+        note: "Clean open-source Jellyfin client focused on video — pairs with the same Quick Connect flow."
 ---
 
 # Getting started with Media
 
 Two services live behind this card:
 - **Audiobookshelf** for audiobooks and podcasts.
-- **Navidrome** for music.
+- **Jellyfin** for music (and optionally video and photos later).
 
 Both have polished mobile apps that work offline once content is downloaded.
 
@@ -54,21 +54,21 @@ Both have polished mobile apps that work offline once content is downloaded.
 
 Bookmarks, playback position, and listening history sync between devices — start in the car, finish on the couch.
 
-## Music (Navidrome)
+## Music (Jellyfin)
 
-Navidrome serves your music collection over a protocol called **Subsonic**, which means dozens of apps work with it. Recommended:
+Jellyfin serves your music collection (and video/photos if you add those libraries). Pick a client and pair it with **Quick Connect** — no shared password to type on the phone:
 
-- **Symfonium** (Android) — fast, polished, plays nicely with Bluetooth car audio. Paid app but worth it.
-- **play:Sub** (iOS) — most-recommended Subsonic client on iPhone.
-- **Browser** — Navidrome's web UI is good and works on every device without an app install.
+- **Symfonium** (Android) — fast, polished music client with great Jellyfin support and Bluetooth car audio. Paid app but worth it.
+- **Streamyfin** (iOS) — native Jellyfin client for iPhone, music and video.
+- **Browser** — Jellyfin's web UI works on every device without an app install.
 
-In the app, configure a **Subsonic** server with the URL from the *Open* button (e.g. `http://music.home.arpa`) and the family credentials.
+**Pairing with Quick Connect:** open the Jellyfin app → *Quick Connect* → the app shows a 6-digit code → open Jellyfin web (signed in) → *Dashboard → Quick Connect* → enter the code. The app is paired — no password shared. (For SSO on the web login, the admin can install `jellyfin-plugin-sso` later.)
 
 ## Adding content
 
-The admin drops audiobooks/podcasts into the server's **Audiobookshelf library folder** (browse via the *Files* card / Samba) and music into the **Navidrome music folder**. Both services pick up new files within a minute or two — no manual import.
+The admin drops audiobooks/podcasts into the server's **Audiobookshelf library folder** and music into the **file-share `music/` folder** (browse via the *Files* card / Samba). Jellyfin's library scan picks up `music/` automatically; Audiobookshelf picks up new files within a minute or two — no manual import. Other folders (`movies/`, `tv/`, `photos/`) the admin adds as Jellyfin libraries under *Dashboard → Libraries*.
 
 ## Tips
 
-- **Offline downloads are per-device.** Downloading a book on your phone doesn't take it off the server; it's just cached locally.
+- **Offline downloads are per-device.** Downloading a book or album on your phone doesn't take it off the server; it's just cached locally.
 - **Multiple users keep separate progress.** Each family member's listening position, bookmarks, and finished/unfinished list is private to them.
