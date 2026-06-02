@@ -12,9 +12,11 @@ function deps(over: Partial<ExistingEmailDeps>): ExistingEmailDeps {
 
 describe('handleExistingEmail', () => {
   it('short-circuits + notifies the owner when the email already exists', async () => {
-    const notifyOwner = vi.fn(async () => {});
+    const notifyOwner = vi.fn<(email: string) => Promise<void>>(async () => {});
     const d = deps({
-      listUsers: vi.fn(async () => ({ ok: true, users: [{ id: 'alice', email: 'Alice@Example.com' }] })),
+      listUsers: vi.fn(
+        async (): Promise<LldapListUsersResult> => ({ ok: true, users: [{ id: 'alice', email: 'Alice@Example.com' }] }),
+      ),
       notifyOwner,
     });
 
@@ -31,7 +33,9 @@ describe('handleExistingEmail', () => {
   it('does not short-circuit and never emails when the email is new', async () => {
     const notifyOwner = vi.fn(async () => {});
     const d = deps({
-      listUsers: vi.fn(async () => ({ ok: true, users: [{ id: 'bob', email: 'bob@example.com' }] })),
+      listUsers: vi.fn(
+        async (): Promise<LldapListUsersResult> => ({ ok: true, users: [{ id: 'bob', email: 'bob@example.com' }] }),
+      ),
       notifyOwner,
     });
 
@@ -44,7 +48,9 @@ describe('handleExistingEmail', () => {
   it('fails open (does not short-circuit) when LLDAP is unreachable', async () => {
     const notifyOwner = vi.fn(async () => {});
     const d = deps({
-      listUsers: vi.fn(async () => ({ ok: false, reason: 'network_error', message: 'boom' })),
+      listUsers: vi.fn(
+        async (): Promise<LldapListUsersResult> => ({ ok: false, reason: 'network_error', message: 'boom' }),
+      ),
       notifyOwner,
     });
 
@@ -56,7 +62,9 @@ describe('handleExistingEmail', () => {
 
   it('still short-circuits when the owner notification throws (never enumerates via error)', async () => {
     const d = deps({
-      listUsers: vi.fn(async () => ({ ok: true, users: [{ id: 'carol', email: 'carol@example.com' }] })),
+      listUsers: vi.fn(
+        async (): Promise<LldapListUsersResult> => ({ ok: true, users: [{ id: 'carol', email: 'carol@example.com' }] }),
+      ),
       notifyOwner: vi.fn(async () => { throw new Error('smtp down'); }),
     });
 
@@ -67,7 +75,12 @@ describe('handleExistingEmail', () => {
 
   it('ignores directory users with no email', async () => {
     const d = deps({
-      listUsers: vi.fn(async () => ({ ok: true, users: [{ id: 'svc' }, { id: 'dave', email: 'dave@example.com' }] })),
+      listUsers: vi.fn(
+        async (): Promise<LldapListUsersResult> => ({
+          ok: true,
+          users: [{ id: 'svc' }, { id: 'dave', email: 'dave@example.com' }],
+        }),
+      ),
     });
 
     expect((await handleExistingEmail('dave@example.com', d)).shortCircuit).toBe(true);
