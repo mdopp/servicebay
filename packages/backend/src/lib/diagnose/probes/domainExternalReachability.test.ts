@@ -63,15 +63,18 @@ const NOW = Date.UTC(2026, 4, 15, 12, 0, 0);
 const isoNow = () => new Date(NOW).toISOString();
 const isoAgo = (ms: number) => new Date(NOW - ms).toISOString();
 
-function makeDnsRoutingCheck(domain: string): CheckConfig {
+// #1564 — the per-domain dns_routing rows collapsed into the canonical
+// `domain` check, which carries the DoH DNS-routing payload on its result.
+function makeDomainCheck(domain: string): CheckConfig {
   return {
-    id: `dns_routing:${domain}`,
-    name: `DNS routing — ${domain}`,
-    type: 'dns_routing',
+    id: `domain:${domain}`,
+    name: `Domain — ${domain}`,
+    type: 'domain',
     target: domain,
-    interval: 900,
+    interval: 60,
     enabled: true,
     created_at: isoNow(),
+    domainConfig: { expectedScheme: 'https', isPublic: true },
   };
 }
 
@@ -95,8 +98,8 @@ beforeEach(() => {
     },
   };
   state.checks = [
-    makeDnsRoutingCheck('one.example.com'),
-    makeDnsRoutingCheck('two.example.com'),
+    makeDomainCheck('one.example.com'),
+    makeDomainCheck('two.example.com'),
   ];
   state.results.clear();
   state.runOutcome = { status: 'ok', message: '', payload: undefined };
@@ -132,14 +135,14 @@ describe('checkDomainExternalReachability', () => {
   });
 
   it('omits healthy rows when DNS matches the gateway IP and reports overall ok', async () => {
-    state.results.set('dns_routing:one.example.com', {
-      check_id: 'dns_routing:one.example.com',
+    state.results.set('domain:one.example.com', {
+      check_id: 'domain:one.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
-    state.results.set('dns_routing:two.example.com', {
-      check_id: 'dns_routing:two.example.com',
+    state.results.set('domain:two.example.com', {
+      check_id: 'domain:two.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
@@ -151,14 +154,14 @@ describe('checkDomainExternalReachability', () => {
   });
 
   it('flags a domain whose A record points at a different IP as fail', async () => {
-    state.results.set('dns_routing:one.example.com', {
-      check_id: 'dns_routing:one.example.com',
+    state.results.set('domain:one.example.com', {
+      check_id: 'domain:one.example.com',
       timestamp: isoAgo(60_000),
       status: 'fail',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['198.51.100.7'], matched: false }),
     });
-    state.results.set('dns_routing:two.example.com', {
-      check_id: 'dns_routing:two.example.com',
+    state.results.set('domain:two.example.com', {
+      check_id: 'domain:two.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
@@ -172,14 +175,14 @@ describe('checkDomainExternalReachability', () => {
   });
 
   it('flags a domain with no public A record as fail', async () => {
-    state.results.set('dns_routing:one.example.com', {
-      check_id: 'dns_routing:one.example.com',
+    state.results.set('domain:one.example.com', {
+      check_id: 'domain:one.example.com',
       timestamp: isoAgo(60_000),
       status: 'fail',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: [], matched: false }),
     });
-    state.results.set('dns_routing:two.example.com', {
-      check_id: 'dns_routing:two.example.com',
+    state.results.set('domain:two.example.com', {
+      check_id: 'domain:two.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
@@ -191,14 +194,14 @@ describe('checkDomainExternalReachability', () => {
   });
 
   it('surfaces transport errors (no payload, fail status) as info rows', async () => {
-    state.results.set('dns_routing:one.example.com', {
-      check_id: 'dns_routing:one.example.com',
+    state.results.set('domain:one.example.com', {
+      check_id: 'domain:one.example.com',
       timestamp: isoAgo(30_000),
       status: 'fail',
       message: 'DoH lookup failed: connect ETIMEDOUT',
     });
-    state.results.set('dns_routing:two.example.com', {
-      check_id: 'dns_routing:two.example.com',
+    state.results.set('domain:two.example.com', {
+      check_id: 'domain:two.example.com',
       timestamp: isoAgo(30_000),
       status: 'ok',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
@@ -211,14 +214,14 @@ describe('checkDomainExternalReachability', () => {
 
   it('#611 — flags DNS-green + HTTP-fail combo (the v4.0.x outage shape)', async () => {
     // DNS is healthy for both domains.
-    state.results.set('dns_routing:one.example.com', {
-      check_id: 'dns_routing:one.example.com',
+    state.results.set('domain:one.example.com', {
+      check_id: 'domain:one.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
-    state.results.set('dns_routing:two.example.com', {
-      check_id: 'dns_routing:two.example.com',
+    state.results.set('domain:two.example.com', {
+      check_id: 'domain:two.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
@@ -243,14 +246,14 @@ describe('checkDomainExternalReachability', () => {
 
   it('#611 — accepts 302 → auth.<publicDomain> as a healthy redirect (forward-auth)', async () => {
     state.config.reverseProxy.publicDomain = 'example.com';
-    state.results.set('dns_routing:one.example.com', {
-      check_id: 'dns_routing:one.example.com',
+    state.results.set('domain:one.example.com', {
+      check_id: 'domain:one.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
-    state.results.set('dns_routing:two.example.com', {
-      check_id: 'dns_routing:two.example.com',
+    state.results.set('domain:two.example.com', {
+      check_id: 'domain:two.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
@@ -264,8 +267,8 @@ describe('checkDomainExternalReachability', () => {
   });
 
   it('appends letsdebug summary to a flagged row when one exists', async () => {
-    state.results.set('dns_routing:one.example.com', {
-      check_id: 'dns_routing:one.example.com',
+    state.results.set('domain:one.example.com', {
+      check_id: 'domain:one.example.com',
       timestamp: isoAgo(60_000),
       status: 'fail',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['198.51.100.7'], matched: false }),
@@ -276,8 +279,8 @@ describe('checkDomainExternalReachability', () => {
       status: 'fail',
       payload: letsdebugPayload([{ name: 'ANotWorking', explanation: 'port 80 unreachable', severity: 'fatal' }]),
     });
-    state.results.set('dns_routing:two.example.com', {
-      check_id: 'dns_routing:two.example.com',
+    state.results.set('domain:two.example.com', {
+      check_id: 'domain:two.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
       payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
@@ -323,14 +326,14 @@ describe('refresh_now action (DoH)', () => {
   });
 
   it('reports ok:false when the matching check does not exist', async () => {
-    state.checks = state.checks.filter(c => c.id !== 'dns_routing:one.example.com');
+    state.checks = state.checks.filter(c => c.id !== 'domain:one.example.com');
     const r = await dispatchProbeAction({
       probeId: 'domain_unreachable',
       actionId: 'refresh_now', node: 'Local',
       itemId: 'one.example.com',
     });
     expect(r.ok).toBe(false);
-    expect(r.message).toMatch(/No DNS routing check found/);
+    expect(r.message).toMatch(/No domain check found/);
   });
 });
 

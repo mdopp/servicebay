@@ -2,10 +2,11 @@
  * `domain_external_reachability` probe — surfaces the external view
  * of every public-exposure domain. Composed of two layers:
  *
- *   1. **Continuous: DoH-based DNS routing** (the `dns_routing` health
- *      check). Cheap, free, no third-party rate limits — answers
- *      "does public DNS resolve this domain to my known public IP?"
- *      every 15 min via Cloudflare 1.1.1.1.
+ *   1. **Continuous: DoH-based DNS routing** (carried on the canonical
+ *      `domain` health check since #1564). Cheap, free, no third-party
+ *      rate limits — answers "does public DNS resolve this domain to my
+ *      known public IP?" each time the domain check runs (~every minute)
+ *      via Cloudflare 1.1.1.1.
  *   2. **On-demand: letsdebug.net** (`run_letsdebug` action below).
  *      The full taxonomy — CAA records, port-80 HTTP-01 simulation,
  *      DNSSEC drift, ACME readiness — for when DNS looks right but
@@ -39,7 +40,10 @@ import { logger } from '@/lib/logger';
 // "Refresh DNS check" / "Run letsdebug" deep-check actions. Both register
 // under the canonical `domain_unreachable` probe id.
 const PROBE_ID = 'domain_unreachable';
-const DNS_ROUTING_CHECK_PREFIX = 'dns_routing:';
+// #1564 — the per-domain `dns_routing:<domain>` rows were collapsed into
+// the canonical `domain:<domain>` health check, which now carries the
+// DoH DNS-routing payload on its result. Read from the domain check.
+const DOMAIN_CHECK_PREFIX = 'domain:';
 const LETSDEBUG_CHECK_PREFIX = 'letsdebug:';
 
 export interface DomainExternalReachabilityResult {
@@ -248,16 +252,16 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
   let pendingCount = 0;
 
   for (const domain of publicDomains) {
-    const dnsResult: CheckResult | null = HealthStore.getLastResult(`${DNS_ROUTING_CHECK_PREFIX}${domain}`);
+    const dnsResult: CheckResult | null = HealthStore.getLastResult(`${DOMAIN_CHECK_PREFIX}${domain}`);
     const letsdebugResult: CheckResult | null = HealthStore.getLastResult(`${LETSDEBUG_CHECK_PREFIX}${domain}`);
 
-    // First-check pending — the dns_routing tick hasn't fired yet.
+    // First-check pending — the domain check tick hasn't fired yet.
     if (!dnsResult) {
       pendingCount++;
       items.push({
         id: domain,
         label: domain,
-        detail: '⏳ First check pending — runs within ~15 min of boot. Click Refresh now to skip the wait.',
+        detail: '⏳ First check pending — runs within ~1 min of boot. Click Refresh now to skip the wait.',
         status: 'info',
         actionIds: ['refresh_now', 'run_letsdebug'],
       });
@@ -267,7 +271,7 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
     const dnsAge = ` · Last checked ${formatRelativeAge(Date.parse(dnsResult.timestamp))}`;
     const dnsPayload = decodeDnsRouting(dnsResult.payload);
 
-    // dns_routing transport error → plaintext message, no payload. Surface as info row.
+    // DNS-routing transport error → plaintext message, no payload. Surface as info row.
     if (!dnsPayload && dnsResult.status === 'fail') {
       pendingCount++;
       items.push({
@@ -379,27 +383,27 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
   return {
     status: pendingCount > 0 && overall === 'ok' ? 'info' : overall,
     detail: `${parts.join(' · ')} of ${publicDomains.length} public domain${publicDomains.length === 1 ? '' : 's'}.`,
-    hint: 'DNS routing is checked every 15 min via Cloudflare DoH (no rate limits). For the full ACME / port-80 / CAA taxonomy click "Run letsdebug" on a row — that hits letsdebug.net once on demand.',
+    hint: 'DNS routing is checked on the canonical domain check (~every minute) via Cloudflare DoH (no rate limits). For the full ACME / port-80 / CAA taxonomy click "Run letsdebug" on a row — that hits letsdebug.net once on demand.',
     items,
   };
 }
 
 /**
  * `refresh_now` — operator-initiated single-domain re-probe of the
- * DoH-based `dns_routing` check. Synchronous (sub-second under normal
- * conditions); the UI's auto-refresh picks up the new state without
- * a second click.
+ * canonical `domain` check (which carries the DoH DNS-routing payload
+ * since #1564). Synchronous (sub-second under normal conditions); the
+ * UI's auto-refresh picks up the new state without a second click.
  */
 async function refreshNow({ itemId }: { itemId?: string }): Promise<ProbeActionResult> {
   if (!itemId) {
     return { ok: false, message: 'No domain supplied — nothing to refresh.', refresh: false };
   }
-  const checkId = `${DNS_ROUTING_CHECK_PREFIX}${itemId}`;
+  const checkId = `${DOMAIN_CHECK_PREFIX}${itemId}`;
   const check = HealthStore.getChecks().find(c => c.id === checkId);
   if (!check) {
     return {
       ok: false,
-      message: `No DNS routing check found for ${itemId}. It should appear automatically — try reloading.`,
+      message: `No domain check found for ${itemId}. It should appear automatically — try reloading.`,
       refresh: true,
     };
   }
