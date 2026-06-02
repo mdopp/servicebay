@@ -33,6 +33,37 @@ async function addGatewayCheck(config: Awaited<ReturnType<typeof getConfig>>, _e
  */
 const SERVICE_CHECK_PRUNE_EXEMPT = new Set<string>(['podman.socket']);
 
+/** A v4-style UUID, the id shape the UI's "add check" flow stamps
+ *  (`crypto.randomUUID()`). Template/post-deploy-registered checks instead
+ *  use a stable lowercase slug id (`home-assistant-api`, `ollama-api`). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SLUG_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
+
+/**
+ * Template-registered checks (#1551): a stack's post-deploy may register an
+ * extra `http`/`tcp`/`script` probe against its own endpoint via
+ * `POST /api/health/checks` (e.g. home-assistant's `home-assistant-api`,
+ * oscar-ollama's `ollama-api`). These carry no `type:'service'` link, so the
+ * service-row prune above misses them and they linger as `0ms` rows for an
+ * un-installed (or never-installed-on-this-box) service.
+ *
+ * Bind such a check to a service by its **id slug**: a template check's id is
+ * a stable lowercase slug whose leading segment is the owning service name
+ * (`<service>` or `<service>-<suffix>`). A manually-added check carries a
+ * `crypto.randomUUID()` id, so it never matches and is never pruned. Returns
+ * true when the check is a template-registered probe whose owner is not in the
+ * deployed set.
+ */
+function isOrphanTemplateCheck(c: { id: string; type: string }, deployed: Set<string>): boolean {
+  if (c.type !== 'http' && c.type !== 'tcp' && c.type !== 'script') return false;
+  if (UUID_RE.test(c.id) || !SLUG_ID_RE.test(c.id)) return false;
+  // Owned by a deployed service? (id === <svc> or id starts with `<svc>-`)
+  for (const svc of deployed) {
+    if (c.id === svc || c.id.startsWith(`${svc}-`)) return false;
+  }
+  return true;
+}
+
 async function addServiceChecks(existingChecks: ReturnType<typeof HealthStore.getChecks>, exists: (type: string, target: string) => boolean) {
   try {
     const services = await ServiceManager.listServices('Local');
@@ -47,6 +78,18 @@ async function addServiceChecks(existingChecks: ReturnType<typeof HealthStore.ge
       if (!deployed.has(c.target)) {
         logger.info('Health', `Pruning health check for un-installed service ${c.target}`);
         HealthStore.deleteServiceCheck(c.target);
+      }
+    }
+
+    // Prune template-registered http/tcp/script probes whose owning stack is
+    // not deployed (#1551) — these slip past the `type:'service'` prune above
+    // and otherwise linger forever (e.g. a stale `ollama-api`/`home-assistant-api`
+    // row carried over a wipe-configs reinstall, a restored config backup, or a
+    // missed uninstall).
+    for (const c of existingChecks) {
+      if (isOrphanTemplateCheck(c, deployed)) {
+        logger.info('Health', `Pruning template-registered check ${c.id} for un-installed service`);
+        HealthStore.deleteCheck(c.id);
       }
     }
 

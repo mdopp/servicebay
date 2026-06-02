@@ -1,0 +1,54 @@
+# Dependabot configuration (#1549).
+#
+# Mirrors the report-only-first posture of the CI `audit` and `semgrep` jobs:
+# security updates flow in immediately, while routine version bumps are batched
+# weekly and grouped so they don't drown the queue.
+#
+# Autoloop handling: a Dependabot PR is NOT an issue, so the planner never picks
+# one up as a unit. Treat them as a manual filler-track — review/merge a green
+# Dependabot PR by hand when the backlog is dry. Security-update PRs (the
+# `security` group / GitHub security alerts) take priority over version bumps.
+version: 2
+updates:
+  # npm workspace — single root lockfile covers packages/{api-client,frontend,backend}.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One PR for all non-major dev/runtime bumps; majors stay individual so
+      # breaking changes get their own review.
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: chore
+      include: scope
+
+  # Go lifecycle launcher (tools/sb, module `sb`) — #1272.
+  - package-ecosystem: gomod
+    directory: /tools/sb
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: chore
+      include: scope
+
+  # Keep the GitHub Actions themselves current (also enables the SHA-pin
+  # ratchet — once actions are pinned to commit SHAs, Dependabot bumps the SHA).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+      include: scope

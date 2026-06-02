@@ -166,23 +166,29 @@ func runBuild() int {
 // runWatch opens the native install-watch dashboard against the resolved box
 // target. On a clean exit because ServiceBay's wizard took over, it prints a
 // handoff banner (in the normal screen, after the alt-screen program exits)
-// pointing the operator at the setup URL.
+// pointing the operator at the setup URL. It is shared by the `sb watch`
+// subcommand and Express's step 3, so it only reports the exit code; the
+// post-install menu hand-off is the caller's call (Express continues into
+// runExpressPostBoot; the bare subcommand re-opens the menu — see main).
 func runWatch() int {
 	t := probes.ResolveTarget()
 	if t.Host == "" {
 		fmt.Fprintln(os.Stderr, "no target host — set SB_HOST (and SB_PORT), or build an ISO first so build/fcos/install-settings.env exists.")
 		return 2
 	}
-	return watchTarget(ui.NewWatch(t.Host, t.Port, probes.ResolveToken(t.Host)), t.Host, t.Port)
+	_, code := watchTarget(ui.NewWatch(t.Host, t.Port, probes.ResolveToken(t.Host)), t.Host, t.Port)
+	return code
 }
 
 // watchTarget runs a watch dashboard model and prints the handoff banner on a
 // takeover exit. Shared by runWatch and the post-build reinstall continuation.
-func watchTarget(model ui.WatchModel, host, port string) int {
+// Returns whether the install completed (the wizard took over) so the caller
+// can advance the journey to the post-install menu rather than the shell (#1555).
+func watchTarget(model ui.WatchModel, host, port string) (takeover bool, code int) {
 	final, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return false, 1
 	}
 	if wm, ok := final.(ui.WatchModel); ok && wm.Takeover {
 		elapsed, reboots := wm.Stats()
@@ -190,8 +196,9 @@ func watchTarget(model ui.WatchModel, host, port string) int {
 		fmt.Printf("   Setup wizard:  http://%s:%s/setup\n", host, port)
 		fmt.Printf("   Dashboard:     http://%s:%s/\n\n", host, port)
 		fmt.Printf("   Total: %s, %d reboot(s) observed.\n\n", watch.FmtDur(elapsed), reboots)
+		return true, 0
 	}
-	return 0
+	return false, 0
 }
 
 // boxClient resolves the box target + scoped `sb_` token (SB_TOKEN) into a REST
@@ -352,7 +359,7 @@ func main() {
 			cli.PrintUsage()
 			return
 		case "watch":
-			os.Exit(runWatch())
+			os.Exit(runWatchThenMenu())
 		case "build":
 			os.Exit(runBuild())
 		case "express":
@@ -390,35 +397,44 @@ func main() {
 		}
 	}
 
-	// Full-screen unified app (alt-screen): the menu, login, and the
-	// box-control panels (edit-config / install / backups) all live in one
-	// program — sub-views return to the menu instead of exiting, and the box
-	// panels sign in + mint a token in-flow rather than dead-ending on a
-	// missing SB_TOKEN. The bootstrap/watch legs below are the only handoffs
-	// that quit the app, because build is an interactive stdin wizard and the
-	// rest are natural one-shots.
+	os.Exit(runMenu())
+}
+
+// runMenu opens the full-screen unified app (alt-screen): the menu, login, and
+// the box-control panels (edit-config / install / backups) all live in one
+// program — sub-views return to the menu instead of exiting, and the box panels
+// sign in + mint a token in-flow rather than dead-ending on a missing SB_TOKEN.
+// The build / express handoff legs are the only ones that quit the app (build
+// is an interactive stdin wizard; express is a guided sequence), so this runs
+// them after the app exits and then re-opens the menu so the operator lands
+// back on the setup-journey map rather than a shell prompt (#1555).
+func runMenu() int {
 	t := probes.ResolveTarget()
 	app := ui.NewApp(detect, t.Host, t.Port, probes.ResolveToken(t.Host), probes.SaveToken, probes.DeleteToken, buildConfig())
 	final, err := tea.NewProgram(app, tea.WithAltScreen()).Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return 1
 	}
 	res, ok := final.(ui.App)
 	if !ok {
-		return
+		return 0
 	}
 
-	// Watch / edit-config / install / backups / the build form all run inside
-	// the App and return to the menu. Only these need a post-exit handoff: the
-	// build form's confirmed Plan (bake + sudo flash run in the normal
-	// terminal), and Express's guided sequence.
 	switch {
 	case res.BuildPlan != nil:
-		os.Exit(runBuildThenWatch(*res.BuildPlan))
+		takeover, code := runBuildThenWatch(*res.BuildPlan)
+		if code != 0 || !takeover {
+			return code
+		}
+		// The reinstall finished and the box is up; re-open the menu so the
+		// operator advances to "Install a stack on the server" (now Recommended
+		// in the post-install Ready phase) rather than dropping to a shell.
+		return runMenu()
 	case res.Chosen == phase.Express:
-		os.Exit(runExpress())
+		return runExpress()
 	}
+	return 0
 }
 
 // runBuildThenWatch runs a confirmed build Plan, then — instead of stopping —
@@ -426,13 +442,13 @@ func main() {
 // the install-watch dashboard on the target box (offline → reboot → install →
 // live). Reinstall mode waits for the box to reboot first, so the still-running
 // old install isn't mistaken for the finished new one.
-func runBuildThenWatch(plan buildflow.Plan) int {
+func runBuildThenWatch(plan buildflow.Plan) (takeover bool, code int) {
 	if code := runExecute(plan); code != 0 {
-		return code
+		return false, code
 	}
 	host, port := plan.Settings.StaticIP, plan.Settings.ServicebayPort
 	if host == "" {
-		return 0 // nothing to watch (no target); build is done
+		return false, 0 // nothing to watch (no target); build is done
 	}
 	fmt.Printf("\n→ USB is ready. Now make the SERVER boot FROM this USB stick:\n\n")
 	fmt.Printf("   1. Plug the USB into the server.\n")
@@ -443,4 +459,21 @@ func runBuildThenWatch(plan buildflow.Plan) int {
 	fmt.Printf("       \"boot from USB next\", which sets a one-shot UEFI entry and reboots.)\n\n")
 	fmt.Printf("   Watching %s:%s — offline → reboot → install → live. Ctrl+C to stop.\n\n", host, port)
 	return watchTarget(ui.NewWatchReinstall(host, port, probes.ResolveToken(host)), host, port)
+}
+
+// runWatchThenMenu runs the bare `sb watch` subcommand: watch the install, then
+// — once the wizard has taken over — re-open the menu so the operator advances
+// to "Install a stack on the server" rather than dropping back to the shell
+// (#1555). If the operator aborted before takeover, it just exits with the code.
+func runWatchThenMenu() int {
+	t := probes.ResolveTarget()
+	if t.Host == "" {
+		fmt.Fprintln(os.Stderr, "no target host — set SB_HOST (and SB_PORT), or build an ISO first so build/fcos/install-settings.env exists.")
+		return 2
+	}
+	takeover, code := watchTarget(ui.NewWatch(t.Host, t.Port, probes.ResolveToken(t.Host)), t.Host, t.Port)
+	if code != 0 || !takeover {
+		return code
+	}
+	return runMenu()
 }

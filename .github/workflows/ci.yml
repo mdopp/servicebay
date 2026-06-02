@@ -8,7 +8,7 @@ name: CI
 #   lint        — eslint
 #   typecheck   — tsc --noEmit
 #   build       — next build (with .next/cache restored)
-#   test        — vitest run
+#   test        — vitest run (with v8 coverage) + new-code diff-coverage gate (#1548)
 #   invariants  — file size, security `as any` budget, exec-template-literal count,
 #                 withApiHandler adoption ratio, twin singleton fan-in
 #                 (companion to docs/ARCHITECTURE_INVARIANTS.md)
@@ -124,7 +124,11 @@ jobs:
     runs-on: ubuntu-latest
     if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
     steps:
+      # fetch-depth: 0 so the diff-coverage gate (#1548) can `git merge-base`
+      # against the PR base branch — the new-code coverage floor needs the diff.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -139,7 +143,19 @@ jobs:
       - name: Install dependencies
         if: steps.cache-npm.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
-      - run: npm test
+      # Full suite WITH v8 coverage. This is the seal/full gate — the autoloop
+      # builder's per-issue fast gate stays bare `vitest --changed` (no
+      # coverage overhead). Emits coverage/coverage-final.json for the gate.
+      - name: Test (with coverage)
+        run: npm run test:coverage
+      # New-code diff-coverage gate (#1548). Fails the PR when added/modified
+      # lines fall below the floor in .diff-coverage.json; untouched legacy
+      # code never blocks. On `push: main` there's no base_ref — compare
+      # against the previous main tip so a direct-to-main commit is still gated.
+      - name: Diff-coverage gate (new code)
+        env:
+          DIFF_COVERAGE_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: npm run check:diff-coverage
 
   invariants:
     runs-on: ubuntu-latest
@@ -220,6 +236,36 @@ jobs:
         run: semgrep --config .semgrep.yml --severity=ERROR --metrics=off --error .
       - name: Custom rules (informational warnings)
         run: semgrep --config .semgrep.yml --metrics=off . || true
+      # Broader registry coverage (#1550). Report-only: the full
+      # p/security-audit + p/typescript rulesets surface a wall of findings
+      # on day one, so this step is non-blocking (`|| true`) and exists to
+      # populate the CI log + give us a triage list. Promote individual
+      # findings to blocking incrementally — either fix them, or codify a
+      # ServiceBay-specific variant in .semgrep.yml (which the ERROR step
+      # above already gates). Mirrors the npm-audit WARNING/ERROR tiering.
+      - name: Registry rulesets (report-only — p/security-audit, p/typescript)
+        run: semgrep --config p/security-audit --config p/typescript --metrics=off . || true
+
+  # Dependency CVE scan (#1549). Decoupled from the install step — the build/
+  # test/lint installs stay `--no-audit` for speed, so a freshly-published
+  # advisory can't flakily block every unrelated PR. This job is the single
+  # place CVE signal surfaces. Mirrors the semgrep WARNING/ERROR tiering:
+  #   - report-only step (always green) surfaces the full advisory list now;
+  #   - the blocking step (commented out) ratchets to fail on high/critical
+  #     once the baseline is clean — uncomment to flip it on.
+  audit:
+    runs-on: ubuntu-latest
+    if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: npm audit (report-only)
+        run: npm audit --audit-level=high || true
+      # Ratchet to blocking once the high/critical baseline is clean:
+      # - name: npm audit (blocking on high/critical)
+      #   run: npm audit --audit-level=high
 
   # The Go lifecycle launcher (#1272). Lives in its own module under tools/,
   # outside the npm workspace, so the JS gates above don't touch it — this job

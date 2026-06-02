@@ -33,5 +33,34 @@ export default defineConfig({
     // specs are `*.e2e.ts` (outside the `*.{test,spec}` glob) but exclude the
     // dir explicitly so vitest never tries to run a Playwright test under jsdom.
     exclude: ['**/node_modules/**', '**/dist/**', '**/.next/**', '**/*-worktree/**', 'tests/e2e/**'],
+    // Coverage is OFF by default (no overhead on the fast `vitest run` /
+    // `vitest --changed` per-issue gate). It's switched on only by
+    // `npm run test:coverage` (the full/seal gate, see #1548), which emits a
+    // machine-readable `coverage/coverage-final.json`. The diff-coverage gate
+    // (scripts/check-diff-coverage.ts) intersects that report with
+    // `git diff origin/main` and fails a PR whose *new* lines fall below the
+    // floor in .diff-coverage.json — untouched legacy debt never blocks.
+    coverage: {
+      provider: 'v8',
+      // JSON is what the diff-coverage script parses; text gives a console
+      // summary in the CI log. No HTML — it's CI-only.
+      reporter: ['text', 'json'],
+      reportsDirectory: './coverage',
+      // Mirror the test exclude set plus the non-product code the gate
+      // should never count against new-line coverage.
+      exclude: [
+        '**/node_modules/**',
+        '**/dist/**',
+        '**/dist-server/**',
+        '**/.next/**',
+        '**/*-worktree/**',
+        'tests/**',
+        'scripts/**',
+        'tools/**',
+        '**/*.test.{ts,tsx}',
+        '**/*.config.{ts,js,mjs,cjs}',
+        '**/*.d.ts',
+      ],
+    },
   },
 })

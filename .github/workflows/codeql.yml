@@ -1,0 +1,75 @@
+# CodeQL — GitHub's deeper SAST, surfacing in the repo Security tab (#1550).
+#
+# The repo is public, so CodeQL Advanced runs free. This complements the
+# semgrep job (fast pattern matching) with dataflow-based analysis. Findings
+# land in Security > Code scanning alerts — wartungsfrei, no CI-log triage.
+#
+# It is intentionally NOT a required PR gate on day one: like the broadened
+# semgrep registry step, the first runs surface a baseline that we triage in
+# the Security tab rather than blocking the loop. Ratchet to a PR gate later
+# by adding a branch-protection check, not by editing this workflow.
+#
+# Two languages:
+#   javascript-typescript — the npm workspace (packages/{api-client,frontend,backend})
+#   go                    — the Go lifecycle launcher under tools/sb (#1272)
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly full re-scan so dormant code keeps getting fresh advisories.
+    - cron: '27 4 * * 1'
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    # release-please PRs only touch package.json / CHANGELOG / manifest;
+    # the underlying code was already scanned when its source PR merged.
+    if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
+    permissions:
+      # Required to upload results to the Security tab.
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+            build-mode: none
+          - language: go
+            build-mode: autobuild
+    steps:
+      - uses: actions/checkout@v4
+
+      # Go's autobuild needs the toolchain; the JS analysis uses build-mode:none.
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: tools/sb/go.sum
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Autobuild
+        if: matrix.build-mode == 'autobuild'
+        uses: github/codeql-action/autobuild@v3
+        with:
+          working-directory: tools/sb
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'

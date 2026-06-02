@@ -72,3 +72,34 @@ describe('initializeDefaultChecks service-check reconciliation (#1506)', () => {
     expect(state.checks.some(c => c.type === 'service' && c.target === 'immich')).toBe(true);
   });
 });
+
+const httpCheck = (id: string): CheckConfig => ({
+  id, name: id, type: 'http', target: 'http://localhost/',
+  interval: 60, enabled: true, created_at: new Date().toISOString(),
+});
+
+describe('initializeDefaultChecks template-registered check prune (#1551)', () => {
+  beforeEach(() => { state.checks = []; state.deployed = []; });
+
+  it('prunes a template-registered http check whose owning service is not deployed', async () => {
+    state.checks = [httpCheck('ollama-api'), httpCheck('home-assistant-api')];
+    state.deployed = ['home-assistant'];
+
+    await initializeDefaultChecks();
+
+    const ids = state.checks.map(c => c.id);
+    expect(ids).not.toContain('ollama-api');     // owner not deployed → pruned
+    expect(ids).toContain('home-assistant-api'); // owner deployed → kept
+  });
+
+  it('keeps a manually-added http check (uuid id), even when nothing is deployed', async () => {
+    const manual = httpCheck('a1b2c3d4-e5f6-4789-8abc-1234567890ab');
+    manual.name = 'Link: my router';
+    state.checks = [manual];
+    state.deployed = [];
+
+    await initializeDefaultChecks();
+
+    expect(state.checks.map(c => c.id)).toContain('a1b2c3d4-e5f6-4789-8abc-1234567890ab');
+  });
+});
