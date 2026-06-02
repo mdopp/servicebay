@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.84.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.83.1...servicebay-v4.84.0) (2026-06-02)
+
+
+### Features
+
+* **backups:** collapse System Backups list to newest 5 with show-all toggle ([#1531](https://github.com/mdopp/servicebay/issues/1531)) ([ba8b84a](https://github.com/mdopp/servicebay/commit/ba8b84a77b43bdd00d5a4738008eae45437d8450))
+
 ## [4.83.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.83.0...servicebay-v4.83.1) (2026-06-02)
 
 
