@@ -491,17 +491,26 @@ export class FritzBoxClient {
             dnsServers.push(luaDns);
         }
 
-        // 1. Try GetInfo (WAN)
-        // console.log('[FritzBox] Fetching DNS servers via GetInfo...');
-        const infoXml = await this.soapRequest('GetInfo');
-        if (infoXml) {
-            // console.log('[FritzBox] GetInfo Response:', infoXml);
-            const dnsStr = this.extractValue(infoXml, 'NewDNSServers');
-            // console.log('[FritzBox] Extracted NewDNSServers:', dnsStr);
-            if (dnsStr) {
-                const servers = dnsStr.split(',').map(s => s.trim()).filter(s => s);
-                dnsServers.push(...servers);
+        // 1. Try GetInfo (WAN). Some FritzBox firmwares reject GetInfo on
+        //    the detected WAN service with UPnP 401 "Invalid Action". This
+        //    must stay self-contained: when the call threw straight to the
+        //    outer catch it skipped the AVM + LAN fallbacks below (steps
+        //    2/3) entirely AND logged "Failed to get DNS servers" on every
+        //    poll (once a minute). It's also redundant — the Lua interface
+        //    (step 0) already yields the upstream DNS on those boxes — so a
+        //    miss here is silent and we fall through to the other methods.
+        try {
+            const infoXml = await this.soapRequest('GetInfo', {}, undefined, undefined, true);
+            if (infoXml) {
+                const dnsStr = this.extractValue(infoXml, 'NewDNSServers');
+                if (dnsStr) {
+                    const servers = dnsStr.split(',').map(s => s.trim()).filter(s => s);
+                    dnsServers.push(...servers);
+                }
             }
+        } catch {
+            // GetInfo unsupported on this service/firmware — fall through to
+            // X_AVM-DE_GetDNSServer (step 2) and LANHostConfigManagement (step 3).
         }
 
         // 2. Try X_AVM-DE_GetDNSServer (WAN) - if available
@@ -563,10 +572,13 @@ export class FritzBoxClient {
         // Deduplicate
         dnsServers = Array.from(new Set(dnsServers));
         
+        // Steady-state poll value (gateway poller runs this once a minute) —
+        // the servers are surfaced in the network twin/UI, so log at debug to
+        // avoid a recurring journal line either way.
         if (dnsServers.length > 0) {
-            logger.info('FritzBox', `Found DNS Servers: ${dnsServers.join(', ')}`);
+            logger.debug('FritzBox', `Found DNS Servers: ${dnsServers.join(', ')}`);
         } else {
-            logger.warn('FritzBox', 'No DNS servers found via discover service.');
+            logger.debug('FritzBox', 'No DNS servers found via discover service.');
         }
 
     } catch (e) {

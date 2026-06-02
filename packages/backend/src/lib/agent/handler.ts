@@ -369,8 +369,14 @@ export class AgentHandler extends EventEmitter {
           this.flushDeferredCommands();
           this.emit('connected');
           
-          // Trigger a refresh on connect/reconnect so initialSyncComplete fires again for the twin (#894)
-          void this.sendCommand('refresh', {}).catch(err => {
+          // Trigger a refresh on connect/reconnect so initialSyncComplete fires again for the twin (#894).
+          // Generous timeout: the *first* refresh after a cold boot gathers full
+          // state for every stack (podman inspect per container) over the single
+          // SSH channel, which legitimately exceeds the default 30s on a box with
+          // many services — that produced a one-off "Command timeout for 'refresh'"
+          // on every boot. It's fire-and-forget and the periodic poller retries
+          // anyway, so 90s just stops the spurious cold-start error.
+          void this.sendCommand('refresh', {}, { timeoutMs: 90_000 }).catch(err => {
               this.log(this.nodeName, 'error', `Failed to send automatic refresh command on connect: ${err.message}`);
           });
 
