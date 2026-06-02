@@ -43,7 +43,7 @@ describe('useInstallPlan', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith('/api/install/plan', expect.objectContaining({ method: 'POST' }));
-    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const body = JSON.parse(((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1]).body as string);
     expect(body).toEqual({ desired: ['cloud'], reinstall: ['cloud'], node: 'Local' });
     expect(returned).toEqual(plan);
     await waitFor(() => expect(result.current.plan).toEqual(plan));
@@ -76,7 +76,7 @@ describe('useInstallPlan', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith('/api/system/stacks/cloud/wipe', expect.objectContaining({ method: 'POST' }));
-    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const body = JSON.parse(((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1]).body as string);
     expect(body).toEqual({ confirm: 'WIPE-cloud', node: 'Local' });
     expect(res.ok).toBe(true);
   });
