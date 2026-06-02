@@ -21,7 +21,7 @@ interface StackSummary {
   health: StackHealth | null;
 }
 
-// `tokenScope: 'read'` (#1276) lets the sb-tui stack-install panel enumerate
+// `tokenScope: 'read'` (#1276) lets the sb stack-install panel enumerate
 // the installable stack catalog with a scoped `sb_` token; the handler gate
 // also covers the web UI's session cookie.
 export const GET = withApiHandler({ tokenScope: 'read' }, async () => {

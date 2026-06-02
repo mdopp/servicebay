@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
  * (#1354), so a fresh install can re-seed the same accounts. No body: it uses
  * the stored LLDAP admin credentials. Passwords are not exported (OPAQUE);
  * migrated users set a new password on first login. `tokenScope: 'lifecycle'`
- * so the sb-tui flow can trigger it with a scoped token.
+ * so the sb flow can trigger it with a scoped token.
  */
 export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async () => {
   try {

@@ -134,7 +134,7 @@ export default function BackupsSettingsPage() {
   const [backupSyncTestResult, setBackupSyncTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // NAS (FritzBox) external-backup source — the config-survival backups the
-  // sb-tui upload stages under sb-backup/ (e.g. home-assistant.tar). #1440.
+  // sb upload stages under sb-backup/ (e.g. home-assistant.tar). #1440.
   const [nasOverview, setNasOverview] = useState<{
     configured: boolean;
     connection: { ok: true } | { ok: false; error: string } | null;
@@ -962,7 +962,7 @@ export default function BackupsSettingsPage() {
         </div>
       </div>
 
-      {/* NAS Backups (FritzBox) — the config-survival source the sb-tui upload
+      {/* NAS Backups (FritzBox) — the config-survival source the sb upload
           stages under sb-backup/, e.g. home-assistant.tar (#1440). */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex flex-col gap-3 md:flex-row md:items-center">

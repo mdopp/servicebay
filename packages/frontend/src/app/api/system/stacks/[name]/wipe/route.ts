@@ -45,7 +45,7 @@ interface WipeResult {
 }
 
 export const POST = withApiHandlerParams<undefined, undefined, { name: string }>(
-  // `tokenScope: 'destroy'` lets the sb-tui desired-state install panel
+  // `tokenScope: 'destroy'` lets the sb desired-state install panel
   // uninstall a feature stack with its scoped `sb_` token. The handler
   // still hard-refuses atomic-wipe/core stacks below, and the body must
   // carry the WIPE-<name> confirmation, so the token can't cause a

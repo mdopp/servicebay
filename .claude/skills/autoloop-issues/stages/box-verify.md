@@ -19,10 +19,10 @@ The verify gate is two-sided and you own the second side:
 
 ## Steps
 
-1. **Flip to dev.** `sb-tui channel dev` (or `POST /api/system/channel`). Invocation/payload: `tools/sb-tui/internal/rest/channel.go`, `tools/sb-tui/internal/ui/channel.go`, `packages/backend/src/lib/servicebayChannel.ts`.
+1. **Flip to dev.** `sb channel dev` (or `POST /api/system/channel`). Invocation/payload: `tools/sb/internal/rest/channel.go`, `tools/sb/internal/ui/channel.go`, `packages/backend/src/lib/servicebayChannel.ts`.
 2. **Wait (bounded) for the dev image to land.** Poll the box's running image/version until it matches the newest merged SHA. **Timeout ≤15 min** (release.yml build + box pull + restart). If it never lands, treat as a verify failure (step 5, reason "dev image didn't land").
 3. **Verify.** Run `/verify` against `<SERVICEBAY_BOX>`, exercising the merged path-mandated changes (`box_verify.detail` names which paths). Sweep stray `*.bak` before reinstall-style checks (memory `feedback_hermes_config_bak_selinux`).
-4. **Always flip back.** `sb-tui channel latest` — on success, failure, **and** timeout. The box must never be left on `:dev`. If the flip-back itself fails, that's a **hard exit**: alert the user, don't leave the box stranded.
+4. **Always flip back.** `sb channel latest` — on success, failure, **and** timeout. The box must never be left on `:dev`. If the flip-back itself fails, that's a **hard exit**: alert the user, don't leave the box stranded.
 5. **On verify red:** the change is already on `main`. Identify the culprit (a cluster keeps it attributable to one theme; an unrelated dev-box batch needs a bisect), open a **revert PR**, merge it on CI-green, and re-run this verify. (Merging a revert to `main` is safe to do here — it only republishes `:dev`; the builder is build-ahead on its own branch and doesn't touch `main` until its own seal.) Write `box-verify.json` with `status:"red"` so the orchestrator holds the release PR until it's green again.
 6. **On verify green:** write `box-verify.json` with `status:"green"` and `verified_at`. The release PR is clear for the orchestrator to merge next preflight.
 

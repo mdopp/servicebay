@@ -8,10 +8,10 @@ export const dynamic = 'force-dynamic';
 /**
  * POST { host, username, password } — register the FritzBox NAS as the
  * external-backup source by recording its creds in `config.gateway` (#1440).
- * The sb-tui NAS upload calls this after pushing `home-assistant.tar`, so the
+ * The sb NAS upload calls this after pushing `home-assistant.tar`, so the
  * box knows where its backups live and the upload is discoverable by
  * install/restore (it was previously invisible — the box's gateway was empty).
- * Idempotent. `tokenScope: 'mutate'` (it writes config) so the sb-tui flow can
+ * Idempotent. `tokenScope: 'mutate'` (it writes config) so the sb flow can
  * trigger it with a scoped `sb_` token; a browser session cookie also works.
  */
 export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request }) => {

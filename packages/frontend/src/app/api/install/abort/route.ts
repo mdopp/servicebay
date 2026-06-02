@@ -15,7 +15,7 @@ const Body = z.object({ jobId: z.string().min(1) });
  * `aborted` cleanly. Idempotent — calling on an already-aborted job
  * is a no-op.
  *
- * `tokenScope: 'lifecycle'` lets the sb-tui install panel abort a stuck
+ * `tokenScope: 'lifecycle'` lets the sb install panel abort a stuck
  * job with its scoped `sb_` token — the same scope `/api/install/start`
  * already holds, and strictly less powerful (it only stops an install).
  */

@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
  * "Back up config" button); without one, backs up every installed service that
  * has a backup manifest in one pass. Per-service failures in the back-up-all
  * path are reported in the result rather than aborting the run.
- * `tokenScope: 'mutate'` so the sb-tui flow can trigger it with a scoped token.
+ * `tokenScope: 'mutate'` so the sb flow can trigger it with a scoped token.
  */
 export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request }) => {
   try {

@@ -3,7 +3,7 @@
  *
  * The template was ported out of install-fedora-coreos.sh into the native Go
  * build leg (#1293/#1295); it now lives verbatim at
- * tools/sb-tui/internal/build/assets/fedora-coreos.bu (the raw Butane, no
+ * tools/sb/internal/build/assets/fedora-coreos.bu (the raw Butane, no
  * heredoc wrapping). This test reads that asset directly.
  *
  * The butane template embeds units in two systemd instances:
@@ -41,7 +41,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const BUTANE_TEMPLATE = path.join(
   REPO_ROOT,
   'tools',
-  'sb-tui',
+  'sb',
   'internal',
   'build',
   'assets',

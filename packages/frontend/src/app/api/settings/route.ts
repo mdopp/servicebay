@@ -32,7 +32,7 @@ export const GET = withApiHandler({ tokenScope: 'read' }, async ({ auth }) => {
  * settings UI displays. Re-routing through the handler's Zod path would
  * lose that fidelity.
  *
- * `tokenScope: 'mutate'` (#1275) lets a scoped `sb_` API token (the sb-tui
+ * `tokenScope: 'mutate'` (#1275) lets a scoped `sb_` API token (the sb
  * edit-config panel) write config, not just read it via GET. The body is a
  * Partial<AppConfig> that's merged with the persisted config, so a token
  * caller sends only the field(s) it changes — it never round-trips the
@@ -64,7 +64,7 @@ export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request })
       ...validated.notifications,
     } : currentConfig.notifications,
     // Deep-merge reverseProxy (same one-level merge as notifications) so a
-    // caller sending a single nested field — e.g. the sb-tui edit-config
+    // caller sending a single nested field — e.g. the sb edit-config
     // panel writing `{ reverseProxy: { publicDomain } }` — doesn't blow
     // away the rest of the block (npm creds, lanDomain, lanIp). The web UI
     // edits the domain via its own server action / /api/system/mode, not

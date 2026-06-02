@@ -5,7 +5,7 @@ import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
 
-// tokenScope: 'read' (#1277) lets the sb-tui backup panel list backups with a
+// tokenScope: 'read' (#1277) lets the sb backup panel list backups with a
 // scoped `sb_` token; the handler gate still covers the web UI's cookie.
 export const GET = withApiHandler({ tokenScope: 'read' }, async () => {
   const backups = await listSystemBackups();
@@ -18,7 +18,7 @@ export const GET = withApiHandler({ tokenScope: 'read' }, async () => {
  * deliberately unused; `withApiHandler` skips body parsing when
  * `options.body` isn't set.
  *
- * tokenScope: 'lifecycle' (#1277) lets the sb-tui backup panel trigger a
+ * tokenScope: 'lifecycle' (#1277) lets the sb backup panel trigger a
  * backup with a scoped `sb_` token.
  */
 export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async () => {

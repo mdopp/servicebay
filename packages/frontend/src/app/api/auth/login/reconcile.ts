@@ -14,7 +14,7 @@
 //   2. If the stored hash rejects the password but the env bootstrap password
 //      accepts it, the request is at the genuine reinstall/bootstrap boundary:
 //      authenticate AND re-key the stored hash to the env password so the
-//      stored credential converges on what sb-tui showed the operator.
+//      stored credential converges on what sb showed the operator.
 //   3. With no stored hash, the env password authenticates as before.
 //
 // The verify/hash primitives are injected so this module stays pure and

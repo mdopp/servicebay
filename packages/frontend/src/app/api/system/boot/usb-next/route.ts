@@ -13,7 +13,7 @@ async function getAgent() {
   return agentManager.getAgent(nodeName);
 }
 
-// `tokenScope: 'read'` so the sb-tui launcher can poll USB-boot readiness with
+// `tokenScope: 'read'` so the sb launcher can poll USB-boot readiness with
 // its scoped token (show "would the box boot from USB?" beside ping/webserver)
 // without an extra cookie login.
 export const GET = withApiHandler({ tokenScope: 'read' }, async () => {
@@ -83,7 +83,7 @@ const PostBody = z.object({
 });
 
 // `tokenScope: 'mutate'` — sets the firmware's one-shot BootNext (and optionally
-// reboots), so the sb-tui "ensure USB boot" action can enable it with a scoped
+// reboots), so the sb "ensure USB boot" action can enable it with a scoped
 // token, matching the frontend's enable button.
 export const POST = withApiHandler({ body: PostBody, tokenScope: 'mutate' }, async ({ body }) => {
   try {

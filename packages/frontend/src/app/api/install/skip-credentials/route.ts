@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
  * Proxy routes won't be configured in this run; the operator can fix
  * this later via Settings → Security.
  *
- * `tokenScope: 'lifecycle'` lets the sb-tui install panel resolve a
+ * `tokenScope: 'lifecycle'` lets the sb install panel resolve a
  * needs_credentials pause with its scoped `sb_` token — the same scope
  * that already authorises `/api/install/start`, and strictly less
  * powerful (it only continues an install the operator already started).

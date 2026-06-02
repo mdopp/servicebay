@@ -73,7 +73,7 @@ export default function OverviewDashboard() {
 
         {/* Live install monitor — only renders while an install is
             running, so every web client sees the same progress the
-            sb-tui monitor shows (#A). */}
+            sb monitor shows (#A). */}
         <InstallProgressCard />
 
         {/* Headline status — the single sentence that answers "is everything OK?" */}

@@ -81,29 +81,29 @@ Combined: any stolen token has a bounded blast radius; everything is reversible;
 |-----------|------------|--------|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Network Map](docs/screenshots/network-map.png) | ![Health](docs/screenshots/monitoring.png) |
 
-**`sb-tui` — the lifecycle launcher (terminal):**
+**`sb` — the lifecycle launcher (terminal):**
 
 | Launcher (phase-aware menu) | Express setup (guided happy path) |
 |---|---|
-| ![sb-tui menu](docs/screenshots/sb-tui-menu.png) | ![sb-tui express](docs/screenshots/sb-tui-express.png) |
+| ![sb menu](docs/screenshots/sb-menu.png) | ![sb express](docs/screenshots/sb-express.png) |
 
 The menu tracks where the box is in its lifecycle (no ISO → booting → installing → up) and offers only the actions that apply; **Express** chains the whole happy path — build + flash the USB, boot, watch, then sign in, restore config from the NAS, and install your stacks.
 
 ## Quick Start
 
-ServiceBay runs on **Fedora CoreOS** as an immutable, self-updating appliance. The whole lifecycle is driven by **`sb-tui`** — a single static Go/Bubble Tea binary (no repo clone needed). See the [Installation Guide](docs/INSTALLATION.md) for the full build pipeline, first-boot sequence, and configuration options.
+ServiceBay runs on **Fedora CoreOS** as an immutable, self-updating appliance. The whole lifecycle is driven by **`sb`** — a single static Go/Bubble Tea binary (no repo clone needed). See the [Installation Guide](docs/INSTALLATION.md) for the full build pipeline, first-boot sequence, and configuration options.
 
 ```bash
 # Install the lifecycle TUI (auto-detects your OS/arch from GitHub releases):
-curl -fsSL https://raw.githubusercontent.com/mdopp/servicebay/main/install-sb-tui.sh | sh
+curl -fsSL https://raw.githubusercontent.com/mdopp/servicebay/main/install-sb.sh | sh
 
-sb-tui          # launcher — Express setup, or pick an individual leg
-sb-tui build    # just the ISO build + USB-flash wizard
+sb          # launcher — Express setup, or pick an individual leg
+sb build    # just the ISO build + USB-flash wizard
 ```
 
-**`sb-tui` is the one tool for the whole journey.** Its **Express setup** chains the happy path end-to-end: build + flash the install USB → boot the box → watch the install → sign in → **restore your config from the NAS** → install your stacks. Each leg is also available standalone from the menu (build, watch, edit-config, install stacks, backups, channel switch). Developers working from a clone can run it with `go run ./tools/sb-tui`.
+**`sb` is the one tool for the whole journey.** Its **Express setup** chains the happy path end-to-end: build + flash the install USB → boot the box → watch the install → sign in → **restore your config from the NAS** → install your stacks. Each leg is also available standalone from the menu (build, watch, edit-config, install stacks, backups, channel switch). Developers working from a clone can run it with `go run ./tools/sb`.
 
-The install USB provisions the entire system: OS, networking, ServiceBay container, SSH keys, and an admin account. First boot drops you into a wizard (web) — or `sb-tui` Express (terminal) — that deploys the stacks you select, sets up SSO, configures DNS + proxy routes, restores any per-service config backups from the FritzBox NAS, and hands you the credentials manifest as a Bitwarden-importable CSV.
+The install USB provisions the entire system: OS, networking, ServiceBay container, SSH keys, and an admin account. First boot drops you into a wizard (web) — or `sb` Express (terminal) — that deploys the stacks you select, sets up SSO, configures DNS + proxy routes, restores any per-service config backups from the FritzBox NAS, and hands you the credentials manifest as a Bitwarden-importable CSV.
 
 ## Technical features
 
