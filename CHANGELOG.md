@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.89.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.88.1...servicebay-v4.89.0) (2026-06-02)
+
+
+### Features
+
+* **reverseProxy:** branded proxy error pages for unknown subdomain and bare 401/502 ([cd35130](https://github.com/mdopp/servicebay/commit/cd35130a2ed1e81ca2bc7cae4ef5fe46ccf5c86c)), closes [#1583](https://github.com/mdopp/servicebay/issues/1583)
+
+
+### Bug Fixes
+
+* **externalBackup:** decouple NAS auto-restore from retired cleanInstall flag ([1bcbbc0](https://github.com/mdopp/servicebay/commit/1bcbbc043a0218de92f5e6e0c52619c95b59b4b7)), closes [#1584](https://github.com/mdopp/servicebay/issues/1584)
+* NAS auto-restore decoupled from cleanInstall + branded proxy error pages ([d9977a0](https://github.com/mdopp/servicebay/commit/d9977a01b857134800d477b908b2be013fb8c3c4))
+* **util:** replace unreachable return with default case in humanizeDomainError ([c9712d0](https://github.com/mdopp/servicebay/commit/c9712d08c388f9e8858b68f506729959d4a90fbe))
+
 ## [4.88.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.88.0...servicebay-v4.88.1) (2026-06-02)
 
 
