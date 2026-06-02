@@ -142,6 +142,73 @@ function parseDestination(destination: string): { host: string; port: number; us
   return { host, port, user };
 }
 
+function useNodeHealthCheck(nodes: PodmanConnection[]) {
+  const [nodeHealth, setNodeHealth] = useState<Record<string, NodeHealthEntry>>({});
+
+  const checkHealth = useCallback(
+    async (nodeName: string) => {
+      setNodeHealth(prev => ({ ...prev, [nodeName]: { loading: true, online: false, auth: false } }));
+
+      const node = nodes.find(n => n.Name === nodeName);
+      if (!node) return;
+
+      if (node.URI === 'local') {
+        setNodeHealth(prev => ({
+          ...prev,
+          [nodeName]: {
+            loading: false,
+            online: false,
+            auth: false,
+            error: 'Legacy local nodes are unsupported. Edit this node to use ssh://user@host.',
+          },
+        }));
+        return;
+      }
+
+      try {
+        let host = '';
+        let port = 22;
+        let user = 'root';
+
+        if (node.URI.startsWith('ssh://')) {
+          const url = new URL(node.URI);
+          host = url.hostname;
+          port = url.port ? parseInt(url.port) : 22;
+          user = url.username || 'root';
+        } else {
+          const parts = node.URI.split('@');
+          if (parts.length === 2) {
+            user = parts[0];
+            host = parts[1];
+          } else {
+            host = node.URI;
+          }
+        }
+
+        const res = await checkFullConnection(host, port, user, node.Identity);
+
+        setNodeHealth(prev => ({
+          ...prev,
+          [nodeName]: {
+            loading: false,
+            online: res.success || res.stage === 'auth',
+            auth: res.success,
+            error: res.error,
+          },
+        }));
+      } catch (e) {
+        setNodeHealth(prev => ({
+          ...prev,
+          [nodeName]: { loading: false, online: false, auth: false, error: String(e) },
+        }));
+      }
+    },
+    [nodes],
+  );
+
+  return { nodeHealth, setNodeHealth, checkHealth };
+}
+
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { addToast } = useToast();
@@ -171,7 +238,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   });
 
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
-  const [nodeHealth, setNodeHealth] = useState<Record<string, NodeHealthEntry>>({});
+  const { nodeHealth, setNodeHealth, checkHealth } = useNodeHealthCheck(nodes);
 
   const [isSSHModalOpen, setIsSSHModalOpen] = useState(false);
   const [sshModalDefaults, setSshModalDefaults] = useState({ host: '', port: 22, user: 'root' });
@@ -324,67 +391,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       templateSchema,
       templateValues,
     ],
-  );
-
-  const checkHealth = useCallback(
-    async (nodeName: string) => {
-      setNodeHealth(prev => ({ ...prev, [nodeName]: { loading: true, online: false, auth: false } }));
-
-      const node = nodes.find(n => n.Name === nodeName);
-      if (!node) return;
-
-      if (node.URI === 'local') {
-        setNodeHealth(prev => ({
-          ...prev,
-          [nodeName]: {
-            loading: false,
-            online: false,
-            auth: false,
-            error: 'Legacy local nodes are unsupported. Edit this node to use ssh://user@host.',
-          },
-        }));
-        return;
-      }
-
-      try {
-        let host = '';
-        let port = 22;
-        let user = 'root';
-
-        if (node.URI.startsWith('ssh://')) {
-          const url = new URL(node.URI);
-          host = url.hostname;
-          port = url.port ? parseInt(url.port) : 22;
-          user = url.username || 'root';
-        } else {
-          const parts = node.URI.split('@');
-          if (parts.length === 2) {
-            user = parts[0];
-            host = parts[1];
-          } else {
-            host = node.URI;
-          }
-        }
-
-        const res = await checkFullConnection(host, port, user, node.Identity);
-
-        setNodeHealth(prev => ({
-          ...prev,
-          [nodeName]: {
-            loading: false,
-            online: res.success || res.stage === 'auth',
-            auth: res.success,
-            error: res.error,
-          },
-        }));
-      } catch (e) {
-        setNodeHealth(prev => ({
-          ...prev,
-          [nodeName]: { loading: false, online: false, auth: false, error: String(e) },
-        }));
-      }
-    },
-    [nodes],
   );
 
   // Auto-probe health when nodes change.

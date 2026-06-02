@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect } from 'react';
+import { useBackupState } from './_lib/useBackupState';
 import {
   Save,
   Trash2,
@@ -31,7 +32,7 @@ import { useToast } from '@/providers/ToastProvider';
 import ConfirmModal from '@/components/ConfirmModal';
 import FileViewer from '@/components/FileViewer';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
-import type { BackupLogEntry, BackupPreviewResult, BackupRestoreSelection } from '@/lib/systemBackup';
+import type { BackupPreviewResult, BackupRestoreSelection } from '@/lib/systemBackup';
 import { useSettings } from '../_lib/SettingsContext';
 import {
   formatBytes,
@@ -47,192 +48,49 @@ import {
 } from '../_lib/helpers';
 import ExternalBackupDestinationSection from '../_lib/sections/ExternalBackupDestinationSection';
 
-type RestoreSelectionState = {
-  nodes: Record<string, boolean>;
-  checks: Record<string, boolean>;
-  configFlags: {
-    externalLinks: boolean;
-    registries: boolean;
-    gateway: boolean;
-    notifications: boolean;
-    templateSettings: boolean;
-    logLevel: boolean;
-    update: boolean;
-  };
-  nodeFiles: Record<string, Record<string, boolean>>;
-  targetNodes: Record<string, string>;
-  serviceData: Record<string, Record<string, boolean>>;
-};
-
-type BackupSyncState = {
-  enabled: boolean;
-  schedule: 'hourly' | 'daily' | 'weekly' | 'monthly';
-  time: string;
-  dayOfWeek?: number;
-  dayOfMonth?: number;
-  targetType: 'local' | 'ssh' | 'smb' | 'nfs';
-  localPath: string;
-  sshHost: string;
-  sshPort: string;
-  sshUser: string;
-  sshPath: string;
-  sshIdentityFile: string;
-  smbHost: string;
-  smbShare: string;
-  smbPath: string;
-  smbUsername: string;
-  smbPassword: string;
-  nfsHost: string;
-  nfsExport: string;
-  nfsPath: string;
-  sourcePath: string;
-  excludePatterns: string;
-  lastRun?: string;
-  lastStatus?: 'success' | 'error';
-  lastMessage?: string;
-  lastDuration?: number;
-};
-
 export default function BackupsSettingsPage() {
   const { addToast } = useToast();
   const { nodes } = useSettings();
-
-  const [backups, setBackups] = useState<SystemBackupEntrySummary[]>([]);
-  const [backupsLoading, setBackupsLoading] = useState(true);
-  const [creatingBackup, setCreatingBackup] = useState(false);
-  const [restoreOverlayOpen, setRestoreOverlayOpen] = useState(false);
-  const [restoringBackup, setRestoringBackup] = useState(false);
-  const [restorePreview, setRestorePreview] = useState<BackupPreviewResult | null>(null);
-  const [restoreSource, setRestoreSource] = useState<{ type: 'stored' | 'upload'; fileName?: string; token?: string } | null>(null);
-  const [restoreUploadError, setRestoreUploadError] = useState<string | null>(null);
-  const [restoreFilePreview, setRestoreFilePreview] = useState<{ nodeName: string; relativePath: string; content: string; loading: boolean } | null>(null);
-  const [restoreFilePreviewError, setRestoreFilePreviewError] = useState<string | null>(null);
-  const [restoreSelectionState, setRestoreSelectionState] = useState<RestoreSelectionState | null>(null);
-  const [backupLog, setBackupLog] = useState<BackupLogEntry[]>([]);
-  const [backupStatus, setBackupStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
-  const [deleteTarget, setDeleteTarget] = useState<SystemBackupEntrySummary | null>(null);
-  const [deletingBackup, setDeletingBackup] = useState(false);
-  const [restoreExpandedSections, setRestoreExpandedSections] = useState<Record<string, boolean>>({});
-  const [restoringLatest, setRestoringLatest] = useState(false);
-  const [confirmRestoreLatestOpen, setConfirmRestoreLatestOpen] = useState(false);
-  // Collapse the (newest-first) backup list to the 5 most recent; the rest are
-  // behind a "Show all" toggle so a long retention history doesn't dominate.
-  const [showAllBackups, setShowAllBackups] = useState(false);
   const BACKUP_PREVIEW_COUNT = 5;
 
-  const [backupSync, setBackupSync] = useState<BackupSyncState>({
-    enabled: false,
-    schedule: 'daily',
-    time: '02:00',
-    targetType: 'local',
-    localPath: '/mnt/backup',
-    sshHost: '', sshPort: '22', sshUser: 'root', sshPath: '/backup', sshIdentityFile: '/app/data/ssh/id_rsa',
-    smbHost: '', smbShare: '', smbPath: '', smbUsername: '', smbPassword: '',
-    nfsHost: '', nfsExport: '', nfsPath: '',
-    sourcePath: '/mnt/data',
-    excludePatterns: '',
-  });
-  const [backupSyncHistory, setBackupSyncHistory] = useState<Array<{ success: boolean; startedAt: string; completedAt: string; duration: number; message: string; filesTransferred?: number }>>([]);
-  const [backupSyncRunning, setBackupSyncRunning] = useState(false);
-  const [backupSyncTesting, setBackupSyncTesting] = useState(false);
-  const [backupSyncSaving, setBackupSyncSaving] = useState(false);
-  const [backupSyncTestResult, setBackupSyncTestResult] = useState<{ success: boolean; message: string } | null>(null);
-
-  // NAS (FritzBox) external-backup source — the config-survival backups the
-  // sb upload stages under sb-backup/ (e.g. home-assistant.tar). #1440.
-  const [nasOverview, setNasOverview] = useState<{
-    configured: boolean;
-    connection: { ok: true } | { ok: false; error: string } | null;
-    backups: { service: string; tarName: string; size: number }[];
-  } | null>(null);
-  const [nasLoading, setNasLoading] = useState(true);
-  const [nasRestoring, setNasRestoring] = useState<string | null>(null);
-  const [nasRestoreTarget, setNasRestoreTarget] = useState<{ service: string; tarName: string } | null>(null);
-
-  const fetchBackups = useCallback(async () => {
-    setBackupsLoading(true);
-    try {
-      const res = await fetch('/api/settings/backups');
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Unable to load backups');
-      }
-      const data: SystemBackupEntrySummary[] = await res.json();
-      setBackups(data);
-    } catch (error) {
-      console.error(error);
-      const message = error instanceof Error ? error.message : undefined;
-      addToast('error', 'Failed to load backups', message);
-    } finally {
-      setBackupsLoading(false);
-    }
-  }, [addToast]);
-
-  useEffect(() => { void fetchBackups(); }, [fetchBackups]);
-
-  const fetchBackupSync = useCallback(async () => {
-    try {
-      const res = await fetch('/api/settings/backup-sync');
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.config) {
-        const c = data.config;
-        const t = c.target || { type: 'local', path: '/mnt/backup' };
-        setBackupSync(prev => ({
-          ...prev,
-          enabled: c.enabled ?? false,
-          schedule: c.schedule ?? 'daily',
-          time: c.time ?? '02:00',
-          dayOfWeek: c.dayOfWeek,
-          dayOfMonth: c.dayOfMonth,
-          sourcePath: c.sourcePath ?? '/mnt/data',
-          excludePatterns: (c.excludePatterns || []).join('\n'),
-          targetType: t.type ?? 'local',
-          localPath: t.type === 'local' ? t.path : prev.localPath,
-          sshHost: t.type === 'ssh' ? t.host : prev.sshHost,
-          sshPort: t.type === 'ssh' ? String(t.port ?? 22) : prev.sshPort,
-          sshUser: t.type === 'ssh' ? t.user : prev.sshUser,
-          sshPath: t.type === 'ssh' ? t.path : prev.sshPath,
-          sshIdentityFile: t.type === 'ssh' ? (t.identityFile ?? '/app/data/ssh/id_rsa') : prev.sshIdentityFile,
-          smbHost: t.type === 'smb' ? t.host : prev.smbHost,
-          smbShare: t.type === 'smb' ? t.share : prev.smbShare,
-          smbPath: t.type === 'smb' ? (t.path ?? '') : prev.smbPath,
-          smbUsername: t.type === 'smb' ? (t.username ?? '') : prev.smbUsername,
-          smbPassword: t.type === 'smb' ? (t.password ?? '') : prev.smbPassword,
-          nfsHost: t.type === 'nfs' ? t.host : prev.nfsHost,
-          nfsExport: t.type === 'nfs' ? t.export : prev.nfsExport,
-          nfsPath: t.type === 'nfs' ? (t.path ?? '') : prev.nfsPath,
-          lastRun: c.lastRun,
-          lastStatus: c.lastStatus,
-          lastMessage: c.lastMessage,
-          lastDuration: c.lastDuration,
-        }));
-      }
-      if (data.history) setBackupSyncHistory(data.history);
-      setBackupSyncRunning(data.running ?? false);
-    } catch { /* ignore */ }
-  }, []);
-
-  useEffect(() => { void fetchBackupSync(); }, [fetchBackupSync]);
-
-  const fetchNasOverview = useCallback(async () => {
-    setNasLoading(true);
-    try {
-      const res = await fetch('/api/system/external-backup/list');
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Unable to read NAS backups');
-      setNasOverview({ configured: data.configured, connection: data.connection, backups: data.backups ?? [] });
-    } catch (error) {
-      // A failure here is informational (the source may just not be configured);
-      // show the empty/unconfigured state rather than a blocking toast.
-      console.error(error);
-      setNasOverview({ configured: false, connection: null, backups: [] });
-    } finally {
-      setNasLoading(false);
-    }
-  }, []);
+  const {
+    backups, setBackups,
+    backupsLoading,
+    creatingBackup, setCreatingBackup,
+    restoreOverlayOpen, setRestoreOverlayOpen,
+    restoringBackup, setRestoringBackup,
+    restorePreview, setRestorePreview,
+    restoreSource, setRestoreSource,
+    restoreUploadError, setRestoreUploadError,
+    restoreFilePreview, setRestoreFilePreview,
+    restoreFilePreviewError, setRestoreFilePreviewError,
+    restoreSelectionState, setRestoreSelectionState,
+    backupLog, setBackupLog,
+    backupStatus, setBackupStatus,
+    deleteTarget, setDeleteTarget,
+    deletingBackup, setDeletingBackup,
+    restoreExpandedSections, setRestoreExpandedSections,
+    restoringLatest, setRestoringLatest,
+    confirmRestoreLatestOpen, setConfirmRestoreLatestOpen,
+    showAllBackups, setShowAllBackups,
+    backupSync, setBackupSync,
+    backupSyncHistory, setBackupSyncHistory,
+    backupSyncRunning,
+    backupSyncTesting, setBackupSyncTesting,
+    backupSyncSaving, setBackupSyncSaving,
+    backupSyncTestResult, setBackupSyncTestResult,
+    nasOverview,
+    nasLoading,
+    nasRestoring, setNasRestoring,
+    nasRestoreTarget, setNasRestoreTarget,
+    fetchBackups,
+    fetchBackupSync,
+    fetchNasOverview,
+  } = useBackupState();
 
   useEffect(() => { void fetchNasOverview(); }, [fetchNasOverview]);
+  useEffect(() => { void fetchBackups(); }, [fetchBackups]);
+  useEffect(() => { void fetchBackupSync(); }, [fetchBackupSync]);
 
   const confirmRestoreNasBackup = useCallback(async () => {
     if (!nasRestoreTarget || nasRestoring) return;
