@@ -36,6 +36,15 @@ export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async ({ request
     if (!input || !Array.isArray(input.items) || !Array.isArray(input.variables)) {
       return NextResponse.json({ error: 'invalid input' }, { status: 400 });
     }
+    // #1520 — clean-install (wipe-then-deploy) is retired: an install never
+    // wipes existing data. A reinstall is a plain redeploy over the data on
+    // disk (the runner's `!cleanInstall` path: reuse saved secrets, preserve
+    // certs — the safe credential-reconciliation defaults); the only
+    // system-wide wipe is the explicit Factory Reset. Enforce server-side so
+    // no caller (old client, replayed JobInput) can trigger the wipe branch.
+    input.cleanInstall = false;
+    input.cleanInstallConfirm = '';
+    delete input.preserve;
     const existing = await getCurrentJob();
     if (existing) {
       return NextResponse.json(

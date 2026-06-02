@@ -326,15 +326,7 @@ export default function OnboardingWizard() {
   const [, setDiagnoseError] = useState<string | null>(null);
   const [diagnoseRanOnce, setDiagnoseRanOnce] = useState(false);
 
-  // Clean install + log state live in the install-flow controller now —
-  // the local aliases below keep the JSX readable without touching every
-  // call site.
-  const cleanInstall = installFlow.cleanInstall;
-  const cleanInstallConfirm = installFlow.cleanInstallConfirm;
-  const setCleanInstall = installFlow.setCleanInstall;
-  const setCleanInstallConfirm = installFlow.setCleanInstallConfirm;
-  const preserve = installFlow.preserve;
-  const setPreserve = installFlow.setPreserve;
+  // An install never wipes data (#1520) — no clean-install state here.
   const stackVariables = installFlow.variables;
   const installingNow = installFlow.installingNow;
   /** Display-only union that lets the existing JSX guards
@@ -928,7 +920,7 @@ export default function OnboardingWizard() {
             const name = match[2].trim();
             if (itemsByName.has(name)) return;
             const isInstalled = existing.has(name.toLowerCase());
-            const effectivelyInstalled = cleanInstall ? false : isInstalled;
+            const effectivelyInstalled = isInstalled;
             itemsByName.set(name, {
               name,
               description: match[3]?.trim() || undefined,
@@ -982,7 +974,7 @@ export default function OnboardingWizard() {
           alreadyInstalled: i.alreadyInstalled,
         })),
         prefilled,
-        { node: stackSelectedNode || undefined, cleanInstall },
+        { node: stackSelectedNode || undefined },
       );
 
       const merged = baseItems.map(i => {
@@ -1325,13 +1317,6 @@ export default function OnboardingWizard() {
                 operatorEmailIssue={operatorEmailIssue}
                 detectedRaid={raidArrays[0]}
                 availableStacks={availableStacks}
-                cleanInstall={cleanInstall}
-                setCleanInstall={setCleanInstall}
-                cleanInstallConfirm={cleanInstallConfirm}
-                setCleanInstallConfirm={setCleanInstallConfirm}
-                preserve={preserve}
-                setPreserve={setPreserve}
-                stackSelectedNode={stackSelectedNode}
                 navigateTo={navigateTo}
                 detectedDrives={detectedDrives}
                 stackLoadingDevices={stackLoadingDevices}
@@ -1399,7 +1384,7 @@ export default function OnboardingWizard() {
                 {currentStep === 'install-confirm' && (
                    <Button
                       onClick={handleStartExpressInstall}
-                      disabled={loading || (cleanInstall && !cleanInstallConfirm)}
+                      disabled={loading}
                       className="px-10 py-4 text-base shadow-xl shadow-blue-500/20"
                    >
                       <span className="flex items-center gap-2"><Layers className="w-5 h-5" /> Install Now</span>
