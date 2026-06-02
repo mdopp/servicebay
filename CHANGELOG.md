@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.83.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.82.0...servicebay-v4.83.0) (2026-06-02)
+
+
+### Features
+
+* **install:** drop clean-install from the wizard; reinstall = redeploy-over-data ([#1520](https://github.com/mdopp/servicebay/issues/1520)) ([f211ec0](https://github.com/mdopp/servicebay/commit/f211ec0ce50c51eeccb1102ffd6372fedc916fb2))
+* **install:** server-side /api/install/plan — single source for the desired-state diff ([#1520](https://github.com/mdopp/servicebay/issues/1520)) ([7ecbf89](https://github.com/mdopp/servicebay/commit/7ecbf899fe6b7e730b5bede4ebaf74bf26275e1e))
+* **install:** single-source /api/install/plan + drop clean-install from the wizard ([#1520](https://github.com/mdopp/servicebay/issues/1520)) ([1554d84](https://github.com/mdopp/servicebay/commit/1554d8496d29846381ec5bc56ce784d6c251b92c))
+* **sb:** add a non-interactive, scriptable CLI for box control ([568ef4f](https://github.com/mdopp/servicebay/commit/568ef4fe4d033705e78ab76271f056aa277bbce5))
+* **sb:** make all four journey phases headers with nested actions ([3fce8c6](https://github.com/mdopp/servicebay/commit/3fce8c69592e178d3816458f4a5c65125cfb066b))
+* **sb:** rename sb-tui → sb + add a scriptable CLI + consistent menu ([2ef26dd](https://github.com/mdopp/servicebay/commit/2ef26dd1a2f5d2a2f9f8b3a373d4651fa7f70856))
+
+
+### Bug Fixes
+
+* **agent:** give the cold-boot reconnect refresh a 90s timeout ([b4d5733](https://github.com/mdopp/servicebay/commit/b4d5733ad8b938453ff11189ceeae8f3f6fb1e33))
+* **fritzbox:** stop the GetInfo DNS probe spamming a SOAP 500 warning every poll ([4847106](https://github.com/mdopp/servicebay/commit/48471069473a3f45b54cae4ee0bab9681c21f8e7))
+* **media:** update portal user-guide from Navidrome to Jellyfin ([8c7d69b](https://github.com/mdopp/servicebay/commit/8c7d69b6ea0d615508b05e77f5fce29a9ad12745))
+* quiet recurring log noise (FritzBox DNS, cold-boot refresh) + portal Jellyfin card ([959b574](https://github.com/mdopp/servicebay/commit/959b57484039d6c65f00a5f5ce8d55389b819c4d))
+
 ## [4.82.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.81.0...servicebay-v4.82.0) (2026-06-02)
 
 
