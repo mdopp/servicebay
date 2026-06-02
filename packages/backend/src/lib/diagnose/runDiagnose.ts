@@ -26,6 +26,7 @@ import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailur
 import { checkAdguardRewritesMissing } from '@/lib/diagnose/probes/adguardRewritesMissing';
 import { checkDomainExternalReachability } from '@/lib/diagnose/probes/domainExternalReachability';
 import { checkDomainUnreachable } from '@/lib/diagnose/probes/domainUnreachable';
+import { checkDomainResolvesToBox } from '@/lib/diagnose/probes/domainResolvesToBox';
 import { checkOidcProviderReachable } from '@/lib/diagnose/probes/oidcProviderReachable';
 import { checkNasBackupReachable } from '@/lib/diagnose/probes/nasBackupReachable';
 import { checkSsoVerify } from '@/lib/diagnose/probes/ssoVerify';
@@ -84,6 +85,7 @@ const PROBE_GROUP: Record<string, ProbeGroup> = {
   lan_ip_changed_since_install: 'dns-network',
   router_dns_not_pointing: 'dns-network',
   adguard_rewrites_missing: 'dns-network',
+  domain_resolves_to_box: 'dns-network',
   // TLS certificates
   cert_expiry: 'tls',
   // Login / SSO
@@ -849,7 +851,35 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
     });
   }
 
-  // 14a) Login / SSO (#623 + #1455 + #1535 — consolidated). One row that
+  // 14a) Core service domains resolve to the box (#1563). The blunt
+  //     precondition every SSO/OIDC flow depends on: does
+  //     `ldap.<publicDomain>` / `auth.<publicDomain>` / each public app
+  //     domain resolve to ServiceBay's LAN IP from the box's own
+  //     resolver? `domain_unreachable` bypasses DNS with a Host: header,
+  //     so a node whose DNS is entirely broken (FritzBox→AdGuard upstream
+  //     down, #1559) can still look green there. This probe is the
+  //     blocking gate — a `fail` here means a reinstall must not be
+  //     declared healthy (pairs with #1561). Fix lives on the
+  //     `router_dns_not_pointing` row (Pattern A: DHCP DNS → ServiceBay).
+  try {
+    const dnsResolve = await checkDomainResolvesToBox();
+    probes.push({
+      id: 'domain_resolves_to_box',
+      label: 'Service domains resolve to box',
+      status: dnsResolve.status,
+      detail: dnsResolve.detail,
+      hint: dnsResolve.hint,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'domain_resolves_to_box',
+      label: 'Service domains resolve to box',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 14b) Login / SSO (#623 + #1455 + #1535 — consolidated). One row that
   //     fronts live OIDC-provider reachability (does Authelia answer
   //     `/.well-known/openid-configuration` — caught the #622 storage-key
   //     drift where every SSO-gated service 502'd while diagnose was
@@ -858,7 +888,7 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
   //     admin-only ones) with an on-demand "Run SSO check" action.
   probes.push(await buildSsoVerifyProbe(nodeName));
 
-  // 14b) Proxy route create-failures (B12) are now folded into the
+  // 14c) Proxy route create-failures (B12) are now folded into the
   //     consolidated `dangling_proxy` ("Reverse-proxy routes") row above
   //     (#1535) — missing routes carry the same "Retry create" action.
 
