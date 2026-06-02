@@ -389,6 +389,133 @@ class FileShareScript(unittest.TestCase):
         )
         self.assertNotIn("shar3", log_only)
 
+    def test_provisions_notes_share_acl(self):
+        """#1311: provision_notes_share() must own the notes vault by the
+        shared `file-share` gid, set the setgid bit (mode 2775), and apply
+        a default + existing POSIX ACL granting g:<gid>:rwx — replacing the
+        old 0777 hack with a real access model. Commands are recorded
+        (subprocess mocked) and asserted against the real tempdir path."""
+        import tempfile
+        import grp as grp_mod
+        m = load_script("file-share")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notes = os.path.join(tmp, "file-share", "data", "notes")
+            calls: list[list[str]] = []
+
+            class _OK:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            def record_run(cmd, *_a, **_kw):
+                calls.append(list(cmd))
+                return _OK()
+
+            class _Grp:
+                gr_gid = 6000
+
+            env = {"DATA_DIR": tmp}
+            import subprocess as subprocess_mod
+            with run_with_env(env), \
+                    mock.patch.object(subprocess_mod, "run", record_run), \
+                    mock.patch.object(grp_mod, "getgrnam", lambda _n: _Grp()):
+                m.provision_notes_share()
+
+            # The notes subdir is created if absent so the model applies
+            # from the first deploy.
+            self.assertTrue(os.path.isdir(notes))
+
+            # Group already resolvable → no groupadd needed.
+            self.assertFalse(any("groupadd" in c for c in calls),
+                             "should not groupadd when the group already exists")
+
+            joined = [" ".join(c) for c in calls]
+            # 1. chgrp -R <gid> on notes
+            self.assertTrue(any(c == ["chgrp", "-R", "6000", notes] for c in calls), joined)
+            # 2. setgid mode 2775
+            self.assertTrue(any(c == ["chmod", "2775", notes] for c in calls), joined)
+            # 3. default ACL g:<gid>:rwx (new files) + existing entries
+            self.assertTrue(any(c == ["setfacl", "-R", "-d", "-m", "g:6000:rwx", notes] for c in calls), joined)
+            self.assertTrue(any(c == ["setfacl", "-R", "-m", "g:6000:rwx", notes] for c in calls), joined)
+
+    def test_provision_notes_share_fail_soft_when_group_unavailable(self):
+        """If the `file-share` group can't be resolved or created, the
+        provisioning logs and skips the ACL work without raising — a
+        permission step must never abort the deploy (#1311)."""
+        import tempfile
+        import grp as grp_mod
+        m = load_script("file-share")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            calls: list[list[str]] = []
+
+            class _OK:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            def record_run(cmd, *_a, **_kw):
+                calls.append(list(cmd))
+                return _OK()
+
+            env = {"DATA_DIR": tmp}
+            import subprocess as subprocess_mod
+            # getgrnam always raises KeyError → group never resolvable even
+            # after groupadd. Must skip chgrp/chmod/setfacl, log, return.
+            with run_with_env(env), \
+                    mock.patch.object(subprocess_mod, "run", record_run), \
+                    mock.patch.object(grp_mod, "getgrnam",
+                                      mock.Mock(side_effect=KeyError("no group"))):
+                m.provision_notes_share()  # must not raise
+
+            self.assertFalse(any("chgrp" in c for c in calls))
+            self.assertFalse(any("setfacl" in c for c in calls))
+
+    def test_provision_notes_share_creates_group_when_missing(self):
+        """When the group doesn't exist yet, provision runs `groupadd`
+        (idempotent system group), then resolves the freshly-created gid
+        and proceeds with the ACL provisioning."""
+        import tempfile
+        import grp as grp_mod
+        m = load_script("file-share")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            notes = os.path.join(tmp, "file-share", "data", "notes")
+            calls: list[list[str]] = []
+
+            class _OK:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            def record_run(cmd, *_a, **_kw):
+                calls.append(list(cmd))
+                return _OK()
+
+            class _Grp:
+                gr_gid = 6001
+
+            # First getgrnam raises (missing) → groupadd → second resolves.
+            seq = [KeyError("missing"), _Grp()]
+
+            def fake_getgrnam(_n):
+                v = seq.pop(0)
+                if isinstance(v, Exception):
+                    raise v
+                return v
+
+            env = {"DATA_DIR": tmp}
+            import subprocess as subprocess_mod
+            with run_with_env(env), \
+                    mock.patch.object(subprocess_mod, "run", record_run), \
+                    mock.patch.object(grp_mod, "getgrnam", fake_getgrnam):
+                m.provision_notes_share()
+
+            self.assertTrue(any("groupadd" in c for c in calls),
+                            "groupadd must run when the group is missing")
+            self.assertTrue(any(c == ["chgrp", "-R", "6001", notes] for c in calls))
+
     def test_returns_nonzero_when_seed_times_out(self):
         """If /api/system/filebrowser/init never accepts the seed within
         the 3-minute budget, the script must exit non-zero so the

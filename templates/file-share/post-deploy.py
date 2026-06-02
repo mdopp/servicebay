@@ -19,6 +19,7 @@ See lib/registry.ts:getTemplatePostDeployScript for the script protocol.
 
 from __future__ import annotations
 
+import grp
 import json
 import os
 import subprocess
@@ -26,6 +27,13 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
+
+# Dedicated POSIX group that owns the shared notes vault. Members of this
+# group (incl. cross-stack consumers like OSCAR's Hermes, mapped in on the
+# consumer side) can co-write the vault regardless of which host uid their
+# userns maps them to. See #1311.
+SHARE_GROUP = "file-share"
 
 
 def env(key: str, default: str = "") -> str:
@@ -66,8 +74,115 @@ def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tu
         return 0, None
 
 
+def _notes_dir() -> str:
+    """Host-side path of the shared notes vault. Lives under the
+    `shared-data` hostPath (`{{DATA_DIR}}/file-share/data`) that the pod
+    mounts as /data (samba), /srv (filebrowser) and /var/syncthing/Sync
+    (syncthing). Must stay in sync with the volume in template.yml."""
+    base = env("DATA_DIR", "/mnt/data")
+    return os.path.join(base, "file-share", "data", "notes")
+
+
+def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30)
+
+
+def _run_priv(cmd: list[str]) -> bool:
+    """Run a mutating command, retrying once with sudo if the unprivileged
+    attempt fails (the notes dir is normally owned by the host user the
+    post-deploy runs as, so the plain attempt usually succeeds; sudo is the
+    fallback when ownership has drifted). Returns True on success."""
+    try:
+        res = _run(cmd)
+        if res.returncode == 0:
+            return True
+        sudo = _run(["sudo", "-n", *cmd])
+        if sudo.returncode == 0:
+            return True
+        log(f"   ⚠️  {' '.join(cmd)} failed: {(res.stderr or sudo.stderr or '').strip()}")
+        return False
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"   ⚠️  {' '.join(cmd)} could not run: {exc}")
+        return False
+
+
+def _ensure_share_group() -> int | None:
+    """Ensure the dedicated `file-share` group exists and return its gid.
+    Idempotent: returns the existing gid if the group is already present,
+    otherwise best-effort `groupadd` (needs sudo). Returns None if the
+    group can't be resolved/created — caller logs + skips ACL work then."""
+    try:
+        return grp.getgrnam(SHARE_GROUP).gr_gid
+    except KeyError:
+        pass
+    # Group missing — create it (system group, host-wide). Best-effort.
+    try:
+        created = _run(["sudo", "-n", "groupadd", "--system", SHARE_GROUP])
+        if created.returncode != 0 and "already exists" not in (created.stderr or ""):
+            log(f"   ⚠️  Could not create the '{SHARE_GROUP}' group: {(created.stderr or '').strip()}")
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"   ⚠️  groupadd '{SHARE_GROUP}' could not run: {exc}")
+    try:
+        return grp.getgrnam(SHARE_GROUP).gr_gid
+    except KeyError:
+        return None
+
+
+def provision_notes_share() -> None:
+    """Replace the legacy `0777` notes hack with a real access model so the
+    vault is multi-writer across services (and, once a consumer is mapped
+    into the group, across stacks). Idempotent + fail-soft: every step logs
+    on failure and never aborts the deploy. Re-applied each deploy so it
+    survives a backup/restore that resets ownership. See #1311.
+
+      1. dedicated `file-share` gid owns notes/ (chgrp -R)
+      2. setgid (chmod 2775) so new files inherit that group
+      3. default POSIX ACL g:<gid>:rwx so new files are group-rwx
+         regardless of the writer's umask 0022 (the images run as root
+         with no UMASK knob — the directory enforces it instead), plus the
+         same ACL on existing entries.
+    """
+    notes = _notes_dir()
+    log(f"── Provisioning shared notes vault permissions ({notes}) ──")
+    if not os.path.isdir(notes):
+        # DirectoryOrCreate makes the share root, but `notes/` is a
+        # convention subdir — create it so the model applies from deploy 1.
+        try:
+            os.makedirs(notes, exist_ok=True)
+        except OSError as exc:
+            log(f"   ⚠️  notes dir absent and could not be created ({exc}); skipping permission provisioning.")
+            return
+
+    gid = _ensure_share_group()
+    if gid is None:
+        log(f"   ⚠️  '{SHARE_GROUP}' group unavailable; skipping group-own + ACL. The vault keeps its current permissions.")
+        return
+
+    # 1. group-own the tree by the shared gid.
+    if _run_priv(["chgrp", "-R", str(gid), notes]):
+        log(f"   group-owned notes/ by gid {gid} ({SHARE_GROUP}).")
+    # 2. setgid + group-write on the dir so new files inherit the group.
+    if _run_priv(["chmod", "2775", notes]):
+        log("   set mode 2775 (setgid) on notes/.")
+    # 3. default ACL (new files) + apply to existing entries. setfacl is
+    #    only present when the fs supports ACLs (XFS here does); a missing
+    #    binary or unsupported fs just logs and leaves setgid in place.
+    if _run_priv(["setfacl", "-R", "-d", "-m", f"g:{gid}:rwx", notes]):
+        log(f"   set default ACL g:{gid}:rwx on notes/ (new files inherit group-rwx).")
+    if _run_priv(["setfacl", "-R", "-m", f"g:{gid}:rwx", notes]):
+        log(f"   applied ACL g:{gid}:rwx to existing notes/ entries.")
+    log("   ✅ notes vault provisioned (shared gid + setgid + default ACL). "
+        "Cross-stack consumers (e.g. Hermes) must be mapped into the "
+        f"'{SHARE_GROUP}' group on their pod to co-write.")
+
+
 def main() -> int:
     host = env("HOST", "<server-ip>")
+
+    # ── Shared notes-vault permission model (#1311) ────────────────────
+    # Provision the multi-writer access model before anything else so the
+    # vault is co-editable from this deploy on. Best-effort; never fatal.
+    provision_notes_share()
 
     # ── Syncthing GUI host-check ───────────────────────────────────────
     # Syncthing's GUI rejects Host headers other than the bind address

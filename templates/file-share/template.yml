@@ -181,6 +181,16 @@ spec:
         name: filebrowser-config
 
   volumes:
+  # shared-data is the multi-writer vault (mounted as /data, /srv and
+  # /var/syncthing/Sync above). Its `notes/` subdir is provisioned by
+  # post-deploy.py with a real access model — owned by a dedicated
+  # `file-share` group, setgid (mode 2775) so new files inherit that group,
+  # and a default POSIX ACL (g:<gid>:rwx) so every new file is group-rwx
+  # regardless of the writer's umask. This replaces the old blunt `0777`
+  # workaround: cross-stack consumers (e.g. OSCAR's Hermes, mapped to a
+  # different host uid) co-write by being added to the `file-share` group on
+  # their own pod (supplementalGroups / --group-add) rather than by making
+  # the dir world-writable. See #1311.
   - name: shared-data
     hostPath:
       path: {{DATA_DIR}}/file-share/data
