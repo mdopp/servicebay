@@ -220,6 +220,15 @@ jobs:
         run: semgrep --config .semgrep.yml --severity=ERROR --metrics=off --error .
       - name: Custom rules (informational warnings)
         run: semgrep --config .semgrep.yml --metrics=off . || true
+      # Broader registry coverage (#1550). Report-only: the full
+      # p/security-audit + p/typescript rulesets surface a wall of findings
+      # on day one, so this step is non-blocking (`|| true`) and exists to
+      # populate the CI log + give us a triage list. Promote individual
+      # findings to blocking incrementally — either fix them, or codify a
+      # ServiceBay-specific variant in .semgrep.yml (which the ERROR step
+      # above already gates). Mirrors the npm-audit WARNING/ERROR tiering.
+      - name: Registry rulesets (report-only — p/security-audit, p/typescript)
+        run: semgrep --config p/security-audit --config p/typescript --metrics=off . || true
 
   # Dependency CVE scan (#1549). Decoupled from the install step — the build/
   # test/lint installs stay `--no-audit` for speed, so a freshly-published
