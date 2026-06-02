@@ -212,6 +212,18 @@ const eslintConfig = defineConfig([
           argsIgnorePattern: "^_",
         },
       ],
+      // --- Dead-code detection (syntactic + constant-folded). Exact, near
+      // zero false positives; complements knip (module-level unused
+      // files/exports) and branch coverage (semantic / runtime-dead). These
+      // catch code the TS compiler's allowUnreachableCode/
+      // noFallthroughCasesInSwitch don't, e.g. dead arms behind a literalised
+      // flag: `if (x || true)`, `const F = false; if (F) {…}`.
+      "no-unreachable": "error",
+      "no-unreachable-loop": "error",
+      "no-constant-condition": ["error", { checkLoops: false }],
+      "no-constant-binary-expression": "error",
+      "no-unused-private-class-members": "error",
+      "no-fallthrough": "error",
       "sb/no-exec-template-literal": "error",
       // Hard error since the #603 burn-down — every API route verb
       // export must use withApiHandler / withApiHandlerParams. The
