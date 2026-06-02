@@ -238,7 +238,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   });
 
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
-  const { nodeHealth, setNodeHealth, checkHealth } = useNodeHealthCheck(nodes);
+  const { nodeHealth, checkHealth } = useNodeHealthCheck(nodes);
 
   const [isSSHModalOpen, setIsSSHModalOpen] = useState(false);
   const [sshModalDefaults, setSshModalDefaults] = useState({ host: '', port: 22, user: 'root' });

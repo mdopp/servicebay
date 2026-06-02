@@ -54,7 +54,7 @@ export default function BackupsSettingsPage() {
   const BACKUP_PREVIEW_COUNT = 5;
 
   const {
-    backups, setBackups,
+    backups,
     backupsLoading,
     creatingBackup, setCreatingBackup,
     restoreOverlayOpen, setRestoreOverlayOpen,
@@ -75,7 +75,7 @@ export default function BackupsSettingsPage() {
     showAllBackups, setShowAllBackups,
     backupSync, setBackupSync,
     backupSyncHistory, setBackupSyncHistory,
-    backupSyncRunning,
+    backupSyncRunning, setBackupSyncRunning,
     backupSyncTesting, setBackupSyncTesting,
     backupSyncSaving, setBackupSyncSaving,
     backupSyncTestResult, setBackupSyncTestResult,

@@ -8,6 +8,7 @@ import ServiceForm, { ServiceFormInitialData } from '@/components/ServiceForm';
 import ActionProgressModal from '@/components/ActionProgressModal';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
+import type { ToastType } from '@/providers/ToastProvider';
 import { ServiceViewModel } from '@servicebay/api-client';
 import { logger } from '@servicebay/api-client';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
@@ -253,7 +254,7 @@ interface ServiceActionOverlaysProps {
   currentAction: 'start' | 'stop' | 'restart' | null;
   actionModalOpen: boolean;
   onRefresh?: () => void;
-  addToast: (level: string, message: string) => void;
+  addToast: (type: ToastType, title: string, message?: string, duration?: number) => string;
   showActions: boolean;
   selectedService: ServiceViewModel | null;
   actionLoading: boolean;

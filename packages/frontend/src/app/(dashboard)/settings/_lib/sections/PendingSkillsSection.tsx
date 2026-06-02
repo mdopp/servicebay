@@ -5,6 +5,7 @@ import { Check, ChevronDown, ChevronRight, Loader2, ShieldAlert, Trash2 } from '
 import { useToast } from '@/providers/ToastProvider';
 import ConfirmModal from '@/components/ConfirmModal';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 
 interface PendingSkill {
   slug: string;
@@ -113,24 +114,24 @@ interface PendingSkillCardProps {
   onRejectClick: (slug: string) => void;
 }
 
-const SKILL_MARKDOWN_COMPONENTS = {
-  h1: ({children}: {children: React.ReactNode}) => <h1 className="text-sm font-extrabold text-gray-900 dark:text-white mt-4 mb-2 first:mt-0 pb-1 border-b border-gray-200/50 dark:border-white/5">{children}</h1>,
-  h2: ({children}: {children: React.ReactNode}) => <h2 className="text-xs font-bold text-gray-900 dark:text-white mt-3 mb-1.5">{children}</h2>,
-  h3: ({children}: {children: React.ReactNode}) => <h3 className="text-xs font-semibold text-gray-800 dark:text-gray-200 mt-2 mb-1">{children}</h3>,
-  p: ({children}: {children: React.ReactNode}) => <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 leading-relaxed">{children}</p>,
-  ul: ({children}: {children: React.ReactNode}) => <ul className="list-disc pl-4 mb-2 space-y-1 text-xs text-gray-600 dark:text-gray-400">{children}</ul>,
-  ol: ({children}: {children: React.ReactNode}) => <ol className="list-decimal pl-4 mb-2 space-y-1 text-xs text-gray-600 dark:text-gray-400">{children}</ol>,
-  li: ({children}: {children: React.ReactNode}) => <li className="text-xs">{children}</li>,
-  code: ({className, children, ...props}: {className?: string; children: React.ReactNode; [key: string]: unknown}) => {
+const SKILL_MARKDOWN_COMPONENTS: Components = {
+  h1: ({children}) => <h1 className="text-sm font-extrabold text-gray-900 dark:text-white mt-4 mb-2 first:mt-0 pb-1 border-b border-gray-200/50 dark:border-white/5">{children}</h1>,
+  h2: ({children}) => <h2 className="text-xs font-bold text-gray-900 dark:text-white mt-3 mb-1.5">{children}</h2>,
+  h3: ({children}) => <h3 className="text-xs font-semibold text-gray-800 dark:text-gray-200 mt-2 mb-1">{children}</h3>,
+  p: ({children}) => <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 leading-relaxed">{children}</p>,
+  ul: ({children}) => <ul className="list-disc pl-4 mb-2 space-y-1 text-xs text-gray-600 dark:text-gray-400">{children}</ul>,
+  ol: ({children}) => <ol className="list-decimal pl-4 mb-2 space-y-1 text-xs text-gray-600 dark:text-gray-400">{children}</ol>,
+  li: ({children}) => <li className="text-xs">{children}</li>,
+  code: ({className, children}) => {
     const match = /language-(\w+)/.exec(className || '');
     const isInline = !match;
     return isInline ? (
-      <code className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-white/5 font-mono text-[11px] text-pink-600 dark:text-pink-400 font-medium" {...props}>
+      <code className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-white/5 font-mono text-[11px] text-pink-600 dark:text-pink-400 font-medium">
         {children}
       </code>
     ) : (
       <pre className="p-3 my-2 rounded-xl bg-gray-100 dark:bg-black/45 border border-gray-250 dark:border-white/5 overflow-x-auto text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
-        <code className={className} {...props}>{children}</code>
+        <code className={className}>{children}</code>
       </pre>
     );
   }
