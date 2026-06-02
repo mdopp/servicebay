@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { getConfig, saveConfig, getAdminBaseUrl, type AccessRequest } from '@/lib/config';
 import { sendEmailAlert } from '@/lib/email';
 import { isOverUserLimit, DEFAULT_MAX_USERS } from '@/lib/portal/userCap';
+import { handleExistingEmail } from './existingEmail';
 import { logger } from '@/lib/logger';
 import { withApiHandler } from '@/lib/api/handler';
 
@@ -104,6 +105,18 @@ export const POST = withApiHandler({ skipAuth: true }, async ({ request }) => {
   const capResponse = await rejectIfCapped(config.maxUsers ?? DEFAULT_MAX_USERS, pending.length);
   if (capResponse) return capResponse;
 
+  // #1510 — if the email already has an LLDAP account, queueing an admin
+  // approval is doomed (it can only fail "already exists"). Short-circuit:
+  // notify the rightful owner and return the SAME neutral success below
+  // (no admin queue, no enumeration). Fails open if LLDAP is unreachable.
+  const { shortCircuit } = await handleExistingEmail(parsed.email);
+  if (shortCircuit) {
+    // Same response shape as a real submission so the requester can't tell
+    // the email already exists. The id is a throwaway UUID — the status
+    // endpoint will report `not-found`, identical to a cleared request.
+    return NextResponse.json({ ok: true, id: crypto.randomUUID() });
+  }
+
   // Compose display name from firstName/lastName when both are
   // provided (new clients); otherwise fall back to the free-text
   // `name` field (old clients). At least one source is required.
@@ -130,22 +143,28 @@ export const POST = withApiHandler({ skipAuth: true }, async ({ request }) => {
   };
   await saveConfig({ ...config, accessRequests: [...existing, newRequest] });
   logger.info('access-requests', `New request from ${parsed.email}`);
+  notifyAdminOfRequest(config, newRequest);
 
-  // Best-effort email notification — sendEmailAlert no-ops when
-  // email isn't configured.
+  return NextResponse.json({ ok: true, id: newRequest.id });
+});
+
+/**
+ * Best-effort "New access request" admin notification — sendEmailAlert
+ * no-ops when email isn't configured. Split out of the POST handler to
+ * keep it under the size/complexity budget.
+ */
+function notifyAdminOfRequest(config: Awaited<ReturnType<typeof getConfig>>, req: AccessRequest): void {
   const adminBase = getAdminBaseUrl(config);
   const deepLink = adminBase ? `${adminBase}/settings/networking#access-requests` : null;
   void sendEmailAlert(
     'New access request',
-    `${parsed.name} (${parsed.email}) has requested access to your home server.\n\n` +
-    (parsed.message ? `Message: ${parsed.message}\n\n` : '') +
+    `${req.name} (${req.email}) has requested access to your home server.\n\n` +
+    (req.message ? `Message: ${req.message}\n\n` : '') +
     (deepLink
       ? `Review and approve: ${deepLink}`
       : 'Open Settings → Access Requests to create the LLDAP user.'),
   );
-
-  return NextResponse.json({ ok: true, id: newRequest.id });
-});
+}
 
 export const GET = withApiHandler({}, async () => {
   const config = await getConfig();

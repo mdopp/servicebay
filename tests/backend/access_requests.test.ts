@@ -2,7 +2,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const state: { config: any } = { config: {} };
+const state: { config: any; lldapUsers: Array<{ id: string; email?: string }>; lldapOk: boolean } = {
+  config: {},
+  lldapUsers: [],
+  lldapOk: true,
+};
 
 vi.mock('@/lib/config', async () => {
   const actual = await vi.importActual<any>('@/lib/config');
@@ -12,8 +16,19 @@ vi.mock('@/lib/config', async () => {
     saveConfig: vi.fn(async (cfg: any) => { state.config = cfg; }),
   };
 });
+const sendTransactionalEmail = vi.fn(async () => {});
 vi.mock('@/lib/email', () => ({
   sendEmailAlert: vi.fn(async () => {}),
+  sendTransactionalEmail: (...args: unknown[]) => sendTransactionalEmail(...args as []),
+}));
+// #1510 — the public POST checks LLDAP for the email before queueing. Mock
+// the client so the dedupe path is deterministic without a live directory.
+vi.mock('@/lib/lldap/client', () => ({
+  listLldapUsers: vi.fn(async () =>
+    state.lldapOk
+      ? { ok: true, users: state.lldapUsers }
+      : { ok: false, reason: 'network_error', message: 'mocked unreachable' },
+  ),
 }));
 
 // requireSession bypass for tests (#596) — the PATCH/DELETE routes
@@ -27,6 +42,9 @@ import { PATCH, DELETE } from '@/app/api/system/access-requests/[id]/route';
 
 beforeEach(() => {
   state.config = {};
+  state.lldapUsers = [];
+  state.lldapOk = true;
+  sendTransactionalEmail.mockClear();
 });
 
 const post = (body: unknown, opts?: { rawBody?: string }) =>
@@ -87,6 +105,32 @@ describe('POST /api/system/access-requests', () => {
     }));
     const res = await post({ name: 'Fresh', email: 'fresh@example.com' });
     expect(res.status).toBe(200);
+  });
+
+  // #1510 — an email that already has an LLDAP account must not reach the
+  // admin queue (the approval could only ever fail "already exists"). The
+  // owner is notified instead; the requester gets the same neutral response.
+  it('does not queue an admin approval when the email already exists in LLDAP', async () => {
+    state.lldapUsers = [{ id: 'alice', email: 'Alice@Example.com' }];
+    const res = await post({ name: 'Imposter', email: 'alice@example.com' });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    // Same shape as a real submission (ok + id) — no enumeration.
+    expect(data.ok).toBe(true);
+    expect(typeof data.id).toBe('string');
+    // Nothing queued for the admin.
+    expect(state.config.accessRequests ?? []).toHaveLength(0);
+    // Owner was notified at the directory address.
+    expect(sendTransactionalEmail).toHaveBeenCalledTimes(1);
+    expect((sendTransactionalEmail.mock.calls[0] as unknown[])[0]).toBe('Alice@Example.com');
+  });
+
+  it('queues normally when LLDAP is unreachable (fail-open)', async () => {
+    state.lldapOk = false;
+    const res = await post({ name: 'Real', email: 'real@example.com' });
+    expect(res.status).toBe(200);
+    expect(state.config.accessRequests).toHaveLength(1);
+    expect(sendTransactionalEmail).not.toHaveBeenCalled();
   });
 });
 
