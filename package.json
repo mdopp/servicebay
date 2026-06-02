@@ -95,10 +95,10 @@
   "knip": {
     "ignoreBinaries": [
       "fuser",
-      "python3"
+      "python3",
+      "gofmt"
     ],
     "ignore": [
-      "scripts/check-invariants.ts",
       "packages/frontend/public/mockServiceWorker.js"
     ],
     "ignoreExportsUsedInFile": true,
@@ -109,7 +109,6 @@
           "tests/e2e/**/*.e2e.ts"
         ],
         "ignoreDependencies": [
-          "@servicebay/api-client",
           "lucide-react",
           "react-markdown",
           "socket.io-client"
