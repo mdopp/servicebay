@@ -91,6 +91,9 @@ func (m ChannelModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case channelLoadedMsg:
 		if msg.err != nil {
 			m.stage, m.errMsg = chanError, friendlyErr(msg.err)
+			if msg.err == rest.ErrUnauthorized {
+				return m, reauthCmd()
+			}
 			return m, nil
 		}
 		m.current, m.stage = msg.channel, chanSelect
@@ -103,6 +106,9 @@ func (m ChannelModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case channelSetMsg:
 		if msg.err != nil {
 			m.stage, m.errMsg = chanError, friendlyErr(msg.err)
+			if msg.err == rest.ErrUnauthorized {
+				return m, reauthCmd()
+			}
 			return m, nil
 		}
 		return m, tick2s() // the box is restarting; start polling for the flip

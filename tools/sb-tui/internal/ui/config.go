@@ -88,6 +88,11 @@ func (m ConfigModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			m.loadEr = msg.err
+			// A rejected token isn't a dead-end: ask the App to drop it + re-auth.
+			// Standalone (no App) drops the msg and the stored error shows as before.
+			if msg.err == rest.ErrUnauthorized {
+				return m, reauthCmd()
+			}
 			return m, nil
 		}
 		m.loadEr = nil
@@ -97,6 +102,9 @@ func (m ConfigModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.editing = false
 		if msg.err != nil {
 			m.status = "✗ " + friendlyErr(msg.err)
+			if msg.err == rest.ErrUnauthorized {
+				return m, reauthCmd()
+			}
 			return m, nil
 		}
 		m.values[msg.key] = msg.value

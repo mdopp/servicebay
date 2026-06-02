@@ -20,9 +20,36 @@ async function addGatewayCheck(config: Awaited<ReturnType<typeof getConfig>>, _e
   }
 }
 
+/**
+ * Per-service health checks are gated on actual deployment (#1506):
+ * `listServices` reads the deployed Quadlet files off the digital twin, so
+ * it is the authoritative set of installed stacks. We reconcile the on-disk
+ * checks to that set — add a check for any deployed service that lacks one,
+ * and prune any auto-created `Service:` check whose target is no longer
+ * deployed (an uninstall the box missed, or a stale check from a prior
+ * install). An un-installed service must show no check, never a red
+ * "failing" one. `podman.socket` is a ServiceBay-internal singleton (added
+ * separately) and is exempt from the prune.
+ */
+const SERVICE_CHECK_PRUNE_EXEMPT = new Set<string>(['podman.socket']);
+
 async function addServiceChecks(existingChecks: ReturnType<typeof HealthStore.getChecks>, exists: (type: string, target: string) => boolean) {
   try {
     const services = await ServiceManager.listServices('Local');
+    const deployed = new Set(services.map(s => s.name));
+
+    // Prune auto-created per-service checks for services that are no longer
+    // deployed. Only touches `type:'service'` rows the deploy/discovery path
+    // creates — manual checks of other types are untouched.
+    for (const c of existingChecks) {
+      if (c.type !== 'service') continue;
+      if (SERVICE_CHECK_PRUNE_EXEMPT.has(c.target)) continue;
+      if (!deployed.has(c.target)) {
+        logger.info('Health', `Pruning health check for un-installed service ${c.target}`);
+        HealthStore.deleteServiceCheck(c.target);
+      }
+    }
+
     for (const service of services) {
       const alreadyMonitored = existingChecks.some(c =>
         (c.type === 'service' && c.target === service.name) ||

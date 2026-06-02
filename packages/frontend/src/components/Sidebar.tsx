@@ -2,11 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ChevronLeft, Github, Users, ExternalLink, Sparkles, Home, Wrench, User as UserIcon, LogOut } from 'lucide-react';
+import { ChevronLeft, Github, Users, ExternalLink, Sparkles, Home, User as UserIcon, LogOut } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
 import DomainTag from './DomainTag';
-import { typedFetch, InstallStatusResponseSchema } from '@servicebay/api-client';
 import { NAVIGATION_ENTRIES, isNavActive } from '@/config/navigation';
 
 // Back-compat re-export — MobileNav imports `dashboards` from here.
@@ -22,14 +21,11 @@ export default function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showCollapsedNodeLabel, setShowCollapsedNodeLabel] = useState(false);
   const [lldapUrl, setLldapUrl] = useState<string | null>(null);
-  // Conditional sidebar entry for /setup. Visible whenever the server
-  // reports an active install job (running / needs_credentials) OR a
-  // recently-finished job that hasn't been acknowledged yet (terminal
-  // phases with stackSetupPending still set). This way "Setup" is a
-  // first-class destination during the 10-minute install window — the
-  // operator can navigate to Services / Terminal / Health and still
-  // come back to watch progress.
-  const [hasActiveInstall, setHasActiveInstall] = useState(false);
+  // The redundant /setup sidebar rider was removed (#1503): setup is now
+  // integrated into the dashboard, which renders the live install
+  // progress directly. The separate rider led operators to the wizard's
+  // "Concurrent Pipeline Active" lock over the box's own install, so it's
+  // gone — the dashboard's integrated install view is the single home.
   // Workspace package.json stays at 0.0.0 (release-please only bumps the
   // root). Read the live version from the API instead. (#812)
   const [appVersion, setAppVersion] = useState<string | null>(null);
@@ -108,35 +104,6 @@ export default function Sidebar() {
       .catch(() => {});
   }, []);
 
-  // Poll the install-job singleton so every connected client picks up
-  // (and drops) the "Setup" entry within 5 s — the operator on a
-  // second tab/phone should see the same affordance as the operator
-  // who clicked Install. Short interval is fine: payload is tiny and
-  // it pauses naturally when there's no active job.
-  //
-  // Visibility rule: show the pill whenever EITHER (a) an install job
-  // is currently running, OR (b) the operator hasn't acknowledged a
-  // terminal install yet (`stackSetupPending: true`). The second case
-  // is what gives the operator a path back to /setup after they
-  // minimised the wizard but never clicked "Finish".
-  useEffect(() => {
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const data = await typedFetch(
-          '/api/install/status',
-          InstallStatusResponseSchema,
-          { cache: 'no-store' },
-        );
-        if (cancelled) return;
-        setHasActiveInstall(data.jobIsActive);
-      } catch { /* offline / mid-redeploy / schema drift — keep the previous value */ }
-    };
-    void tick();
-    const handle = setInterval(tick, 5000);
-    return () => { cancelled = true; clearInterval(handle); };
-  }, []);
-
   return (
     <div className={`${isCollapsed ? 'w-16' : 'w-64'} flex flex-col sidebar-transition h-full shrink-0`}>
         <div className="h-16 flex items-center justify-between px-4">
@@ -184,33 +151,6 @@ export default function Sidebar() {
             </button>
         )}
         <div className="overflow-y-auto flex-1 p-2 space-y-1">
-            {/* Setup entry (#696). Only visible when there's an active install OR we are looking at the setup page. */}
-            {(hasActiveInstall || (pathname?.startsWith('/setup') ?? false)) && (() => {
-                const isActive = pathname?.startsWith('/setup') ?? false;
-                const baseClass = `w-full text-left px-3.5 py-3 rounded-xl flex items-center transition-all border ${isCollapsed ? 'justify-center' : 'gap-3.5'} `;
-                const tone = isActive
-                    ? 'bg-blue-50 dark:bg-blue-600/10 border-blue-100 dark:border-blue-500/20 text-blue-600 dark:text-blue-400 font-bold shadow-sm shadow-blue-500/5'
-                    : 'border-blue-100/50 dark:border-blue-500/10 bg-blue-50/50 dark:bg-blue-900/20 hover:bg-blue-100/60 dark:hover:bg-blue-900/40 text-blue-700 dark:text-blue-300';
-                const iconColor = isActive
-                    ? 'text-blue-500 dark:text-blue-400'
-                    : 'text-blue-600 dark:text-blue-400';
-                return (
-                    <button
-                        type="button"
-                        onClick={() => router.push('/setup')}
-                        className={baseClass + tone}
-                        title={isCollapsed ? (hasActiveInstall ? 'Setup in progress' : 'Setup') : ''}
-                    >
-                        <div className="relative shrink-0">
-                            <Wrench size={20} className={`shrink-0 ${iconColor}`} />
-                            {hasActiveInstall && (
-                                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                            )}
-                        </div>
-                        {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">Setup</span>}
-                    </button>
-                );
-            })()}
             {dashboards.map(p => {
                 const Icon = p.icon;
                 const isActive = isNavActive(pathname, p.path);

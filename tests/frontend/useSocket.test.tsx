@@ -8,6 +8,8 @@ const fakeSocket = {
   connected: false,
   on: vi.fn((event: string, cb: (arg?: any) => void) => { handlers[event] = cb; }),
   off: vi.fn(),
+  connect: vi.fn(),
+  disconnect: vi.fn(),
 };
 vi.mock('socket.io-client', () => ({
   default: vi.fn(() => fakeSocket),
@@ -18,6 +20,9 @@ import { useSocket } from '@/hooks/useSocket';
 describe('useSocket — connect_error handling', () => {
   beforeEach(() => {
     for (const k of Object.keys(handlers)) delete handlers[k];
+    fakeSocket.connected = false;
+    fakeSocket.connect.mockClear();
+    fakeSocket.disconnect.mockClear();
   });
 
   it('redirects to /login on an unauthorized rejection, ignores transient errors', () => {
@@ -63,6 +68,29 @@ describe('useSocket — connect_error handling', () => {
       Object.defineProperty(window, 'location', {
         value: originalLocation, writable: true, configurable: true,
       });
+    }
+  });
+
+  it('kicks the connect on mount when the persisted socket is disconnected (#1509)', () => {
+    fakeSocket.connected = false;
+    renderHook(() => useSocket());
+    // The singleton can persist across navigations disconnected; the hook
+    // must re-initiate the connect rather than hang the hydration gate.
+    expect(fakeSocket.connect).toHaveBeenCalled();
+  });
+
+  it('forces a fresh reconnect if the initial connect stalls (#1509)', () => {
+    vi.useFakeTimers();
+    try {
+      fakeSocket.connected = false;
+      renderHook(() => useSocket());
+      fakeSocket.connect.mockClear();
+      // Still not connected after the bounded window → recycle the socket.
+      vi.advanceTimersByTime(3000);
+      expect(fakeSocket.disconnect).toHaveBeenCalled();
+      expect(fakeSocket.connect).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

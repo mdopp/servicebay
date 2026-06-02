@@ -1273,6 +1273,17 @@ export class ServiceLifecycle {
         await ServiceLifecycle.refreshAgent(nodeName);
         ServiceLifecycle.backupQuadlets(nodeName);
 
+        // Drop the per-service health check (#1506). The check is created
+        // on deploy and must be removed on uninstall — otherwise an
+        // un-installed service lingers as a red "failing" row forever.
+        try {
+            const { HealthStore } = await import('../health/store');
+            const removed = HealthStore.deleteServiceCheck(serviceName);
+            if (removed > 0) logger.info('ServiceManager', `Removed ${removed} health check(s) for uninstalled ${serviceName}`);
+        } catch (e) {
+            logger.warn('ServiceManager', `Failed to remove health check for ${serviceName}:`, e);
+        }
+
         logger.info('ServiceManager', `Soft-deleted ${serviceName} on ${nodeName} → ${trashDir}`);
     }
 

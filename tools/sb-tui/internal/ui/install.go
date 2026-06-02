@@ -230,6 +230,9 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stacksLoadedMsg:
 		if msg.err != nil {
 			m.stage, m.errMsg = stageError, friendlyErr(msg.err)
+			if msg.err == rest.ErrUnauthorized {
+				return m, reauthCmd()
+			}
 			return m, nil
 		}
 		m.stacks, m.stage = msg.stacks, stageSelect
@@ -257,6 +260,9 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.pollCmd()
 			}
 			m.stage, m.errMsg = stageError, friendlyErr(msg.err)
+			if msg.err == rest.ErrUnauthorized {
+				return m, reauthCmd()
+			}
 			return m, nil
 		}
 		m.jobID, m.stage = msg.jobID, stageInstalling
