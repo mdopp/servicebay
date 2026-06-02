@@ -89,7 +89,7 @@
     "postcss": "^8.5.10",
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
-    "typescript": "^5",
+    "typescript": "^6",
     "vitest": "^4.0.16"
   },
   "knip": {
