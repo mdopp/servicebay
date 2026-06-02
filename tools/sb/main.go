@@ -19,12 +19,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"sb/internal/build"
 	"sb/internal/buildflow"
+	"sb/internal/cli"
 	"sb/internal/iso"
 	"sb/internal/phase"
 	"sb/internal/probes"
@@ -321,55 +321,6 @@ func runInstallStacks() int {
 	return 0
 }
 
-// runChannel is a non-interactive CLI: `sb channel` prints the running
-// box's release channel; `sb channel <latest|dev|test>` flips it (the box
-// re-points its image, pulls, and restarts), then polls until it's back on the
-// new channel. Lets a fix merged to main (auto-published as `:dev`) be verified
-// on the box without cutting a release — and it's scriptable (no TTY).
-func runChannel() int {
-	client, code := boxClient()
-	if client == nil {
-		return code
-	}
-	ctx := context.Background()
-	if len(os.Args) < 3 {
-		ch, err := client.GetChannel(ctx)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		fmt.Printf("ServiceBay channel: %s\n", ch)
-		fmt.Printf("Switch with: sb channel <%s>\n", strings.Join(rest.Channels, "|"))
-		return 0
-	}
-	target := os.Args[2]
-	valid := false
-	for _, c := range rest.Channels {
-		if c == target {
-			valid = true
-		}
-	}
-	if !valid {
-		fmt.Fprintf(os.Stderr, "unknown channel %q — use one of: %s\n", target, strings.Join(rest.Channels, ", "))
-		return 2
-	}
-	if err := client.SetChannel(ctx, target); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	fmt.Printf("Switching to '%s' — ServiceBay will pull + restart (~1 min)…\n", target)
-	// The restart drops the API we're talking to; poll until it's back on target.
-	for i := 0; i < 30; i++ {
-		time.Sleep(4 * time.Second)
-		if ch, err := client.GetChannel(ctx); err == nil && ch == target {
-			fmt.Printf("✓ ServiceBay is now on '%s'.\n", target)
-			return 0
-		}
-	}
-	fmt.Println("Still switching — run `sb channel` in a moment to confirm.")
-	return 0
-}
-
 // runBackups opens the backup panel (#1277).
 func runBackups() int {
 	client, code := boxClient()
@@ -397,22 +348,45 @@ func main() {
 			// in a pipe / non-interactive shell.
 			fmt.Printf("sb %s\n", version)
 			return
+		case "help", "-h", "--help":
+			cli.PrintUsage()
+			return
 		case "watch":
 			os.Exit(runWatch())
 		case "build":
 			os.Exit(runBuild())
 		case "express":
 			os.Exit(runExpress())
-		case "config":
-			os.Exit(runConfig())
-		case "install":
-			os.Exit(runInstallStacks())
-		case "backups":
-			os.Exit(runBackups())
 		case "upload":
 			os.Exit(runNasUpload())
+		// Groups with both a bare interactive panel and a non-interactive CLI:
+		// `sb config` opens the TUI panel; `sb config get|set …` runs headless.
+		case "config":
+			if len(os.Args) > 2 {
+				os.Exit(cli.Config(os.Args[2:]))
+			}
+			os.Exit(runConfig())
+		case "install":
+			if len(os.Args) > 2 {
+				os.Exit(cli.Install(os.Args[2:]))
+			}
+			os.Exit(runInstallStacks())
+		case "backups":
+			if len(os.Args) > 2 {
+				os.Exit(cli.Backups(os.Args[2:]))
+			}
+			os.Exit(runBackups())
+		// CLI-only groups (no interactive panel of their own):
 		case "channel":
-			os.Exit(runChannel())
+			os.Exit(cli.Channel(os.Args[2:]))
+		case "stacks":
+			os.Exit(cli.Stacks(os.Args[2:]))
+		case "boot":
+			os.Exit(cli.Boot(os.Args[2:]))
+		case "nas":
+			os.Exit(cli.Nas(os.Args[2:]))
+		case "token":
+			os.Exit(cli.Token(os.Args[2:]))
 		}
 	}
 
