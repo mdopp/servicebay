@@ -148,6 +148,49 @@ export function diagnoseProbeToPayload(probe: PersistableProbe): DiagnosticProbe
 }
 
 /**
+ * Persisted-history summary for a single probe, derived from the
+ * `diagnose:<probeId>` result file (#1541). Uniform across every probe
+ * so the frontend renders the same first-seen / last-ok / trend badge on
+ * each row — no per-probe special-casing. Built off the binary
+ * `CheckResult.status` the store records (`ok`/`fail`), which is enough
+ * for the trend sparkline and last-ok timestamp.
+ */
+export interface ProbeHistory {
+  /** ISO timestamp of the oldest retained result — when this probe first
+   *  started being tracked (within the store's 7-day retention window). */
+  firstSeen: string;
+  /** ISO timestamp of the most recent `ok` result, or null if every
+   *  retained result is failing. */
+  lastOk: string | null;
+  /** Recent statuses, oldest → newest, capped at 20 — drives the trend
+   *  sparkline. */
+  trend: ('ok' | 'fail')[];
+  /** Total retained results (may exceed `trend.length`). */
+  total: number;
+}
+
+/**
+ * Summarise a probe's persisted result history into the uniform
+ * {@link ProbeHistory} badge shape (#1541). Reads the `diagnose:<probeId>`
+ * result file from the store (newest-first); returns null when the probe
+ * has no persisted results yet (first ever run on a fresh box, before the
+ * current run's side-write — callers run this *after* persisting so the
+ * current result is already included).
+ */
+export function buildProbeHistory(probeId: string): ProbeHistory | null {
+  const results = HealthStore.getResults(diagnoseCheckId(probeId));
+  if (results.length === 0) return null;
+  // Store keeps results newest-first; the oldest is the last entry.
+  const firstSeen = results[results.length - 1].timestamp;
+  const lastOk = results.find(r => r.status === 'ok')?.timestamp ?? null;
+  const trend = results
+    .slice(0, 20)
+    .map(r => r.status)
+    .reverse(); // oldest → newest for left-to-right rendering
+  return { firstSeen, lastOk, trend, total: results.length };
+}
+
+/**
  * Side-write every probe result to the HealthStore as a synthetic
  * `diagnose:<probeId>` check result, attaching the typed `payload`
  * (#1539). Returns the persisted results so a caller (the daily

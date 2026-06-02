@@ -21,6 +21,7 @@ import {
   diagnoseStatusToCheckStatus,
   diagnoseProbeToPayload,
   persistDiagnoseResults,
+  buildProbeHistory,
   encodeDiagnoseMessage,
   decodeDiagnoseMessage,
   type PersistableProbe,
@@ -115,5 +116,54 @@ describe('persistDiagnoseResults', () => {
     expect(store.results.get('diagnose:disk')).toHaveLength(2);
     // Newest first.
     expect(store.results.get('diagnose:disk')![0].status).toBe('fail');
+  });
+});
+
+describe('buildProbeHistory (#1541)', () => {
+  // Helper: push a result with an explicit timestamp, newest-first (store order).
+  const seed = (id: string, entries: { status: 'ok' | 'fail'; ts: string }[]) => {
+    // entries given newest-first to mirror the store layout.
+    store.results.set(
+      diagnoseCheckId(id),
+      entries.map(e => ({ check_id: diagnoseCheckId(id), timestamp: e.ts, status: e.status })),
+    );
+  };
+
+  it('returns null when the probe has no persisted results', () => {
+    expect(buildProbeHistory('never-run')).toBeNull();
+  });
+
+  it('summarises first-seen, last-ok and an oldest→newest trend', () => {
+    seed('disk', [
+      { status: 'fail', ts: '2026-06-02T12:00:00Z' }, // newest
+      { status: 'ok', ts: '2026-06-02T11:00:00Z' },
+      { status: 'ok', ts: '2026-06-01T10:00:00Z' }, // oldest
+    ]);
+    const h = buildProbeHistory('disk')!;
+    expect(h.firstSeen).toBe('2026-06-01T10:00:00Z'); // oldest retained
+    expect(h.lastOk).toBe('2026-06-02T11:00:00Z'); // most recent ok
+    expect(h.trend).toEqual(['ok', 'ok', 'fail']); // oldest → newest
+    expect(h.total).toBe(3);
+  });
+
+  it('reports lastOk:null when every retained result is failing', () => {
+    seed('pods', [
+      { status: 'fail', ts: '2026-06-02T12:00:00Z' },
+      { status: 'fail', ts: '2026-06-02T11:00:00Z' },
+    ]);
+    const h = buildProbeHistory('pods')!;
+    expect(h.lastOk).toBeNull();
+    expect(h.trend).toEqual(['fail', 'fail']);
+  });
+
+  it('caps the trend at 20 while total reflects all retained results', () => {
+    const many = Array.from({ length: 25 }, (_, i) => ({
+      status: (i % 2 === 0 ? 'ok' : 'fail') as 'ok' | 'fail',
+      ts: new Date(Date.UTC(2026, 5, 2, 0, i)).toISOString(),
+    }));
+    seed('engine', many);
+    const h = buildProbeHistory('engine')!;
+    expect(h.trend).toHaveLength(20);
+    expect(h.total).toBe(25);
   });
 });
