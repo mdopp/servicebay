@@ -221,6 +221,27 @@ jobs:
       - name: Custom rules (informational warnings)
         run: semgrep --config .semgrep.yml --metrics=off . || true
 
+  # Dependency CVE scan (#1549). Decoupled from the install step — the build/
+  # test/lint installs stay `--no-audit` for speed, so a freshly-published
+  # advisory can't flakily block every unrelated PR. This job is the single
+  # place CVE signal surfaces. Mirrors the semgrep WARNING/ERROR tiering:
+  #   - report-only step (always green) surfaces the full advisory list now;
+  #   - the blocking step (commented out) ratchets to fail on high/critical
+  #     once the baseline is clean — uncomment to flip it on.
+  audit:
+    runs-on: ubuntu-latest
+    if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: npm audit (report-only)
+        run: npm audit --audit-level=high || true
+      # Ratchet to blocking once the high/critical baseline is clean:
+      # - name: npm audit (blocking on high/critical)
+      #   run: npm audit --audit-level=high
+
   # The Go lifecycle launcher (#1272). Lives in its own module under tools/,
   # outside the npm workspace, so the JS gates above don't touch it — this job
   # is its gate: formatting, vet, build, and unit tests.
