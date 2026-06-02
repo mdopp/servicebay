@@ -354,6 +354,23 @@ storage:
           # Create data directories (no-op if they already exist)
           mkdir -p "$MOUNT_POINT/servicebay/ssh" "$MOUNT_POINT/stacks"
 
+          # Rootless podman image store on the RAID (#1494). The baked
+          # storage.conf points graphroot here; create it BEFORE the user's
+          # linger services come up so the first podman call finds a usable,
+          # correctly-labelled store. The RAID is xfs mounted as mnt_t — a
+          # type rootless podman can't write its overlay store onto — so we
+          # relabel the tree to container_file_t (the type the default
+          # ~/.local/share/containers/storage already carries via FCOS's
+          # file_contexts). chcon (not semanage) because the path is on a
+          # dynamically-created mount with no persistent fcontext rule; the
+          # store is recreated/relabelled on every first boot anyway, and a
+          # reinstall preserves the existing labels on the kept RAID data.
+          STORAGE_ROOT="$MOUNT_POINT/containers/storage"
+          mkdir -p "$STORAGE_ROOT"
+          chown -R "$HOST_USER:$HOST_USER" "$MOUNT_POINT/containers"
+          # Best-effort: a box booted with SELinux disabled has no chcon.
+          chcon -R -t container_file_t "$MOUNT_POINT/containers" 2>/dev/null || true
+
           # Factory-fresh "wipe-configs" (#1496): clear ServiceBay's own identity
           # so the install promotes the freshly-baked config instead of merging the
           # old one back — fresh admin / secret.key / tokens — while KEEPING all
@@ -469,6 +486,30 @@ storage:
     # User Linger (enables rootless services at boot)
     - path: /var/lib/systemd/linger/${HOST_USER}
       mode: 0644
+
+    # Rootless podman storage on the RAID (#1494). The default rootless
+    # graphroot is /var/home/${HOST_USER}/.local/share/containers/storage
+    # — on the OS disk, which a USB reinstall reformats, so ~38 GB of
+    # images get re-pulled every reinstall. Point graphroot at the data
+    # RAID (${DATA_ROOT}, survives reinstalls) so images persist + are
+    # versioned. setup-raid.sh creates ${DATA_ROOT}/containers/storage
+    # with HOST_USER ownership + a container_file_t SELinux label before
+    # any rootless podman runs (the RAID mounts as xfs with mnt_t, which
+    # rootless podman cannot write its overlay store onto). Only graphroot
+    # is overridden — runroot is left at podman's default (/run/user/$UID/
+    # containers, tmpfs, per-boot scratch); persisting it would only invite
+    # stale lockfiles after an unclean shutdown.
+    - path: /var/home/${HOST_USER}/.config/containers/storage.conf
+      mode: 0644
+      user:
+        name: ${HOST_USER}
+      group:
+        name: ${HOST_USER}
+      contents:
+        inline: |
+          [storage]
+          driver = "overlay"
+          graphroot = "${DATA_ROOT}/containers/storage"
 
     # ServiceBay Quadlet (rootless).
     #
