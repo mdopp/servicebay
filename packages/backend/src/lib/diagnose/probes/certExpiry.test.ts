@@ -57,7 +57,7 @@ describe('checkCertExpiry (reader)', () => {
     expect(out.detail).toMatch(/No proxy hosts with public exposure/);
   });
 
-  it('decodes the runner-encoded payload (warn with items[])', async () => {
+  it('reads the typed runner payload (warn with items[])', async () => {
     const payload = {
       status: 'warn',
       detail: '1 of 1 Let\'s Encrypt cert expiring within 14 days.',
@@ -76,7 +76,7 @@ describe('checkCertExpiry (reader)', () => {
       check_id: 'cert_expiry',
       timestamp: new Date().toISOString(),
       status: 'ok',
-      message: `cert_expiry:${JSON.stringify(payload)}`,
+      payload,
       latency: 100,
     });
     const out = await checkCertExpiry();

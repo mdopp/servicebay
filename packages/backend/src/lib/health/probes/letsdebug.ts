@@ -8,8 +8,6 @@
 import { registerProbe } from './registry';
 import { runLetsdebugForDomain } from '../../letsdebug/client';
 
-export const LETSDEBUG_MESSAGE_PREFIX = 'letsdebug:';
-
 registerProbe({
   type: 'letsdebug',
   async run(check) {
@@ -26,13 +24,12 @@ registerProbe({
       return { status: 'ok', message: '' };
     }
     const hasFatal = result.problems.some(p => (p.severity || '').toLowerCase() === 'fatal');
-    const payload = JSON.stringify({
-      problems: result.problems,
-      submissionUrl: result.submissionUrl,
-    });
     return {
       status: hasFatal ? 'fail' : 'ok',
-      message: `${LETSDEBUG_MESSAGE_PREFIX}${payload}`,
+      payload: {
+        problems: result.problems,
+        submissionUrl: result.submissionUrl,
+      },
     };
   },
 });

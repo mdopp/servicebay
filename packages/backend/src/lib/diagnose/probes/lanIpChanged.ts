@@ -28,7 +28,6 @@
  */
 
 import { HealthStore } from '@/lib/health/store';
-import { LAN_IP_DRIFT_MESSAGE_PREFIX } from '@/lib/health/runner';
 import { reconcileLanIp } from '@/lib/lanIp';
 import { provisionPortalRouting } from '@/lib/portal/provisioner';
 import { getConfig } from '@/lib/config';
@@ -67,20 +66,15 @@ export async function checkLanIpChanged(): Promise<LanIpProbeResult> {
       detail: 'Scheduled — first run pending. Open Settings → Health to trigger it manually.',
     };
   }
-  if (result.message && result.message.startsWith(LAN_IP_DRIFT_MESSAGE_PREFIX)) {
-    try {
-      const json = result.message.slice(LAN_IP_DRIFT_MESSAGE_PREFIX.length);
-      const parsed = JSON.parse(json);
-      if (parsed && typeof parsed.status === 'string' && typeof parsed.detail === 'string') {
-        return {
-          status: parsed.status === 'ok' || parsed.status === 'warn' ? parsed.status : 'info',
-          detail: parsed.detail,
-          hint: typeof parsed.hint === 'string' ? parsed.hint : undefined,
-        };
-      }
-    } catch {
-      // fall through to fail-style rendering
-    }
+  const parsed = result.payload as
+    | { status?: unknown; detail?: unknown; hint?: unknown }
+    | undefined;
+  if (parsed && typeof parsed.status === 'string' && typeof parsed.detail === 'string') {
+    return {
+      status: parsed.status === 'ok' || parsed.status === 'warn' ? parsed.status : 'info',
+      detail: parsed.detail,
+      hint: typeof parsed.hint === 'string' ? parsed.hint : undefined,
+    };
   }
   if (result.status === 'fail') {
     return {

@@ -25,7 +25,6 @@ vi.mock('@/lib/config', () => ({
   updateConfig: vi.fn(async (patch: any) => { state.updated = patch; }),
 }));
 vi.mock('@/lib/health/store', () => ({ HealthStore: { getLastResult: () => null, getChecks: () => [] } }));
-vi.mock('@/lib/health/runner', () => ({ NPM_AUTH_MESSAGE_PREFIX: 'npm_auth:' }));
 
 const fetchMock = vi.fn(async () => ({ ok: state.fetchStatus < 400, status: state.fetchStatus } as Response));
 vi.stubGlobal('fetch', fetchMock);

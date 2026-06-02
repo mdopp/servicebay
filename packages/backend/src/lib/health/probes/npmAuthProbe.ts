@@ -10,13 +10,11 @@ import { getConfig } from '../../config';
 import { findNpmAdminUrl } from './npmAdmin';
 import { isInvalidAuth } from '@/lib/reverseProxy/npmAdminRekey';
 
-export const NPM_AUTH_MESSAGE_PREFIX = 'npm_auth:';
-
 type Payload = { status: 'ok' | 'warn' | 'fail' | 'info'; detail: string; hint?: string };
 
 const encode = (payload: Payload) => ({
   status: payload.status === 'fail' ? ('fail' as const) : ('ok' as const),
-  message: `${NPM_AUTH_MESSAGE_PREFIX}${JSON.stringify(payload)}`,
+  payload,
 });
 
 async function checkNpmAuth(adminUrl: string, email: string, password: string) {

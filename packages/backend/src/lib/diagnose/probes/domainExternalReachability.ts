@@ -29,10 +29,6 @@ import {
 } from '../actions';
 import { HealthStore } from '@/lib/health/store';
 import { CheckRunner } from '@/lib/health/runner';
-import {
-  DNS_ROUTING_MESSAGE_PREFIX,
-  LETSDEBUG_MESSAGE_PREFIX,
-} from '@/lib/health/runner';
 import type { CheckResult } from '@/lib/health/types';
 import { runLetsdebugForDomain, type LetsdebugProblem } from '@/lib/letsdebug/client';
 import { logger } from '@/lib/logger';
@@ -86,19 +82,14 @@ interface DnsRoutingPayload {
   matched: boolean;
 }
 
-function decodeDnsRouting(message: string | undefined): DnsRoutingPayload | null {
-  if (!message || !message.startsWith(DNS_ROUTING_MESSAGE_PREFIX)) return null;
-  try {
-    const parsed = JSON.parse(message.slice(DNS_ROUTING_MESSAGE_PREFIX.length));
-    if (typeof parsed !== 'object' || parsed === null) return null;
-    return {
-      expected: typeof parsed.expected === 'string' ? parsed.expected : null,
-      resolved: Array.isArray(parsed.resolved) ? parsed.resolved.filter((s: unknown) => typeof s === 'string') : [],
-      matched: !!parsed.matched,
-    };
-  } catch {
-    return null;
-  }
+function decodeDnsRouting(payload: unknown): DnsRoutingPayload | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const p = payload as { expected?: unknown; resolved?: unknown; matched?: unknown };
+  return {
+    expected: typeof p.expected === 'string' ? p.expected : null,
+    resolved: Array.isArray(p.resolved) ? p.resolved.filter((s: unknown) => typeof s === 'string') : [],
+    matched: !!p.matched,
+  };
 }
 
 interface LetsdebugPayload {
@@ -106,19 +97,14 @@ interface LetsdebugPayload {
   submissionUrl: string | null;
 }
 
-function decodeLetsdebug(message: string | undefined): LetsdebugPayload | null {
-  if (!message || !message.startsWith(LETSDEBUG_MESSAGE_PREFIX)) return null;
-  try {
-    const json = message.slice(LETSDEBUG_MESSAGE_PREFIX.length);
-    const parsed = JSON.parse(json);
-    if (!parsed || !Array.isArray(parsed.problems)) return null;
-    return {
-      problems: parsed.problems as LetsdebugProblem[],
-      submissionUrl: typeof parsed.submissionUrl === 'string' ? parsed.submissionUrl : null,
-    };
-  } catch {
-    return null;
-  }
+function decodeLetsdebug(payload: unknown): LetsdebugPayload | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const p = payload as { problems?: unknown; submissionUrl?: unknown };
+  if (!Array.isArray(p.problems)) return null;
+  return {
+    problems: p.problems as LetsdebugProblem[],
+    submissionUrl: typeof p.submissionUrl === 'string' ? p.submissionUrl : null,
+  };
 }
 
 async function listPublicDomains(): Promise<string[]> {
@@ -279,7 +265,7 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
     }
 
     const dnsAge = ` · Last checked ${formatRelativeAge(Date.parse(dnsResult.timestamp))}`;
-    const dnsPayload = decodeDnsRouting(dnsResult.message);
+    const dnsPayload = decodeDnsRouting(dnsResult.payload);
 
     // dns_routing transport error → plaintext message, no payload. Surface as info row.
     if (!dnsPayload && dnsResult.status === 'fail') {
@@ -324,7 +310,7 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
     // making the layer explicit cuts the diagnostic step.
     if (letsdebugResult) {
       const ldAge = formatRelativeAge(Date.parse(letsdebugResult.timestamp));
-      const ldPayload = decodeLetsdebug(letsdebugResult.message);
+      const ldPayload = decodeLetsdebug(letsdebugResult.payload);
       const dnsOkBeforeLd = rowStatus === 'ok';
       if (ldPayload) {
         if (ldPayload.problems.length === 0) {
@@ -419,7 +405,7 @@ async function refreshNow({ itemId }: { itemId?: string }): Promise<ProbeActionR
   }
   try {
     const result = await CheckRunner.run(check);
-    const payload = decodeDnsRouting(result.message);
+    const payload = decodeDnsRouting(result.payload);
     if (!payload) {
       return { ok: false, message: `DNS check failed for ${itemId}: ${(result.message ?? '').slice(0, 160)}`, refresh: true };
     }
@@ -452,16 +438,15 @@ async function runLetsdebug({ itemId }: { itemId?: string }): Promise<ProbeActio
   const checkId = `${LETSDEBUG_CHECK_PREFIX}${itemId}`;
   try {
     const result = await runLetsdebugForDomain(itemId);
-    const payload = JSON.stringify({
-      problems: result.problems,
-      submissionUrl: result.submissionUrl,
-    });
     const hasFatal = result.problems.some(p => (p.severity || '').toLowerCase() === 'fatal');
     HealthStore.saveResult({
       check_id: checkId,
       timestamp: new Date().toISOString(),
       status: hasFatal ? 'fail' : 'ok',
-      message: `${LETSDEBUG_MESSAGE_PREFIX}${payload}`,
+      payload: {
+        problems: result.problems,
+        submissionUrl: result.submissionUrl,
+      },
     });
     return {
       ok: result.problems.length === 0,

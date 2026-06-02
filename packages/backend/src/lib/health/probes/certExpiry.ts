@@ -6,8 +6,6 @@
 import { registerProbe } from './registry';
 import { findNpmAdminUrl, getNpmToken } from './npmAdmin';
 
-export const CERT_EXPIRY_MESSAGE_PREFIX = 'cert_expiry:';
-
 interface NpmCert { id: number; provider?: string; domain_names?: string[]; expires_on?: string; }
 interface CertItem { id: string; label: string; detail: string; status: 'warn' | 'fail'; actionIds: string[]; }
 
@@ -15,7 +13,7 @@ type Payload = { status: 'ok' | 'warn' | 'fail' | 'info'; detail: string; hint?:
 
 const encode = (payload: Payload) => ({
   status: payload.status === 'fail' ? ('fail' as const) : ('ok' as const),
-  message: `${CERT_EXPIRY_MESSAGE_PREFIX}${JSON.stringify(payload)}`,
+  payload,
 });
 
 const WARN_DAYS = 14;

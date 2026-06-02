@@ -86,7 +86,7 @@ describe('checkLanIpChanged (reader)', () => {
       check_id: 'lan_ip_drift',
       timestamp: new Date().toISOString(),
       status: 'ok',
-      message: `lan_ip_drift:${JSON.stringify(payload)}`,
+      payload,
       latency: 100,
     });
     const out = await checkLanIpChanged();
@@ -101,7 +101,7 @@ describe('checkLanIpChanged (reader)', () => {
       check_id: 'lan_ip_drift',
       timestamp: new Date().toISOString(),
       status: 'ok',
-      message: `lan_ip_drift:${JSON.stringify(payload)}`,
+      payload,
       latency: 100,
     });
     const out = await checkLanIpChanged();

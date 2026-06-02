@@ -1,14 +1,12 @@
 /**
  * `lan_ip_drift` probe — compares the currently-detected LAN IP
  * to the install-time value captured in config.reverseProxy.lanIp.
- * Encodes the diagnose row payload behind LAN_IP_DRIFT_MESSAGE_PREFIX.
+ * Attaches the diagnose row payload to the typed CheckResult.payload.
  */
 
 import { registerProbe } from './registry';
 import { getConfig } from '../../config';
 import { detectLanIp, recentChanges } from '../../lanIp';
-
-export const LAN_IP_DRIFT_MESSAGE_PREFIX = 'lan_ip_drift:';
 
 const RECENT_DAYS = 30;
 const RECENT_THRESHOLD = 1;
@@ -50,7 +48,7 @@ registerProbe({
           };
         }
       }
-      return { status: 'ok', message: `${LAN_IP_DRIFT_MESSAGE_PREFIX}${JSON.stringify(payload)}` };
+      return { status: 'ok', payload };
     } catch (e) {
       return { status: 'fail', message: `lan_ip_drift error: ${e instanceof Error ? e.message : String(e)}` };
     }

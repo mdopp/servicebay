@@ -16,14 +16,15 @@ import type { Executor } from '../../executor';
 
 /** Mirrors the legacy runner's per-arm return shape. Probes can
  *  throw to signal failure (the dispatcher catches and reports
- *  `status: 'fail'`), or return `{ status, message }` for the
- *  message-prefix-encoded cases (letsdebug, lan_ip_drift, etc.).
+ *  `status: 'fail'`), return `{ status, message }` for the plain
+ *  status+text cases, or attach a typed `payload` (#1539) the diagnose
+ *  reader pulls off directly instead of decoding a string.
  *  Kept module-local — probes that want to type their `ctx` param
  *  pick it up via the Probe interface signature automatically. */
 type ProbeResult =
   | void
-  | { status: 'ok' | 'fail'; message?: string }
-  | { message: string };
+  | { status: 'ok' | 'fail'; message?: string; payload?: unknown }
+  | { message: string; payload?: unknown };
 
 interface ProbeContext {
   /** Executor bound to the node the check targets (Local or remote
