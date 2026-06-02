@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.85.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.84.0...servicebay-v4.85.0) (2026-06-02)
+
+
+### Features
+
+* **diagnose:** regroup probe rows into problem-domain cards ([16ba662](https://github.com/mdopp/servicebay/commit/16ba662594032a002caa77f7bb98e2c2523b68a9)), closes [#1534](https://github.com/mdopp/servicebay/issues/1534)
+* **externalBackup:** configurable backup destination + FritzBox NAS creds in the UI ([e3e871b](https://github.com/mdopp/servicebay/commit/e3e871be8239e5bc40762536f5515d04665dba6d)), closes [#1525](https://github.com/mdopp/servicebay/issues/1525) [#1527](https://github.com/mdopp/servicebay/issues/1527)
+* **externalBackup:** NPM as first-class backup manifest + post-restore credential reconcile ([6e69785](https://github.com/mdopp/servicebay/commit/6e69785cc8569b4779bdfdf1a79d6e7f3bb7f049)), closes [#1528](https://github.com/mdopp/servicebay/issues/1528) [#1529](https://github.com/mdopp/servicebay/issues/1529)
+* FritzBox/NPM backup config + NPM credential cleanup + diagnose consolidation & regroup ([221e8ba](https://github.com/mdopp/servicebay/commit/221e8bac637b649da472f03c344926631d16ce8c))
+* **reverseProxy:** derive NPM admin credential from DB, drop free-text field ([05f076c](https://github.com/mdopp/servicebay/commit/05f076c2b5f795b68b5a75eb282e30fc941ab75d)), closes [#1530](https://github.com/mdopp/servicebay/issues/1530)
+
 ## [4.84.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.83.1...servicebay-v4.84.0) (2026-06-02)
 
 
