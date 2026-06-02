@@ -22,6 +22,13 @@ type RestoreSelectionState = {
   serviceData: Record<string, Record<string, boolean>>;
 };
 
+// One editable source row. `excludePatterns` is a newline-delimited string
+// while editing; it's split into a string[] on save.
+export type BackupSourceDraft = {
+  path: string;
+  excludePatterns: string;
+};
+
 type BackupSyncState = {
   enabled: boolean;
   schedule: 'hourly' | 'daily' | 'weekly' | 'monthly';
@@ -43,8 +50,7 @@ type BackupSyncState = {
   nfsHost: string;
   nfsExport: string;
   nfsPath: string;
-  sourcePath: string;
-  excludePatterns: string;
+  sources: BackupSourceDraft[];
   lastRun?: string;
   lastStatus?: 'success' | 'error';
   lastMessage?: string;
@@ -83,8 +89,7 @@ export function useBackupState() {
     sshHost: '', sshPort: '22', sshUser: 'root', sshPath: '/backup', sshIdentityFile: '/app/data/ssh/id_rsa',
     smbHost: '', smbShare: '', smbPath: '', smbUsername: '', smbPassword: '',
     nfsHost: '', nfsExport: '', nfsPath: '',
-    sourcePath: '/mnt/data',
-    excludePatterns: '',
+    sources: [{ path: '/mnt/data', excludePatterns: '' }],
   });
   const [backupSyncHistory, setBackupSyncHistory] = useState<Array<{ success: boolean; startedAt: string; completedAt: string; duration: number; message: string; filesTransferred?: number }>>([]);
   const [backupSyncRunning, setBackupSyncRunning] = useState(false);
@@ -128,6 +133,15 @@ export function useBackupState() {
       if (data.config) {
         const c = data.config;
         const t = c.target || { type: 'local', path: '/mnt/backup' };
+        // New configs carry `sources`; pre-multi-source configs carry the
+        // legacy single `sourcePath`/`excludePatterns` pair — fold it into a
+        // one-element list so the editor always renders a source row.
+        const sources: BackupSourceDraft[] = Array.isArray(c.sources) && c.sources.length > 0
+          ? c.sources.map((s: { path: string; excludePatterns?: string[] }) => ({
+              path: s.path ?? '',
+              excludePatterns: (s.excludePatterns || []).join('\n'),
+            }))
+          : [{ path: c.sourcePath ?? '/mnt/data', excludePatterns: (c.excludePatterns || []).join('\n') }];
         setBackupSync(prev => ({
           ...prev,
           enabled: c.enabled ?? false,
@@ -135,8 +149,7 @@ export function useBackupState() {
           time: c.time ?? '02:00',
           dayOfWeek: c.dayOfWeek,
           dayOfMonth: c.dayOfMonth,
-          sourcePath: c.sourcePath ?? '/mnt/data',
-          excludePatterns: (c.excludePatterns || []).join('\n'),
+          sources,
           targetType: t.type ?? 'local',
           localPath: t.type === 'local' ? t.path : prev.localPath,
           sshHost: t.type === 'ssh' ? t.host : prev.sshHost,

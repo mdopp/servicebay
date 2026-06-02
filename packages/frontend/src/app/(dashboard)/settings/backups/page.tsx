@@ -27,6 +27,7 @@ import {
   Network,
   Folder,
   Cloud,
+  Plus,
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -134,8 +135,12 @@ export default function BackupsSettingsPage() {
         dayOfWeek: backupSync.schedule === 'weekly' ? backupSync.dayOfWeek : undefined,
         dayOfMonth: backupSync.schedule === 'monthly' ? backupSync.dayOfMonth : undefined,
         target: buildBackupTarget(),
-        sourcePath: backupSync.sourcePath,
-        excludePatterns: backupSync.excludePatterns.split('\n').map(s => s.trim()).filter(Boolean),
+        sources: backupSync.sources
+          .map(src => ({
+            path: src.path.trim(),
+            excludePatterns: src.excludePatterns.split('\n').map(p => p.trim()).filter(Boolean),
+          }))
+          .filter(src => src.path),
       };
       const res = await fetch('/api/settings/backup-sync', {
         method: 'POST',
@@ -151,6 +156,16 @@ export default function BackupsSettingsPage() {
       setBackupSyncSaving(false);
     }
   };
+
+  const addBackupSource = () =>
+    setBackupSync(prev => ({ ...prev, sources: [...prev.sources, { path: '', excludePatterns: '' }] }));
+  const removeBackupSource = (index: number) =>
+    setBackupSync(prev => ({ ...prev, sources: prev.sources.filter((_, i) => i !== index) }));
+  const updateBackupSource = (index: number, patch: Partial<{ path: string; excludePatterns: string }>) =>
+    setBackupSync(prev => ({
+      ...prev,
+      sources: prev.sources.map((src, i) => (i === index ? { ...src, ...patch } : src)),
+    }));
 
   const handleTestBackupSync = async () => {
     setBackupSyncTesting(true);
@@ -954,9 +969,52 @@ export default function BackupsSettingsPage() {
         </div>
 
         <div className="p-4 space-y-4">
+          {/* Sources — an operator-configurable list of directories, each with
+              its own .gitignore-style exclude patterns. Each source rsyncs into
+              its own subfolder under the target. */}
           <div>
-            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Source Path</label>
-            <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sourcePath} onChange={e => setBackupSync(prev => ({ ...prev, sourcePath: e.target.value }))} placeholder="/mnt/data" />
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">Source Directories</label>
+              <button type="button" onClick={addBackupSource} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-200">
+                <Plus size={14} /> Add source
+              </button>
+            </div>
+            <div className="space-y-3">
+              {backupSync.sources.length === 0 && (
+                <p className="text-[11px] text-gray-500 dark:text-gray-400 italic">No sources configured. Add at least one directory to sync.</p>
+              )}
+              {backupSync.sources.map((src, i) => (
+                <div key={i} className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      value={src.path}
+                      onChange={e => updateBackupSource(i, { path: e.target.value })}
+                      placeholder="/mnt/data"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeBackupSource(i)}
+                      aria-label="Remove source"
+                      className="p-2 rounded-lg border border-red-200 text-red-600 dark:text-red-400 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-medium text-gray-500 dark:text-gray-400 mb-1">Exclude patterns (one per line)</label>
+                    <textarea
+                      className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono"
+                      rows={2}
+                      value={src.excludePatterns}
+                      onChange={e => updateBackupSource(i, { excludePatterns: e.target.value })}
+                      placeholder="*.tmp&#10;cache/"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Target picker — radio cards. The previous version used a row of
@@ -1088,11 +1146,6 @@ export default function BackupsSettingsPage() {
                 <input type="number" min={1} max={28} className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.dayOfMonth ?? 1} onChange={e => setBackupSync(prev => ({ ...prev, dayOfMonth: parseInt(e.target.value) || 1 }))} />
               </div>
             )}
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Exclude Patterns (one per line)</label>
-            <textarea className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono" rows={2} value={backupSync.excludePatterns} onChange={e => setBackupSync(prev => ({ ...prev, excludePatterns: e.target.value }))} placeholder="*.tmp&#10;*.log" />
           </div>
 
           {backupSyncTestResult && (
