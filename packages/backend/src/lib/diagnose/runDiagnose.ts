@@ -30,6 +30,7 @@ import { checkOidcProviderReachable } from '@/lib/diagnose/probes/oidcProviderRe
 import { checkNasBackupReachable } from '@/lib/diagnose/probes/nasBackupReachable';
 import { checkSsoVerify } from '@/lib/diagnose/probes/ssoVerify';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
+import { persistDiagnoseResults } from '@/lib/diagnose/persistDiagnoseResults';
 import '@/lib/diagnose/probes/register';
 
 
@@ -258,7 +259,12 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
   });
 
   if (ping.code !== 0) {
-    return { node: nodeName, probes };
+    // Agent unreachable — only the `agent` probe ran. Resolve + persist
+    // it on the same path the full run uses (#1540) so its history keeps
+    // accruing even while the box is down.
+    const resolved = probes.map(withActions).map(p => ({ ...p, group: groupForProbe(p.id) }));
+    persistDiagnoseResults(resolved);
+    return { node: nodeName, probes: resolved };
   }
 
   // Probes 2-9 each shell out to the agent independently. Earlier
@@ -1007,8 +1013,16 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
     });
   }
 
+  const resolved = probes.map(withActions).map(p => ({ ...p, group: groupForProbe(p.id) }));
+  // #1540 — side-write every probe's result to the HealthStore so the
+  // ~16 stateless inline probes accrue history on every on-demand run
+  // (wizard / /setup self-test / MCP diagnose), not just the daily
+  // scheduler. On-demand behaviour is unchanged: this is a fire-side
+  // write of the already-computed results (saveResult logs-but-never-
+  // throws on a write error).
+  persistDiagnoseResults(resolved);
   return {
     node: nodeName,
-    probes: probes.map(withActions).map(p => ({ ...p, group: groupForProbe(p.id) })),
+    probes: resolved,
   };
 }
