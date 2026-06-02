@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
  * GET — which release channel the running ServiceBay container is pinned to.
  * POST { channel } — re-point it (`latest`/`dev`/`test`) and restart, so an
  * unreleased `:dev` build can be verified on the box without cutting a
- * release. `tokenScope: 'mutate'` lets the sb-tui `channel` command drive it
+ * release. `tokenScope: 'mutate'` lets the sb `channel` command drive it
  * with its scoped token; the restart is non-blocking so this returns first.
  */
 export const GET = withApiHandler({ tokenScope: 'read' }, async () => {

@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
  * of the backup-survival loop: `import-ha`/`upload`/`export-lldap` put backups
  * on the NAS; this pulls one back. Refuses a non-empty data dir unless `force`
  * is set, so it never clobbers a live service. `tokenScope: 'lifecycle'` so the
- * sb-tui flow can trigger it with a scoped `sb_` token.
+ * sb flow can trigger it with a scoped `sb_` token.
  */
 export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async ({ request }) => {
   try {

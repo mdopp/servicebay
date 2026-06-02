@@ -1,6 +1,6 @@
-# Cross-compiled sb-tui release binaries (#1279). The Go lifecycle launcher
-# (tools/sb-tui, #1272) is distributed as static, dependency-free binaries so an
-# operator who doesn't clone the repo can `curl … | sh` it (install-sb-tui.sh).
+# Cross-compiled sb release binaries (#1279). The Go lifecycle launcher
+# (tools/sb, #1272) is distributed as static, dependency-free binaries so an
+# operator who doesn't clone the repo can `curl … | sh` it (install-sb.sh).
 #
 # This is intentionally a SEPARATE workflow from release.yml (the Docker image
 # publish): a failure here must never break image publishing, and vice versa.
@@ -18,9 +18,9 @@ on:
     branches: [main]
   pull_request:
     paths:
-      - 'tools/sb-tui/**'
+      - 'tools/sb/**'
       - '.github/workflows/release-binaries.yml'
-      - 'install-sb-tui.sh'
+      - 'install-sb.sh'
   release:
     types: [published]
   workflow_dispatch:
@@ -46,20 +46,20 @@ jobs:
           - windows/arm64
     defaults:
       run:
-        working-directory: tools/sb-tui
+        working-directory: tools/sb
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-          cache-dependency-path: tools/sb-tui/go.sum
-      - name: Cross-compile sb-tui
+          cache-dependency-path: tools/sb/go.sum
+      - name: Cross-compile sb
         run: |
           os="${{ matrix.target }}"; os="${os%/*}"
           arch="${{ matrix.target }}"; arch="${arch#*/}"
-          out="sb-tui-${os}-${arch}"
+          out="sb-${os}-${arch}"
           [ "$os" = windows ] && out="${out}.exe"
-          # Stamp the binary with the repo version so `sb-tui version` and the
+          # Stamp the binary with the repo version so `sb version` and the
           # launcher footer self-report which release it carries.
           ver=$(jq -r .version ../../package.json)
           mkdir -p dist
@@ -69,8 +69,8 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sb-tui-${{ matrix.target == 'windows/amd64' && 'windows-amd64' || matrix.target == 'windows/arm64' && 'windows-arm64' || matrix.target == 'darwin/amd64' && 'darwin-amd64' || matrix.target == 'darwin/arm64' && 'darwin-arm64' || matrix.target == 'linux/amd64' && 'linux-amd64' || 'linux-arm64' }}
-          path: tools/sb-tui/dist/*
+          name: sb-${{ matrix.target == 'windows/amd64' && 'windows-amd64' || matrix.target == 'windows/arm64' && 'windows-arm64' || matrix.target == 'darwin/amd64' && 'darwin-amd64' || matrix.target == 'darwin/arm64' && 'darwin-arm64' || matrix.target == 'linux/amd64' && 'linux-amd64' || 'linux-arm64' }}
+          path: tools/sb/dist/*
           if-no-files-found: error
 
   # Attach the binaries to the GitHub Release on a release commit. Skipped on PRs
@@ -95,13 +95,13 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: sb-tui-*
+          pattern: sb-*
           merge-multiple: true
           path: dist
       - name: Checksums
         run: |
           cd dist
-          sha256sum sb-tui-* > SHA256SUMS
+          sha256sum sb-* > SHA256SUMS
           ls -l
       - name: Wait for the release to exist
         env:

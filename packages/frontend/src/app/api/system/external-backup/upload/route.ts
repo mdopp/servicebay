@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 /**
  * POST multipart/form-data — stage an uploaded `<service>.tar` onto the FritzBox
  * NAS in the restore layout (#1351), so a fresh install pulls it. The HTTP
- * counterpart of the `sb-config-upload` CLI (#1219): it lets the sb-tui upload
+ * counterpart of the `sb-config-upload` CLI (#1219): it lets the sb upload
  * flow (#1352) and the per-source extractors (#1353+) seed the NAS from the
  * operator's machine instead of from an on-box directory.
  *

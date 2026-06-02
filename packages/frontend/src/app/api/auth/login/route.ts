@@ -79,7 +79,7 @@ export const POST = withApiHandler({ skipAuth: true }, async ({ request }) => {
     if (usernameMatches) {
       // Reconcile the reinstall-over-persisted-data lockout: a stored hash from
       // a prior install must not shadow the fresh SERVICEBAY_PASSWORD that
-      // sb-tui handed the operator (issue #1438). The stored hash is tried
+      // sb handed the operator (issue #1438). The stored hash is tried
       // first, so an operator-changed password is never overridden — the env
       // password only wins (and re-keys the stored hash) when the stored
       // credential rejects the request.

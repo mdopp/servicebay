@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic';
  * future headless / ISO-driven first-boot setup uses to turn baked
  * `config.json` defaults into an installable manifest.
  *
- * `tokenScope: 'lifecycle'` (#1276) lets the sb-tui stack-install panel
+ * `tokenScope: 'lifecycle'` (#1276) lets the sb stack-install panel
  * assemble a manifest with a scoped `sb_` token; the paired
  * `/api/install/start` carries the same scope so one lifecycle token drives
  * the whole install.

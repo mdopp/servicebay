@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
  * FritzBox NAS source registered, does it connect, and which service backups
  * (incl. `home-assistant.tar`) are staged under `sb-backup/`. Read-only; the
  * restore happens via the existing `/external-backup/restore` route.
- * `tokenScope: 'read'` so the sb-tui flow can poll it with a scoped token; a
+ * `tokenScope: 'read'` so the sb flow can poll it with a scoped token; a
  * browser session cookie is also accepted.
  */
 export const GET = withApiHandler({ tokenScope: 'read' }, async () => {

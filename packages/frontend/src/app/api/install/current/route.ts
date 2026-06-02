@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
  * Token-readable, sanitized summary of the *currently active* install job
  * (running / needs_credentials), or `{ job: null }` when none is active.
  *
- * This exists so the sb-tui launcher can show "install in progress" on a
+ * This exists so the sb launcher can show "install in progress" on a
  * reachable box and offer to reattach to it — without knowing the jobId up
  * front (a fresh launch has no job in memory).
  *

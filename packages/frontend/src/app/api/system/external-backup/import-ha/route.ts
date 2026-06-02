@@ -16,7 +16,7 @@ export const dynamic = 'force-dynamic';
  * the request body (streamed to a temp file rather than buffered, since these
  * run tens to hundreds of MB); we extract its core config dir and stage the
  * manifest-filtered `home-assistant.tar` onto the NAS for a fresh install to
- * restore. `tokenScope: 'lifecycle'` so the sb-tui flow can call it.
+ * restore. `tokenScope: 'lifecycle'` so the sb flow can call it.
  */
 export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async ({ request }) => {
   if (!request.body) {

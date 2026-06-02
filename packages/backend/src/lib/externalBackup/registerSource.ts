@@ -8,7 +8,7 @@
  * `config.gateway` carries the FritzBox host + credentials, so the box knows
  * where its backups live and can list/restore them.
  *
- * The sb-tui NAS upload (#1367) pushes a `home-assistant.tar` straight to the
+ * The sb NAS upload (#1367) pushes a `home-assistant.tar` straight to the
  * FritzBox over FTP using creds the operator typed locally — but never told the
  * box, so the upload was invisible to install/restore. This module is the
  * missing wire-up: the TUI (or Settings) calls `registerNasSource` with those

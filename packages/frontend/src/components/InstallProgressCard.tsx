@@ -6,7 +6,7 @@ import { useInstallMonitor, type InstallMonitorState } from '@/hooks/useInstallM
 /**
  * Live install-progress card for the Home dashboard (#A). When an
  * install is running on the box, every connected web client sees the
- * same thing the sb-tui monitor shows: the current item, deployed/total
+ * same thing the sb monitor shows: the current item, deployed/total
  * count, a percent bar, and a tail of the install log — plus a "skip
  * credentials" button when the runner pauses on the NPM credentials
  * prompt.
@@ -20,7 +20,7 @@ export default function InstallProgressCard() {
   return <InstallProgressCardView state={state} onSkipCredentials={skipCredentials} />;
 }
 
-// phaseLabel maps a raw job phase to a human label — mirrors the sb-tui
+// phaseLabel maps a raw job phase to a human label — mirrors the sb
 // monitor's phaseLabel so the web and terminal views read the same.
 function phaseLabel(phase: string): string {
   switch (phase) {

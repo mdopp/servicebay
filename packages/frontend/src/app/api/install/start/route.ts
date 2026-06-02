@@ -25,7 +25,7 @@ export const dynamic = 'force-dynamic';
  * two parallel POSTs could both pass this pre-check and start
  * simultaneous installs racing on shared host state.
  *
- * `tokenScope: 'lifecycle'` (#1276) lets the sb-tui stack-install panel start
+ * `tokenScope: 'lifecycle'` (#1276) lets the sb stack-install panel start
  * an install with a scoped `sb_` token. Progress is then polled on the public
  * jobId-gated `/api/install/progress` (no token needed there).
  */
