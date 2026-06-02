@@ -52,6 +52,10 @@ const SET_PASSWORD_TIMEOUT_MS = 15_000;
  * body so the check also catches "200 with the wrong content" (a half-broken
  * proxy). Kept in sync with the smoke test's USER_APPS map; ollama is
  * intentionally absent (no auth, opt-in NPM host only — see #1180).
+ *
+ * `hermes` was dropped (#1591): it's an external OSCAR service with no
+ * ServiceBay template, so it has no entry in `installedTemplates` to gate on
+ * and would always 404 a non-OSCAR install into a false `fail`.
  */
 export const USER_APP_SIGNATURES: Readonly<Record<string, string>> = {
   vault: 'Vaultwarden Web',
@@ -62,7 +66,23 @@ export const USER_APP_SIGNATURES: Readonly<Record<string, string>> = {
   files: '',
   sync: '',
   caldav: '',
-  hermes: 'Hermes Agent',
+};
+
+/**
+ * Subdomain prefix → the template whose installation puts that proxy host on
+ * the box (#1591). Only subdomains whose backing template is present in
+ * `cfg.installedTemplates` are probed; an absent service is *not* a failure,
+ * it's simply not installed. `file-share` backs two hosts (files + sync).
+ */
+export const SUBDOMAIN_TEMPLATE: Readonly<Record<string, string>> = {
+  vault: 'vaultwarden',
+  photos: 'immich',
+  music: 'media',
+  books: 'media',
+  home: 'home-assistant',
+  files: 'file-share',
+  sync: 'file-share',
+  caldav: 'radicale',
 };
 
 /**
@@ -308,10 +328,22 @@ interface SsoRun {
   publicDomain: string;
   ephemeralUser: string;
   password: string;
+  /** Templates installed on this node — gates which user subdomains we probe. */
+  installedTemplates: Record<string, unknown>;
   steps: SsoStepResult[];
   userDomains: SsoDomainResult[];
   adminDomains: SsoDomainResult[];
   created: boolean;
+}
+
+/** The user subdomains to probe on this install: only those whose backing
+ *  template is installed. A subdomain with no known template is never probed
+ *  (so an external/untemplated service can't false-fail the run). */
+export function probeableUserSubdomains(installedTemplates: Record<string, unknown>): string[] {
+  return Object.keys(USER_APP_SIGNATURES).filter(host => {
+    const template = SUBDOMAIN_TEMPLATE[host];
+    return template != null && installedTemplates[template] != null;
+  });
 }
 
 /** Create the ephemeral user, set its password, and join `family`. Returns
@@ -349,7 +381,8 @@ async function provisionEphemeralUser(deps: SsoVerifyDeps, run: SsoRun): Promise
 /** Hit every user-facing domain (cookie + follow redirects) and every
  *  admin-only domain (cookie, no redirects), recording per-domain results. */
 async function probeAllDomains(deps: SsoVerifyDeps, run: SsoRun, cookie: string): Promise<void> {
-  for (const [host, signature] of Object.entries(USER_APP_SIGNATURES)) {
+  for (const host of probeableUserSubdomains(run.installedTemplates)) {
+    const signature = USER_APP_SIGNATURES[host] ?? '';
     const probe = await deps.probeDomain(run.publicDomain, host, cookie, true);
     run.userDomains.push(classifyUserDomain(`${host}.${run.publicDomain}`, signature, probe));
   }
@@ -373,7 +406,11 @@ async function finishRun(deps: SsoVerifyDeps, run: SsoRun): Promise<SsoVerifyRep
       run.steps.push({ id: 'cleanup', status: 'fail', detail: `could not delete ${run.ephemeralUser}: ${del.message}` });
     }
   }
-  const ranDomains = run.userDomains.length > 0 && run.adminDomains.length > 0;
+  // The admin-reject probes always run once we reach the domain phase, so a
+  // non-empty adminDomains is the "we got far enough to judge" signal. An
+  // install with no installed user apps (only auth+infra) legitimately probes
+  // zero user domains — that is not a failure (#1591).
+  const ranDomains = run.adminDomains.length > 0;
   const ok = ranDomains
     && run.steps.every(s => s.status !== 'fail')
     && run.userDomains.every(d => d.status !== 'fail')
@@ -392,6 +429,7 @@ export async function verifySso(options: SsoVerifyOptions = {}): Promise<SsoVeri
     publicDomain: '',
     ephemeralUser: makeEphemeralUsername(),
     password: randomBytes(18).toString('hex'), // 36 hex chars, shell-safe
+    installedTemplates: {},
     steps: [],
     userDomains: [],
     adminDomains: [],
@@ -409,6 +447,7 @@ export async function verifySso(options: SsoVerifyOptions = {}): Promise<SsoVeri
     return finishRun(deps, run);
   }
   run.publicDomain = publicDomain;
+  run.installedTemplates = cfg.installedTemplates ?? {};
 
   try {
     if (!(await provisionEphemeralUser(deps, run))) return finishRun(deps, run);
