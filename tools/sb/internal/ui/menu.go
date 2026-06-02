@@ -364,9 +364,12 @@ var circledNum = map[int]string{1: "①", 2: "②", 3: "③", 4: "④"}
 // / sub-item. Future steps are greyed, section headers stand out, done steps get
 // a ✓, and the focused selectable row is highlighted with the ❯ cursor.
 func renderRow(r phase.JourneyRow, selected bool) string {
-	prefix := "  " // helper / sub-item indent (aligns under the number column)
-	if r.Num >= 1 {
-		prefix = circledNum[r.Num] + " "
+	prefix := "  " // top-level helper (Express / Quit)
+	switch {
+	case r.Num >= 1:
+		prefix = circledNum[r.Num] + " " // numbered phase header
+	case r.Sub:
+		prefix = "    " // action nested under its phase header
 	}
 	if selected {
 		body := "❯ " + prefix + r.Action.Label

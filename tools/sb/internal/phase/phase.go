@@ -147,10 +147,19 @@ var quitAction = Action{Quit, "Quit", "Exit the launcher."}
 // future step shown greyed for orientation (Ahead) or a section header.
 type JourneyRow struct {
 	Action      Action
-	Num         int  // 1..4 journey step; 0 = helper / sub-item
+	Num         int  // 1..4 journey step HEADER (non-selectable); 0 = sub-item / helper
 	Done        bool // already accomplished — rendered with a ✓
 	Ahead       bool // not actionable yet — rendered greyed
 	Recommended bool // the default cursor target for this phase
+	Sub         bool // an indented action beneath the preceding phase header
+}
+
+// phaseHeader is a non-selectable numbered phase title (①..④). Every phase in
+// the journey renders as a header with its actions nested beneath as Sub rows,
+// so all four steps of the build→boot→install→manage arc read consistently
+// (rather than steps 1–3 being bare actions and only step 4 a header).
+func phaseHeader(num int, label string, done, ahead bool) JourneyRow {
+	return JourneyRow{Action: signpost(label, ""), Num: num, Done: done, Ahead: ahead}
 }
 
 // Selectable reports whether the cursor can land on (and enter) this row.
@@ -188,52 +197,71 @@ func signpost(label, detail string) Action { return Action{"", label, detail} }
 // yet, so the menu can render the whole path top-to-bottom with a "you are here"
 // cursor on the recommended next step.
 func Journey(s State) []JourneyRow {
-	afterBoot := signpost("After boot: install stacks / tweak config",
-		"Server config is baked into the USB at build time, so this step is optional — add services or adjust settings once the box is up.")
-	manage := signpost("Manage your server", "")
+	// Consistent phase-header titles for the four-step arc.
+	const (
+		h1 = "Stage backups"
+		h2 = "Build the install USB"
+		h3 = "Boot the box + watch the install"
+		h4 = "Manage your server"
+	)
+	aheadBoot := JourneyRow{Action: signpost("Available once the USB is built — boot the box and watch the install", ""), Sub: true, Ahead: true}
+	aheadManage := JourneyRow{Action: signpost("Available after boot — add services, tweak config", ""), Sub: true, Ahead: true}
 	switch s.Phase {
 	case NoISO:
 		return []JourneyRow{
-			{Action: uploadStep(s), Num: 1, Recommended: true},
-			{Action: buildAction(s), Num: 2},
-			{Action: signpost("Boot the box from USB + watch the install",
-				"Available once you've built the USB: power the box on from it and watch the install through to the setup wizard."), Num: 3, Ahead: true},
-			{Action: afterBoot, Num: 4, Ahead: true},
+			phaseHeader(1, h1, false, false),
+			{Action: uploadStep(s), Sub: true, Recommended: true},
+			phaseHeader(2, h2, false, false),
+			{Action: buildAction(s), Sub: true},
+			phaseHeader(3, h3, false, true),
+			aheadBoot,
+			phaseHeader(4, h4, false, true),
+			aheadManage,
 			{Action: expressAction},
 			{Action: quitAction},
 		}
 	case ISOReady:
 		return []JourneyRow{
-			{Action: uploadStep(s), Num: 1},
-			{Action: buildAction(s), Num: 2, Done: true},
-			{Action: watchStep(s), Num: 3, Recommended: true},
-			{Action: afterBoot, Num: 4, Ahead: true},
+			phaseHeader(1, h1, false, false),
+			{Action: uploadStep(s), Sub: true},
+			phaseHeader(2, h2, true, false),
+			{Action: buildAction(s), Sub: true},
+			phaseHeader(3, h3, false, false),
+			{Action: watchStep(s), Sub: true, Recommended: true},
+			phaseHeader(4, h4, false, true),
+			aheadManage,
 			{Action: quitAction},
 		}
 	case Installing:
 		return []JourneyRow{
-			{Action: uploadStep(s), Num: 1, Done: true},
-			{Action: buildAction(s), Num: 2, Done: true},
-			{Action: watchStep(s), Num: 3, Recommended: true},
-			{Action: manage, Num: 4},
-			{Action: editConfigAction},
-			{Action: installStacksAction},
-			{Action: backupsAction},
-			{Action: switchChannelAction},
-			{Action: bootFromUSBAction},
+			phaseHeader(1, h1, true, false),
+			{Action: uploadStep(s), Sub: true},
+			phaseHeader(2, h2, true, false),
+			{Action: buildAction(s), Sub: true},
+			phaseHeader(3, h3, false, false),
+			{Action: watchStep(s), Sub: true, Recommended: true},
+			phaseHeader(4, h4, false, false),
+			{Action: editConfigAction, Sub: true},
+			{Action: installStacksAction, Sub: true},
+			{Action: backupsAction, Sub: true},
+			{Action: switchChannelAction, Sub: true},
+			{Action: bootFromUSBAction, Sub: true},
 			{Action: quitAction},
 		}
 	case Ready:
 		return []JourneyRow{
-			{Action: uploadStep(s), Num: 1, Done: true},
-			{Action: buildAction(s), Num: 2, Done: true},
-			{Action: signpost("Install complete — setup wizard finished", ""), Num: 3, Done: true},
-			{Action: manage, Num: 4},
-			{Action: installStacksAction, Recommended: true},
-			{Action: editConfigAction},
-			{Action: backupsAction},
-			{Action: switchChannelAction},
-			{Action: bootFromUSBAction},
+			phaseHeader(1, h1, true, false),
+			{Action: uploadStep(s), Sub: true},
+			phaseHeader(2, h2, true, false),
+			{Action: buildAction(s), Sub: true},
+			phaseHeader(3, h3, true, false),
+			{Action: signpost("Install complete — setup wizard finished", ""), Sub: true, Done: true},
+			phaseHeader(4, h4, false, false),
+			{Action: installStacksAction, Sub: true, Recommended: true},
+			{Action: editConfigAction, Sub: true},
+			{Action: backupsAction, Sub: true},
+			{Action: switchChannelAction, Sub: true},
+			{Action: bootFromUSBAction, Sub: true},
 			{Action: quitAction},
 		}
 	}

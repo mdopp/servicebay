@@ -90,18 +90,52 @@ func TestJourneyHasSignpostsAndRecommended(t *testing.T) {
 			t.Fatalf("phase %q: want exactly 1 recommended row, got %d", s.Phase, rec)
 		}
 	}
-	// NoISO must signpost the not-yet-reachable boot + manage steps (greyed).
-	ahead := 0
+	// NoISO must signpost the not-yet-reachable boot + manage steps (greyed): the
+	// phase-3 and phase-4 headers are Ahead, and every Ahead row (header or
+	// sub-item) is non-selectable.
+	aheadHeaders := map[int]bool{}
 	for _, r := range Journey(Detect(false, BoxStatus{})) {
 		if r.Ahead {
-			ahead++
 			if r.Selectable() {
 				t.Fatalf("ahead signpost %q should not be selectable", r.Action.Label)
 			}
+			if r.Num >= 1 {
+				aheadHeaders[r.Num] = true
+			}
 		}
 	}
-	if ahead != 2 {
-		t.Fatalf("NoISO: want 2 ahead signposts (boot, manage), got %d", ahead)
+	if !aheadHeaders[3] || !aheadHeaders[4] {
+		t.Fatalf("NoISO: want phase-3 (boot) and phase-4 (manage) headers greyed Ahead, got %v", aheadHeaders)
+	}
+}
+
+// TestJourneyEveryPhaseIsHeaderWithSubs verifies the consistency the menu wants:
+// all four numbered steps are non-selectable headers, and their actions live
+// beneath as Sub rows — no bare numbered action rows.
+func TestJourneyEveryPhaseIsHeaderWithSubs(t *testing.T) {
+	for _, s := range []State{
+		Detect(false, BoxStatus{}),
+		Detect(true, BoxStatus{}),
+		Detect(true, BoxStatus{Reachable: true}),
+		Detect(true, BoxStatus{Reachable: true, WizardDone: true}),
+	} {
+		seen := map[int]bool{}
+		for _, r := range Journey(s) {
+			if r.Num >= 1 {
+				seen[r.Num] = true
+				if r.Selectable() {
+					t.Errorf("phase %q: numbered header %d (%q) must not be selectable", s.Phase, r.Num, r.Action.Label)
+				}
+			}
+			if r.Selectable() && r.Action.ID != Express && r.Action.ID != Quit && !r.Sub {
+				t.Errorf("phase %q: selectable action %q should be a Sub row under a phase header", s.Phase, r.Action.Label)
+			}
+		}
+		for n := 1; n <= 4; n++ {
+			if !seen[n] {
+				t.Errorf("phase %q: missing numbered header %d", s.Phase, n)
+			}
+		}
 	}
 }
 
