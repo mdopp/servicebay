@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.82.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.81.0...servicebay-v4.82.0) (2026-06-02)
+
+
+### Features
+
+* **file-share:** provision shared-gid + setgid + default ACL on notes vault ([39ca35a](https://github.com/mdopp/servicebay/commit/39ca35afe61b80c4a4fa98d75ce9cffac50744aa))
+* **file-share:** shared-gid + setgid + default ACL on the notes vault ([4f885c8](https://github.com/mdopp/servicebay/commit/4f885c89392b53472067295d247c7e48278b2d09))
+
 ## [4.81.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.80.2...servicebay-v4.81.0) (2026-06-02)
 
 
