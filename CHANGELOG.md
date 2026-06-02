@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.88.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.88.0...servicebay-v4.88.1) (2026-06-02)
+
+
+### Bug Fixes
+
+* **frontend:** upgrade lucide-react to 1.x and reconcile icon imports ([e29e008](https://github.com/mdopp/servicebay/commit/e29e00802ee66147a575c628b6fc8a8066b400f5))
+* **frontend:** upgrade lucide-react to 1.x and reconcile icon imports ([04a62f5](https://github.com/mdopp/servicebay/commit/04a62f58f44777ecab4314d678d01211529a5b23)), closes [#1578](https://github.com/mdopp/servicebay/issues/1578) [#1576](https://github.com/mdopp/servicebay/issues/1576)
+
 ## [4.88.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.87.0...servicebay-v4.88.0) (2026-06-02)
 
 
