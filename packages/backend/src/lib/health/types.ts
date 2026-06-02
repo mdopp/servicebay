@@ -74,12 +74,53 @@ export interface CheckConfig {
   };
 }
 
+/**
+ * Typed shared probe result shape (#1539).
+ *
+ * The canonical structured payload a health probe attaches to its
+ * persisted `CheckResult` so the on-demand diagnose reader gets a typed
+ * struct instead of decoding a `JSON.stringify` blob out of the
+ * free-text `message` field. Retires the per-probe `*_MESSAGE_PREFIX`
+ * string bridge.
+ *
+ * `status` is the four-way diagnose status (`info` for "not applicable /
+ * pending", distinct from the binary `CheckResult.status`). `items` are
+ * per-row sub-findings (cert ids, ACME failures, …) the diagnose UI
+ * renders with their own action buttons; `actionIds` on an item are the
+ * probe-action ids that apply to that row. Declared structurally (no
+ * import of the diagnose ProbeItem type) to avoid a health⇄diagnose
+ * module cycle.
+ */
+export interface DiagnosticProbeItem {
+  id: string;
+  label: string;
+  detail: string;
+  status: 'ok' | 'warn' | 'fail' | 'info';
+  actionIds?: string[];
+}
+
+export interface DiagnosticProbeResult {
+  status: 'ok' | 'warn' | 'fail' | 'info';
+  detail: string;
+  hint?: string;
+  items?: DiagnosticProbeItem[];
+}
+
 export interface CheckResult {
   check_id: string;
   timestamp: string;
   status: 'ok' | 'fail';
   latency?: number; // in ms
   message?: string;
+  /**
+   * Structured probe payload (#1539). Health probes whose diagnose
+   * reader needs more than a status+message string attach the typed
+   * struct here; the reader pulls it off directly. Persisted to disk
+   * alongside the rest of the result. `unknown`-typed at the store
+   * boundary so probe-specific shapes (dns_routing, letsdebug) ride the
+   * same field — each consumer narrows it.
+   */
+  payload?: unknown;
 }
 
 /**

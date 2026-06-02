@@ -8,21 +8,40 @@ const store = {
   results: new Map<string, CheckResult[]>(),
 };
 
+const saveResult = (r: CheckResult) => {
+  const arr = store.results.get(r.check_id) ?? [];
+  arr.unshift(r);
+  store.results.set(r.check_id, arr);
+};
 vi.mock('@/lib/health/store', () => ({
   HealthStore: {
-    saveResult: (r: CheckResult) => {
-      const arr = store.results.get(r.check_id) ?? [];
-      arr.unshift(r);
-      store.results.set(r.check_id, arr);
-    },
+    saveResult: (r: CheckResult) => saveResult(r),
     getResults: (id: string) => store.results.get(id) ?? [],
     getResultCheckIds: () => Array.from(store.results.keys()),
+    getLastResult: (id: string) => store.results.get(id)?.[0] ?? null,
   },
 }));
 
+// `runDiagnose` itself now persists each probe (#1540). The mock mirrors
+// that side-write so `runDiagnoseChecks` (which reads the persisted
+// results back) returns them.
 const runDiagnoseMock = vi.fn();
 vi.mock('@/lib/diagnose/runDiagnose', () => ({
-  runDiagnose: (node: string) => runDiagnoseMock(node),
+  runDiagnose: async (node: string) => {
+    const res = await runDiagnoseMock(node);
+    const now = new Date().toISOString();
+    for (const p of res.probes as DiagnoseProbe[]) {
+      saveResult({
+        check_id: `diagnose:${p.id}`,
+        timestamp: now,
+        status: p.status === 'fail' || p.status === 'warn' ? 'fail' : 'ok',
+        latency: 0,
+        message: `diagnose:${JSON.stringify({ status: p.status, label: p.label, detail: p.detail, hint: p.hint, actions: p.actions, items: p.items })}`,
+        payload: { status: p.status, detail: p.detail, hint: p.hint, items: p.items },
+      });
+    }
+    return res;
+  },
 }));
 
 vi.mock('@/lib/logger', () => ({
@@ -77,7 +96,7 @@ describe('encode/decode diagnose message', () => {
     expect(decoded?.status).toBe('warn');
     expect(decoded?.detail).toBe('d');
     expect(decoded?.hint).toBe('h');
-    expect(decoded?.actions?.[0].id).toBe('a');
+    expect((decoded?.actions?.[0] as { id: string }).id).toBe('a');
   });
 
   it('returns null for a non-diagnose message', () => {

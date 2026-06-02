@@ -186,7 +186,7 @@ describe('checkCertRequestFailure (reader)', () => {
       check_id: 'cert_request_failure',
       timestamp: new Date().toISOString(),
       status: 'fail',
-      message: `cert_request_failure:${JSON.stringify(payload)}`,
+      payload,
       latency: 100,
     });
     const out = await checkCertRequestFailure();

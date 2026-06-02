@@ -28,7 +28,6 @@ import { updateConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
 import { HealthStore } from '@/lib/health/store';
-import { NPM_AUTH_MESSAGE_PREFIX } from '@/lib/health/runner';
 import { registerRefreshNow } from './refreshHealthCheck';
 import { findNpmAdminUrl, npmTokenStatus, rekeyNpmAdmin } from '@/lib/reverseProxy/npmAdminRekey';
 
@@ -68,20 +67,15 @@ export async function checkNpmDataStale(): Promise<NpmDataStaleResult> {
       detail: 'Scheduled — first run pending. Open Settings → Health to trigger it manually.',
     };
   }
-  if (result.message && result.message.startsWith(NPM_AUTH_MESSAGE_PREFIX)) {
-    try {
-      const json = result.message.slice(NPM_AUTH_MESSAGE_PREFIX.length);
-      const parsed = JSON.parse(json);
-      if (parsed && typeof parsed.status === 'string' && typeof parsed.detail === 'string') {
-        return {
-          status: parsed.status,
-          detail: parsed.detail,
-          hint: typeof parsed.hint === 'string' ? parsed.hint : undefined,
-        };
-      }
-    } catch {
-      // fall through
-    }
+  const parsed = result.payload as
+    | { status?: unknown; detail?: unknown; hint?: unknown }
+    | undefined;
+  if (parsed && typeof parsed.status === 'string' && typeof parsed.detail === 'string') {
+    return {
+      status: parsed.status as NpmDataStaleResult['status'],
+      detail: parsed.detail,
+      hint: typeof parsed.hint === 'string' ? parsed.hint : undefined,
+    };
   }
   if (result.status === 'fail') {
     return {

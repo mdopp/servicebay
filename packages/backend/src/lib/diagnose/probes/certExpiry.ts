@@ -22,7 +22,6 @@ import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
 import { HealthStore } from '@/lib/health/store';
-import { CERT_EXPIRY_MESSAGE_PREFIX } from '@/lib/health/runner';
 import { registerRefreshNow } from './refreshHealthCheck';
 
 const PROBE_ID = 'cert_expiry';
@@ -59,21 +58,16 @@ export async function checkCertExpiry(): Promise<CertExpiryResult> {
       detail: 'Scheduled — first run pending. Open Settings → Health to trigger it manually.',
     };
   }
-  if (result.message && result.message.startsWith(CERT_EXPIRY_MESSAGE_PREFIX)) {
-    try {
-      const json = result.message.slice(CERT_EXPIRY_MESSAGE_PREFIX.length);
-      const parsed = JSON.parse(json);
-      if (parsed && typeof parsed.status === 'string' && typeof parsed.detail === 'string') {
-        return {
-          status: parsed.status,
-          detail: parsed.detail,
-          hint: typeof parsed.hint === 'string' ? parsed.hint : undefined,
-          items: Array.isArray(parsed.items) ? (parsed.items as ProbeItem[]) : undefined,
-        };
-      }
-    } catch {
-      // fall through
-    }
+  const parsed = result.payload as
+    | { status?: unknown; detail?: unknown; hint?: unknown; items?: unknown }
+    | undefined;
+  if (parsed && typeof parsed.status === 'string' && typeof parsed.detail === 'string') {
+    return {
+      status: parsed.status as CertExpiryResult['status'],
+      detail: parsed.detail,
+      hint: typeof parsed.hint === 'string' ? parsed.hint : undefined,
+      items: Array.isArray(parsed.items) ? (parsed.items as ProbeItem[]) : undefined,
+    };
   }
   if (result.status === 'fail') {
     return {

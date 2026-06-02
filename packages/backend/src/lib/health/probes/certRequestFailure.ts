@@ -9,14 +9,12 @@ import { agentManager } from '../../agent/manager';
 import { parseLetsencryptTail, categoryLabel, type FailureCategory } from './letsencryptLogParser';
 import { logger } from '../../logger';
 
-export const CERT_REQUEST_FAILURE_MESSAGE_PREFIX = 'cert_request_failure:';
-
 interface CrfItem { id: string; label: string; detail: string; status: 'fail'; actionIds: string[]; }
 type Payload = { status: 'ok' | 'warn' | 'fail' | 'info'; detail: string; hint?: string; items?: CrfItem[] };
 
 const encode = (payload: Payload) => ({
   status: payload.status === 'fail' ? ('fail' as const) : ('ok' as const),
-  message: `${CERT_REQUEST_FAILURE_MESSAGE_PREFIX}${JSON.stringify(payload)}`,
+  payload,
 });
 
 const FRESHNESS_HOURS = 24;

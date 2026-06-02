@@ -10,9 +10,9 @@
  * Adding a new check type is purely additive — drop a file under
  * `probes/`, add it to the barrel, no edits here.
  *
- * Message-prefix constants are re-exported from their probe modules
- * so existing diagnose readers keep importing `LETSDEBUG_MESSAGE_PREFIX`
- * etc. from this file unchanged.
+ * Probes that carry a structured diagnose payload attach it to the
+ * typed `CheckResult.payload` field (#1539); the dispatcher persists it
+ * verbatim. The old `*_MESSAGE_PREFIX` JSON-in-`message` bridge is gone.
  */
 
 import { CheckConfig, CheckResult } from './types';
@@ -24,21 +24,12 @@ import { getProbe } from './probes/registry';
 // Must run before the first CheckRunner.run dispatch.
 import './probes';
 
-// Re-export the message-prefix discriminators from their probe homes
-// so the diagnose-side readers that import them from `runner` keep
-// working without touching their import paths.
-export { LETSDEBUG_MESSAGE_PREFIX } from './probes/letsdebug';
-export { LAN_IP_DRIFT_MESSAGE_PREFIX } from './probes/lanIpDrift';
-export { NPM_AUTH_MESSAGE_PREFIX } from './probes/npmAuthProbe';
-export { CERT_EXPIRY_MESSAGE_PREFIX } from './probes/certExpiry';
-export { CERT_REQUEST_FAILURE_MESSAGE_PREFIX } from './probes/certRequestFailure';
-export { DNS_ROUTING_MESSAGE_PREFIX } from './probes/dnsRouting';
-
 export class CheckRunner {
   static async run(check: CheckConfig): Promise<CheckResult> {
     const start = Date.now();
     let status: 'ok' | 'fail' = 'fail';
     let message = '';
+    let payload: unknown;
 
     let connection;
     if (check.nodeName && check.nodeName !== 'Local') {
@@ -58,9 +49,11 @@ export class CheckRunner {
         } else if ('status' in result && result.status) {
           status = result.status;
           message = result.message ?? '';
+          if ('payload' in result) payload = result.payload;
         } else {
           status = 'ok';
           if ('message' in result && result.message) message = result.message;
+          if ('payload' in result) payload = result.payload;
         }
       } catch (e: unknown) {
         status = 'fail';
@@ -75,6 +68,7 @@ export class CheckRunner {
       status,
       latency,
       message,
+      ...(payload !== undefined ? { payload } : {}),
     };
 
     HealthStore.saveResult(result);

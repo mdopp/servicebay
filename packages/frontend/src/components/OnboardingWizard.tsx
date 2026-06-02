@@ -22,6 +22,8 @@ import { Template } from '@servicebay/api-client';
 import type { TemplateTier } from '@servicebay/api-client';
 import { useStackInstall } from '@/hooks/useStackInstall';
 import type { StackVariable } from '@/hooks/useStackInstall';
+import { useInstallPlan } from '@/hooks/useInstallPlan';
+import type { InstallPlan } from '@/hooks/useInstallPlan';
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import type { DiagnoseProbe } from './DiagnoseProbeList';
@@ -306,6 +308,36 @@ export default function OnboardingWizard() {
     templateSource: selectedStacks[0]?.source || 'Built-in',
     source: 'wizard',
   });
+
+  // Desired-state install plan (#1520 / #1537). The box resolves the
+  // install/reinstall/uninstall/blocked diff from the catalog + live
+  // twin health; the wizard is a thin renderer of it. We fetch the plan
+  // with an empty desired set on the stacks step purely to learn which
+  // stacks are *currently installed* (`uninstall` lists every installed
+  // wipeable stack when desired is empty; `blocked` lists installed core/
+  // atomic-wipe stacks) so the picker can pre-check them and offer
+  // uncheck-to-uninstall. There is no clean-install toggle anywhere.
+  const installPlan = useInstallPlan();
+  // stack name → 'wipeable' | 'core'. Installed wipeable stacks get an
+  // enabled, pre-checked row (uncheck = uninstall, confirmed); installed
+  // core/atomic-wipe stacks get a locked, checked row (Factory-Reset-only).
+  const [installedStacks, setInstalledStacks] = useState<Map<string, 'wipeable' | 'core'>>(new Map());
+  const [uninstalling, setUninstalling] = useState<string | null>(null);
+
+  /** Derive installed-stack classification from a resolved plan whose
+   *  `desired` was empty: every installed wipeable stack shows up under
+   *  `uninstall`, every installed core stack under `blocked`. */
+  const applyInstalledFromPlan = useCallback((plan: InstallPlan): Map<string, 'wipeable' | 'core'> => {
+    const map = new Map<string, 'wipeable' | 'core'>();
+    for (const u of plan.uninstall) map.set(u.stack, 'wipeable');
+    for (const b of plan.blocked) {
+      // Only core/atomic-wipe blocks count as "installed but locked";
+      // an "unknown stack" block (typo) isn't an installed stack.
+      if (/factory reset|core stack/i.test(b.reason)) map.set(b.stack, 'core');
+    }
+    setInstalledStacks(map);
+    return map;
+  }, []);
 
   // Configure-step tab. Variables are categorised so the operator isn't
   // staring at a 50-line flat list — the "subdomains" tab shows the
@@ -601,7 +633,20 @@ export default function OnboardingWizard() {
       // load. Pre-existing pickerChecked (operator returned via
       // Back from the services step) wins over the default — they
       // don't get their selection reset.
-      setPickerChecked(prev => prev.size > 0 ? prev : new Set(stacks.map(s => s.name)));
+      // Resolve the box-side desired-state plan with an empty desired
+      // set to learn which stacks are already installed, then pre-check
+      // those in the picker (a desired-state editor pre-checks what's
+      // installed; the operator unchecks to uninstall). Best-effort —
+      // on a fresh box nothing is installed and the plan is all-empty.
+      const planNode = nodes.length === 1 ? nodes[0].Name : undefined;
+      const plan = await installPlan.fetchPlan([], [], planNode);
+      const installed = plan ? applyInstalledFromPlan(plan).keys() : [];
+      // First-load default: all stacks checked PLUS any already-installed
+      // stack (so an installed-but-not-in-catalog-default stack still
+      // shows pre-checked). Operator's in-progress selection wins on Back.
+      setPickerChecked(prev =>
+        prev.size > 0 ? prev : new Set([...stacks.map(s => s.name), ...installed]),
+      );
       if (stacks.length === 1 && selectedStacks.length === 0) {
         await handleSelectStack([stacks[0]]);
       }
@@ -889,6 +934,42 @@ export default function OnboardingWizard() {
         addToast('error', 'Error', 'Failed to generate key');
     } finally {
         setLoading(false);
+    }
+  };
+
+  /** Uncheck-to-uninstall gesture for an installed stack (#1537). Core/
+   *  atomic-wipe stacks are blocked here — the box's wipe endpoint
+   *  refuses them too (Factory-Reset-only), so the row stays locked. On
+   *  success the stack drops out of the installed map and the picker. */
+  const handleUninstallStack = async (stack: string): Promise<void> => {
+    if (installedStacks.get(stack) === 'core') {
+      addToast('error', 'Core stack', `${stack} carries identity + certs every service depends on. Remove it via Settings → System → Factory Reset.`);
+      return;
+    }
+    const ok = window.confirm(
+      `Uninstall the ${stack} stack? This stops its services and deletes their data on the box. This can't be undone.`,
+    );
+    if (!ok) return;
+    setUninstalling(stack);
+    try {
+      const res = await installPlan.uninstall(stack, stackSelectedNode || undefined);
+      if (!res.ok) {
+        addToast('error', 'Uninstall failed', res.error ?? `Could not uninstall ${stack}.`);
+        return;
+      }
+      addToast('success', 'Uninstalled', `${stack} was removed.`);
+      setInstalledStacks(prev => {
+        const next = new Map(prev);
+        next.delete(stack);
+        return next;
+      });
+      setPickerChecked(prev => {
+        const next = new Set(prev);
+        next.delete(stack);
+        return next;
+      });
+    } finally {
+      setUninstalling(null);
     }
   };
 
@@ -1346,6 +1427,9 @@ export default function OnboardingWizard() {
                 SERVICE_DEPS={SERVICE_DEPS}
                 stackDeviceOptions={stackDeviceOptions}
                 stackLoadingDevices={stackLoadingDevices}
+                installedStacks={installedStacks}
+                uninstalling={uninstalling}
+                onUninstallStack={handleUninstallStack}
               />
             )}
 

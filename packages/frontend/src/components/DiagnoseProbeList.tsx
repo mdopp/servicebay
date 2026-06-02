@@ -58,6 +58,18 @@ export type ProbeGroup =
   | 'system-info'
   | 'other';
 
+/** Persisted result history for a probe (#1541). Mirrors the backend
+ *  `ProbeHistory` in `lib/diagnose/persistDiagnoseResults.ts` — kept
+ *  structural (no shared import) to match the existing duplicated
+ *  `DiagnoseProbe` shape across the package boundary. `trend` is
+ *  oldest → newest binary statuses for a left-to-right sparkline. */
+export interface ProbeHistory {
+  firstSeen: string;
+  lastOk: string | null;
+  trend: ('ok' | 'fail')[];
+  total: number;
+}
+
 export interface DiagnoseProbe {
   id: string;
   label: string;
@@ -69,6 +81,62 @@ export interface DiagnoseProbe {
   /** Problem-domain card (#1534). Set by the backend; older payloads
    *  without it fall through to the ungrouped flat list. */
   group?: ProbeGroup;
+  /** Persisted first-seen / last-ok / trend (#1541). Set by the backend
+   *  once #1540 persistence has accrued; absent on a brand-new box or an
+   *  older backend, in which case the row simply shows no history badge. */
+  history?: ProbeHistory;
+}
+
+/** Compact relative-time label ("3d", "5h", "12m", "just now") for a
+ *  history timestamp. Keeps the badge terse — the full timestamp lives
+ *  in the element's `title`. */
+function relTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '?';
+  const secs = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (secs < 60) return 'just now';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
+
+/**
+ * Uniform per-row history badge (#1541): first-seen, last-ok, and a
+ * trend sparkline, rendered identically on every diagnose row from the
+ * persisted `history` payload. No per-probe special-casing — a row with
+ * no history yet renders nothing.
+ */
+function ProbeHistoryBadge({ history, compact }: { history?: ProbeHistory; compact: boolean }) {
+  if (!history || history.trend.length === 0) return null;
+  const trend = history.trend.slice(-20);
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
+      <span
+        className="inline-flex items-end gap-[1.5px] h-3.5"
+        title={`Trend: ${trend.length} of ${history.total} recent checks (oldest → newest)`}
+        aria-label="status trend"
+      >
+        {trend.map((s, i) => (
+          <span
+            key={i}
+            className={`inline-block w-[3px] ${compact ? 'h-2.5' : 'h-3.5'} rounded-sm ${
+              s === 'ok' ? 'bg-emerald-400 dark:bg-emerald-600' : 'bg-red-400 dark:bg-red-600'
+            }`}
+          />
+        ))}
+      </span>
+      <span title={new Date(history.firstSeen).toLocaleString()}>
+        first seen <span className="font-medium">{relTime(history.firstSeen)}</span> ago
+      </span>
+      <span title={history.lastOk ? new Date(history.lastOk).toLocaleString() : 'No passing result on record'}>
+        {history.lastOk
+          ? <>last ok <span className="font-medium">{relTime(history.lastOk)}</span> ago</>
+          : <span className="text-red-500 dark:text-red-400">never ok</span>}
+      </span>
+    </div>
+  );
 }
 
 /** Card metadata for the problem-domain grouping (#1534). `order` fixes
@@ -233,6 +301,7 @@ export default function DiagnoseProbeList({
                     <strong>Suggestion:</strong> {probe.hint}
                   </p>
                 )}
+                <ProbeHistoryBadge history={probe.history} compact={compact} />
                 {(probe.actions ?? []).length > 0 && (
                   <div className="mt-3 space-y-2">
                     <div className="flex flex-wrap gap-2">

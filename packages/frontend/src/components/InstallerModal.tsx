@@ -235,8 +235,6 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
               nodes={nodes}
               selectedNode={selectedNode}
               onSelectNode={setSelectedNode}
-              // #1150: the "Clean install" toggle wipes EVERY service on
-              // the node (via /api/system/stacks/reset), not just the one
               deviceContext={{
                 deviceOptions,
                 loadingDevices,

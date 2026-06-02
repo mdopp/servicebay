@@ -217,7 +217,7 @@ describe('CheckRunner', () => {
         expect(result.message).toBe('');
     });
 
-    it('should encode warnings in the message and stay status:ok', async () => {
+    it('should attach warnings to the typed payload and stay status:ok', async () => {
         const check: CheckConfig = {
             id: 'letsdebug:warn.example.com',
             name: 'External reachability — warn.example.com',
@@ -229,8 +229,7 @@ describe('CheckRunner', () => {
         };
         const result = await CheckRunner.run(check);
         expect(result.status).toBe('ok');
-        expect(result.message).toMatch(/^letsdebug:/);
-        const payload = JSON.parse(result.message!.slice('letsdebug:'.length));
+        const payload = result.payload as { problems: unknown[]; submissionUrl: string };
         expect(payload.problems).toHaveLength(1);
         expect(payload.submissionUrl).toMatch(/letsdebug\.net/);
     });
@@ -247,7 +246,7 @@ describe('CheckRunner', () => {
         };
         const result = await CheckRunner.run(check);
         expect(result.status).toBe('fail');
-        expect(result.message).toMatch(/^letsdebug:/);
+        expect((result.payload as { problems: unknown[] }).problems.length).toBeGreaterThan(0);
     });
 
     it('should report transport errors as status:fail with plaintext message', async () => {
@@ -263,6 +262,6 @@ describe('CheckRunner', () => {
         const result = await CheckRunner.run(check);
         expect(result.status).toBe('fail');
         expect(result.message).toMatch(/letsdebug error: HTTP 429/);
-        expect(result.message).not.toMatch(/^letsdebug:/);
+        expect(result.payload).toBeUndefined();
     });
 });

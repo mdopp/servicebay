@@ -49,7 +49,7 @@ describe('checkNpmDataStale (reader)', () => {
       check_id: 'npm_auth',
       timestamp: new Date().toISOString(),
       status: 'fail',
-      message: `npm_auth:${JSON.stringify(payload)}`,
+      payload,
       latency: 100,
     });
     const out = await checkNpmDataStale();
@@ -64,7 +64,7 @@ describe('checkNpmDataStale (reader)', () => {
       check_id: 'npm_auth',
       timestamp: new Date().toISOString(),
       status: 'ok',
-      message: `npm_auth:${JSON.stringify(payload)}`,
+      payload,
       latency: 100,
     });
     const out = await checkNpmDataStale();

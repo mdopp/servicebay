@@ -31,7 +31,6 @@ import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
 import { HealthStore } from '@/lib/health/store';
-import { CERT_REQUEST_FAILURE_MESSAGE_PREFIX } from '@/lib/health/runner';
 import { parseLetsencryptTail } from '@/lib/health/probes/letsencryptLogParser';
 
 // Re-export so callers (and the existing unit test) can import the
@@ -75,21 +74,16 @@ export async function checkCertRequestFailure(): Promise<CertRequestFailureResul
       detail: 'Scheduled — first run pending. Open Settings → Health to trigger it manually.',
     };
   }
-  if (result.message && result.message.startsWith(CERT_REQUEST_FAILURE_MESSAGE_PREFIX)) {
-    try {
-      const json = result.message.slice(CERT_REQUEST_FAILURE_MESSAGE_PREFIX.length);
-      const parsed = JSON.parse(json);
-      if (parsed && typeof parsed.status === 'string' && typeof parsed.detail === 'string') {
-        return {
-          status: parsed.status,
-          detail: parsed.detail,
-          hint: typeof parsed.hint === 'string' ? parsed.hint : undefined,
-          items: Array.isArray(parsed.items) ? (parsed.items as ProbeItem[]) : undefined,
-        };
-      }
-    } catch {
-      // fall through
-    }
+  const parsed = result.payload as
+    | { status?: unknown; detail?: unknown; hint?: unknown; items?: unknown }
+    | undefined;
+  if (parsed && typeof parsed.status === 'string' && typeof parsed.detail === 'string') {
+    return {
+      status: parsed.status as CertRequestFailureResult['status'],
+      detail: parsed.detail,
+      hint: typeof parsed.hint === 'string' ? parsed.hint : undefined,
+      items: Array.isArray(parsed.items) ? (parsed.items as ProbeItem[]) : undefined,
+    };
   }
   if (result.status === 'fail') {
     return {

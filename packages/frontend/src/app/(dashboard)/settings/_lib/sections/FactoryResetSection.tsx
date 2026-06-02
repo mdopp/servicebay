@@ -11,10 +11,9 @@ import { useToast } from '@/providers/ToastProvider';
  * `lldap` / `adguard` / `reverseProxy.npm` config fields so the next
  * wizard run starts from genuine zero.
  *
- * Distinct from the wizard's "Clean install" flow:
- *   - clean install is granular (per-group preserve flags) and tuned for
- *     re-installing while keeping useful state
- *   - factory reset is the nuclear option for "I want zero baseline"
+ * Factory reset is the only system-wide wipe. A reinstall never wipes —
+ * it redeploys over the data on disk (#1520). This is the nuclear option
+ * for "I want zero baseline".
  *
  * The confirmation token is FACTORY-RESET (not RESET) so an operator
  * can't accidentally type the wrong thing into the wrong dialog.

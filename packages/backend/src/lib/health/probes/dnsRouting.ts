@@ -6,8 +6,6 @@
 
 import { registerProbe } from './registry';
 
-export const DNS_ROUTING_MESSAGE_PREFIX = 'dns_routing:';
-
 registerProbe({
   type: 'dns_routing',
   async run(check) {
@@ -39,14 +37,14 @@ registerProbe({
     };
 
     if (!haveExpected) {
-      return { status: 'ok', message: `${DNS_ROUTING_MESSAGE_PREFIX}${JSON.stringify(payload)}` };
+      return { status: 'ok', payload };
     }
     if (answers.length === 0) {
-      return { status: 'fail', message: `${DNS_ROUTING_MESSAGE_PREFIX}${JSON.stringify(payload)}` };
+      return { status: 'fail', payload };
     }
     return {
       status: payload.matched ? 'ok' : 'fail',
-      message: `${DNS_ROUTING_MESSAGE_PREFIX}${JSON.stringify(payload)}`,
+      payload,
     };
   },
 });

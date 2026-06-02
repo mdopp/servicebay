@@ -1,8 +1,7 @@
 /**
  * Reset preserve-group identifiers used by `/api/system/stacks/reset`
- * and `/api/system/stacks/reset/info`. The wizard surfaces a checkbox
- * per group so the operator can pick *what* a "clean install"
- * actually wipes (#568 transparency rework).
+ * and `/api/system/stacks/reset/info`. A caller can pick *what* a reset
+ * actually wipes per group (#568 transparency rework).
  *
  * Defaults preserve the three system-critical groups; only
  * `service-data` (app payload — photos, HA, media, …) wipes unless

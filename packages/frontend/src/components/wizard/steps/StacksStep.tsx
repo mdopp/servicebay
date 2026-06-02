@@ -61,6 +61,15 @@ interface StacksStepProps {
     SERVICE_DEPS: Record<string, ServiceDeps>;
     stackDeviceOptions: Record<string, string[]>;
     stackLoadingDevices: boolean;
+    /** Desired-state editor (#1537): installed-stack classification from
+     *  the box-side `/api/install/plan`. `'wipeable'` rows are pre-checked
+     *  and uncheck = uninstall (confirmed); `'core'` rows are locked
+     *  (atomic-wipe, Factory-Reset-only). Empty on a fresh box. */
+    installedStacks: Map<string, 'wipeable' | 'core'>;
+    /** Stack currently being torn down, or null. Disables its row. */
+    uninstalling: string | null;
+    /** Uncheck-to-uninstall handler. Owns the confirm + wipe call. */
+    onUninstallStack: (stack: string) => void | Promise<void>;
 }
 
 type ConfigureTab = 'subdomains' | 'settings' | 'ports';
@@ -87,6 +96,9 @@ export function StacksStep({
     SERVICE_DEPS,
     stackDeviceOptions,
     stackLoadingDevices,
+    installedStacks,
+    uninstalling,
+    onUninstallStack,
 }: StacksStepProps) {
     const [configureTab, setConfigureTab] = useState<ConfigureTab | null>(null);
 
@@ -105,7 +117,9 @@ export function StacksStep({
             {stackInstallStep === 'select' && (
                 <div className="space-y-4">
                     <p className="text-sm text-gray-500 leading-relaxed">
-                        Pick the stacks to install. Defaults to all — uncheck what you don&apos;t need.
+                        Pick the stacks you want installed. Checked stacks get installed;
+                        unchecking an already-installed stack uninstalls it. The core stack
+                        (DNS, reverse proxy, identity) can only be removed via Factory Reset.
                     </p>
                     {stacksLoading ? (
                         <div className="flex items-center justify-center py-12 text-gray-400">
@@ -117,41 +131,17 @@ export function StacksStep({
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 gap-3">
-                            {availableStacks.map(stack => {
-                                const checked = pickerChecked.has(stack.name);
-                                return (
-                                    <label
-                                        key={stack.name}
-                                        id={`stack-pick-${stack.name.toLowerCase()}`}
-                                        className={`flex items-start gap-4 p-4 rounded-2xl border cursor-pointer transition-all ${
-                                            checked
-                                                ? 'bg-white dark:bg-blue-600/10 border-blue-400 shadow-sm ring-1 ring-blue-400'
-                                                : 'bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/5 opacity-80 hover:opacity-100 hover:border-blue-300'
-                                        }`}
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={checked}
-                                            onChange={(e) => {
-                                                setPickerChecked(prev => {
-                                                    const next = new Set(prev);
-                                                    if (e.target.checked) next.add(stack.name);
-                                                    else next.delete(stack.name);
-                                                    return next;
-                                                });
-                                            }}
-                                            className="mt-1 w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                        />
-                                        <div className={`p-2 rounded-lg ${checked ? 'bg-blue-500/10 text-blue-500' : 'bg-gray-100 dark:bg-white/10 text-gray-400'}`}>
-                                            {stack.type === 'stack' ? <Layers className="w-5 h-5" /> : <Package className="w-5 h-5" />}
-                                        </div>
-                                        <div className="flex-1">
-                                            <div className="font-bold text-sm text-gray-900 dark:text-gray-100">{stack.name}</div>
-                                            <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">{stack.source}</div>
-                                        </div>
-                                    </label>
-                                );
-                            })}
+                            {availableStacks.map(stack => (
+                                <StackPickerRow
+                                    key={stack.name}
+                                    stack={stack}
+                                    checked={pickerChecked.has(stack.name)}
+                                    installState={installedStacks.get(stack.name)}
+                                    isUninstalling={uninstalling === stack.name}
+                                    setPickerChecked={setPickerChecked}
+                                    onUninstallStack={onUninstallStack}
+                                />
+                            ))}
                         </div>
                     )}
 
@@ -527,6 +517,98 @@ export function StacksStep({
                         </div>
                     )}
                 </div>
+            )}
+        </div>
+    );
+}
+
+interface StackPickerRowProps {
+    stack: Template;
+    checked: boolean;
+    /** undefined = not installed; 'wipeable' = installed feature stack
+     *  (uncheck → uninstall); 'core' = installed atomic-wipe (locked). */
+    installState: 'wipeable' | 'core' | undefined;
+    isUninstalling: boolean;
+    setPickerChecked: Dispatch<SetStateAction<Set<string>>>;
+    onUninstallStack: (stack: string) => void | Promise<void>;
+}
+
+/** One desired-state row in the stack picker (#1537). Checked = install;
+ *  unchecking an installed wipeable stack hands off to the confirmed
+ *  uninstall path; core/atomic-wipe rows are locked (Factory-Reset-only). */
+function StackPickerRow({ stack, checked, installState, isUninstalling, setPickerChecked, onUninstallStack }: StackPickerRowProps) {
+    const isInstalled = installState !== undefined;
+    const isCore = installState === 'core';
+    return (
+        <label
+            id={`stack-pick-${stack.name.toLowerCase()}`}
+            className={`flex items-start gap-4 p-4 rounded-2xl border transition-all ${isCore ? 'cursor-not-allowed' : 'cursor-pointer'} ${
+                checked
+                    ? 'bg-white dark:bg-blue-600/10 border-blue-400 shadow-sm ring-1 ring-blue-400'
+                    : 'bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/5 opacity-80 hover:opacity-100 hover:border-blue-300'
+            }`}
+        >
+            <input
+                type="checkbox"
+                checked={checked}
+                // Core/atomic-wipe stacks can't be unchecked here
+                // (Factory-Reset-only); their box-side wipe is refused too.
+                disabled={isCore || isUninstalling}
+                onChange={(e) => {
+                    // Unchecking an installed stack is an uninstall, not a
+                    // mere de-select — hand off to the confirmed wipe path.
+                    if (!e.target.checked && isInstalled) {
+                        void onUninstallStack(stack.name);
+                        return;
+                    }
+                    setPickerChecked(prev => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(stack.name);
+                        else next.delete(stack.name);
+                        return next;
+                    });
+                }}
+                className="mt-1 w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+            />
+            <div className={`p-2 rounded-lg ${checked ? 'bg-blue-500/10 text-blue-500' : 'bg-gray-100 dark:bg-white/10 text-gray-400'}`}>
+                {stack.type === 'stack' ? <Layers className="w-5 h-5" /> : <Package className="w-5 h-5" />}
+            </div>
+            <div className="flex-1">
+                <StackPickerBadges name={stack.name} isInstalled={isInstalled} isCore={isCore} isUninstalling={isUninstalling} />
+                <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">{stack.source}</div>
+                {isInstalled && !isCore && (
+                    <p className="text-[10px] text-gray-400 mt-0.5">Uncheck to uninstall.</p>
+                )}
+                {isCore && (
+                    <p className="text-[10px] text-gray-400 mt-0.5">Remove via Factory Reset only.</p>
+                )}
+            </div>
+        </label>
+    );
+}
+
+/** Name + state badges for a picker row. Split out so `StackPickerRow`
+ *  stays under the per-function line budget. */
+function StackPickerBadges({ name, isInstalled, isCore, isUninstalling }: {
+    name: string; isInstalled: boolean; isCore: boolean; isUninstalling: boolean;
+}) {
+    return (
+        <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-sm text-gray-900 dark:text-gray-100">{name}</span>
+            {isInstalled && (
+                <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800/60">
+                    installed
+                </span>
+            )}
+            {isCore && (
+                <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60">
+                    core
+                </span>
+            )}
+            {isUninstalling && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600">
+                    <Loader2 className="w-3 h-3 animate-spin" /> uninstalling…
+                </span>
             )}
         </div>
     );

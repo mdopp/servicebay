@@ -6,7 +6,7 @@ const state = {
   config: {} as any,
   checks: [] as CheckConfig[],
   results: new Map<string, CheckResult>(),
-  runOutcome: { status: 'ok' as 'ok' | 'fail', message: '' as string },
+  runOutcome: { status: 'ok' as 'ok' | 'fail', message: '' as string, payload: undefined as unknown },
   runCallCount: 0,
   letsdebugCalls: [] as string[],
   letsdebugResult: undefined as
@@ -28,8 +28,6 @@ vi.mock('@/lib/health/store', () => ({
 }));
 
 vi.mock('@/lib/health/runner', () => ({
-  DNS_ROUTING_MESSAGE_PREFIX: 'dns_routing:',
-  LETSDEBUG_MESSAGE_PREFIX: 'letsdebug:',
   CheckRunner: {
     run: vi.fn((check: CheckConfig) => {
       state.runCallCount++;
@@ -38,6 +36,7 @@ vi.mock('@/lib/health/runner', () => ({
         timestamp: new Date().toISOString(),
         status: state.runOutcome.status,
         message: state.runOutcome.message,
+        payload: state.runOutcome.payload,
         latency: 5,
       };
       state.results.set(check.id, result);
@@ -77,11 +76,11 @@ function makeDnsRoutingCheck(domain: string): CheckConfig {
 }
 
 function dnsRoutingPayload(opts: { expected: string | null; resolved: string[]; matched: boolean }) {
-  return `dns_routing:${JSON.stringify(opts)}`;
+  return opts;
 }
 
 function letsdebugPayload(problems: { name?: string; explanation?: string; severity?: string }[], submissionUrl = 'https://letsdebug.net/x.example.com/1') {
-  return `letsdebug:${JSON.stringify({ problems, submissionUrl })}`;
+  return { problems, submissionUrl };
 }
 
 beforeEach(() => {
@@ -100,7 +99,7 @@ beforeEach(() => {
     makeDnsRoutingCheck('two.example.com'),
   ];
   state.results.clear();
-  state.runOutcome = { status: 'ok', message: '' };
+  state.runOutcome = { status: 'ok', message: '', payload: undefined };
   state.runCallCount = 0;
   state.letsdebugCalls = [];
   state.letsdebugResult = { problems: [], submissionUrl: 'https://letsdebug.net/one.example.com/42' };
@@ -137,13 +136,13 @@ describe('checkDomainExternalReachability', () => {
       check_id: 'dns_routing:one.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
     state.results.set('dns_routing:two.example.com', {
       check_id: 'dns_routing:two.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
     const r = await checkDomainExternalReachability();
     expect(r.status).toBe('ok');
@@ -156,13 +155,13 @@ describe('checkDomainExternalReachability', () => {
       check_id: 'dns_routing:one.example.com',
       timestamp: isoAgo(60_000),
       status: 'fail',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['198.51.100.7'], matched: false }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['198.51.100.7'], matched: false }),
     });
     state.results.set('dns_routing:two.example.com', {
       check_id: 'dns_routing:two.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
     const r = await checkDomainExternalReachability();
     expect(r.status).toBe('fail');
@@ -177,13 +176,13 @@ describe('checkDomainExternalReachability', () => {
       check_id: 'dns_routing:one.example.com',
       timestamp: isoAgo(60_000),
       status: 'fail',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: [], matched: false }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: [], matched: false }),
     });
     state.results.set('dns_routing:two.example.com', {
       check_id: 'dns_routing:two.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
     const r = await checkDomainExternalReachability();
     expect(r.status).toBe('fail');
@@ -202,7 +201,7 @@ describe('checkDomainExternalReachability', () => {
       check_id: 'dns_routing:two.example.com',
       timestamp: isoAgo(30_000),
       status: 'ok',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
     const r = await checkDomainExternalReachability();
     expect(r.items).toHaveLength(1);
@@ -216,13 +215,13 @@ describe('checkDomainExternalReachability', () => {
       check_id: 'dns_routing:one.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
     state.results.set('dns_routing:two.example.com', {
       check_id: 'dns_routing:two.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
     // But the HTTPS GET surfaces a 502 for one.example.com (proxy
     // forwarding to a crash-looping upstream).
@@ -248,13 +247,13 @@ describe('checkDomainExternalReachability', () => {
       check_id: 'dns_routing:one.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
     state.results.set('dns_routing:two.example.com', {
       check_id: 'dns_routing:two.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('', { status: 302, headers: { location: 'https://auth.example.com/' } }) as Response,
@@ -269,19 +268,19 @@ describe('checkDomainExternalReachability', () => {
       check_id: 'dns_routing:one.example.com',
       timestamp: isoAgo(60_000),
       status: 'fail',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['198.51.100.7'], matched: false }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['198.51.100.7'], matched: false }),
     });
     state.results.set('letsdebug:one.example.com', {
       check_id: 'letsdebug:one.example.com',
       timestamp: isoAgo(120_000),
       status: 'fail',
-      message: letsdebugPayload([{ name: 'ANotWorking', explanation: 'port 80 unreachable', severity: 'fatal' }]),
+      payload: letsdebugPayload([{ name: 'ANotWorking', explanation: 'port 80 unreachable', severity: 'fatal' }]),
     });
     state.results.set('dns_routing:two.example.com', {
       check_id: 'dns_routing:two.example.com',
       timestamp: isoAgo(60_000),
       status: 'ok',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     });
     const r = await checkDomainExternalReachability();
     expect(r.items).toHaveLength(1);
@@ -294,7 +293,8 @@ describe('refresh_now action (DoH)', () => {
   it('runs the dns_routing check and reports matched=true', async () => {
     state.runOutcome = {
       status: 'ok',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+      message: '',
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
     };
     const r = await dispatchProbeAction({
       probeId: 'domain_unreachable',
@@ -310,7 +310,8 @@ describe('refresh_now action (DoH)', () => {
   it('reports ok:false when DNS does not match', async () => {
     state.runOutcome = {
       status: 'fail',
-      message: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['198.51.100.7'], matched: false }),
+      message: '',
+      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['198.51.100.7'], matched: false }),
     };
     const r = await dispatchProbeAction({
       probeId: 'domain_unreachable',
@@ -346,7 +347,7 @@ describe('run_letsdebug action', () => {
     expect(r.message).toMatch(/passed letsdebug/);
     const saved = state.results.get('letsdebug:one.example.com');
     expect(saved).toBeDefined();
-    expect(saved!.message).toMatch(/^letsdebug:/);
+    expect((saved!.payload as { problems: unknown[] }).problems).toEqual([]);
   });
 
   it('surfaces a friendly 429 message when letsdebug rate-limits', async () => {
