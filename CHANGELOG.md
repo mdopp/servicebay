@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.80.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.80.1...servicebay-v4.80.2) (2026-06-02)
+
+
+### Bug Fixes
+
+* **dashboard:** reconcile socket connect, offline banner + drop redundant setup rider ([94da39e](https://github.com/mdopp/servicebay/commit/94da39e50a87d7a1984a30768c539e95b70a7ba1)), closes [#1503](https://github.com/mdopp/servicebay/issues/1503) [#1504](https://github.com/mdopp/servicebay/issues/1504) [#1509](https://github.com/mdopp/servicebay/issues/1509)
+* **health:** gate per-service checks on actual deployment ([28e9152](https://github.com/mdopp/servicebay/commit/28e91525e9a17ea9178d68b3cb07641cfc45df0e)), closes [#1506](https://github.com/mdopp/servicebay/issues/1506)
+* **home-assistant:** reconcile HA token, Z-Wave device + integrations after a wipe-configs reinstall ([69b0774](https://github.com/mdopp/servicebay/commit/69b0774a774ebb876f16aa44dc81101a8ea54cd6)), closes [#1505](https://github.com/mdopp/servicebay/issues/1505) [#1511](https://github.com/mdopp/servicebay/issues/1511) [#1512](https://github.com/mdopp/servicebay/issues/1512)
+* reconcile install/dashboard/health/tui state after wipe-configs reinstall ([407de7a](https://github.com/mdopp/servicebay/commit/407de7a193d5db7c48eb72e00db8b98767ea0030))
+* **sb-tui:** re-auth on a rejected token instead of dead-ending ([f771bbb](https://github.com/mdopp/servicebay/commit/f771bbbd201ca2621f84aafdd559ddf694910054)), closes [#1502](https://github.com/mdopp/servicebay/issues/1502)
+
 ## [4.80.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.80.0...servicebay-v4.80.1) (2026-06-01)
 
 
