@@ -35,12 +35,87 @@ import '@/lib/diagnose/probes/register';
 
 type ProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
 
+/**
+ * Problem-domain grouping (#1534). The diagnose suite emits ~20 probe
+ * rows framed by *technical mechanism*; the UI re-groups them into a
+ * handful of user-facing "is this OK?" cards (one root cause = one
+ * prominent card) plus a collapsed "System info" panel for the
+ * info-only probes (serial / ports / first-boot / health-check
+ * coverage) that aren't really problems.
+ *
+ * The grouping lives here (not the frontend) so every diagnose surface
+ * — the wizard, /setup self-test, the MCP `diagnose` tool — sees the
+ * same cards without each re-deriving the mapping. A probe with no
+ * mapping falls back to `other` so a newly-added probe is never
+ * silently dropped from the UI.
+ */
+export type ProbeGroup =
+  | 'services'        // is everything running?
+  | 'reverse-proxy'   // routes reach a real backend
+  | 'proxy-admin'     // NPM admin auth healthy
+  | 'domains'         // domains reachable
+  | 'dns-network'     // DNS / LAN routing
+  | 'tls'             // certificates
+  | 'sso'             // login / SSO
+  | 'storage-backups' // disk + backup target
+  | 'system-info'     // info-only, collapsed (not a "problem")
+  | 'other';          // unmapped fallback
+
+/** Probe id → problem-domain card. Drives the UI grouping (#1534).
+ *  A single root cause (a crashed service) lands every mechanism row
+ *  (`podman`/`pods`/`failed_units`/`crash_loop`/`post_deploy_failed`)
+ *  in the one "Services running" card so it reads as one issue. */
+const PROBE_GROUP: Record<string, ProbeGroup> = {
+  // Services running
+  agent: 'services',
+  podman: 'services',
+  pods: 'services',
+  failed_units: 'services',
+  crash_loop: 'services',
+  post_deploy_failed: 'services',
+  // Reverse-proxy routes
+  dangling_proxy: 'reverse-proxy',
+  // Proxy admin reachable
+  npm_data_stale: 'proxy-admin',
+  // Domains reachable
+  domain_unreachable: 'domains',
+  // DNS & network routing
+  lan_ip_changed_since_install: 'dns-network',
+  router_dns_not_pointing: 'dns-network',
+  adguard_rewrites_missing: 'dns-network',
+  // TLS certificates
+  cert_expiry: 'tls',
+  // Login / SSO
+  sso_verify: 'sso',
+  // Storage & backups
+  disk: 'storage-backups',
+  nas_backup_reachable: 'storage-backups',
+  // System info (collapsed — not a problem)
+  serial: 'system-info',
+  ports: 'system-info',
+  first_boot: 'system-info',
+  health_checks: 'system-info',
+};
+
+/** Map a probe id to its problem-domain group, defaulting unmapped
+ *  probes to `other` so a new probe is still rendered (just outside
+ *  the curated cards) rather than dropped. */
+export function groupForProbe(id: string): ProbeGroup {
+  return PROBE_GROUP[id] ?? 'other';
+}
+
 export interface DiagnoseProbe {
   id: string;
   label: string;
   status: ProbeStatus;
   detail: string;
   hint?: string;
+  /**
+   * Problem-domain card this probe belongs to (#1534). Populated by
+   * `runDiagnose` from the `PROBE_GROUP` map; the UI buckets rows into
+   * cards by this field and renders the `system-info` group collapsed.
+   */
+  group?: ProbeGroup;
   /**
    * Fix-buttons the UI renders next to this probe's status. Populated
    * automatically from the probe-action registry (see
@@ -932,5 +1007,8 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
     });
   }
 
-  return { node: nodeName, probes: probes.map(withActions) };
+  return {
+    node: nodeName,
+    probes: probes.map(withActions).map(p => ({ ...p, group: groupForProbe(p.id) })),
+  };
 }
