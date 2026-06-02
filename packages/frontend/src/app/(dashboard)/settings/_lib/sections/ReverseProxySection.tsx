@@ -1,53 +1,56 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { CheckCircle2, Eye, EyeOff, Loader2, Shield, XCircle } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, CheckCircle2, HelpCircle, KeyRound, Loader2, Shield, XCircle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+
+/**
+ * Settings → Networking → Reverse Proxy (NPM) (#1530 — derive, don't ask).
+ *
+ * No free-text admin email/password field: ServiceBay owns the NPM admin
+ * credential through the verified re-key path. This section shows the
+ * DB-derived admin identity as read-only with a live auth check, and a
+ * one-click re-key when the stored credential is stale/diverged. That
+ * kills the two-diverging-emails footgun (#1530).
+ */
+type CredStatus = 'ok' | 'rejected' | 'no-creds' | 'unknown';
+
+interface CredState {
+  configured: boolean;
+  email: string;
+  status: CredStatus;
+}
 
 export default function ReverseProxySection() {
   const { addToast } = useToast();
-  const [configured, setConfigured] = useState(false);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [adminUrl, setAdminUrl] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [busy, setBusy] = useState<'load' | 'save' | 'forget' | null>('load');
+  const [state, setState] = useState<CredState | null>(null);
+  const [busy, setBusy] = useState<'load' | 'rekey' | 'forget' | null>('load');
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch('/api/system/nginx/credentials');
-        if (res.ok) {
-          const data = await res.json();
-          setConfigured(Boolean(data.configured));
-          setEmail(data.email || '');
-        }
-      } finally {
-        setBusy(null);
-      }
-    })();
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/system/nginx/credentials');
+      if (res.ok) setState(await res.json());
+    } finally {
+      setBusy(null);
+    }
   }, []);
 
-  const handleSave = async () => {
-    setBusy('save');
+  useEffect(() => { void load(); }, [load]);
+
+  const handleRekey = async () => {
+    setBusy('rekey');
     try {
       const res = await fetch('/api/system/nginx/credentials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email,
-          password,
-          adminUrl: adminUrl || undefined,
-          test: Boolean(adminUrl),
-        }),
+        body: JSON.stringify({}),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        addToast('error', 'Could not save credentials', data.error || `HTTP ${res.status}`);
+        addToast('error', 'Re-key failed', data.message || `HTTP ${res.status}`);
       } else {
-        addToast('success', 'NPM credentials saved', adminUrl ? 'Tested and stored.' : 'Stored without testing (no admin URL provided).');
-        setConfigured(true);
-        setPassword('');
+        addToast('success', 'NPM admin re-keyed', data.message || 'A fresh admin password was written into NPM and saved — proxy routes preserved.');
+        await load();
       }
     } finally {
       setBusy(null);
@@ -59,15 +62,17 @@ export default function ReverseProxySection() {
     try {
       const res = await fetch('/api/system/nginx/credentials', { method: 'DELETE' });
       if (res.ok) {
-        setConfigured(false);
-        setEmail('');
-        setPassword('');
         addToast('success', 'NPM credentials removed');
+        await load();
       }
     } finally {
       setBusy(null);
     }
   };
+
+  const status = state?.status ?? 'unknown';
+  const verified = status === 'ok';
+  const diverged = status === 'rejected' || status === 'no-creds';
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
@@ -78,93 +83,80 @@ export default function ReverseProxySection() {
         <div className="flex-1 min-w-0">
           <h3 className="font-bold text-gray-900 dark:text-white">Reverse Proxy (NPM)</h3>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Store Nginx Proxy Manager admin credentials so ServiceBay can auto-sync proxy routes during service install/update without prompting.
+            ServiceBay owns the Nginx Proxy Manager admin credential automatically — it&apos;s read from NPM&apos;s own database, never typed in, so it can&apos;t silently drift out of sync.
           </p>
         </div>
         <div className="shrink-0">
-          {configured ? (
+          {busy === 'load' ? (
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
+              <Loader2 size={12} className="animate-spin" /> Checking
+            </span>
+          ) : verified ? (
             <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 px-2 py-1 rounded">
-              <CheckCircle2 size={12} /> Stored
+              <CheckCircle2 size={12} /> Verified
+            </span>
+          ) : diverged ? (
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 px-2 py-1 rounded">
+              <AlertTriangle size={12} /> {status === 'no-creds' ? 'Not set' : 'Out of sync'}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
-              <XCircle size={12} /> Not configured
+              <XCircle size={12} /> Unknown
             </span>
           )}
         </div>
       </div>
 
       <div className="p-6 space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Admin email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              disabled={busy !== null}
-              autoComplete="off"
-              className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none"
-              placeholder="admin@example.com"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Admin password</label>
-            <div className="relative">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                disabled={busy !== null}
-                autoComplete="new-password"
-                className="w-full p-2 pr-10 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none"
-                placeholder={configured ? '•••••••• (leave blank to keep)' : ''}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(s => !s)}
-                className="absolute inset-y-0 right-2 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                title={showPassword ? 'Hide' : 'Show'}
-              >
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-          </div>
-          <div className="md:col-span-2">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              NPM admin URL <span className="text-gray-400 font-normal">(optional, for credential test)</span>
-            </label>
-            <input
-              type="text"
-              value={adminUrl}
-              onChange={e => setAdminUrl(e.target.value)}
-              disabled={busy !== null}
-              className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none"
-              placeholder="http://nginx-host:81"
-            />
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              When set, ServiceBay verifies the credentials against NPM before saving.
-            </p>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Admin identity (from NPM database)</label>
+          <div className="flex items-center gap-2 w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 text-gray-900 dark:text-white font-mono text-sm">
+            <KeyRound size={14} className="text-gray-400 shrink-0" />
+            <span className="truncate">
+              {state?.email || (status === 'unknown' ? 'NPM not detected on this node' : 'No credential stored yet')}
+            </span>
           </div>
         </div>
 
+        {status === 'unknown' && (
+          <div className="flex items-start gap-2 text-xs text-gray-500 dark:text-gray-400">
+            <HelpCircle size={14} className="shrink-0 mt-0.5" />
+            <p>Nginx Proxy Manager isn&apos;t deployed or reachable on this node, so the admin credential can&apos;t be checked. Install NPM, then re-key.</p>
+          </div>
+        )}
+        {status === 'ok' && (
+          <p className="text-xs text-emerald-700 dark:text-emerald-300">
+            ServiceBay can manage NPM — the stored credential authenticates against NPM&apos;s admin API.
+          </p>
+        )}
+        {status === 'rejected' && (
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            NPM is rejecting the stored credential (it diverged — common after a reinstall over preserved data). Re-key to write a fresh admin password straight into NPM, keeping every proxy route.
+          </p>
+        )}
+        {status === 'no-creds' && (
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            NPM is up but ServiceBay has no admin credential stored. Re-key to generate and verify one — no proxy routes are touched.
+          </p>
+        )}
+
         <div className="flex items-center gap-2 pt-2">
           <button
-            onClick={handleSave}
-            disabled={busy !== null || !email || !password}
+            onClick={handleRekey}
+            disabled={busy !== null || status === 'unknown'}
             className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors text-sm font-medium inline-flex items-center gap-2"
           >
-            {busy === 'save' && <Loader2 className="w-4 h-4 animate-spin" />}
-            {adminUrl ? 'Test & Save' : 'Save'}
+            {busy === 'rekey' ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+            {verified ? 'Re-key admin' : 'Re-key NPM admin'}
           </button>
-          {configured && (
+          {state?.configured && (
             <button
               onClick={handleForget}
               disabled={busy !== null}
               className="px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50"
             >
               {busy === 'forget' && <Loader2 className="w-4 h-4 animate-spin inline mr-1" />}
-              Forget credentials
+              Forget credential
             </button>
           )}
         </div>
