@@ -29,10 +29,10 @@ export const dynamic = 'force-dynamic';
 /**
  * GET /api/system/stacks/reset/info?node=<name>
  *
- * Returns per-group disk usage so the wizard's "what will Clean
- * install wipe?" panel can show concrete sizes next to each
- * preserve/wipe checkbox — operators decide intentionally instead of
- * blind-clicking RESET (the #568 transparency rework).
+ * Returns per-group disk usage for the reset machinery so a caller can
+ * show concrete sizes next to each preserve/wipe group — operators
+ * decide intentionally instead of blind-clicking RESET (the #568
+ * transparency rework).
  *
  * Response:
  *   {

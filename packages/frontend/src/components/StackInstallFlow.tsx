@@ -6,9 +6,9 @@
  * Exposed as three sibling components plus a convenience default that
  * dispatches by `controller.phase`:
  *
- *   - `<StackInstallConfigureForm>` — configure phase: clean-install
- *     toggle, optional node selector, variable form (delegates to the
- *     shared `<StackVariableField>` for the type dispatch).
+ *   - `<StackInstallConfigureForm>` — configure phase: optional node
+ *     selector, variable form (delegates to the shared
+ *     `<StackVariableField>` for the type dispatch).
  *   - `<StackInstallProgress>`       — installing / done phase: log
  *     panel with auto-scroll + the NPM-credentials prompt when the
  *     proxy step asks for them.
