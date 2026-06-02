@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.90.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.89.0...servicebay-v4.90.0) (2026-06-02)
+
+
+### Features
+
+* **install:** per-service config/data split + wipe-mode model ([244a3e8](https://github.com/mdopp/servicebay/commit/244a3e8d310a6cd6b13b12c0cdd79a5ab874dc94))
+* **install:** per-service config/data split + wipe-mode model ([0da637a](https://github.com/mdopp/servicebay/commit/0da637a32da3ccf794b48023fc0a36a45f8d5b2c)), closes [#1585](https://github.com/mdopp/servicebay/issues/1585)
+
 ## [4.89.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.88.1...servicebay-v4.89.0) (2026-06-02)
 
 
