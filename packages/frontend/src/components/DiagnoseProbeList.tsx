@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertCircle, AlertTriangle, CheckCircle2, Info, Loader2, Wrench } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, History, Info, Loader2, Wrench, X } from 'lucide-react';
 
 /**
  * Shared probe-list renderer used by Settings → Self-Diagnose and by the
@@ -68,6 +68,16 @@ export interface ProbeHistory {
   lastOk: string | null;
   trend: ('ok' | 'fail')[];
   total: number;
+}
+
+/** One persisted result row served by `GET /api/health/checks/:id/history`
+ *  (#1553). Mirrors the HealthStore result shape the Checks tab already
+ *  consumes — newest first. */
+interface ProbeHistoryItem {
+  status: 'ok' | 'fail';
+  latency: number;
+  timestamp: string;
+  message?: string;
 }
 
 export interface DiagnoseProbe {
@@ -235,6 +245,35 @@ export default function DiagnoseProbeList({
   const [expandedForms, setExpandedForms] = useState<Record<string, boolean>>({});
   /** Form-field values per action. */
   const [formValues, setFormValues] = useState<Record<string, Record<string, string>>>({});
+  /** #1553 — self-contained per-probe history drawer. #1540 persists each
+   *  probe as a synthetic `diagnose:<probeId>` check, so the same
+   *  `/api/health/checks/:id/history` endpoint the Checks tab uses also
+   *  serves diagnose history. Owning the drawer here (rather than threading
+   *  a callback through every consumer) means setup, StacksStep and the
+   *  HealthDashboard repair popup all get the opener for free. */
+  const [historyProbe, setHistoryProbe] = useState<DiagnoseProbe | null>(null);
+  const [historyData, setHistoryData] = useState<ProbeHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const handleViewHistory = async (probe: DiagnoseProbe) => {
+    setHistoryProbe(probe);
+    setHistoryData([]);
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/health/checks/${encodeURIComponent(`diagnose:${probe.id}`)}/history`);
+      if (res.ok) setHistoryData(await res.json());
+    } catch {
+      // Leave historyData empty — the drawer shows its "no history" state.
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const closeHistory = () => {
+    setHistoryProbe(null);
+    setHistoryData([]);
+    setHistoryLoading(false);
+  };
 
   const runAction = async (probe: DiagnoseProbe, action: ProbeAction, payload?: Record<string, string>, itemId?: string) => {
     if (action.destructive) {
@@ -301,7 +340,20 @@ export default function DiagnoseProbeList({
                     <strong>Suggestion:</strong> {probe.hint}
                   </p>
                 )}
-                <ProbeHistoryBadge history={probe.history} compact={compact} />
+                <div className="flex items-start justify-between gap-2">
+                  <ProbeHistoryBadge history={probe.history} compact={compact} />
+                  {probe.history && probe.history.trend.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void handleViewHistory(probe)}
+                      title="View history"
+                      aria-label={`View history for ${probe.label}`}
+                      className="shrink-0 mt-1.5 p-1 rounded hover:bg-black/5 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 transition-colors"
+                    >
+                      <History size={14} />
+                    </button>
+                  )}
+                </div>
                 {(probe.actions ?? []).length > 0 && (
                   <div className="mt-3 space-y-2">
                     <div className="flex flex-wrap gap-2">
@@ -530,6 +582,80 @@ export default function DiagnoseProbeList({
           </div>
         </details>
       ))}
+
+      {/* #1553 — per-probe history drawer. Opens the persisted
+          `diagnose:<probeId>` results so the diagnose page has parity with
+          the Checks tab's history opener. */}
+      {historyProbe && (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm"
+          onClick={closeHistory}
+        >
+          <div
+            className="w-full sm:max-w-2xl h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-4 p-5 border-b border-gray-200 dark:border-gray-800">
+              <div className="min-w-0">
+                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">Probe history</p>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate">{historyProbe.label}</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 font-mono truncate">diagnose:{historyProbe.id}</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeHistory}
+                aria-label="Close history"
+                className="shrink-0 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              {historyLoading && historyData.length === 0 ? (
+                <div className="flex h-full items-center justify-center gap-3 text-gray-500 dark:text-gray-300">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Loading history…</span>
+                </div>
+              ) : historyData.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-gray-400">
+                  No history recorded yet for this probe.
+                </div>
+              ) : (
+                <table className="w-full text-left text-sm border border-slate-200 dark:border-gray-800 rounded-lg overflow-hidden">
+                  <thead className="bg-slate-100 dark:bg-gray-800/60 text-gray-600 dark:text-gray-300">
+                    <tr>
+                      <th className="p-3 font-semibold">Time</th>
+                      <th className="p-3 font-semibold">Status</th>
+                      <th className="p-3 font-semibold">Message</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                    {historyData.map((h, i) => (
+                      <tr key={i} className="hover:bg-slate-50 dark:hover:bg-gray-800/40 align-top">
+                        <td className="p-3 text-gray-900 dark:text-white whitespace-nowrap">
+                          {new Date(h.timestamp).toLocaleString()}
+                        </td>
+                        <td className="p-3">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                            h.status === 'ok'
+                              ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                              : 'bg-rose-100 dark:bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                          }`}>
+                            {h.status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="p-3 text-gray-500 dark:text-gray-400 whitespace-pre-wrap break-words font-mono text-xs">
+                          {h.message ?? ''}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

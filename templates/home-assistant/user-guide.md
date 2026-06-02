@@ -1,11 +1,19 @@
 ---
-lucide_icon: "lightbulb"
-tagline: "Control lights, sensors, and smart-home devices from one app — and keep all the data on your home server."
-recommended_apps:
-  - name: "Home Assistant Companion"
-    url: "https://companion.home-assistant.io/"
-    platforms: ["ios", "android"]
-    note: "Official app — exposes your phone's sensors (location, battery) to HA so automations can react to who's home."
+# Explicit card pinned to HA_SUBDOMAIN. The template ships two
+# subdomain variables (ZWAVE_JS_SUBDOMAIN first, then HA_SUBDOMAIN),
+# so the implicit single-card path picked the first-listed one and
+# the "Home Assistant" card opened zwave.<domain> instead of
+# home.<domain> (#1562). zwave-js is internal-only and gets no portal
+# card of its own.
+cards:
+  - subdomain_var: "HA_SUBDOMAIN"
+    lucide_icon: "lightbulb"
+    tagline: "Control lights, sensors, and smart-home devices from one app — and keep all the data on your home server."
+    recommended_apps:
+      - name: "Home Assistant Companion"
+        url: "https://companion.home-assistant.io/"
+        platforms: ["ios", "android"]
+        note: "Official app — exposes your phone's sensors (location, battery) to HA so automations can react to who's home."
 ---
 
 # Getting started with Home Assistant
