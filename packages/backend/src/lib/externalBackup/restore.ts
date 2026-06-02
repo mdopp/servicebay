@@ -140,14 +140,25 @@ export async function restoreServiceBackup(
 }
 
 /**
- * #1218 entry point 1 — auto-restore a service's config from the NAS during a
- * **reinstall**, before its pod starts. No-op (and never throws) unless:
- *  - this is a clean install / reinstall (`cleanInstall`), AND
+ * #1218 entry point 1 — auto-restore a service's config from the NAS before its
+ * pod starts on any (re)deploy. Gated on its **own safe conditions** rather than
+ * the install mode: it fires when a `<service>.tar` exists on the NAS **and**
+ * the service's data dir is empty/fresh — so it can't clobber live data, yet it
+ * no longer depends on the retired `cleanInstall` flag (#1584: #1520 hard-set
+ * `cleanInstall = false`, which silently disabled restore for every install).
+ *
+ * Conditions (all required to restore):
  *  - the node is Local (the restore primitive uses the backend's own fs), AND
  *  - a `<service>.tar` exists on the NAS, AND
  *  - the service's data dir is empty (`restoreServiceBackup` also refuses a
  *    non-empty dir, so a live service's config is never clobbered).
- * Logs each step through the injected `log` so it shows on the install stream.
+ *
+ * Emits a VISIBLE breadcrumb through the injected `log` for BOTH outcomes —
+ * restore-performed and restore-skipped (with the reason) — so a skipped
+ * restore is never silent (the #1584 root cause was the old silent `return`).
+ * The Local-node short-circuit stays silent: it's an architectural no-op (the
+ * primitive is local-fs only), not a user-facing decision.
+ *
  * Best-effort: a restore failure is logged and swallowed so it can't block the
  * deploy. The install runner calls this from `deployItem` (epic #1190).
  */
@@ -156,12 +167,19 @@ export async function autoRestoreServiceOnReinstall(
   opts: { cleanInstall?: boolean; node?: string | null },
   log: (line: string) => Promise<void>,
 ): Promise<void> {
-  if (!opts.cleanInstall) return;
+  // #1584: deliberately NOT gated on opts.cleanInstall — that flag was retired
+  // to false (#1520) and was the sole gate, which silently killed auto-restore.
   if (opts.node && opts.node !== 'Local') return;
   try {
     const hasBackup = (await listServiceBackups()).some(b => b.service === service);
-    if (!hasBackup) return;
-    if (!(await isFreshDataDir(await resolveServiceDataDir(service)))) return;
+    if (!hasBackup) {
+      await log(`(note) ${service}: no config backup found on the FritzBox NAS — starting on existing/blank data.`);
+      return;
+    }
+    if (!(await isFreshDataDir(await resolveServiceDataDir(service)))) {
+      await log(`(note) ${service}: a config backup exists on the NAS, but the data dir is not empty — keeping the on-disk data and skipping restore.`);
+      return;
+    }
     await log(`💾 ${service}: found a config backup on the FritzBox NAS and the data dir is empty — restoring before first start…`);
     const r = await restoreServiceBackup(service, { node: opts.node });
     await log(`✅ ${service}: restored ${r.files} config file(s) from the NAS${r.meta ? ` (backed up ${r.meta.createdAt.slice(0, 10)} from ${r.meta.nodeId})` : ''}.`);
