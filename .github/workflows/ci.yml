@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -126,7 +126,7 @@ jobs:
     steps:
       # fetch-depth: 0 so the diff-coverage gate (#1548) can `git merge-base`
       # against the PR base branch — the new-code coverage floor needs the diff.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: actions/setup-node@v4
@@ -161,7 +161,7 @@ jobs:
     runs-on: ubuntu-latest
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -182,7 +182,7 @@ jobs:
     runs-on: ubuntu-latest
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -212,7 +212,7 @@ jobs:
     # exercised via vitest subprocess (post_deploy_runtime.test.ts) — no
     # need to duplicate it here.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -225,7 +225,7 @@ jobs:
     container:
       image: returntocorp/semgrep
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # ServiceBay-specific patterns only at first. Each rule in .semgrep.yml
       # has a severity assigned; --severity=ERROR makes only ERROR-tagged
       # findings fail the build (WARNING/INFO are reported but non-blocking).
@@ -257,7 +257,7 @@ jobs:
     runs-on: ubuntu-latest
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -277,7 +277,7 @@ jobs:
       run:
         working-directory: tools/sb
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'

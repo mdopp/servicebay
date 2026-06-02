@@ -36,7 +36,7 @@ jobs:
             description: "Placeholder — keeps the workflow valid until ServiceBay ships its own image."
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check Dockerfile exists
         id: check

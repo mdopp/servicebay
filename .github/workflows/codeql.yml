@@ -48,7 +48,7 @@ jobs:
           - language: go
             build-mode: autobuild
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Go's autobuild needs the toolchain; the JS analysis uses build-mode:none.
       - if: matrix.language == 'go'
