@@ -13,7 +13,7 @@ import { applyVariableDefaults } from './manifestAssembler';
 import type { JobInput } from './jobStore';
 
 function input(partial: Partial<JobInput>): JobInput {
-  const base: JobInput = { items: [], variables: [], cleanInstall: false, cleanInstallConfirm: '', templateSource: 'installed', host: 'localhost' };
+  const base: JobInput = { items: [], variables: [], wipeMode: 'install', templateSource: 'installed', host: 'localhost' };
   return { ...base, ...partial };
 }
 

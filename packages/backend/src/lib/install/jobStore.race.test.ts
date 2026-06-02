@@ -29,8 +29,7 @@ function mkInput(): JobInput {
   return {
     items: [{ name: 'stub', checked: true }],
     variables: [],
-    cleanInstall: false,
-    cleanInstallConfirm: '',
+    wipeMode: 'install',
     templateSource: 'test',
     host: 'localhost',
   };

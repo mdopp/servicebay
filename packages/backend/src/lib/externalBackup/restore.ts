@@ -19,9 +19,18 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { fetchServiceBackup, listServiceBackups, resolveServiceDataDir, type ServiceBackupMeta } from './producer';
-import { getServiceManifest } from './serviceManifest';
+import { getServiceManifest, getConfigPaths } from './serviceManifest';
 import { safeTarExtract } from '../systemBackup';
 import { logger } from '../logger';
+
+/**
+ * Per-service wipe mode (#1585). Structurally identical to
+ * `install/jobStore.ts`'s `WipeMode` but declared locally so this backup module
+ * doesn't import from the install module (the install runner already imports
+ * THIS module — a cross-import would form a cycle). The install runner passes
+ * its `JobInput.wipeMode` straight through.
+ */
+type WipeMode = 'install' | 'wipe-config' | 'wipe-all';
 
 export interface RestoreResult {
   service: string;
@@ -140,48 +149,116 @@ export async function restoreServiceBackup(
 }
 
 /**
- * #1218 entry point 1 — auto-restore a service's config from the NAS before its
- * pod starts on any (re)deploy. Gated on its **own safe conditions** rather than
- * the install mode: it fires when a `<service>.tar` exists on the NAS **and**
- * the service's data dir is empty/fresh — so it can't clobber live data, yet it
- * no longer depends on the retired `cleanInstall` flag (#1584: #1520 hard-set
- * `cleanInstall = false`, which silently disabled restore for every install).
+ * #1585 — per-service wipe before a (re)deploy, under the install `wipeMode`
+ * model. Acts ONLY on this one service's on-disk data dir (never a system-wide
+ * nuke — that's Factory Reset's job):
  *
- * Conditions (all required to restore):
- *  - the node is Local (the restore primitive uses the backend's own fs), AND
- *  - a `<service>.tar` exists on the NAS, AND
- *  - the service's data dir is empty (`restoreServiceBackup` also refuses a
- *    non-empty dir, so a live service's config is never clobbered).
+ *   install      → no-op (keep config + data)
+ *   wipe-config  → delete the service's CONFIG paths (manifest `include`),
+ *                  KEEP its DATA (recorder db, photo library, mesh db, …)
+ *   wipe-all     → delete the whole service data dir (CONFIG + DATA)
  *
- * Emits a VISIBLE breadcrumb through the injected `log` for BOTH outcomes —
+ * After this runs, `autoRestoreServiceOnReinstall` re-seeds CONFIG from the NAS
+ * (the wiped CONFIG paths are gone, so the restore re-creates them over the
+ * kept DATA). ServiceBay-managed bits stamped into the restored
+ * `configuration.yaml` (HA `http: trusted_proxies`, the OIDC client secret) are
+ * re-applied by the existing post-deploy self-heal hooks (serviceLifecycle's
+ * trusted_proxies append + the #989 OIDC dispatcher), which run on every deploy
+ * regardless of the restore — so the documented caveat is honoured without a
+ * second stamping path here.
+ *
+ * Emits a VISIBLE breadcrumb for what it wiped. Best-effort: a wipe failure is
+ * logged and swallowed so it can't block the deploy. Local-node only (the fs
+ * primitive is local); a remote node short-circuits silently.
+ */
+export async function wipeServiceForReinstall(
+  service: string,
+  opts: { wipeMode?: WipeMode; node?: string | null },
+  log: (line: string) => Promise<void>,
+): Promise<void> {
+  const mode = opts.wipeMode ?? 'install';
+  if (mode === 'install') return;
+  if (opts.node && opts.node !== 'Local') return;
+  if (!getServiceManifest(service)) {
+    // No manifest → no declared config/data classes → nothing safe to wipe.
+    await log(`(note) ${service}: no backup manifest, skipping ${mode} wipe (no config/data classification).`);
+    return;
+  }
+  try {
+    const dataDir = await resolveServiceDataDir(service);
+    if (mode === 'wipe-all') {
+      await fs.rm(dataDir, { recursive: true, force: true });
+      await log(`🧹 ${service}: wipe-all — cleared the service data dir (config + data).`);
+      return;
+    }
+    // wipe-config: delete only the manifest's CONFIG paths, keep everything else.
+    const configPaths = getConfigPaths(service);
+    let removed = 0;
+    for (const rel of configPaths) {
+      const abs = path.join(dataDir, rel);
+      // Guard against traversal — the manifest is trusted static data, but keep
+      // the same invariant the restore path enforces.
+      if (!abs.startsWith(dataDir + path.sep)) continue;
+      try {
+        await fs.rm(abs, { recursive: true, force: true });
+        removed += 1;
+      } catch { /* path absent — fine */ }
+    }
+    await log(`🧹 ${service}: wipe-config — cleared ${removed} config path(s), kept the service data on disk.`);
+  } catch (e) {
+    await log(`(note) ${service}: ${mode} wipe skipped — ${e instanceof Error ? e.message : String(e)}.`);
+  }
+}
+
+/**
+ * #1218 entry point 1 / #1585 — auto-restore a service's config from the NAS
+ * before its pod starts on any (re)deploy. Gated on its **own safe conditions**
+ * plus the install `wipeMode`, not the retired `cleanInstall` flag (#1584: #1520
+ * hard-set `cleanInstall = false`, which silently disabled restore).
+ *
+ * Restore conditions by mode:
+ *  - `install`: restore only if the data dir is empty/fresh (config missing) —
+ *    never clobber a live service's config.
+ *  - `wipe-config` / `wipe-all`: the CONFIG paths were just cleared by
+ *    `wipeServiceForReinstall`, so FORCE-restore them from the NAS over the kept
+ *    DATA (the tar contains only CONFIG paths, so this re-seeds config without
+ *    touching the kept recorder db / photo library / mesh db).
+ *
+ * Common preconditions (all modes): the node is Local AND a `<service>.tar`
+ * exists on the NAS. Emits a VISIBLE breadcrumb for BOTH outcomes —
  * restore-performed and restore-skipped (with the reason) — so a skipped
  * restore is never silent (the #1584 root cause was the old silent `return`).
- * The Local-node short-circuit stays silent: it's an architectural no-op (the
- * primitive is local-fs only), not a user-facing decision.
+ * The Local-node short-circuit stays silent: it's an architectural no-op.
  *
  * Best-effort: a restore failure is logged and swallowed so it can't block the
  * deploy. The install runner calls this from `deployItem` (epic #1190).
  */
 export async function autoRestoreServiceOnReinstall(
   service: string,
-  opts: { cleanInstall?: boolean; node?: string | null },
+  opts: { wipeMode?: WipeMode; node?: string | null },
   log: (line: string) => Promise<void>,
 ): Promise<void> {
-  // #1584: deliberately NOT gated on opts.cleanInstall — that flag was retired
-  // to false (#1520) and was the sole gate, which silently killed auto-restore.
+  const mode = opts.wipeMode ?? 'install';
+  // #1584/#1585: gated on the wipeMode + safe conditions, NOT the retired
+  // cleanInstall flag (which #1520 pinned false, silently killing restore).
   if (opts.node && opts.node !== 'Local') return;
+  const forceRestore = mode === 'wipe-config' || mode === 'wipe-all';
   try {
     const hasBackup = (await listServiceBackups()).some(b => b.service === service);
     if (!hasBackup) {
       await log(`(note) ${service}: no config backup found on the FritzBox NAS — starting on existing/blank data.`);
       return;
     }
-    if (!(await isFreshDataDir(await resolveServiceDataDir(service)))) {
+    if (!forceRestore && !(await isFreshDataDir(await resolveServiceDataDir(service)))) {
       await log(`(note) ${service}: a config backup exists on the NAS, but the data dir is not empty — keeping the on-disk data and skipping restore.`);
       return;
     }
-    await log(`💾 ${service}: found a config backup on the FritzBox NAS and the data dir is empty — restoring before first start…`);
-    const r = await restoreServiceBackup(service, { node: opts.node });
+    await log(
+      forceRestore
+        ? `💾 ${service}: ${mode} — restoring config from the FritzBox NAS over the kept data before first start…`
+        : `💾 ${service}: found a config backup on the FritzBox NAS and the data dir is empty — restoring before first start…`,
+    );
+    const r = await restoreServiceBackup(service, { node: opts.node, force: forceRestore });
     await log(`✅ ${service}: restored ${r.files} config file(s) from the NAS${r.meta ? ` (backed up ${r.meta.createdAt.slice(0, 10)} from ${r.meta.nodeId})` : ''}.`);
     // On a reinstall the pod isn't up yet, so credentialReconcile is normally
     // a no-op here (the install runner's post-deploy self-heal re-keys NPM once

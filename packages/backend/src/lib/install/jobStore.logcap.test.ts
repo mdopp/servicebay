@@ -34,8 +34,7 @@ function mkInput(): JobInput {
   return {
     items: [],
     variables: [],
-    cleanInstall: false,
-    cleanInstallConfirm: '',
+    wipeMode: 'install',
     templateSource: 'test',
     host: 'localhost',
   };
