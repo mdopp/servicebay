@@ -371,11 +371,18 @@ storage:
           # Best-effort: a box booted with SELinux disabled has no chcon.
           chcon -R -t container_file_t "$MOUNT_POINT/containers" 2>/dev/null || true
 
-          # Factory-fresh "wipe-configs" (#1496): clear ServiceBay's own identity
-          # so the install promotes the freshly-baked config instead of merging the
-          # old one back — fresh admin / secret.key / tokens — while KEEPING all
-          # service data under stacks/. (wipe-all-data already reformatted, so the
-          # dir is empty there and this is a no-op.) Gated on the baked flag.
+          # Factory-fresh "wipe-configs" (#1496): clear ServiceBay's own IDENTITY
+          # (config.json / secret.key / admin / API tokens) so the install promotes
+          # the freshly-baked config instead of merging the old one back — while
+          # KEEPING all service data under stacks/.
+          #
+          # NOTE (#1585): "wipe-configs" here is ServiceBay's OWN identity — NOT a
+          # service's config. It is a DIFFERENT axis from the per-service wipeMode
+          # (install | wipe-config | wipe-all) the install runner applies to each
+          # service's CONFIG/DATA paths. This build flag never touches a service's
+          # own config or data under stacks/<service>/; the per-service wipe does.
+          # (wipe-all-data already reformatted, so the dir is empty there and this
+          # is a no-op.) Gated on the baked flag.
           # checks.json + results/ are ServiceBay state (the health-check registry
           # and its history), not service data — they belong on the wiped side, or
           # an un-installed service's check leaks across a reinstall (#1551).

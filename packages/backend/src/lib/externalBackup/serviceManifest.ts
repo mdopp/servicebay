@@ -36,11 +36,33 @@ export interface ServiceBackupManifest {
    *  (NPM ships as template `nginx` but stores under `nginx-proxy-manager/`).
    *  Defaults to `service`. */
   dataSubdir?: string;
-  /** Relative paths/dirs that ARE config worth preserving across a reinstall. */
+  /**
+   * The CONFIG class (#1585): small, backed up to the NAS, restorable.
+   * These relative paths/dirs ARE the per-service config worth preserving
+   * across a reinstall (HA `configuration.yaml`/automations/`.storage`, the
+   * OIDC client, etc.). The backup producer tars exactly these; a
+   * `wipe-config` reinstall deletes exactly these from disk and restores them
+   * from the NAS on startup. `data[]` (below) is KEPT through a wipe-config.
+   */
   include: string[];
   /** Relative paths/dirs to never back up — bulk data, logs, caches, and
    *  secrets with no restore value. Conceptually excludes win over includes. */
   exclude: string[];
+  /**
+   * The DATA class (#1585): large, NEVER backed up, lives on the RAID. These
+   * relative paths/dirs are KEPT on disk through a `wipe-config` reinstall
+   * (HA `home-assistant_v2.db` recorder history, Immich photo library, Z-Wave
+   * mesh db). A `wipe-all` reinstall wipes them; `wipe-config` does not.
+   *
+   * This is a DECLARATION of the heavy on-RAID artifacts, distinct from
+   * `exclude` (which is "don't put this in the backup tarball" — a superset
+   * that also covers logs/caches/sessions). Both can name the same path; the
+   * intent differs. Optional: a service with no large on-RAID artifacts (e.g.
+   * authelia) omits it. Informational/documentary today — wipe-config keeps
+   * everything that isn't a CONFIG path regardless — but it makes the
+   * config↔data split explicit and is the seam for any future per-class wipe.
+   */
+  data?: string[];
   /** Per-file transforms applied before a file enters the tarball. */
   strip?: StripRule[];
   /** Optional in-container snapshot step the producer runs before staging
@@ -72,6 +94,13 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
       'home-assistant_v2.db', 'home-assistant_v2.db-wal', 'home-assistant_v2.db-shm',
       'history', 'logs', 'home-assistant.log', 'tts', 'image', 'www', 'deps',
     ],
+    // Large on-RAID artifacts kept through a wipe-config: the recorder history
+    // DB (can be many GB) and the Z-Wave mesh DB. The zwave_js *keys* are CONFIG
+    // (in `include`) so the mesh re-pairs; the mesh db itself is heavy DATA.
+    data: [
+      'home-assistant_v2.db', 'home-assistant_v2.db-wal', 'home-assistant_v2.db-shm',
+      'zwave_js_network.db',
+    ],
   },
   {
     service: 'authelia',
@@ -92,6 +121,9 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     // device list + folder-share definitions; the synced data re-syncs from peers.
     include: ['config.xml'],
     exclude: ['index-v0.14.0.db', 'index'],
+    // The synced-folder index re-syncs from peers, but it's a heavy on-RAID
+    // artifact worth keeping through a wipe-config rather than re-indexing.
+    data: ['index-v0.14.0.db', 'index'],
   },
   {
     service: 'hermes',
@@ -99,6 +131,9 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     // installed-skills git URLs, household-member personalization.
     include: ['config.yaml'],
     exclude: ['vectordb', 'embeddings', 'conversations', 'history'],
+    // The vector store + embeddings are large and rebuildable, but kept on the
+    // RAID through a wipe-config (re-embedding is expensive).
+    data: ['vectordb', 'embeddings'],
     // LLM API keys are re-entered after a restore.
     strip: [{ file: 'config.yaml', dropYamlKeys: ['api_key', 'apiKey', 'llm_api_key'] }],
   },
@@ -134,6 +169,25 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
 
 export function getServiceManifest(service: string): ServiceBackupManifest | undefined {
   return SERVICE_BACKUP_MANIFESTS.find(m => m.service === service);
+}
+
+/**
+ * The CONFIG class for a service (#1585): the relative paths a `wipe-config`
+ * reinstall deletes and then restores from the NAS. This is exactly the
+ * manifest's `include` set — the small, backed-up, restorable config. Returns
+ * `[]` for a service with no manifest (nothing classified as config).
+ */
+export function getConfigPaths(service: string): string[] {
+  return [...(getServiceManifest(service)?.include ?? [])];
+}
+
+/**
+ * The DATA class for a service (#1585): the large on-RAID artifacts a
+ * `wipe-config` reinstall KEEPS (and a `wipe-all` wipes). Returns `[]` when the
+ * manifest declares none.
+ */
+export function getDataPaths(service: string): string[] {
+  return [...(getServiceManifest(service)?.data ?? [])];
 }
 
 /**

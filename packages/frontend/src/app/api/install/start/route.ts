@@ -36,15 +36,16 @@ export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async ({ request
     if (!input || !Array.isArray(input.items) || !Array.isArray(input.variables)) {
       return NextResponse.json({ error: 'invalid input' }, { status: 400 });
     }
-    // #1520 — clean-install (wipe-then-deploy) is retired: an install never
-    // wipes existing data. A reinstall is a plain redeploy over the data on
-    // disk (the runner's `!cleanInstall` path: reuse saved secrets, preserve
-    // certs — the safe credential-reconciliation defaults); the only
-    // system-wide wipe is the explicit Factory Reset. Enforce server-side so
-    // no caller (old client, replayed JobInput) can trigger the wipe branch.
-    input.cleanInstall = false;
-    input.cleanInstallConfirm = '';
-    delete input.preserve;
+    // #1585 — wipe-mode model. The install runner never SYSTEM-WIDE wipes (that
+    // is Factory Reset's job); `wipe-config`/`wipe-all` act only on the
+    // PER-SERVICE config/data paths from each backup manifest. Normalise the
+    // field server-side: anything that isn't a known mode (or absent, e.g. an
+    // old client / replayed JobInput) becomes the safe `install` default — keep
+    // config + data, reuse saved secrets, restore config only if missing.
+    const VALID_WIPE_MODES = ['install', 'wipe-config', 'wipe-all'] as const;
+    input.wipeMode = VALID_WIPE_MODES.includes(input.wipeMode as never)
+      ? input.wipeMode
+      : 'install';
     const existing = await getCurrentJob();
     if (existing) {
       return NextResponse.json(

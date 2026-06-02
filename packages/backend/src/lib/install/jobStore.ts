@@ -69,17 +69,34 @@ export interface JobInputVariable {
   meta?: unknown;
 }
 
+/**
+ * Per-service wipe mode for an install run (#1585). Replaces the old inert
+ * `cleanInstall` + `cleanInstallConfirm` + `preserve[]` triple (the install
+ * runner must never system-wide-wipe — that's Factory Reset's job). Per the
+ * agreed model, the unit of action is the *service's* config↔data split:
+ *
+ *   mode        | CONFIG | DATA | on startup
+ *   ------------+--------+------+---------------------------
+ *   install     | keep   | keep | restore CONFIG iff missing
+ *   wipe-config | WIPE   | keep | RESTORE CONFIG from NAS
+ *   wipe-all    | WIPE   | WIPE | RESTORE CONFIG from NAS
+ *
+ * CONFIG / DATA paths come from each service's backup manifest
+ * (`externalBackup/serviceManifest.ts`). Distinct from the *build-time*
+ * `FACTORY_FRESH=wipe-configs` flag, which wipes ServiceBay's OWN identity
+ * (config.json/secret.key/tokens) — not a service's config.
+ */
+export type WipeMode = 'install' | 'wipe-config' | 'wipe-all';
+
 export interface JobInput {
   items: JobInputItem[];
   variables: JobInputVariable[];
   node?: string;
-  cleanInstall: boolean;
-  cleanInstallConfirm: string;
-  /** Per-group preserve flags for the clean-install wipe (#568). Each
-   *  entry the operator left checked means "keep this group". Maps to
-   *  `ResetGroup` from `@/lib/install/resetGroups`. Omitted = use the
-   *  API default (keep system-critical: secrets + certs + identity). */
-  preserve?: string[];
+  /** How an install treats each service's on-disk config/data (#1585). The
+   *  install runner never system-wide-wipes; `wipe-config`/`wipe-all` act on
+   *  the per-service config/data paths from the backup manifest. Defaults to
+   *  `install` (keep everything) when absent. */
+  wipeMode?: WipeMode;
   templateSource: string;
   /** `window.location.hostname` captured client-side so the credentials
    *  banner can render reachable URLs without the server having to guess. */

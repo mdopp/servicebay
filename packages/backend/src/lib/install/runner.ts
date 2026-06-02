@@ -415,14 +415,29 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
     },
   });
 
+  // #1585 — per-service wipe under the new wipeMode model. wipe-config clears
+  // only this service's CONFIG paths (keeps DATA); wipe-all clears CONFIG+DATA.
+  // Acts ONLY on this service's data dir — never a system-wide nuke. No-op for
+  // `install` (or absent mode). Best-effort; never throws.
+  {
+    const { wipeServiceForReinstall } = await import('@/lib/externalBackup/restore');
+    await wipeServiceForReinstall(
+      item.name,
+      { wipeMode: input.wipeMode, node: input.node },
+      line => log(jobId, line),
+    );
+  }
+
   // #1218 entry point 1 — restore this service's config from the NAS before its
-  // pod starts, on a reinstall into an empty data dir. No-op otherwise; never
-  // throws (see autoRestoreServiceOnReinstall). Mirrors the cert-archive restore.
+  // pod starts. On `install` it restores only into an empty data dir (config
+  // missing); on `wipe-config`/`wipe-all` the CONFIG paths were just cleared, so
+  // it force-restores them over the kept DATA. No-op otherwise; never throws
+  // (see autoRestoreServiceOnReinstall). Mirrors the cert-archive restore.
   {
     const { autoRestoreServiceOnReinstall } = await import('@/lib/externalBackup/restore');
     await autoRestoreServiceOnReinstall(
       item.name,
-      { cleanInstall: input.cleanInstall, node: input.node },
+      { wipeMode: input.wipeMode, node: input.node },
       line => log(jobId, line),
     );
   }
@@ -673,62 +688,16 @@ async function runJob(jobId: string): Promise<void> {
 
   const scriptCredentials: Credential[] = [];
 
-  // Optional clean-install reset.
-  if (input.cleanInstall && input.cleanInstallConfirm === 'RESET') {
-    // Per-group preserve flags (#568): operator's checkbox state from
-    // the wizard. Omitted entirely → endpoint applies the conservative
-    // default (keep secrets + certs + identity, wipe service-data).
-    const preserve = input.preserve;
-    const previewLabel = preserve === undefined
-      ? 'default (keep secrets/certs/identity, wipe service-data)'
-      : preserve.length === 0
-        ? 'FACTORY RESET — wipe everything'
-        : `keep ${preserve.join(' + ')}`;
-    await log(jobId, `🧹 Clean install — ${previewLabel}…`);
-    try {
-      const res = await apiFetch('/api/system/stacks/reset', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          confirm: 'RESET',
-          node: input.node || undefined,
-          ...(preserve !== undefined ? { preserve } : {}),
-        }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        const removed = data.deleted?.length ?? 0;
-        const kept = data.preservedServices?.length ?? 0;
-        await log(jobId, `✅ Reset done — removed ${removed} service${removed === 1 ? '' : 's'}${kept ? `, kept ${kept} (${(data.preservedServices ?? []).join(', ')})` : ''}.`);
-        if (data.wipeStepsRun?.length) {
-          await log(jobId, `   Wiped: ${data.wipeStepsRun.join('; ')}.`);
-        }
-        if (data.certArchive) {
-          await log(jobId, `   Archived NPM data to ${data.certArchive} — cert-reuse will pull from it on next install.`);
-        }
-        if (data.failed?.length) {
-          await log(jobId, `⚠️ Some services could not be cleanly removed: ${data.failed.map((f: { name: string }) => f.name).join(', ')}`);
-        }
-      } else {
-        // Pre-fix the runner logged a warning and continued. But the
-        // operator typed RESET to confirm they want a clean slate;
-        // proceeding to deploy on top of un-wiped state silently
-        // violates that promise (existing service data persists,
-        // stale containers count as already-installed in the wizard
-        // UI, the "8/12 deployed" confusion). Hard-fail the install
-        // so the operator can investigate + retry.
-        const detail = data.error || 'unknown error';
-        await log(jobId, `❌ Reset failed: ${detail}. Aborting install — existing service data would persist and counted as already-installed in the next run. Fix the reset cause then retry.`);
-        await patchJob(jobId, { phase: 'error', endedAt: new Date().toISOString(), error: `Reset failed: ${detail}` });
-        return;
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'unknown error';
-      await log(jobId, `❌ Reset call failed: ${msg}. Aborting install — clean-install was requested but the wipe didn't run. Check the server log and retry.`);
-      await patchJob(jobId, { phase: 'error', endedAt: new Date().toISOString(), error: `Reset call failed: ${msg}` });
-      return;
-    }
-  }
+  // #1585 — the install runner NEVER system-wide-wipes. The old
+  // `if (input.cleanInstall && cleanInstallConfirm === 'RESET')` branch POSTed
+  // to `/api/system/stacks/reset` (a system-wide nuke of EVERY service on the
+  // node) and was already dead (cleanInstall was hard-pinned `false` in the
+  // start route). It is deleted here. System-wide wipe lives only in the
+  // explicit Factory Reset (`/api/system/factory-reset`, which still uses
+  // `/api/system/stacks/reset`). Per-service wipe under the new `wipeMode`
+  // model happens per-service in `deployItem` (it clears only that service's
+  // CONFIG (wipe-config) or CONFIG+DATA (wipe-all) paths, never other
+  // services' data), then restores CONFIG from the NAS on startup.
 
   // Capture / refresh the host's LAN IP synchronously (#660 — S2).
   //
@@ -827,10 +796,14 @@ async function runJob(jobId: string): Promise<void> {
   // and reinstall", which silently destroys identity state — the
   // opposite of what they ticked.
   //
-  // Conditions for the override:
-  //   - Not a clean install (always reuse saved state on plain re-install), OR
-  //   - Clean install AND `secrets` is in the preserve list (operator
-  //     explicitly chose to keep prior identity).
+  // #1585 — saved secrets are ALWAYS reused. ServiceBay's identity (saved
+  // secret-typed variables, secret.key, tokens) is never wiped by the install
+  // runner under any wipeMode: `wipe-config`/`wipe-all` clear a SERVICE's
+  // config/data, not ServiceBay's own identity. Wiping identity is the
+  // build-time `FACTORY_FRESH=wipe-configs` flag's job — a different mechanism
+  // entirely (see jobStore.WipeMode). So the old `shouldReuseSecrets` (which
+  // already collapsed to constant-true once cleanInstall was pinned false) is
+  // dropped in favour of always reusing.
   //
   // The legacy NPM-specific block below is now subsumed by this general
   // path; kept anyway because it has a specific cert-archive-was-just-
@@ -839,9 +812,7 @@ async function runJob(jobId: string): Promise<void> {
   // Authelia-storage self-heal below reads this to decide whether the
   // encryption key matches existing on-disk Authelia storage or is
   // freshly generated.
-
-  const shouldReuseSecrets = !input.cleanInstall || (input.preserve?.includes('secrets') ?? true);
-  if (shouldReuseSecrets) {
+  {
     try {
       const { getConfig } = await import('@/lib/config');
       const { loadSavedSecrets } = await import('./savedSecrets');
@@ -1217,16 +1188,19 @@ async function runJob(jobId: string): Promise<void> {
     // don't have (forgotten, never copied off the credentials banner).
     // Auto-wipe the NPM data dir (admin sqlite + sites table) and
     // retry bootstrap; letsencrypt/ stays untouched so cert files
-    // survive — that's the only reason "preserve certs" exists in the
-    // first place.
+    // survive — the heal targets only the stale admin DB, never the certs.
     //
-    // Used to be gated on `input.cleanInstall` only — but the same
-    // mismatch happens on a regular re-install over a preserved data
-    // volume (e.g. swap an OS install, redeploy stacks). Both end with
-    // the same prompt-the-operator flow; auto-heal applies equally.
+    // #1585 — re-expressed against the wipeMode model's data-keep semantics.
+    // The heal is intrinsically cert-preserving (it removes only
+    // `nginx-proxy-manager/data`, leaving `letsencrypt/`), so it applies for
+    // any mode that keeps NPM's certs on disk: `install` and `wipe-config`
+    // (both keep DATA, i.e. letsencrypt/). On `wipe-all` the whole NPM dir was
+    // already cleared by the per-service wipe, so there's no stale admin DB to
+    // heal — skip. (Previously gated on the inert `preserve?.includes('certs')`
+    // which collapsed to constant-true.)
     if (
       bootstrapState === 'needs_credentials'
-      && (input.preserve?.includes('certs') ?? true)
+      && input.wipeMode !== 'wipe-all'
     ) {
       const node = input.node || 'Local';
       const dataDir = (await getConfig()).templateSettings?.DATA_DIR || '/mnt/data/stacks';

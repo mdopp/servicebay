@@ -3,6 +3,8 @@ import yaml from 'js-yaml';
 import {
   SERVICE_BACKUP_MANIFESTS,
   getServiceManifest,
+  getConfigPaths,
+  getDataPaths,
   stripYamlKeys,
   applyStripRules,
 } from './serviceManifest';
@@ -63,6 +65,41 @@ describe('stripYamlKeys', () => {
   it('returns the original content unchanged when it is not valid YAML', () => {
     const garbage = '\t: : not: yaml: [unclosed';
     expect(stripYamlKeys(garbage, ['password'])).toBe(garbage);
+  });
+});
+
+describe('config/data classification (#1585)', () => {
+  it('getConfigPaths returns the manifest include set (the CONFIG class)', () => {
+    const ha = getServiceManifest('home-assistant')!;
+    expect(getConfigPaths('home-assistant')).toEqual(ha.include);
+    // CONFIG includes the small restorable bits.
+    expect(getConfigPaths('home-assistant')).toContain('configuration.yaml');
+    expect(getConfigPaths('home-assistant')).toContain('.storage/zwave_js');
+  });
+
+  it('getDataPaths returns the large on-RAID artifacts kept through wipe-config', () => {
+    expect(getDataPaths('home-assistant')).toContain('home-assistant_v2.db');
+    expect(getDataPaths('home-assistant')).toContain('zwave_js_network.db');
+  });
+
+  it('CONFIG and DATA are disjoint for home-assistant (recorder db is DATA, mesh keys are CONFIG)', () => {
+    const config = new Set(getConfigPaths('home-assistant'));
+    const data = getDataPaths('home-assistant');
+    // The heavy recorder DB must NOT be in the CONFIG (backed-up) set.
+    expect(config.has('home-assistant_v2.db')).toBe(false);
+    // No DATA path is also a CONFIG path.
+    for (const d of data) expect(config.has(d)).toBe(false);
+  });
+
+  it('returns empty arrays for a service with no manifest', () => {
+    expect(getConfigPaths('not-a-service')).toEqual([]);
+    expect(getDataPaths('not-a-service')).toEqual([]);
+  });
+
+  it('a service may declare no DATA class (authelia is config-only)', () => {
+    expect(getServiceManifest('authelia')!.data).toBeUndefined();
+    expect(getDataPaths('authelia')).toEqual([]);
+    expect(getConfigPaths('authelia')).toContain('users_database.yml');
   });
 });
 
