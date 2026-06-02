@@ -109,28 +109,43 @@ const CustomEdge = ({
 
 type CustomNodeType = Node<GraphNodeData>;
 
+// Helper: extract node type info
+function getNodeTypeInfo(data: GraphNodeData) {
+  const isGroup = data.type === 'group';
+  const isExpandable = ['group', 'service', 'pod', 'proxy', 'unmanaged-service'].includes(data.type);
+  const effectiveType = ((data.type === 'group' && data.rawData?.type) ? data.rawData.type : data.type) as string;
+  const isManagedService = effectiveType === 'service';
+  const isUnmanagedService = effectiveType === 'unmanaged-service';
+  const isServiceType = isManagedService || isUnmanagedService;
+  const isMissing = data.rawData?.type === 'missing';
+  const isGateway = data.rawData?.type === 'gateway';
+  return { isGroup, isExpandable, effectiveType, isManagedService, isUnmanagedService, isServiceType, isMissing, isGateway };
+}
+
 // Custom Node Component
 const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
-    const isGroup = data.type === 'group';
-    // Services, Pods, Proxies, and unmanaged bundles can also behave as groups (can be expanded/collapsed)
-    const isExpandable = ['group', 'service', 'pod', 'proxy', 'unmanaged-service'].includes(data.type);
-  const isCollapsed = data.collapsed;
-  const onToggle = data.onToggle;
-  
+    const isCollapsed = data.collapsed;
+    const onToggle = data.onToggle;
+    const { isGroup, isExpandable, effectiveType, isManagedService, isUnmanagedService, isServiceType, isMissing, isGateway } = getNodeTypeInfo(data);
+
   // Decide whether to render as the "Opened Group Frame" or the "Node Card"
   const renderAsExpandedGroup = isExpandable && !isCollapsed;
 
   const summary = data.summary || {};
   
-  const isGateway = data.rawData?.type === 'gateway';
-  const isMissing = data.rawData?.type === 'missing';
-  
-  // Determine effective type: if group, try to use rawData.type (service, pod, proxy) to get correct label/color
-    const effectiveType = ((data.type === 'group' && data.rawData?.type) ? data.rawData.type : data.type) as string;
-    const isManagedService = effectiveType === 'service';
-    const isUnmanagedService = effectiveType === 'unmanaged-service';
-    const isServiceType = isManagedService || isUnmanagedService;
-  
+  const getTypeColors = (): Record<string, string> => ({
+    container: 'border-blue-400 dark:border-blue-600 bg-blue-100 dark:bg-blue-900/40',
+    service: 'border-purple-400 dark:border-purple-600 bg-purple-100 dark:bg-purple-900/40',
+    'unmanaged-service': 'border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-900/30',
+    pod: 'border-pink-400 dark:border-pink-600 bg-pink-100 dark:bg-pink-900/40',
+    router: 'border-orange-400 dark:border-orange-600 bg-orange-100 dark:bg-orange-600/60',
+    internet: 'border-gray-400 dark:border-gray-600 bg-gray-100 dark:bg-gray-800/60',
+    proxy: 'border-emerald-400 dark:border-emerald-600 bg-emerald-100 dark:bg-emerald-900/40',
+    gateway: 'border-orange-400 dark:border-orange-600 bg-orange-100 dark:bg-orange-800/50',
+    link: 'border-cyan-400 dark:border-cyan-600 bg-cyan-100 dark:bg-cyan-900/40',
+    device: 'border-indigo-400 dark:border-indigo-600 bg-indigo-100 dark:bg-indigo-900/40',
+  });
+
   const typeLabels: Record<string, string> = {
       container: 'Container',
     service: 'Managed Service',
@@ -143,22 +158,8 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
       device: 'Network Device'
   };
 
-  // Color Mapping
-  const typeColors: Record<string, string> = {
-    container: 'border-blue-400 dark:border-blue-600 bg-blue-100 dark:bg-blue-900/40',
-    service: 'border-purple-400 dark:border-purple-600 bg-purple-100 dark:bg-purple-900/40',
-    'unmanaged-service': 'border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-900/30',
-      pod: 'border-pink-400 dark:border-pink-600 bg-pink-100 dark:bg-pink-900/40',
-      router: 'border-orange-400 dark:border-orange-600 bg-orange-100 dark:bg-orange-600/60',
-      internet: 'border-gray-400 dark:border-gray-600 bg-gray-100 dark:bg-gray-800/60',
-      proxy: 'border-emerald-400 dark:border-emerald-600 bg-emerald-100 dark:bg-emerald-900/40',
-      gateway: 'border-orange-400 dark:border-orange-600 bg-orange-100 dark:bg-orange-800/50', // Add gateway mapping
-
-      link: 'border-cyan-400 dark:border-cyan-600 bg-cyan-100 dark:bg-cyan-900/40',
-      device: 'border-indigo-400 dark:border-indigo-600 bg-indigo-100 dark:bg-indigo-900/40',
-  };
-
-  const nodeColor = isMissing 
+  const typeColors = getTypeColors();
+  const nodeColor = isMissing
       ? 'border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/20 border-dashed'
       : (typeColors[effectiveType] || 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900');
 
@@ -172,87 +173,69 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
           : (summary.portMap || []);
       
 
+      // Helper to normalize port IP (handles 0.0.0.0, localhost)
+      const normalizePortIp = (ip: string | null, nodeHost: string | null, nodeData: string | null): string | null => {
+        if (!ip) return null;
+        if (ip === '0.0.0.0' || ip === '127.0.0.1' || ip === 'localhost') {
+          return nodeHost || (nodeData && nodeData !== 'local' && nodeData !== 'Local' ? nodeData : null);
+        }
+        return ip;
+      };
+
       // Helper to extract IP info from ports
       const extractIpInfo = () => {
-    
-    if (!rawPorts || rawPorts.length === 0) return { globalIp: null, portMap: [] };
-    
-    const parsedPorts = rawPorts.map((p: unknown) => {
-        const isObj = typeof p === 'object' && p !== null;
-        // Check both camelCase (API) and snake_case (Agent) properties
-        // Also handle the case where p is just a number (legacy/simple)
-        
-        let ip: string | null = null;
-        let hostPort: number | string | null = null;
-        let containerPort: number | string | null = null;
+        if (!rawPorts || rawPorts.length === 0) return { globalIp: null, portMap: [] };
 
-        if (isObj) {
-            const portObj = p as LegacyPortMapping;
-            ip = portObj.hostIp || portObj.IP || null;
-            hostPort = portObj.host || portObj.hostPort || null;
-            containerPort = portObj.container || portObj.containerPort || null;
-        } else {
-            // p is number or string
-            const val = p as unknown as (string | number);
-            hostPort = val;
-            containerPort = val; // Assume symmetry if simple number
-        }
-
-        // Podman reports `0.0.0.0` (bind-all) and `127.0.0.1` (loopback)
-        // verbatim, but rendering them on the card tells the operator
-        // nothing about where to actually reach the service — and the
-        // dedup-to-globalIp logic below was hoisting `0.0.0.0` up as
-        // the headline IP. Normalize to the node's reachable host
-        // address (LAN IP) at parse time so every downstream display
-        // (`globalIp`, per-port tag label, and the link's hostname)
-        // shows the real address.
         const nodeHost = typeof data.metadata?.nodeHost === 'string' ? data.metadata.nodeHost as string : null;
-        const fallbackHost = nodeHost || (data.node && data.node !== 'local' && data.node !== 'Local' ? data.node : null);
-        if (fallbackHost && (ip === '0.0.0.0' || ip === '127.0.0.1' || ip === 'localhost')) {
-            ip = fallbackHost;
-        }
+        const nodeDataStr = data.node && data.node !== 'local' && data.node !== 'Local' ? data.node : null;
 
-        return {
-            host: hostPort,
-            container: containerPort,
-            ip: ip
-        };
-    });
+        const parsedPorts = rawPorts.map((p: unknown) => {
+            const isObj = typeof p === 'object' && p !== null;
+            let ip: string | null = null;
+            let hostPort: number | string | null = null;
+            let containerPort: number | string | null = null;
 
-    // Deduplicate ports based on IP and Host Port
-    const uniquePortsMap = new Map<string, { host: number|string|null, container: number|string|null, ip: string|null }>();
-    parsedPorts.forEach((p: { host: number|string|null, container: number|string|null, ip: string|null }) => {
-        const key = `${p.ip || '_'}:${p.host}`;
-        // Keep the first one, or maybe prefer one with container info?
-        // Usually first is fine.
-        if (p.host && !uniquePortsMap.has(key)) { // Only add if host port exists
-            uniquePortsMap.set(key, p);
-        }
-    });
-    
-    const dedupedPorts = Array.from(uniquePortsMap.values());
+            if (isObj) {
+                const portObj = p as LegacyPortMapping;
+                ip = portObj.hostIp || portObj.IP || null;
+                hostPort = portObj.host || portObj.hostPort || null;
+                containerPort = portObj.container || portObj.containerPort || null;
+            } else {
+                const val = p as unknown as (string | number);
+                hostPort = val;
+                containerPort = val;
+            }
 
-    const uniqueIps = Array.from(new Set(dedupedPorts.map((p) => p.ip).filter(Boolean))) as string[];
-    // If exactly one unique IP is found across all ports, show it globally.
-    // Otherwise (0 or >1) we tag IPs per port — but #1428: when a node's ports
-    // span multiple bind addresses (e.g. file-share's mix of localhost + LAN),
-    // showing the prefix on EVERY port balloons the card. Group ports by IP and
-    // show each prefix once per group: sort to cluster groups, mark the first
-    // port of each group with `showIp`. No info lost (loopback vs LAN still clear).
-    const globalIp = uniqueIps.length === 1 ? uniqueIps[0] : null;
+            ip = normalizePortIp(ip, nodeHost, nodeDataStr);
+            return { host: hostPort, container: containerPort, ip };
+        });
 
-    const sortedPorts = globalIp
-      ? dedupedPorts
-      : [...dedupedPorts].sort((a, b) => String(a.ip ?? '').localeCompare(String(b.ip ?? '')));
-    let prevIp: string | null | undefined;
-    const portMap = sortedPorts.map((pp) => {
-      const showIp = pp.ip != null && pp.ip !== prevIp;
-      prevIp = pp.ip;
-      return { ...pp, showIp };
-    });
+        // Deduplicate ports based on IP and Host Port
+        const uniquePortsMap = new Map<string, { host: number|string|null, container: number|string|null, ip: string|null }>();
+        parsedPorts.forEach((p: { host: number|string|null, container: number|string|null, ip: string|null }) => {
+            const key = `${p.ip || '_'}:${p.host}`;
+            if (p.host && !uniquePortsMap.has(key)) {
+                uniquePortsMap.set(key, p);
+            }
+        });
 
-    return { globalIp, portMap };
-  };
+        const dedupedPorts = Array.from(uniquePortsMap.values());
+        const uniqueIps = Array.from(new Set(dedupedPorts.map((p) => p.ip).filter(Boolean))) as string[];
+        const globalIp = uniqueIps.length === 1 ? uniqueIps[0] : null;
+
+        const sortedPorts = globalIp
+          ? dedupedPorts
+          : [...dedupedPorts].sort((a, b) => String(a.ip ?? '').localeCompare(String(b.ip ?? '')));
+
+        let prevIp: string | null | undefined;
+        const portMap = sortedPorts.map((pp) => {
+          const showIp = pp.ip != null && pp.ip !== prevIp;
+          prevIp = pp.ip;
+          return { ...pp, showIp };
+        });
+
+        return { globalIp, portMap };
+      };
 
   const { globalIp, portMap } = extractIpInfo();
 
@@ -278,73 +261,59 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
   const displayDomains = renderAsExpandedGroup ? [] : uniqueDomains;
   type DetailItem = { label: string; value: string | number | React.ReactNode; full?: boolean };
 
+  // Helper to build detail item for container type
+  const getContainerDetails = (raw: Record<string, unknown>): DetailItem[] => {
+    const items: DetailItem[] = [
+      { label: 'Created', value: raw.Created ? new Date((raw.Created as number) * 1000).toLocaleDateString() : null },
+      { label: 'Status', value: String(raw.Status || '') },
+    ];
+    if (raw.hostNetwork) items.push({ label: 'Network', value: 'Host' });
+    return items;
+  };
+
+  // Helper to build detail items for service/bundle type
+  const getServiceDetails = (raw: Record<string, unknown>): DetailItem[] => {
+    const items: DetailItem[] = [
+      {
+        label: 'State',
+        value: isManagedService
+          ? (raw.active ? 'Active' : 'Inactive')
+          : (raw.isRunning ? 'Detected' : 'Stopped')
+      }
+    ];
+    if (isManagedService) {
+      items.push({ label: 'Load', value: String(raw.load || '') });
+      if (raw.hostNetwork) items.push({ label: 'Network', value: 'Host' });
+    } else {
+      const bundleSize = Array.isArray(raw.services) ? raw.services.length : Array.isArray(raw.containers) ? raw.containers.length : 0;
+      items.push({ label: 'Bundle Size', value: bundleSize || 'Unknown' });
+      items.push({ label: 'Severity', value: (String(raw.severity || 'info')).toUpperCase() });
+    }
+    return items;
+  };
+
+  // Helper to build detail items for gateway/router type
+  const getGatewayDetails = (raw: Record<string, unknown>): DetailItem[] => {
+    const items: DetailItem[] = [
+      { label: 'Ext IP', value: String(raw.externalIP || data.metadata?.stats?.externalIP || 'Unknown') },
+      { label: 'Int IP', value: String(raw.internalIP || data.metadata?.stats?.internalIP || 'Unknown') },
+      { label: 'Uptime', value: raw.uptime ? `${Math.floor((raw.uptime as number) / 3600)}h` : 'N/A', full: true }
+    ];
+    const dns = (raw.dnsServers as string[] | undefined) || data.metadata?.stats?.dnsServers;
+    if (dns && Array.isArray(dns) && dns.length > 0) items.push({ label: 'DNS', value: dns.join(', '), full: true });
+    return items;
+  };
+
   // Helper to get display details based on type
   const getDetails = (): DetailItem[] => {
-      // rawData carries a discriminated union of per-node-kind shapes
-      // (container / service / link / gateway / device). Until the
-      // backend's GraphNode types are exported as a union, we keep the
-      // cast — see #976 reader API refactor for the proper fix.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const raw = (data.rawData || {}) as any;
-      const common: DetailItem[] = [];
 
-      if (effectiveType === 'container') {
-          const items = [
-              ...common,
-              { label: 'Created', value: raw.Created ? new Date(raw.Created * 1000).toLocaleDateString() : null },
-              { label: 'Status', value: raw.Status },
-          ];
-          if (raw.hostNetwork) {
-              items.push({ label: 'Network', value: 'Host' });
-          }
-          return items;
-      }
-      if (isServiceType) {
-          const items = [
-              ...common,
-              {
-                  label: 'State',
-                  value: isManagedService
-                      ? (raw.active ? 'Active' : 'Inactive')
-                      : (raw.isRunning ? 'Detected' : 'Stopped')
-              }
-          ];
-
-          if (isManagedService) {
-              items.push({ label: 'Load', value: raw.load });
-              if (raw.hostNetwork) {
-                  items.push({ label: 'Network', value: 'Host' });
-              }
-          } else {
-              const bundleSize = Array.isArray(raw.services) ? raw.services.length : Array.isArray(raw.containers) ? raw.containers.length : 0;
-              items.push({ label: 'Bundle Size', value: bundleSize || 'Unknown' });
-              items.push({ label: 'Severity', value: (raw.severity || 'info').toString().toUpperCase() });
-          }
-
-          return items;
-      }
-      if (effectiveType === 'link') {
-          return [
-              ...common,
-              { label: 'URL', value: raw.url, full: true },
-          ];
-      }
-      if (effectiveType === 'gateway' || effectiveType === 'router') { // Handle both
-          const items = [
-              { label: 'Ext IP', value: raw.externalIP || data.metadata?.stats?.externalIP || 'Unknown' },
-              { label: 'Int IP', value: raw.internalIP || data.metadata?.stats?.internalIP || 'Unknown' },
-              { label: 'Uptime', value: raw.uptime ? `${Math.floor(raw.uptime / 3600)}h` : 'N/A', full: true }
-          ];
-          const dns = raw.dnsServers || data.metadata?.stats?.dnsServers;
-          if (dns && dns.length > 0) {
-              items.push({ label: 'DNS', value: dns.join(', '), full: true });
-          }
-          return items;
-      }
-      if (effectiveType === 'device') {
-          return [];
-      }
-      return common;
+      if (effectiveType === 'container') return getContainerDetails(raw);
+      if (isServiceType) return getServiceDetails(raw);
+      if (effectiveType === 'link') return [{ label: 'URL', value: raw.url, full: true }];
+      if (effectiveType === 'gateway' || effectiveType === 'router') return getGatewayDetails(raw);
+      return [];
   };
 
   const details = getDetails();
@@ -583,45 +552,7 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                 )}
                 
                 <div className="mt-auto pt-3 flex items-center justify-between border-t border-gray-100 dark:border-gray-800/50">
-                    <div className="flex flex-wrap gap-1.5 items-center">
-                        {portMap && portMap.map((p, idx) => {
-                            // Determine hostname for link
-                            let hostname = p.ip; // Start with the resolved IP
-                            
-                            // If IP is 0.0.0.0 or localhost, try to be smarter for the link 
-                            // (though visual label uses p.ip which is now normalized)
-                            if (hostname === '0.0.0.0' || hostname === '127.0.0.1' || hostname === 'localhost') {
-                                 if (data.metadata?.nodeHost && typeof data.metadata.nodeHost === 'string' && data.metadata.nodeHost !== 'localhost') {
-                                    hostname = data.metadata.nodeHost as string;
-                                } else if (data.node && data.node !== 'local' && data.node !== 'Local') {
-                                    hostname = data.node;
-                                }
-                            }
-
-                            const showIpInTag = !globalIp && p.ip && p.showIp;
-                            const link = `http://${hostname}:${p.host}`;
-
-                            const content = (
-                                <span className="text-[11px] font-medium px-2 py-0.5 bg-white dark:bg-black/20 text-blue-600 dark:text-blue-400 rounded border border-blue-100 dark:border-blue-800/30 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors cursor-pointer flex items-center gap-1">
-                                    <span>{showIpInTag ? `${p.ip}:${p.host}` : `:${p.host}`}</span>
-                                    {p.container && <span className="text-gray-400 dark:text-gray-500 opacity-75">(to :{p.container})</span>}
-                                </span>
-                            );
-
-                            return (
-                                <a 
-                                    key={idx} 
-                                    href={link} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer" 
-                                    onClick={(e) => e.stopPropagation()}
-                                    title={`Open ${link}`}
-                                >
-                                    {content}
-                                </a>
-                            );
-                        })}
-                    </div>
+                    <PortTagsList portMap={portMap} globalIp={globalIp} nodeData={data} />
                     
                     <div className="flex flex-col items-end gap-1 ml-auto">
                         {data.node && data.node !== 'local' && (!data.parentNode || data.type === 'link') && (
@@ -655,6 +586,48 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
   );
 };
 
+// Helper: render port tags for nodes
+const PortTagsList = ({ portMap, globalIp, nodeData }: { portMap: Array<{ host: number|string|null, container: number|string|null, ip: string|null, showIp?: boolean }>, globalIp: string | null, nodeData: GraphNodeData }) => {
+    if (!portMap.length) return null;
+
+    return (
+        <div className="flex flex-wrap gap-1.5 items-center">
+            {portMap.map((p, idx) => {
+                let hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+                if (p.ip) {
+                    hostname = p.ip;
+                } else if (nodeData.metadata?.nodeHost && typeof nodeData.metadata.nodeHost === 'string' && nodeData.metadata.nodeHost !== 'localhost') {
+                    hostname = nodeData.metadata.nodeHost as string;
+                } else if (nodeData.node && nodeData.node !== 'local' && nodeData.node !== 'Local') {
+                    hostname = nodeData.node;
+                }
+
+                const showIpInTag = !globalIp && p.ip && p.showIp;
+                const link = `http://${hostname}:${p.host}`;
+                const content = (
+                    <span className="text-[11px] font-medium px-2 py-0.5 bg-white dark:bg-black/20 text-blue-600 dark:text-blue-400 rounded border border-blue-100 dark:border-blue-800/30 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors cursor-pointer flex items-center gap-1">
+                        <span>{showIpInTag ? `${p.ip}:${p.host}` : `:${p.host}`}</span>
+                        {p.container && <span className="text-gray-400 dark:text-gray-500 opacity-75">(to :{p.container})</span>}
+                    </span>
+                );
+
+                return (
+                    <a
+                        key={idx}
+                        href={link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title={`Open ${link}`}
+                    >
+                        {content}
+                    </a>
+                );
+            })}
+        </div>
+    );
+};
+
 const nodeTypes = {
   custom: CustomNode,
 };
@@ -675,6 +648,42 @@ type LinkFormState = {
     monitor: boolean;
     ipTargetsText?: string;
 };
+
+// Helper: get MiniMap color for node type
+function getMiniMapNodeColor(type: string): string {
+  switch (type) {
+    case 'container': return '#60a5fa';
+    case 'service': return '#c084fc';
+    case 'unmanaged-service': return '#fbbf24';
+    case 'pod': return '#f472b6';
+    case 'proxy': return '#34d399';
+    case 'router': return '#fb923c';
+    case 'gateway': return '#fb923c';
+    case 'internet': return '#9ca3af';
+    case 'link': return '#22d3ee';
+    case 'device': return '#818cf8';
+    case 'group': return 'transparent';
+    default: return '#d1d5db';
+  }
+}
+
+// Helper: get MiniMap stroke color for node type
+function getMiniMapStrokeColor(type: string): string {
+  switch (type) {
+    case 'container': return '#2563eb';
+    case 'service': return '#9333ea';
+    case 'unmanaged-service': return '#d97706';
+    case 'pod': return '#db2777';
+    case 'router': return '#ea580c';
+    case 'gateway': return '#ea580c';
+    case 'internet': return '#4b5563';
+    case 'proxy': return '#059669';
+    case 'link': return '#0891b2';
+    case 'device': return '#4f46e5';
+    case 'group': return '#d1d5db';
+    default: return '#9ca3af';
+  }
+}
 
 function NetworkLegend() {
     const [isOpen, setIsOpen] = useState(false);
@@ -700,9 +709,6 @@ function NetworkLegend() {
                             <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500" /><span>Active / Running</span></div>
                             <div className="flex items-center gap-2 mt-1"><div className="w-2.5 h-2.5 rounded-full bg-red-500" /><span>Stopped / Error</span></div>
                         </div>
-                        {/* Edge-kind legend (#813). The two provenance kinds
-                            must read as visually distinct so an operator never
-                            confuses observed traffic with template intent. */}
                         <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5 space-y-1">
                             <div className="flex items-center gap-2">
                                 <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#0ea5e9" strokeWidth="2" /></svg>
@@ -1467,43 +1473,11 @@ export default function NetworkDashboard() {
                 showInteractive={false} 
                 className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-lg [&>button]:!bg-white dark:[&>button]:!bg-gray-800 [&>button]:!border-gray-100 dark:[&>button]:!border-gray-700 [&>button]:!text-gray-900 dark:[&>button]:!text-gray-100 [&>button:hover]:!bg-gray-100 dark:[&>button:hover]:!bg-gray-700 [&>button>svg]:!fill-current"
             />
-            <MiniMap 
+            <MiniMap
                 className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-lg scale-50 origin-bottom-right md:scale-100"
                 maskColor="transparent"
-                nodeStrokeColor={(n) => {
-                    const type = n.data?.type as string;
-                    switch (type) {
-                        case 'container': return '#2563eb'; // blue-600
-                        case 'service': return '#9333ea'; // purple-600
-                        case 'unmanaged-service': return '#d97706'; // amber-600
-                        case 'pod': return '#db2777'; // pink-600
-                        case 'router': return '#ea580c'; // orange-600
-                        case 'gateway': return '#ea580c'; // orange-600
-                        case 'internet': return '#4b5563'; // gray-600
-                        case 'proxy': return '#059669'; // emerald-600
-                        case 'link': return '#0891b2'; // cyan-600
-                        case 'device': return '#4f46e5'; // indigo-600
-                        case 'group': return '#d1d5db'; // gray-300
-                        default: return '#9ca3af';
-                    }
-                }}
-                nodeColor={(n) => {
-                    const type = n.data?.type as string;
-                    switch (type) {
-                        case 'container': return '#60a5fa'; // blue-400
-                        case 'service': return '#c084fc'; // purple-400
-                        case 'unmanaged-service': return '#fbbf24'; // amber-400
-                        case 'pod': return '#f472b6'; // pink-400
-                        case 'proxy': return '#34d399'; // emerald-400
-                        case 'router': return '#fb923c'; // orange-400
-                        case 'gateway': return '#fb923c'; // orange-400
-                        case 'internet': return '#9ca3af'; // gray-400
-                        case 'link': return '#22d3ee'; // cyan-400
-                        case 'device': return '#818cf8'; // indigo-400
-                        case 'group': return 'transparent';
-                        default: return '#d1d5db';
-                    }
-                }}
+                nodeStrokeColor={(n) => getMiniMapStrokeColor(n.data?.type as string)}
+                nodeColor={(n) => getMiniMapNodeColor(n.data?.type as string)}
             />
             {/* Status-only legend was here; consolidated into the bottom-left
                 NetworkLegend (which already covers shape colours + status

@@ -5,6 +5,7 @@ import { Check, ChevronDown, ChevronRight, Loader2, ShieldAlert, Trash2 } from '
 import { useToast } from '@/providers/ToastProvider';
 import ConfirmModal from '@/components/ConfirmModal';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 
 interface PendingSkill {
   slug: string;
@@ -15,12 +16,126 @@ interface PendingSkill {
   preview: string;
 }
 
+function usePendingSkillActions() {
+  const { addToast, updateToast } = useToast();
+  const [skills, setSkills] = useState<PendingSkill[]>([]);
+  const [busy, setBusy] = useState<'load' | 'action' | null>('load');
+
+  const load = async () => {
+    try {
+      const res = await fetch('/api/oscar/pending-skills');
+      if (res.ok) {
+        const data = await res.json();
+        setSkills(Array.isArray(data.skills) ? data.skills : []);
+      } else {
+        addToast('error', 'Could not load pending skills', `HTTP ${res.status}`);
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const executePromote = async (slug: string) => {
+    setBusy('action');
+    const toastId = addToast('info', 'Promoting skill...', `Deploying draft ${slug} into the active dynamic-skills directory.`);
+
+    try {
+      updateToast(toastId, 'info', 'Restarting Hermes Agent...', 'Initiating Hermes dynamic reload sequence. Active sessions may briefly disconnect.');
+
+      const res = await fetch(`/api/oscar/pending-skills/${encodeURIComponent(slug)}/promote`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok) {
+        if (data.restarted === false) {
+          updateToast(toastId, 'warning', 'Promoted, but Hermes restart failed', data.restartError ?? 'Restart Hermes from the services page to load the new skill.');
+        } else {
+          updateToast(toastId, 'info', 'Verifying Hermes reboot status...', 'Polling container health check to verify successful launch.');
+
+          let hermesActive = false;
+          for (let i = 0; i < 10; i++) {
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            try {
+              const statusRes = await fetch('/api/services/hermes/status');
+              if (statusRes.ok) {
+                const statusData = await statusRes.json();
+                if (statusData.status === 'active' || statusData.status === 'running') {
+                  hermesActive = true;
+                  break;
+                }
+              }
+            } catch {
+              // ignore fetch failures during container reboot
+            }
+          }
+
+          if (hermesActive) {
+            updateToast(toastId, 'success', 'Skill promoted & Hermes online', `${slug} is live and Hermes agent has successfully restarted.`);
+          } else {
+            updateToast(toastId, 'warning', 'Skill promoted, Hermes slow to respond', `${slug} deployed. Hermes container was restarted but is taking longer than expected to report active status.`);
+          }
+        }
+        await load();
+      } else {
+        updateToast(toastId, 'error', 'Could not promote skill', data.error ?? `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      updateToast(toastId, 'error', 'Could not promote skill', e instanceof Error ? e.message : 'Network error during promotion.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const executeReject = async (slug: string) => {
+    setBusy('action');
+    const toastId = addToast('info', 'Rejecting skill...', `Deleting pending draft skill ${slug}.`);
+    try {
+      const res = await fetch(`/api/oscar/pending-skills/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+      if (res.ok) {
+        updateToast(toastId, 'success', 'Skill rejected', `${slug} removed from pending.`);
+        await load();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        updateToast(toastId, 'error', 'Could not reject skill', data.error ?? `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      updateToast(toastId, 'error', 'Could not reject skill', e instanceof Error ? e.message : 'Network error during rejection.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return { skills, setSkills, busy, load, executePromote, executeReject };
+}
+
 interface PendingSkillCardProps {
   skill: PendingSkill;
   busy: 'load' | 'action' | null;
   onPromoteClick: (slug: string) => void;
   onRejectClick: (slug: string) => void;
 }
+
+const SKILL_MARKDOWN_COMPONENTS: Components = {
+  h1: ({children}) => <h1 className="text-sm font-extrabold text-gray-900 dark:text-white mt-4 mb-2 first:mt-0 pb-1 border-b border-gray-200/50 dark:border-white/5">{children}</h1>,
+  h2: ({children}) => <h2 className="text-xs font-bold text-gray-900 dark:text-white mt-3 mb-1.5">{children}</h2>,
+  h3: ({children}) => <h3 className="text-xs font-semibold text-gray-800 dark:text-gray-200 mt-2 mb-1">{children}</h3>,
+  p: ({children}) => <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 leading-relaxed">{children}</p>,
+  ul: ({children}) => <ul className="list-disc pl-4 mb-2 space-y-1 text-xs text-gray-600 dark:text-gray-400">{children}</ul>,
+  ol: ({children}) => <ol className="list-decimal pl-4 mb-2 space-y-1 text-xs text-gray-600 dark:text-gray-400">{children}</ol>,
+  li: ({children}) => <li className="text-xs">{children}</li>,
+  code: ({className, children}) => {
+    const match = /language-(\w+)/.exec(className || '');
+    const isInline = !match;
+    return isInline ? (
+      <code className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-white/5 font-mono text-[11px] text-pink-600 dark:text-pink-400 font-medium">
+        {children}
+      </code>
+    ) : (
+      <pre className="p-3 my-2 rounded-xl bg-gray-100 dark:bg-black/45 border border-gray-250 dark:border-white/5 overflow-x-auto text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
+        <code className={className}>{children}</code>
+      </pre>
+    );
+  }
+};
 
 function PendingSkillCard({ skill, busy, onPromoteClick, onRejectClick }: PendingSkillCardProps) {
   const [isOpen, setIsOpen] = useState(false);
@@ -99,30 +214,7 @@ function PendingSkillCard({ skill, busy, onPromoteClick, onRejectClick }: Pendin
         }}
       >
         <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-gray-50 dark:bg-gray-950/80 max-h-[420px] overflow-y-auto">
-          <ReactMarkdown
-            components={{
-              h1: ({children}) => <h1 className="text-sm font-extrabold text-gray-900 dark:text-white mt-4 mb-2 first:mt-0 pb-1 border-b border-gray-200/50 dark:border-white/5">{children}</h1>,
-              h2: ({children}) => <h2 className="text-xs font-bold text-gray-900 dark:text-white mt-3 mb-1.5">{children}</h2>,
-              h3: ({children}) => <h3 className="text-xs font-semibold text-gray-800 dark:text-gray-200 mt-2 mb-1">{children}</h3>,
-              p: ({children}) => <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 leading-relaxed">{children}</p>,
-              ul: ({children}) => <ul className="list-disc pl-4 mb-2 space-y-1 text-xs text-gray-600 dark:text-gray-400">{children}</ul>,
-              ol: ({children}) => <ol className="list-decimal pl-4 mb-2 space-y-1 text-xs text-gray-600 dark:text-gray-400">{children}</ol>,
-              li: ({children}) => <li className="text-xs">{children}</li>,
-              code: ({node: _node, className, children, ...props}) => {
-                const match = /language-(\w+)/.exec(className || '');
-                const isInline = !match;
-                return isInline ? (
-                  <code className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-white/5 font-mono text-[11px] text-pink-600 dark:text-pink-400 font-medium" {...props}>
-                    {children}
-                  </code>
-                ) : (
-                  <pre className="p-3 my-2 rounded-xl bg-gray-100 dark:bg-black/45 border border-gray-250 dark:border-white/5 overflow-x-auto text-[11px] font-mono text-emerald-600 dark:text-emerald-400">
-                    <code className={className} {...props}>{children}</code>
-                  </pre>
-                );
-              }
-            }}
-          >
+          <ReactMarkdown components={SKILL_MARKDOWN_COMPONENTS}>
             {skill.preview}
           </ReactMarkdown>
         </div>
@@ -143,107 +235,15 @@ function PendingSkillCard({ skill, busy, onPromoteClick, onRejectClick }: Pendin
  * writing a malicious skill straight into the loader's scan dir.
  */
 export default function PendingSkillsSection() {
-  const { addToast, updateToast } = useToast();
-  const [skills, setSkills] = useState<PendingSkill[]>([]);
-  const [busy, setBusy] = useState<'load' | 'action' | null>('load');
   const [confirmPromoteSlug, setConfirmPromoteSlug] = useState<string | null>(null);
   const [confirmRejectSlug, setConfirmRejectSlug] = useState<string | null>(null);
-
-  const load = async () => {
-    try {
-      const res = await fetch('/api/oscar/pending-skills');
-      if (res.ok) {
-        const data = await res.json();
-        setSkills(Array.isArray(data.skills) ? data.skills : []);
-      } else {
-        addToast('error', 'Could not load pending skills', `HTTP ${res.status}`);
-      }
-    } finally {
-      setBusy(null);
-    }
-  };
+  const { skills, busy, load, executePromote, executeReject } = usePendingSkillActions();
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
-  const executePromote = async (slug: string) => {
-    setBusy('action');
-    const toastId = addToast('info', 'Promoting skill...', `Deploying draft ${slug} into the active dynamic-skills directory.`);
-    
-    try {
-      updateToast(toastId, 'info', 'Restarting Hermes Agent...', 'Initiating Hermes dynamic reload sequence. Active sessions may briefly disconnect.');
-      
-      const res = await fetch(`/api/oscar/pending-skills/${encodeURIComponent(slug)}/promote`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      
-      if (res.ok) {
-        if (data.restarted === false) {
-          updateToast(toastId, 'warning', 'Promoted, but Hermes restart failed', data.restartError ?? 'Restart Hermes from the services page to load the new skill.');
-        } else {
-          updateToast(toastId, 'info', 'Verifying Hermes reboot status...', 'Polling container health check to verify successful launch.');
-          
-          let hermesActive = false;
-          for (let i = 0; i < 10; i++) {
-            await new Promise(resolve => setTimeout(resolve, 1500));
-            try {
-              const statusRes = await fetch('/api/services/hermes/status');
-              if (statusRes.ok) {
-                const statusData = await statusRes.json();
-                if (statusData.status === 'active' || statusData.status === 'running') {
-                  hermesActive = true;
-                  break;
-                }
-              }
-            } catch {
-              // ignore fetch failures during container reboot
-            }
-          }
-          
-          if (hermesActive) {
-            updateToast(toastId, 'success', 'Skill promoted & Hermes online', `${slug} is live and Hermes agent has successfully restarted.`);
-          } else {
-            updateToast(toastId, 'warning', 'Skill promoted, Hermes slow to respond', `${slug} deployed. Hermes container was restarted but is taking longer than expected to report active status.`);
-          }
-        }
-        await load();
-      } else {
-        updateToast(toastId, 'error', 'Could not promote skill', data.error ?? `HTTP ${res.status}`);
-      }
-    } catch (e) {
-      updateToast(toastId, 'error', 'Could not promote skill', e instanceof Error ? e.message : 'Network error during promotion.');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const executeReject = async (slug: string) => {
-    setBusy('action');
-    const toastId = addToast('info', 'Rejecting skill...', `Deleting pending draft skill ${slug}.`);
-    try {
-      const res = await fetch(`/api/oscar/pending-skills/${encodeURIComponent(slug)}`, { method: 'DELETE' });
-      if (res.ok) {
-        updateToast(toastId, 'success', 'Skill rejected', `${slug} removed from pending.`);
-        await load();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        updateToast(toastId, 'error', 'Could not reject skill', data.error ?? `HTTP ${res.status}`);
-      }
-    } catch (e) {
-      updateToast(toastId, 'error', 'Could not reject skill', e instanceof Error ? e.message : 'Network error during rejection.');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  if (busy === 'load') {
-    return (
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 text-sm text-gray-500 dark:text-gray-400">
-        <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
-        Loading pending OSCAR skills…
-      </div>
-    );
-  }
+  if (busy === 'load') return <PendingSkillsLoadingState />;
 
   return (
     <div id="pending-skills" className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full scroll-mt-24">
@@ -335,6 +335,15 @@ export default function PendingSkillsSection() {
         }}
         onCancel={() => setConfirmRejectSlug(null)}
       />
+    </div>
+  );
+}
+
+function PendingSkillsLoadingState() {
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 text-sm text-gray-500 dark:text-gray-400">
+      <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
+      Loading pending OSCAR skills…
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   Loader2,
   RefreshCw,
   XCircle,
+  type LucideIcon,
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 
@@ -210,78 +211,107 @@ export default function PublicDomainSection() {
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-        <div className={`p-2 rounded-lg ${isLan ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'}`}>
-          <Icon size={20} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-gray-900 dark:text-white">
-            {isLan ? 'Internal-only mode' : 'Public-domain mode'}
-          </h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            {isLan
-              ? `Services live on <sub>.${info.activeDomain} via AdGuard DNS rewrites. No HTTPS, no external access.`
-              : `Services reachable as <sub>.${info.publicDomain} with Let's Encrypt SSL + external access. Internal URLs (<sub>.${info.lanDomain ?? 'home.arpa'}) keep working as a soft-handoff.`}
-          </p>
-        </div>
+      <PublicDomainHeader isLan={isLan} Icon={Icon} info={info} />
+      <PublicDomainBody
+        phase={phase}
+        info={info}
+        preflight={preflight}
+        pendingDomain={pendingDomain}
+        setPendingDomain={setPendingDomain}
+        migrating={migrating}
+        result={result}
+        startPreflight={startPreflight}
+        cancelPreflight={cancelPreflight}
+        fetchPreflight={fetchPreflight}
+        stopPolling={stopPolling}
+        runMigration={runMigration}
+        setPhase={setPhase}
+        setResult={setResult}
+        setPreflight={setPreflight}
+      />
+    </div>
+  );
+}
+
+function PublicDomainHeader({isLan, Icon, info}: {isLan: boolean; Icon: LucideIcon; info: ModeInfo}) {
+  return (
+    <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
+      <div className={`p-2 rounded-lg ${isLan ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'}`}>
+        <Icon size={20} />
       </div>
-
-      <div className="p-6 space-y-4">
-        {phase === 'public' && info.publicDomain && (
-          <PublicModeBody info={info} />
-        )}
-
-        {phase === 'idle' && (
-          <IdleForm
-            lanDomain={info.activeDomain}
-            pendingDomain={pendingDomain}
-            setPendingDomain={setPendingDomain}
-            onCheckReadiness={startPreflight}
-          />
-        )}
-
-        {phase === 'preflight' && (
-          <PreflightPanel
-            publicDomain={pendingDomain.trim()}
-            preflight={preflight}
-            onCancel={cancelPreflight}
-            onRefresh={() => {
-              stopPolling();
-              void fetchPreflight(pendingDomain.trim());
-            }}
-          />
-        )}
-
-        {phase === 'confirm' && preflight && (
-          <ConfirmPanel
-            publicDomain={pendingDomain.trim()}
-            preflight={preflight}
-            migrating={migrating}
-            onDryRun={() => runMigration(true)}
-            onMigrate={() => runMigration(false)}
-            onBack={() => setPhase('preflight')}
-          />
-        )}
-
-        {phase === 'migrating' && (
-          <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            Migrating… NPM hosts, Authelia, and cert request can take 30–120 s combined.
-          </div>
-        )}
-
-        {phase === 'done' && result && (
-          <ResultPanel
-            result={result}
-            onMigrateAgain={() => runMigration(false)}
-            onReset={() => {
-              setResult(null);
-              setPreflight(null);
-              setPhase(result.applied && result.errors.length === 0 ? 'public' : 'idle');
-            }}
-          />
-        )}
+      <div className="flex-1 min-w-0">
+        <h3 className="font-bold text-gray-900 dark:text-white">
+          {isLan ? 'Internal-only mode' : 'Public-domain mode'}
+        </h3>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          {isLan
+            ? `Services live on <sub>.${info.activeDomain} via AdGuard DNS rewrites. No HTTPS, no external access.`
+            : `Services reachable as <sub>.${info.publicDomain} with Let's Encrypt SSL + external access. Internal URLs (<sub>.${info.lanDomain ?? 'home.arpa'}) keep working as a soft-handoff.`}
+        </p>
       </div>
+    </div>
+  );
+}
+
+function PublicDomainBody({
+  phase, info, preflight, pendingDomain, setPendingDomain, migrating, result,
+  startPreflight, cancelPreflight, fetchPreflight, stopPolling, runMigration, setPhase, setResult, setPreflight,
+}: {
+  phase: Phase; info: ModeInfo; preflight: PreflightStatus | null; pendingDomain: string;
+  setPendingDomain: (v: string) => void; migrating: boolean; result: MigrationResult | null;
+  startPreflight: () => void; cancelPreflight: () => void; fetchPreflight: (domain: string) => Promise<void>;
+  stopPolling: () => void; runMigration: (dryRun: boolean) => Promise<void>; setPhase: (p: Phase) => void;
+  setResult: (r: MigrationResult | null) => void; setPreflight: (p: PreflightStatus | null) => void;
+}) {
+  return (
+    <div className="p-6 space-y-4">
+      {phase === 'public' && info.publicDomain && <PublicModeBody info={info} />}
+      {phase === 'idle' && (
+        <IdleForm
+          lanDomain={info.activeDomain}
+          pendingDomain={pendingDomain}
+          setPendingDomain={setPendingDomain}
+          onCheckReadiness={startPreflight}
+        />
+      )}
+      {phase === 'preflight' && (
+        <PreflightPanel
+          publicDomain={pendingDomain.trim()}
+          preflight={preflight}
+          onCancel={cancelPreflight}
+          onRefresh={() => {
+            stopPolling();
+            void fetchPreflight(pendingDomain.trim());
+          }}
+        />
+      )}
+      {phase === 'confirm' && preflight && (
+        <ConfirmPanel
+          publicDomain={pendingDomain.trim()}
+          preflight={preflight}
+          migrating={migrating}
+          onDryRun={() => runMigration(true)}
+          onMigrate={() => runMigration(false)}
+          onBack={() => setPhase('preflight')}
+        />
+      )}
+      {phase === 'migrating' && (
+        <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Migrating… NPM hosts, Authelia, and cert request can take 30–120 s combined.
+        </div>
+      )}
+      {phase === 'done' && result && (
+        <ResultPanel
+          result={result}
+          onMigrateAgain={() => runMigration(false)}
+          onReset={() => {
+            setResult(null);
+            setPreflight(null);
+            setPhase(result.applied && result.errors.length === 0 ? 'public' : 'idle');
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -468,7 +498,46 @@ function ConfirmPanel({
   );
 }
 
-function ResultPanel({
+function ResultStatusBox({ result }: { result: MigrationResult }) {
+  const ok = result.errors.length === 0;
+  const isDry = !result.applied;
+  return (
+    <div className={`p-3 rounded text-sm ${ok ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800' : 'bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-800'}`}>
+      {isDry
+        ? `Dry-run for ${result.plan.publicDomain}: ${result.stepResults.length} step${result.stepResults.length === 1 ? '' : 's'} would run.`
+        : ok
+          ? `Migration to ${result.plan.publicDomain} complete.`
+          : `Migration to ${result.plan.publicDomain} finished with ${result.errors.length} error${result.errors.length === 1 ? '' : 's'}; re-run to retry the failed steps.`}
+    </div>
+  );
+}
+
+function ResultStepDetails({ result }: { result: MigrationResult }) {
+  return (
+    <details className="text-xs">
+      <summary className="cursor-pointer text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100">
+        Show step-by-step ({result.stepResults.length})
+      </summary>
+      <ol className="mt-2 space-y-1 list-decimal list-inside text-gray-600 dark:text-gray-400">
+        {result.plan.steps.map((step, i) => {
+          const r = result.stepResults[i];
+          const skipped = step.skipped === true;
+          return (
+            <li key={`${step.kind}:${i}`} className="break-words">
+              <span className="font-mono">{step.kind}</span>{' '}
+              {step.domain ? <span className="font-mono">{step.domain}</span> : null}
+              {step.node ? <span> on <span className="font-mono">{step.node}</span></span> : null}
+              {' — '}
+              {!r ? '(not run)' : r.ok ? (skipped ? 'skipped (already done)' : 'ok') : `failed: ${r.error}`}
+            </li>
+          );
+        })}
+      </ol>
+    </details>
+  );
+}
+
+function ResultActions({
   result,
   onMigrateAgain,
   onReset,
@@ -480,74 +549,60 @@ function ResultPanel({
   const ok = result.errors.length === 0;
   const isDry = !result.applied;
   return (
-    <div className="space-y-3">
-      <div className={`p-3 rounded text-sm ${ok ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800' : 'bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-800'}`}>
-        {isDry
-          ? `Dry-run for ${result.plan.publicDomain}: ${result.stepResults.length} step${result.stepResults.length === 1 ? '' : 's'} would run.`
-          : ok
-            ? `Migration to ${result.plan.publicDomain} complete.`
-            : `Migration to ${result.plan.publicDomain} finished with ${result.errors.length} error${result.errors.length === 1 ? '' : 's'}; re-run to retry the failed steps.`}
-      </div>
+    <div className="flex flex-wrap gap-2">
+      {isDry ? (
+        <button
+          onClick={onMigrateAgain}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded"
+        >
+          Apply for real
+        </button>
+      ) : ok ? (
+        <a
+          href={`https://${result.plan.publicDomain}`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded"
+        >
+          <ExternalLink size={14} /> Open {result.plan.publicDomain}
+        </a>
+      ) : (
+        <button
+          onClick={onMigrateAgain}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded"
+        >
+          Retry failed steps
+        </button>
+      )}
+      <button
+        onClick={onReset}
+        className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+      >
+        {ok ? 'Done' : 'Close'}
+      </button>
+    </div>
+  );
+}
 
+function ResultPanel({
+  result,
+  onMigrateAgain,
+  onReset,
+}: {
+  result: MigrationResult;
+  onMigrateAgain: () => void;
+  onReset: () => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <ResultStatusBox result={result} />
       {result.plan.warnings.length > 0 && (
         <ul className="text-xs text-amber-700 dark:text-amber-300 space-y-1 list-disc list-inside">
           {result.plan.warnings.map((w, i) => <li key={i}>{w}</li>)}
         </ul>
       )}
-
-      <details className="text-xs">
-        <summary className="cursor-pointer text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100">
-          Show step-by-step ({result.stepResults.length})
-        </summary>
-        <ol className="mt-2 space-y-1 list-decimal list-inside text-gray-600 dark:text-gray-400">
-          {result.plan.steps.map((step, i) => {
-            const r = result.stepResults[i];
-            const skipped = step.skipped === true;
-            return (
-              <li key={`${step.kind}:${i}`} className="break-words">
-                <span className="font-mono">{step.kind}</span>{' '}
-                {step.domain ? <span className="font-mono">{step.domain}</span> : null}
-                {step.node ? <span> on <span className="font-mono">{step.node}</span></span> : null}
-                {' — '}
-                {!r ? '(not run)' : r.ok ? (skipped ? 'skipped (already done)' : 'ok') : `failed: ${r.error}`}
-              </li>
-            );
-          })}
-        </ol>
-      </details>
-
-      <div className="flex flex-wrap gap-2">
-        {isDry ? (
-          <button
-            onClick={onMigrateAgain}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded"
-          >
-            Apply for real
-          </button>
-        ) : ok ? (
-          <a
-            href={`https://${result.plan.publicDomain}`}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded"
-          >
-            <ExternalLink size={14} /> Open {result.plan.publicDomain}
-          </a>
-        ) : (
-          <button
-            onClick={onMigrateAgain}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded"
-          >
-            Retry failed steps
-          </button>
-        )}
-        <button
-          onClick={onReset}
-          className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-        >
-          {ok ? 'Done' : 'Close'}
-        </button>
-      </div>
+      <ResultStepDetails result={result} />
+      <ResultActions result={result} onMigrateAgain={onMigrateAgain} onReset={onReset} />
     </div>
   );
 }

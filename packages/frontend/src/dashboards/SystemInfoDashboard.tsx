@@ -52,6 +52,15 @@ interface NetworkAddr {
     address: string;
 }
 
+// Helper: format bytes to human-readable
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
 /**
  * SystemInfoContent
  * Core system info display (CPU, RAM, Disk, Network, Updates).
@@ -154,14 +163,6 @@ export function SystemInfoContent() {
   }
 
   const { cpuUsage, memoryUsage, totalMemory, os, disks, network, cpu, gpus } = resources;
-
-  const formatBytes = (bytes: number) => {
-      if (bytes === 0) return '0 B';
-      const k = 1024;
-      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-      const i = Math.floor(Math.log(bytes) / Math.log(k));
-      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
 
   return (
       <div className="p-4 md:p-6 space-y-6">

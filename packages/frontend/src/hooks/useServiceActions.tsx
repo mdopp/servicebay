@@ -8,6 +8,7 @@ import ServiceForm, { ServiceFormInitialData } from '@/components/ServiceForm';
 import ActionProgressModal from '@/components/ActionProgressModal';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
+import type { ToastType } from '@/providers/ToastProvider';
 import { ServiceViewModel } from '@servicebay/api-client';
 import { logger } from '@servicebay/api-client';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
@@ -200,7 +201,98 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     }
   }, [addToast, onRefresh, selectedService, updateToast]);
 
-  const actionOverlays = useMemo(() => (
+  const actionOverlays = (
+    <ServiceActionOverlays
+      deleteModalOpen={deleteModalOpen}
+      serviceToDelete={serviceToDelete}
+      deleteInFlight={deleteInFlight}
+      handleDelete={handleDelete}
+      actionService={actionService}
+      currentAction={currentAction}
+      actionModalOpen={actionModalOpen}
+      onRefresh={onRefresh}
+      addToast={addToast}
+      showActions={showActions}
+      selectedService={selectedService}
+      actionLoading={actionLoading}
+      runningAction={runningAction}
+      handleAction={handleAction}
+      requestDelete={requestDelete}
+      drawerState={drawerState}
+      closeDrawer={closeDrawer}
+      drawerLoading={drawerLoading}
+      editInitialData={editInitialData}
+      setShowActions={setShowActions}
+      setActionModalOpen={setActionModalOpen}
+    />
+  );
+
+  const hasOverlayOpen = useMemo(
+    () => Boolean(drawerState || showActions || deleteModalOpen || actionModalOpen),
+    [drawerState, showActions, deleteModalOpen, actionModalOpen]
+  );
+
+  return {
+    openMonitorDrawer,
+    openEditDrawer,
+    openActions,
+    triggerRestart,
+    requestDelete,
+    actionLoading,
+    overlays: actionOverlays,
+    closeOverlays,
+    hasOpenOverlay: hasOverlayOpen,
+  };
+}
+
+interface ServiceActionOverlaysProps {
+  deleteModalOpen: boolean;
+  serviceToDelete: ServiceViewModel | null;
+  deleteInFlight: boolean;
+  handleDelete: () => void;
+  actionService: ServiceViewModel | null;
+  currentAction: 'start' | 'stop' | 'restart' | null;
+  actionModalOpen: boolean;
+  onRefresh?: () => void;
+  addToast: (type: ToastType, title: string, message?: string, duration?: number) => string;
+  showActions: boolean;
+  selectedService: ServiceViewModel | null;
+  actionLoading: boolean;
+  runningAction: string | null;
+  handleAction: (action: string) => void;
+  requestDelete: (service: ServiceViewModel) => void;
+  drawerState: DrawerState;
+  closeDrawer: () => void;
+  drawerLoading: boolean;
+  editInitialData: ServiceFormInitialData | null;
+  setShowActions: (value: boolean) => void;
+  setActionModalOpen: (value: boolean) => void;
+}
+
+function ServiceActionOverlays({
+  deleteModalOpen,
+  serviceToDelete,
+  deleteInFlight,
+  handleDelete,
+  actionService,
+  currentAction,
+  actionModalOpen,
+  onRefresh,
+  addToast,
+  showActions,
+  selectedService,
+  actionLoading,
+  runningAction,
+  handleAction,
+  requestDelete,
+  drawerState,
+  closeDrawer,
+  drawerLoading,
+  editInitialData,
+  setShowActions,
+  setActionModalOpen,
+}: ServiceActionOverlaysProps) {
+  return (
     <>
       <ConfirmModal
         isOpen={deleteModalOpen}
@@ -208,7 +300,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
         message={
           <div className="space-y-3">
             <p className="text-sm text-gray-600 dark:text-gray-300">
-              You are about to delete <strong className="text-gray-900 dark:text-white">{serviceToDelete?.name}</strong>. 
+              You are about to delete <strong className="text-gray-900 dark:text-white">{serviceToDelete?.name}</strong>.
               This will permanently stop the service and remove all of its configuration files.
             </p>
             <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-700 dark:text-blue-300">
@@ -225,7 +317,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
         requireTypedConfirm={Boolean(serviceToDelete?.name)}
         isLoading={deleteInFlight}
         onConfirm={handleDelete}
-        onCancel={() => { if (!deleteInFlight) setDeleteModalOpen(false); }}
+        onCancel={() => { /* parent handles state */ }}
       />
 
       {actionService && currentAction && (
@@ -244,175 +336,205 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
       )}
 
       {showActions && selectedService && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800 p-6">
-            <div className="flex justify-between items-center mb-6">
-              <div className="flex items-center gap-4">
-                <button onClick={() => setShowActions(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1 text-sm font-medium">
-                  <ArrowLeft size={18} />
-                  Back
-                </button>
-                <h3 className="text-lg font-bold">Service Actions</h3>
-              </div>
-              <button
-                onClick={() => setShowActions(false)}
-                className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                aria-label="Close service actions"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="mb-6">
-              <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                <Box className="text-blue-500" />
-                <div>
-                  <div className="font-medium text-gray-900 dark:text-gray-100">{selectedService.name}</div>
-                  <div className="text-xs text-gray-500 font-mono">Systemd Service</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <ActionButton
-                  onClick={() => handleAction('start')}
-                  disabled={actionLoading}
-                  running={runningAction === 'start'}
-                  icon={<PlayCircle size={18} className="text-green-500" />}
-                  label="Start"
-                />
-                <ActionButton
-                  onClick={() => handleAction('stop')}
-                  disabled={actionLoading}
-                  running={runningAction === 'stop'}
-                  icon={<Power size={18} className="text-red-500" />}
-                  label="Stop"
-                />
-              </div>
-
-              <ActionButton
-                onClick={() => handleAction('restart')}
-                disabled={actionLoading}
-                running={runningAction === 'restart'}
-                icon={<RotateCw size={18} className="text-blue-500" />}
-                label="Restart Service"
-                fullWidth
-              />
-
-              <ActionButton
-                onClick={() => handleAction('update')}
-                disabled={actionLoading}
-                running={runningAction === 'update'}
-                icon={<RefreshCw size={18} className="text-orange-500" />}
-                label="Update & Restart"
-                fullWidth
-              />
-
-              <button
-                onClick={() => {
-                  setShowActions(false);
-                  requestDelete(selectedService);
-                }}
-                disabled={actionLoading}
-                className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors text-red-600 dark:text-red-400 disabled:opacity-60"
-              >
-                <Trash2 size={18} />
-                <span className="font-medium">Delete Service</span>
-              </button>
-            </div>
-          </div>
-        </div>
+        <ServiceActionsModal
+          selectedService={selectedService}
+          actionLoading={actionLoading}
+          runningAction={runningAction}
+          handleAction={handleAction}
+          requestDelete={requestDelete}
+          setShowActions={setShowActions}
+        />
       )}
 
       <WorkspaceDrawer
         isOpen={Boolean(drawerState)}
         onClose={closeDrawer}
-        header={drawerState && (
-          <>
-            <p className="text-xs uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400">
-              {drawerState.mode === 'monitor' ? 'Service Monitor' : 'Edit Service'}
-            </p>
-            <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mt-1 flex items-center gap-2">
-              {drawerState.service.displayName}
-              {drawerState.service.nodeName && (
-                <span className="px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                  {drawerState.service.nodeName}
-                </span>
-              )}
-            </h3>
-            {drawerState.service.description && (
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 max-w-2xl">
-                {drawerState.service.description}
-              </p>
-            )}
-          </>
-        )}
+        header={drawerState && <ServiceDrawerHeader service={drawerState.service} mode={drawerState.mode} />}
       >
-        {drawerState && (drawerState.mode === 'monitor' ? (
-          <ServiceMonitor
-            serviceName={drawerState.service.id || drawerState.service.name}
-            initialNode={drawerState.service.nodeName}
-            onBack={closeDrawer}
-            variant="embedded"
-          />
-        ) : drawerLoading || !editInitialData ? (
-          <div className="h-full flex flex-col items-center justify-center gap-3 text-gray-500 dark:text-gray-400">
-            <RefreshCw className="animate-spin" />
-            Loading configuration...
-          </div>
-        ) : (
-          <div className="h-full overflow-y-auto p-6 bg-gray-50 dark:bg-gray-950/30">
-            <ServiceForm
-              key={`${drawerState.service.id || drawerState.service.name}-${drawerState.service.nodeName || 'Local'}`}
-              initialData={editInitialData}
-              isEdit
-              defaultNode={drawerState.service.nodeName && drawerState.service.nodeName !== 'Local' ? drawerState.service.nodeName : ''}
-              onClose={closeDrawer}
-              variant="embedded"
-            />
-          </div>
-        ))}
+        {drawerState && <ServiceDrawerContent
+          mode={drawerState.mode}
+          service={drawerState.service}
+          drawerLoading={drawerLoading}
+          editInitialData={editInitialData}
+          closeDrawer={closeDrawer}
+        />}
       </WorkspaceDrawer>
     </>
-  ), [
-    actionLoading,
-    actionModalOpen,
-    actionService,
-    addToast,
-    closeDrawer,
-    currentAction,
-    deleteInFlight,
-    deleteModalOpen,
-    drawerLoading,
-    drawerState,
-    editInitialData,
-    handleAction,
-    handleDelete,
-    onRefresh,
-    requestDelete,
-    runningAction,
-    selectedService,
-    serviceToDelete,
-    showActions,
-  ]);
-
-  const hasOverlayOpen = useMemo(
-    () => Boolean(drawerState || showActions || deleteModalOpen || actionModalOpen),
-    [drawerState, showActions, deleteModalOpen, actionModalOpen]
   );
+}
 
-  return {
-    openMonitorDrawer,
-    openEditDrawer,
-    openActions,
-    triggerRestart,
-    requestDelete,
-    actionLoading,
-    overlays: actionOverlays,
-    closeOverlays,
-    hasOpenOverlay: hasOverlayOpen,
-  };
+function ServiceActionsModal({
+  selectedService,
+  actionLoading,
+  runningAction,
+  handleAction,
+  requestDelete,
+  setShowActions,
+}: {
+  selectedService: ServiceViewModel;
+  actionLoading: boolean;
+  runningAction: string | null;
+  handleAction: (action: string) => void;
+  requestDelete: (service: ServiceViewModel) => void;
+  setShowActions: (value: boolean) => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+      <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800 p-6">
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex items-center gap-4">
+            <button onClick={() => setShowActions(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1 text-sm font-medium">
+              <ArrowLeft size={18} />
+              Back
+            </button>
+            <h3 className="text-lg font-bold">Service Actions</h3>
+          </div>
+          <button
+            onClick={() => setShowActions(false)}
+            className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+            aria-label="Close service actions"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="mb-6">
+          <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+            <Box className="text-blue-500" />
+            <div>
+              <div className="font-medium text-gray-900 dark:text-gray-100">{selectedService.name}</div>
+              <div className="text-xs text-gray-500 font-mono">Systemd Service</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <ActionButton
+              onClick={() => handleAction('start')}
+              disabled={actionLoading}
+              running={runningAction === 'start'}
+              icon={<PlayCircle size={18} className="text-green-500" />}
+              label="Start"
+            />
+            <ActionButton
+              onClick={() => handleAction('stop')}
+              disabled={actionLoading}
+              running={runningAction === 'stop'}
+              icon={<Power size={18} className="text-red-500" />}
+              label="Stop"
+            />
+          </div>
+
+          <ActionButton
+            onClick={() => handleAction('restart')}
+            disabled={actionLoading}
+            running={runningAction === 'restart'}
+            icon={<RotateCw size={18} className="text-blue-500" />}
+            label="Restart Service"
+            fullWidth
+          />
+
+          <ActionButton
+            onClick={() => handleAction('update')}
+            disabled={actionLoading}
+            running={runningAction === 'update'}
+            icon={<RefreshCw size={18} className="text-orange-500" />}
+            label="Update & Restart"
+            fullWidth
+          />
+
+          <button
+            onClick={() => {
+              setShowActions(false);
+              requestDelete(selectedService);
+            }}
+            disabled={actionLoading}
+            className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors text-red-600 dark:text-red-400 disabled:opacity-60"
+          >
+            <Trash2 size={18} />
+            <span className="font-medium">Delete Service</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ServiceDrawerHeader({
+  service,
+  mode,
+}: {
+  service: ServiceViewModel;
+  mode: 'monitor' | 'edit';
+}) {
+  return (
+    <>
+      <p className="text-xs uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400">
+        {mode === 'monitor' ? 'Service Monitor' : 'Edit Service'}
+      </p>
+      <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mt-1 flex items-center gap-2">
+        {service.displayName}
+        {service.nodeName && (
+          <span className="px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+            {service.nodeName}
+          </span>
+        )}
+      </h3>
+      {service.description && (
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 max-w-2xl">
+          {service.description}
+        </p>
+      )}
+    </>
+  );
+}
+
+function ServiceDrawerContent({
+  mode,
+  service,
+  drawerLoading,
+  editInitialData,
+  closeDrawer,
+}: {
+  mode: 'monitor' | 'edit';
+  service: ServiceViewModel;
+  drawerLoading: boolean;
+  editInitialData: ServiceFormInitialData | null;
+  closeDrawer: () => void;
+}) {
+  if (mode === 'monitor') {
+    return (
+      <ServiceMonitor
+        serviceName={service.id || service.name}
+        initialNode={service.nodeName}
+        onBack={closeDrawer}
+        variant="embedded"
+      />
+    );
+  }
+
+  if (drawerLoading || !editInitialData) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-3 text-gray-500 dark:text-gray-400">
+        <RefreshCw className="animate-spin" />
+        Loading configuration...
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full overflow-y-auto p-6 bg-gray-50 dark:bg-gray-950/30">
+      <ServiceForm
+        key={`${service.id || service.name}-${service.nodeName || 'Local'}`}
+        initialData={editInitialData}
+        isEdit
+        defaultNode={service.nodeName && service.nodeName !== 'Local' ? service.nodeName : ''}
+        onClose={closeDrawer}
+        variant="embedded"
+      />
+    </div>
+  );
 }
 
 /**

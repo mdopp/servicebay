@@ -31,7 +31,7 @@ describe('useInstallPlan', () => {
       blocked: [{ stack: 'basic', reason: 'core stack — uninstall via Factory Reset, not here' }],
       templatesToDeploy: ['immich'],
     };
-    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => Promise.resolve(new Response(JSON.stringify(plan), {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify(plan), {
       status: 200, headers: { 'content-type': 'application/json' },
     })));
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -43,7 +43,7 @@ describe('useInstallPlan', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith('/api/install/plan', expect.objectContaining({ method: 'POST' }));
-    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const body = JSON.parse(((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1]).body as string);
     expect(body).toEqual({ desired: ['cloud'], reinstall: ['cloud'], node: 'Local' });
     expect(returned).toEqual(plan);
     await waitFor(() => expect(result.current.plan).toEqual(plan));
@@ -64,7 +64,7 @@ describe('useInstallPlan', () => {
   });
 
   it('uninstall posts the WIPE-<stack> confirmation token', async () => {
-    const fetchMock = vi.fn((_url: string, _init?: RequestInit) => Promise.resolve(new Response(JSON.stringify({ ok: true, deleted: ['immich'] }), {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ ok: true, deleted: ['immich'] }), {
       status: 200, headers: { 'content-type': 'application/json' },
     })));
     global.fetch = fetchMock as unknown as typeof fetch;
@@ -76,7 +76,7 @@ describe('useInstallPlan', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith('/api/system/stacks/cloud/wipe', expect.objectContaining({ method: 'POST' }));
-    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const body = JSON.parse(((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1]).body as string);
     expect(body).toEqual({ confirm: 'WIPE-cloud', node: 'Local' });
     expect(res.ok).toBe(true);
   });
