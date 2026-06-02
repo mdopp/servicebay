@@ -147,6 +147,23 @@ setup_assets:
     expect(result!.frontmatter.setup_assets?.[1].kind).toBe('audiobookshelf_deeplink');
   });
 
+  it('parses the basicsync_install_qr setup-asset kind', () => {
+    const raw = `---
+setup_assets:
+  - kind: "basicsync_install_qr"
+    label: "Install BasicSync"
+    description: "Scan to download the app."
+---
+`;
+    const result = parseUserGuide(raw, 'file-share');
+    expect(result!.frontmatter.setup_assets).toHaveLength(1);
+    expect(result!.frontmatter.setup_assets?.[0]).toEqual({
+      kind: 'basicsync_install_qr',
+      label: 'Install BasicSync',
+      description: 'Scan to download the app.',
+    });
+  });
+
   it('drops setup_assets entries with non-string kind', () => {
     const raw = `---
 setup_assets:

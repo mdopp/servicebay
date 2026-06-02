@@ -61,6 +61,7 @@ const ASSET_LABELS: Record<SetupAssetKind, { label: string; icon: IconComponent 
   ios_calendar_profile: { label: 'Add to iPhone (Calendar + Contacts)', icon: Download },
   audiobookshelf_deeplink: { label: 'Open in Audiobookshelf app', icon: Smartphone },
   syncthing_qr: { label: 'Pair Syncthing device', icon: QrCode },
+  basicsync_install_qr: { label: 'Install BasicSync on your phone', icon: Download },
 };
 
 /** Coarse user-agent sniff for iOS devices — iPhone / iPad / iPod.
@@ -225,6 +226,11 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
                     if (asset.kind === 'syncthing_qr') {
                       return (
                         <SyncthingQrButton key={asset.kind} card={card} label={label} description={asset.description} Icon={Icon} />
+                      );
+                    }
+                    if (asset.kind === 'basicsync_install_qr') {
+                      return (
+                        <BasicSyncInstallQrButton key={asset.kind} label={label} description={asset.description} Icon={Icon} />
                       );
                     }
                     return null;
@@ -475,11 +481,88 @@ function DeepLinkButton({
 }
 
 /**
+ * BasicSync install QR. Opens a modal with a QR encoding the static
+ * `/api/system/downloads/basicsync` URL so the operator can point a
+ * phone camera at it and download the recommended sync client APK
+ * directly — no app-store hunt, no server round-trip. This is the
+ * "install the app" step; the SyncthingQrButton below is the
+ * separate "pair the device" step.
+ */
+const BASICSYNC_INSTALL_URL = '/api/system/downloads/basicsync?abi=arm64-v8a';
+
+function BasicSyncInstallQrButton({
+  label,
+  description,
+  Icon,
+}: {
+  label: string;
+  description?: string;
+  Icon: typeof Download;
+}) {
+  const [open, setOpen] = useState(false);
+  // The QR needs an absolute URL — a phone scanning it has no notion
+  // of the portal's origin. Resolve against the current location at
+  // render time (the portal is served from the box's public host).
+  const absoluteUrl =
+    typeof window !== 'undefined'
+      ? new URL(BASICSYNC_INSTALL_URL, window.location.origin).toString()
+      : BASICSYNC_INSTALL_URL;
+
+  return (
+    <>
+      <div>
+        <button
+          onClick={() => setOpen(true)}
+          className="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+        >
+          <Icon size={14} /> {label}
+        </button>
+        {description && (
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 leading-snug text-center">{description}</p>
+        )}
+      </div>
+
+      {open && <BasicSyncInstallModal qrUrl={absoluteUrl} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+/** The QR modal opened by {@link BasicSyncInstallQrButton}. Split out
+ *  to keep the button under the per-function line budget. */
+function BasicSyncInstallModal({ qrUrl, onClose }: { qrUrl: string; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={onClose}>
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl max-w-sm w-full p-6 text-center" onClick={e => e.stopPropagation()}>
+        <h2 className="text-lg font-bold text-gray-900 dark:text-white">Install BasicSync</h2>
+        <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+          Point your phone camera at this QR to download the BasicSync app — a trusted, open-source Syncthing client. Once it&apos;s installed, use the <strong>Pair this device</strong> button to connect.
+        </p>
+
+        <div className="mt-5 flex justify-center">
+          <div className="bg-white p-4 rounded-lg">
+            <QRCodeSVG value={qrUrl} size={192} level="M" />
+          </div>
+        </div>
+
+        <a
+          href={BASICSYNC_INSTALL_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-4 inline-block text-xs text-blue-700 dark:text-blue-300 hover:underline break-all"
+        >
+          Or open the download link directly
+        </a>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Syncthing QR pairing button. Fetches the server's device ID
  * lazily on click (it's a podman-exec round-trip, so we don't
  * pre-fetch it on every card render) and opens a modal with the QR
- * code rendered client-side. The Android Syncthing app's "Add
- * Device → Scan QR" reads it directly.
+ * code rendered client-side. The BasicSync app's "Add Device →
+ * Scan QR" reads it directly.
  */
 function SyncthingQrButton({
   card,

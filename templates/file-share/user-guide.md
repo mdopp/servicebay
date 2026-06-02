@@ -16,18 +16,17 @@ cards:
     lucide_icon: "refresh-cw"
     tagline: "Keep folders on your phone and laptop in sync with the home server — automatic two-way."
     setup_assets:
+      - kind: "basicsync_install_qr"
+        label: "Install BasicSync on your phone"
+        description: "Point your phone camera at this QR to download the BasicSync app (a trusted, open-source Syncthing client). Step 1: install it. Then use the pairing QR below to connect."
       - kind: "syncthing_qr"
-        label: "Pair this Syncthing device"
-        description: "Shows a QR code with the home server's device ID. The Android Syncthing app's \"Add Device → Scan QR\" picks it up directly."
+        label: "Pair this device"
+        description: "Shows a QR code with the home server's device ID. In BasicSync, tap \"Add Device → Scan QR\" to pick it up directly. Step 2 — after BasicSync is installed."
     recommended_apps:
-      - name: "Syncthing"
-        url: "https://syncthing.net/downloads/"
-        platforms: ["desktop"]
-        note: "Two-way folder sync between your computer and the home server."
       - name: "BasicSync"
         url: "/api/system/downloads/basicsync?abi=arm64-v8a"
         platforms: ["android"]
-        note: "Actively-maintained Android Syncthing client. This link always grabs the latest build for arm64 phones — for older or x86 devices change ?abi= to armeabi-v7a, x86_64 or x86."
+        note: "The recommended Android sync client — trusted, open-source, actively maintained. This link always grabs the latest build for arm64 phones; for older or x86 devices change ?abi= to armeabi-v7a, x86_64 or x86. (Or just scan the install QR above.)"
       - name: "Möbius Sync"
         url: "https://apps.apple.com/app/m%C3%B6bius-sync/id1539203216"
         platforms: ["ios"]
@@ -70,12 +69,12 @@ The username + password are the family ones. Once mounted, drag files in/out as 
 
 Best for: working with large files (video, photos), where uploading through a browser would be slow.
 
-## On your phone (Syncthing)
+## On your phone (BasicSync)
 
-Syncthing keeps a folder on your phone in sync with the home server in both directions. Photos you take, documents you save — they appear on the server within minutes.
+BasicSync keeps a folder on your phone in sync with the home server in both directions. Photos you take, documents you save — they appear on the server within minutes. It's a trusted, open-source Syncthing-compatible client — no need to hunt for an app in the store.
 
-1. Install **Syncthing** (Android) or **Möbius Sync** (iOS) from the links above.
-2. The app shows a *device ID*. Open the **Syncthing** card and scan the QR code (it carries the home server's device ID).
+1. **Install the app.** On Android, scan the *Install BasicSync on your phone* QR on the **Syncthing** card (or tap the BasicSync link) — it downloads the APK directly. On iOS, install **Möbius Sync** from the link.
+2. **Pair the device.** Open the **Syncthing** card, tap *Pair this device*, and in BasicSync use *Add Device → Scan QR* to scan it (the QR carries the home server's device ID).
 3. Pick which folders on your phone to sync.
 
 Best for: continuous backup of phone documents, two-way sync between phone and laptop.
