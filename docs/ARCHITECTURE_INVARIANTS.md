@@ -11,6 +11,7 @@ This document is the *intent* layer; the configs are the *enforcement* layer:
 | Tool | Config | Catches |
 |---|---|---|
 | `scripts/check-invariants.ts` | (this file's thresholds) | Aggregate metrics — file size, adoption ratios, budgets |
+| `scripts/check-diff-coverage.ts` | `.diff-coverage.json` | New-code test coverage — added/modified lines vs a ratchetable floor |
 | `.dependency-cruiser.cjs` | depcruise | Module boundary rules — forbidden import edges, circular deps |
 | `.semgrep.yml` | semgrep | Security & coupling patterns — line-level pattern matching |
 | `eslint.config.mjs` (custom `sb/*` rules) | eslint | IDE-time feedback for the highest-traffic patterns |
@@ -86,6 +87,14 @@ Thresholds are **deliberate decisions**, not aspirational defaults. Two paths:
 **executor.exec template literals.** Ratcheted to 0 in #602. ESLint rule `sb/no-exec-template-literal` is `error` everywhere — every previous offender was converted to `execArgv`. `EXEC_TEMPLATE_LITERAL_MAX = 0` in `check-invariants.ts` blocks any regression.
 
 **withApiHandler adoption.** `@/lib/api/handler` provides shared Zod validation + error envelope + ApiError short-circuiting. The #603 burn-down completed the migration — all 108 route.ts files use `withApiHandler` / `withApiHandlerParams`. The floor is locked at 100%; every new route must use the wrapper. Enforced as a hard error by the `sb/api-route-needs-handler` ESLint rule (per verb export) and the `check-invariants.ts` ratio (per file). Intentionally-public routes (login, OIDC, family-portal submission) wrap with `{ skipAuth: true }` to opt out of the requireSession gate while keeping the shared envelope.
+
+### Test coverage (new code only)
+
+| Invariant | Current | Threshold | Enforced by |
+|---|---:|---:|---|
+| New-line coverage (added/modified lines vs base) | — | 70% | `check-diff-coverage.ts` + `.diff-coverage.json:minLineCoverage` |
+
+**Diff coverage, not a global threshold (#1548).** A repo-wide coverage floor would fail on years of pre-coverage legacy debt, so the gate measures only the lines this branch *adds or modifies*: `scripts/check-diff-coverage.ts` intersects `git diff --unified=0 <base>` with the v8 coverage report (`coverage/coverage-final.json`, from `npm run test:coverage`) and fails when the share of new executable lines that are covered falls below `minLineCoverage`. Untouched legacy code is never measured. Runs in the **full/seal gate** (the CI `test` job), not the autoloop's per-issue fast gate (which stays `vitest --changed`, no coverage overhead). The floor starts at 70% and is ratcheted up over time like every other invariant — edit `.diff-coverage.json` with a justification. `minChangedLines` exempts trivially small diffs from the 0%/100% noise floor.
 
 ### Security boundaries (pattern enforcement)
 

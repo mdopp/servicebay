@@ -8,7 +8,7 @@ name: CI
 #   lint        — eslint
 #   typecheck   — tsc --noEmit
 #   build       — next build (with .next/cache restored)
-#   test        — vitest run
+#   test        — vitest run (with v8 coverage) + new-code diff-coverage gate (#1548)
 #   invariants  — file size, security `as any` budget, exec-template-literal count,
 #                 withApiHandler adoption ratio, twin singleton fan-in
 #                 (companion to docs/ARCHITECTURE_INVARIANTS.md)
@@ -124,7 +124,11 @@ jobs:
     runs-on: ubuntu-latest
     if: "${{ !startsWith(github.head_ref, 'release-please--') }}"
     steps:
+      # fetch-depth: 0 so the diff-coverage gate (#1548) can `git merge-base`
+      # against the PR base branch — the new-code coverage floor needs the diff.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -139,7 +143,19 @@ jobs:
       - name: Install dependencies
         if: steps.cache-npm.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
-      - run: npm test
+      # Full suite WITH v8 coverage. This is the seal/full gate — the autoloop
+      # builder's per-issue fast gate stays bare `vitest --changed` (no
+      # coverage overhead). Emits coverage/coverage-final.json for the gate.
+      - name: Test (with coverage)
+        run: npm run test:coverage
+      # New-code diff-coverage gate (#1548). Fails the PR when added/modified
+      # lines fall below the floor in .diff-coverage.json; untouched legacy
+      # code never blocks. On `push: main` there's no base_ref — compare
+      # against the previous main tip so a direct-to-main commit is still gated.
+      - name: Diff-coverage gate (new code)
+        env:
+          DIFF_COVERAGE_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: npm run check:diff-coverage
 
   invariants:
     runs-on: ubuntu-latest

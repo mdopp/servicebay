@@ -1,0 +1,6 @@
+{
+  "$comment": "New-code diff-coverage floor (#1548). The gate (scripts/check-diff-coverage.ts) intersects `git diff --unified=0 <base>` with the v8 coverage report and fails a PR whose *added/modified* lines fall below this floor. Untouched legacy code is never measured. Like the arch-invariants ratchet: start modest, tighten over time — only raise, never lower without a justification + issue.",
+  "minLineCoverage": 70,
+  "minChangedLines": 10,
+  "comment_minChangedLines": "Diffs touching fewer than this many measurable new lines are exempt — a 1-line fix shouldn't need its own test to keep the percentage out of the 0%/100% noise floor."
+}
