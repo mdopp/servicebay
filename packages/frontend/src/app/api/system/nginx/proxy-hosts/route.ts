@@ -9,6 +9,7 @@ import { agentManager } from '@/lib/agent/manager';
 import { listNodes } from '@/lib/nodes';
 import { AUTHELIA_LOCATION_HEADERS } from '@/lib/stackInstall/forwardAuth';
 import { withLanDeniedPage, deployLanDeniedPage } from '@/lib/reverseProxy/lanDeniedPage';
+import { withProxyErrorPage, deployProxyErrorPages } from '@/lib/reverseProxy/proxyErrorPages';
 
 export const dynamic = 'force-dynamic';
 
@@ -885,6 +886,17 @@ export const POST = withApiHandler({}, async ({ request }) => {
             await deployLanDeniedPage(node);
         }
 
+        // #1583 — Ship the branded unknown-subdomain explainer + bare-proxy-error
+        // page into NPM's data volume and wire the catch-all "dead host" server
+        // at the explainer, so an unconfigured *.dopp.cloud host (typically a
+        // typo) renders a self-explaining page instead of the raw openresty 401.
+        // Unconditional (unlike the LAN-denied page): the default server fires
+        // for ANY unknown host regardless of access lists. The per-host 401/502/504
+        // error_page is wired below in the create loop. Best-effort — a write
+        // hiccup just leaves the old bare openresty page in place.
+        const errorPageDomain = publicDomain ?? config.reverseProxy?.publicDomain;
+        await deployProxyErrorPages(errorPageDomain, node);
+
         const results: { domain: string; success: boolean; error?: string; certIssued?: boolean; certError?: string; lanRestricted?: boolean }[] = [];
 
         for (const host of hosts) {
@@ -906,6 +918,15 @@ export const POST = withApiHandler({}, async ({ request }) => {
                     advanced_config: withLanDeniedPage(host.proxyConfig?.advanced_config),
                 };
             }
+            // #1583 — Wire the branded bare-proxy-error page (401/502/503/504)
+            // into every configured host. A 401 here means the Authelia login
+            // redirect didn't fire; 502/504 means the upstream is down/starting.
+            // Idempotent; preserves any existing directives (incl. the #1415
+            // LAN-denied block, which owns 403 separately).
+            host.proxyConfig = {
+                ...host.proxyConfig,
+                advanced_config: withProxyErrorPage(host.proxyConfig?.advanced_config),
+            };
             let createdHost: { id?: number } | null = null;
             try {
                 createdHost = await createProxyHost(npm.apiUrl, token, host, accessListId);

@@ -131,12 +131,14 @@ describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
     expect(logs.some(l => l.includes('restored') && l.includes('home-assistant'))).toBe(true);
   });
 
-  it('is a no-op when it is not a clean install (a normal add-a-service install)', async () => {
+  it('restores even when cleanInstall is false, given backup-exists + empty dir (#1584)', async () => {
+    // #1520 retired cleanInstall to a hard-coded false; restore must no longer
+    // depend on it — backup-exists + fresh-dir are the only safe gates.
     nasHasHomeAssistantBackup();
     const logs: string[] = [];
     await autoRestoreServiceOnReinstall('home-assistant', { cleanInstall: false, node: 'Local' }, async l => { logs.push(l); });
-    expect(await isFreshDataDir(dataDir)).toBe(true); // nothing written
-    expect(logs).toEqual([]);
+    expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('restored:');
+    expect(logs.some(l => l.includes('restored') && l.includes('home-assistant'))).toBe(true);
   });
 
   it('is a no-op on a remote node (restore primitive is local-fs only)', async () => {
@@ -147,22 +149,24 @@ describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
     expect(logs).toEqual([]);
   });
 
-  it('is a silent no-op when no backup exists for the service', async () => {
+  it('logs a visible skip breadcrumb (not silent) when no backup exists for the service', async () => {
     mockNas.nasList.mockResolvedValue([]); // empty NAS
     const logs: string[] = [];
-    await autoRestoreServiceOnReinstall('home-assistant', { cleanInstall: true, node: 'Local' }, async l => { logs.push(l); });
-    expect(logs).toEqual([]);
+    await autoRestoreServiceOnReinstall('home-assistant', { cleanInstall: false, node: 'Local' }, async l => { logs.push(l); });
+    expect(logs.some(l => l.includes('home-assistant') && l.includes('no config backup'))).toBe(true);
+    expect(logs.some(l => l.includes('restored'))).toBe(false);
   });
 
-  it('never clobbers a non-empty data dir, and never throws', async () => {
+  it('skips a non-empty data dir with a logged reason, never clobbers, never throws (#1584)', async () => {
     await fs.mkdir(dataDir, { recursive: true });
     await fs.writeFile(path.join(dataDir, 'live.yaml'), 'live');
     nasHasHomeAssistantBackup();
     const logs: string[] = [];
     await expect(
-      autoRestoreServiceOnReinstall('home-assistant', { cleanInstall: true, node: 'Local' }, async l => { logs.push(l); }),
+      autoRestoreServiceOnReinstall('home-assistant', { cleanInstall: false, node: 'Local' }, async l => { logs.push(l); }),
     ).resolves.toBeUndefined();
     expect(await fs.readFile(path.join(dataDir, 'live.yaml'), 'utf8')).toBe('live'); // untouched
+    expect(logs.some(l => l.includes('not empty') && l.includes('skipping restore'))).toBe(true);
     expect(logs.some(l => l.includes('restored'))).toBe(false);
   });
 });
