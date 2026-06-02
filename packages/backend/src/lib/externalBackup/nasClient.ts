@@ -100,10 +100,21 @@ export async function nasDownload(remotePath: string): Promise<Buffer> {
   });
 }
 
-/** List a directory (relative to the NAS root). */
+/** List a directory (relative to the NAS root).
+ *
+ * FritzBox's FTP server IGNORES a path argument to `LIST` — `client.list('sb-backup')`
+ * returns the ROOT listing, not the subdir's contents. That silently made every
+ * staged backup invisible (`listServiceBackups` filtered the root for `.tar`,
+ * found none → empty), which in turn meant the reinstall auto-restore (#1218,
+ * gated on `listServiceBackups`) never fired even with a backup present. `cd`
+ * into the directory first, then bare `list()`. `withClient` opens a fresh
+ * connection per call, so there's no working dir to restore afterwards. */
 export async function nasList(dir = ''): Promise<FileInfo[]> {
   const clean = dir.replace(/^\/+/, '');
-  return withClient(client => client.list(clean || undefined));
+  return withClient(async client => {
+    if (clean) await client.cd(clean);
+    return client.list();
+  });
 }
 
 /** Remove a file (relative to the NAS root). Idempotent — a missing file

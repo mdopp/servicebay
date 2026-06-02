@@ -8,6 +8,7 @@ const { mockClient, mockGetConfig } = vi.hoisted(() => ({
     uploadFrom: vi.fn(),
     downloadTo: vi.fn(),
     list: vi.fn(),
+    cd: vi.fn(),
     remove: vi.fn(),
     close: vi.fn(),
   },
@@ -30,6 +31,7 @@ beforeEach(() => {
   mockClient.uploadFrom.mockResolvedValue(undefined);
   mockClient.downloadTo.mockImplementation(async (sink: NodeJS.WritableStream) => { sink.write(Buffer.from('hello')); });
   mockClient.list.mockResolvedValue([{ name: 'x.tar', size: 10 }]);
+  mockClient.cd.mockResolvedValue(undefined);
   mockClient.remove.mockResolvedValue(undefined);
 });
 
@@ -67,9 +69,17 @@ describe('nas operations', () => {
     expect(buf.toString()).toBe('hello');
     expect(mockClient.downloadTo).toHaveBeenCalled();
   });
-  it('lists a directory', async () => {
+  it('lists a directory by cd-then-bare-list (FritzBox ignores LIST <path>)', async () => {
     expect(await nasList('sb-backup')).toEqual([{ name: 'x.tar', size: 10 }]);
-    expect(mockClient.list).toHaveBeenCalledWith('sb-backup');
+    // Must cd into the dir then list() with no arg — a path arg returns the
+    // root on FritzBox FTP, which silently hid every staged backup.
+    expect(mockClient.cd).toHaveBeenCalledWith('sb-backup');
+    expect(mockClient.list).toHaveBeenCalledWith();
+  });
+  it('lists the root without a cd when no dir is given', async () => {
+    await nasList();
+    expect(mockClient.cd).not.toHaveBeenCalled();
+    expect(mockClient.list).toHaveBeenCalledWith();
   });
   it('removes a file idempotently', async () => {
     await nasRemove('/sb-backup/x.tar');
