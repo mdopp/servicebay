@@ -68,7 +68,7 @@ function joinTargetPath(base: string, subFolder?: string): string {
     return subFolder ? path.posix.join(base, subFolder) : base;
 }
 
-function buildRsyncArgs(
+export function buildRsyncArgs(
     source: string,
     target: BackupTarget,
     excludePatterns: string[],
