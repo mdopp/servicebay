@@ -114,6 +114,10 @@ export default function BackupsSettingsPage() {
   const [restoreExpandedSections, setRestoreExpandedSections] = useState<Record<string, boolean>>({});
   const [restoringLatest, setRestoringLatest] = useState(false);
   const [confirmRestoreLatestOpen, setConfirmRestoreLatestOpen] = useState(false);
+  // Collapse the (newest-first) backup list to the 5 most recent; the rest are
+  // behind a "Show all" toggle so a long retention history doesn't dominate.
+  const [showAllBackups, setShowAllBackups] = useState(false);
+  const BACKUP_PREVIEW_COUNT = 5;
 
   const [backupSync, setBackupSync] = useState<BackupSyncState>({
     enabled: false,
@@ -892,7 +896,7 @@ export default function BackupsSettingsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                  {backups.map(backup => (
+                  {(showAllBackups ? backups : backups.slice(0, BACKUP_PREVIEW_COUNT)).map(backup => (
                     <tr key={backup.fileName}>
                       <td className="py-3 font-mono text-xs text-blue-600 dark:text-blue-300 break-all">{backup.fileName}</td>
                       <td className="py-3 text-gray-700 dark:text-gray-300">{new Date(backup.createdAt).toLocaleString()}</td>
@@ -914,6 +918,18 @@ export default function BackupsSettingsPage() {
                   ))}
                 </tbody>
               </table>
+              {backups.length > BACKUP_PREVIEW_COUNT && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllBackups(v => !v)}
+                  className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+                >
+                  {showAllBackups ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  {showAllBackups
+                    ? `Show fewer (newest ${BACKUP_PREVIEW_COUNT})`
+                    : `Show all ${backups.length} backups`}
+                </button>
+              )}
             </div>
           )}
 
