@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.88.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.87.0...servicebay-v4.88.0) (2026-06-02)
+
+
+### Features
+
+* **backup:** operator-configurable source list + per-source excludes for Backup Sync ([e1f50d4](https://github.com/mdopp/servicebay/commit/e1f50d4ef4186b17a71523050fcbb6ce5b40b098)), closes [#1554](https://github.com/mdopp/servicebay/issues/1554)
+* **portal:** recommend BasicSync with an install QR for file-share sync ([70b0c53](https://github.com/mdopp/servicebay/commit/70b0c531442a1d045f647d2ac7993767ae31843b)), closes [#1560](https://github.com/mdopp/servicebay/issues/1560)
+* wipe-configs UX, BasicSync portal, domain-check collapse, backup-sync sources ([7417cc7](https://github.com/mdopp/servicebay/commit/7417cc773d5fe8b7991ec1e4c795236514426448))
+
+
+### Bug Fixes
+
+* **ux:** make wipe-configs / restore data lifecycle unmistakable ([f48d468](https://github.com/mdopp/servicebay/commit/f48d4684d1b5daa52f4165d16b49588ee02b4f2f)), closes [#1558](https://github.com/mdopp/servicebay/issues/1558)
+
 ## [4.87.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.86.1...servicebay-v4.87.0) (2026-06-02)
 
 
