@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.87.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.86.1...servicebay-v4.87.0) (2026-06-02)
+
+
+### Features
+
+* **diagnose:** add domain_resolves_to_box blocking DNS-resolution probe ([9a80982](https://github.com/mdopp/servicebay/commit/9a80982267d96ad12d18773637654f1f15ecde8d)), closes [#1563](https://github.com/mdopp/servicebay/issues/1563)
+
+
+### Bug Fixes
+
+* **health:** prune lingering checks for un-installed services ([f0832d8](https://github.com/mdopp/servicebay/commit/f0832d89150d08b3f6f7343d559ff804da19e472)), closes [#1551](https://github.com/mdopp/servicebay/issues/1551)
+* portal/diagnose UI, health-check hygiene, DNS probe, sb-tui nav + CI security hardening ([f1bad6b](https://github.com/mdopp/servicebay/commit/f1bad6b5e03265df982438025a6422348381760d))
+* **portal:** pin HA card to HA_SUBDOMAIN; add diagnose history opener ([d4af2a2](https://github.com/mdopp/servicebay/commit/d4af2a24c713fca23a9be15512988eaeed896784)), closes [#1562](https://github.com/mdopp/servicebay/issues/1562) [#1553](https://github.com/mdopp/servicebay/issues/1553)
+* **sb:** advance to post-install menu after standalone watch completes ([7649330](https://github.com/mdopp/servicebay/commit/76493306d7a4be06917f2d1cc4c8478ab2b1eac6)), closes [#1555](https://github.com/mdopp/servicebay/issues/1555)
+
 ## [4.86.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.86.0...servicebay-v4.86.1) (2026-06-02)
 
 
