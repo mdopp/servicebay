@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.83.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.83.0...servicebay-v4.83.1) (2026-06-02)
+
+
+### Bug Fixes
+
+* **externalBackup:** cd-then-list for FritzBox FTP (empty NAS backup list broke reinstall auto-restore) ([82cc2b5](https://github.com/mdopp/servicebay/commit/82cc2b57faf5e984d5041f57d1dcde975cf4db75))
+* **externalBackup:** FritzBox FTP ignores LIST &lt;path&gt; — cd then bare list() ([31282de](https://github.com/mdopp/servicebay/commit/31282de4b28286ae33a03ac3baa787d5bb602829))
+
 ## [4.83.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.82.0...servicebay-v4.83.0) (2026-06-02)
 
 
