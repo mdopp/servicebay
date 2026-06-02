@@ -37,7 +37,12 @@ import type { CheckResult } from '@/lib/health/types';
 import { runLetsdebugForDomain, type LetsdebugProblem } from '@/lib/letsdebug/client';
 import { logger } from '@/lib/logger';
 
-const PROBE_ID = 'domain_external_reachability';
+// #1535 — folded into the consolidated `domain_unreachable` ("Domains
+// reachable") diagnose row: the cheap per-domain fetch+DNS check is the
+// headline; this slow, DoH+letsdebug external view is demoted to per-row
+// "Refresh DNS check" / "Run letsdebug" deep-check actions. Both register
+// under the canonical `domain_unreachable` probe id.
+const PROBE_ID = 'domain_unreachable';
 const DNS_ROUTING_CHECK_PREFIX = 'dns_routing:';
 const LETSDEBUG_CHECK_PREFIX = 'letsdebug:';
 
