@@ -1,10 +1,12 @@
 import { headers } from 'next/headers';
 import ServiceBayLogo from '@/components/ServiceBayLogo';
 import { getConfig } from '@/lib/config';
+import { getActiveDomain, getMode } from '@/lib/mode';
 import { buildPortalCards } from '@/lib/portal/services';
 import { isPortalBlockedForRequest } from '@/lib/portal/lanGate';
 import { verifyAutheliaSession } from '@/lib/portal/auth';
 import PortalGrid from './PortalGrid';
+import PortalAdminLink from './PortalAdminLink';
 import PortalLogoutLink from './PortalLogoutLink';
 import PortalUserChip from './PortalUserChip';
 import AccessRequestStatusCTA from './AccessRequestStatusCTA';
@@ -12,6 +14,12 @@ import RequestAccessButton from './RequestAccessButton';
 
 export const revalidate = 0;
 export const dynamic = 'force-dynamic';
+
+/** ServiceBay admin host (see PortalAdminLink for the design rationale). */
+function adminDashboardUrl(config: Parameters<typeof getMode>[0]): string {
+  const scheme = getMode(config) === 'public' ? 'https' : 'http';
+  return `${scheme}://admin.${getActiveDomain(config)}/`;
+}
 
 /**
  * /portal — read-only card grid surfacing every running, feature-tier
@@ -56,10 +64,9 @@ export default async function PortalPage() {
   ]);
   const isLoggedIn = Boolean(visitor.user);
   const displayName = visitor.name?.trim() || visitor.user || null;
-  const firstName = displayName?.split(/\s+/)[0] ?? null;
-
   return (
     <main className="relative max-w-6xl mx-auto px-6 py-12">
+      <PortalAdminLink href={adminDashboardUrl(config)} />
       {isLoggedIn && displayName && <PortalUserChip displayName={displayName} />}
       <header className="mb-10 text-center">
         <div className="flex items-center justify-center gap-3">
@@ -69,8 +76,8 @@ export default async function PortalPage() {
           </h1>
         </div>
         <p className="mt-3 text-base text-gray-600 dark:text-gray-400">
-          {isLoggedIn && firstName
-            ? `Welcome back, ${firstName} — pick a service below to get started.`
+          {isLoggedIn && displayName
+            ? `Welcome back, ${displayName.split(/\s+/)[0]} — pick a service below to get started.`
             : 'Pick a service below to get started.'}
         </p>
         {isLoggedIn && <PortalLogoutLink />}
