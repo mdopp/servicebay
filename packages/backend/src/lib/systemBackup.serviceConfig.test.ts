@@ -42,6 +42,12 @@ async function buildTar(files: Record<string, string>): Promise<Buffer> {
     return buf;
 }
 
+interface SvcDataEntry { label: string; service: string; sourcePath: string; nodeName: string }
+/** A BackupMetadata-shaped object whose serviceData is the new typed-entry form. */
+function makeMeta(): { version: number; createdAt: string; nodes: never[]; configFiles: never[]; serviceData: SvcDataEntry[] } {
+    return { version: 3, createdAt: '', nodes: [], configFiles: [], serviceData: [] };
+}
+
 let tmpRoot: string;
 
 beforeEach(async () => {
@@ -70,7 +76,7 @@ describe('stageServiceConfig', () => {
             buildTar({ [`${m.service}.conf`]: `cfg for ${m.service}` }),
         );
 
-        const metadata = { version: 3, createdAt: '', nodes: [], configFiles: [] };
+        const metadata = makeMeta();
         const logs: unknown[] = [];
         const staged = await stageServiceConfig(tmpRoot, metadata as never, logs as never, undefined);
 
@@ -83,8 +89,7 @@ describe('stageServiceConfig', () => {
         // The per-service tmp tar is cleaned up.
         await expect(fs.access(path.join(tmpRoot, 'service-config', 'home-assistant.tar'))).rejects.toThrow();
         // Metadata records {label, service, sourcePath, nodeName}.
-        expect(metadata).toHaveProperty('serviceData');
-        const sd = (metadata as { serviceData: Array<{ label: string; service: string; sourcePath: string; nodeName: string }> }).serviceData;
+        const sd = metadata.serviceData;
         expect(sd).toEqual([
             { label: 'home-assistant', service: 'home-assistant', sourcePath: '/mnt/data/stacks/home-assistant', nodeName: 'Local' },
             { label: 'nginx', service: 'nginx', sourcePath: '/mnt/data/stacks/nginx', nodeName: 'Local' },
@@ -100,10 +105,10 @@ describe('stageServiceConfig', () => {
         mockProducer.resolveServiceDataDir.mockImplementation(async (svc: string) => `/mnt/data/stacks/${svc}`);
         mockProducer.buildServiceBackupTar.mockResolvedValue(await buildTar({ 'nginx.conf': 'x' }));
 
-        const metadata = { version: 3, createdAt: '', nodes: [], configFiles: [] };
+        const metadata = makeMeta();
         await stageServiceConfig(tmpRoot, metadata as never, [], undefined);
 
-        const sd = (metadata as { serviceData: Array<{ service: string }> }).serviceData;
+        const sd = metadata.serviceData;
         expect(sd.map(e => e.service)).toEqual(['nginx']);
         expect(mockProducer.buildServiceBackupTar).toHaveBeenCalledTimes(1);
     });
