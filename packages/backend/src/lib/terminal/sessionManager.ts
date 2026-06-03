@@ -192,16 +192,53 @@ function resolveHomeDir(): string {
   }
 }
 
+/** Bare shell launched inside a container when no session attach is requested. */
+const BARE_SHELL_CMD = 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi';
+
+/**
+ * The command run inside `podman exec ... sh -c '<cmd>'`.
+ *
+ * With no `attachSession`, opens a plain login shell (bash-or-sh dance). With
+ * one, attaches to (or creates) the named tmux session via `tmux new -A -s
+ * <session>` so the deep-link drops onto the persistent session. If `tmux`
+ * isn't on PATH in that container we fall back to a bare shell rather than
+ * erroring — the deep-link still gives a usable terminal. The session name is
+ * pre-validated by the caller, so it's safe to interpolate.
+ */
+export function buildContainerInnerCmd(attachSession?: string): string {
+  if (!attachSession) return BARE_SHELL_CMD;
+  return `if command -v tmux >/dev/null 2>&1; then exec tmux new -A -s ${attachSession}; else ${BARE_SHELL_CMD}; fi`;
+}
+
 export async function resolvePtySpec(id: string): Promise<PtySpec> {
   const defaultShell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || 'bash');
 
   if (id.startsWith('container:')) {
+    // Session-target grammar:
+    //   container:<node>:<id>                  → bare shell in the container
+    //   container:<node>:<id>:attach=<session> → attach to a named tmux session
+    //   container:<id>                         → legacy 2-part form, node = local
+    // The optional trailing `attach=<session>` segment lets a deep-link drop
+    // the operator straight onto a persistent session (e.g. claude-dev's
+    // `tmux new -A -s claude`) instead of a fresh shell. It is generalised:
+    // the session name is supplied by the caller, never hard-coded.
     const parts = id.split(':');
+    let attachSession: string | undefined;
+    if (parts[parts.length - 1]?.startsWith('attach=')) {
+      attachSession = parts.pop()!.slice('attach='.length) || undefined;
+    }
     const nodeName = parts.length === 3 ? parts[1] : 'local';
     const containerId = parts.length === 3 ? parts[2] : parts[1];
     if (!containerId) {
       throw new Error('Invalid container ID');
     }
+    // Guard the session name so it can't break out of the single-quoted
+    // remote command / `sh -c` argument below (it's interpolated into a
+    // shell string for the SSH path).
+    if (attachSession && !/^[A-Za-z0-9._-]+$/.test(attachSession)) {
+      throw new Error('Invalid attach session name');
+    }
+    const innerCmd = buildContainerInnerCmd(attachSession);
 
     // Always try to resolve the node (incl. `local` → `Local`) and route via
     // SSH when the node has an ssh:// URI. In container-mode installs every
@@ -226,7 +263,7 @@ export async function resolvePtySpec(id: string): Promise<PtySpec> {
           args.push('-o', 'UserKnownHostsFile=/dev/null');
           args.push('-t');
           args.push(`${uri.username}@${uri.hostname}`);
-          args.push(`podman exec -it -e TERM=xterm-256color ${containerId} sh -c 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'`);
+          args.push(`podman exec -it -e TERM=xterm-256color ${containerId} sh -c '${innerCmd}'`);
           return { shell: 'ssh', args, fallbackWarning: '' };
         }
       }
@@ -240,7 +277,7 @@ export async function resolvePtySpec(id: string): Promise<PtySpec> {
     // binary) still works without a per-node SSH config entry.
     return {
       shell: 'podman',
-      args: ['exec', '-it', '-e', 'TERM=xterm-256color', containerId, 'sh', '-c', 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin/sh; fi'],
+      args: ['exec', '-it', '-e', 'TERM=xterm-256color', containerId, 'sh', '-c', innerCmd],
       fallbackWarning: '',
     };
   }

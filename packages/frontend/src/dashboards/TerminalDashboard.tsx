@@ -23,6 +23,8 @@ export default function TerminalDashboard() {
     const pathname = usePathname() || '';
     const searchParams = useSearchParams();
     const nodeParam = searchParams?.get('node') ?? null;
+    const containerParam = searchParams?.get('container') ?? null;
+    const attachParam = searchParams?.get('attach') ?? null;
     const queryString = searchParams?.toString() ?? '';
     const storageHydrated = useRef(false);
 
@@ -116,7 +118,19 @@ export default function TerminalDashboard() {
         ];
     }, [nodes, normalizeName]);
 
-    const terminalTarget = selectedNode === 'Local' ? 'host' : `node:${selectedNode}`;
+    // A `?container=<name>` deep-link selects a container terminal directly,
+    // wired to the backend's `container:<node>:<id>` session target. An
+    // optional `?attach=<session>` drops onto a named tmux session inside that
+    // container (e.g. claude-dev's persistent `claude` session) instead of a
+    // fresh shell — generalised, not hard-coded to claude-dev. Without
+    // `container`, the dashboard behaves as before (host / node shell).
+    const terminalTarget = useMemo(() => {
+        if (containerParam) {
+            const base = `container:${selectedNode}:${containerParam}`;
+            return attachParam ? `${base}:attach=${attachParam}` : base;
+        }
+        return selectedNode === 'Local' ? 'host' : `node:${selectedNode}`;
+    }, [containerParam, attachParam, selectedNode]);
 
   return (
     <div className="h-full flex flex-col">
