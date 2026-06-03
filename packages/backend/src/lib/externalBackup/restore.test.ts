@@ -7,11 +7,12 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-const { mockNas, mockCfg, mockNpmCredStatus, mockRekeyNpm } = vi.hoisted(() => ({
+const { mockNas, mockCfg, mockNpmCredStatus, mockRekeyNpm, mockGetExecutor } = vi.hoisted(() => ({
   mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn() },
   mockCfg: { getConfig: vi.fn() },
   mockNpmCredStatus: vi.fn(),
   mockRekeyNpm: vi.fn(),
+  mockGetExecutor: vi.fn(),
 }));
 vi.mock('./nasClient', () => mockNas);
 vi.mock('../config', () => mockCfg);
@@ -19,6 +20,7 @@ vi.mock('../reverseProxy/npmAdminRekey', () => ({
   npmAdminCredStatus: (...a: unknown[]) => mockNpmCredStatus(...a),
   rekeyNpmAdmin: (...a: unknown[]) => mockRekeyNpm(...a),
 }));
+vi.mock('../executor', () => ({ getExecutor: (...a: unknown[]) => mockGetExecutor(...a) }));
 
 import { restoreServiceBackup, isFreshDataDir, autoRestoreServiceOnReinstall, wipeServiceForReinstall } from './restore';
 import { NAS_BACKUP_DIR } from './producer';
@@ -69,7 +71,7 @@ describe('restoreServiceBackup', () => {
       '.storage/zwave_js': '{"keys":"MESH"}',
     }));
 
-    const res = await restoreServiceBackup('home-assistant');
+    const res = await restoreServiceBackup('home-assistant', { local: true });
     expect(res.service).toBe('home-assistant');
     expect(res.dataDir).toBe(dataDir);
     expect(res.files).toBe(2);
@@ -82,7 +84,7 @@ describe('restoreServiceBackup', () => {
     await fs.writeFile(path.join(dataDir, 'existing.yaml'), 'live');
     serveTar(await buildServiceTar({ 'configuration.yaml': 'incoming' }));
 
-    await expect(restoreServiceBackup('home-assistant')).rejects.toThrow(/already has data/);
+    await expect(restoreServiceBackup('home-assistant', { local: true })).rejects.toThrow(/already has data/);
     expect(await fs.readFile(path.join(dataDir, 'existing.yaml'), 'utf8')).toBe('live'); // untouched
   });
 
@@ -91,7 +93,7 @@ describe('restoreServiceBackup', () => {
     await fs.writeFile(path.join(dataDir, 'configuration.yaml'), 'old');
     serveTar(await buildServiceTar({ 'configuration.yaml': 'new' }));
 
-    const res = await restoreServiceBackup('home-assistant', { force: true });
+    const res = await restoreServiceBackup('home-assistant', { force: true, local: true });
     expect(res.files).toBeGreaterThanOrEqual(1);
     expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('new');
   });
@@ -129,7 +131,7 @@ describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
   it('restores on install into an empty data dir (Local node)', async () => {
     nasHasHomeAssistantBackup();
     const logs: string[] = [];
-    await autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'install', node: 'Local' }, async l => { logs.push(l); });
+    await autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'install', node: 'Local', local: true }, async l => { logs.push(l); });
     expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('restored:');
     expect(logs.some(l => l.includes('restored') && l.includes('home-assistant'))).toBe(true);
   });
@@ -139,7 +141,7 @@ describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
     // backup-exists + fresh-dir for the plain install path.
     nasHasHomeAssistantBackup();
     const logs: string[] = [];
-    await autoRestoreServiceOnReinstall('home-assistant', { node: 'Local' }, async l => { logs.push(l); });
+    await autoRestoreServiceOnReinstall('home-assistant', { node: 'Local', local: true }, async l => { logs.push(l); });
     expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('restored:');
     expect(logs.some(l => l.includes('restored') && l.includes('home-assistant'))).toBe(true);
   });
@@ -155,7 +157,7 @@ describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
   it('logs a visible skip breadcrumb (not silent) when no backup exists for the service', async () => {
     mockNas.nasList.mockResolvedValue([]); // empty NAS
     const logs: string[] = [];
-    await autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'install', node: 'Local' }, async l => { logs.push(l); });
+    await autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'install', node: 'Local', local: true }, async l => { logs.push(l); });
     expect(logs.some(l => l.includes('home-assistant') && l.includes('no config backup'))).toBe(true);
     expect(logs.some(l => l.includes('restored'))).toBe(false);
   });
@@ -166,7 +168,7 @@ describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
     nasHasHomeAssistantBackup();
     const logs: string[] = [];
     await expect(
-      autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'install', node: 'Local' }, async l => { logs.push(l); }),
+      autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'install', node: 'Local', local: true }, async l => { logs.push(l); }),
     ).resolves.toBeUndefined();
     expect(await fs.readFile(path.join(dataDir, 'live.yaml'), 'utf8')).toBe('live'); // untouched
     expect(logs.some(l => l.includes('not empty') && l.includes('skipping restore'))).toBe(true);
@@ -180,7 +182,7 @@ describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
     await fs.writeFile(path.join(dataDir, 'home-assistant_v2.db'), 'KEPT-RECORDER-DB');
     nasHasHomeAssistantBackup();
     const logs: string[] = [];
-    await autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'wipe-config', node: 'Local' }, async l => { logs.push(l); });
+    await autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
     expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('restored:');
     expect(await fs.readFile(path.join(dataDir, 'home-assistant_v2.db'), 'utf8')).toBe('KEPT-RECORDER-DB'); // DATA kept
     expect(logs.some(l => l.includes('wipe-config') && l.includes('restoring config'))).toBe(true);
@@ -189,7 +191,7 @@ describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
   it('on wipe-all, restores config into the (now-empty) dir (#1585)', async () => {
     nasHasHomeAssistantBackup();
     const logs: string[] = [];
-    await autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'wipe-all', node: 'Local' }, async l => { logs.push(l); });
+    await autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'wipe-all', node: 'Local', local: true }, async l => { logs.push(l); });
     expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('restored:');
     expect(logs.some(l => l.includes('restored') && l.includes('home-assistant'))).toBe(true);
   });
@@ -201,7 +203,7 @@ describe('wipeServiceForReinstall (#1585)', () => {
     await fs.writeFile(path.join(dataDir, 'configuration.yaml'), 'cfg');
     await fs.writeFile(path.join(dataDir, 'home-assistant_v2.db'), 'data');
     const logs: string[] = [];
-    await wipeServiceForReinstall('home-assistant', { wipeMode: 'install', node: 'Local' }, async l => { logs.push(l); });
+    await wipeServiceForReinstall('home-assistant', { wipeMode: 'install', node: 'Local', local: true }, async l => { logs.push(l); });
     expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('cfg');
     expect(await fs.readFile(path.join(dataDir, 'home-assistant_v2.db'), 'utf8')).toBe('data');
     expect(logs).toEqual([]);
@@ -214,7 +216,7 @@ describe('wipeServiceForReinstall (#1585)', () => {
     await fs.writeFile(path.join(dataDir, '.storage/zwave_js'), 'keys'); // CONFIG (mesh keys)
     await fs.writeFile(path.join(dataDir, 'home-assistant_v2.db'), 'RECORDER'); // DATA
     const logs: string[] = [];
-    await wipeServiceForReinstall('home-assistant', { wipeMode: 'wipe-config', node: 'Local' }, async l => { logs.push(l); });
+    await wipeServiceForReinstall('home-assistant', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
     // CONFIG gone:
     await expect(fs.access(path.join(dataDir, 'configuration.yaml'))).rejects.toThrow();
     await expect(fs.access(path.join(dataDir, 'automations.yaml'))).rejects.toThrow();
@@ -229,7 +231,7 @@ describe('wipeServiceForReinstall (#1585)', () => {
     await fs.writeFile(path.join(dataDir, 'configuration.yaml'), 'cfg');
     await fs.writeFile(path.join(dataDir, 'home-assistant_v2.db'), 'RECORDER');
     const logs: string[] = [];
-    await wipeServiceForReinstall('home-assistant', { wipeMode: 'wipe-all', node: 'Local' }, async l => { logs.push(l); });
+    await wipeServiceForReinstall('home-assistant', { wipeMode: 'wipe-all', node: 'Local', local: true }, async l => { logs.push(l); });
     expect(await isFreshDataDir(dataDir)).toBe(true);
     expect(logs.some(l => l.includes('wipe-all') && l.includes('config + data'))).toBe(true);
   });
@@ -245,7 +247,7 @@ describe('wipeServiceForReinstall (#1585)', () => {
 
   it('logs a skip note for a service with no manifest (no classification to wipe)', async () => {
     const logs: string[] = [];
-    await wipeServiceForReinstall('not-a-service', { wipeMode: 'wipe-config', node: 'Local' }, async l => { logs.push(l); });
+    await wipeServiceForReinstall('not-a-service', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
     expect(logs.some(l => l.includes('no backup manifest'))).toBe(true);
   });
 });
@@ -265,7 +267,7 @@ describe('NPM credential reconcile after restore (#1529)', () => {
     mockNpmCredStatus.mockResolvedValue('rejected');
     mockRekeyNpm.mockResolvedValue({ ok: true, message: 'NPM admin password re-keyed and saved', email: 'a@x' });
 
-    const res = await restoreServiceBackup('nginx');
+    const res = await restoreServiceBackup('nginx', { local: true });
     expect(res.dataDir).toBe(path.join(tmpRoot, 'nginx-proxy-manager'));
     expect(mockRekeyNpm).toHaveBeenCalledWith('Local');
     expect(res.credentialReconcile).toEqual({ ok: true, message: expect.stringContaining('re-keyed') });
@@ -275,7 +277,7 @@ describe('NPM credential reconcile after restore (#1529)', () => {
     await serveNginxTar();
     mockNpmCredStatus.mockResolvedValue('ok');
 
-    const res = await restoreServiceBackup('nginx');
+    const res = await restoreServiceBackup('nginx', { local: true });
     expect(mockRekeyNpm).not.toHaveBeenCalled();
     expect(res.credentialReconcile).toBeUndefined();
   });
@@ -284,7 +286,7 @@ describe('NPM credential reconcile after restore (#1529)', () => {
     await serveNginxTar();
     mockNpmCredStatus.mockResolvedValue('unknown');
 
-    const res = await restoreServiceBackup('nginx');
+    const res = await restoreServiceBackup('nginx', { local: true });
     expect(mockRekeyNpm).not.toHaveBeenCalled();
     expect(res.credentialReconcile).toBeUndefined();
   });
@@ -294,14 +296,103 @@ describe('NPM credential reconcile after restore (#1529)', () => {
     mockNpmCredStatus.mockResolvedValue('no-creds');
     mockRekeyNpm.mockResolvedValue({ ok: false, message: 'Could not find the running NPM container to re-key.' });
 
-    const res = await restoreServiceBackup('nginx');
+    const res = await restoreServiceBackup('nginx', { local: true });
     expect(res.credentialReconcile).toEqual({ ok: false, message: expect.stringContaining('Could not find') });
   });
 
   it('never reconciles for a non-NPM service', async () => {
     serveTar(await buildServiceTar({ 'configuration.yaml': 'x' }));
-    const res = await restoreServiceBackup('home-assistant');
+    const res = await restoreServiceBackup('home-assistant', { local: true });
     expect(mockNpmCredStatus).not.toHaveBeenCalled();
     expect(res.credentialReconcile).toBeUndefined();
+  });
+});
+
+describe('host-agent-routed restore/wipe (#1600 — stacks dir not in container)', () => {
+  // The real host agent runs these argv ops on /mnt/data/stacks, which the
+  // servicebay container can't see. The unit env has no agent, so this Executor
+  // stand-in runs the SAME argv against the test's real temp fs — proving the
+  // routed path actually wipes + extracts (not the in-container no-op of #1600).
+  function makeHostExecutor() {
+    const run = (argv: string[]) => execFileAsync(argv[0], argv.slice(1));
+    const exec: {
+      execArgv: ReturnType<typeof vi.fn>;
+      exists: ReturnType<typeof vi.fn>;
+      writeFile: ReturnType<typeof vi.fn>;
+    } = {
+      execArgv: vi.fn(async (argv: string[]) => {
+        // `sh -c <script> sh <args...>` — run the script with positional args.
+        if (argv[0] === 'sh' && argv[1] === '-c') {
+          const script = argv[2];
+          const rest = argv.slice(3); // [$0, $1, $2, ...]
+          const { stdout, stderr } = await execFileAsync('sh', ['-c', script, ...rest]);
+          return { stdout, stderr };
+        }
+        const { stdout, stderr } = await run(argv);
+        return { stdout, stderr };
+      }),
+      exists: vi.fn(async (p: string) => {
+        try { await fs.access(p); return true; } catch { return false; }
+      }),
+      writeFile: vi.fn(async (p: string, content: string) => { await fs.writeFile(p, content); }),
+    };
+    return exec;
+  }
+
+  beforeEach(() => {
+    mockGetExecutor.mockImplementation(() => makeHostExecutor());
+  });
+
+  it('restore: extracts the NAS tar onto the host (agent), counting host files', async () => {
+    serveTar(await buildServiceTar({ 'configuration.yaml': 'host-restored:', '.storage/zwave_js': '{"k":2}' }));
+    const res = await restoreServiceBackup('home-assistant', { node: 'Local' });
+    expect(mockGetExecutor).toHaveBeenCalledWith('Local');
+    expect(res.files).toBe(2);
+    // Files landed on the (host = temp) data dir, via the agent path.
+    expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('host-restored:');
+    expect(await fs.readFile(path.join(dataDir, '.storage/zwave_js'), 'utf8')).toBe('{"k":2}');
+  });
+
+  it('restore: refuses a non-empty host data dir without force (agent ls -A)', async () => {
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.writeFile(path.join(dataDir, 'live.yaml'), 'live');
+    serveTar(await buildServiceTar({ 'configuration.yaml': 'incoming' }));
+    await expect(restoreServiceBackup('home-assistant', { node: 'Local' })).rejects.toThrow(/already has data/);
+    expect(await fs.readFile(path.join(dataDir, 'live.yaml'), 'utf8')).toBe('live');
+  });
+
+  it('wipe-config: clears CONFIG paths on the host, keeps DATA (agent rm -rf)', async () => {
+    await fs.mkdir(path.join(dataDir, '.storage'), { recursive: true });
+    await fs.writeFile(path.join(dataDir, 'configuration.yaml'), 'cfg');
+    await fs.writeFile(path.join(dataDir, '.storage/zwave_js'), 'keys');
+    await fs.writeFile(path.join(dataDir, 'home-assistant_v2.db'), 'RECORDER');
+    const logs: string[] = [];
+    await wipeServiceForReinstall('home-assistant', { wipeMode: 'wipe-config', node: 'Local' }, async l => { logs.push(l); });
+    await expect(fs.access(path.join(dataDir, 'configuration.yaml'))).rejects.toThrow();
+    await expect(fs.access(path.join(dataDir, '.storage/zwave_js'))).rejects.toThrow();
+    expect(await fs.readFile(path.join(dataDir, 'home-assistant_v2.db'), 'utf8')).toBe('RECORDER');
+    expect(logs.some(l => l.includes('wipe-config') && l.includes('kept the service data'))).toBe(true);
+  });
+
+  it('wipe-all: clears the whole host data dir (agent rm -rf)', async () => {
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.writeFile(path.join(dataDir, 'configuration.yaml'), 'cfg');
+    await fs.writeFile(path.join(dataDir, 'home-assistant_v2.db'), 'RECORDER');
+    const logs: string[] = [];
+    await wipeServiceForReinstall('home-assistant', { wipeMode: 'wipe-all', node: 'Local' }, async l => { logs.push(l); });
+    await expect(fs.access(dataDir)).rejects.toThrow();
+    expect(logs.some(l => l.includes('wipe-all'))).toBe(true);
+  });
+
+  it('autoRestore wipe-config: force-restores config over kept host data (agent path)', async () => {
+    mockNas.nasList.mockResolvedValue([{ name: 'home-assistant.tar', size: 1024 }]);
+    serveTar(await buildServiceTar({ 'configuration.yaml': 'reseeded:', '.storage/zwave_js': '{"k":3}' }));
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.writeFile(path.join(dataDir, 'home-assistant_v2.db'), 'KEPT-DB');
+    const logs: string[] = [];
+    await autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'wipe-config', node: 'Local' }, async l => { logs.push(l); });
+    expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('reseeded:');
+    expect(await fs.readFile(path.join(dataDir, 'home-assistant_v2.db'), 'utf8')).toBe('KEPT-DB');
+    expect(logs.some(l => l.includes('restored') && l.includes('home-assistant'))).toBe(true);
   });
 });

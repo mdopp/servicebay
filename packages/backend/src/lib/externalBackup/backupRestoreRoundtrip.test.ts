@@ -61,7 +61,7 @@ describe('backup → restore round-trip (#1218 / #1190)', () => {
     await backupServiceToNas('home-assistant', { serviceDataDir: src });
     expect(nas.has(`${NAS_BACKUP_DIR}/home-assistant.tar`)).toBe(true);
 
-    const { dataDir } = await restoreServiceBackup('home-assistant');
+    const { dataDir } = await restoreServiceBackup('home-assistant', { local: true });
 
     // kept config — including the zwave network keys the operator can't reconstruct
     expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('default_config:\n');
@@ -87,7 +87,7 @@ describe('backup → restore round-trip (#1218 / #1190)', () => {
     });
 
     await backupServiceToNas('authelia', { serviceDataDir: src });
-    const { dataDir } = await restoreServiceBackup('authelia');
+    const { dataDir } = await restoreServiceBackup('authelia', { local: true });
     const restored = await fs.readFile(path.join(dataDir, 'users_database.yml'), 'utf8');
 
     expect(restored).toContain('alice');
@@ -106,7 +106,7 @@ describe('backup → restore round-trip (#1218 / #1190)', () => {
     // Simulate the reinstall wiping the live data dir to empty, then restoring.
     const dest = path.join(tmpRoot, 'adguard');
     await fs.mkdir(dest, { recursive: true }); // empty dir is the fresh/seedable state
-    const { files } = await restoreServiceBackup('adguard');
+    const { files } = await restoreServiceBackup('adguard', { local: true });
 
     expect(files).toBe(1); // only the included config, not the querylog
     expect(await fs.readFile(path.join(dest, 'conf/AdGuardHome.yaml'), 'utf8')).toContain('home.dopp.cloud');
