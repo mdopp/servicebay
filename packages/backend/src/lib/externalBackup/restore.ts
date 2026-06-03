@@ -20,7 +20,7 @@ import os from 'os';
 import path from 'path';
 import { fetchServiceBackup, listServiceBackups, resolveServiceDataDir, type ServiceBackupMeta } from './producer';
 import { getServiceManifest, getConfigPaths } from './serviceManifest';
-import { safeTarExtract, assertSafeArchiveEntries } from '../systemBackup';
+import { safeTarExtract, extractServiceConfigToNode } from '../systemBackup';
 import { getExecutor, type Executor } from '../executor';
 import { logger } from '../logger';
 
@@ -128,61 +128,15 @@ function agentRestoreBackend(executor: Executor): RestoreFsBackend {
       await executor.execArgv(['rm', '-rf', target]);
     },
     async extractTar(tar, destDir) {
-      // Traversal/symlink-escape guard (#580/#590) runs in-container on the
-      // fetched tar bytes — before anything touches the host.
-      const tmp = path.join(os.tmpdir(), `sb-restore-${Date.now()}-${process.pid}.tar`);
-      try {
-        await fs.writeFile(tmp, tar);
-        await assertSafeArchiveEntries(tmp, false);
-      } finally {
-        await fs.rm(tmp, { force: true });
-      }
-      // Push the validated tar to a host temp file (base64 over the agent's
-      // utf-8-only write_file, so binary config stays intact), then extract
-      // host-side with the SAME hardening flags safeTarExtract uses, and run a
-      // host-side symlink-escape walk as defense in depth (mirrors
-      // assertNoSymlinkEscape).
-      const { stdout } = await executor.execArgv(['mktemp', '-t', 'sb-restore-XXXXXX']);
-      const hostTar = stdout.trim();
-      const hostTarB64 = `${hostTar}.b64`;
-      try {
-        await executor.writeFile(hostTarB64, tar.toString('base64'));
-        await executor.execArgv(['sh', '-c', 'base64 -d "$1" > "$2"', 'sh', hostTarB64, hostTar], { timeoutMs: 120_000 });
-        await executor.execArgv(['mkdir', '-p', destDir]);
-        await executor.execArgv(
-          ['tar', '-xf', hostTar, '-C', destDir, '--no-same-owner', '--no-overwrite-dir', '--no-same-permissions'],
-          { timeoutMs: 120_000 },
-        );
-        await assertNoSymlinkEscapeHost(executor, destDir);
-      } finally {
-        await executor.execArgv(['rm', '-f', hostTarB64, hostTar]);
-      }
+      // #1610 — the host-side per-service tar extraction (in-container
+      // traversal/link pre-pass on the fetched tar bytes → base64 push →
+      // host-side tar with safeTarExtract's hardening flags → host-side
+      // symlink-escape walk) is the SAME engine the guided System-Snapshot
+      // restore uses. Delegate to it so config-survival auto-restore and guided
+      // restore can't fork their safety rails.
+      await extractServiceConfigToNode(executor, tar, destDir);
     },
   };
-}
-
-/**
- * Host-side equivalent of systemBackup's `assertNoSymlinkEscape` (#580/#590):
- * after a host extraction, refuse any symlink under `dir` whose resolved target
- * escapes `dir`. The in-container pre-pass already refused absolute/traversal
- * link targets in the archive listing; this is defense in depth on the host
- * where the link's real resolution lives. On refusal the partial extraction is
- * cleaned up host-side, matching safeTarExtract.
- */
-async function assertNoSymlinkEscapeHost(executor: Executor, dir: string): Promise<void> {
-  // List every symlink under dir with its resolved real path (-printf %l is the
-  // raw target; readlink -f resolves it). A target that doesn't stay within the
-  // realpath of dir is a refusal.
-  const realRoot = (await executor.execArgv(['readlink', '-f', dir])).stdout.trim();
-  const { stdout } = await executor.execArgv(['find', dir, '-type', 'l']);
-  const links = stdout.split('\n').map(l => l.trim()).filter(Boolean);
-  for (const link of links) {
-    const resolved = (await executor.execArgv(['readlink', '-f', link]).catch(() => ({ stdout: '' }))).stdout.trim();
-    if (!resolved || (resolved !== realRoot && !resolved.startsWith(realRoot + '/'))) {
-      await executor.execArgv(['rm', '-rf', dir]).catch(() => {});
-      throw new Error(`Refused archive: symlink "${link}" → "${resolved}" escapes the extraction directory`);
-    }
-  }
 }
 
 /**
