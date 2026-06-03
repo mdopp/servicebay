@@ -42,6 +42,20 @@ describe('verifyAutheliaSession', () => {
     expect(original).not.toContain('/portal');
   });
 
+  it('calls the 4.38+ /api/authz/auth-request endpoint with X-Original-Method, not deprecated /api/verify', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(autheliaResponse(200, { 'remote-user': 'alice', 'remote-name': 'Alice Doe' }));
+
+    await verifyAutheliaSession('authelia_session=abc');
+
+    const url = fetchSpy.mock.calls[0]?.[0] as string;
+    expect(url).toContain('/api/authz/auth-request');
+    expect(url).not.toContain('/api/verify');
+    const headers = (fetchSpy.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+    expect(headers['X-Original-Method']).toBe('GET');
+  });
+
   it('maps a 200 + identity headers to the signed-in visitor', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       autheliaResponse(200, { 'remote-user': 'alice', 'remote-name': 'Alice Doe' }),

@@ -8,25 +8,31 @@
  * can render extra affordances: hide the "Request access" button,
  * greet them by name, etc.
  *
- * Implementation: server-side call into Authelia's `/api/verify`
- * forwarding the visitor's `Cookie` header. Authelia returns 200 +
+ * Implementation: server-side call into Authelia's
+ * `/api/authz/auth-request` forwarding the visitor's `Cookie` header
+ * plus `X-Original-URL` / `X-Original-Method`. Authelia returns 200 +
  * `Remote-User` / `Remote-Name` response headers when the cookie is
  * a valid session, or 401 when it isn't (or when there's no cookie
  * at all). Either way we treat it as best-effort — a stale config
  * or unreachable Authelia just falls back to the anonymous render.
  *
- * This is the same `/api/verify` endpoint the standard NPM
- * `auth_request` integration uses (see file-share's `FILEBROWSER_SUBDOMAIN`
- * advanced_config); we just call it ourselves so we don't have to
- * thread `auth_request_set` headers through the portal proxy host
- * (which would require an NPM advanced_config update for the apex
- * and complicates the anonymous-fallback path).
+ * `/api/authz/auth-request` is the nginx-flavoured forward-auth
+ * endpoint (Authelia 4.38+) the rest of the proxy integration already
+ * uses (see `forwardAuth.ts`), replacing the now-deprecated
+ * `/api/verify`. It keeps the same `X-Original-URL` / `X-Original-Method`
+ * header API; we call it ourselves so we don't have to thread
+ * `auth_request_set` headers through the portal proxy host (which would
+ * require an NPM advanced_config update for the apex and complicates
+ * the anonymous-fallback path).
  */
 import { getConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
 
 const VERIFY_TIMEOUT_MS = 3_000;
 const DEFAULT_AUTHELIA_PORT = '9091';
+// Authelia 4.38+ forward-auth endpoint (the deprecated `/api/verify` is what
+// the rest of the proxy already moved off of — see forwardAuth.ts).
+const AUTH_REQUEST_PATH = '/api/authz/auth-request';
 
 export interface PortalVisitor {
   /** LLDAP username when Authelia recognizes the cookie, otherwise null. */
@@ -37,10 +43,10 @@ export interface PortalVisitor {
 
 async function fetchAutheliaVerify(port: string, cookieHeader: string, originalUrl: string): Promise<Response | null> {
   try {
-    return await fetch(`http://127.0.0.1:${port}/api/verify`, {
+    return await fetch(`http://127.0.0.1:${port}${AUTH_REQUEST_PATH}`, {
       headers: {
         Cookie: cookieHeader,
-        ...(originalUrl ? { 'X-Original-URL': originalUrl } : {}),
+        ...(originalUrl ? { 'X-Original-URL': originalUrl, 'X-Original-Method': 'GET' } : {}),
       },
       signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
     });
