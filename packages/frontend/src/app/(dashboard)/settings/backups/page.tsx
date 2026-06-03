@@ -700,7 +700,7 @@ export default function BackupsSettingsPage() {
         </div>
       )}
 
-      {/* System Backups */}
+      {/* System Snapshot — config/setup; downloadable + NAS-pushed + auto-restored. */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex flex-col gap-3 md:flex-row md:items-center">
           <div className="flex items-center gap-3 flex-1">
@@ -708,8 +708,8 @@ export default function BackupsSettingsPage() {
               <HardDrive size={20} />
             </div>
             <div>
-              <h3 className="font-bold text-gray-900 dark:text-white">System Backups</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Capture managed services and ServiceBay config into a restorable tarball.</p>
+              <h3 className="font-bold text-gray-900 dark:text-white">System Snapshot</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Your setup and per-service config (settings, not bulk data). Download it on demand, and it&apos;s pushed to the NAS nightly and auto-restored on reinstall.</p>
               {backupStatus !== 'idle' && (
                 <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300">
                   {backupStatus === 'running' && (
@@ -747,7 +747,7 @@ export default function BackupsSettingsPage() {
               className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg shadow-sm hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {creatingBackup ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
-              {creatingBackup ? 'Creating Backup...' : 'Create Backup'}
+              {creatingBackup ? 'Creating snapshot...' : 'Create Snapshot'}
             </button>
           </div>
         </div>
@@ -758,7 +758,7 @@ export default function BackupsSettingsPage() {
               Loading backups...
             </div>
           ) : backups.length === 0 ? (
-            <div className="text-sm text-gray-500 dark:text-gray-400 italic">No backups found. Create one to snapshot your environment.</div>
+            <div className="text-sm text-gray-500 dark:text-gray-400 italic">No snapshots yet. Create one to capture your setup and per-service config.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
@@ -853,8 +853,10 @@ export default function BackupsSettingsPage() {
         </div>
       </div>
 
-      {/* NAS Backups (FritzBox) — the config-survival source the sb upload
-          stages under sb-backup/, e.g. home-assistant.tar (#1440). */}
+      {/* System Snapshot — NAS storage mode (FritzBox). The same per-service
+          config atoms the snapshot above carries, staged under sb-backup/ so a
+          fresh install auto-restores them (#1440). Not a separate backup —
+          this is where the snapshot lives off-box and how reinstall finds it. */}
       <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex flex-col gap-3 md:flex-row md:items-center">
           <div className="flex items-center gap-3 flex-1">
@@ -862,8 +864,8 @@ export default function BackupsSettingsPage() {
               <Network size={20} />
             </div>
             <div>
-              <h3 className="font-bold text-gray-900 dark:text-white">NAS Backups</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Config backups staged for a fresh install to restore — on the FritzBox USB NAS by default, or a separate FTP/SSH destination you set below.</p>
+              <h3 className="font-bold text-gray-900 dark:text-white">Snapshot on NAS</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Where the System Snapshot is pushed off-box so a fresh install can auto-restore it — the FritzBox USB NAS by default, or a separate FTP/SSH destination you set below.</p>
             </div>
           </div>
           <button
@@ -886,7 +888,7 @@ export default function BackupsSettingsPage() {
             </div>
           ) : !nasOverview?.configured ? (
             <div className="text-sm text-gray-500 dark:text-gray-400">
-              No backup destination configured yet. Set one above (it defaults to the FritzBox gateway credentials), and the box will list backups staged there for a fresh install to restore.
+              No NAS destination configured yet. Set one above (it defaults to the FritzBox gateway credentials), and the box will push the System Snapshot there and list it for a fresh install to auto-restore.
             </div>
           ) : nasOverview.connection && !nasOverview.connection.ok ? (
             <div className="flex items-start gap-2 text-sm text-red-600 dark:text-red-300">
@@ -899,7 +901,7 @@ export default function BackupsSettingsPage() {
                 <CheckCircle2 size={14} /> Connected to the FritzBox NAS.
               </div>
               {nasOverview.backups.length === 0 ? (
-                <div className="text-sm text-gray-500 dark:text-gray-400 italic">No backups staged on the NAS yet.</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400 italic">No snapshot staged on the NAS yet.</div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
@@ -949,7 +951,7 @@ export default function BackupsSettingsPage() {
             </div>
             <div className="flex-1">
               <h3 className="font-bold text-gray-900 dark:text-white">Backup Sync</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Incrementally sync your data to an external target using rsync.</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Your bulk data (the photo library, recorder history, the Z-Wave mesh DB) — rsynced from <span className="font-mono">/mnt/data</span> to an external drive or NAS share. The System Snapshot above covers config; this covers data.</p>
             </div>
             <label className="flex items-center gap-2 cursor-pointer">
               <span className="text-xs text-gray-500 dark:text-gray-400">{backupSync.enabled ? 'Enabled' : 'Disabled'}</span>
