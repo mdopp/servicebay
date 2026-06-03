@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.90.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.90.2...servicebay-v4.90.3) (2026-06-03)
+
+
+### Bug Fixes
+
+* **externalBackup:** drop Supervisor-only HA config entries on import ([5907ef4](https://github.com/mdopp/servicebay/commit/5907ef4b08faed1fc30eb4f431e2f669d686abac)), closes [#1601](https://github.com/mdopp/servicebay/issues/1601)
+* **externalBackup:** route restore + wipe through host agent ([#1600](https://github.com/mdopp/servicebay/issues/1600)) ([5ba9c4f](https://github.com/mdopp/servicebay/commit/5ba9c4f662bee8f3e72996ad52f41a1bd6aae28f))
+* **externalBackup:** route restore/wipe through host agent + drop HA-OS Supervisor entries ([7923e37](https://github.com/mdopp/servicebay/commit/7923e37af06b37f6f191bf0e81b7d803d70185ac))
+
 ## [4.90.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.90.1...servicebay-v4.90.2) (2026-06-03)
 
 
