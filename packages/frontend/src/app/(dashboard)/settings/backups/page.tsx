@@ -1432,7 +1432,7 @@ export default function BackupsSettingsPage() {
                         {restoreExpandedSections.serviceData ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
                         <Database size={16} className="text-gray-400 shrink-0" />
                         <div className="flex-1 min-w-0">
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Service Data</span>
+                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Service Config</span>
                           <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
                             {Object.values(restoreSelectionState.serviceData).reduce((sum, fm) => sum + Object.values(fm).filter(Boolean).length, 0)} file{Object.values(restoreSelectionState.serviceData).reduce((sum, fm) => sum + Object.values(fm).filter(Boolean).length, 0) !== 1 ? 's' : ''} selected
                           </span>
@@ -1441,7 +1441,7 @@ export default function BackupsSettingsPage() {
                       {restoreExpandedSections.serviceData && (
                         <div className="px-4 pb-4 pt-1 border-t border-gray-100 dark:border-gray-800/50 space-y-3">
                           <p className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-2">
-                            This is your actual app data — Home Assistant&apos;s <span className="font-mono">.storage</span>, Z-Wave, the Immich library, and so on. A &quot;configs löschen&quot; / wipe-configs reinstall keeps it on disk but does <span className="font-semibold">not</span> pull it back automatically. Select it here to recover it, or services come up blank.
+                            This is each service&apos;s <span className="font-semibold">config</span> — Home Assistant&apos;s automations and <span className="font-mono">.storage</span> registries, the Z-Wave network keys, AdGuard / Authelia / Syncthing / nginx settings, and so on. It is <span className="font-semibold">not</span> bulk data (the Immich photo library, the recorder history DB, the Z-Wave mesh DB) — that stays on disk on a wipe-configs reinstall and is Backup Sync&apos;s job. A wipe-configs reinstall does <span className="font-semibold">not</span> pull this config back automatically; select it here to recover it, or services come up with default settings.
                           </p>
                           {restorePreview.serviceData.map(sd => {
                             const label = sd.name.replace(/-/g, '/').replace(/^\//, '');

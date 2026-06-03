@@ -70,10 +70,19 @@ function matchesInclude(rel: string, inc: string): boolean {
  * can find them) whose path under `data/` matches one of the manifest includes
  * — either the include itself (a file), anything beneath a dir include, or a
  * trailing-`*` glob include.
+ *
+ * Only LEAF FILE members are returned, never directory members. A tar listing
+ * of a dir include yields the directory entry (`data/custom_components/`), every
+ * intermediate dir entry, AND the leaf files; passing an intermediate dir member
+ * to `tar -x` alongside its children makes GNU/libarchive tar report the children
+ * as "Not found in archive" and exit non-zero, aborting the whole import (#1620).
+ * Extracting just the leaf files is sufficient — tar recreates the parent dirs.
  */
 function selectWantedMembers(members: string[], includes: string[]): string[] {
   const wanted: string[] = [];
   for (const member of members) {
+    // Directory members list with a trailing slash; skip them (see above).
+    if (/\/$/.test(member)) continue;
     const norm = normaliseMember(member);
     if (!norm.startsWith(DATA_PREFIX)) continue;
     const rel = norm.slice(DATA_PREFIX.length);

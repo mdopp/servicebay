@@ -300,13 +300,12 @@ describe('GOLDEN: importHaOsBackupToNas → manifest-filtered home-assistant.tar
     await write(inner, 'data/.storage/core.entity_registry', '{}');
     await write(inner, 'data/.storage/lovelace.lovelace', '{"dash":"main"}');
     await write(inner, 'data/.storage/hacs.repositories', '[]');
-    // NOTE: this fixture intentionally exercises only FILE includes. The HA
-    // manifest also includes the `custom_components` DIR, but extractHaConfigDir
-    // currently passes intermediate dir members to `tar -x` alongside their
-    // children, which GNU/libarchive tar rejects ("Not found in archive") — a
-    // latent gap tracked separately (#1620). The selective-extraction *atom
-    // shape* this PIN guards is the file-include set; the dir-include path is a
-    // pre-existing bug, not behaviour this regression test should bless.
+    // The HA manifest also includes the `custom_components` DIR (HACS installed
+    // — the common case). The inner tar lists the dir + intermediate dir members
+    // alongside the leaf files; extractHaConfigDir must pass only the leaf files
+    // to `tar -x` or GNU/libarchive tar aborts ("Not found in archive") (#1620).
+    await write(inner, 'data/custom_components/meross_lan/__init__.py', 'CODE');
+    await write(inner, 'data/custom_components/meross_lan/manifest.json', '{"domain":"meross_lan"}');
     // Heavy excluded members — must never be unpacked nor staged (#1353).
     await write(inner, 'data/home-assistant_v2.db', 'HUGE-DB');
     await write(inner, 'data/home-assistant.log', 'noise');
@@ -336,6 +335,8 @@ describe('GOLDEN: importHaOsBackupToNas → manifest-filtered home-assistant.tar
       '.storage/zwave_js',
       'automations.yaml',
       'configuration.yaml',
+      'custom_components/meross_lan/__init__.py',
+      'custom_components/meross_lan/manifest.json',
     ]);
     // The heavy excluded members never make it into the atom.
     expect(files).not.toContain('home-assistant_v2.db');

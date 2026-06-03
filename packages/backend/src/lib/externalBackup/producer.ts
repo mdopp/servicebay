@@ -94,7 +94,7 @@ async function pathExists(target: string): Promise<boolean> {
  * targets; the resulting tar bytes are always returned to the caller (the
  * container) for upload to the NAS.
  */
-interface BackupFileBackend {
+export interface BackupFileBackend {
   /** Directory entries with their type (no recursion). */
   readdirTypes(dir: string): Promise<{ name: string; isDir: boolean; isFile: boolean }[]>;
   exists(target: string): Promise<boolean>;
@@ -150,7 +150,7 @@ const localFileBackend: BackupFileBackend = {
  * bytes cross back into the container (base64 over the agent channel, since the
  * agent's `read_file` is utf-8-only and would corrupt binary config).
  */
-function agentFileBackend(executor: Executor): BackupFileBackend {
+export function agentFileBackend(executor: Executor): BackupFileBackend {
   return {
     async readdirTypes(dir) {
       // `find -maxdepth 1` with a type tag per entry — one round-trip, and it

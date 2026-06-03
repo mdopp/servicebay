@@ -928,25 +928,27 @@ export const POST = withApiHandler({}, async ({ request }) => {
                 advanced_config: withProxyErrorPage(host.proxyConfig?.advanced_config),
             };
             let createdHost: { id?: number } | null = null;
+            // #999 — When the host needs forward-auth or a strict upstream
+            // Host header, the generated .conf must be patched so the
+            // directives land in the LOCATION block where nginx honours
+            // them (the server-level advanced_config alone is silently
+            // dropped by NPM's location-level proxy.conf include). We
+            // compute the need once here and re-apply it after cert-bind
+            // (see #1623): requestPublicCert's certificate_id PUT makes NPM
+            // regenerate the .conf, wiping this location patch. The patch is
+            // idempotent (buildForwardAuthPatch no-ops when already present).
+            const wantsForwardAuth = /auth_request\s+\/authelia|__authelia_forward_auth__/.test(host.proxyConfig?.advanced_config ?? '');
+            const wantsStrictHost = !!host.proxyConfig?.strictUpstreamHost;
+            const wantsConfPatch = wantsForwardAuth || wantsStrictHost;
+            const upstreamHostHeader = wantsStrictHost
+                ? `${host.forwardHost ?? '127.0.0.1'}:${host.forwardPort}`
+                : undefined;
             try {
                 createdHost = await createProxyHost(npm.apiUrl, token, host, accessListId);
                 results.push({ domain: host.domain, success: true, lanRestricted: accessListId !== 0 });
                 logger.info('ProxyHosts', `Created proxy host: ${host.domain} → ${host.forwardHost}:${host.forwardPort} (exposure=${host.exposure ?? 'lan'}${accessListId !== 0 ? ', LAN-only via access list' : ''})`);
-                // #999 — When the host needs forward-auth or a strict
-                // upstream Host header, patch the generated .conf file
-                // to land the directives in the LOCATION block where
-                // nginx will actually honour them. The server-level
-                // advanced_config alone is silently dropped by NPM's
-                // location-level proxy.conf include.
-                if (typeof createdHost?.id === 'number') {
-                    const wantsForwardAuth = /auth_request\s+\/authelia|__authelia_forward_auth__/.test(host.proxyConfig?.advanced_config ?? '');
-                    const wantsStrictHost = !!host.proxyConfig?.strictUpstreamHost;
-                    if (wantsForwardAuth || wantsStrictHost) {
-                        const upstreamHostHeader = wantsStrictHost
-                            ? `${host.forwardHost ?? '127.0.0.1'}:${host.forwardPort}`
-                            : undefined;
-                        await patchProxyHostConfFile(createdHost.id, host.domain, upstreamHostHeader, node);
-                    }
+                if (wantsConfPatch && typeof createdHost?.id === 'number') {
+                    await patchProxyHostConfFile(createdHost.id, host.domain, upstreamHostHeader, node);
                 }
             } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
@@ -980,6 +982,14 @@ export const POST = withApiHandler({}, async ({ request }) => {
                             logger.info('ProxyHosts', `Reused existing LE cert ${certResult.certId} for ${host.domain} (re-install survived #534 cert-archive — no ACME call needed)`);
                         } else {
                             logger.info('ProxyHosts', `Issued + bound LE cert ${certResult.certId} for ${host.domain}`);
+                        }
+                        // #1623 — Binding the cert (certificate_id PUT) makes
+                        // NPM regenerate the .conf, discarding the #999
+                        // location-level forward-auth/Host patch applied above.
+                        // Re-apply it so the Remote-* identity headers and the
+                        // strict-host Host rewrite survive cert-bind. Idempotent.
+                        if (wantsConfPatch && typeof createdHost?.id === 'number') {
+                            await patchProxyHostConfFile(createdHost.id, host.domain, upstreamHostHeader, node);
                         }
                     } else {
                         results[results.length - 1].certError = certResult.reason;

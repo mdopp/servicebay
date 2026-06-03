@@ -78,7 +78,7 @@ export default function FactoryResetSection() {
             Not what you want for a normal re-install. To rebuild from a USB stick, pick a Factory-fresh option in the build form instead — &quot;wipe-configs&quot; keeps your app data on disk; this button does not.
           </p>
           <p className="text-xs text-gray-700 dark:text-gray-300">
-            Your app data (Home Assistant&apos;s <span className="font-mono">.storage</span>, Z-Wave, the Immich library) is <span className="font-semibold">not</span> pulled back automatically — restore it from a System Backup (include and select Service Data) afterwards, or services come up blank.
+            Each service&apos;s config (Home Assistant&apos;s automations + <span className="font-mono">.storage</span>, the Z-Wave network keys, AdGuard / Authelia / nginx settings) is <span className="font-semibold">not</span> pulled back automatically — restore it from a System Backup (select Service Config) afterwards, or services come up with default settings. Bulk data (the Immich photo library, recorder history, the Z-Wave mesh DB) is not in the snapshot; it is wiped by a Factory Reset.
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400">
             Family members will need to re-create their LLDAP accounts. NPM&apos;s Let&apos;s Encrypt certs are wiped (LE has a rate limit on re-issuance, so don&apos;t do this repeatedly).

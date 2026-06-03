@@ -42,16 +42,19 @@ interface RawLsblkNode {
   name?: string;
   path?: string;
   type?: string;
-  size?: string;
+  /** lsblk -b returns integers; lsblk without -b returns human strings. */
+  size?: string | number;
   fstype?: string;
   label?: string;
   mountpoint?: string | null;
-  fsavail?: string;
+  /** lsblk -b returns integers; lsblk without -b returns human strings. */
+  fsavail?: string | number | null;
   'fsuse%'?: string;
   children?: RawLsblkNode[];
 }
 
 const trim = (v: unknown): string | undefined => {
+  if (typeof v === 'number') return isFinite(v) ? String(v) : undefined;
   if (typeof v !== 'string') return undefined;
   const s = v.trim();
   return s.length > 0 ? s : undefined;
@@ -68,17 +71,19 @@ const fmtBytes = (b: number): string => {
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)}${units[i]}`;
 };
 
-// lsblk -b returns byte counts; without -b it returns human strings.
-// Detect by sniffing whether any size leaf is a bare integer.
+// lsblk -b returns byte counts as JSON integers; without -b it returns human
+// strings. Detect by sniffing whether any size leaf is a number or a bare
+// decimal string (both indicate byte mode from -b or recent util-linux).
 const looksLikeBytes = (nodes: RawLsblkNode[]): boolean => {
   for (const n of nodes) {
+    if (typeof n.size === 'number') return true;
     if (typeof n.size === 'string' && /^\d+$/.test(n.size)) return true;
     if (n.children && looksLikeBytes(n.children)) return true;
   }
   return false;
 };
 
-const maybeHuman = (raw: string | undefined, bytes: boolean): string | undefined => {
+const maybeHuman = (raw: string | number | null | undefined, bytes: boolean): string | undefined => {
   const v = trim(raw);
   if (!v) return undefined;
   if (bytes && /^\d+$/.test(v)) return fmtBytes(parseInt(v, 10));
