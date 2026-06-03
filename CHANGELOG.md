@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.91.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.90.3...servicebay-v4.91.0) (2026-06-03)
+
+
+### Features
+
+* **backup-sync:** local/USB target as a detected-mount picker ([5d5c004](https://github.com/mdopp/servicebay/commit/5d5c0049bcf7f7f3163a1adaf8c7fcf06c8b2223)), closes [#1613](https://github.com/mdopp/servicebay/issues/1613)
+* backup-target hardening, portal SSO + appless cards, claude-dev tmux ([87e9e87](https://github.com/mdopp/servicebay/commit/87e9e8776391a3c5a07c62506ba5fe19205532ad))
+* **backup:** System Snapshot collects per-service config, retires nginx-only Service-Data ([1c68e6e](https://github.com/mdopp/servicebay/commit/1c68e6e9289aca5125432facf23ed4d461b31426)), closes [#1609](https://github.com/mdopp/servicebay/issues/1609)
+* **claude-dev:** persistent tmux session that survives disconnects ([dab8528](https://github.com/mdopp/servicebay/commit/dab8528e533e4403564f261ff73cbe7260f779e3)), closes [#1616](https://github.com/mdopp/servicebay/issues/1616)
+* **portal:** appless cards + action links for URL-less services ([42dc477](https://github.com/mdopp/servicebay/commit/42dc47780e8f366ae17bcdc180824a39f1060f86)), closes [#1618](https://github.com/mdopp/servicebay/issues/1618)
+* **terminal:** deep-link web terminal into a container and attach to a named session ([3fab72b](https://github.com/mdopp/servicebay/commit/3fab72bb0a77415df0201c6e2d03bf55ed58c905)), closes [#1617](https://github.com/mdopp/servicebay/issues/1617)
+
+
+### Bug Fixes
+
+* backup HA-OS import, proxy-host cert re-patch, snapshot config collector, terminal deep-link ([7bbc2b0](https://github.com/mdopp/servicebay/commit/7bbc2b07c68992e8467aad6527092149d0e2a619))
+* **backup-mounts:** handle integer byte sizes from lsblk -b ([946e2f9](https://github.com/mdopp/servicebay/commit/946e2f912f452d0e79fce34312e3f7af594d971a))
+* **backup-mounts:** update maybeHuman signature for number | null inputs ([0f42703](https://github.com/mdopp/servicebay/commit/0f42703e2368aa15cb40d1a0ff1cb4de34630523))
+* **backup:** HA-OS import skips dir members in tar extraction ([307dac0](https://github.com/mdopp/servicebay/commit/307dac0df53b17c3174184f7ce36a176e2a4de0b)), closes [#1620](https://github.com/mdopp/servicebay/issues/1620)
+* **backup:** validate Local target on Run like Test — no silent mkdir onto OS disk ([6b22dd2](https://github.com/mdopp/servicebay/commit/6b22dd2c459cae0e43f592952ba2129db97a3162)), closes [#1612](https://github.com/mdopp/servicebay/issues/1612)
+* **portal:** recognize signed-in SSO user + link admin dashboard ([07198a6](https://github.com/mdopp/servicebay/commit/07198a66756798056bddaebf3d3834063bb7402b)), closes [#1606](https://github.com/mdopp/servicebay/issues/1606)
+* **proxy-hosts:** re-apply forward-auth conf patch after cert-bind ([f5d6911](https://github.com/mdopp/servicebay/commit/f5d6911da72cb60187c7d83ee54694c22aafaf1e)), closes [#1623](https://github.com/mdopp/servicebay/issues/1623)
+
 ## [4.90.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.90.2...servicebay-v4.90.3) (2026-06-03)
 
 
