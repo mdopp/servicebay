@@ -8,7 +8,7 @@ const execMock = vi.fn(async (argv: string[]) => {
   return { stdout: '', stderr: '' };
 });
 
-vi.mock('@/lib/executor', () => ({ getExecutor: () => ({ execArgv: (a: string[], o?: any) => execMock(a, o) }) }));
+vi.mock('@/lib/executor', () => ({ getExecutor: () => ({ execArgv: (a: string[]) => execMock(a) }) }));
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), error: vi.fn() } }));
 
 import { getServicebayChannel, setServicebayChannel, isChannel } from './servicebayChannel';
