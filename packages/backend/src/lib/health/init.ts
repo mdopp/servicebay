@@ -64,7 +64,7 @@ function isOrphanTemplateCheck(c: { id: string; type: string }, deployed: Set<st
   return true;
 }
 
-async function addServiceChecks(existingChecks: ReturnType<typeof HealthStore.getChecks>, exists: (type: string, target: string) => boolean) {
+async function addServiceChecks(existingChecks: ReturnType<typeof HealthStore.getChecks>, _exists: (type: string, target: string) => boolean) {
   try {
     const services = await ServiceManager.listServices('Local');
     const deployed = new Set(services.map(s => s.name));

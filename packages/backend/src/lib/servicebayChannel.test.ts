@@ -2,13 +2,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const calls: string[][] = [];
-const execMock = vi.fn(async (argv: string[], _opts?: any) => {
+const execMock = vi.fn(async (argv: string[]) => {
   calls.push(argv);
   if (argv.includes('inspect')) return { stdout: 'ghcr.io/mdopp/servicebay:dev\n', stderr: '' };
   return { stdout: '', stderr: '' };
 });
 
-vi.mock('@/lib/executor', () => ({ getExecutor: () => ({ execArgv: (a: string[], o?: any) => execMock(a, o) }) }));
+vi.mock('@/lib/executor', () => ({ getExecutor: () => ({ execArgv: (a: string[]) => execMock(a) }) }));
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), error: vi.fn() } }));
 
 import { getServicebayChannel, setServicebayChannel, isChannel } from './servicebayChannel';
