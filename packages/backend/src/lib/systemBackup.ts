@@ -396,7 +396,7 @@ export async function safeTarExtract(
  * with the same hardening flags `safeTarExtract` uses, followed by a host-side
  * symlink-escape walk.
  */
-async function extractServiceConfigToNode(executor: Executor, tar: Buffer, destDir: string): Promise<void> {
+export async function extractServiceConfigToNode(executor: Executor, tar: Buffer, destDir: string): Promise<void> {
     // In-container traversal/link refusal on the raw tar bytes before anything
     // touches the host.
     const tmp = path.join(os.tmpdir(), `sb-svcconfig-${Date.now()}-${process.pid}.tar`);
@@ -458,7 +458,7 @@ function pushLog(logs: BackupLogEntry[], progress: ProgressCallback | undefined,
  * use. Per-service failures are logged and skipped — one bad service doesn't
  * abort the snapshot.
  */
-async function stageServiceConfig(
+export async function stageServiceConfig(
     stagingDir: string,
     metadata: BackupMetadata,
     logs: BackupLogEntry[],
