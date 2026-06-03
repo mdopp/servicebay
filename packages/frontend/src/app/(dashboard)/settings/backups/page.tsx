@@ -48,6 +48,7 @@ import {
   type SystemBackupEntrySummary,
 } from '../_lib/helpers';
 import ExternalBackupDestinationSection from '../_lib/sections/ExternalBackupDestinationSection';
+import LocalTargetPicker from './_lib/LocalTargetPicker';
 
 export default function BackupsSettingsPage() {
   const { addToast } = useToast();
@@ -1065,11 +1066,10 @@ export default function BackupsSettingsPage() {
             </div>
 
           {backupSync.targetType === 'local' && (
-            <div>
-              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Target Path</label>
-              <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.localPath} onChange={e => setBackupSync(prev => ({ ...prev, localPath: e.target.value }))} placeholder="/mnt/backup" />
-              <p className="text-[11px] text-gray-400 mt-1">Mount your USB/external drive here first.</p>
-            </div>
+            <LocalTargetPicker
+              value={backupSync.localPath}
+              onChange={path => setBackupSync(prev => ({ ...prev, localPath: path }))}
+            />
           )}
 
           {backupSync.targetType === 'ssh' && (
