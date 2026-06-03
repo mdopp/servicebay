@@ -1,13 +1,42 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Download, Eye, EyeOff, Key, Loader2, Trash2 } from 'lucide-react';
-import { buildBitwardenCsv, type Credential } from '@servicebay/api-client';
+import { Download, ExternalLink, Eye, EyeOff, Key, Loader2, Trash2 } from 'lucide-react';
+import {
+  buildBitwardenCsv,
+  isHttpUrl,
+  resolveCredentialUrl,
+  type Credential,
+  type CredentialUrlHost,
+} from '@servicebay/api-client';
 import { useToast } from '@/providers/ToastProvider';
 
 interface Manifest {
   savedAt: string;
   credentials: Credential[];
+}
+
+/** URL cell (#1626): render an admin-reachable http(s) URL as a clickable
+ *  link; render non-URL hints (`env:`, `\\…`, `ssh://`, bearer tokens) as
+ *  plain text. The loopback→public-subdomain rewrite happens in
+ *  `resolveCredentialUrl`. */
+function CredentialUrlCell({ cred, hosts, publicDomain }: {
+  cred: Credential;
+  hosts: CredentialUrlHost[];
+  publicDomain: string | null;
+}) {
+  const resolved = resolveCredentialUrl(cred, { hosts, publicDomain: publicDomain ?? undefined });
+  if (!isHttpUrl(resolved)) return <span className="break-all">{resolved}</span>;
+  return (
+    <a
+      href={resolved}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-blue-600 dark:text-blue-400 hover:underline break-all"
+    >
+      {resolved}
+    </a>
+  );
 }
 
 /**
@@ -27,6 +56,8 @@ interface Manifest {
 export default function CredentialsSection() {
   const { addToast } = useToast();
   const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [proxyHosts, setProxyHosts] = useState<CredentialUrlHost[]>([]);
+  const [publicDomain, setPublicDomain] = useState<string | null>(null);
   const [busy, setBusy] = useState<'load' | 'wipe' | null>('load');
   const [revealed, setRevealed] = useState<Record<number, boolean>>({});
 
@@ -34,10 +65,25 @@ export default function CredentialsSection() {
     fetch('/api/system/credentials')
       .then(r => (r.ok ? r.json() : null))
       .then(data => {
-        if (data) setManifest(data.manifest ?? null);
+        if (data) {
+          setManifest(data.manifest ?? null);
+          setProxyHosts(Array.isArray(data.proxyHosts) ? data.proxyHosts : []);
+          setPublicDomain(data.publicDomain ?? null);
+        }
       })
       .finally(() => setBusy(null));
   }, []);
+
+  const urlCtx = { hosts: proxyHosts, publicDomain: publicDomain ?? undefined };
+
+  // Vaultwarden import deep-link (#1627): only when vaultwarden is installed
+  // (has a proxy host) and a public domain is configured. Derive the domain
+  // from the proxy host so we don't hardcode `vault`/the public domain.
+  const vaultHost = proxyHosts.find(h => h.service === 'vaultwarden');
+  const vaultwardenImportUrl =
+    publicDomain && vaultHost?.domain
+      ? `https://${vaultHost.domain}/#/tools/import`
+      : null;
 
   const onWipe = async () => {
     if (!window.confirm(
@@ -62,7 +108,7 @@ export default function CredentialsSection() {
 
   const downloadCsv = () => {
     if (!manifest || manifest.credentials.length === 0) return;
-    const blob = new Blob([buildBitwardenCsv(manifest.credentials)], { type: 'text/csv' });
+    const blob = new Blob([buildBitwardenCsv(manifest.credentials, urlCtx)], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `servicebay-credentials-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -104,6 +150,18 @@ export default function CredentialsSection() {
               <Download size={14} />
               Download CSV
             </button>
+            {vaultwardenImportUrl && (
+              <a
+                href={vaultwardenImportUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-100 text-sm font-medium rounded-lg"
+                title="Opens the Vaultwarden web-vault import page in a new tab. Download the CSV first, then pick it there. Choose an Organization collection to share entries with other admins (folders are personal)."
+              >
+                <ExternalLink size={14} />
+                Open Vaultwarden import
+              </a>
+            )}
             <button
               onClick={onWipe}
               disabled={busy === 'wipe'}
@@ -148,7 +206,9 @@ export default function CredentialsSection() {
                           <span className="ml-2 text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">system</span>
                         )}
                       </td>
-                      <td className="py-2 pr-3 text-gray-700 dark:text-gray-300 font-mono text-xs">{c.url}</td>
+                      <td className="py-2 pr-3 text-gray-700 dark:text-gray-300 font-mono text-xs">
+                        <CredentialUrlCell cred={c} hosts={proxyHosts} publicDomain={publicDomain} />
+                      </td>
                       <td className="py-2 pr-3 text-gray-700 dark:text-gray-300 font-mono text-xs">{c.username}</td>
                       <td className="py-2 pr-3">
                         <div className="flex items-center gap-2">

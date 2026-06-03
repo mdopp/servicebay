@@ -15,7 +15,11 @@ export type { Check, CheckConfig, CheckType } from '@/lib/health/types';
 export type { NodeTwin, GatewayState, ProxyState } from '@/lib/store/twin';
 export type { NetworkGraph } from '@/lib/network/types';
 export type { HistoryEntry } from '@/lib/history';
-export type { Credential } from '@/lib/stackInstall/credentialsManifest';
+export type {
+  Credential,
+  CredentialUrlHost,
+  CredentialUrlContext,
+} from '@/lib/stackInstall/credentialsManifest';
 export type {
   ServiceBundle,
   BundleValidation,

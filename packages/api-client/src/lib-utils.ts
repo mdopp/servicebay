@@ -16,7 +16,11 @@ export { parseTemplateLabel } from '@/lib/templateLabel';
 export { buildServiceViewModel } from '@/lib/services/serviceViewModel';
 export { getLayoutedElements } from '@/lib/network/layout';
 export { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
-export { buildBitwardenCsv } from '@/lib/stackInstall/credentialsManifest';
+export {
+  buildBitwardenCsv,
+  resolveCredentialUrl,
+  isHttpUrl,
+} from '@/lib/stackInstall/credentialsManifest';
 export {
   generateBundleStackArtifacts,
   sanitizeBundleName,
