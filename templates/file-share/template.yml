@@ -107,17 +107,20 @@ spec:
 
   # 2. Samba — SMB/CIFS network shares with per-user authentication.
   #
-  # Per-user accounts are synced from LLDAP into Samba's tdbsam DB by
+  # Per-user accounts are synced from LLDAP into Samba's passdb by
   # ServiceBay's /api/system/file-share/samba/users endpoint and managed
-  # operator-side via Settings → Integrations → File Share. Samba can't
-  # speak OIDC, so the password lives in tdbsam — set/regenerated from
-  # the UI, deliberately not derived from the LLDAP password (Argon2/
-  # bcrypt → NT-hash is not a reversible operation).
+  # operator-side via Settings → Integrations → File Share. (This image
+  # ships `passdb backend = smbpasswd`, not tdbsam — sambaSync.ts drives
+  # it via the smbpasswd/pdbedit CLIs, which are backend-agnostic, and
+  # provisions the POSIX user smbpasswd -a needs.) Samba can't speak
+  # OIDC, so the password lives in the passdb — set/regenerated from the
+  # UI, deliberately not derived from the LLDAP password (Argon2/bcrypt →
+  # NT-hash is not a reversible operation).
   #
   # SHARE_USER + SHARE_PASSWORD remain as a legacy fallback so existing
   # installs keep working until the operator migrates family members
   # onto LLDAP-backed Samba accounts. The share config no longer pins
-  # `valid users` to a single name — any tdbsam user can mount.
+  # `valid users` to a single name — any passdb user can mount.
   - name: samba
     image: docker.io/servercontainers/samba:latest
     env:

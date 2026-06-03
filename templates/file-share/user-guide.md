@@ -21,7 +21,7 @@ cards:
         description: "Point your phone camera at this QR to download the BasicSync app (a trusted, open-source Syncthing client). Step 1: install it. Then use the pairing QR below to connect."
       - kind: "syncthing_qr"
         label: "Pair this device"
-        description: "Shows a QR code with the home server's device ID. In BasicSync, tap \"Add Device → Scan QR\" to pick it up directly. Step 2 — after BasicSync is installed."
+        description: "Shows a QR code with the home server's device ID. In BasicSync, tap \"Add Device → Scan QR\" to pick it up directly. Step 2 — after BasicSync is installed. When the server asks where to store a synced folder, use /var/syncthing/Sync/<name> — that's your shared drive (also in Files and the \\\\server\\data network drive). Avoid the default ~/ path and /mnt/data — they're not the shared vault (~/ is config-only; /mnt/data doesn't exist inside the container)."
     recommended_apps:
       - name: "BasicSync"
         url: "/api/system/downloads/basicsync?abi=arm64-v8a"
@@ -76,6 +76,8 @@ BasicSync keeps a folder on your phone in sync with the home server in both dire
 1. **Install the app.** On Android, scan the *Install BasicSync on your phone* QR on the **Syncthing** card (or tap the BasicSync link) — it downloads the APK directly. On iOS, install **Möbius Sync** from the link.
 2. **Pair the device.** Open the **Syncthing** card, tap *Pair this device*, and in BasicSync use *Add Device → Scan QR* to scan it (the QR carries the home server's device ID).
 3. Pick which folders on your phone to sync.
+
+> **Where do synced folders live on the server?** Use `/var/syncthing/Sync/<name>` — that's the shared family drive, the same tree you see in **Files** and the `\\server\data` network drive. When a phone or laptop shares a folder *to* the server, Syncthing prefills the accept-path as `~/<folderid>`; change it to `/var/syncthing/Sync/<name>`. Avoid the `~/` default (that's the config volume — not on Files/Samba and not in the data backup) and `/mnt/data` (it doesn't exist inside the container, so the folder would sync to an empty throwaway dir). This vault is shared with everyone who has file-share access, so keep it for shared, not private, files.
 
 Best for: continuous backup of phone documents, two-way sync between phone and laptop.
 

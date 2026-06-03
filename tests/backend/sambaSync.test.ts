@@ -16,9 +16,11 @@ import {
 } from '@/lib/fileShare/sambaSync';
 
 /**
- * Unit coverage for the LLDAP → Samba tdbsam sync (#494). Mocks the
- * agent so `pdbedit -L` / `smbpasswd -a` calls are captured in-process,
- * plus the LLDAP client so the test rig drives both sides.
+ * Unit coverage for the LLDAP → Samba passdb sync (#494/#1630). Mocks the
+ * agent so `getent` / `useradd` / `pdbedit -L` / `smbpasswd -a` calls are
+ * captured in-process, plus the LLDAP client so the test rig drives both
+ * sides. The agent models the container's POSIX accounts so the on-demand
+ * provisioning (#1630) is exercised end-to-end.
  */
 
 interface ExecCall {
@@ -30,10 +32,27 @@ function makeAgent() {
   const calls: ExecCall[] = [];
   const sambaState = new Set<string>();
   const passwords = new Map<string, string>();
+  // POSIX accounts inside the container. smbpasswd -a requires one (#1630),
+  // so ensureSambaPosixUser getent-checks then useradds. Model that here.
+  const posixUsers = new Set<string>();
 
   const sendCommand = vi.fn(async (kind: string, payload: { command: string; stdin?: string }) => {
     if (kind !== 'exec') throw new Error(`unexpected agent command: ${kind}`);
     calls.push({ command: payload.command, stdin: payload.stdin });
+    if (payload.command.includes('getent passwd')) {
+      const match = payload.command.match(/getent passwd ([\w.-]+)/);
+      const user = match?.[1];
+      if (user && posixUsers.has(user)) return { code: 0, stdout: `${user}:x:1000:1000::/:/usr/sbin/nologin`, stderr: '' };
+      return { code: 2, stdout: '', stderr: '' };
+    }
+    if (payload.command.includes('stat -c %g')) {
+      return { code: 0, stdout: '1000\n', stderr: '' };
+    }
+    if (payload.command.includes('useradd')) {
+      const match = payload.command.match(/useradd .*?([\w.-]+)$/);
+      if (match) posixUsers.add(match[1]);
+      return { code: 0, stdout: '', stderr: '' };
+    }
     if (payload.command.includes('pdbedit -L')) {
       const lines = [...sambaState].map(u => `${u}:1000:${u}`).join('\n');
       return { code: 0, stdout: lines, stderr: '' };
@@ -58,7 +77,7 @@ function makeAgent() {
   });
 
   vi.mocked(agentManager.ensureAgent).mockResolvedValue({ sendCommand } as never);
-  return { calls, sambaState, passwords };
+  return { calls, sambaState, passwords, posixUsers };
 }
 
 beforeEach(() => {

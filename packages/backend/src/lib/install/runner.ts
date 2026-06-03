@@ -638,7 +638,15 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
           if (evt.type === 'progress') {
             if (typeof evt.message === 'string' && evt.message.startsWith('__SB_CREDENTIAL__ ')) {
               try {
-                ctx.scriptCredentials.push(JSON.parse(evt.message.slice('__SB_CREDENTIAL__ '.length)));
+                const captured = JSON.parse(evt.message.slice('__SB_CREDENTIAL__ '.length));
+                // Tag with the owning template so the Saved-credentials UI can
+                // resolve the loopback `url` to the service's public subdomain
+                // (#1626) and per-template uninstall can drop it (#631). The
+                // marker itself doesn't carry the name; the deploy loop does.
+                if (captured && typeof captured === 'object' && captured.template == null) {
+                  captured.template = item.name;
+                }
+                ctx.scriptCredentials.push(captured);
               } catch { /* malformed marker — drop it */ }
               continue;
             }
