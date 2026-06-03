@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.92.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.91.0...servicebay-v4.92.0) (2026-06-03)
+
+
+### Features
+
+* **claude-dev:** add portal card user-guide with terminal + VS Code actions ([ac6ffea](https://github.com/mdopp/servicebay/commit/ac6ffead79fc3a030de914faa96f859ec8620dcc)), closes [#1619](https://github.com/mdopp/servicebay/issues/1619)
+
+
+### Bug Fixes
+
+* **file-share:** create POSIX user before smbpasswd -a for Samba accounts ([eed426f](https://github.com/mdopp/servicebay/commit/eed426f121287fe3cdc3033da99365b885f3f52d)), closes [#1630](https://github.com/mdopp/servicebay/issues/1630)
+* **portal:** accept SSO sessions for portal setup assets in public mode ([92ef426](https://github.com/mdopp/servicebay/commit/92ef4265cff38a512da869a7743483bd9a170c18)), closes [#1628](https://github.com/mdopp/servicebay/issues/1628)
+* saved-credential public URLs, portal SSO assets, Samba POSIX user, unified restore engine, claude-dev + Syncthing guides ([2a1b799](https://github.com/mdopp/servicebay/commit/2a1b799e011237c9a02999eb9d0ed7a8b30bf2a9))
+* **settings:** resolve saved-credential URLs to public subdomains + add Vaultwarden import button ([38867be](https://github.com/mdopp/servicebay/commit/38867bec03499b501fe28d4bf9cd1bb039b97d04)), closes [#1626](https://github.com/mdopp/servicebay/issues/1626) [#1627](https://github.com/mdopp/servicebay/issues/1627)
+
 ## [4.91.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.90.3...servicebay-v4.91.0) (2026-06-03)
 
 
