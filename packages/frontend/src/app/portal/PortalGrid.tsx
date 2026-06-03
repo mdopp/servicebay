@@ -4,16 +4,17 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  BookOpen, Bot, Calendar, CalendarDays, Camera, Check, Copy,
+  BookOpen, Bot, Calendar, CalendarDays, Camera, Check, Code, Copy,
   Download, ExternalLink, Files, Film, Folder, FolderOpen, Globe,
   Headphones, House, Image as ImageIcon, Images, KeyRound, Lightbulb,
   Lightbulb as LightbulbIcon, Loader2, Lock, Mail, MessageSquare,
-  Music, Package, QrCode, RefreshCw, Router, Shield, Smartphone, Terminal, Video,
+  Music, Package, QrCode, RefreshCw, Router, Shield, Smartphone,
+  Terminal, TerminalSquare, Video,
   Sparkles, X,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { PortalCard } from '@/lib/portal/services';
-import type { AppPlatform, PortalIconName, SetupAssetKind } from '@/lib/portal/userGuide';
+import type { AppPlatform, PortalAction, PortalIconName, SetupAssetKind } from '@/lib/portal/userGuide';
 
 type IconComponent = typeof Camera;
 
@@ -176,17 +177,13 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
               </p>
             </div>
 
-            {/* Open button — at fixed offset from card top thanks to
-                the clamped header above. Consistent Y across cards. */}
-            <div className="px-6">
-              <a
-                href={card.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors"
-              >
-                Open <ExternalLink size={16} />
-              </a>
+            {/* CTA — at fixed offset from card top thanks to the
+                clamped header above. Consistent Y across cards. An
+                Open-URL card shows the blue "Open" button; a URL-less
+                appless card (#1618) shows its primary action instead,
+                followed by any secondary action buttons. */}
+            <div className="px-6 space-y-2">
+              <CardCta card={card} isMobile={isMobile} />
             </div>
 
             {/* Variable content below — fills the rest of the card so
@@ -300,6 +297,84 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
       <CardHelpModal card={activeCard} onClose={() => setActiveCardId(null)} />
     )}
     </>
+  );
+}
+
+/**
+ * Card call-to-action (#1618). An ordinary Open-URL card renders the
+ * blue "Open" button pointing at the resolved subdomain. A URL-less
+ * appless card (e.g. claude-dev — no subdomain/proxy host) has an
+ * empty `url` and a `primaryAction` instead: that action becomes the
+ * CTA. Secondary actions render underneath as smaller buttons.
+ *
+ * Desktop-only actions (`desktop_only`, e.g. `vscode://` which needs a
+ * desktop app installed) are hidden on a phone/tablet so the mobile
+ * visitor isn't offered a link that can't open.
+ */
+function CardCta({ card, isMobile }: { card: PortalCard; isMobile: boolean }) {
+  if (card.url) {
+    return (
+      <a
+        href={card.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors"
+      >
+        Open <ExternalLink size={16} />
+      </a>
+    );
+  }
+  // Appless card: primary action as the CTA, secondaries below.
+  const primaryHidden = card.primaryAction?.desktop_only && isMobile;
+  return (
+    <>
+      {card.primaryAction && !primaryHidden && (
+        <ActionButton action={card.primaryAction} variant="primary" />
+      )}
+      {card.primaryAction && primaryHidden && (
+        <p className="text-[11px] text-gray-500 dark:text-gray-400 text-center leading-snug">
+          {card.primaryAction.label} is available on desktop.
+        </p>
+      )}
+      {card.secondaryActions
+        .filter(a => !(a.desktop_only && isMobile))
+        .map(a => (
+          <ActionButton key={a.href} action={a} variant="secondary" />
+        ))}
+    </>
+  );
+}
+
+/**
+ * Renders one {@link PortalAction} as a button/link. `in_app` actions
+ * are root-relative same-origin links (open in the same tab — they're
+ * other ServiceBay surfaces like the web terminal); `external_scheme`
+ * actions (`vscode://`, …) hand off to a desktop app, so they open via
+ * a plain anchor the OS intercepts.
+ */
+function ActionButton({
+  action,
+  variant,
+}: {
+  action: PortalAction;
+  variant: 'primary' | 'secondary';
+}) {
+  const Icon = action.icon ? PORTAL_ICON_MAP[action.icon] : action.type === 'external_scheme' ? Code : TerminalSquare;
+  const className =
+    variant === 'primary'
+      ? 'flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors'
+      : 'flex items-center justify-center gap-2 w-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-100 text-sm font-medium py-2 rounded-lg transition-colors';
+  // in_app links stay in the tab (same-origin app surface); external
+  // schemes open via the same anchor — the OS intercepts the scheme.
+  const sameTab = action.type === 'in_app';
+  return (
+    <a
+      href={action.href}
+      {...(sameTab ? {} : { target: '_blank', rel: 'noopener noreferrer' })}
+      className={className}
+    >
+      <Icon size={variant === 'primary' ? 16 : 14} /> {action.label}
+    </a>
   );
 }
 
