@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-const { mockNas, mockGetConfig, mockSendCommand } = vi.hoisted(() => ({
+const { mockNas, mockGetConfig, mockSendCommand, mockExecutor, mockGetExecutor } = vi.hoisted(() => ({
   mockNas: {
     nasUpload: vi.fn(),
     nasDownload: vi.fn(),
@@ -15,6 +15,14 @@ const { mockNas, mockGetConfig, mockSendCommand } = vi.hoisted(() => ({
   },
   mockGetConfig: vi.fn(),
   mockSendCommand: vi.fn(),
+  mockExecutor: {
+    exec: vi.fn(),
+    execArgv: vi.fn(),
+    readFile: vi.fn(),
+    writeFile: vi.fn(),
+    exists: vi.fn(),
+  },
+  mockGetExecutor: vi.fn(),
 }));
 
 vi.mock('./nasClient', () => mockNas);
@@ -22,6 +30,7 @@ vi.mock('../config', () => ({ getConfig: () => mockGetConfig() }));
 vi.mock('../agent/manager', () => ({
   agentManager: { ensureAgent: vi.fn(async () => ({ sendCommand: mockSendCommand })) },
 }));
+vi.mock('../executor', () => ({ getExecutor: (...a: unknown[]) => mockGetExecutor(...a) }));
 
 import {
   stageServiceBackup,
@@ -56,6 +65,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetConfig.mockResolvedValue({ templateSettings: {} });
   mockNas.nasUpload.mockResolvedValue(undefined);
+  mockGetExecutor.mockReturnValue(mockExecutor);
 });
 
 afterEach(async () => {
@@ -214,6 +224,105 @@ describe('resolveServiceDataDir', () => {
   });
 });
 
+describe('backupServiceToNas via the host agent (#1597)', () => {
+  // The servicebay container can't see /mnt/data/stacks, so a box backup (no
+  // serviceDataDir override) must route every fs op through the host agent.
+  // Here the mocked executor runs the same ops against a REAL local temp dir,
+  // exercising the actual agentFileBackend round-trip (incl. tar | base64).
+  function wireExecutorToHostDir(): { stagingDir: string } {
+    const ref = { stagingDir: '' };
+    mockExecutor.execArgv.mockImplementation(async (argv: string[]) => {
+      const [cmd, ...args] = argv;
+      if (cmd === 'find') {
+        const dir = args[0];
+        const ents = await fs.readdir(dir, { withFileTypes: true });
+        const lines = ents.map(e => `${e.isDirectory() ? 'd' : e.isFile() ? 'f' : 'o'}\t${e.name}`);
+        return { stdout: lines.join('\n'), stderr: '' };
+      }
+      if (cmd === 'test' && args[0] === '-d') {
+        const ok = await fs.stat(args[1]).then(s => s.isDirectory(), () => false);
+        if (!ok) throw new Error('not a dir');
+        return { stdout: '', stderr: '' };
+      }
+      if (cmd === 'test' && args[0] === '-e') {
+        const ok = await fs.access(args[1]).then(() => true, () => false);
+        if (!ok) throw new Error('missing');
+        return { stdout: '', stderr: '' };
+      }
+      if (cmd === 'mkdir') { await fs.mkdir(args[1], { recursive: true }); return { stdout: '', stderr: '' }; }
+      if (cmd === 'cp') {
+        const src = args[args.length - 2];
+        const dest = args[args.length - 1];
+        await fs.copyFile(src, dest);
+        return { stdout: '', stderr: '' };
+      }
+      if (cmd === 'mktemp') {
+        ref.stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'producer-test-hoststage-'));
+        tmpDirs.push(ref.stagingDir);
+        return { stdout: ref.stagingDir, stderr: '' };
+      }
+      if (cmd === 'tar') {
+        // tar -cf <tarPath> -C <stagingDir> .
+        const tarPath = args[1];
+        const stagingDir = args[3];
+        await execFileAsync('tar', ['-cf', tarPath, '-C', stagingDir, '.']);
+        tmpDirs.push(tarPath);
+        return { stdout: '', stderr: '' };
+      }
+      if (cmd === 'base64') {
+        const buf = await fs.readFile(args[0]);
+        return { stdout: buf.toString('base64'), stderr: '' };
+      }
+      if (cmd === 'rm') return { stdout: '', stderr: '' }; // leave temp for afterEach cleanup
+      throw new Error(`unexpected execArgv: ${argv.join(' ')}`);
+    });
+    mockExecutor.exists.mockImplementation((p: string) => fs.access(p).then(() => true, () => false));
+    mockExecutor.readFile.mockImplementation((p: string) => fs.readFile(p, 'utf8'));
+    mockExecutor.writeFile.mockImplementation((p: string, c: string) => fs.writeFile(p, c));
+    return ref;
+  }
+
+  it('reads + tars the stacks dir host-side and uploads the tar (config-survival is non-functional without this)', async () => {
+    const hostStacks = await mkTmp();
+    await writeFile(hostStacks, 'adguard/conf/AdGuardHome.yaml', 'bind_host: 0.0.0.0');
+    await writeFile(hostStacks, 'adguard/data/querylog.json', '[]'); // excluded
+    mockGetConfig.mockResolvedValue({ templateSettings: { DATA_DIR: hostStacks } });
+    wireExecutorToHostDir();
+
+    const result = await backupServiceToNas('adguard');
+
+    expect(mockGetExecutor).toHaveBeenCalledWith('Local');
+    expect(result.size).toBeGreaterThan(0);
+    // The tar bytes that came back through the agent contain the config, not the excluded querylog.
+    const tarCall = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('/adguard.tar'))!;
+    const out = await mkTmp();
+    const tarFile = path.join(out, 'a.tar');
+    await fs.writeFile(tarFile, tarCall[1] as Buffer);
+    await execFileAsync('tar', ['-xf', tarFile, '-C', out]);
+    expect(await fs.readFile(path.join(out, 'conf/AdGuardHome.yaml'), 'utf8')).toBe('bind_host: 0.0.0.0');
+    await expect(fs.access(path.join(out, 'data/querylog.json'))).rejects.toThrow();
+  });
+
+  it('applies strip rules host-side via the agent (password hashes never leave the box)', async () => {
+    const hostStacks = await mkTmp();
+    await writeFile(hostStacks, 'authelia/users_database.yml',
+      'users:\n  a:\n    password: $argon2$SEKRIT\n    email: a@x\n');
+    mockGetConfig.mockResolvedValue({ templateSettings: { DATA_DIR: hostStacks } });
+    wireExecutorToHostDir();
+
+    const result = await backupServiceToNas('authelia');
+    const tarCall = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('/authelia.tar'))!;
+    const out = await mkTmp();
+    const tarFile = path.join(out, 'a.tar');
+    await fs.writeFile(tarFile, tarCall[1] as Buffer);
+    await execFileAsync('tar', ['-xf', tarFile, '-C', out]);
+    const stripped = await fs.readFile(path.join(out, 'users_database.yml'), 'utf8');
+    expect(stripped).not.toContain('SEKRIT');
+    expect(stripped).toContain('a@x');
+    expect(result.size).toBeGreaterThan(0);
+  });
+});
+
 describe('backupServiceToNas', () => {
   it('uploads the tar and a meta sidecar under sb-backup/', async () => {
     const src = await mkTmp();
@@ -242,14 +351,8 @@ describe('backupServiceToNas', () => {
     expect(mockNas.nasUpload).not.toHaveBeenCalled();
   });
 
-  it('resolves the data dir from config when serviceDataDir is omitted', async () => {
-    const stacks = await mkTmp();
-    await writeFile(stacks, 'adguard/conf/AdGuardHome.yaml', 'bind_host: 0.0.0.0');
-    mockGetConfig.mockResolvedValue({ templateSettings: { DATA_DIR: stacks } });
-
-    const result = await backupServiceToNas('adguard');
-    expect(result.size).toBeGreaterThan(0);
-  });
+  // (data-dir resolution for the no-override box path is covered by the
+  // "via the host agent" describe block above, which also passes DATA_DIR.)
 });
 
 describe('read-back', () => {

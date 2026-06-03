@@ -82,6 +82,13 @@ export interface ServiceBackupManifest {
 export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
   {
     service: 'home-assistant',
+    // The dockerized HA stores its config one level down, under
+    // `home-assistant/homeassistant/` (the container's /config) — not directly
+    // in the stack dir (#1597). The manifest's include paths are relative to
+    // THIS config root, matching the HA-OS Supervisor backup layout (its
+    // `homeassistant.tar.gz` nests the same files under `data/`, stripped to
+    // bare paths on import) and what restoreServiceBackup extracts into.
+    dataSubdir: 'home-assistant/homeassistant',
     include: [
       'automations.yaml', 'scripts.yaml', 'scenes.yaml', 'configuration.yaml',
       '.storage/core.config_entries', '.storage/core.device_registry',

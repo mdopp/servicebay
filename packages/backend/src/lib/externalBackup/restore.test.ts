@@ -53,7 +53,10 @@ beforeEach(async () => {
   vi.clearAllMocks();
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'restore-test-'));
   mockCfg.getConfig.mockResolvedValue({ templateSettings: { DATA_DIR: tmpRoot } });
-  dataDir = path.join(tmpRoot, 'home-assistant');
+  // HA config lives one level down under home-assistant/homeassistant/ (the
+  // container's /config) — the manifest dataSubdir (#1597). Restore extracts
+  // the producer's bare-rooted tar into exactly this dir.
+  dataDir = path.join(tmpRoot, 'home-assistant', 'homeassistant');
 });
 afterEach(async () => {
   await fs.rm(tmpRoot, { recursive: true, force: true });
