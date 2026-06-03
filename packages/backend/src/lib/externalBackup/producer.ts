@@ -23,10 +23,13 @@ import { promisify } from 'node:util';
 import { getConfig } from '../config';
 import { logger } from '../logger';
 import { agentManager } from '../agent/manager';
+import { getExecutor, type Executor } from '../executor';
 import { nasUpload, nasDownload, nasList } from './nasClient';
 import {
   getServiceManifest,
+  getBackupGate,
   applyStripRules,
+  applyTransformRules,
   SERVICE_BACKUP_MANIFESTS,
   type ServiceBackupManifest,
 } from './serviceManifest';
@@ -76,27 +79,185 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
+/**
+ * The few filesystem primitives the staging + tar-building logic needs, so the
+ * SAME selection/exclude/strip/rename logic can run against either:
+ *  - the **local** container filesystem (the `sb-config-upload` CLI seed in
+ *    #1219 / the HA-OS import #1353, which extract to a container-local temp
+ *    dir), or
+ *  - the **host** filesystem via the node agent (#1597 — the box backup reads
+ *    `/mnt/data/stacks/<service>`, which is NOT bind-mounted into the
+ *    servicebay container; only the host agent can see it, the same way
+ *    install/restore/deploy reach the stacks).
+ *
+ * Source reads and the staging dir both live on whichever side the backend
+ * targets; the resulting tar bytes are always returned to the caller (the
+ * container) for upload to the NAS.
+ */
+interface BackupFileBackend {
+  /** Directory entries with their type (no recursion). */
+  readdirTypes(dir: string): Promise<{ name: string; isDir: boolean; isFile: boolean }[]>;
+  exists(target: string): Promise<boolean>;
+  isDirectory(target: string): Promise<boolean>;
+  /** Read a text (config) file — only ever called for strip-rule targets. */
+  readText(target: string): Promise<string>;
+  /** Copy a file byte-for-byte (binary-safe — sqlite, certs, …). */
+  copyFile(src: string, dest: string): Promise<void>;
+  writeText(dest: string, content: string): Promise<void>;
+  mkdirp(dir: string): Promise<void>;
+  /** Make a fresh staging dir on this backend's side, return its path. */
+  makeStagingDir(): Promise<string>;
+  /** Tar the staging dir's contents and return the bytes to the container. */
+  tarStagingDir(stagingDir: string): Promise<Buffer>;
+  rmrf(target: string): Promise<void>;
+}
+
+/** Local-filesystem backend — the in-container path (CLI seed / HA-OS import). */
+const localFileBackend: BackupFileBackend = {
+  async readdirTypes(dir) {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    return entries.map(e => ({ name: e.name, isDir: e.isDirectory(), isFile: e.isFile() }));
+  },
+  exists: pathExists,
+  async isDirectory(target) {
+    return (await fs.stat(target)).isDirectory();
+  },
+  readText: target => fs.readFile(target, 'utf8'),
+  copyFile: (src, dest) => fs.copyFile(src, dest),
+  writeText: (dest, content) => fs.writeFile(dest, content),
+  mkdirp: async dir => {
+    await fs.mkdir(dir, { recursive: true });
+  },
+  makeStagingDir: () => fs.mkdtemp(path.join(os.tmpdir(), 'sb-svcbackup-')),
+  async tarStagingDir(stagingDir) {
+    const tarPath = path.join(os.tmpdir(), `sb-svcbackup-${process.pid}-${Date.now()}.tar`);
+    try {
+      await execFileAsync('tar', ['-cf', tarPath, '-C', stagingDir, '.']);
+      return await fs.readFile(tarPath);
+    } finally {
+      await fs.rm(tarPath, { force: true });
+    }
+  },
+  rmrf: async target => {
+    await fs.rm(target, { recursive: true, force: true });
+  },
+};
+
+/**
+ * Host-agent backend (#1597) — reads/stages on the HOST via the node agent, so
+ * it sees `/mnt/data/stacks/<service>` (not mounted into the servicebay
+ * container). The staging dir + tar are built host-side; only the final tar
+ * bytes cross back into the container (base64 over the agent channel, since the
+ * agent's `read_file` is utf-8-only and would corrupt binary config).
+ */
+function agentFileBackend(executor: Executor): BackupFileBackend {
+  return {
+    async readdirTypes(dir) {
+      // `find -maxdepth 1` with a type tag per entry — one round-trip, and it
+      // distinguishes files from dirs without a stat-per-entry storm.
+      const { stdout } = await executor.execArgv([
+        'find', dir, '-maxdepth', '1', '-mindepth', '1', '-printf', '%y\t%f\n',
+      ]);
+      return stdout
+        .split('\n')
+        .map(l => l.trim())
+        .filter(Boolean)
+        .map(l => {
+          const [type, ...rest] = l.split('\t');
+          const name = rest.join('\t');
+          return { name, isDir: type === 'd', isFile: type === 'f' };
+        });
+    },
+    exists: target => executor.exists(target),
+    async isDirectory(target) {
+      // `test -d` exits non-zero (→ execArgv throws) for a non-dir.
+      return executor.execArgv(['test', '-d', target]).then(() => true, () => false);
+    },
+    readText: target => executor.readFile(target),
+    async copyFile(src, dest) {
+      await executor.execArgv(['cp', '-p', src, dest]);
+    },
+    writeText: (dest, content) => executor.writeFile(dest, content),
+    async mkdirp(dir) {
+      await executor.execArgv(['mkdir', '-p', dir]);
+    },
+    async makeStagingDir() {
+      const { stdout } = await executor.execArgv(['mktemp', '-d', '-t', 'sb-svcbackup-XXXXXX']);
+      return stdout.trim();
+    },
+    async tarStagingDir(stagingDir) {
+      // Tar host-side to a file, then read it back base64-encoded — no shell
+      // pipe and no exec template-literal (each arg is execArgv-quoted). The
+      // agent's read_file is utf-8-only, so base64 keeps binary config intact.
+      const tarPath = `${stagingDir}.tar`;
+      try {
+        await executor.execArgv(['tar', '-cf', tarPath, '-C', stagingDir, '.'], { timeoutMs: 120_000 });
+        const { stdout } = await executor.execArgv(['base64', tarPath], { timeoutMs: 120_000 });
+        return Buffer.from(stdout.replace(/\s+/g, ''), 'base64');
+      } finally {
+        await executor.execArgv(['rm', '-f', tarPath]);
+      }
+    },
+    async rmrf(target) {
+      await executor.execArgv(['rm', '-rf', target]);
+    },
+  };
+}
+
 /** A relative path is excluded when it equals an exclude entry or lives under
  *  one (an exclude dir). Excludes always win over includes. */
 function isExcluded(relPath: string, excludes: string[]): boolean {
   return excludes.some(ex => relPath === ex || relPath.startsWith(ex + '/'));
 }
 
+/**
+ * Resolve a manifest include that may carry a trailing-`*` glob in its leaf
+ * component (e.g. `.storage/lovelace*`, `.storage/hacs*`) to the concrete
+ * relative paths that exist under `serviceDataDir`. HA names its dashboards
+ * `.storage/lovelace.<url_path>` and HACS its data `.storage/hacs.repositories`
+ * etc., so an exact include never matches them (#1595/#1596). A plain include
+ * (no `*`) resolves to itself. Only a single trailing-`*` on the leaf is
+ * supported — that's all the manifest needs, and it keeps the match a cheap
+ * prefix test rather than a full glob engine.
+ */
+async function resolveIncludeGlob(
+  backend: BackupFileBackend,
+  serviceDataDir: string,
+  include: string,
+): Promise<string[]> {
+  if (!include.includes('*')) return [include];
+  const dir = path.posix.dirname(include);
+  const leaf = path.posix.basename(include);
+  if (leaf.indexOf('*') !== leaf.length - 1) {
+    // Only a trailing-`*` leaf glob is supported; anything else is a manifest
+    // authoring error — treat it as a literal (it simply won't exist → skipped).
+    return [include];
+  }
+  const prefix = leaf.slice(0, -1);
+  const parentAbs = path.join(serviceDataDir, dir);
+  if (!(await backend.exists(parentAbs))) return [];
+  const entries = await backend.readdirTypes(parentAbs);
+  return entries
+    .filter(e => e.name.startsWith(prefix))
+    .map(e => path.posix.join(dir, e.name));
+}
+
 /** Walk an included directory, returning the relative (posix) paths of every
  *  file inside it that isn't excluded. */
 async function collectDirFiles(
+  backend: BackupFileBackend,
   serviceDataDir: string,
   relDir: string,
   excludes: string[],
 ): Promise<string[]> {
   const out: string[] = [];
-  const entries = await fs.readdir(path.join(serviceDataDir, relDir), { withFileTypes: true });
+  const entries = await backend.readdirTypes(path.join(serviceDataDir, relDir));
   for (const entry of entries) {
     const rel = path.posix.join(relDir, entry.name);
     if (isExcluded(rel, excludes)) continue;
-    if (entry.isDirectory()) {
-      out.push(...(await collectDirFiles(serviceDataDir, rel, excludes)));
-    } else if (entry.isFile()) {
+    if (entry.isDir) {
+      out.push(...(await collectDirFiles(backend, serviceDataDir, rel, excludes)));
+    } else if (entry.isFile) {
       out.push(rel);
     }
   }
@@ -106,37 +267,48 @@ async function collectDirFiles(
 /**
  * Copy the manifest-selected config files from `serviceDataDir` into
  * `stagingDir`, applying excludes and strip rules. Returns the sorted list of
- * relative paths actually staged. Pure filesystem work — no NAS, no tar — so
- * the selection logic is unit-testable on its own.
+ * relative paths actually staged. The `backend` decides whether source +
+ * staging live in-container (local) or on the host via the agent (#1597) — the
+ * selection logic is identical, and unit-testable on the local backend.
  */
 export async function stageServiceBackup(
   serviceDataDir: string,
   manifest: ServiceBackupManifest,
   stagingDir: string,
+  backend: BackupFileBackend = localFileBackend,
 ): Promise<string[]> {
   const staged: string[] = [];
+  // Expand any trailing-`*` glob includes (HA dashboards `.storage/lovelace*`,
+  // HACS data `.storage/hacs*`) to the concrete paths on disk first.
+  const includes: string[] = [];
   for (const include of manifest.include) {
+    includes.push(...(await resolveIncludeGlob(backend, serviceDataDir, include)));
+  }
+  for (const include of includes) {
     if (isExcluded(include, manifest.exclude)) continue;
     const absInclude = path.join(serviceDataDir, include);
-    if (!(await pathExists(absInclude))) continue;
-    const stat = await fs.stat(absInclude);
-    const relFiles = stat.isDirectory()
-      ? await collectDirFiles(serviceDataDir, include, manifest.exclude)
+    if (!(await backend.exists(absInclude))) continue;
+    const relFiles = (await backend.isDirectory(absInclude))
+      ? await collectDirFiles(backend, serviceDataDir, include, manifest.exclude)
       : [include];
     for (const rel of relFiles) {
       // A collector may stage a snapshot file under a canonical name (e.g.
       // database.sqlite.sb-backup → database.sqlite) so restore lands it right.
       const tarRel = manifest.renames?.[rel] ?? rel;
       const dest = path.join(stagingDir, tarRel);
-      await fs.mkdir(path.dirname(dest), { recursive: true });
-      const hasStrip = manifest.strip?.some(r => r.file === rel);
-      if (hasStrip) {
-        // Only read-as-text the files a strip rule targets; everything else is
-        // copied byte-for-byte so binary config (e.g. SQLite-ish blobs) stays intact.
-        const content = await fs.readFile(path.join(serviceDataDir, rel), 'utf8');
-        await fs.writeFile(dest, applyStripRules(manifest, rel, content));
+      await backend.mkdirp(path.dirname(dest));
+      const needsRewrite =
+        manifest.strip?.some(r => r.file === rel) ||
+        manifest.transform?.some(r => r.file === rel);
+      if (needsRewrite) {
+        // Only read-as-text the files a strip/transform rule targets; everything
+        // else is copied byte-for-byte so binary config (e.g. SQLite-ish blobs)
+        // stays intact. Strip (key removal) then transform (value rewrite).
+        const content = await backend.readText(path.join(serviceDataDir, rel));
+        const stripped = applyStripRules(manifest, rel, content);
+        await backend.writeText(dest, applyTransformRules(manifest, rel, stripped));
       } else {
-        await fs.copyFile(path.join(serviceDataDir, rel), dest);
+        await backend.copyFile(path.join(serviceDataDir, rel), dest);
       }
       staged.push(tarRel);
     }
@@ -144,23 +316,25 @@ export async function stageServiceBackup(
   return staged.sort();
 }
 
-/** Build a `<service>.tar` buffer from a service's on-disk config dir. */
+/**
+ * Build a `<service>.tar` buffer from a service's config dir. With the default
+ * local backend the dir is in-container; pass the agent backend (#1597) to read
+ * + tar host-side and stream the bytes back.
+ */
 export async function buildServiceBackupTar(
   serviceDataDir: string,
   manifest: ServiceBackupManifest,
+  backend: BackupFileBackend = localFileBackend,
 ): Promise<Buffer> {
-  const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sb-svcbackup-'));
-  const tarPath = path.join(os.tmpdir(), `sb-svcbackup-${process.pid}-${Date.now()}.tar`);
+  const stagingDir = await backend.makeStagingDir();
   try {
-    const staged = await stageServiceBackup(serviceDataDir, manifest, stagingDir);
+    const staged = await stageServiceBackup(serviceDataDir, manifest, stagingDir, backend);
     if (staged.length === 0) {
       throw new Error(`No config files to back up for "${manifest.service}" under ${serviceDataDir}`);
     }
-    await execFileAsync('tar', ['-cf', tarPath, '-C', stagingDir, '.']);
-    return await fs.readFile(tarPath);
+    return await backend.tarStagingDir(stagingDir);
   } finally {
-    await fs.rm(stagingDir, { recursive: true, force: true });
-    await fs.rm(tarPath, { force: true });
+    await backend.rmrf(stagingDir);
   }
 }
 
@@ -252,8 +426,15 @@ export async function backupServiceToNas(
   if (manifest.collector && !opts.serviceDataDir) {
     manifest = await runBackupCollector(manifest, opts.node || 'Local');
   }
+  // An explicit serviceDataDir is a container-local source (CLI seed / HA-OS
+  // import) → local fs backend. A box backup reads the stacks dir, which is NOT
+  // mounted into the servicebay container, so it MUST go through the host agent
+  // (#1597) — same path install/restore/deploy use.
   const serviceDataDir = opts.serviceDataDir ?? (await resolveServiceDataDir(service));
-  const tar = await buildServiceBackupTar(serviceDataDir, manifest);
+  const backend = opts.serviceDataDir
+    ? localFileBackend
+    : agentFileBackend(getExecutor(opts.node || 'Local'));
+  const tar = await buildServiceBackupTar(serviceDataDir, manifest, backend);
   return writeServiceBackupToNas(service, tar);
 }
 
@@ -277,7 +458,9 @@ export async function backupInstalledServicesToNas(): Promise<ServiceBackupRunEn
   const installed = new Set(Object.keys((await getConfig()).installedTemplates ?? {}));
   const results: ServiceBackupRunEntry[] = [];
   for (const manifest of SERVICE_BACKUP_MANIFESTS) {
-    if (!installed.has(manifest.service)) continue;
+    // A sibling-store entry (#1594) gates on its parent template, not its own
+    // synthetic service name (which is never an installedTemplates key).
+    if (!installed.has(getBackupGate(manifest))) continue;
     try {
       const r = await backupServiceToNas(manifest.service);
       results.push({ service: manifest.service, ok: true, tarName: r.tarName, size: r.size });

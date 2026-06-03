@@ -23,10 +23,18 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+
+
+# The postgres container inside the immich pod. Podman names a Pod's
+# containers `<pod>-<container>`; this pod is `immich`, the DB container
+# is `database` (see template.yml), so the running container is
+# `immich-database`. Used by the OIDC-secret DB reconcile below.
+DB_CONTAINER = "immich-database"
 
 
 # Single end-to-end budget covering everything between deploy and
@@ -139,6 +147,102 @@ def wait_ready(port: str) -> tuple[bool, str]:
     return False, candidates[0]
 
 
+def _psql(db_password: str, sql: str, set_vars: dict[str, str] | None = None) -> tuple[int, str]:
+    """Run a single SQL statement inside the immich-database container
+    as the postgres superuser. Returns (returncode, stripped stdout).
+
+    Uses `podman exec` (the same host-side capability file-share /
+    home-assistant post-deploys use) and passes the password via
+    PGPASSWORD in the container env so it never lands on the host process
+    table. `-tAc` gives one bare value per row, no headers/alignment.
+
+    `set_vars` binds psql variables (`-v name=value`); reference them in
+    `sql` as `:'name'` so psql does the literal quoting. This keeps an
+    arbitrary secret value out of the SQL string entirely — no manual
+    escaping, injection-safe whatever bytes the secret contains."""
+    cmd = [
+        "podman", "exec",
+        "-e", f"PGPASSWORD={db_password}",
+        DB_CONTAINER,
+        "psql", "-U", "postgres", "-d", "immich",
+    ]
+    for name, value in (set_vars or {}).items():
+        cmd.extend(["-v", f"{name}={value}"])
+    cmd.extend(["-tAc", sql])
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        return result.returncode, (result.stdout or "").strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"   ⚠️ psql exec against {DB_CONTAINER} failed: {exc}")
+        return 1, ""
+
+
+def reconcile_oidc_secret_in_db(sso_secret: str, db_password: str) -> bool:
+    """Re-stamp Immich's stored OIDC client secret to match Authelia's
+    freshly-registered one, writing straight to the database.
+
+    Why this exists (#1556): Immich keeps its OIDC client secret in its
+    database — survived DATA across a `wipe-configs` reinstall — while
+    Authelia regenerates its copy from CONFIG. The two drift apart and the
+    token exchange at /api/oidc/token fails with "Failed to finish oauth".
+    The normal repair is the admin-authenticated PUT /api/system-config in
+    main(), but on a wipe-configs reinstall the freshly-generated
+    IMMICH_ADMIN_PASSWORD no longer matches the preserved admin row, so the
+    admin login fails and that path never runs. This DB-level reconcile is
+    the fallback that does not need an admin token — same class as the
+    LLDAP FORCE_RESET / NPM in-place rekey.
+
+    Immich stores its system config in the `system_metadata` table as a
+    single jsonb row keyed `system-config`, holding only non-default
+    overrides. We only touch `oauth.clientSecret`, and only when an
+    `oauth` block already exists (a populated DATA dir) and its stored
+    secret differs from the wizard's. Returns True iff it wrote a change.
+    """
+    code, current = _psql(
+        db_password,
+        "SELECT value->'oauth'->>'clientSecret' FROM system_metadata "
+        "WHERE key='system-config';",
+    )
+    if code != 0:
+        log("   ⚠️ Could not read Immich's stored OIDC secret from the DB — "
+            "skipping DB reconcile. SSO may need a manual secret re-paste.")
+        return False
+    # Empty result: no system-config row yet, or no oauth block (fresh
+    # DATA). Nothing to reconcile here — the API PUT path seeds it on a
+    # successful admin login.
+    if not current:
+        log("   ℹ️ No stored OIDC secret in Immich's DB yet — nothing to reconcile "
+            "(fresh data; the API path seeds it once admin login succeeds).")
+        return False
+    if current == sso_secret:
+        log("   ✅ Immich's stored OIDC secret already matches Authelia — no reconcile needed.")
+        return False
+
+    # Re-stamp just the nested clientSecret, preserving every other oauth
+    # field the operator/Immich set. jsonb_set with create_missing=false
+    # only rewrites the existing leaf. The secret rides in via a psql
+    # variable (:'secret') so psql quotes it — no manual escaping.
+    code, _ = _psql(
+        db_password,
+        "UPDATE system_metadata "
+        "SET value = jsonb_set(value, '{oauth,clientSecret}', to_jsonb(:'secret'::text), false) "
+        "WHERE key='system-config';",
+        set_vars={"secret": sso_secret},
+    )
+    if code != 0:
+        log("   ⚠️ Failed to re-stamp Immich's OIDC secret in the DB — "
+            "SSO may need a manual secret re-paste from the Immich UI.")
+        return False
+    log("   ✅ Reconciled Immich's stored OIDC secret to match Authelia (DB re-stamp).")
+    return True
+
+
 def main() -> int:
     port = env("IMMICH_PORT", "2283")
     public_domain = env("PUBLIC_DOMAIN")
@@ -221,10 +325,27 @@ def main() -> int:
     if code != 201 or not token:
         log(
             f"ℹ️  Immich admin login returns HTTP {code} — the admin row pre-dates this install "
-            "and holds a different password than the wizard's value. OIDC config skipped; the "
-            "service stays reachable via Authelia forward-auth. To restore SSO, reset Immich's "
-            "admin from the Immich UI (forgot-password flow) or DROP the user table in the "
-            "immich-database container and re-run this post-deploy from Diagnose."
+            "and holds a different password than the wizard's value (preserved DATA + a freshly "
+            "generated IMMICH_ADMIN_PASSWORD). The API-authenticated OIDC config path can't run."
+        )
+        # This is exactly the wipe-configs case #1556 fixes: the admin
+        # login can't happen, but Immich's stored OIDC client secret
+        # (survived DATA) has drifted from Authelia's freshly-regenerated
+        # one (CONFIG). Reconcile it directly in the DB — no admin token
+        # needed — so SSO works without a manual re-paste. The rest of the
+        # OAuth config (issuer URL, auth method, etc.) already survived in
+        # the same DATA, so only the secret can have gone stale.
+        db_password = env("DB_PASSWORD")
+        if sso_enabled and sso_secret and db_password:
+            log("   Attempting a DB-level OIDC secret reconcile (no admin login required)…")
+            reconcile_oidc_secret_in_db(sso_secret, db_password)
+        elif sso_enabled and not db_password:
+            log("   ⚠️ DB_PASSWORD unavailable — cannot DB-reconcile the OIDC secret. "
+                "SSO may need a manual secret re-paste from the Immich UI.")
+        log(
+            "   The service stays reachable via Authelia forward-auth. If SSO still fails, reset "
+            "Immich's admin from the Immich UI (forgot-password flow) or DROP the user table in "
+            "the immich-database container and re-run this post-deploy from Diagnose."
         )
         return 0
 

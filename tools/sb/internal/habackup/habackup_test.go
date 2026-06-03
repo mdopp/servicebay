@@ -89,8 +89,10 @@ func TestExtractAndFilter_KeepsIncludesDropsBulk(t *testing.T) {
 		"data/configuration.yaml":            "default_config:",
 		"data/.storage/zwave_js":             `{"keys":"MESH"}`,
 		"data/.storage/core.entity_registry": "{}",
+		"data/.storage/lovelace.map":         `{"dash":"map"}`, // lovelace* glob
+		"data/.storage/hacs.repositories":    `{"hacs":1}`,     // hacs* glob
+		"data/custom_components/hacs/x.js":   "hacs-code",      // custom_components dir
 		"data/home-assistant_v2.db":          "BIGDB",          // not an include
-		"data/custom_components/hacs/x.js":   "frontend-bloat", // not an include
 		"data/home-assistant.log":            "noise",          // not an include
 	})
 
@@ -106,7 +108,12 @@ func TestExtractAndFilter_KeepsIncludesDropsBulk(t *testing.T) {
 	if files[".storage/zwave_js"] != `{"keys":"MESH"}` {
 		t.Errorf(".storage/zwave_js missing/wrong: %q", files[".storage/zwave_js"])
 	}
-	for _, gone := range []string{"home-assistant_v2.db", "custom_components/hacs/x.js", "home-assistant.log"} {
+	for _, kept := range []string{".storage/lovelace.map", ".storage/hacs.repositories", "custom_components/hacs/x.js"} {
+		if _, present := files[kept]; !present {
+			t.Errorf("glob/dir include %q should be in the filtered tar", kept)
+		}
+	}
+	for _, gone := range []string{"home-assistant_v2.db", "home-assistant.log"} {
 		if _, present := files[gone]; present {
 			t.Errorf("bulk file %q should not be in the filtered tar", gone)
 		}
@@ -151,7 +158,10 @@ func TestHomeAssistantIncludesMatchManifest(t *testing.T) {
 	if block == nil {
 		t.Fatal("could not locate home-assistant include block in serviceManifest.ts")
 	}
-	tsIncludes := regexp.MustCompile(`'([^']+)'`).FindAllStringSubmatch(string(block[1]), -1)
+	// Strip `//` line comments first — the block's comments carry backticks and
+	// apostrophes that would otherwise be parsed as include entries.
+	stripped := regexp.MustCompile(`(?m)//.*$`).ReplaceAllString(string(block[1]), "")
+	tsIncludes := regexp.MustCompile(`'([^']+)'`).FindAllStringSubmatch(stripped, -1)
 	got := map[string]bool{}
 	for _, m := range tsIncludes {
 		got[m[1]] = true

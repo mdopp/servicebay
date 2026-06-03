@@ -3,10 +3,14 @@ import yaml from 'js-yaml';
 import {
   SERVICE_BACKUP_MANIFESTS,
   getServiceManifest,
+  getBackupGate,
+  getSiblingBackupServices,
   getConfigPaths,
   getDataPaths,
   stripYamlKeys,
   applyStripRules,
+  applyTransformRules,
+  translateHaAddonConfigEntries,
 } from './serviceManifest';
 
 describe('service backup manifests', () => {
@@ -20,6 +24,45 @@ describe('service backup manifests', () => {
 
   it('keeps the zwave_js network keys in home-assistant (needed to recover the mesh)', () => {
     expect(getServiceManifest('home-assistant')!.include).toContain('.storage/zwave_js');
+  });
+
+  it('uses a glob for lovelace dashboards, not the bare exact name (#1595)', () => {
+    const ha = getServiceManifest('home-assistant')!;
+    // HA stores dashboards as `.storage/lovelace.<url_path>`; the bare exact
+    // include never matched them. The glob must be present and the dropped
+    // exact name must be gone.
+    expect(ha.include).toContain('.storage/lovelace*');
+    expect(ha.include).not.toContain('.storage/lovelace');
+  });
+
+  it('backs up HACS code + data so HACS integrations survive a reinstall (#1596)', () => {
+    const ha = getServiceManifest('home-assistant')!;
+    expect(ha.include).toContain('custom_components');
+    expect(ha.include).toContain('.storage/hacs*');
+  });
+
+  it('backs up the zwave-js store as a sibling entry gated on home-assistant (#1594)', () => {
+    const zw = getServiceManifest('home-assistant-zwave')!;
+    expect(zw).toBeDefined();
+    // The store is a SIBLING dir under DATA_DIR — a plain dataSubdir, no `../`,
+    // so the traversal guards stay intact.
+    expect(zw.dataSubdir).toBe('home-assistant/zwave-js');
+    expect(zw.gateOn).toBe('home-assistant');
+    // settings.json carries the network securityKeys + port + soft-reset.
+    expect(zw.include).toContain('settings.json');
+    // Kept verbatim — the keys can't be regenerated (trusted-NAS decision).
+    expect(zw.strip).toBeUndefined();
+  });
+
+  it('getBackupGate returns gateOn for a sibling entry, the service name otherwise', () => {
+    expect(getBackupGate(getServiceManifest('home-assistant-zwave')!)).toBe('home-assistant');
+    expect(getBackupGate(getServiceManifest('adguard')!)).toBe('adguard');
+  });
+
+  it('getSiblingBackupServices lists the stores that ride a template deploy (#1594)', () => {
+    expect(getSiblingBackupServices('home-assistant')).toEqual(['home-assistant-zwave']);
+    // A template with no sibling stores gets an empty list.
+    expect(getSiblingBackupServices('adguard')).toEqual([]);
   });
 
   it('excludes the recorder DB from home-assistant', () => {
@@ -110,5 +153,101 @@ describe('applyStripRules', () => {
     expect(stripped).not.toContain('password');
     const passthrough = applyStripRules(authelia, 'some-other-file.yml', 'password: keep\n');
     expect(passthrough).toBe('password: keep\n');
+  });
+});
+
+describe('translateHaAddonConfigEntries (#1595)', () => {
+  const supervisorEntries = () =>
+    JSON.stringify({
+      version: 1,
+      minor_version: 4,
+      key: 'core.config_entries',
+      data: {
+        entries: [
+          {
+            entry_id: 'zw1',
+            domain: 'zwave_js',
+            title: 'Z-Wave JS',
+            data: {
+              use_addon: true,
+              integration_created_addon: true,
+              url: 'ws://core-zwave-js:3000',
+            },
+          },
+          {
+            entry_id: 'mt1',
+            domain: 'matter',
+            data: {
+              use_addon: true,
+              integration_created_addon: true,
+              url: 'ws://core-matter-server:5580/ws',
+            },
+          },
+          {
+            entry_id: 'hue1',
+            domain: 'hue',
+            data: { host: '192.168.1.50', use_addon: true },
+          },
+        ],
+      },
+    });
+
+  it('rewrites zwave_js + matter add-on entries to the in-pod containers', () => {
+    const out = translateHaAddonConfigEntries(supervisorEntries());
+    const parsed = JSON.parse(out) as {
+      data: { entries: { domain: string; data: Record<string, unknown> }[] };
+    };
+    const zw = parsed.data.entries.find(e => e.domain === 'zwave_js')!.data;
+    expect(zw.use_addon).toBe(false);
+    expect(zw.integration_created_addon).toBe(false);
+    // :3000 is taken by NPM under hostNetwork — zwave-js-ui serves :3001.
+    expect(zw.url).toBe('ws://localhost:3001');
+
+    const mt = parsed.data.entries.find(e => e.domain === 'matter')!.data;
+    expect(mt.use_addon).toBe(false);
+    expect(mt.integration_created_addon).toBe(false);
+    expect(mt.url).toBe('ws://localhost:5580/ws');
+  });
+
+  it('leaves non-add-on entries (e.g. hue) untouched even when use_addon is set', () => {
+    const out = translateHaAddonConfigEntries(supervisorEntries());
+    const parsed = JSON.parse(out) as {
+      data: { entries: { domain: string; data: Record<string, unknown> }[] };
+    };
+    const hue = parsed.data.entries.find(e => e.domain === 'hue')!.data;
+    // hue is not in the translation table → its data is preserved verbatim.
+    expect(hue.host).toBe('192.168.1.50');
+    expect(hue.use_addon).toBe(true);
+    expect(hue.url).toBeUndefined();
+  });
+
+  it('is idempotent: an already-translated backup is returned byte-stable', () => {
+    const once = translateHaAddonConfigEntries(supervisorEntries());
+    const twice = translateHaAddonConfigEntries(once);
+    expect(twice).toBe(once);
+  });
+
+  it('returns the content unchanged when there is no add-on entry to translate', () => {
+    const noAddon = JSON.stringify({
+      data: { entries: [{ domain: 'zwave_js', data: { use_addon: false, url: 'ws://localhost:3001' } }] },
+    });
+    expect(translateHaAddonConfigEntries(noAddon)).toBe(noAddon);
+  });
+
+  it('returns the content unchanged for non-JSON or an unexpected shape', () => {
+    expect(translateHaAddonConfigEntries('not json {')).toBe('not json {');
+    expect(translateHaAddonConfigEntries('{"data":{}}')).toBe('{"data":{}}');
+  });
+
+  it('applyTransformRules runs the HA config-entries translation only on the targeted file', () => {
+    const ha = getServiceManifest('home-assistant')!;
+    expect(ha.transform).toEqual([
+      { file: '.storage/core.config_entries', kind: 'ha-config-entries-addon' },
+    ]);
+    const translated = applyTransformRules(ha, '.storage/core.config_entries', supervisorEntries());
+    expect(JSON.parse(translated).data.entries[0].data.url).toBe('ws://localhost:3001');
+    // A different file is passed through untouched.
+    const other = applyTransformRules(ha, 'configuration.yaml', 'default_config:\n');
+    expect(other).toBe('default_config:\n');
   });
 });

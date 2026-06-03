@@ -34,8 +34,13 @@ var HomeAssistantIncludes = []string{
 	"automations.yaml", "scripts.yaml", "scenes.yaml", "configuration.yaml",
 	".storage/core.config_entries", ".storage/core.device_registry",
 	".storage/core.entity_registry", ".storage/core.area_registry",
-	".storage/lovelace", ".storage/lovelace_dashboards",
+	// HA names each dashboard `.storage/lovelace.<url_path>`; the trailing-`*`
+	// leaf glob catches them all (and `.storage/lovelace_dashboards`) — #1595.
+	".storage/lovelace*",
 	".storage/zwave_js",
+	// HACS code + its data store so integrations survive a reinstall (#1596).
+	"custom_components",
+	".storage/hacs*",
 }
 
 // normalize strips a leading "./" and any trailing "/" from a tar member name.
@@ -45,10 +50,20 @@ func normalize(name string) string {
 }
 
 // wanted reports whether an inner member (relative to data/) is covered by one
-// of the include paths — either the include itself (a file) or anything beneath
-// it (a dir include).
+// of the include paths — either the include itself (a file), anything beneath
+// it (a dir include), or a trailing-`*` leaf glob (`.storage/lovelace*`)
+// matching any sibling whose name starts with the prefix. Mirrors the TS
+// producer's resolveIncludeGlob / haOsImport's matchesInclude so a Go HA-OS
+// import keeps the same files a box backup does (#1595 / #1596).
 func wanted(rel string, includes []string) bool {
 	for _, inc := range includes {
+		if strings.HasSuffix(inc, "*") {
+			prefix := strings.TrimSuffix(inc, "*")
+			if rel == prefix || strings.HasPrefix(rel, prefix) {
+				return true
+			}
+			continue
+		}
 		if rel == inc || strings.HasPrefix(rel, inc+"/") {
 			return true
 		}

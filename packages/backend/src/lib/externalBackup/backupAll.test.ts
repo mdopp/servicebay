@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 const { mockNas, mockCfg } = vi.hoisted(() => ({
   mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn() },
@@ -9,6 +13,52 @@ const { mockNas, mockCfg } = vi.hoisted(() => ({
 }));
 vi.mock('./nasClient', () => mockNas);
 vi.mock('../config', () => mockCfg);
+// The box backup routes through the host agent (#1597). In-process, wire the
+// executor straight to the local fs so the same staging/tar logic runs against
+// the test's real temp dir (and exercises the agent-backend code path).
+const stageDirs: string[] = [];
+vi.mock('../executor', () => ({
+  getExecutor: () => ({
+    async execArgv(argv: string[]) {
+      const [cmd, ...args] = argv;
+      if (cmd === 'find') {
+        const ents = await fs.readdir(args[0], { withFileTypes: true }).catch(() => []);
+        return {
+          stdout: ents.map(e => `${e.isDirectory() ? 'd' : e.isFile() ? 'f' : 'o'}\t${e.name}`).join('\n'),
+          stderr: '',
+        };
+      }
+      if (cmd === 'test' && args[0] === '-d') {
+        if (!(await fs.stat(args[1]).then(s => s.isDirectory(), () => false))) throw new Error('not a dir');
+        return { stdout: '', stderr: '' };
+      }
+      if (cmd === 'test' && args[0] === '-e') {
+        if (!(await fs.access(args[1]).then(() => true, () => false))) throw new Error('missing');
+        return { stdout: '', stderr: '' };
+      }
+      if (cmd === 'mkdir') { await fs.mkdir(args[1], { recursive: true }); return { stdout: '', stderr: '' }; }
+      if (cmd === 'cp') { await fs.copyFile(args[args.length - 2], args[args.length - 1]); return { stdout: '', stderr: '' }; }
+      if (cmd === 'mktemp') {
+        const d = await fs.mkdtemp(path.join(os.tmpdir(), 'backupall-stage-'));
+        stageDirs.push(d);
+        return { stdout: d, stderr: '' };
+      }
+      if (cmd === 'tar') {
+        await execFileAsync('tar', ['-cf', args[1], '-C', args[3], '.']);
+        stageDirs.push(args[1]);
+        return { stdout: '', stderr: '' };
+      }
+      if (cmd === 'base64') {
+        return { stdout: (await fs.readFile(args[0])).toString('base64'), stderr: '' };
+      }
+      if (cmd === 'rm') return { stdout: '', stderr: '' };
+      throw new Error(`unexpected execArgv: ${argv.join(' ')}`);
+    },
+    exists: (p: string) => fs.access(p).then(() => true, () => false),
+    readFile: (p: string) => fs.readFile(p, 'utf8'),
+    writeFile: (p: string, c: string) => fs.writeFile(p, c),
+  }),
+}));
 
 import { backupInstalledServicesToNas } from './producer';
 
@@ -27,6 +77,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await fs.rm(tmpRoot, { recursive: true, force: true });
+  await Promise.all(stageDirs.splice(0).map(d => fs.rm(d, { recursive: true, force: true })));
 });
 
 describe('backupInstalledServicesToNas', () => {
@@ -66,5 +117,25 @@ describe('backupInstalledServicesToNas', () => {
   it('returns empty when nothing with a manifest is installed', async () => {
     mockCfg.getConfig.mockResolvedValue({ installedTemplates: { 'some-unmanaged-thing': {} } });
     expect(await backupInstalledServicesToNas()).toEqual([]);
+  });
+
+  it('backs up the zwave-js sibling store when home-assistant is installed (#1594)', async () => {
+    // HA config + the sibling zwave-js store (network keys) both present.
+    await write('home-assistant/homeassistant/configuration.yaml', 'default_config:');
+    await write('home-assistant/zwave-js/settings.json', '{"zwave":{"securityKeys":{"S0_Legacy":"deadbeef"}}}');
+    mockCfg.getConfig.mockResolvedValue({
+      templateSettings: { DATA_DIR: tmpRoot },
+      // Only `home-assistant` is an installedTemplates key; `home-assistant-zwave`
+      // is a synthetic gate-on-parent entry that must still get backed up.
+      installedTemplates: { 'home-assistant': { schemaVersion: 1, installedAt: 'x' } },
+    });
+
+    const results = await backupInstalledServicesToNas();
+    const services = results.map(r => r.service);
+    expect(services).toContain('home-assistant');
+    expect(services).toContain('home-assistant-zwave');
+    expect(results.find(r => r.service === 'home-assistant-zwave')).toMatchObject({ ok: true });
+    const uploaded = mockNas.nasUpload.mock.calls.map(c => String(c[0]));
+    expect(uploaded).toContain('sb-backup/home-assistant-zwave.tar');
   });
 });

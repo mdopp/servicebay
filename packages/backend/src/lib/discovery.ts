@@ -25,27 +25,6 @@ import path from 'path';
 import type { ServiceBundle } from './unmanaged/bundleShared';
 import { logger } from './logger';
 
-export function getSystemdDir() {
-    // V4: All operations go through the agent which runs on the host.
-    // Always use relative path - it resolves to the host user's home directory.
-    return '.config/containers/systemd';
-}
-
-export function getBackupDir() {
-    return path.join(getSystemdDir(), 'backups');
-}
-
-export async function inspectItem(executor: Executor, id: string, type: 'container' | 'pod' = 'container') {
-    try {
-        const { stdout } = await executor.execArgv(['podman', 'inspect', ...(type === 'pod' ? ['--type', 'pod'] : ['--type', 'container']), id]);
-        const data = JSON.parse(stdout);
-        return Array.isArray(data) ? data[0] : data;
-    } catch (e) {
-        logger.warn('discovery', `Failed to inspect ${type} ${id}`, e);
-        return null;
-    }
-}
-
 export interface DiscoveredService {
     serviceName: string;
     containerNames: string[];

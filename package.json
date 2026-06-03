@@ -116,19 +116,18 @@
       },
       "packages/frontend": {
         "entry": [
-          "src/app/**/page.tsx",
-          "src/app/**/layout.tsx",
-          "src/app/**/route.ts",
-          "src/app/**/loading.tsx",
-          "src/app/**/error.tsx",
-          "src/app/**/not-found.tsx",
-          "src/mocks/browser.ts",
-          "src/**/*.{ts,tsx}"
+          "src/app/**/{page,layout,route,loading,error,not-found,template,default,global-error,sitemap,robots,manifest,opengraph-image,twitter-image,icon,apple-icon}.{ts,tsx}",
+          "src/mocks/browser.ts"
         ]
       },
       "packages/backend": {
         "entry": [
-          "src/**/*.ts"
+          "src/server.ts"
+        ]
+      },
+      "packages/api-client": {
+        "entry": [
+          "src/index.ts"
         ]
       }
     }

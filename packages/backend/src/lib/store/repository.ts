@@ -1,5 +1,5 @@
 import { DigitalTwinStore } from './twin';
-import type { NodeTwin, GatewayState, ProxyState, MigrationHistoryEntry } from './twin';
+import type { NodeTwin, GatewayState, ProxyState } from './twin';
 import type { EnrichedContainer, ServiceUnit, ServiceHealth } from '../agent/types';
 import type { ServiceBundle } from '../unmanaged/bundleShared';
 
@@ -97,10 +97,6 @@ export function clearServiceHealth(nodeName: string, serviceName: string): void 
 
 export function updateGateway(update: Partial<GatewayState>): void {
   DigitalTwinStore.getInstance().updateGateway(update);
-}
-
-export function recordMigrationEvent(nodeId: string, entry: MigrationHistoryEntry): void {
-  DigitalTwinStore.getInstance().recordMigrationEvent(nodeId, entry);
 }
 
 export function subscribeToTwin(listener: () => void): () => void {

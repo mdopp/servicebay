@@ -784,6 +784,73 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertIn("UI-configured serverPort", out)
             self.assertFalse(os.path.isfile(os.path.join(zwave_dir, "sb-external-settings.json")))
 
+    def test_zwave_port_settings_written_on_fresh_store(self):
+        """`ensure_zwave_port_settings` must seed zwave.port and default
+        enableSoftReset to false when settings.json doesn't exist yet
+        (#1594 — driver logged 'no port configured' + Gen5 soft-reset)."""
+        import tempfile
+
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            with run_with_env({"DATA_DIR": tmp}):
+                changed = m.ensure_zwave_port_settings("/dev/ttyACM0")
+            self.assertTrue(changed)
+            settings_path = os.path.join(tmp, "home-assistant", "zwave-js", "settings.json")
+            with open(settings_path) as fh:
+                data = json.load(fh)
+            self.assertEqual(data["zwave"]["port"], "/dev/ttyACM0")
+            self.assertIs(data["zwave"]["enableSoftReset"], False)
+
+    def test_zwave_port_settings_merges_without_clobbering(self):
+        """Must MERGE into an existing settings.json (zwave-js-ui owns it),
+        preserving securityKeys and an operator-chosen port/soft-reset."""
+        import tempfile
+
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            store = os.path.join(tmp, "home-assistant", "zwave-js")
+            os.makedirs(store, exist_ok=True)
+            existing = {
+                "zwave": {
+                    "port": "/dev/ttyUSB7",          # operator-chosen — keep
+                    "enableSoftReset": True,         # operator-chosen — keep
+                    "securityKeys": {"S0_Legacy": "deadbeefdeadbeefdeadbeefdeadbeef"},
+                },
+                "mqtt": {"name": "zwave"},
+            }
+            with open(os.path.join(store, "settings.json"), "w") as fh:
+                json.dump(existing, fh)
+            with run_with_env({"DATA_DIR": tmp}):
+                changed = m.ensure_zwave_port_settings("/dev/ttyACM0")
+            self.assertFalse(changed)  # nothing to change → no rewrite
+            with open(os.path.join(store, "settings.json")) as fh:
+                data = json.load(fh)
+            # Operator choices + keys + sibling sections all survive.
+            self.assertEqual(data["zwave"]["port"], "/dev/ttyUSB7")
+            self.assertIs(data["zwave"]["enableSoftReset"], True)
+            self.assertEqual(data["zwave"]["securityKeys"]["S0_Legacy"], "deadbeefdeadbeefdeadbeefdeadbeef")
+            self.assertEqual(data["mqtt"]["name"], "zwave")
+
+    def test_zwave_port_settings_keeps_keys_when_only_port_missing(self):
+        """A restored store with keys but no port (the live #1594 repro):
+        seed the port + soft-reset, keep the securityKeys intact."""
+        import tempfile
+
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            store = os.path.join(tmp, "home-assistant", "zwave-js")
+            os.makedirs(store, exist_ok=True)
+            with open(os.path.join(store, "settings.json"), "w") as fh:
+                json.dump({"zwave": {"securityKeys": {"S2_Authenticated": "k"}}}, fh)
+            with run_with_env({"DATA_DIR": tmp}):
+                changed = m.ensure_zwave_port_settings("/dev/ttyACM0")
+            self.assertTrue(changed)
+            with open(os.path.join(store, "settings.json")) as fh:
+                data = json.load(fh)
+            self.assertEqual(data["zwave"]["port"], "/dev/ttyACM0")
+            self.assertIs(data["zwave"]["enableSoftReset"], False)
+            self.assertEqual(data["zwave"]["securityKeys"]["S2_Authenticated"], "k")
+
     def test_already_installed_skips_download(self):
         """When the on-disk version stamp matches HA_OIDC_AUTH_VERSION,
         the script must skip the tarball download entirely. We assert
@@ -1072,6 +1139,150 @@ class ClaudeDevScript(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(parse_credentials(out), [])
 
+
+
+class ImmichScript(unittest.TestCase):
+    """#1556: on a wipe-configs reinstall Authelia regenerates the OIDC
+    client secret (CONFIG) but Immich keeps its copy in its DB (survived
+    DATA), so they drift and SSO login fails with "Failed to finish
+    oauth". The admin-authenticated PUT /api/system-config can't repair it
+    because the freshly-generated IMMICH_ADMIN_PASSWORD no longer matches
+    the preserved admin row, so the script falls back to a DB-level
+    secret re-stamp (no admin token needed)."""
+
+    BASE_RESPONSES = {
+        "/api/server/ping": {"status": 200, "body": {}},
+    }
+
+    def _run(self, m, env, responses, fake_psql):
+        import urllib.request
+        import subprocess as subprocess_mod
+        import time as time_mod
+        with run_with_env(env), \
+                mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory(responses)), \
+                mock.patch.object(time_mod, "sleep", lambda _s: None), \
+                mock.patch.object(subprocess_mod, "run", fake_psql), \
+                mock.patch.object(m, "READY_INTERVAL", 0.001):
+            return capture_main(m)
+
+    def _psql_recorder(self, select_value: str):
+        """Return (run_fn, calls) where run_fn fakes `podman exec … psql`.
+        SELECT returns `select_value`; UPDATE returns rc 0 and is recorded
+        with its bound `-v secret=…` value so the test can assert the
+        new secret was written."""
+        calls: list[dict[str, Any]] = []
+
+        class _CP:
+            def __init__(self, rc=0, out=""):
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = ""
+
+        def run_fn(cmd, *_a, **_kw):
+            sql = cmd[-1]
+            secret_var = None
+            for i, tok in enumerate(cmd):
+                if tok == "-v" and i + 1 < len(cmd) and cmd[i + 1].startswith("secret="):
+                    secret_var = cmd[i + 1].split("=", 1)[1]
+            calls.append({"sql": sql, "secret": secret_var})
+            if sql.strip().upper().startswith("SELECT"):
+                return _CP(0, select_value)
+            return _CP(0, "UPDATE 1")
+
+        return run_fn, calls
+
+    def test_db_reconcile_on_admin_login_failure_when_secret_drifts(self):
+        m = load_script("immich")
+        # admin sign-up → 400 (admin pre-exists), login → 401 forever
+        # (preserved admin row, mismatched freshly-generated password).
+        responses = dict(self.BASE_RESPONSES)
+        responses["/api/auth/admin-sign-up"] = {"status": 400, "body": {}}
+        responses["/api/auth/login"] = {"status": 401, "body": {}}
+        env = {
+            "PUBLIC_DOMAIN": "dopp.cloud",
+            "IMMICH_SSO_ENABLED": "true",
+            "IMMICH_SSO_SECRET": "fresh-authelia-secret",
+            "IMMICH_ADMIN_EMAIL": "op@example.com",
+            "IMMICH_ADMIN_PASSWORD": "regenerated-pw",
+            "DB_PASSWORD": "db-pass",
+        }
+        # DB holds the OLD, drifted secret.
+        run_fn, calls = self._psql_recorder("stale-immich-secret")
+        rc, out = self._run(m, env, responses, run_fn)
+        self.assertEqual(rc, 0)
+        self.assertIn("DB-level OIDC secret reconcile", out)
+        self.assertIn("Reconciled Immich's stored OIDC secret", out)
+        # An UPDATE must have been issued, binding the fresh secret.
+        updates = [c for c in calls if c["sql"].strip().upper().startswith("UPDATE")]
+        self.assertEqual(len(updates), 1, calls)
+        self.assertEqual(updates[0]["secret"], "fresh-authelia-secret")
+        # The secret must not leak into a user-visible log line.
+        log_only = "\n".join(
+            line for line in out.splitlines() if not line.startswith("__SB_CREDENTIAL__ ")
+        )
+        self.assertNotIn("fresh-authelia-secret", log_only)
+        self.assertNotIn("stale-immich-secret", log_only)
+
+    def test_db_reconcile_noop_when_secret_already_matches(self):
+        m = load_script("immich")
+        responses = dict(self.BASE_RESPONSES)
+        responses["/api/auth/admin-sign-up"] = {"status": 400, "body": {}}
+        responses["/api/auth/login"] = {"status": 401, "body": {}}
+        env = {
+            "PUBLIC_DOMAIN": "dopp.cloud",
+            "IMMICH_SSO_ENABLED": "true",
+            "IMMICH_SSO_SECRET": "matching-secret",
+            "IMMICH_ADMIN_EMAIL": "op@example.com",
+            "IMMICH_ADMIN_PASSWORD": "regenerated-pw",
+            "DB_PASSWORD": "db-pass",
+        }
+        run_fn, calls = self._psql_recorder("matching-secret")
+        rc, out = self._run(m, env, responses, run_fn)
+        self.assertEqual(rc, 0)
+        self.assertIn("already matches Authelia", out)
+        # No UPDATE when the stored secret is already correct.
+        self.assertFalse(any(c["sql"].strip().upper().startswith("UPDATE") for c in calls), calls)
+
+    def test_db_reconcile_skipped_when_no_oauth_in_db(self):
+        m = load_script("immich")
+        responses = dict(self.BASE_RESPONSES)
+        responses["/api/auth/admin-sign-up"] = {"status": 400, "body": {}}
+        responses["/api/auth/login"] = {"status": 401, "body": {}}
+        env = {
+            "PUBLIC_DOMAIN": "dopp.cloud",
+            "IMMICH_SSO_ENABLED": "true",
+            "IMMICH_SSO_SECRET": "fresh-secret",
+            "IMMICH_ADMIN_EMAIL": "op@example.com",
+            "IMMICH_ADMIN_PASSWORD": "regenerated-pw",
+            "DB_PASSWORD": "db-pass",
+        }
+        # Empty SELECT → no oauth block yet → nothing to reconcile.
+        run_fn, calls = self._psql_recorder("")
+        rc, out = self._run(m, env, responses, run_fn)
+        self.assertEqual(rc, 0)
+        self.assertIn("nothing to reconcile", out)
+        self.assertFalse(any(c["sql"].strip().upper().startswith("UPDATE") for c in calls), calls)
+
+    def test_happy_path_configures_oidc_via_api_no_db_touch(self):
+        m = load_script("immich")
+        responses = dict(self.BASE_RESPONSES)
+        responses["/api/auth/admin-sign-up"] = {"status": 201, "body": {}}
+        responses["/api/auth/login"] = {"status": 201, "body": {"accessToken": "tok"}}
+        responses["/api/system-config"] = {"status": 200, "body": {"oauth": {}}}
+        env = {
+            "PUBLIC_DOMAIN": "dopp.cloud",
+            "IMMICH_SSO_ENABLED": "true",
+            "IMMICH_SSO_SECRET": "fresh-secret",
+            "IMMICH_ADMIN_EMAIL": "op@example.com",
+            "IMMICH_ADMIN_PASSWORD": "pw",
+            "DB_PASSWORD": "db-pass",
+        }
+        # psql must never be invoked on the happy path.
+        def boom(*_a, **_kw):
+            raise AssertionError("psql must not run when the admin API path succeeds")
+        rc, out = self._run(m, env, responses, boom)
+        self.assertEqual(rc, 0)
+        self.assertIn("Immich OIDC configured", out)
 
 
 if __name__ == "__main__":

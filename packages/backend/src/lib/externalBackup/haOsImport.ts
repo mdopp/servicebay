@@ -50,9 +50,26 @@ function normaliseMember(member: string): string {
 }
 
 /**
+ * Does the relative path `rel` (under `data/`) match a manifest include? An
+ * include is either an exact path (a file), a dir prefix (anything beneath it),
+ * or a trailing-`*` leaf glob (`.storage/lovelace*`, `.storage/hacs*`) matching
+ * any sibling whose name starts with the prefix. Mirrors the producer's
+ * `resolveIncludeGlob` so HA-OS imports keep the same files a box backup does
+ * (#1595 dashboards / #1596 HACS data).
+ */
+function matchesInclude(rel: string, inc: string): boolean {
+  if (inc.endsWith('*')) {
+    const prefix = inc.slice(0, -1);
+    return rel === prefix || rel.startsWith(prefix);
+  }
+  return rel === inc || rel.startsWith(`${inc}/`);
+}
+
+/**
  * From an inner-archive listing, pick the exact member names (verbatim, so tar
  * can find them) whose path under `data/` matches one of the manifest includes
- * — either the include itself (a file) or anything beneath it (a dir include).
+ * — either the include itself (a file), anything beneath a dir include, or a
+ * trailing-`*` glob include.
  */
 function selectWantedMembers(members: string[], includes: string[]): string[] {
   const wanted: string[] = [];
@@ -60,7 +77,7 @@ function selectWantedMembers(members: string[], includes: string[]): string[] {
     const norm = normaliseMember(member);
     if (!norm.startsWith(DATA_PREFIX)) continue;
     const rel = norm.slice(DATA_PREFIX.length);
-    if (includes.some(inc => rel === inc || rel.startsWith(`${inc}/`))) {
+    if (includes.some(inc => matchesInclude(rel, inc))) {
       wanted.push(member);
     }
   }
