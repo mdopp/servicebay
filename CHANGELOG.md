@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.90.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.90.1...servicebay-v4.90.2) (2026-06-03)
+
+
+### Bug Fixes
+
+* **externalBackup:** glob lovelace dashboards + back up HACS in the HA manifest ([7c5d434](https://github.com/mdopp/servicebay/commit/7c5d4341f90589a73aa4403ccf191bcb18a8cbc3)), closes [#1596](https://github.com/mdopp/servicebay/issues/1596)
+* **externalBackup:** route the config-survival producer through the host agent ([eea92ae](https://github.com/mdopp/servicebay/commit/eea92ae3a171d77cdfcefdae54c665f3f923da06)), closes [#1597](https://github.com/mdopp/servicebay/issues/1597)
+* **externalBackup:** translate HA add-on config entries for the container deploy ([93850f8](https://github.com/mdopp/servicebay/commit/93850f8f52ac8919284c3130537a8122836b63c1)), closes [#1595](https://github.com/mdopp/servicebay/issues/1595)
+* HA config-survival, OIDC secret reconcile, backup host-agent routing, knip rework ([6f97a83](https://github.com/mdopp/servicebay/commit/6f97a831c4f249f7f892b7d54b2d3377fc569053))
+* **home-assistant:** auto-configure Z-Wave serial port, disable soft-reset, back up the key store ([9cd5b83](https://github.com/mdopp/servicebay/commit/9cd5b8390729c6aca6304cb23cd3d5af736d113f)), closes [#1594](https://github.com/mdopp/servicebay/issues/1594)
+* **immich:** reconcile OIDC client secret in DB on wipe-configs reinstall ([93d6b9b](https://github.com/mdopp/servicebay/commit/93d6b9b03203f9c0c79a141072d9732182ded32b)), closes [#1556](https://github.com/mdopp/servicebay/issues/1556)
+* **sb-tui:** sync Go HA backup includes with the TS manifest ([7d0a754](https://github.com/mdopp/servicebay/commit/7d0a75468f115979034b1849e6ac90709b29d428)), closes [#1596](https://github.com/mdopp/servicebay/issues/1596) [#1595](https://github.com/mdopp/servicebay/issues/1595)
+
 ## [4.90.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.90.0...servicebay-v4.90.1) (2026-06-02)
 
 
