@@ -20,7 +20,8 @@ import os from 'os';
 import path from 'path';
 import { fetchServiceBackup, listServiceBackups, resolveServiceDataDir, type ServiceBackupMeta } from './producer';
 import { getServiceManifest, getConfigPaths } from './serviceManifest';
-import { safeTarExtract } from '../systemBackup';
+import { safeTarExtract, assertSafeArchiveEntries } from '../systemBackup';
+import { getExecutor, type Executor } from '../executor';
 import { logger } from '../logger';
 
 /**
@@ -31,6 +32,169 @@ import { logger } from '../logger';
  * its `JobInput.wipeMode` straight through.
  */
 type WipeMode = 'install' | 'wipe-config' | 'wipe-all';
+
+/**
+ * The few filesystem primitives the restore + wipe logic needs, so the SAME
+ * logic can run against either:
+ *  - the **local** container filesystem (the unit tests / an explicit
+ *    serviceDataDir under /app/data), or
+ *  - the **host** filesystem via the node agent (#1600 — the box reinstall
+ *    operates on `/mnt/data/stacks/<service>`, which is NOT bind-mounted into
+ *    the servicebay container; only the host agent can see it, exactly as the
+ *    producer's box backup does since #1597).
+ *
+ * This is the symmetric consumer-side counterpart to producer.ts's
+ * `BackupFileBackend`: without it, a box (re)install's wipe-config "cleared"
+ * nothing and the restore wrote into a container-only path the real service
+ * never reads (the #1600 silent failure).
+ */
+interface RestoreFsBackend {
+  /** True if `dir` is empty or doesn't exist — the safe-to-seed condition. */
+  isFreshDir(dir: string): Promise<boolean>;
+  /** Count regular files under `dir`, recursively — for the restore summary. */
+  countFiles(dir: string): Promise<number>;
+  mkdirp(dir: string): Promise<void>;
+  /** Recursive force-remove (a file, dir, or absent path). */
+  rmrf(target: string): Promise<void>;
+  /**
+   * Extract `tar` into `destDir`, preserving safeTarExtract's traversal guard
+   * (#580/#590). The traversal/symlink-escape pre-pass always runs in-container
+   * on the fetched tar bytes; only the extraction lands on this backend's side.
+   */
+  extractTar(tar: Buffer, destDir: string): Promise<void>;
+}
+
+/** Local-filesystem backend — the in-container path (tests / explicit dir). */
+const localRestoreBackend: RestoreFsBackend = {
+  async isFreshDir(dir) {
+    try {
+      return (await fs.readdir(dir)).length === 0;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return true;
+      throw e;
+    }
+  },
+  async countFiles(dir) {
+    let total = 0;
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) total += await this.countFiles(full);
+      else if (entry.isFile()) total += 1;
+    }
+    return total;
+  },
+  async mkdirp(dir) {
+    await fs.mkdir(dir, { recursive: true });
+  },
+  async rmrf(target) {
+    await fs.rm(target, { recursive: true, force: true });
+  },
+  async extractTar(tar, destDir) {
+    // safeTarExtract reads from a path, so stage the fetched tar to a temp file.
+    const tmp = path.join(os.tmpdir(), `sb-restore-${Date.now()}-${process.pid}.tar`);
+    try {
+      await fs.writeFile(tmp, tar);
+      await fs.mkdir(destDir, { recursive: true });
+      await safeTarExtract(tmp, destDir, { gzip: false });
+    } finally {
+      await fs.rm(tmp, { force: true });
+    }
+  },
+};
+
+/**
+ * Host-agent backend (#1600) — every fs op runs on the HOST via the node agent,
+ * so it sees `/mnt/data/stacks/<service>` (not mounted into the servicebay
+ * container). Mirrors producer.ts's `agentFileBackend`.
+ */
+function agentRestoreBackend(executor: Executor): RestoreFsBackend {
+  return {
+    async isFreshDir(dir) {
+      if (!(await executor.exists(dir))) return true;
+      // `ls -A` lists entries (incl. dotfiles, excl. . and ..); empty stdout → fresh.
+      const { stdout } = await executor.execArgv(['ls', '-A', dir]);
+      return stdout.trim().length === 0;
+    },
+    async countFiles(dir) {
+      if (!(await executor.exists(dir))) return 0;
+      const { stdout } = await executor.execArgv(['find', dir, '-type', 'f']);
+      return stdout.split('\n').filter(l => l.trim().length > 0).length;
+    },
+    async mkdirp(dir) {
+      await executor.execArgv(['mkdir', '-p', dir]);
+    },
+    async rmrf(target) {
+      await executor.execArgv(['rm', '-rf', target]);
+    },
+    async extractTar(tar, destDir) {
+      // Traversal/symlink-escape guard (#580/#590) runs in-container on the
+      // fetched tar bytes — before anything touches the host.
+      const tmp = path.join(os.tmpdir(), `sb-restore-${Date.now()}-${process.pid}.tar`);
+      try {
+        await fs.writeFile(tmp, tar);
+        await assertSafeArchiveEntries(tmp, false);
+      } finally {
+        await fs.rm(tmp, { force: true });
+      }
+      // Push the validated tar to a host temp file (base64 over the agent's
+      // utf-8-only write_file, so binary config stays intact), then extract
+      // host-side with the SAME hardening flags safeTarExtract uses, and run a
+      // host-side symlink-escape walk as defense in depth (mirrors
+      // assertNoSymlinkEscape).
+      const { stdout } = await executor.execArgv(['mktemp', '-t', 'sb-restore-XXXXXX']);
+      const hostTar = stdout.trim();
+      const hostTarB64 = `${hostTar}.b64`;
+      try {
+        await executor.writeFile(hostTarB64, tar.toString('base64'));
+        await executor.execArgv(['sh', '-c', 'base64 -d "$1" > "$2"', 'sh', hostTarB64, hostTar], { timeoutMs: 120_000 });
+        await executor.execArgv(['mkdir', '-p', destDir]);
+        await executor.execArgv(
+          ['tar', '-xf', hostTar, '-C', destDir, '--no-same-owner', '--no-overwrite-dir', '--no-same-permissions'],
+          { timeoutMs: 120_000 },
+        );
+        await assertNoSymlinkEscapeHost(executor, destDir);
+      } finally {
+        await executor.execArgv(['rm', '-f', hostTarB64, hostTar]);
+      }
+    },
+  };
+}
+
+/**
+ * Host-side equivalent of systemBackup's `assertNoSymlinkEscape` (#580/#590):
+ * after a host extraction, refuse any symlink under `dir` whose resolved target
+ * escapes `dir`. The in-container pre-pass already refused absolute/traversal
+ * link targets in the archive listing; this is defense in depth on the host
+ * where the link's real resolution lives. On refusal the partial extraction is
+ * cleaned up host-side, matching safeTarExtract.
+ */
+async function assertNoSymlinkEscapeHost(executor: Executor, dir: string): Promise<void> {
+  // List every symlink under dir with its resolved real path (-printf %l is the
+  // raw target; readlink -f resolves it). A target that doesn't stay within the
+  // realpath of dir is a refusal.
+  const realRoot = (await executor.execArgv(['readlink', '-f', dir])).stdout.trim();
+  const { stdout } = await executor.execArgv(['find', dir, '-type', 'l']);
+  const links = stdout.split('\n').map(l => l.trim()).filter(Boolean);
+  for (const link of links) {
+    const resolved = (await executor.execArgv(['readlink', '-f', link]).catch(() => ({ stdout: '' }))).stdout.trim();
+    if (!resolved || (resolved !== realRoot && !resolved.startsWith(realRoot + '/'))) {
+      await executor.execArgv(['rm', '-rf', dir]).catch(() => {});
+      throw new Error(`Refused archive: symlink "${link}" → "${resolved}" escapes the extraction directory`);
+    }
+  }
+}
+
+/**
+ * Pick the fs backend for a restore/wipe. A box (re)install operates on the
+ * stacks dir, which is NOT mounted into the servicebay container, so it routes
+ * through the host agent (#1600). A `local: true` opt forces the in-container
+ * path (the unit tests, which stage into a real container-local temp dir).
+ */
+function pickRestoreBackend(opts: { node?: string | null; local?: boolean }): RestoreFsBackend {
+  if (opts.local) return localRestoreBackend;
+  return agentRestoreBackend(getExecutor(opts.node || 'Local'));
+}
 
 export interface RestoreResult {
   service: string;
@@ -81,27 +245,13 @@ async function reconcileNpmCredentialAfterRestore(
   }
 }
 
-/** True if `dir` is empty or doesn't exist — the safe-to-seed condition. */
+/**
+ * True if `dir` is empty or doesn't exist — the safe-to-seed condition.
+ * Standalone local-fs check; the restore/wipe flows resolve their backend
+ * (host agent on a box, local in tests) and call `backend.isFreshDir` instead.
+ */
 export async function isFreshDataDir(dir: string): Promise<boolean> {
-  try {
-    const entries = await fs.readdir(dir);
-    return entries.length === 0;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return true;
-    throw e;
-  }
-}
-
-/** Count regular files under `dir` (recursively) — for the restore summary. */
-async function countFiles(dir: string): Promise<number> {
-  let total = 0;
-  const entries = await fs.readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) total += await countFiles(full);
-    else if (entry.isFile()) total += 1;
-  }
-  return total;
+  return localRestoreBackend.isFreshDir(dir);
 }
 
 /**
@@ -111,13 +261,16 @@ async function countFiles(dir: string): Promise<number> {
  */
 export async function restoreServiceBackup(
   service: string,
-  opts: { force?: boolean; node?: string | null } = {},
+  opts: { force?: boolean; node?: string | null; local?: boolean } = {},
 ): Promise<RestoreResult> {
   if (!getServiceManifest(service)) {
     throw new Error(`No backup manifest for service "${service}"`);
   }
+  // The stacks dir isn't mounted into the container, so a box restore runs every
+  // fs op on the host via the agent (#1600); tests force the local backend.
+  const backend = pickRestoreBackend(opts);
   const dataDir = await resolveServiceDataDir(service);
-  if (!opts.force && !(await isFreshDataDir(dataDir))) {
+  if (!opts.force && !(await backend.isFreshDir(dataDir))) {
     throw new Error(
       `Refusing to restore "${service}": ${dataDir} already has data. Restore ` +
       `only seeds a fresh/empty data dir; pass force to overwrite a live service.`,
@@ -125,18 +278,9 @@ export async function restoreServiceBackup(
   }
 
   const { tar, meta } = await fetchServiceBackup(`${service}.tar`);
+  await backend.extractTar(tar, dataDir);
 
-  // safeTarExtract reads from a path, so stage the fetched tar to a temp file.
-  const tmp = path.join(os.tmpdir(), `sb-restore-${service}-${Date.now()}.tar`);
-  try {
-    await fs.writeFile(tmp, tar);
-    await fs.mkdir(dataDir, { recursive: true });
-    await safeTarExtract(tmp, dataDir, { gzip: false });
-  } finally {
-    await fs.rm(tmp, { force: true });
-  }
-
-  const files = await countFiles(dataDir);
+  const files = await backend.countFiles(dataDir);
   logger.info('ExternalBackup', `Restored "${service}" from NAS into ${dataDir} (${files} files)`);
 
   // #1529 — NPM's restored database.sqlite carries its own admin hash, so
@@ -173,7 +317,7 @@ export async function restoreServiceBackup(
  */
 export async function wipeServiceForReinstall(
   service: string,
-  opts: { wipeMode?: WipeMode; node?: string | null },
+  opts: { wipeMode?: WipeMode; node?: string | null; local?: boolean },
   log: (line: string) => Promise<void>,
 ): Promise<void> {
   const mode = opts.wipeMode ?? 'install';
@@ -184,10 +328,13 @@ export async function wipeServiceForReinstall(
     await log(`(note) ${service}: no backup manifest, skipping ${mode} wipe (no config/data classification).`);
     return;
   }
+  // The stacks dir isn't mounted into the container, so the wipe runs on the
+  // host via the agent (#1600); without this it silently cleared nothing.
+  const backend = pickRestoreBackend(opts);
   try {
     const dataDir = await resolveServiceDataDir(service);
     if (mode === 'wipe-all') {
-      await fs.rm(dataDir, { recursive: true, force: true });
+      await backend.rmrf(dataDir);
       await log(`🧹 ${service}: wipe-all — cleared the service data dir (config + data).`);
       return;
     }
@@ -200,7 +347,7 @@ export async function wipeServiceForReinstall(
       // the same invariant the restore path enforces.
       if (!abs.startsWith(dataDir + path.sep)) continue;
       try {
-        await fs.rm(abs, { recursive: true, force: true });
+        await backend.rmrf(abs);
         removed += 1;
       } catch { /* path absent — fine */ }
     }
@@ -235,7 +382,7 @@ export async function wipeServiceForReinstall(
  */
 export async function autoRestoreServiceOnReinstall(
   service: string,
-  opts: { wipeMode?: WipeMode; node?: string | null },
+  opts: { wipeMode?: WipeMode; node?: string | null; local?: boolean },
   log: (line: string) => Promise<void>,
 ): Promise<void> {
   const mode = opts.wipeMode ?? 'install';
@@ -243,13 +390,17 @@ export async function autoRestoreServiceOnReinstall(
   // cleanInstall flag (which #1520 pinned false, silently killing restore).
   if (opts.node && opts.node !== 'Local') return;
   const forceRestore = mode === 'wipe-config' || mode === 'wipe-all';
+  // The stacks dir isn't mounted into the container, so the freshness check (and
+  // the restore it gates) run on the host via the agent (#1600). Without this
+  // the check saw an absent container path → "fresh" → restore wrote nowhere.
+  const backend = pickRestoreBackend(opts);
   try {
     const hasBackup = (await listServiceBackups()).some(b => b.service === service);
     if (!hasBackup) {
       await log(`(note) ${service}: no config backup found on the FritzBox NAS — starting on existing/blank data.`);
       return;
     }
-    if (!forceRestore && !(await isFreshDataDir(await resolveServiceDataDir(service)))) {
+    if (!forceRestore && !(await backend.isFreshDir(await resolveServiceDataDir(service)))) {
       await log(`(note) ${service}: a config backup exists on the NAS, but the data dir is not empty — keeping the on-disk data and skipping restore.`);
       return;
     }
@@ -258,7 +409,7 @@ export async function autoRestoreServiceOnReinstall(
         ? `💾 ${service}: ${mode} — restoring config from the FritzBox NAS over the kept data before first start…`
         : `💾 ${service}: found a config backup on the FritzBox NAS and the data dir is empty — restoring before first start…`,
     );
-    const r = await restoreServiceBackup(service, { node: opts.node, force: forceRestore });
+    const r = await restoreServiceBackup(service, { node: opts.node, force: forceRestore, local: opts.local });
     await log(`✅ ${service}: restored ${r.files} config file(s) from the NAS${r.meta ? ` (backed up ${r.meta.createdAt.slice(0, 10)} from ${r.meta.nodeId})` : ''}.`);
     // On a reinstall the pod isn't up yet, so credentialReconcile is normally
     // a no-op here (the install runner's post-deploy self-heal re-keys NPM once

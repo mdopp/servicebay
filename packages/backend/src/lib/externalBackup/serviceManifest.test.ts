@@ -188,6 +188,11 @@ describe('translateHaAddonConfigEntries (#1595)', () => {
             domain: 'hue',
             data: { host: '192.168.1.50', use_addon: true },
           },
+          // Supervisor-only family entries (#1601) — dropped on import.
+          { entry_id: 'hassio1', domain: 'hassio', data: {} },
+          { entry_id: 'cloud1', domain: 'cloud', data: {} },
+          { entry_id: 'backup1', domain: 'backup', data: {} },
+          { entry_id: 'dc1', domain: 'default_config', data: {} },
         ],
       },
     });
@@ -221,10 +226,38 @@ describe('translateHaAddonConfigEntries (#1595)', () => {
     expect(hue.url).toBeUndefined();
   });
 
+  it('drops the Supervisor-only family entries (#1601) but keeps user integrations', () => {
+    const out = translateHaAddonConfigEntries(supervisorEntries());
+    const parsed = JSON.parse(out) as {
+      data: { entries: { domain: string }[] };
+    };
+    const domains = parsed.data.entries.map(e => e.domain);
+    expect(domains).not.toContain('hassio');
+    expect(domains).not.toContain('cloud');
+    expect(domains).not.toContain('backup');
+    expect(domains).not.toContain('default_config');
+    // The real integrations are still present.
+    expect(domains).toEqual(expect.arrayContaining(['zwave_js', 'matter', 'hue']));
+  });
+
   it('is idempotent: an already-translated backup is returned byte-stable', () => {
     const once = translateHaAddonConfigEntries(supervisorEntries());
     const twice = translateHaAddonConfigEntries(once);
     expect(twice).toBe(once);
+  });
+
+  it('drops a Supervisor-only entry even when there is nothing to translate', () => {
+    const onlyHassio = JSON.stringify({
+      data: {
+        entries: [
+          { domain: 'hassio', data: {} },
+          { domain: 'hue', data: { host: '10.0.0.2' } },
+        ],
+      },
+    });
+    const out = translateHaAddonConfigEntries(onlyHassio);
+    const parsed = JSON.parse(out) as { data: { entries: { domain: string }[] } };
+    expect(parsed.data.entries.map(e => e.domain)).toEqual(['hue']);
   });
 
   it('returns the content unchanged when there is no add-on entry to translate', () => {

@@ -231,7 +231,7 @@ function linkTargetEscapes(linkName: string, target: string): boolean {
     return resolved === '..' || resolved.startsWith('../');
 }
 
-async function assertSafeArchiveEntries(archivePath: string, gzip = true): Promise<void> {
+export async function assertSafeArchiveEntries(archivePath: string, gzip = true): Promise<void> {
     let stdout: string;
     try {
         const result = await execFileAsync('tar', [gzip ? '-tvzf' : '-tvf', archivePath]);

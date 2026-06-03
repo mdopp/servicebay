@@ -48,6 +48,30 @@ const HA_ADDON_ENTRY_TRANSLATIONS: Record<string, { url: string }> = {
 };
 
 /**
+ * Config-entry domains that exist ONLY in the Supervisor (HA-OS) environment and
+ * have no working counterpart on ServiceBay's containerised HA (#1601). A HA-OS
+ * backup's `.storage/core.config_entries` carries a `hassio` entry (the
+ * Supervisor integration itself), plus the `cloud` / `backup` config entries the
+ * Supervisor onboarding creates against it. On the container deploy:
+ *   - `hassio` cannot load at all — there is no Supervisor to talk to.
+ *   - `cloud` and `backup` are core integrations configured via
+ *     `configuration.yaml` (single-instance / YAML-only); a stale
+ *     Supervisor-created config entry makes HA log a non-fatal setup error and
+ *     leaves a broken entry in the UI. They still load via their normal path.
+ *   - `default_config` is a meta-component that has no business owning a config
+ *     entry on the container deploy; one carried from HA-OS just errors.
+ * So we DROP these entries from the array entirely on import — neutralising the
+ * noise without removing any legitimate user integration. Conservative by
+ * design: only these known-broken Supervisor-family domains are dropped.
+ */
+const HA_SUPERVISOR_ONLY_DOMAINS: ReadonlySet<string> = new Set([
+  'hassio',
+  'cloud',
+  'backup',
+  'default_config',
+]);
+
+/**
  * Identifies a service whose backup needs an in-container snapshot step before
  * the file-copy producer reads its data dir — e.g. a live WAL-mode SQLite that
  * a plain `cp` would tear. The producer runs the snapshot inside the service's
@@ -380,6 +404,12 @@ function isHaEntryOnAddon(data: NonNullable<HaConfigEntry['data']>): boolean {
  * to the in-pod localhost address. Every other entry — and any zwave_js/matter
  * entry already pointing at localhost (idempotent re-run) — is left byte-stable.
  *
+ * Additionally (#1601) DROP the Supervisor-only family entries
+ * (`HA_SUPERVISOR_ONLY_DOMAINS`: hassio + the cloud/backup/default_config entries
+ * it spawns) that cannot function on the container deploy — they only produce
+ * non-fatal setup errors and a broken entry in the UI. Dropping is idempotent:
+ * a re-imported (already-cleaned) backup has none left, so it's a no-op.
+ *
  * Best-effort: returns the content unchanged if it doesn't parse as JSON or
  * lacks the expected `data.entries[]` array, so a future HA storage-schema
  * change can't make the backup fail (the worst case is the old, manual fix-up).
@@ -391,7 +421,8 @@ export function translateHaAddonConfigEntries(content: string): string {
   } catch {
     return content;
   }
-  const entries = (doc as { data?: { entries?: unknown } })?.data?.entries;
+  const data = (doc as { data?: { entries?: unknown } })?.data;
+  const entries = data?.entries;
   if (!Array.isArray(entries)) return content;
 
   let changed = false;
@@ -399,14 +430,25 @@ export function translateHaAddonConfigEntries(content: string): string {
     if (!entry || typeof entry !== 'object') continue;
     const translation = entry.domain ? HA_ADDON_ENTRY_TRANSLATIONS[entry.domain] : undefined;
     if (!translation) continue;
-    const data = entry.data;
-    if (!data || typeof data !== 'object') continue;
-    if (!isHaEntryOnAddon(data)) continue;
-    data.use_addon = false;
-    data.integration_created_addon = false;
-    data.url = translation.url;
+    const entryData = entry.data;
+    if (!entryData || typeof entryData !== 'object') continue;
+    if (!isHaEntryOnAddon(entryData)) continue;
+    entryData.use_addon = false;
+    entryData.integration_created_addon = false;
+    entryData.url = translation.url;
     changed = true;
   }
+
+  // Drop the Supervisor-only family entries that can't work on container HA.
+  const kept = (entries as HaConfigEntry[]).filter(
+    e => !(e && typeof e === 'object' && typeof e.domain === 'string'
+      && HA_SUPERVISOR_ONLY_DOMAINS.has(e.domain)),
+  );
+  if (kept.length !== entries.length) {
+    (data as { entries: unknown }).entries = kept;
+    changed = true;
+  }
+
   if (!changed) return content;
   return JSON.stringify(doc, null, 2);
 }
