@@ -208,6 +208,38 @@ function isExcluded(relPath: string, excludes: string[]): boolean {
   return excludes.some(ex => relPath === ex || relPath.startsWith(ex + '/'));
 }
 
+/**
+ * Resolve a manifest include that may carry a trailing-`*` glob in its leaf
+ * component (e.g. `.storage/lovelace*`, `.storage/hacs*`) to the concrete
+ * relative paths that exist under `serviceDataDir`. HA names its dashboards
+ * `.storage/lovelace.<url_path>` and HACS its data `.storage/hacs.repositories`
+ * etc., so an exact include never matches them (#1595/#1596). A plain include
+ * (no `*`) resolves to itself. Only a single trailing-`*` on the leaf is
+ * supported — that's all the manifest needs, and it keeps the match a cheap
+ * prefix test rather than a full glob engine.
+ */
+async function resolveIncludeGlob(
+  backend: BackupFileBackend,
+  serviceDataDir: string,
+  include: string,
+): Promise<string[]> {
+  if (!include.includes('*')) return [include];
+  const dir = path.posix.dirname(include);
+  const leaf = path.posix.basename(include);
+  if (leaf.indexOf('*') !== leaf.length - 1) {
+    // Only a trailing-`*` leaf glob is supported; anything else is a manifest
+    // authoring error — treat it as a literal (it simply won't exist → skipped).
+    return [include];
+  }
+  const prefix = leaf.slice(0, -1);
+  const parentAbs = path.join(serviceDataDir, dir);
+  if (!(await backend.exists(parentAbs))) return [];
+  const entries = await backend.readdirTypes(parentAbs);
+  return entries
+    .filter(e => e.name.startsWith(prefix))
+    .map(e => path.posix.join(dir, e.name));
+}
+
 /** Walk an included directory, returning the relative (posix) paths of every
  *  file inside it that isn't excluded. */
 async function collectDirFiles(
@@ -244,7 +276,13 @@ export async function stageServiceBackup(
   backend: BackupFileBackend = localFileBackend,
 ): Promise<string[]> {
   const staged: string[] = [];
+  // Expand any trailing-`*` glob includes (HA dashboards `.storage/lovelace*`,
+  // HACS data `.storage/hacs*`) to the concrete paths on disk first.
+  const includes: string[] = [];
   for (const include of manifest.include) {
+    includes.push(...(await resolveIncludeGlob(backend, serviceDataDir, include)));
+  }
+  for (const include of includes) {
     if (isExcluded(include, manifest.exclude)) continue;
     const absInclude = path.join(serviceDataDir, include);
     if (!(await backend.exists(absInclude))) continue;

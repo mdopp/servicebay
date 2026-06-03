@@ -97,6 +97,68 @@ describe('stageServiceBackup', () => {
     await expect(fs.access(path.join(staging, 'logs'))).rejects.toThrow();
   });
 
+  it('expands a trailing-* leaf glob include to the matching files (#1595/#1596)', async () => {
+    const src = await mkTmp();
+    const staging = await mkTmp();
+    // HA dashboards (lovelace.<url_path>) + HACS data (hacs.*) + the bare
+    // sidebar list, plus a sibling that must NOT match the lovelace glob.
+    await writeFile(src, '.storage/lovelace', '{"ui":true}');
+    await writeFile(src, '.storage/lovelace.lovelace', '{"dash":"main"}');
+    await writeFile(src, '.storage/lovelace.map', '{"dash":"map"}');
+    await writeFile(src, '.storage/lovelace_dashboards', '{"list":true}');
+    await writeFile(src, '.storage/hacs.repositories', '{"repos":[]}');
+    await writeFile(src, '.storage/hacs.data', '{"data":1}');
+    await writeFile(src, '.storage/core.config_entries', '{"entries":[]}');
+
+    const manifest: ServiceBackupManifest = {
+      service: 'demo',
+      include: ['.storage/lovelace*', '.storage/hacs*'],
+      exclude: [],
+    };
+    const staged = await stageServiceBackup(src, manifest, staging);
+
+    // Every lovelace dashboard (including the bare name + the sidebar list) and
+    // every hacs.* file is staged; the unrelated core.config_entries is not.
+    expect(staged).toEqual([
+      '.storage/hacs.data',
+      '.storage/hacs.repositories',
+      '.storage/lovelace',
+      '.storage/lovelace.lovelace',
+      '.storage/lovelace.map',
+      '.storage/lovelace_dashboards',
+    ]);
+    expect(await fs.readFile(path.join(staging, '.storage/lovelace.map'), 'utf8')).toBe('{"dash":"map"}');
+  });
+
+  it('a glob include matching nothing stages no files (no literal-* file created)', async () => {
+    const src = await mkTmp();
+    const staging = await mkTmp();
+    await writeFile(src, '.storage/core.config_entries', '{}');
+    const manifest: ServiceBackupManifest = {
+      service: 'demo',
+      include: ['.storage/lovelace*'],
+      exclude: [],
+    };
+    expect(await stageServiceBackup(src, manifest, staging)).toEqual([]);
+  });
+
+  it('stages an included directory (custom_components/) recursively (#1596)', async () => {
+    const src = await mkTmp();
+    const staging = await mkTmp();
+    await writeFile(src, 'custom_components/meross_lan/__init__.py', 'CODE');
+    await writeFile(src, 'custom_components/meross_lan/manifest.json', '{"domain":"meross_lan"}');
+    const manifest: ServiceBackupManifest = {
+      service: 'demo',
+      include: ['custom_components'],
+      exclude: [],
+    };
+    const staged = await stageServiceBackup(src, manifest, staging);
+    expect(staged).toEqual([
+      'custom_components/meross_lan/__init__.py',
+      'custom_components/meross_lan/manifest.json',
+    ]);
+  });
+
   it('applies strip rules to the targeted file only', async () => {
     const src = await mkTmp();
     const staging = await mkTmp();

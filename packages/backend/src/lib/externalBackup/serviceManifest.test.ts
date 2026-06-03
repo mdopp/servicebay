@@ -22,6 +22,21 @@ describe('service backup manifests', () => {
     expect(getServiceManifest('home-assistant')!.include).toContain('.storage/zwave_js');
   });
 
+  it('uses a glob for lovelace dashboards, not the bare exact name (#1595)', () => {
+    const ha = getServiceManifest('home-assistant')!;
+    // HA stores dashboards as `.storage/lovelace.<url_path>`; the bare exact
+    // include never matched them. The glob must be present and the dropped
+    // exact name must be gone.
+    expect(ha.include).toContain('.storage/lovelace*');
+    expect(ha.include).not.toContain('.storage/lovelace');
+  });
+
+  it('backs up HACS code + data so HACS integrations survive a reinstall (#1596)', () => {
+    const ha = getServiceManifest('home-assistant')!;
+    expect(ha.include).toContain('custom_components');
+    expect(ha.include).toContain('.storage/hacs*');
+  });
+
   it('excludes the recorder DB from home-assistant', () => {
     expect(getServiceManifest('home-assistant')!.exclude).toContain('home-assistant_v2.db');
   });

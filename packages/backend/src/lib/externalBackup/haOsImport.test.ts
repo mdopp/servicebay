@@ -40,6 +40,9 @@ async function buildFakeHaBackup(): Promise<string> {
   await write(innerStage, 'data/configuration.yaml', 'default_config:');
   await write(innerStage, 'data/.storage/zwave_js', '{"keys":"SECRET-MESH"}');
   await write(innerStage, 'data/.storage/core.entity_registry', '{}');
+  // Glob-matched members (#1595/#1596): a dashboard + HACS data.
+  await write(innerStage, 'data/.storage/lovelace.lovelace', '{"dash":"main"}');
+  await write(innerStage, 'data/.storage/hacs.repositories', '{"repos":[]}');
   await write(innerStage, 'data/home-assistant_v2.db', 'BINARYDB'); // manifest-excluded
   await write(innerStage, 'data/home-assistant.log', 'noise');       // manifest-excluded
 
@@ -62,7 +65,10 @@ afterEach(async () => {
   tmpDirs = [];
 });
 
-const HA_INCLUDES = ['configuration.yaml', '.storage/zwave_js', '.storage/core.entity_registry'];
+const HA_INCLUDES = [
+  'configuration.yaml', '.storage/zwave_js', '.storage/core.entity_registry',
+  '.storage/lovelace*', '.storage/hacs*',
+];
 
 describe('extractHaConfigDir', () => {
   it('extracts only the requested include paths from the inner data/ dir', async () => {
@@ -71,6 +77,9 @@ describe('extractHaConfigDir', () => {
     const dataDir = await extractHaConfigDir(backup, work, HA_INCLUDES);
     expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('default_config:');
     expect(await exists(path.join(dataDir, '.storage/zwave_js'))).toBe(true);
+    // Glob includes pull the dashboard + HACS data members (#1595/#1596).
+    expect(await exists(path.join(dataDir, '.storage/lovelace.lovelace'))).toBe(true);
+    expect(await exists(path.join(dataDir, '.storage/hacs.repositories'))).toBe(true);
     // The big excluded members are never even unpacked to /tmp (#1353): the
     // whole point is to not write the DB out and exhaust the container tmpfs.
     expect(await exists(path.join(dataDir, 'home-assistant_v2.db'))).toBe(false);

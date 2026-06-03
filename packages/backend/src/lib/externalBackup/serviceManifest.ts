@@ -93,9 +93,20 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
       'automations.yaml', 'scripts.yaml', 'scenes.yaml', 'configuration.yaml',
       '.storage/core.config_entries', '.storage/core.device_registry',
       '.storage/core.entity_registry', '.storage/core.area_registry',
-      '.storage/lovelace', '.storage/lovelace_dashboards',
+      // HA names each dashboard `.storage/lovelace.<url_path>` (`lovelace.lovelace`,
+      // `lovelace.map`, …); the bare `.storage/lovelace` exact-match dropped every
+      // dashboard's contents (#1595). The trailing-`*` glob catches them all
+      // (and still matches `.storage/lovelace_dashboards`, the sidebar list).
+      '.storage/lovelace*',
       // zwave_js network keys ARE needed to recover the mesh after a reinstall.
       '.storage/zwave_js',
+      // HACS itself + every integration it installed. Without the code, a restore
+      // re-seeds config entries for integrations that no longer exist (#1596).
+      // Byte-for-byte: a few MB of operator-trusted third-party components.
+      'custom_components',
+      // HACS's own data store (repo list, installed-version pins) so HACS comes
+      // back knowing what it manages: `.storage/hacs.repositories`, `hacs.data`, …
+      '.storage/hacs*',
     ],
     exclude: [
       'home-assistant_v2.db', 'home-assistant_v2.db-wal', 'home-assistant_v2.db-shm',
