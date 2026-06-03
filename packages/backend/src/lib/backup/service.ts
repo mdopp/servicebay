@@ -193,9 +193,45 @@ function parseRsyncStats(output: string): { bytesTransferred?: number; filesTran
     return result;
 }
 
-async function ensureTargetDir(target: BackupTarget): Promise<void> {
+/**
+ * Validate a Local/USB target. Shared by Test Connection and Run so the two
+ * can never diverge (#1612). The target must ALREADY exist and be a directory
+ * — we never `mkdir` it, because a silently-created dir means a non-mounted
+ * mountpoint, which rsyncs straight onto the OS/boot disk. When `sources` are
+ * supplied we additionally refuse a target on the same filesystem/device as
+ * any source: a same-disk "backup" is pointless and is exactly what the old
+ * silent mkdir produced.
+ */
+async function validateLocalTarget(targetPath: string, sources?: BackupSource[]): Promise<void> {
+    let targetStats;
+    try {
+        targetStats = await fs.stat(targetPath);
+    } catch {
+        throw new Error(`ENOENT: no such file or directory, access '${targetPath}'`);
+    }
+    if (!targetStats.isDirectory()) {
+        throw new Error(`${targetPath} is not a directory`);
+    }
+    if (!sources || sources.length === 0) return;
+    for (const source of sources) {
+        let sourceStats;
+        try {
+            sourceStats = await fs.stat(source.path);
+        } catch {
+            continue; // a missing source is rsyncOneSource's problem, not ours
+        }
+        if (sourceStats.dev === targetStats.dev) {
+            throw new Error(
+                `Backup target ${targetPath} is on the same filesystem as source ${source.path} ` +
+                `(likely nothing is mounted there) — refusing to back up onto the same disk.`
+            );
+        }
+    }
+}
+
+async function ensureTargetDir(target: BackupTarget, sources?: BackupSource[]): Promise<void> {
     if (target.type === 'local') {
-        await fs.mkdir(target.path, { recursive: true });
+        await validateLocalTarget(target.path, sources);
     } else if (target.type === 'ssh') {
         const [sshBin, ...sshArgs] = buildSSHArgv(target);
         await execFileAsync(sshBin, [...sshArgs, `${target.user}@${target.host}`, 'mkdir', '-p', target.path]);
@@ -276,7 +312,7 @@ async function runBackupItems(
     }
 
     try {
-        await ensureTargetDir(config.target);
+        await ensureTargetDir(config.target, sources);
 
         let totalBytes = 0;
         let totalFiles = 0;
@@ -491,15 +527,11 @@ export function isBackupRunning(): boolean {
 
 // ─── Test Connection ────────────────────────────────────────────────
 
-export async function testBackupTarget(target: BackupTarget): Promise<{ success: boolean; message: string }> {
+export async function testBackupTarget(target: BackupTarget, sources?: BackupSource[]): Promise<{ success: boolean; message: string }> {
     try {
         switch (target.type) {
             case 'local': {
-                await fs.access(target.path);
-                const stats = await fs.stat(target.path);
-                if (!stats.isDirectory()) {
-                    return { success: false, message: `${target.path} is not a directory` };
-                }
+                await validateLocalTarget(target.path, sources);
                 // Test write access
                 const testFile = path.join(target.path, '.servicebay-backup-test');
                 await fs.writeFile(testFile, 'test');

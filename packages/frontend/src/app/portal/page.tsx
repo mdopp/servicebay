@@ -1,6 +1,7 @@
 import { headers } from 'next/headers';
+import { Settings } from 'lucide-react';
 import ServiceBayLogo from '@/components/ServiceBayLogo';
-import { getConfig } from '@/lib/config';
+import { getConfig, getAdminBaseUrl } from '@/lib/config';
 import { buildPortalCards } from '@/lib/portal/services';
 import { isPortalBlockedForRequest } from '@/lib/portal/lanGate';
 import { verifyAutheliaSession } from '@/lib/portal/auth';
@@ -57,6 +58,11 @@ export default async function PortalPage() {
   const isLoggedIn = Boolean(visitor.user);
   const displayName = visitor.name?.trim() || visitor.user || null;
   const firstName = displayName?.split(/\s+/)[0] ?? null;
+  // Link to the ServiceBay admin dashboard at admin.<domain>. The apex →
+  // /portal rewrite otherwise hides any path to the admin UI (#1606). admin.
+  // has its own app-layer login (not Authelia forward-auth), so it's safe to
+  // surface the link to anyone — the admin login still gates access.
+  const adminUrl = getAdminBaseUrl(config);
 
   return (
     <main className="relative max-w-6xl mx-auto px-6 py-12">
@@ -74,6 +80,18 @@ export default async function PortalPage() {
             : 'Pick a service below to get started.'}
         </p>
         {isLoggedIn && <PortalLogoutLink />}
+        {adminUrl && (
+          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+            <a
+              href={adminUrl}
+              className="inline-flex items-center gap-1.5 text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 underline-offset-2 hover:underline"
+            >
+              <Settings size={14} />
+              Admin dashboard
+            </a>
+            <span className="ml-1.5 text-gray-400 dark:text-gray-500">(separate login)</span>
+          </p>
+        )}
       </header>
 
       {!isLoggedIn && (

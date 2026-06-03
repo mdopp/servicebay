@@ -27,7 +27,7 @@ import { parseTemplateTier } from '@/lib/templateTier';
 import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getTemplateUserGuide } from '@/lib/registry';
 import { logger } from '@/lib/logger';
-import { parseUserGuide, type PortalIconName, type RecommendedApp, type SetupAsset, type ManualPairing } from './userGuide';
+import { parseUserGuide, type PortalIconName, type RecommendedApp, type SetupAsset, type ManualPairing, type PortalAction } from './userGuide';
 
 const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 
@@ -50,8 +50,17 @@ export interface PortalCard {
   /** Legacy emoji icon */
   icon: string;
   tagline: string;
-  /** External URL the "Open" button should point at. */
+  /** External URL the "Open" button should point at. Empty string for
+   *  an appless card (no subdomain) — the CTA falls back to
+   *  `primaryAction` instead (#1618). */
   url: string;
+  /** Primary action for a URL-less service (#1618). When `url` is empty
+   *  this is the card's CTA (a terminal deep-link, a `vscode://` link,
+   *  …). Null for ordinary Open-URL cards. */
+  primaryAction: PortalAction | null;
+  /** Secondary actions rendered as extra buttons. Desktop-only ones
+   *  (e.g. `vscode://`) carry `desktop_only` so the phone UI hides them. */
+  secondaryActions: PortalAction[];
   /** Markdown body shared across all cards from the same template
    *  (the template's `user-guide.md` body). */
   body: string;
@@ -179,45 +188,69 @@ export async function resolveServiceUrl(
   return `${scheme}://${sub}.${getActiveDomain(config)}`;
 }
 
+interface PortalCardDef {
+  subdomain_var: string;
+  label?: string;
+  lucide_icon?: PortalIconName;
+  icon?: string;
+  tagline?: string;
+  recommended_apps?: RecommendedApp[];
+  setup_assets?: SetupAsset[];
+  manual_pairing?: ManualPairing[];
+  primary_action?: PortalAction;
+  actions?: PortalAction[];
+}
+
+/** Assemble the PortalCard payload once the URL + subdomainVar are
+ *  resolved. Pure — no I/O — so the branching `buildPortalCardEntry`
+ *  stays lean. */
+function assemblePortalCard(
+  def: PortalCardDef,
+  serviceName: string,
+  templateLabel: string,
+  url: string | null,
+  subdomainVar: string,
+  parsedBody: string,
+): PortalCard {
+  return {
+    id: `${serviceName}:${subdomainVar || 'default'}`,
+    name: serviceName,
+    subdomainVar,
+    label: def.label ?? templateLabel,
+    lucideIcon: def.lucide_icon ?? null,
+    icon: def.icon ?? '',
+    tagline: def.tagline ?? '',
+    url: url ?? '',
+    primaryAction: def.primary_action ?? null,
+    secondaryActions: def.actions ?? [],
+    body: parsedBody,
+    recommendedApps: def.recommended_apps ?? [],
+    setupAssets: def.setup_assets ?? [],
+    manualPairing: def.manual_pairing ?? [],
+  };
+}
+
 /**
  * Build a single portal card entry from a parsed definition.
  */
 async function buildPortalCardEntry(
   config: AppConfig,
   svc: Awaited<ReturnType<typeof ServiceManager.listServices>>[number],
-  def: {
-    subdomain_var: string;
-    label?: string;
-    lucide_icon?: PortalIconName;
-    icon?: string;
-    tagline?: string;
-    recommended_apps?: RecommendedApp[];
-    setup_assets?: SetupAsset[];
-    manual_pairing?: ManualPairing[];
-  },
+  def: PortalCardDef,
   templateLabel: string,
   parsedBody: string,
 ): Promise<PortalCard | null> {
   const url = await resolveServiceUrl(config, svc.name, def.subdomain_var || undefined);
-  if (!url) {
-    logger.warn('portal', `Template ${svc.name} card (subdomain_var=${def.subdomain_var || '<auto>'}) couldn't resolve a URL — skipping`);
+  // No subdomain URL: an appless card still renders *iff* the guide
+  // declares an explicit primary action (#1618) — that becomes the CTA
+  // in place of the Open-URL button. Without one, there's nothing to
+  // act on, so we skip as before.
+  if (!url && !def.primary_action) {
+    logger.warn('portal', `Template ${svc.name} card (subdomain_var=${def.subdomain_var || '<auto>'}) couldn't resolve a URL and has no primary_action — skipping`);
     return null;
   }
   const subdomainVar = def.subdomain_var || (await firstSubdomainVar(svc.name)) || '';
-  return {
-    id: `${svc.name}:${subdomainVar || 'default'}`,
-    name: svc.name,
-    subdomainVar,
-    label: def.label ?? templateLabel,
-    lucideIcon: def.lucide_icon ?? null,
-    icon: def.icon ?? '',
-    tagline: def.tagline ?? '',
-    url,
-    body: parsedBody,
-    recommendedApps: def.recommended_apps ?? [],
-    setupAssets: def.setup_assets ?? [],
-    manualPairing: def.manual_pairing ?? [],
-  };
+  return assemblePortalCard(def, svc.name, templateLabel, url, subdomainVar, parsedBody);
 }
 
 /**
@@ -261,6 +294,8 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
         recommended_apps: parsed.frontmatter.recommended_apps,
         setup_assets: parsed.frontmatter.setup_assets,
         manual_pairing: parsed.frontmatter.manual_pairing,
+        primary_action: parsed.frontmatter.primary_action,
+        actions: parsed.frontmatter.actions,
       }];
 
     for (const def of cardDefs) {

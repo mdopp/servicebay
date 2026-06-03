@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getConfig, updateConfig } from '@/lib/config';
 import { runBackup, getBackupHistory, isBackupRunning, testBackupTarget, scheduleBackup } from '@/lib/backup/service';
 import type { BackupConfig, BackupTarget } from '@/lib/backup/types';
+import { resolveBackupSources } from '@/lib/backup/types';
 import { HealthStore } from '@/lib/health/store';
 import { withApiHandler } from '@/lib/api/handler';
 import crypto from 'crypto';
@@ -79,7 +80,11 @@ export const POST = withApiHandler({ body: PostBody }, async ({ body }) => {
       if (!target) {
         return NextResponse.json({ error: 'target is required' }, { status: 400 });
       }
-      const result = await testBackupTarget(target);
+      // Resolve the configured sources so Test applies the same same-device
+      // guard Run does (#1612) — a target on the source's filesystem is refused.
+      const cfg = await getConfig();
+      const sources = cfg.backup ? resolveBackupSources(cfg.backup) : [];
+      const result = await testBackupTarget(target, sources);
       return NextResponse.json(result);
     }
   }

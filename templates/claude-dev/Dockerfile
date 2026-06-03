@@ -15,12 +15,13 @@ FROM node:20-bookworm-slim
 #   - make/gcc/g++/python3   : native-module builds (better-sqlite3, …)
 #   - podman                 : run the repo's container e2e scripts
 #   - procps/iproute2        : ps/ss for debugging from inside a session
+#   - tmux                   : persistent session that survives disconnects
 #   - curl/ca-certificates/gnupg : fetch the GitHub CLI apt key
 # The GitHub CLI (`gh`) is not in Debian's repos, so add its apt source.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       openssh-server openssh-client git bash \
       make gcc g++ python3 \
-      podman procps iproute2 \
+      podman procps iproute2 tmux \
       curl ca-certificates gnupg \
   && install -m 0755 -d /etc/apt/keyrings \
   && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -44,6 +45,22 @@ RUN useradd --create-home --home-dir /workspace --shell /bin/bash dev
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Interactive login shells (an SSH session, the web terminal, the mobile
+# app) attach to the long-lived `claude` tmux session the entrypoint
+# starts on boot, so every connection lands in the SAME live session and
+# detaching/disconnecting leaves it running. Guarded on an interactive
+# shell ($- has i) and not-already-inside-tmux, so a non-interactive
+# `podman exec` (scripts / health probes) is never trapped. Lives in the
+# image layer (not under the /workspace bind mount that takes over $HOME),
+# and `exec`s so the tmux client becomes the login shell. `new -A` creates
+# the session if the boot-time one is somehow gone.
+RUN printf '%s\n' \
+      '# claude-dev: attach interactive logins to the persistent tmux session.' \
+      'if [ -z "${TMUX:-}" ] && [ -n "${SSH_CONNECTION:-}" ] && case "$-" in *i*) true;; *) false;; esac; then' \
+      '  exec tmux new -A -s claude' \
+      'fi' \
+      > /etc/profile.d/claude-dev-tmux.sh
 
 # Informational — the real port is set at runtime via CLAUDE_DEV_SSH_PORT.
 EXPOSE 2222

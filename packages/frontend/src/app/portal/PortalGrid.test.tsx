@@ -23,6 +23,8 @@ const baseCard: PortalCard = {
   icon: '',
   tagline: 'Auto-backup your family photos.',
   url: 'https://photos.home.arpa',
+  primaryAction: null,
+  secondaryActions: [],
   body: '',
   recommendedApps: [],
   setupAssets: [],
@@ -148,6 +150,85 @@ describe('PortalGrid', () => {
       // Clicking the backdrop (the outermost overlay div) closes the modal.
       fireEvent.click(screen.getByRole('heading', { name: /install basicsync/i }).closest('div')!.parentElement!);
       expect(screen.queryByRole('heading', { name: /install basicsync/i })).toBeNull();
+    });
+  });
+
+  describe('appless cards + action links (#1618)', () => {
+    const applessCard: PortalCard = {
+      ...baseCard,
+      id: 'claude-dev:default',
+      name: 'claude-dev',
+      label: 'Claude Dev',
+      url: '', // no subdomain → no Open-URL button
+      primaryAction: {
+        type: 'in_app',
+        label: 'Open terminal',
+        href: '/terminal?node=Local&container=claude-dev',
+        desktop_only: false,
+      },
+    };
+
+    it('renders the primary action as the CTA when there is no URL', () => {
+      render(<PortalGrid cards={[applessCard]} />);
+      // No "Open" link (no url), but the primary action link is present.
+      expect(screen.queryByRole('link', { name: /^open$/i })).toBeNull();
+      const cta = screen.getByRole('link', { name: /open terminal/i });
+      expect(cta.getAttribute('href')).toBe('/terminal?node=Local&container=claude-dev');
+    });
+
+    it('keeps in-app deep-links in the same tab (no target=_blank)', () => {
+      render(<PortalGrid cards={[applessCard]} />);
+      const cta = screen.getByRole('link', { name: /open terminal/i });
+      expect(cta.getAttribute('target')).toBeNull();
+    });
+
+    it('renders secondary actions as extra buttons', () => {
+      const card: PortalCard = {
+        ...applessCard,
+        secondaryActions: [
+          { type: 'external_scheme', label: 'Open in VS Code', href: 'vscode://vscode-remote/ssh-remote+box', desktop_only: true },
+        ],
+      };
+      render(<PortalGrid cards={[card]} />);
+      const vscode = screen.getByRole('link', { name: /open in vs code/i });
+      expect(vscode.getAttribute('href')).toBe('vscode://vscode-remote/ssh-remote+box');
+      // External scheme opens in a new tab/handoff.
+      expect(vscode.getAttribute('target')).toBe('_blank');
+    });
+
+    it('shows desktop-only actions on desktop (default jsdom UA)', () => {
+      const card: PortalCard = {
+        ...applessCard,
+        primaryAction: { type: 'external_scheme', label: 'Open in VS Code', href: 'vscode://x', desktop_only: true },
+      };
+      render(<PortalGrid cards={[card]} />);
+      // jsdom's default UA is non-mobile → desktop-only action is visible.
+      expect(screen.getByRole('link', { name: /open in vs code/i })).toBeDefined();
+    });
+
+    it('hides a desktop-only primary action on a phone UA', () => {
+      const original = navigator.userAgent;
+      Object.defineProperty(navigator, 'userAgent', {
+        value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile/15E148',
+        configurable: true,
+      });
+      try {
+        const card: PortalCard = {
+          ...applessCard,
+          primaryAction: { type: 'external_scheme', label: 'Open in VS Code', href: 'vscode://x', desktop_only: true },
+        };
+        render(<PortalGrid cards={[card]} />);
+        expect(screen.queryByRole('link', { name: /open in vs code/i })).toBeNull();
+        // A graceful "available on desktop" hint replaces it.
+        expect(screen.getByText(/available on desktop/i)).toBeDefined();
+      } finally {
+        Object.defineProperty(navigator, 'userAgent', { value: original, configurable: true });
+      }
+    });
+
+    it('still shows the Open-URL button for ordinary URL-based cards', () => {
+      render(<PortalGrid cards={[baseCard]} />);
+      expect(screen.getByRole('link', { name: /^open$/i })).toBeDefined();
     });
   });
 });

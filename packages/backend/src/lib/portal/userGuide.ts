@@ -120,6 +120,45 @@ export interface ManualPairing {
 }
 
 /**
+ * A primary/secondary card action for a service that has no Open-URL
+ * (#1618). The canonical case is claude-dev: no subdomain/proxy host,
+ * so the card can't offer an "Open" button — instead it offers a
+ * deep-link action (open the web terminal at `/terminal?...`) or an
+ * external-scheme link (`vscode://...`). Distinct from `manual_pairing`
+ * (a copyable command) and `setup_assets` (a server-generated artifact).
+ *
+ * Two link shapes are recognized:
+ *   - `in_app`: a root-relative path served from the same origin
+ *     (e.g. `/terminal?node=Local&container=claude-dev`). Rendered as
+ *     a normal in-app link.
+ *   - `external_scheme`: a custom-scheme URI the OS hands off to a
+ *     desktop app (`vscode://`, `zed://`, …). Inherently desktop-only,
+ *     so it carries `desktop_only:true` by default and the phone UI
+ *     hides/disables it.
+ */
+export type PortalActionType = 'in_app' | 'external_scheme';
+
+/** External URI schemes a card action may use. Allowlisted so a
+ *  template author can't smuggle `javascript:`/`data:` into an action
+ *  link. Each is a registered desktop-app handoff scheme. */
+const KNOWN_ACTION_SCHEMES = ['vscode', 'vscode-insiders', 'zed', 'jetbrains'] as const;
+
+export interface PortalAction {
+  type: PortalActionType;
+  /** Button label, e.g. "Open terminal" or "Open in VS Code". */
+  label: string;
+  /** The link target: a root-relative `/path?...` for `in_app`, or a
+   *  `<scheme>://...` URI for `external_scheme`. */
+  href: string;
+  /** Optional Lucide icon for the button (from the portal allowlist). */
+  icon?: PortalIconName;
+  /** When true, the phone UI hides/disables this action (the target
+   *  needs a desktop app, e.g. `vscode://`). Defaults true for
+   *  `external_scheme`, false for `in_app`. */
+  desktop_only?: boolean;
+}
+
+/**
  * Curated allowlist of Lucide icon names usable on portal cards.
  * Lucide is the same line-art icon set the dashboard sidebar uses,
  * so picking from this set keeps the portal visually consistent
@@ -168,6 +207,11 @@ export interface UserGuideCard {
   recommended_apps?: RecommendedApp[];
   setup_assets?: SetupAsset[];
   manual_pairing?: ManualPairing[];
+  /** Primary action when this card has no Open-URL (#1618). When set,
+   *  the card renders even without a resolvable subdomain. */
+  primary_action?: PortalAction;
+  /** Additional actions rendered as secondary buttons. */
+  actions?: PortalAction[];
 }
 
 export interface UserGuideFrontmatter {
@@ -198,6 +242,12 @@ export interface UserGuideFrontmatter {
    *  hand (e.g. `signal-cli link` QR pairing). Surfaced as a static
    *  "manual action required" panel — informational only (#1253). */
   manual_pairing?: ManualPairing[];
+  /** Primary card action for a URL-less service (#1618). When present,
+   *  the portal renders the card even without a resolvable subdomain;
+   *  the CTA becomes this action instead of an Open-URL button. */
+  primary_action?: PortalAction;
+  /** Secondary actions rendered as extra buttons below the CTA. */
+  actions?: PortalAction[];
 }
 
 export interface ParsedUserGuide {
@@ -288,6 +338,49 @@ function parseManualPairing(input: unknown): ManualPairing[] {
     .filter((e): e is ManualPairing => e !== null);
 }
 
+/** Validate a single action link (#1618). Returns null when the entry
+ *  is malformed or the href fails the per-type safety check:
+ *    - `in_app`: a same-origin root-relative path (`/...`, not `//`).
+ *    - `external_scheme`: a `<scheme>://...` URI whose scheme is in the
+ *      allowlist (`vscode`, `zed`, …) — blocks `javascript:`/`data:`.
+ *  `desktop_only` defaults to true for external-scheme links (they
+ *  hand off to a desktop app) and false for in-app links. */
+function isValidActionHref(type: PortalActionType, href: string): boolean {
+  if (type === 'in_app') {
+    // Root-relative same-origin path only; reject `//host` and any scheme.
+    return href.startsWith('/') && !href.startsWith('//');
+  }
+  const m = /^([a-z][a-z0-9+.-]*):\/\//i.exec(href);
+  return !!m && (KNOWN_ACTION_SCHEMES as readonly string[]).includes(m[1].toLowerCase());
+}
+
+function parsePortalAction(entry: unknown): PortalAction | null {
+  if (!entry || typeof entry !== 'object') return null;
+  const e = entry as Record<string, unknown>;
+  if (e.type !== 'in_app' && e.type !== 'external_scheme') return null;
+  if (typeof e.label !== 'string' || !e.label.trim()) return null;
+  if (typeof e.href !== 'string' || !e.href.trim()) return null;
+  const type = e.type;
+  const href = e.href.trim();
+  if (!isValidActionHref(type, href)) return null;
+  const out: PortalAction = { type, label: e.label.trim(), href };
+  if (typeof e.icon === 'string' && PORTAL_ICON_SET.has(e.icon)) {
+    out.icon = e.icon as PortalIconName;
+  }
+  // Explicit desktop_only wins; otherwise default by link type.
+  out.desktop_only =
+    typeof e.desktop_only === 'boolean' ? e.desktop_only : type === 'external_scheme';
+  return out;
+}
+
+/** Parse the optional secondary `actions[]` list. */
+function parsePortalActions(input: unknown): PortalAction[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map(parsePortalAction)
+    .filter((a): a is PortalAction => a !== null);
+}
+
 /** Parse a `setup_assets[]` list down to whitelisted-kind entries.
  *  Shared by the top-level frontmatter and the per-card `cards[]`
  *  path. Unknown/non-string kinds drop silently. */
@@ -308,6 +401,19 @@ function parseSetupAssets(input: unknown): SetupAsset[] {
 
 /** Parse one `cards[]` entry (per-subdomain card). Returns null when
  *  the entry is malformed or lacks a valid `*_SUBDOMAIN` var. */
+function applyCardLists(card: UserGuideCard, e: Record<string, unknown>): void {
+  const apps = parseRecommendedApps(e.recommended_apps);
+  if (apps.length > 0) card.recommended_apps = apps;
+  const assets = parseSetupAssets(e.setup_assets);
+  if (assets.length > 0) card.setup_assets = assets;
+  const pairing = parseManualPairing(e.manual_pairing);
+  if (pairing.length > 0) card.manual_pairing = pairing;
+  const primaryAction = parsePortalAction(e.primary_action);
+  if (primaryAction) card.primary_action = primaryAction;
+  const actions = parsePortalActions(e.actions);
+  if (actions.length > 0) card.actions = actions;
+}
+
 function parseCardEntry(entry: unknown): UserGuideCard | null {
   if (!entry || typeof entry !== 'object') return null;
   const e = entry as Record<string, unknown>;
@@ -321,12 +427,7 @@ function parseCardEntry(entry: unknown): UserGuideCard | null {
     card.lucide_icon = e.lucide_icon as PortalIconName;
   }
   if (typeof e.tagline === 'string') card.tagline = e.tagline;
-  const apps = parseRecommendedApps(e.recommended_apps);
-  if (apps.length > 0) card.recommended_apps = apps;
-  const assets = parseSetupAssets(e.setup_assets);
-  if (assets.length > 0) card.setup_assets = assets;
-  const pairing = parseManualPairing(e.manual_pairing);
-  if (pairing.length > 0) card.manual_pairing = pairing;
+  applyCardLists(card, e);
   return card;
 }
 
@@ -361,6 +462,11 @@ function parseUserGuideSection(data: Record<string, unknown>): UserGuideFrontmat
 
   const pairing = parseManualPairing(data.manual_pairing);
   if (pairing.length > 0) fm.manual_pairing = pairing;
+
+  const primaryAction = parsePortalAction(data.primary_action);
+  if (primaryAction) fm.primary_action = primaryAction;
+  const actions = parsePortalActions(data.actions);
+  if (actions.length > 0) fm.actions = actions;
 
   return fm;
 }

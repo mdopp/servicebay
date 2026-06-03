@@ -225,3 +225,15 @@ export async function getNodeConnection(name?: string): Promise<PodmanConnection
   const target = normalizeName(name);
   return nodes.find(n => normalizeName(n.Name) === target);
 }
+
+/**
+ * Resolve the name of the home node — the one ServiceBay itself runs on.
+ * Prefers the `Default`-flagged node, falls back to the first node, then
+ * to the built-in `Local` name. Used by host-side probes (e.g. the
+ * Backup Sync mount picker) that need a node to query but aren't tied to
+ * a user-selected one.
+ */
+export async function getDefaultNodeName(): Promise<string> {
+  const nodes = await loadNodes();
+  return (nodes.find(n => n.Default) ?? nodes[0])?.Name ?? 'Local';
+}

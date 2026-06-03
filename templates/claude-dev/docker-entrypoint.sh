@@ -42,6 +42,21 @@ if [ "$password_auth" = no ] && [ -z "${CLAUDE_DEV_SSH_AUTHORIZED_KEY:-}" ]; the
   echo "claude-dev: WARNING — no SSH password or authorized key set; nobody can log in." >&2
 fi
 
+# Start the long-lived `claude` tmux session as the dev user BEFORE we
+# exec sshd, so it's already running before anyone connects (incl. after
+# a container restart — `claude --continue` then resumes the prior
+# conversation from the persisted ~/.claude on /workspace). The tmux
+# server daemonizes, so sshd stays PID 1 — do NOT regress that. Idempotent:
+# `has-session` skips re-creating it if one somehow already exists. The
+# session runs as `dev` with /workspace as $HOME so its working dir + any
+# `claude` auth/history match an interactive login's.
+if su -s /bin/bash dev -c 'tmux has-session -t claude' 2>/dev/null; then
+  echo "claude-dev: tmux session 'claude' already running."
+else
+  su -s /bin/bash dev -c "cd '$DEV_HOME' && HOME='$DEV_HOME' tmux new-session -d -s claude"
+  echo "claude-dev: started detached tmux session 'claude' for user 'dev'."
+fi
+
 mkdir -p /run/sshd
 echo "claude-dev: starting sshd on port ${SSH_PORT}."
 exec /usr/sbin/sshd -D -e \

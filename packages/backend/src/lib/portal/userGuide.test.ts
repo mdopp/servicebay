@@ -256,3 +256,166 @@ body
     expect(result).toBeNull();
   });
 });
+
+describe('parseUserGuide — action links (#1618)', () => {
+  it('parses a top-level in_app primary_action (terminal deep-link)', () => {
+    const raw = `---
+primary_action:
+  type: "in_app"
+  label: "Open terminal"
+  href: "/terminal?node=Local&container=claude-dev"
+  icon: "bot"
+---
+body
+`;
+    const result = parseUserGuide(raw, 'claude-dev');
+    expect(result).not.toBeNull();
+    const pa = result!.frontmatter.primary_action;
+    expect(pa).toEqual({
+      type: 'in_app',
+      label: 'Open terminal',
+      href: '/terminal?node=Local&container=claude-dev',
+      icon: 'bot',
+      desktop_only: false, // in_app defaults to not desktop-only
+    });
+  });
+
+  it('parses an external_scheme action and defaults desktop_only to true', () => {
+    const raw = `---
+actions:
+  - type: "external_scheme"
+    label: "Open in VS Code"
+    href: "vscode://vscode-remote/ssh-remote+box/workspace"
+---
+body
+`;
+    const result = parseUserGuide(raw, 'claude-dev');
+    expect(result!.frontmatter.actions).toEqual([
+      {
+        type: 'external_scheme',
+        label: 'Open in VS Code',
+        href: 'vscode://vscode-remote/ssh-remote+box/workspace',
+        desktop_only: true,
+      },
+    ]);
+  });
+
+  it('honours an explicit desktop_only override', () => {
+    const raw = `---
+primary_action:
+  type: "external_scheme"
+  label: "Open in Zed"
+  href: "zed://open"
+  desktop_only: false
+---
+body
+`;
+    const result = parseUserGuide(raw, 'svc');
+    expect(result!.frontmatter.primary_action?.desktop_only).toBe(false);
+  });
+
+  it('rejects an in_app href that is not root-relative (scheme / protocol-relative)', () => {
+    const cases = [
+      'https://evil.example/x',
+      '//evil.example/x',
+      'javascript:alert(1)',
+      'terminal',
+    ];
+    for (const href of cases) {
+      const raw = `---
+primary_action:
+  type: "in_app"
+  label: "X"
+  href: "${href}"
+---
+body
+`;
+      const result = parseUserGuide(raw, 'svc');
+      expect(result!.frontmatter.primary_action).toBeUndefined();
+    }
+  });
+
+  it('rejects an external_scheme href whose scheme is not allowlisted', () => {
+    const cases = ['javascript://x', 'data://x', 'http://x', 'ftp://x'];
+    for (const href of cases) {
+      const raw = `---
+primary_action:
+  type: "external_scheme"
+  label: "X"
+  href: "${href}"
+---
+body
+`;
+      const result = parseUserGuide(raw, 'svc');
+      expect(result!.frontmatter.primary_action).toBeUndefined();
+    }
+  });
+
+  it('drops an action missing label or href, or with an unknown type', () => {
+    const raw = `---
+actions:
+  - type: "in_app"
+    href: "/terminal"
+  - type: "in_app"
+    label: "No href"
+  - type: "bogus"
+    label: "X"
+    href: "/x"
+  - type: "in_app"
+    label: "Good"
+    href: "/good"
+---
+body
+`;
+    const result = parseUserGuide(raw, 'svc');
+    expect(result!.frontmatter.actions).toEqual([
+      { type: 'in_app', label: 'Good', href: '/good', desktop_only: false },
+    ]);
+  });
+
+  it('drops an unknown icon name but keeps the action', () => {
+    const raw = `---
+primary_action:
+  type: "in_app"
+  label: "Open terminal"
+  href: "/terminal"
+  icon: "not-a-real-icon"
+---
+body
+`;
+    const result = parseUserGuide(raw, 'svc');
+    expect(result!.frontmatter.primary_action).toEqual({
+      type: 'in_app',
+      label: 'Open terminal',
+      href: '/terminal',
+      desktop_only: false,
+    });
+  });
+
+  it('parses primary_action + actions inside a cards[] entry', () => {
+    const raw = `---
+cards:
+  - subdomain_var: "CLAUDE_DEV_SUBDOMAIN"
+    label: "Claude Dev"
+    primary_action:
+      type: "in_app"
+      label: "Open terminal"
+      href: "/terminal?container=claude-dev"
+    actions:
+      - type: "external_scheme"
+        label: "Open in VS Code"
+        href: "vscode://x"
+---
+body
+`;
+    const result = parseUserGuide(raw, 'claude-dev');
+    const card = result!.frontmatter.cards?.[0];
+    expect(card?.primary_action?.href).toBe('/terminal?container=claude-dev');
+    expect(card?.actions?.[0]).toEqual({
+      type: 'external_scheme',
+      label: 'Open in VS Code',
+      href: 'vscode://x',
+      desktop_only: true,
+    });
+  });
+});
