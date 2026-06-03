@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.93.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.92.0...servicebay-v4.93.0) (2026-06-03)
+
+
+### Features
+
+* **backup:** relabel Backups page to System Snapshot + Backup Sync ([b0fae9b](https://github.com/mdopp/servicebay/commit/b0fae9b089cf0d0ce22353ca5c8acbeb785d6072))
+* **backup:** relabel Backups page to two backups — System Snapshot + Backup Sync ([f3dc76a](https://github.com/mdopp/servicebay/commit/f3dc76a3cf458cf00507a3c1ec0b9b6de67c0321)), closes [#1611](https://github.com/mdopp/servicebay/issues/1611)
+
 ## [4.92.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.91.0...servicebay-v4.92.0) (2026-06-03)
 
 
