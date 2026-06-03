@@ -27,6 +27,7 @@ import { getExecutor, type Executor } from '../executor';
 import { nasUpload, nasDownload, nasList } from './nasClient';
 import {
   getServiceManifest,
+  getBackupGate,
   applyStripRules,
   SERVICE_BACKUP_MANIFESTS,
   type ServiceBackupManifest,
@@ -452,7 +453,9 @@ export async function backupInstalledServicesToNas(): Promise<ServiceBackupRunEn
   const installed = new Set(Object.keys((await getConfig()).installedTemplates ?? {}));
   const results: ServiceBackupRunEntry[] = [];
   for (const manifest of SERVICE_BACKUP_MANIFESTS) {
-    if (!installed.has(manifest.service)) continue;
+    // A sibling-store entry (#1594) gates on its parent template, not its own
+    // synthetic service name (which is never an installedTemplates key).
+    if (!installed.has(getBackupGate(manifest))) continue;
     try {
       const r = await backupServiceToNas(manifest.service);
       results.push({ service: manifest.service, ok: true, tarName: r.tarName, size: r.size });

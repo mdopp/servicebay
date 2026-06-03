@@ -221,6 +221,75 @@ def ensure_zwave_external_settings() -> bool:
     return True
 
 
+def _zwave_settings_path() -> str:
+    """zwave-js-ui's operator store. It holds `zwave.port` (the serial
+    device), `zwave.enableSoftReset`, and the network securityKeys. zwave-js-ui
+    reads + rewrites this on boot, so we merge into it rather than clobber it."""
+    return os.path.join(_zwave_store_dir(), "settings.json")
+
+
+def ensure_zwave_port_settings(zwave_device: str) -> bool:
+    """Write the serial port + soft-reset policy into zwave-js-ui's
+    settings.json so the driver inits without a manual web-UI step (#1594).
+
+    Two gaps this closes, both verified live on an Aeotec Gen5 (USB 0658:0200):
+
+      1. The serial port was never configured — sb-external-settings.json only
+         carries the HA WebSocket server, never `zwave.port` — so the driver
+         logged "no port configured" and the stick sat unused even though the
+         privileged container had the device node. We set `zwave.port` to the
+         device path the container sees (the value mounted at `mountPath:
+         {{ZWAVE_DEVICE}}` in template.yml — privileged containers get the raw
+         /dev/ttyACMx, not the /dev/serial/by-id symlink).
+
+      2. `enableSoftReset: true` (zwave-js-ui's default) breaks 500-series /
+         Gen5 controllers with "Serial API did not respond after soft-reset".
+         We default it to false; the working live config had it false.
+
+    We MERGE into the existing settings.json (zwave-js-ui owns it and rewrites
+    it on boot) and only fill in fields the operator hasn't already set — an
+    operator-chosen port/soft-reset in the UI is never overridden. Returns True
+    iff the file was changed (caller restarts zwave-js so it takes effect)."""
+    path = _zwave_settings_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            settings = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        settings = {}
+    if not isinstance(settings, dict):
+        settings = {}
+    zwave = settings.get("zwave")
+    if not isinstance(zwave, dict):
+        zwave = {}
+
+    changed = False
+    if not zwave.get("port"):
+        zwave["port"] = zwave_device
+        log(f"   set zwave.port = {zwave_device} in settings.json.")
+        changed = True
+    else:
+        log(f"   zwave.port already set ({zwave['port']}) — leaving untouched.")
+    # enableSoftReset must be explicitly false for 500-series; only stamp it
+    # when the operator hasn't set the key at all (don't fight a UI choice).
+    if "enableSoftReset" not in zwave:
+        zwave["enableSoftReset"] = False
+        log("   set zwave.enableSoftReset = false (500-series / Gen5 controllers).")
+        changed = True
+
+    if not changed:
+        return False
+    settings["zwave"] = zwave
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(settings, fh, indent=2)
+            fh.write("\n")
+    except OSError as exc:
+        log(f"   ⚠️ Could not write {path}: {exc}. Set the Z-Wave port via the zwave-js-ui Settings tab.")
+        return False
+    return True
+
+
 def restart_zwave_js() -> None:
     try:
         result = subprocess.run(
@@ -822,15 +891,23 @@ def main() -> int:
             zwave_device = detected
             log(f"ZWAVE_DEVICE unset but a single USB-serial stick is present — re-detected {detected}.")
 
+    zwave_settings_changed = False
     if zwave_device:
         log(f"Z-Wave stick configured ({zwave_device}) — ensuring host udev permissions...")
         ensure_udev_rule(zwave_device)
         log("✅ Z-Wave JS will have device access after each system boot.")
+        # Auto-configure the serial port + soft-reset policy so the driver
+        # inits with no manual web-UI step (#1594). Without this, zwave-js-ui
+        # logs "no port configured" and the stick sits unused.
+        if ensure_zwave_port_settings(zwave_device):
+            zwave_settings_changed = True
     else:
-        log("No ZWAVE_DEVICE set and no single USB-serial stick detected — skipping udev rule.")
+        log("No ZWAVE_DEVICE set and no single USB-serial stick detected — skipping udev rule + port config.")
 
     log(f"Seeding Z-Wave JS WS server config (port {ZWAVEJS_WS_PORT})...")
     if ensure_zwave_external_settings():
+        zwave_settings_changed = True
+    if zwave_settings_changed:
         restart_zwave_js()
     log(f"✅ Connect Home Assistant to Z-Wave JS: ws://localhost:{ZWAVEJS_WS_PORT}")
 

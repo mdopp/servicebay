@@ -419,13 +419,21 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   // only this service's CONFIG paths (keeps DATA); wipe-all clears CONFIG+DATA.
   // Acts ONLY on this service's data dir — never a system-wide nuke. No-op for
   // `install` (or absent mode). Best-effort; never throws.
+  // The service plus any sibling-store services that ride its deploy (#1594 —
+  // e.g. home-assistant carries `home-assistant-zwave`, the zwave-js key store
+  // in a sibling dir with no template name of its own).
+  const { getSiblingBackupServices } = await import('@/lib/externalBackup/serviceManifest');
+  const backupServices = [item.name, ...getSiblingBackupServices(item.name)];
+
   {
     const { wipeServiceForReinstall } = await import('@/lib/externalBackup/restore');
-    await wipeServiceForReinstall(
-      item.name,
-      { wipeMode: input.wipeMode, node: input.node },
-      line => log(jobId, line),
-    );
+    for (const svc of backupServices) {
+      await wipeServiceForReinstall(
+        svc,
+        { wipeMode: input.wipeMode, node: input.node },
+        line => log(jobId, line),
+      );
+    }
   }
 
   // #1218 entry point 1 — restore this service's config from the NAS before its
@@ -435,11 +443,13 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   // (see autoRestoreServiceOnReinstall). Mirrors the cert-archive restore.
   {
     const { autoRestoreServiceOnReinstall } = await import('@/lib/externalBackup/restore');
-    await autoRestoreServiceOnReinstall(
-      item.name,
-      { wipeMode: input.wipeMode, node: input.node },
-      line => log(jobId, line),
-    );
+    for (const svc of backupServices) {
+      await autoRestoreServiceOnReinstall(
+        svc,
+        { wipeMode: input.wipeMode, node: input.node },
+        line => log(jobId, line),
+      );
+    }
   }
 
   const view = (input.variables as StackVariable[]).reduce<Record<string, string>>((acc, v) => {

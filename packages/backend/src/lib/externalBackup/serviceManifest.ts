@@ -37,6 +37,19 @@ export interface ServiceBackupManifest {
    *  Defaults to `service`. */
   dataSubdir?: string;
   /**
+   * A SIBLING-store manifest (#1594): this entry has no `installedTemplates`
+   * key of its own — it backs up a store that lives in a sibling dir of a real
+   * template (e.g. the zwave-js store at `home-assistant/zwave-js/`, beside
+   * HA's own `home-assistant/homeassistant/` config). `gateOn` names the
+   * template whose presence activates this backup, and whose deploy carries
+   * this entry through the per-service wipe/restore. Crucially this is a plain
+   * `dataSubdir` under DATA_DIR — NOT a `../` traversal off the parent's dir —
+   * so it never trips safeTarExtract's `..` refusal or wipeServiceForReinstall's
+   * dataDir-prefix guard (those security ratchets stay intact). Omitted for a
+   * normal service that gates on its own `service` name.
+   */
+  gateOn?: string;
+  /**
    * The CONFIG class (#1585): small, backed up to the NAS, restorable.
    * These relative paths/dirs ARE the per-service config worth preserving
    * across a reinstall (HA `configuration.yaml`/automations/`.storage`, the
@@ -121,6 +134,37 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     ],
   },
   {
+    // The zwave-js-ui store (#1594) — a SIBLING of HA's config dir, at
+    // `home-assistant/zwave-js/` (NOT under `home-assistant/homeassistant/`).
+    // It has no template/installedTemplates key of its own, so it `gateOn`
+    // home-assistant: HA's presence activates this backup, and HA's deploy
+    // carries it through wipe/restore. `dataSubdir` is a plain path under
+    // DATA_DIR (no `../`), so the traversal guards are untouched.
+    service: 'home-assistant-zwave',
+    dataSubdir: 'home-assistant/zwave-js',
+    gateOn: 'home-assistant',
+    include: [
+      // settings.json holds the network securityKeys (S0_Legacy + the three S2
+      // classes), securityKeysLongRange, the serial port, and enableSoftReset.
+      // Without these, every reinstall destroys the entire Z-Wave security
+      // context and the secure mesh is unrecoverable. These keys ARE the config
+      // worth preserving — like HA's `.storage/zwave_js` and NPM's certs, they
+      // are kept verbatim (no strip): a home NAS is the same trust class as the
+      // system backup, and the keys cannot be regenerated.
+      'settings.json',
+      // ServiceBay's own pinned HA-WebSocket-server settings (serverPort 3001).
+      'sb-external-settings.json',
+    ],
+    exclude: [
+      // The node DB / store cache re-pairs from the mesh + lives on the RAID;
+      // logs are noise.
+      'logs', 'store.jsonl',
+    ],
+    // The mesh node DB is heavy DATA kept through a wipe-config (re-pairing the
+    // whole mesh is expensive); the keys above are CONFIG that re-secures it.
+    data: ['store.jsonl'],
+  },
+  {
     service: 'authelia',
     include: ['users_database.yml'],
     exclude: [],
@@ -187,6 +231,26 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
 
 export function getServiceManifest(service: string): ServiceBackupManifest | undefined {
   return SERVICE_BACKUP_MANIFESTS.find(m => m.service === service);
+}
+
+/**
+ * The installedTemplates key whose presence activates this manifest's backup —
+ * its own `service` name for a normal entry, or `gateOn` for a sibling-store
+ * entry (#1594, e.g. `home-assistant-zwave` gates on `home-assistant`).
+ */
+export function getBackupGate(manifest: ServiceBackupManifest): string {
+  return manifest.gateOn ?? manifest.service;
+}
+
+/**
+ * The sibling-store manifest services that ride a given template's deploy
+ * (#1594): every manifest whose `gateOn` is `template`. The install runner
+ * carries these through the same per-service wipe + restore as the template
+ * itself, since they have no `item.name` of their own to trigger on. Returns
+ * `[]` for a template with no sibling stores (the common case).
+ */
+export function getSiblingBackupServices(template: string): string[] {
+  return SERVICE_BACKUP_MANIFESTS.filter(m => m.gateOn === template).map(m => m.service);
 }
 
 /**

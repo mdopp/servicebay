@@ -784,6 +784,73 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertIn("UI-configured serverPort", out)
             self.assertFalse(os.path.isfile(os.path.join(zwave_dir, "sb-external-settings.json")))
 
+    def test_zwave_port_settings_written_on_fresh_store(self):
+        """`ensure_zwave_port_settings` must seed zwave.port and default
+        enableSoftReset to false when settings.json doesn't exist yet
+        (#1594 — driver logged 'no port configured' + Gen5 soft-reset)."""
+        import tempfile
+
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            with run_with_env({"DATA_DIR": tmp}):
+                changed = m.ensure_zwave_port_settings("/dev/ttyACM0")
+            self.assertTrue(changed)
+            settings_path = os.path.join(tmp, "home-assistant", "zwave-js", "settings.json")
+            with open(settings_path) as fh:
+                data = json.load(fh)
+            self.assertEqual(data["zwave"]["port"], "/dev/ttyACM0")
+            self.assertIs(data["zwave"]["enableSoftReset"], False)
+
+    def test_zwave_port_settings_merges_without_clobbering(self):
+        """Must MERGE into an existing settings.json (zwave-js-ui owns it),
+        preserving securityKeys and an operator-chosen port/soft-reset."""
+        import tempfile
+
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            store = os.path.join(tmp, "home-assistant", "zwave-js")
+            os.makedirs(store, exist_ok=True)
+            existing = {
+                "zwave": {
+                    "port": "/dev/ttyUSB7",          # operator-chosen — keep
+                    "enableSoftReset": True,         # operator-chosen — keep
+                    "securityKeys": {"S0_Legacy": "deadbeefdeadbeefdeadbeefdeadbeef"},
+                },
+                "mqtt": {"name": "zwave"},
+            }
+            with open(os.path.join(store, "settings.json"), "w") as fh:
+                json.dump(existing, fh)
+            with run_with_env({"DATA_DIR": tmp}):
+                changed = m.ensure_zwave_port_settings("/dev/ttyACM0")
+            self.assertFalse(changed)  # nothing to change → no rewrite
+            with open(os.path.join(store, "settings.json")) as fh:
+                data = json.load(fh)
+            # Operator choices + keys + sibling sections all survive.
+            self.assertEqual(data["zwave"]["port"], "/dev/ttyUSB7")
+            self.assertIs(data["zwave"]["enableSoftReset"], True)
+            self.assertEqual(data["zwave"]["securityKeys"]["S0_Legacy"], "deadbeefdeadbeefdeadbeefdeadbeef")
+            self.assertEqual(data["mqtt"]["name"], "zwave")
+
+    def test_zwave_port_settings_keeps_keys_when_only_port_missing(self):
+        """A restored store with keys but no port (the live #1594 repro):
+        seed the port + soft-reset, keep the securityKeys intact."""
+        import tempfile
+
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            store = os.path.join(tmp, "home-assistant", "zwave-js")
+            os.makedirs(store, exist_ok=True)
+            with open(os.path.join(store, "settings.json"), "w") as fh:
+                json.dump({"zwave": {"securityKeys": {"S2_Authenticated": "k"}}}, fh)
+            with run_with_env({"DATA_DIR": tmp}):
+                changed = m.ensure_zwave_port_settings("/dev/ttyACM0")
+            self.assertTrue(changed)
+            with open(os.path.join(store, "settings.json")) as fh:
+                data = json.load(fh)
+            self.assertEqual(data["zwave"]["port"], "/dev/ttyACM0")
+            self.assertIs(data["zwave"]["enableSoftReset"], False)
+            self.assertEqual(data["zwave"]["securityKeys"]["S2_Authenticated"], "k")
+
     def test_already_installed_skips_download(self):
         """When the on-disk version stamp matches HA_OIDC_AUTH_VERSION,
         the script must skip the tarball download entirely. We assert

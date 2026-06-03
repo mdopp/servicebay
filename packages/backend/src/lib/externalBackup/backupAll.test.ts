@@ -118,4 +118,24 @@ describe('backupInstalledServicesToNas', () => {
     mockCfg.getConfig.mockResolvedValue({ installedTemplates: { 'some-unmanaged-thing': {} } });
     expect(await backupInstalledServicesToNas()).toEqual([]);
   });
+
+  it('backs up the zwave-js sibling store when home-assistant is installed (#1594)', async () => {
+    // HA config + the sibling zwave-js store (network keys) both present.
+    await write('home-assistant/homeassistant/configuration.yaml', 'default_config:');
+    await write('home-assistant/zwave-js/settings.json', '{"zwave":{"securityKeys":{"S0_Legacy":"deadbeef"}}}');
+    mockCfg.getConfig.mockResolvedValue({
+      templateSettings: { DATA_DIR: tmpRoot },
+      // Only `home-assistant` is an installedTemplates key; `home-assistant-zwave`
+      // is a synthetic gate-on-parent entry that must still get backed up.
+      installedTemplates: { 'home-assistant': { schemaVersion: 1, installedAt: 'x' } },
+    });
+
+    const results = await backupInstalledServicesToNas();
+    const services = results.map(r => r.service);
+    expect(services).toContain('home-assistant');
+    expect(services).toContain('home-assistant-zwave');
+    expect(results.find(r => r.service === 'home-assistant-zwave')).toMatchObject({ ok: true });
+    const uploaded = mockNas.nasUpload.mock.calls.map(c => String(c[0]));
+    expect(uploaded).toContain('sb-backup/home-assistant-zwave.tar');
+  });
 });

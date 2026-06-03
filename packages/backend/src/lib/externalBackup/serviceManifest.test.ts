@@ -3,6 +3,8 @@ import yaml from 'js-yaml';
 import {
   SERVICE_BACKUP_MANIFESTS,
   getServiceManifest,
+  getBackupGate,
+  getSiblingBackupServices,
   getConfigPaths,
   getDataPaths,
   stripYamlKeys,
@@ -35,6 +37,30 @@ describe('service backup manifests', () => {
     const ha = getServiceManifest('home-assistant')!;
     expect(ha.include).toContain('custom_components');
     expect(ha.include).toContain('.storage/hacs*');
+  });
+
+  it('backs up the zwave-js store as a sibling entry gated on home-assistant (#1594)', () => {
+    const zw = getServiceManifest('home-assistant-zwave')!;
+    expect(zw).toBeDefined();
+    // The store is a SIBLING dir under DATA_DIR — a plain dataSubdir, no `../`,
+    // so the traversal guards stay intact.
+    expect(zw.dataSubdir).toBe('home-assistant/zwave-js');
+    expect(zw.gateOn).toBe('home-assistant');
+    // settings.json carries the network securityKeys + port + soft-reset.
+    expect(zw.include).toContain('settings.json');
+    // Kept verbatim — the keys can't be regenerated (trusted-NAS decision).
+    expect(zw.strip).toBeUndefined();
+  });
+
+  it('getBackupGate returns gateOn for a sibling entry, the service name otherwise', () => {
+    expect(getBackupGate(getServiceManifest('home-assistant-zwave')!)).toBe('home-assistant');
+    expect(getBackupGate(getServiceManifest('adguard')!)).toBe('adguard');
+  });
+
+  it('getSiblingBackupServices lists the stores that ride a template deploy (#1594)', () => {
+    expect(getSiblingBackupServices('home-assistant')).toEqual(['home-assistant-zwave']);
+    // A template with no sibling stores gets an empty list.
+    expect(getSiblingBackupServices('adguard')).toEqual([]);
   });
 
   it('excludes the recorder DB from home-assistant', () => {
