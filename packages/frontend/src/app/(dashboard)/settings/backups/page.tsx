@@ -112,7 +112,7 @@ export default function BackupsSettingsPage() {
       setNasRestoring(null);
       setNasRestoreTarget(null);
     }
-  }, [nasRestoreTarget, nasRestoring, addToast]);
+  }, [nasRestoreTarget, nasRestoring, addToast, setNasRestoring, setNasRestoreTarget]);
 
   // ─── Backup Sync handlers ─────────────────────────────────────────
   const buildBackupTarget = () => {
@@ -335,7 +335,7 @@ export default function BackupsSettingsPage() {
       targetNodes,
       serviceData: serviceDataState,
     });
-  }, [nodes]);
+  }, [nodes, setRestoreSelectionState]);
 
   const openRestoreOverlay = (reset = false) => {
     if (reset) {
@@ -360,7 +360,7 @@ export default function BackupsSettingsPage() {
     setRestoreSelectionState(null);
     setRestoreFilePreview(null);
     setRestoreFilePreviewError(null);
-  }, [restoringBackup]);
+  }, [restoringBackup, setRestoreOverlayOpen, setRestorePreview, setRestoreSource, setRestoreUploadError, setRestoreSelectionState, setRestoreFilePreview, setRestoreFilePreviewError]);
 
   useEscapeKey(closeRestoreOverlay, restoreOverlayOpen, true);
   useEscapeKey(() => setRestoreFilePreview(null), Boolean(restoreFilePreview), true);
@@ -424,7 +424,7 @@ export default function BackupsSettingsPage() {
       setRestoreFilePreviewError(message);
       setRestoreFilePreview({ nodeName, relativePath, content: '', loading: false });
     }
-  }, [restoreSource]);
+  }, [restoreSource, setRestoreFilePreview, setRestoreFilePreviewError]);
 
   const handleRestoreRequest = (entry: SystemBackupEntrySummary) => {
     void handleRestorePreviewRequest({ fileName: entry.fileName });
@@ -501,7 +501,7 @@ export default function BackupsSettingsPage() {
     } finally {
       setRestoringBackup(false);
     }
-  }, [addToast, closeRestoreOverlay, fetchBackups, restorePreview, restoreSelectionState, restoreSource, restoringBackup]);
+  }, [addToast, closeRestoreOverlay, fetchBackups, restorePreview, restoreSelectionState, restoreSource, restoringBackup, setRestoringBackup]);
 
   const selectAllRestoreItems = useCallback(() => {
     if (!restorePreview || !restoreSelectionState) return;
@@ -526,7 +526,7 @@ export default function BackupsSettingsPage() {
       targetNodes: restoreSelectionState.targetNodes,
       serviceData: Object.fromEntries((restorePreview.serviceData || []).map(sd => [sd.name, Object.fromEntries(sd.files.map(f => [f, true]))])),
     });
-  }, [restorePreview, restoreSelectionState]);
+  }, [restorePreview, restoreSelectionState, setRestoreSelectionState]);
 
   const confirmDeleteBackup = async () => {
     if (!deleteTarget || deletingBackup) return;
@@ -572,7 +572,7 @@ export default function BackupsSettingsPage() {
       setRestoringLatest(false);
       setConfirmRestoreLatestOpen(false);
     }
-  }, [backups, restoringLatest, addToast, fetchBackups]);
+  }, [backups, restoringLatest, addToast, fetchBackups, setRestoringLatest, setConfirmRestoreLatestOpen]);
 
   const availableRestoreTargets = Array.from(new Set(['Local', ...nodes.map(node => node.Name)]));
 
