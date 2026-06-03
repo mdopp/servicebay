@@ -57,7 +57,14 @@ export async function verifyAutheliaSession(cookieHeader: string | null): Promis
   const config = await getConfig();
   const port = config.templateSettings?.AUTHELIA_PORT ?? DEFAULT_AUTHELIA_PORT;
   const publicDomain = config.reverseProxy?.publicDomain ?? config.reverseProxy?.lanDomain ?? '';
-  const originalUrl = publicDomain ? `https://${publicDomain}/portal` : '';
+  // Probe with the `www.<domain>` subdomain, NOT the bare apex. The apex
+  // (`dopp.cloud/portal`) matches no Authelia `access_control` rule, so it
+  // falls through to `default_policy: deny` → 403 with no identity headers,
+  // and a signed-in visitor is always seen as anonymous (#1606, #417, #1001).
+  // `www.<domain>` is provisioned alongside the apex (portal/provisioner.ts)
+  // and is covered by the `*.<domain>` `one_factor` wildcard rule, so an
+  // authenticated cookie returns 200 + `Remote-User` / `Remote-Name`.
+  const originalUrl = publicDomain ? `https://www.${publicDomain}/` : '';
 
   const res = await fetchAutheliaVerify(port, cookieHeader, originalUrl);
   if (!res) {
@@ -66,7 +73,7 @@ export async function verifyAutheliaSession(cookieHeader: string | null): Promis
 
   if (!res.ok) {
     if (res.status === 403) {
-      logger.debug('portal:auth', `Authelia verify returned 403 (X-Original-URL=${originalUrl || '<unset>'}). Check session.cookies[].domain covers the public domain.`);
+      logger.debug('portal:auth', `Authelia verify returned 403 (X-Original-URL=${originalUrl || '<unset>'}). Expected the *.<domain> one_factor rule to match; check session.cookies[].domain covers the public domain and the wildcard access_control rule exists.`);
     }
     return { user: null, name: null };
   }
