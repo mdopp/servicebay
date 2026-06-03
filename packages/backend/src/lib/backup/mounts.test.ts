@@ -134,4 +134,43 @@ describe('parseMountCandidates', () => {
     });
     expect(parseMountCandidates(json)).toHaveLength(1);
   });
+
+  it('humanizes integer byte counts from lsblk -b (real-world JSON integers, not strings)', () => {
+    // lsblk -b returns actual JSON integers for size/fsavail, not decimal strings.
+    // Regression: looksLikeBytes missed integer sizes; trim() returned undefined for numbers.
+    const json = JSON.stringify({
+      blockdevices: [
+        {
+          name: 'nvme0n1',
+          path: '/dev/nvme0n1',
+          type: 'disk',
+          size: 2000398934016,       // integer — real lsblk -b output
+          fstype: null,
+          mountpoint: null,
+          children: [
+            {
+              name: 'md127',
+              path: '/dev/md127',
+              type: 'raid1',
+              size: 2000262594560,   // integer
+              fstype: 'xfs',
+              label: 'data',
+              mountpoint: '/var/mnt/data',
+              fsavail: 1892842528768, // integer — was always undefined before fix
+              'fsuse%': '5%',
+            },
+          ],
+        },
+      ],
+    });
+    const out = parseMountCandidates(json);
+    expect(out).toHaveLength(1);
+    const m = out[0];
+    expect(m.device).toBe('/dev/md127');
+    expect(m.mounted).toBe(true);
+    // Both size and fsAvail must be humanized from integer bytes
+    expect(m.size).toBe('1.8T');
+    expect(m.fsAvail).toBe('1.7T');
+    expect(m.fsUsedPct).toBe('5%');
+  });
 });
