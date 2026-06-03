@@ -6,6 +6,7 @@ import { resolveSetupAsset } from '@/lib/portal/assets';
 import type { SetupAssetKind } from '@/lib/portal/userGuide';
 import { withApiHandlerParams } from '@/lib/api/handler';
 import { requireSession } from '@/lib/api/requireSession';
+import { verifyAutheliaSession } from '@/lib/portal/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,17 +42,31 @@ export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, Params
     const { service, kind } = params;
 
     // LAN-mode installs serve portal assets anonymously (the portal
-    // page is open on the LAN). Public-mode installs require an
-    // authenticated SB session — without that the dashboard's
-    // "Pair device" / "Open in app" buttons would 404 even when an
-    // operator is logged in. Pre-#1172 this used to hard-404 any
-    // public-mode request, which surfaced as "Couldn't read the device
-    // id (HTTP 404)" in the Syncthing pairing modal of every operator
-    // running with a real publicDomain set.
+    // page is open on the LAN). Public-mode installs require *some*
+    // authenticated identity — but a dual gate, because two distinct
+    // surfaces fetch these assets:
+    //
+    //   1. The ServiceBay dashboard's "Pair device" / "Open in app"
+    //      buttons — an operator logged into the SB console
+    //      (requireSession / SB session cookie). #1172 added this.
+    //   2. The family portal at the apex (`dopp.cloud`), which is
+    //      anonymous / Authelia-SSO only and is NOT served behind an SB
+    //      session. A signed-in family member's request to the apex
+    //      already carries the `.<publicDomain>` Authelia cookie, so
+    //      verifyAutheliaSession() can recognize them (#1606, #1628).
+    //
+    // #1172 only checked (1), so every portal visitor — including
+    // SSO-logged-in family members — got 401 ("Couldn't read the device
+    // id (HTTP 401)") in the Syncthing pairing modal. Accept either.
+    // A genuinely anonymous request (no SB session, no SSO cookie)
+    // still falls through to 401.
     const config = await getConfig();
     if (getMode(config) === 'public') {
-      const auth = await requireSession(request);
-      if (auth instanceof NextResponse) return auth;
+      const visitor = await verifyAutheliaSession(request.headers.get('cookie'));
+      if (!visitor.user) {
+        const auth = await requireSession(request);
+        if (auth instanceof NextResponse) return auth;
+      }
     }
 
     if (!KIND_VALUES.includes(kind as SetupAssetKind)) {

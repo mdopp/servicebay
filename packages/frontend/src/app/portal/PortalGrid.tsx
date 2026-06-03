@@ -497,6 +497,19 @@ function CommandBlock({ command }: { command: string }) {
 }
 
 /**
+ * Maps a failed setup-asset fetch to a user-facing message. A 401/403
+ * means the visitor isn't signed in (public mode requires an SSO or SB
+ * session — #1628), which is distinct from the service genuinely not
+ * being up yet (the `notReady` text).
+ */
+function assetFetchError(status: number, notReady: string): string {
+  if (status === 401 || status === 403) {
+    return `You don't seem to be signed in (HTTP ${status}). Sign in and try again.`;
+  }
+  return notReady;
+}
+
+/**
  * Deep-link button for setup assets that resolve to a custom-scheme
  * URL (`abs://`, etc.). Fetches the URL from the asset endpoint on
  * click, then sets `window.location` so the browser hands off to the
@@ -521,7 +534,7 @@ function DeepLinkButton({
     try {
       const res = await fetch(`/api/portal/asset/${card.name}/${kind}?subdomain_var=${encodeURIComponent(card.subdomainVar)}`);
       if (!res.ok) {
-        setError(`Couldn't load the link (HTTP ${res.status}).`);
+        setError(assetFetchError(res.status, `Couldn't load the link (HTTP ${res.status}).`));
         return;
       }
       const data = await res.json() as { url?: string };
@@ -663,7 +676,10 @@ function SyncthingQrButton({
     try {
       const res = await fetch(`/api/portal/asset/${card.name}/syncthing_qr?subdomain_var=${encodeURIComponent(card.subdomainVar)}`);
       if (!res.ok) {
-        setError(`Couldn't read the device id (HTTP ${res.status}). The Syncthing container might not be running yet — try again in a minute.`);
+        setError(assetFetchError(
+          res.status,
+          `Couldn't read the device id (HTTP ${res.status}). The Syncthing container might not be running yet — try again in a minute.`,
+        ));
         return;
       }
       const data = await res.json() as { deviceId?: string };
