@@ -83,7 +83,7 @@ const looksLikeBytes = (nodes: RawLsblkNode[]): boolean => {
   return false;
 };
 
-const maybeHuman = (raw: string | undefined, bytes: boolean): string | undefined => {
+const maybeHuman = (raw: string | number | null | undefined, bytes: boolean): string | undefined => {
   const v = trim(raw);
   if (!v) return undefined;
   if (bytes && /^\d+$/.test(v)) return fmtBytes(parseInt(v, 10));
