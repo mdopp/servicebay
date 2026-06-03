@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.93.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.93.0...servicebay-v4.93.1) (2026-06-03)
+
+
+### Bug Fixes
+
+* **portal:** migrate Authelia soft-auth off deprecated /api/verify ([6b9a7a6](https://github.com/mdopp/servicebay/commit/6b9a7a6367dd208189aedc33174e5dd3a1dee752))
+* **portal:** migrate Authelia soft-auth off deprecated /api/verify ([b5bf2d7](https://github.com/mdopp/servicebay/commit/b5bf2d7ee424198669bf3ea405ef5e3c541d2526))
+* **settings:** move Access requests panel from Networking to Security ([7359c4d](https://github.com/mdopp/servicebay/commit/7359c4d9f4a512333605e9fc2030e8172e99c88d))
+* **settings:** move Access requests panel from Networking to Security ([f2cf96f](https://github.com/mdopp/servicebay/commit/f2cf96fc3a61f7e1ad90711e3a8bfdd5dcab8729)), closes [#1605](https://github.com/mdopp/servicebay/issues/1605)
+
 ## [4.93.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.92.0...servicebay-v4.93.0) (2026-06-03)
 
 
