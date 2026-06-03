@@ -55,6 +55,23 @@ claude
 The clone only has to be done once — `/workspace` persists, so later
 sessions just `cd /workspace/servicebay && claude`.
 
+## Persistent session (tmux)
+
+The container boots a detached `tmux` session named **`claude`** as the
+`dev` user, and every interactive SSH login (the terminal, the mobile
+app) automatically **attaches** to it. That means a closed phone or a
+network blip no longer kills `claude`: the session keeps running on the
+box, and the next connection lands right back in it.
+
+- Re-attach manually (or from a non-login shell): `tmux new -A -s claude`
+- Detach without killing it: `Ctrl-b d` (the session stays live).
+- After a container restart, the entrypoint re-creates the session;
+  `claude --continue` resumes the prior conversation from the persisted
+  `~/.claude` on `/workspace`.
+
+A non-interactive `podman exec` (scripts, health probes) is **not**
+attached, so automation isn't trapped in tmux.
+
 ## Non-goals (first iteration)
 
 - Running the full ServiceBay test suite *inside* this container
