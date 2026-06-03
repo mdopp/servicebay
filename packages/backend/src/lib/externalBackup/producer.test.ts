@@ -180,6 +180,36 @@ describe('stageServiceBackup', () => {
     expect(await fs.readFile(path.join(staging, 'other.yml'), 'utf8')).toBe('password: keepme\n');
   });
 
+  it('applies the HA config-entries add-on transform through staging (#1595)', async () => {
+    const src = await mkTmp();
+    const staging = await mkTmp();
+    await writeFile(
+      src,
+      '.storage/core.config_entries',
+      JSON.stringify({
+        data: {
+          entries: [
+            { domain: 'zwave_js', data: { use_addon: true, integration_created_addon: true, url: 'ws://core-zwave-js:3000' } },
+          ],
+        },
+      }),
+    );
+
+    const manifest: ServiceBackupManifest = {
+      service: 'demo',
+      include: ['.storage/core.config_entries'],
+      exclude: [],
+      transform: [{ file: '.storage/core.config_entries', kind: 'ha-config-entries-addon' }],
+    };
+    await stageServiceBackup(src, manifest, staging);
+
+    const staged = JSON.parse(
+      await fs.readFile(path.join(staging, '.storage/core.config_entries'), 'utf8'),
+    ) as { data: { entries: { data: Record<string, unknown> }[] } };
+    expect(staged.data.entries[0].data.use_addon).toBe(false);
+    expect(staged.data.entries[0].data.url).toBe('ws://localhost:3001');
+  });
+
   it('stages a collector snapshot file under its canonical tarball name via renames (#1528)', async () => {
     const src = await mkTmp();
     const staging = await mkTmp();

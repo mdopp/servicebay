@@ -29,6 +29,7 @@ import {
   getServiceManifest,
   getBackupGate,
   applyStripRules,
+  applyTransformRules,
   SERVICE_BACKUP_MANIFESTS,
   type ServiceBackupManifest,
 } from './serviceManifest';
@@ -296,12 +297,16 @@ export async function stageServiceBackup(
       const tarRel = manifest.renames?.[rel] ?? rel;
       const dest = path.join(stagingDir, tarRel);
       await backend.mkdirp(path.dirname(dest));
-      const hasStrip = manifest.strip?.some(r => r.file === rel);
-      if (hasStrip) {
-        // Only read-as-text the files a strip rule targets; everything else is
-        // copied byte-for-byte so binary config (e.g. SQLite-ish blobs) stays intact.
+      const needsRewrite =
+        manifest.strip?.some(r => r.file === rel) ||
+        manifest.transform?.some(r => r.file === rel);
+      if (needsRewrite) {
+        // Only read-as-text the files a strip/transform rule targets; everything
+        // else is copied byte-for-byte so binary config (e.g. SQLite-ish blobs)
+        // stays intact. Strip (key removal) then transform (value rewrite).
         const content = await backend.readText(path.join(serviceDataDir, rel));
-        await backend.writeText(dest, applyStripRules(manifest, rel, content));
+        const stripped = applyStripRules(manifest, rel, content);
+        await backend.writeText(dest, applyTransformRules(manifest, rel, stripped));
       } else {
         await backend.copyFile(path.join(serviceDataDir, rel), dest);
       }

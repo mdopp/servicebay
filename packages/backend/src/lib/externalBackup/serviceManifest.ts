@@ -17,6 +17,37 @@ export interface StripRule {
 }
 
 /**
+ * A whole-file content transform applied as a config file enters the tarball
+ * (#1595). Distinct from a `StripRule` (which only deletes YAML keys): a
+ * transform rewrites values. The one transform we ship rewrites a HA(-OS)
+ * backup's `.storage/core.config_entries` from the Supervisor ADD-ON model to
+ * ServiceBay's in-pod-container model — a HA-OS backup carries `use_addon:true`
+ * + add-on hostnames (`ws://core-zwave-js:3000`) that break setup on the
+ * dockerized HA, so the import/backup path translates them once into the tar.
+ */
+export interface TransformRule {
+  /** Config file (relative to the service data dir) the rule applies to. */
+  file: string;
+  /** Which transform to run — a closed set so the producer stays pure data. */
+  kind: 'ha-config-entries-addon';
+}
+
+/**
+ * Add-on → container translation table for HA config entries (#1595). A HA-OS
+ * (Supervisor) backup wires the zwave_js / matter integrations to Supervisor
+ * add-on containers (`use_addon:true`, add-on hostnames); in ServiceBay the
+ * same integrations talk to the in-pod zwave-js-ui / matter-server over
+ * localhost. We rewrite `url` to the in-pod address and clear the add-on flags
+ * so HA sets the integration up against the running container instead of
+ * looking for a Supervisor add-on that doesn't exist.
+ */
+const HA_ADDON_ENTRY_TRANSLATIONS: Record<string, { url: string }> = {
+  // zwave-js-ui serves its WS on :3001 — :3000 is taken by NPM under hostNetwork.
+  zwave_js: { url: 'ws://localhost:3001' },
+  matter: { url: 'ws://localhost:5580/ws' },
+};
+
+/**
  * Identifies a service whose backup needs an in-container snapshot step before
  * the file-copy producer reads its data dir — e.g. a live WAL-mode SQLite that
  * a plain `cp` would tear. The producer runs the snapshot inside the service's
@@ -76,8 +107,11 @@ export interface ServiceBackupManifest {
    * config↔data split explicit and is the seam for any future per-class wipe.
    */
   data?: string[];
-  /** Per-file transforms applied before a file enters the tarball. */
+  /** Per-file key-removal transforms applied before a file enters the tarball. */
   strip?: StripRule[];
+  /** Per-file value-rewrite transforms applied before a file enters the
+   *  tarball (e.g. HA add-on → container config-entry translation, #1595). */
+  transform?: TransformRule[];
   /** Optional in-container snapshot step the producer runs before staging
    *  (e.g. a consistent SQLite `.backup`). */
   collector?: BackupCollector;
@@ -132,6 +166,10 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
       'home-assistant_v2.db', 'home-assistant_v2.db-wal', 'home-assistant_v2.db-shm',
       'zwave_js_network.db',
     ],
+    // A HA-OS backup's config entries assume the Supervisor add-on model and
+    // fail setup on the dockerized HA. Translate the zwave_js / matter entries
+    // to talk to the in-pod containers over localhost (#1595).
+    transform: [{ file: '.storage/core.config_entries', kind: 'ha-config-entries-addon' }],
   },
   {
     // The zwave-js-ui store (#1594) — a SIBLING of HA's config dir, at
@@ -310,4 +348,80 @@ export function applyStripRules(
   const rule = manifest.strip?.find(r => r.file === file);
   if (!rule) return content;
   return stripYamlKeys(content, rule.dropYamlKeys);
+}
+
+/**
+ * A single HA config entry — only the fields this translation touches are
+ * typed; everything else passes through untouched.
+ */
+interface HaConfigEntry {
+  domain?: string;
+  data?: { use_addon?: unknown; integration_created_addon?: unknown; url?: unknown };
+}
+
+/**
+ * Is this config entry still wired to a Supervisor add-on? True when it flags
+ * `use_addon`/`integration_created_addon` or still points at an add-on
+ * hostname (`ws://core-…`). An entry already on localhost (a re-imported,
+ * previously-translated backup) is false → the translation is idempotent.
+ */
+function isHaEntryOnAddon(data: NonNullable<HaConfigEntry['data']>): boolean {
+  if (data.use_addon === true || data.integration_created_addon === true) return true;
+  return typeof data.url === 'string' && data.url.startsWith('ws://core-');
+}
+
+/**
+ * Translate a HA(-OS) backup's `.storage/core.config_entries` from the
+ * Supervisor add-on model to ServiceBay's in-pod-container model (#1595).
+ *
+ * For each entry whose `domain` is in the translation table (zwave_js, matter)
+ * AND which is wired to an add-on (`use_addon:true` and/or an add-on hostname),
+ * set `use_addon:false`, `integration_created_addon:false`, and rewrite `url`
+ * to the in-pod localhost address. Every other entry — and any zwave_js/matter
+ * entry already pointing at localhost (idempotent re-run) — is left byte-stable.
+ *
+ * Best-effort: returns the content unchanged if it doesn't parse as JSON or
+ * lacks the expected `data.entries[]` array, so a future HA storage-schema
+ * change can't make the backup fail (the worst case is the old, manual fix-up).
+ */
+export function translateHaAddonConfigEntries(content: string): string {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(content);
+  } catch {
+    return content;
+  }
+  const entries = (doc as { data?: { entries?: unknown } })?.data?.entries;
+  if (!Array.isArray(entries)) return content;
+
+  let changed = false;
+  for (const entry of entries as HaConfigEntry[]) {
+    if (!entry || typeof entry !== 'object') continue;
+    const translation = entry.domain ? HA_ADDON_ENTRY_TRANSLATIONS[entry.domain] : undefined;
+    if (!translation) continue;
+    const data = entry.data;
+    if (!data || typeof data !== 'object') continue;
+    if (!isHaEntryOnAddon(data)) continue;
+    data.use_addon = false;
+    data.integration_created_addon = false;
+    data.url = translation.url;
+    changed = true;
+  }
+  if (!changed) return content;
+  return JSON.stringify(doc, null, 2);
+}
+
+/** Apply a manifest's transform rules to one file's content. Returns the
+ *  content unchanged when no rule targets `file`. */
+export function applyTransformRules(
+  manifest: ServiceBackupManifest,
+  file: string,
+  content: string,
+): string {
+  const rule = manifest.transform?.find(r => r.file === file);
+  if (!rule) return content;
+  if (rule.kind === 'ha-config-entries-addon') {
+    return translateHaAddonConfigEntries(content);
+  }
+  return content;
 }
