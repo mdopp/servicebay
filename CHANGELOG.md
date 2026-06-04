@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.95.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.94.0...servicebay-v4.95.0) (2026-06-04)
+
+
+### Features
+
+* **health:** enrich restart/update digest (epic [#1650](https://github.com/mdopp/servicebay/issues/1650) item C) ([980e296](https://github.com/mdopp/servicebay/commit/980e296f4af13e9ff54c8a69ae28f833240b436c))
+* **health:** enrich restart/update digest with version change, recovery duration, changelog ([39b9dce](https://github.com/mdopp/servicebay/commit/39b9dcec3fa7d76499b588d09b55615ffcbb9820)), closes [#1653](https://github.com/mdopp/servicebay/issues/1653)
+* **health:** root-cause-only alerting + service-centered causal-chain email ([71841e5](https://github.com/mdopp/servicebay/commit/71841e54384312944f6528d2a4a00aff4b7cea73))
+* **health:** root-cause-only alerting + service-centered causal-chain email ([6e4036d](https://github.com/mdopp/servicebay/commit/6e4036dde5d49a61714e36824a4adb0c7080a7f8)), closes [#1652](https://github.com/mdopp/servicebay/issues/1652)
+
 ## [4.94.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.93.1...servicebay-v4.94.0) (2026-06-04)
 
 
