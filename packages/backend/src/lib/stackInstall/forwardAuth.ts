@@ -19,6 +19,43 @@
 export const AUTHELIA_FORWARD_AUTH_SENTINEL = '__authelia_forward_auth__';
 
 /**
+ * #1677 — Authelia's nginx forward-auth port. The forward-auth snippet
+ * references `{{AUTHELIA_PORT}}`; when the `auth` template isn't in the
+ * same install batch as a gated service the Mustache `view` carries no
+ * AUTHELIA_PORT and the placeholder renders empty, producing
+ * `proxy_pass http://127.0.0.1:/api/authz/...` — an invalid nginx
+ * upstream that crashes the WHOLE reverse proxy on the next reload.
+ * Always fall back to this concrete default rather than emit an empty
+ * port. 9091 is Authelia's fixed container port across every template.
+ */
+export const DEFAULT_AUTHELIA_PORT = '9091';
+
+/**
+ * #1677 defense-in-depth — repair a forward-auth `proxy_pass` whose
+ * Authelia port came out empty (`127.0.0.1:/api/authz/...`). NPM stores
+ * the bad `advanced_config` in its DB, so it regenerates the broken
+ * `.conf` on every host rebuild; this sanitiser runs on the on-disk conf
+ * just before nginx reloads it. Idempotent: a conf with a concrete port
+ * is returned unchanged. Returns `{ content, repaired }`.
+ */
+export function sanitizeForwardAuthPort(
+  content: string,
+  port: string = DEFAULT_AUTHELIA_PORT,
+): { content: string; repaired: boolean } {
+  // Match the auth-request upstream specifically so we never touch a
+  // legitimately port-less proxy_pass elsewhere in the conf.
+  const empty = /proxy_pass\s+http:\/\/127\.0\.0\.1:\/api\/authz\//g;
+  if (!empty.test(content)) return { content, repaired: false };
+  return {
+    content: content.replace(
+      /proxy_pass(\s+)http:\/\/127\.0\.0\.1:\/api\/authz\//g,
+      `proxy_pass$1http://127.0.0.1:${port}/api/authz/`,
+    ),
+    repaired: true,
+  };
+}
+
+/**
  * #999 — proxy_set_header directives we want on the UPSTREAM request
  * (Remote-User et al. coming back from Authelia's auth-request). nginx
  * inheritance drops server-level proxy_set_header when the location /
@@ -94,6 +131,19 @@ export const AUTHELIA_FORWARD_AUTH_SNIPPET = [
   '    proxy_set_header X-Original-Method $request_method;',
   '    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
   '    proxy_set_header X-Real-IP $remote_addr;',
+  '}',
+  '',
+  '# #1680 — Let LE HTTP-01 through on :80. The server-level',
+  '# `auth_request /authelia` above is inherited by every location,',
+  '# including the ACME challenge — but Authelia\'s auth-request endpoint',
+  '# is https-only and 400s the plain-http challenge (→ 500), so certbot',
+  '# never gets its token and issuance fails. Disable forward-auth for the',
+  '# challenge path and serve it from NPM\'s webroot so the challenge is',
+  '# never swallowed by forward-auth.',
+  'location /.well-known/acme-challenge/ {',
+  '    auth_request off;',
+  '    allow all;',
+  '    root /data/letsencrypt-acme-challenge;',
   '}',
 ].join('\n');
 

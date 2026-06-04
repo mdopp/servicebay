@@ -10,6 +10,7 @@ let tmpDir: string;
 
 const sampleReport = (over: Partial<SsoVerifyReport> = {}): SsoVerifyReport => ({
   ok: true,
+  couldNotRun: false,
   cleanedUp: true,
   ephemeralUser: 'sb-ssoverify-123-abc',
   steps: [{ id: 'create_user', status: 'pass', detail: 'created' }],

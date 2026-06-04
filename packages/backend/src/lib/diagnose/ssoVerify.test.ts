@@ -17,14 +17,19 @@ import {
   verifySso,
   classifyUserDomain,
   classifyAdminReject,
+  classifyOidcAuthorization,
   extractAutheliaCookie,
+  extractOauthError,
   makeEphemeralUsername,
   USER_APP_SIGNATURES,
   SUBDOMAIN_TEMPLATE,
+  OIDC_CLIENT_SUBDOMAINS,
+  FORWARD_AUTH_DERIVED_SUBDOMAINS,
   ADMIN_ONLY_HOSTS,
   probeableUserSubdomains,
   type SsoVerifyDeps,
   type DomainProbe,
+  type OidcAuthProbe,
 } from './ssoVerify';
 
 const tmpl = (n: string) => ({ [n]: { schemaVersion: 1, installedAt: '2026-05-01T00:00:00Z' } });
@@ -41,9 +46,11 @@ const okConfig = {
   installedTemplates: fullTemplates,
 };
 
-/** Deps where every step succeeds and every domain behaves correctly. */
-function happyDeps(): { deps: SsoVerifyDeps; calls: { deleted: string[] } } {
+/** Deps where every step succeeds and every domain behaves correctly. By
+ *  default no forward-auth-derived host (ollama) is gated; opt in per-test. */
+function happyDeps(opts: { forwardAuthHosts?: string[] } = {}): { deps: SsoVerifyDeps; calls: { deleted: string[] } } {
   const calls = { deleted: [] as string[] };
+  const gated = new Set(opts.forwardAuthHosts ?? []);
   const deps: SsoVerifyDeps = {
     listGroups: vi.fn(async () => ({ ok: true as const, groups: [{ id: 2, displayName: 'family' }, { id: 1, displayName: 'admins' }] })),
     createUser: vi.fn(async () => ({ ok: true as const, userId: 'u', displayName: 'd' })),
@@ -60,6 +67,15 @@ function happyDeps(): { deps: SsoVerifyDeps; calls: { deleted: string[] } } {
       }
       return { code: 302, body: '' };
     }),
+    // ollama.<domain> is gated iff opted in; FQDN-keyed.
+    hostHasForwardAuth: vi.fn(async (fqdn: string) => {
+      const host = fqdn.split('.')[0];
+      return gated.has(host);
+    }),
+    // OIDC-backed apps issue a real code by default.
+    probeOidcAuthorization: vi.fn(async (_pd: string, clientId: string): Promise<OidcAuthProbe> => ({
+      ok: true, code: 302, detail: `code issued for ${clientId}`,
+    })),
   };
   return { deps, calls };
 }
@@ -76,8 +92,10 @@ describe('verifySso orchestrator', () => {
 
     expect(report.ok).toBe(true);
     expect(report.cleanedUp).toBe(true);
-    // every user app + every admin host probed
-    expect(report.userDomains).toHaveLength(Object.keys(USER_APP_SIGNATURES).length);
+    // every templated user app + every admin host probed (ollama is gated on
+    // actual forward-auth, off by default here).
+    const templatedHosts = Object.keys(USER_APP_SIGNATURES).filter(h => SUBDOMAIN_TEMPLATE[h]);
+    expect(report.userDomains).toHaveLength(templatedHosts.length);
     expect(report.adminDomains).toHaveLength(ADMIN_ONLY_HOSTS.length);
     // ephemeral user deleted exactly once, matching the reported username
     expect(calls.deleted).toEqual([report.ephemeralUser]);
@@ -132,19 +150,22 @@ describe('verifySso orchestrator', () => {
     expect(calls.deleted).toHaveLength(1);
   });
 
-  it('fails a user domain that returns 200 with the wrong content signature', async () => {
+  it('fails a forward-auth user domain that returns 200 with the wrong content signature', async () => {
     const { deps } = happyDeps();
     deps.probeDomain = vi.fn(async (_pd, host, _c, follow) => {
       if (!follow) return { code: 302, body: '' };
-      // vault expects 'Vaultwarden Web' but we return junk
-      if (host === 'vault') return { code: 200, body: '<html>error page</html>' };
+      // books expects 'Audiobookshelf' — but books is OIDC; use a forward-auth
+      // app instead. home has no signature, so degrade music's? music is
+      // forward-auth with empty sig. Pick caldav (forward-auth) and break it
+      // by returning a 502 (no signature to mismatch, so use the code path).
+      if (host === 'caldav') return { code: 502, body: 'bad gateway' };
       return { code: 200, body: USER_APP_SIGNATURES[host] || 'ok' };
     });
 
     const report = await verifySso({ deps });
 
     expect(report.ok).toBe(false);
-    expect(report.userDomains.find(d => d.domain === 'vault.dopp.cloud')?.status).toBe('fail');
+    expect(report.userDomains.find(d => d.domain === 'caldav.dopp.cloud')?.status).toBe('fail');
   });
 
   it('skips early (and reports cleanedUp) when publicDomain is not configured', async () => {
@@ -236,9 +257,18 @@ describe('probeableUserSubdomains (#1591)', () => {
     expect(probeableUserSubdomains({})).toEqual([]);
   });
 
-  it('every USER_APP_SIGNATURES host has a known backing template', () => {
+  it('every USER_APP_SIGNATURES host is either template-gated or forward-auth-derived', () => {
     for (const host of Object.keys(USER_APP_SIGNATURES)) {
-      expect(SUBDOMAIN_TEMPLATE[host], `${host} must map to a template`).toBeDefined();
+      const templated = SUBDOMAIN_TEMPLATE[host] != null;
+      const derived = FORWARD_AUTH_DERIVED_SUBDOMAINS.includes(host);
+      expect(templated || derived, `${host} must map to a template or be forward-auth-derived`).toBe(true);
+    }
+  });
+
+  it('every OIDC_CLIENT_SUBDOMAINS host is also a templated user subdomain', () => {
+    for (const host of Object.keys(OIDC_CLIENT_SUBDOMAINS)) {
+      expect(SUBDOMAIN_TEMPLATE[host], `${host} must have a backing template`).toBeDefined();
+      expect(USER_APP_SIGNATURES).toHaveProperty(host);
     }
   });
 
@@ -277,6 +307,146 @@ describe('classifyAdminReject', () => {
   });
   it('fails on transport error', () => {
     expect(classifyAdminReject('ldap.dopp.cloud', { code: 0, body: '', error: 'x' }).status).toBe('fail');
+  });
+});
+
+describe('classifyOidcAuthorization (#1685)', () => {
+  it('passes when a real code is issued', () => {
+    const r = classifyOidcAuthorization('photos.dopp.cloud', 'immich', { ok: true, code: 302, detail: 'code issued' });
+    expect(r.status).toBe('pass');
+    expect(r.detail).toMatch(/healthy/i);
+  });
+  it('fails on invalid_client (the #1559 secret-mismatch signature)', () => {
+    const r = classifyOidcAuthorization('photos.dopp.cloud', 'immich', { ok: false, code: 302, oauthError: 'invalid_client', detail: 'x' });
+    expect(r.status).toBe('fail');
+    expect(r.detail).toMatch(/invalid_client/);
+    expect(r.detail).toMatch(/mismatch|broken/i);
+  });
+  it('fails on server_error', () => {
+    expect(classifyOidcAuthorization('books.dopp.cloud', 'audiobookshelf', { ok: false, code: 500, oauthError: 'server_error', detail: 'x' }).status).toBe('fail');
+  });
+  it('fails on a redirect with no code', () => {
+    expect(classifyOidcAuthorization('vault.dopp.cloud', 'vaultwarden', { ok: false, code: 302, detail: 'no code' }).status).toBe('fail');
+  });
+  it('fails on transport error', () => {
+    expect(classifyOidcAuthorization('vault.dopp.cloud', 'vaultwarden', { ok: false, code: 0, detail: 'ECONNREFUSED' }).status).toBe('fail');
+  });
+});
+
+describe('extractOauthError', () => {
+  it('pulls error= out of a redirect Location', () => {
+    expect(extractOauthError('https://auth.dopp.cloud/?error=invalid_client&state=x')).toBe('invalid_client');
+  });
+  it('pulls error out of a JSON body', () => {
+    expect(extractOauthError('{"error":"server_error","error_description":"boom"}')).toBe('server_error');
+  });
+  it('returns undefined for a clean code redirect', () => {
+    expect(extractOauthError('https://app/cb?code=abc&state=x')).toBeUndefined();
+  });
+});
+
+describe('verifySso — #1673 set_password + couldNotRun', () => {
+  it('drives set_password and classifies a setup failure as couldNotRun (warn), not a login fail', async () => {
+    const { deps, calls } = happyDeps();
+    deps.setPassword = vi.fn(async () => ({ ok: false, message: 'Either the token or the admin password is required' }));
+
+    const report = await verifySso({ deps });
+
+    // The whole point of #1673: a broken setup step must NOT read as SSO-broken.
+    expect(report.ok).toBe(false);
+    expect(report.couldNotRun).toBe(true);
+    const pwStep = report.steps.find(s => s.id === 'set_password');
+    expect(pwStep?.status).toBe('fail');
+    // never reached the actual login test
+    expect(deps.autheliaFirstFactor).not.toHaveBeenCalled();
+    expect(report.userDomains).toHaveLength(0);
+    // still cleaned up the created user
+    expect(calls.deleted).toEqual([report.ephemeralUser]);
+  });
+
+  it('a real login failure (firstfactor) is a fail, NOT couldNotRun', async () => {
+    const { deps } = happyDeps();
+    deps.autheliaFirstFactor = vi.fn(async () => ({ ok: false, cookie: null, detail: 'firstfactor HTTP 401' }));
+
+    const report = await verifySso({ deps });
+
+    expect(report.ok).toBe(false);
+    expect(report.couldNotRun).toBe(false); // login genuinely failed
+    expect(report.steps.find(s => s.id === 'authelia_firstfactor')?.status).toBe('fail');
+  });
+
+  it('passes the happy path with couldNotRun=false', async () => {
+    const { deps } = happyDeps();
+    const report = await verifySso({ deps });
+    expect(report.ok).toBe(true);
+    expect(report.couldNotRun).toBe(false);
+    expect(deps.setPassword).toHaveBeenCalledWith(report.ephemeralUser, expect.any(String));
+  });
+});
+
+describe('verifySso — #1685 ollama forward-auth gating', () => {
+  it('includes ollama when its proxy host carries forward-auth', async () => {
+    const { deps } = happyDeps({ forwardAuthHosts: ['ollama'] });
+    const report = await verifySso({ deps });
+
+    expect(report.ok).toBe(true);
+    expect(report.userDomains.some(d => d.domain === 'ollama.dopp.cloud')).toBe(true);
+    expect(deps.hostHasForwardAuth).toHaveBeenCalledWith('ollama.dopp.cloud');
+  });
+
+  it('catches a 403-ing ollama RED (the live breakage)', async () => {
+    const { deps } = happyDeps({ forwardAuthHosts: ['ollama'] });
+    deps.probeDomain = vi.fn(async (_pd, host, _c, follow) => {
+      if (!follow) return { code: 302, body: '' };
+      if (host === 'ollama') return { code: 403, body: 'Forbidden' };
+      return { code: 200, body: USER_APP_SIGNATURES[host] || 'ok' };
+    });
+
+    const report = await verifySso({ deps });
+
+    expect(report.ok).toBe(false);
+    expect(report.couldNotRun).toBe(false);
+    expect(report.userDomains.find(d => d.domain === 'ollama.dopp.cloud')?.status).toBe('fail');
+  });
+
+  it('does NOT probe ollama when its host carries no forward-auth', async () => {
+    const { deps } = happyDeps(); // ollama not gated
+    const report = await verifySso({ deps });
+    expect(report.userDomains.some(d => d.domain === 'ollama.dopp.cloud')).toBe(false);
+  });
+});
+
+describe('verifySso — #1685 OIDC apps exercise the real handshake', () => {
+  it('drives the OIDC authorization flow for vault/photos/books (not just reachability)', async () => {
+    const { deps } = happyDeps();
+    const report = await verifySso({ deps });
+
+    expect(report.ok).toBe(true);
+    // OIDC apps go through probeOidcAuthorization, NOT probeDomain
+    expect(deps.probeOidcAuthorization).toHaveBeenCalledWith('dopp.cloud', 'immich', expect.any(String));
+    expect(deps.probeOidcAuthorization).toHaveBeenCalledWith('dopp.cloud', 'vaultwarden', expect.any(String));
+    expect(deps.probeOidcAuthorization).toHaveBeenCalledWith('dopp.cloud', 'audiobookshelf', expect.any(String));
+  });
+
+  it('catches an invalid_client OIDC app RED even though its page loads 200 (#1559)', async () => {
+    const { deps } = happyDeps();
+    // Reachability would PASS (page loads), but the OIDC handshake is broken.
+    deps.probeDomain = vi.fn(async (_pd, host, _c, follow) => {
+      if (!follow) return { code: 302, body: '' };
+      return { code: 200, body: USER_APP_SIGNATURES[host] || 'ok' }; // photos loads fine
+    });
+    deps.probeOidcAuthorization = vi.fn(async (_pd, clientId) => {
+      if (clientId === 'immich') return { ok: false, code: 302, oauthError: 'invalid_client', detail: 'secret mismatch' };
+      return { ok: true, code: 302, detail: 'ok' };
+    });
+
+    const report = await verifySso({ deps });
+
+    expect(report.ok).toBe(false);
+    expect(report.couldNotRun).toBe(false);
+    const photos = report.userDomains.find(d => d.domain === 'photos.dopp.cloud');
+    expect(photos?.status).toBe('fail');
+    expect(photos?.detail).toMatch(/invalid_client/);
   });
 });
 

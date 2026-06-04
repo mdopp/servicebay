@@ -186,6 +186,36 @@ describe('buildProxyHosts', () => {
     expect(hosts.find(h => h.domain === 'foo.example.com')?.service).toBe('foo');
   });
 
+  it('never renders an empty Authelia port in a forward-auth proxyConfig (#1677)', () => {
+    // A gated service installed WITHOUT the `auth` template in the same
+    // batch (so the variables carry no AUTHELIA_PORT) must still get a
+    // concrete port — an empty `127.0.0.1:` is an nginx [emerg] that
+    // crashes the whole proxy on reload. The default (9091) is seeded.
+    const { hosts } = buildProxyHosts([
+      v('PUBLIC_DOMAIN', 'example.com'),
+      v('OLLAMA_SUBDOMAIN', 'ollama', subdomain('public', '11434', {
+        proxyConfig: { advanced_config: '__authelia_forward_auth__' },
+      })),
+    ]);
+    const cfg = hosts[0].proxyConfig?.advanced_config ?? '';
+    expect(cfg).toContain('proxy_pass http://127.0.0.1:9091/api/authz/auth-request;');
+    expect(cfg).not.toContain('127.0.0.1:/api/authz');
+    // The placeholder is fully substituted (no literal mustache left).
+    expect(cfg).not.toContain('{{AUTHELIA_PORT}}');
+  });
+
+  it('uses the install batch AUTHELIA_PORT when present (#1677)', () => {
+    const { hosts } = buildProxyHosts([
+      v('PUBLIC_DOMAIN', 'example.com'),
+      v('AUTHELIA_PORT', '9095'),
+      v('OLLAMA_SUBDOMAIN', 'ollama', subdomain('public', '11434', {
+        proxyConfig: { advanced_config: '__authelia_forward_auth__' },
+      })),
+    ]);
+    const cfg = hosts[0].proxyConfig?.advanced_config ?? '';
+    expect(cfg).toContain('proxy_pass http://127.0.0.1:9095/api/authz/auth-request;');
+  });
+
   it('routes loopback-only services through 127.0.0.1 (#880)', () => {
     const { hosts } = buildProxyHosts([
       v('PUBLIC_DOMAIN', 'example.com'),

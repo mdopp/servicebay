@@ -8,6 +8,7 @@ const wrap = (report: SsoVerifyReport): StoredSsoVerifyReport => ({ at, report }
 
 const base = (over: Partial<SsoVerifyReport> = {}): SsoVerifyReport => ({
   ok: true,
+  couldNotRun: false,
   cleanedUp: true,
   ephemeralUser: 'sb-ssoverify-1-aa',
   steps: [{ id: 'create_user', status: 'pass', detail: 'created' }],
@@ -69,6 +70,24 @@ describe('reportToProbe', () => {
     expect(p.detail).toContain('authelia_firstfactor');
     expect(p.detail).toContain('firstfactor HTTP 401');
     expect(p.items).toBeUndefined();
+  });
+
+  it('maps a couldNotRun report to warn (not red fail) and names the setup step (#1673)', () => {
+    const report = base({
+      ok: false,
+      couldNotRun: true,
+      steps: [
+        { id: 'create_user', status: 'pass', detail: 'created' },
+        { id: 'set_password', status: 'fail', detail: "couldn't set the test user's password (test setup, not a login failure): token required" },
+      ],
+      userDomains: [],
+      adminDomains: [],
+    });
+    const p = reportToProbe(wrap(report));
+    expect(p.status).toBe('warn');
+    expect(p.detail).toMatch(/couldn't complete its own setup/i);
+    expect(p.detail).toContain('set_password');
+    expect(p.detail).not.toMatch(/SSO verification found problems/);
   });
 
   it('treats a config-skip report as info, not fail', () => {

@@ -74,6 +74,26 @@ function stepsSummary(steps: SsoStepResult[]): string {
   return ` Failed step(s): ${failed.map(s => `${s.id} (${s.detail})`).join('; ')}.`;
 }
 
+/** The warn result for a "couldn't run the test" report (#1673) — the test
+ *  harness (e.g. provisioning the ephemeral user) failed, so login was never
+ *  exercised. A warn, not a red fail, so it doesn't scare an operator toward
+ *  a reinstall on a healthy box. */
+function couldNotRunResult(
+  report: SsoVerifyReport,
+  when: string,
+  cleanupNote: string,
+  items: ProbeItem[],
+): SsoVerifyProbeResult {
+  return {
+    status: 'warn',
+    detail:
+      `SSO verification couldn't complete its own setup, so login was not actually tested.${stepsSummary(report.steps)} ` +
+      `This is a problem with the test harness (e.g. provisioning the temporary user), not necessarily with SSO itself. (${when})${cleanupNote}`,
+    hint: 'Real SSO may well be fine. Check that LLDAP admin credentials are stored (Settings → Integrations) and that the auth-lldap container is up, then re-run. Only the failed setup step(s) above need attention — the per-domain login checks never ran.',
+    items: items.length > 0 ? items : undefined,
+  };
+}
+
 /** Turn a stored report into the probe shape. Pure — unit-tested. */
 export function reportToProbe(stored: StoredSsoVerifyReport | null): SsoVerifyProbeResult {
   if (!stored) {
@@ -111,6 +131,14 @@ export function reportToProbe(stored: StoredSsoVerifyReport | null): SsoVerifyPr
         `${adminPass}/${report.adminDomains.length} admin domains correctly blocked. (${when})${cleanupNote}`,
       items,
     };
+  }
+
+  // #1673: a setup-step failure ("couldn't run the test") must NOT read as a
+  // red "SSO is broken" — that false-red nearly triggered an unnecessary
+  // reinstall on a healthy box. Surface it as a warn that names the setup
+  // step, so the operator knows the *test* couldn't run, not that login broke.
+  if (report.couldNotRun) {
+    return couldNotRunResult(report, when, cleanupNote, items);
   }
 
   return {

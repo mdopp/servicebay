@@ -349,6 +349,76 @@ def _ha_config_dir() -> str:
     return os.path.join(base, "home-assistant", "homeassistant")
 
 
+# ── auth_oidc configuration.yaml self-heal (#1687) ───────────────────────────
+#
+# A HA backup-restore replaces ServiceBay's base configuration.yaml with the
+# snapshot's own, which carries the user's content but NOT ServiceBay's
+# `auth_oidc:` SSO block — so the "Sign in with Authelia" button disappears
+# and SSO breaks. The trusted_proxies (`http:`) self-heal lives in TS
+# (serviceLifecycle's runHomeAssistantHook), but auth_oidc needs the rendered
+# HA_OIDC_SECRET / group / domain values, which only exist here in the
+# post-deploy env. We re-append the block when the file has no `auth_oidc:`
+# key — coexisting with the restored user config rather than overwriting it.
+
+
+def _build_auth_oidc_block() -> str | None:
+    """Render the auth_oidc YAML block from post-deploy env. Returns None
+    when the OIDC secret is unset (manual / opted-out setup) so we never
+    write a half-filled block."""
+    secret = env("HA_OIDC_SECRET")
+    domain = env("PUBLIC_DOMAIN")
+    if not secret or not domain:
+        return None
+    admin_group = env("HA_OIDC_ADMIN_GROUP", "admins")
+    user_group = env("HA_OIDC_USER_GROUP", "family")
+    return "\n".join([
+        "",
+        "# Re-added by ServiceBay: OIDC SSO via the auth_oidc custom component.",
+        "# ServiceBay re-appends this block on every deploy when the",
+        "# `auth_oidc:` key is missing (e.g. after a HA backup-restore).",
+        "auth_oidc:",
+        "  client_id: homeassistant",
+        f"  client_secret: {secret}",
+        f"  discovery_url: https://auth.{domain}/.well-known/openid-configuration",
+        "  features:",
+        "    automatic_user_linking: true",
+        "    automatic_person_creation: true",
+        "  roles:",
+        f'    admin: "{admin_group}"',
+        f'    user:  "{user_group}"',
+    ])
+
+
+def ensure_auth_oidc_config_block() -> bool:
+    """Append ServiceBay's auth_oidc block to configuration.yaml when it's
+    absent (and the file already exists — first-install seeding is owned by
+    the mustache deploy). Idempotent: a subsequent deploy finds the
+    `auth_oidc:` key and leaves the file alone. Returns True iff the block
+    was just appended (caller restarts HA so the route registers)."""
+    cfg = os.path.join(_ha_config_dir(), "configuration.yaml")
+    try:
+        with open(cfg, encoding="utf-8") as fh:
+            content = fh.read()
+    except OSError:
+        # No file yet → first-install path; the mustache deploy seeds it.
+        return False
+    if re.search(r"(?m)^auth_oidc:", content):
+        log("   configuration.yaml already has auth_oidc: — leaving it alone.")
+        return False
+    block = _build_auth_oidc_block()
+    if block is None:
+        log("   HA_OIDC_SECRET / PUBLIC_DOMAIN unset — skipping auth_oidc re-seed.")
+        return False
+    try:
+        with open(cfg, "a", encoding="utf-8") as fh:
+            fh.write(block + "\n")
+    except OSError as exc:
+        log(f"   ⚠️ Could not re-add auth_oidc block to {cfg}: {exc}")
+        return False
+    log("   Re-added auth_oidc block to configuration.yaml (likely after a backup-restore).")
+    return True
+
+
 # ── HA onboarding + long-lived access token (OSCAR / #934) ───────────────────
 #
 # HA's `/api/onboarding` flow is browser-driven in the UI but the underlying
@@ -641,6 +711,93 @@ def report_kept_data_state() -> None:
         log(f"No existing Home Assistant data at {config_dir} — treating as a fresh first install.")
 
 
+# ── orphaned config-entry helper detection (#1686) ───────────────────────────
+#
+# A HA backup-restore brings back `core.entity_registry` stubs for UI-created
+# helpers (platform integration/template/utility_meter/derivative/threshold/
+# group) but NOT always their backing rows in `core.config_entries` — the
+# entities then sit `unavailable` and dashboards (Energy, areas) break
+# silently. We can't reliably re-create a config entry from a registry stub
+# (the entry holds option data the stub doesn't), so we DETECT + REPORT: scan
+# the registry for helper-platform entities whose `config_entry_id` has no
+# matching config entry and surface a worklist for the operator. Read-only;
+# never mutates HA state or aborts the deploy.
+
+# Helper platforms that are normally backed by a UI config entry. A registry
+# stub on one of these with a dangling config_entry_id is an orphan.
+HELPER_PLATFORMS = frozenset({
+    "integration", "template", "utility_meter", "derivative", "threshold", "group",
+})
+
+
+def _load_storage_json(name: str) -> dict | None:
+    """Load <config>/.storage/<name> and return its `data` object, or None
+    when the file is missing/unreadable/malformed."""
+    path = os.path.join(_ha_config_dir(), ".storage", name)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            blob = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    data = blob.get("data")
+    return data if isinstance(data, dict) else None
+
+
+def find_orphaned_helpers() -> list[dict[str, str]]:
+    """Return the helper entities whose backing config entry didn't restore.
+
+    Each item is {entity_id, platform, config_entry_id}. Returns [] when the
+    registry can't be read (fresh install / no restore) or nothing is
+    orphaned. Pure: takes no args, reads only HA's .storage files."""
+    registry = _load_storage_json("core.entity_registry")
+    if not registry:
+        return []
+    entries = _load_storage_json("core.config_entries") or {}
+    known_entry_ids = {
+        e.get("entry_id")
+        for e in entries.get("entries", [])
+        if isinstance(e, dict) and e.get("entry_id")
+    }
+    orphans: list[dict[str, str]] = []
+    for ent in registry.get("entities", []):
+        if not isinstance(ent, dict):
+            continue
+        platform = ent.get("platform")
+        if platform not in HELPER_PLATFORMS:
+            continue
+        ce_id = ent.get("config_entry_id")
+        # A helper entity always references a config entry; if it points at
+        # one that's not in core.config_entries, the backing entry didn't
+        # restore. (A None config_entry_id on a helper platform is the same
+        # broken state — the entry it needed is simply gone.)
+        if ce_id is None or ce_id not in known_entry_ids:
+            orphans.append({
+                "entity_id": ent.get("entity_id", "<unknown>"),
+                "platform": str(platform),
+                "config_entry_id": str(ce_id) if ce_id is not None else "<missing>",
+            })
+    return orphans
+
+
+def report_orphaned_helpers() -> None:
+    """Log a worklist of helpers whose backing config entry didn't restore
+    (#1686) so the operator knows exactly which to re-create, instead of
+    discovering broken Energy/area dashboards later. Best-effort; read-only."""
+    try:
+        orphans = find_orphaned_helpers()
+    except Exception as exc:  # never let a report abort the deploy
+        log(f"   ⚠️ Orphaned-helper scan failed: {exc}")
+        return
+    if not orphans:
+        return
+    log(f"⚠️ {len(orphans)} Home Assistant helper(s) did not fully restore — their "
+        "backing config entry is missing, so they will show as `unavailable`:")
+    for o in orphans:
+        log(f"     • {o['entity_id']} (platform: {o['platform']})")
+    log("   Re-create each from Settings → Devices & Services → Helpers "
+        "(the entity history is preserved; only the helper definition needs re-adding).")
+
+
 def configure_oscar_ha_onboarding() -> None:
     """When OSCAR_HA_ADMIN_USERNAME and OSCAR_HA_ADMIN_PASSWORD are set,
     walk HA's onboarding API on a fresh install and mint a long-lived
@@ -854,7 +1011,12 @@ def configure_auth_oidc() -> None:
         log(f"   ⚠️ HA did not respond within {HA_READY_TIMEOUT}s. Skipping auth_oidc install — re-run the deploy once HA is up.")
         return  # noqa: RET502 — explicit early-out for the unreachable path
 
-    changed = install_auth_oidc(version)
+    # Self-heal the auth_oidc config block first (#1687): a backup-restore
+    # can leave configuration.yaml without it. If we re-add it, force the
+    # restart path below so HA reloads and re-registers /auth/oidc/*.
+    oidc_block_readded = ensure_auth_oidc_config_block()
+
+    changed = install_auth_oidc(version) or oidc_block_readded
     if not changed:
         # Already at the pinned version — but configuration.yaml might
         # have been edited between deploys, so still verify the
@@ -918,6 +1080,9 @@ def main() -> int:
     # wiped config. Report which case we're in (#1512), then re-provision
     # the HA long-lived token from the kept data (#1505).
     report_kept_data_state()
+    # Surface helpers whose backing config entry didn't restore (#1686) so the
+    # operator gets an explicit worklist instead of silently-broken dashboards.
+    report_orphaned_helpers()
     if _wait_ha_ready():
         configure_oscar_ha_onboarding()
     else:

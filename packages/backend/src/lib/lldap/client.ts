@@ -101,6 +101,24 @@ async function authenticateWithLldap(): Promise<LldapAuthResult> {
   }
 }
 
+export type LldapAdminTokenResult =
+  | { ok: true; token: string; baseUrl: string }
+  | { ok: false; reason: 'not_configured' | 'unreachable' | 'auth_failed'; message: string };
+
+/**
+ * Obtain an LLDAP admin JWT via the same `/auth/simple/login` path the
+ * GraphQL client uses (#1673). Exposed so callers that must invoke the
+ * in-container `lldap_set_password` binary can pass it the `--token` the
+ * binary requires — the credential-less invocation always fails with
+ * "Either the token or the admin password is required", which previously
+ * false-red the SSO-verify probe even on a healthy box.
+ */
+export async function getLldapAdminToken(): Promise<LldapAdminTokenResult> {
+  const auth = await authenticateWithLldap();
+  if (!auth.ok) return auth;
+  return { ok: true, token: auth.token, baseUrl: auth.baseUrl };
+}
+
 export async function createLldapUser(input: CreateUserInput): Promise<LldapCreateUserResult> {
   const auth = await authenticateWithLldap();
   if (!auth.ok) {

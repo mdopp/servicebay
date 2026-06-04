@@ -1036,9 +1036,59 @@ export class ServiceLifecycle {
     }
 
     /**
-     * Home Assistant trusted_proxies self-healing hook.
+     * Append `block` to `cfgFile` (heredoc) only when `topKey` (an
+     * unindented YAML key, e.g. `http:` / `automation:`) is absent. Returns
+     * true iff the block was appended. Shared by the HA self-heal hook so
+     * each managed key is re-added independently after a backup-restore
+     * brings back a user `configuration.yaml` without it. Idempotent: a
+     * subsequent deploy finds the key present and leaves the file alone.
      */
-    private static async runHomeAssistantHook(
+    private static async appendYamlKeyIfMissing(
+        agent: import('../agent/handler').AgentHandler,
+        cfgFile: string,
+        topKey: string,
+        block: string,
+        label: string,
+    ): Promise<boolean> {
+        // grep -E for an unindented top-level key. The `:` is included so
+        // `automation:` doesn't match a deeper `automation_foo:`; the key is
+        // a fixed literal here so no escaping is needed.
+        const probe = await agent.sendCommand('exec', { command: `grep -E '^${topKey}' ${cfgFile} || echo MISSING` });
+        if (!probe.stdout?.includes('MISSING')) {
+            logger.debug('ServiceManager', `HA configuration.yaml already has ${label}, leaving it alone`);
+            return false;
+        }
+        logger.info('ServiceManager', `HA configuration.yaml missing ${label} — re-adding (likely after a backup-restore)`);
+        const appendCmd = `cat >> ${cfgFile} <<'EOF'\n${block}\nEOF`;
+        const res = await agent.sendCommand('exec', { command: appendCmd, timeout: 10 });
+        if (res.code === 0) {
+            logger.info('ServiceManager', `HA ${label} re-added`);
+            return true;
+        }
+        logger.warn('ServiceManager', `HA ${label} append failed: ${res.stderr || res.stdout}`);
+        return false;
+    }
+
+    /**
+     * Home Assistant configuration.yaml self-healing hook.
+     *
+     * A HA backup-restore replaces ServiceBay's base `configuration.yaml`
+     * with the snapshot's own — which carries the user's content but NONE of
+     * ServiceBay's required wiring (the `http:` trusted-proxies block, the
+     * `auth_oidc:` SSO block) and, on a pre-#1687 box, NOT the
+     * `automation:` / `script:` / `scene:` includes either. Without the
+     * includes a restored `automations.yaml` never loads (every automation
+     * `unavailable`); without `http:`/`auth_oidc:` the proxy + SSO break.
+     *
+     * We re-add each managed key independently when it's missing, and ensure
+     * the three include target files exist (empty is fine — restore overwrote
+     * them with real content), so a restored user config keeps all of the
+     * user's own settings AND ServiceBay's needs are present again.
+     *
+     * Public for unit testing (`serviceLifecycle.homeAssistantHook.test.ts`);
+     * the production caller is `runPreStartHooks`.
+     */
+    static async runHomeAssistantHook(
         agent: import('../agent/handler').AgentHandler,
         cfgFile: string,
     ): Promise<void> {
@@ -1049,15 +1099,6 @@ export class ServiceLifecycle {
         const exists = await agent.sendCommand('exec', { command: `test -f ${cfgFile} && echo yes` });
         if (exists.stdout?.trim() !== 'yes') return;
 
-        // grep -E for an unindented `http:` key. Multiline anchors would be
-        // cleaner but the shell context here is simpler.
-        const probe = await agent.sendCommand('exec', { command: `grep -E '^http:' ${cfgFile} || echo MISSING` });
-        if (!probe.stdout?.includes('MISSING')) {
-            logger.debug('ServiceManager', `HA configuration.yaml already has http: block, leaving it alone`);
-            return;
-        }
-
-        logger.info('ServiceManager', `HA configuration.yaml has no http: block — appending trusted_proxies (likely after a backup-restore)`);
         const trustedProxiesBlock = [
             '',
             '# Re-added by ServiceBay: NPM forwards X-Forwarded-For; HA needs',
@@ -1072,12 +1113,28 @@ export class ServiceLifecycle {
             '    - 10.0.0.0/8',
             '    - 172.16.0.0/12',
         ].join('\n');
-        const appendCmd = `cat >> ${cfgFile} <<'EOF'\n${trustedProxiesBlock}\nEOF`;
-        const res = await agent.sendCommand('exec', { command: appendCmd, timeout: 10 });
-        if (res.code === 0) {
-            logger.info('ServiceManager', 'HA trusted_proxies block appended');
-        } else {
-            logger.warn('ServiceManager', `HA trusted_proxies append failed: ${res.stderr || res.stdout}`);
+        await ServiceLifecycle.appendYamlKeyIfMissing(agent, cfgFile, 'http:', trustedProxiesBlock, 'http: trusted_proxies block');
+
+        // UI-editable automations/scripts/scenes only load when their
+        // `!include` line is in configuration.yaml. A backup-restore brings
+        // the data files back but not the includes (#1687) — re-add each
+        // missing one and make sure its target file exists so HA doesn't
+        // error on a dangling include.
+        const includeDir = cfgFile.replace(/\/configuration\.yaml$/, '');
+        const includes: { key: string; file: string; seed: string }[] = [
+            { key: 'automation:', file: 'automations.yaml', seed: '[]' },
+            { key: 'script:', file: 'scripts.yaml', seed: '{}' },
+            { key: 'scene:', file: 'scenes.yaml', seed: '[]' },
+        ];
+        for (const inc of includes) {
+            // Ensure the include target exists (empty seed) so a freshly
+            // re-added include never points at a missing file. `>>` + a guard
+            // avoids clobbering a restored file that already has real content.
+            await agent.sendCommand('exec', {
+                command: `test -f ${includeDir}/${inc.file} || printf '%s\\n' '${inc.seed}' > ${includeDir}/${inc.file}`,
+            });
+            const block = `${inc.key} !include ${inc.file}`;
+            await ServiceLifecycle.appendYamlKeyIfMissing(agent, cfgFile, inc.key, block, `${inc.key} !include`);
         }
     }
 

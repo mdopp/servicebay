@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   AUTHELIA_FORWARD_AUTH_SENTINEL,
   AUTHELIA_FORWARD_AUTH_SNIPPET,
+  DEFAULT_AUTHELIA_PORT,
   expandForwardAuthSentinel,
+  sanitizeForwardAuthPort,
 } from '@/lib/stackInstall/forwardAuth';
 
 /**
@@ -32,5 +34,53 @@ describe('expandForwardAuthSentinel', () => {
   it('passes undefined / empty through unchanged', () => {
     expect(expandForwardAuthSentinel(undefined)).toBeUndefined();
     expect(expandForwardAuthSentinel('')).toBe('');
+  });
+});
+
+/**
+ * #1677 — the empty-Authelia-port landmine. A forward-auth `proxy_pass`
+ * with no port (`http://127.0.0.1:/api/authz/...`) is an nginx `[emerg]`
+ * that crashes the WHOLE reverse proxy on the next reload/reboot, taking
+ * every domain down. The sanitiser must repair the on-disk conf so one
+ * bad host can never emit an empty port.
+ */
+describe('sanitizeForwardAuthPort (#1677)', () => {
+  it('repairs an empty Authelia port to the default 9091', () => {
+    const bad = 'location = /authelia {\n  proxy_pass http://127.0.0.1:/api/authz/auth-request;\n}\n';
+    const out = sanitizeForwardAuthPort(bad);
+    expect(out.repaired).toBe(true);
+    expect(out.content).toContain(`proxy_pass http://127.0.0.1:${DEFAULT_AUTHELIA_PORT}/api/authz/auth-request;`);
+    // Never leaves an empty port behind.
+    expect(out.content).not.toContain('127.0.0.1:/api/authz');
+  });
+
+  it('is a no-op (not repaired) when the port is already concrete', () => {
+    const good = 'proxy_pass http://127.0.0.1:9091/api/authz/auth-request;\n';
+    const out = sanitizeForwardAuthPort(good);
+    expect(out.repaired).toBe(false);
+    expect(out.content).toBe(good);
+  });
+
+  it('honours a custom port override', () => {
+    const bad = 'proxy_pass http://127.0.0.1:/api/authz/auth-request;';
+    const out = sanitizeForwardAuthPort(bad, '9999');
+    expect(out.content).toContain('http://127.0.0.1:9999/api/authz/auth-request');
+  });
+});
+
+/**
+ * The rendered snippet must NEVER ship a literal empty port, and must
+ * carry the #1680 ACME-challenge auth-bypass so LE HTTP-01 isn't
+ * swallowed by the server-level `auth_request`.
+ */
+describe('AUTHELIA_FORWARD_AUTH_SNIPPET', () => {
+  it('references the AUTHELIA_PORT placeholder (never a bare empty port)', () => {
+    expect(AUTHELIA_FORWARD_AUTH_SNIPPET).toContain('http://127.0.0.1:{{AUTHELIA_PORT}}/api/authz/auth-request');
+    expect(AUTHELIA_FORWARD_AUTH_SNIPPET).not.toContain('127.0.0.1:/api/authz');
+  });
+
+  it('exposes the LE acme-challenge path with forward-auth disabled (#1680)', () => {
+    expect(AUTHELIA_FORWARD_AUTH_SNIPPET).toContain('location /.well-known/acme-challenge/');
+    expect(AUTHELIA_FORWARD_AUTH_SNIPPET).toContain('auth_request off;');
   });
 });

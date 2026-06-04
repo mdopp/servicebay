@@ -11,6 +11,17 @@
 # Loads default set of integrations. Do not remove.
 default_config:
 
+# UI-editable automations / scripts / scenes live in their own files.
+# Without these three `!include` lines a restored `automations.yaml`
+# (or `scripts.yaml` / `scenes.yaml`) is NEVER loaded — every automation
+# shows up `unavailable` after a backup-restore (#1687). The companion
+# files are created empty on first install; ServiceBay re-adds any of
+# these include lines on deploy when it finds them missing (e.g. after a
+# restore that brought back a user `configuration.yaml` without them).
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
 # Reverse-proxy trust list. NPM (on the same host) forwards
 # X-Forwarded-For for every proxied request. Trusting the private
 # RFC1918 ranges + loopback works regardless of which LAN subnet
