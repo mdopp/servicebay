@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.95.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.95.1...servicebay-v4.95.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* **build:** make setup-raid mdadm.conf persistence idempotent ([6d4ae77](https://github.com/mdopp/servicebay/commit/6d4ae77b0c2e4534910b113d111011efab3ee6df)), closes [#1666](https://github.com/mdopp/servicebay/issues/1666)
+* **diagnose:** sso_verify probe correctness — set_password admin path, ollama + OIDC coverage ([bd4c0b3](https://github.com/mdopp/servicebay/commit/bd4c0b3a06efd97b7e8d41b504c62d0bbe628c65)), closes [#1673](https://github.com/mdopp/servicebay/issues/1673) [#1685](https://github.com/mdopp/servicebay/issues/1685)
+* **home-assistant:** survive backup-restore of YAML config + helpers ([69c01be](https://github.com/mdopp/servicebay/commit/69c01be16c4457bd6a26b064abf26fa246265446)), closes [#1686](https://github.com/mdopp/servicebay/issues/1686) [#1687](https://github.com/mdopp/servicebay/issues/1687)
+* **install:** preserve secret.key/.auth-secret.env across wipe-config reinstall when enc config exists ([ad48207](https://github.com/mdopp/servicebay/commit/ad4820743dd1d22b2d82762ea62be5fc0079201e)), closes [#1667](https://github.com/mdopp/servicebay/issues/1667)
+* reinstall config-survival batch — mdadm, secret-key, ollama domain, HA restore, sso_verify ([0947045](https://github.com/mdopp/servicebay/commit/094704533cc1520749ab3b37bc5673c8ae310538))
+* **reverseProxy:** add localUpstreamHost to frontend proxy-host route type ([21222a5](https://github.com/mdopp/servicebay/commit/21222a513857431014dda1f424e68cda6d0ec724)), closes [#1683](https://github.com/mdopp/servicebay/issues/1683)
+* **reverseProxy:** make ollama reachable via domain after reinstall ([0002964](https://github.com/mdopp/servicebay/commit/0002964c9c32b9393e03eaf73092b288489023d0)), closes [#1677](https://github.com/mdopp/servicebay/issues/1677) [#1680](https://github.com/mdopp/servicebay/issues/1680) [#1683](https://github.com/mdopp/servicebay/issues/1683)
+
 ## [4.95.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.95.0...servicebay-v4.95.1) (2026-06-04)
 
 
