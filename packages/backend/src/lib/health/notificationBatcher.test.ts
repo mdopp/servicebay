@@ -129,7 +129,7 @@ describe('NotificationBatcher', () => {
     await NotificationBatcher._awaitFlushForTesting();
 
     expect(sendEmailAlertMock).toHaveBeenCalledTimes(1);
-    expect(sendEmailAlertMock.mock.calls[0][0]).toMatch(/3 health checks failing/);
+    expect(sendEmailAlertMock.mock.calls[0][0]).toMatch(/3 checks still failing/);
   });
 
   it('repeated start() calls are no-ops during an active window', () => {
@@ -186,5 +186,74 @@ describe('NotificationBatcher root-cause coalescing (#1652)', () => {
     const body = sendEmailAlertMock.mock.calls[0][1];
     expect(body).toContain('Internet Gateway');
     expect(body).toContain('Service: authelia');
+  });
+});
+
+describe('NotificationBatcher restart/update digest (#1653)', () => {
+  const baseRestart = {
+    currentVersion: '4.94.0',
+    previousVersion: '4.93.1',
+    versionChanged: true,
+    bootAt: Date.now() - 192_000, // ~3m12s ago
+    lastSeenAt: Date.now() - 192_000,
+    changelog: ['**health:** per-type failureThreshold before alerting'],
+  };
+
+  it('subject leads with the version change and lists still-failing checks', async () => {
+    NotificationBatcher._setRestartContextForTesting({ ...baseRestart });
+    NotificationBatcher.start({ maxMs: 60_000, settleMs: 1000 });
+    NotificationBatcher.enqueue('fail', check('nginx'), result('fail'));
+    NotificationBatcher.enqueue('fail', check('adguard'), result('fail'));
+    await NotificationBatcher.flush('manual');
+    const [subject, body] = sendEmailAlertMock.mock.calls[0];
+    expect(subject).toContain('updated to v4.94.0');
+    expect(subject).toMatch(/2 checks still failing \(nginx, adguard\)/);
+    expect(body).toContain('Updated to v4.94.0 (was v4.93.1)');
+    expect(body).toMatch(/Recovered in \d/);
+    expect(body).toContain('per-type failureThreshold');
+  });
+
+  it('sends on a version change even when nothing is still failing', async () => {
+    NotificationBatcher._setRestartContextForTesting({ ...baseRestart });
+    NotificationBatcher.start({ maxMs: 60_000, settleMs: 1000 });
+    // Everything came back cleanly — but the version changed, so we still
+    // tell the operator "we updated".
+    NotificationBatcher.enqueue('fail', check('nginx'), result('fail'));
+    NotificationBatcher.enqueue('recovery', check('nginx'), result('ok'));
+    await NotificationBatcher.flush('manual');
+    expect(sendEmailAlertMock).toHaveBeenCalledTimes(1);
+    const [subject, body] = sendEmailAlertMock.mock.calls[0];
+    expect(subject).toContain('updated to v4.94.0');
+    expect(body).toContain('All health checks recovered cleanly');
+  });
+
+  it('stays silent on a plain no-version-change clean restart', async () => {
+    NotificationBatcher._setRestartContextForTesting({
+      ...baseRestart,
+      previousVersion: '4.94.0',
+      versionChanged: false,
+      changelog: [],
+    });
+    NotificationBatcher.start({ maxMs: 60_000, settleMs: 1000 });
+    NotificationBatcher.enqueue('fail', check('nginx'), result('fail'));
+    NotificationBatcher.enqueue('recovery', check('nginx'), result('ok'));
+    await NotificationBatcher.flush('manual');
+    expect(sendEmailAlertMock).not.toHaveBeenCalled();
+  });
+
+  it('sends on remaining failure even with no version change', async () => {
+    NotificationBatcher._setRestartContextForTesting({
+      ...baseRestart,
+      previousVersion: '4.94.0',
+      versionChanged: false,
+      changelog: [],
+    });
+    NotificationBatcher.start({ maxMs: 60_000, settleMs: 1000 });
+    NotificationBatcher.enqueue('fail', check('nginx'), result('fail'));
+    await NotificationBatcher.flush('manual');
+    expect(sendEmailAlertMock).toHaveBeenCalledTimes(1);
+    const [subject, body] = sendEmailAlertMock.mock.calls[0];
+    expect(subject).toContain('1 check still failing');
+    expect(body).toContain('no version change');
   });
 });
