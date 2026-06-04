@@ -316,7 +316,7 @@ function assemblePortalCard(
 /** Extract the bare host (no scheme/path) from a resolved card URL so we
  *  can look up its `domain:<host>` health check. Returns null for an
  *  empty/appless URL. */
-function hostFromUrl(url: string | null): string | null {
+export function hostFromUrl(url: string | null): string | null {
   if (!url) return null;
   try {
     return new URL(url).hostname;
@@ -328,7 +328,7 @@ function hostFromUrl(url: string | null): string | null {
 /** Gather the per-service status signals from the already-available
  *  stores (the twin's service-health side-map + the HealthStore domain
  *  check) and fold them into a coarse status. */
-function resolveCardStatus(
+export function resolveCardStatus(
   podActive: boolean,
   serviceName: string,
   url: string | null,
