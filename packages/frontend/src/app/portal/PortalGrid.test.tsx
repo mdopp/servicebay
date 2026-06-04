@@ -23,6 +23,7 @@ const baseCard: PortalCard = {
   icon: '',
   tagline: 'Auto-backup your family photos.',
   url: 'https://photos.home.arpa',
+  status: 'ok',
   primaryAction: null,
   secondaryActions: [],
   body: '',
@@ -229,6 +230,45 @@ describe('PortalGrid', () => {
     it('still shows the Open-URL button for ordinary URL-based cards', () => {
       render(<PortalGrid cards={[baseCard]} />);
       expect(screen.getByRole('link', { name: /^open$/i })).toBeDefined();
+    });
+  });
+
+  describe('per-service status badge (#1654)', () => {
+    it('renders no down/degraded badge text when status is ok', () => {
+      render(<PortalGrid cards={[{ ...baseCard, status: 'ok' }]} />);
+      // ok renders a subtle dot (aria-label Online), not a text label.
+      expect(screen.getByLabelText('Online')).toBeDefined();
+      expect(screen.queryByText('Down')).toBeNull();
+      expect(screen.queryByText('Degraded')).toBeNull();
+    });
+
+    it('renders nothing for unknown status', () => {
+      render(<PortalGrid cards={[{ ...baseCard, status: 'unknown' }]} />);
+      expect(screen.queryByLabelText('Online')).toBeNull();
+      expect(screen.queryByText('Down')).toBeNull();
+      expect(screen.queryByText('Degraded')).toBeNull();
+    });
+
+    it('renders a red Down badge with the reason as its tooltip', () => {
+      render(
+        <PortalGrid
+          cards={[{ ...baseCard, status: 'down', statusReason: 'Not reachable' }]}
+        />,
+      );
+      const badge = screen.getByText('Down');
+      expect(badge).toBeDefined();
+      expect(badge.closest('span')?.getAttribute('title')).toBe('Not reachable');
+    });
+
+    it('renders an amber Degraded badge', () => {
+      render(
+        <PortalGrid
+          cards={[{ ...baseCard, status: 'degraded', statusReason: 'Partially unhealthy' }]}
+        />,
+      );
+      const badge = screen.getByText('Degraded');
+      expect(badge).toBeDefined();
+      expect(badge.closest('span')?.getAttribute('title')).toBe('Partially unhealthy');
     });
   });
 });

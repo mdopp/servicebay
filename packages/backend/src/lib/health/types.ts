@@ -36,6 +36,15 @@ export interface CheckConfig {
   enabled: boolean;
   created_at: string;
   nodeName?: string; // Optional node name for remote execution
+  /**
+   * Consecutive `fail` results required before this check is considered
+   * "alerting" and emits a failure notification (#1651). A single flaky
+   * poll (transient DNS, a one-tick timeout) shouldn't fire an alert —
+   * we wait for N consecutive fails. Optional per-check override; when
+   * unset, the per-type default ({@link DEFAULT_FAILURE_THRESHOLDS}) is
+   * used. A value of 1 restores the legacy "alert on first fail" behaviour.
+   */
+  failureThreshold?: number;
   // HTTP specific options
   httpConfig?: {
     expectedStatus?: number;

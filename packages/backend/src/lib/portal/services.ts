@@ -23,6 +23,8 @@ import fs from 'fs/promises';
 import { getConfig, type AppConfig } from '@/lib/config';
 import { getActiveDomain, getMode } from '@/lib/mode';
 import { ServiceManager } from '@/lib/services/ServiceManager';
+import { getServices } from '@/lib/store/repository';
+import { HealthStore } from '@/lib/health/store';
 import { parseTemplateTier } from '@/lib/templateTier';
 import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getTemplateUserGuide } from '@/lib/registry';
@@ -70,6 +72,84 @@ export interface PortalCard {
    *  pairing the operator runs by hand (e.g. `signal-cli link`).
    *  Informational only; the portal shows the command, not a runner. */
   manualPairing: ManualPairing[];
+  /** Coarse up/down status (#1654), derived server-side at page load from
+   *  the signals that already exist: the digital twin's per-service
+   *  health probe (`serviceHealth[node][service].ready`), the auto-created
+   *  domain-reachability check in HealthStore, and pod-active state.
+   *    - `down`     — pod inactive OR the reachability/health probe failing.
+   *    - `degraded` — running but some-but-not-all signals are unhealthy
+   *                   (or the service reports `degraded: true`).
+   *    - `ok`       — every present signal is healthy.
+   *    - `unknown`  — no signal yet (no probe registered, no domain check). */
+  status: PortalCardStatus;
+  /** Optional short reason for a non-ok status. Kept generic — the portal
+   *  is anonymous-readable (LAN), so this carries no sensitive detail. */
+  statusReason?: string;
+}
+
+export type PortalCardStatus = 'ok' | 'degraded' | 'down' | 'unknown';
+
+/** The signals `deriveCardStatus` folds into a coarse status. Each is
+ *  optional — a missing signal contributes nothing (it can't make the
+ *  status worse), so a service with no probe + no domain check is
+ *  `unknown` rather than falsely `down`. */
+export interface CardStatusSignals {
+  /** Pod-active state (`ServiceManager.listServices().active`). */
+  podActive?: boolean;
+  /** The twin's `serviceHealth[node][service].ready` (health poller). */
+  twinReady?: boolean;
+  /** The twin's soft-fail flag — running but `degraded: true`. */
+  twinDegraded?: boolean;
+  /** Last domain-reachability check result (`ok`/`fail`); absent when no
+   *  domain check exists for this card's URL. */
+  domainOk?: boolean;
+}
+
+/**
+ * Fold the available signals into a single coarse {@link PortalCardStatus}
+ * (#1654). Pure — no I/O, so it's unit-testable in isolation.
+ *
+ * Rules:
+ *   - `down`     — pod is explicitly inactive, OR a hard signal (domain
+ *                  reachability / twin readiness) is failing.
+ *   - `degraded` — the service reports `degraded: true`, or the signals
+ *                  disagree (some healthy, some failing) without a hard
+ *                  down.
+ *   - `ok`       — at least one signal is present and every present
+ *                  signal is healthy.
+ *   - `unknown`  — no signal at all.
+ */
+export function deriveCardStatus(
+  signals: CardStatusSignals,
+): { status: PortalCardStatus; statusReason?: string } {
+  // A pod that's explicitly not active is unambiguously down.
+  if (signals.podActive === false) {
+    return { status: 'down', statusReason: 'Not running' };
+  }
+
+  const present: boolean[] = [];
+  if (signals.twinReady !== undefined) present.push(signals.twinReady);
+  if (signals.domainOk !== undefined) present.push(signals.domainOk);
+
+  if (present.length === 0) {
+    return { status: 'unknown' };
+  }
+
+  const anyFail = present.some(ok => !ok);
+  const allFail = present.every(ok => !ok);
+
+  if (allFail) {
+    const reason = signals.domainOk === false ? 'Not reachable' : 'Health check failing';
+    return { status: 'down', statusReason: reason };
+  }
+  if (anyFail) {
+    return { status: 'degraded', statusReason: 'Partially unhealthy' };
+  }
+  // Every present hard signal is healthy — soft-fail still shows degraded.
+  if (signals.twinDegraded) {
+    return { status: 'degraded', statusReason: 'Running in a degraded state' };
+  }
+  return { status: 'ok' };
 }
 
 /** Read a template's variables.json (best-effort, returns empty record on miss).
@@ -211,6 +291,7 @@ function assemblePortalCard(
   url: string | null,
   subdomainVar: string,
   parsedBody: string,
+  status: { status: PortalCardStatus; statusReason?: string },
 ): PortalCard {
   return {
     id: `${serviceName}:${subdomainVar || 'default'}`,
@@ -227,7 +308,41 @@ function assemblePortalCard(
     recommendedApps: def.recommended_apps ?? [],
     setupAssets: def.setup_assets ?? [],
     manualPairing: def.manual_pairing ?? [],
+    status: status.status,
+    ...(status.statusReason ? { statusReason: status.statusReason } : {}),
   };
+}
+
+/** Extract the bare host (no scheme/path) from a resolved card URL so we
+ *  can look up its `domain:<host>` health check. Returns null for an
+ *  empty/appless URL. */
+export function hostFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** Gather the per-service status signals from the already-available
+ *  stores (the twin's service-health side-map + the HealthStore domain
+ *  check) and fold them into a coarse status. */
+export function resolveCardStatus(
+  podActive: boolean,
+  serviceName: string,
+  url: string | null,
+  twinHealthByService: Map<string, { ready: boolean; degraded?: boolean }>,
+): { status: PortalCardStatus; statusReason?: string } {
+  const twin = twinHealthByService.get(serviceName);
+  const host = hostFromUrl(url);
+  const domainResult = host ? HealthStore.getLastResult(`domain:${host}`) : null;
+  return deriveCardStatus({
+    podActive,
+    twinReady: twin?.ready,
+    twinDegraded: twin?.degraded,
+    domainOk: domainResult ? domainResult.status === 'ok' : undefined,
+  });
 }
 
 /**
@@ -239,6 +354,7 @@ async function buildPortalCardEntry(
   def: PortalCardDef,
   templateLabel: string,
   parsedBody: string,
+  twinHealthByService: Map<string, { ready: boolean; degraded?: boolean }>,
 ): Promise<PortalCard | null> {
   const url = await resolveServiceUrl(config, svc.name, def.subdomain_var || undefined);
   // No subdomain URL: an appless card still renders *iff* the guide
@@ -250,7 +366,8 @@ async function buildPortalCardEntry(
     return null;
   }
   const subdomainVar = def.subdomain_var || (await firstSubdomainVar(svc.name)) || '';
-  return assemblePortalCard(def, svc.name, templateLabel, url, subdomainVar, parsedBody);
+  const status = resolveCardStatus(svc.active, svc.name, url, twinHealthByService);
+  return assemblePortalCard(def, svc.name, templateLabel, url, subdomainVar, parsedBody, status);
 }
 
 /**
@@ -267,6 +384,17 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
   if (running.length === 0) return [];
 
   const config = await getConfig();
+
+  // Snapshot the twin's per-service health once (the side-map is
+  // re-attached onto `services[].health` on every agent sync — see
+  // store/twin.ts). Keyed by service name so each card reads its probe
+  // result without re-walking the node.
+  const twinHealthByService = new Map<string, { ready: boolean; degraded?: boolean }>();
+  for (const unit of getServices(node)) {
+    if (unit.health) {
+      twinHealthByService.set(unit.name, { ready: unit.health.ready, degraded: unit.health.degraded });
+    }
+  }
 
   const cards: PortalCard[] = [];
   for (const svc of running) {
@@ -299,7 +427,7 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
       }];
 
     for (const def of cardDefs) {
-      const card = await buildPortalCardEntry(config, svc, def, templateLabel, parsed.body);
+      const card = await buildPortalCardEntry(config, svc, def, templateLabel, parsed.body, twinHealthByService);
       if (card) cards.push(card);
     }
   }
