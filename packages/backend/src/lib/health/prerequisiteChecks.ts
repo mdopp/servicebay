@@ -138,9 +138,34 @@ export function serviceOfCheck(check: CheckConfig, ctx: PrerequisiteContext): st
     return host?.service ?? null;
   }
   // Template-registered http/script probes carry an id slug whose leading
-  // segment is the owning service (init.ts isOrphanTemplateCheck). We only
-  // bind one when that leading segment matches a known service container check.
+  // segment is the owning service (init.ts isOrphanTemplateCheck): the id is
+  // `<service>` or `<service>-<suffix>`, e.g. `home-assistant-api`,
+  // `ollama-api`. Bind one to its service when the leading slug segment(s)
+  // match a service that has a container (`type:'service'`) check — so a
+  // container outage suppresses the probe's separate alert (#1663). Service
+  // names can themselves contain hyphens (`home-assistant`), so we
+  // longest-match against the known container-check targets, not the first
+  // segment alone.
+  if (check.type === 'http' || check.type === 'script') {
+    return serviceFromTemplateSlug(check.id, ctx);
+  }
   return null;
+}
+
+/** Resolve a template-check id slug to its owning service by longest-prefix
+ *  match against services that have a container check. `home-assistant-api`
+ *  binds to `home-assistant` (not `home`); a bare `<service>` slug binds to
+ *  that service. Returns null when no container-checked service owns the slug. */
+function serviceFromTemplateSlug(id: string, ctx: PrerequisiteContext): string | null {
+  let best: string | null = null;
+  for (const c of ctx.checks) {
+    if (c.type !== 'service' || !c.target) continue;
+    const svc = c.target;
+    if (id === svc || id.startsWith(`${svc}-`)) {
+      if (!best || svc.length > best.length) best = svc;
+    }
+  }
+  return best;
 }
 
 /** The `type:'service'` container check for a service, if one exists. */

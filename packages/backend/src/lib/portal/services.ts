@@ -379,9 +379,13 @@ async function buildPortalCardEntry(
  * card assembly.
  */
 export async function buildPortalCards(node: string = 'Local'): Promise<PortalCard[]> {
+  // Build cards for every *installed* service, not just the active ones.
+  // A stopped-but-installed service (`active: false`) must still render a
+  // card so `resolveCardStatus` can surface its `down`/"Not running" badge
+  // (#1662) — filtering to active services here made that branch
+  // unreachable and silently dropped a stopped service from the portal.
   const services = await ServiceManager.listServices(node).catch(() => []);
-  const running = services.filter(s => s.active);
-  if (running.length === 0) return [];
+  if (services.length === 0) return [];
 
   const config = await getConfig();
 
@@ -397,7 +401,7 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
   }
 
   const cards: PortalCard[] = [];
-  for (const svc of running) {
+  for (const svc of services) {
     const yaml = await readTemplateYaml(svc.name);
     if (!yaml) continue; // Service whose template isn't on disk — skip
     const tier = parseTemplateTier(yaml);
