@@ -80,6 +80,19 @@ A unit sorts into the highest-priority bucket any member would land in:
 4. `docs` / `documentation`
 5. everything else, ascending issue number.
 
+## Step 4.5 — Dependency-update PRs (always, exactly ONE unit)
+
+Dependabot opens one PR per dependency (`servicebay` runs it for npm/gomod/github-actions, #1549). Left alone they pile up. **Every run**, check `gh pr list --author app/dependabot --state open --json number`: if any are open and no `dep-updates` unit is already in `queue[]`/`batch.units`, enqueue **exactly one** unit covering all of them — never one-per-PR:
+
+```
+{ id:"dep-update-sweep", kind:"dep-updates", issues:[], theme:"dependency-update PR sweep",
+  region:"(dependabot PRs)", scope:"merge CI-green dev-dep/CI-action bumps; hold risky ones",
+  acceptance:"green safe bumps merged; release-pipeline/runtime-major/red ones held for review",
+  gate:"normal", security:false, status:"planned", pr:null, notes:"<count> open dependabot PRs" }
+```
+
+This is real maintenance work, not dry-queue filler — enqueue it whenever Dependabot PRs are open, alongside (not instead of) real issues. The builder handles it per §Dep-update unit in `builder.md` (it does NOT ride the batch branch).
+
 ## Step 5 — Queue empty? Choose a filler track
 
 If no build-ready survivors remain, **do not exit and do not auto-default to lint.** Pick one:

@@ -54,6 +54,12 @@ A security/sensitive unit rides the batch **like any other unit** — implement 
 ### Lint-sweep unit
 Implement the one file/rule named in the unit. Size guard: **≤2 source files** (+ their `*.test.*`), **≤120 LOC net** (subtractive can be larger), one warning class or one file. If even a bite-size extraction won't fit, park it in `blocked[]` with a structured entry (`{file, blocked_by:"decomposition", reason:"lint-sweep size guard exceeded; needs decomposition ticket", since}`) and return. Lint-sweep commits ride the batch branch like any other unit (no `Closes #`). Append `{file, rule}` context to `lint_sweep[]` at seal time.
 
+### Dep-update unit (`kind:"dep-updates"`)
+**Does NOT ride the batch branch** — Dependabot PRs are independent, already-CI'd PRs. Don't touch `batch`; process them directly, then mark the unit done. For each open `gh pr list --author app/dependabot --state open --json number,title,headRefName,mergeStateStatus`:
+- **Merge** (`gh pr merge <N> --merge --delete-branch`) when CI is green (`mergeStateStatus == CLEAN`) **and** it's a **dev-dependency** (`deps-dev`) or a **CI/github-actions** bump — low blast radius; green CI = lint/build/test pass.
+- **HOLD** (don't merge) + add `{issue:<N>, question, comment_url, since}` to `needs_refinement[]` with a one-line comment (AI marker) for: (a) `googleapis/release-please-action` or anything that changes the release pipeline this repo depends on, (b) a **runtime** (non-dev) dependency major bump, (c) red/`UNSTABLE`/`DIRTY` CI.
+- These merges land on `main` and trigger release-please on their own (dev-dep/action bumps aren't path-mandated → no `box_verify`). Set the unit `status:"built"` (nothing to seal), append `{unit:"dep-update-sweep", merged:[…], held:[…]}` to `completed[]`. Return one line: merged #s + held #s. Idempotent — next run handles whatever's still open.
+
 ---
 
 ## Mode: `seal` — ship the accumulated batch (expensive pipeline, once)
