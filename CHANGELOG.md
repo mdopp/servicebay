@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.95.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.95.0...servicebay-v4.95.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* **health,portal:** alert root-cause correctness + portal down badge ([8d95f6b](https://github.com/mdopp/servicebay/commit/8d95f6b03ba914425cce8f476cb66d97282e2a1b))
+* **health:** apply root-cause graph to recovery alerts and template http probes ([b465757](https://github.com/mdopp/servicebay/commit/b46575798e1a230f7cc7517e3ff5b899d32d1259)), closes [#1661](https://github.com/mdopp/servicebay/issues/1661) [#1663](https://github.com/mdopp/servicebay/issues/1663)
+* **health:** drop dead tcp branch in serviceOfCheck (tsc seal fix) ([86f91fa](https://github.com/mdopp/servicebay/commit/86f91fab4a62bd2cfab40a6e0bafe04873381c58)), closes [#1663](https://github.com/mdopp/servicebay/issues/1663)
+* **portal:** show down badge for stopped installed services ([c7e9f28](https://github.com/mdopp/servicebay/commit/c7e9f284179e9ab018c691b802624694dcf77239)), closes [#1662](https://github.com/mdopp/servicebay/issues/1662)
+
 ## [4.95.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.94.0...servicebay-v4.95.0) (2026-06-04)
 
 
