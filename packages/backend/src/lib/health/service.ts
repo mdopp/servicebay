@@ -6,6 +6,16 @@ import { HealthStore } from './store';
 import { CheckRunner } from './runner';
 import { CheckConfig, CheckResult } from './types';
 import { decideAlert } from './alertDecision';
+import {
+  buildServiceDependencyMap,
+  makePrerequisiteContext,
+  isRootCause,
+  renderCausalChainEmail,
+  type ServiceDependencyMap,
+  type PrerequisiteContext,
+} from './prerequisiteChecks';
+import { getTemplates } from '@/lib/registry';
+import { getConfig } from '@/lib/config';
 import { initializeDefaultChecks } from './init';
 import { sendEmailAlert } from '@/lib/email';
 import { NotificationBatcher } from './notificationBatcher';
@@ -60,6 +70,12 @@ export class HealthService {
     //     surfaces it with the same per-row stats as any other check.
     this.startDiagnoseSchedule();
 
+    // 1d. Build the service-dependency graph used by root-cause-only
+    //     alerting (#1652). Reused from the install topo-sort graph; fire
+    //     and forget — the resolver degrades to technical (CheckType)
+    //     edges until it lands.
+    void this.refreshServiceDeps();
+
     // 2. Start initial scheduling
     this.restartAll();
 
@@ -84,6 +100,53 @@ export class HealthService {
   private static checksWatcherDebounce: NodeJS.Timeout | null = null;
   private static bootstrappedNodes = new Set<string>();
   private static twinUnsubscribe: (() => void) | null = null;
+
+  /**
+   * Cached effective service→deps graph (#1652). Built from the template
+   * registry — the SAME graph the installer topo-sorts with — and only
+   * changes when stacks are installed/removed. Refreshed on init and on
+   * every checks.json change (a deploy rewrites both). Empty until first
+   * build, in which case prerequisite resolution falls back to the
+   * technical (CheckType) edges alone.
+   */
+  private static serviceDeps: ServiceDependencyMap = new Map();
+
+  /** (Re)build the cached service-dependency graph from the registry.
+   *  Best-effort: a registry read failure leaves the prior map in place so
+   *  root-cause resolution degrades to technical edges, never throws. */
+  private static async refreshServiceDeps(): Promise<void> {
+    try {
+      const templates = await getTemplates();
+      this.serviceDeps = buildServiceDependencyMap(templates);
+      // Hand the boot digest the same graph so its post-restart summary
+      // also collapses to root causes (#1652).
+      let hosts: import('@/lib/config').ProxyHostEntry[] = [];
+      try {
+        hosts = (await getConfig()).reverseProxy?.hosts ?? [];
+      } catch { /* config unavailable — digest falls back to legacy listing */ }
+      NotificationBatcher.setRootCauseResolution({ serviceDeps: this.serviceDeps, hosts });
+    } catch (e) {
+      logger.warn('Health', `Could not refresh service-dependency graph: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  /** Assemble the prerequisite-resolution context from live state. Pure
+   *  inputs → the resolver stays unit-testable; this gathers them. */
+  private static async buildPrereqContext(): Promise<PrerequisiteContext> {
+    const checks = HealthStore.getChecks();
+    let config: Awaited<ReturnType<typeof getConfig>> | undefined;
+    try {
+      config = await getConfig();
+    } catch {
+      config = undefined;
+    }
+    return makePrerequisiteContext({
+      checks,
+      serviceDeps: this.serviceDeps,
+      config,
+      isFailing: (id: string) => HealthStore.getLastResult(id)?.status === 'fail',
+    });
+  }
 
   private static async runServiceHealthBootstrap(nodeName: string): Promise<void> {
     if (this.bootstrappedNodes.has(nodeName)) return;
@@ -132,6 +195,9 @@ export class HealthService {
         this.checksWatcherDebounce = setTimeout(() => {
           this.checksWatcherDebounce = null;
           logger.info('Health', 'checks.json changed — re-scheduling.');
+          // A deploy/uninstall rewrites both checks.json and the installed
+          // stack set, so refresh the dependency graph alongside (#1652).
+          void this.refreshServiceDeps();
           this.restartAll();
         }, 250);
       });
@@ -204,6 +270,48 @@ export class HealthService {
     intervals.set(check.id, timer);
   }
 
+  /**
+   * Root-cause-only alerting decision (#1652). A check that has met its
+   * consecutive-fail threshold (#1651) still alerts ONLY when none of its
+   * prerequisite checks is currently failing — a downstream symptom
+   * (immich down *because* the internet is down) keeps its real per-check
+   * status in the UI but is suppressed as a separate email; the root's
+   * causal-chain alert already names it. On any resolution failure we fall
+   * back to a direct alert (treat as root) so a real alert is never
+   * swallowed.
+   */
+  private static async resolveRootAlert(
+    check: CheckConfig,
+    result: CheckResult,
+  ): Promise<{ isRoot: boolean; chainEmail: { subject: string; body: string } | null }> {
+    try {
+      const ctx = await this.buildPrereqContext();
+      const isRoot = isRootCause(check, ctx);
+      return { isRoot, chainEmail: isRoot ? renderCausalChainEmail(check, result, ctx) : null };
+    } catch (e) {
+      logger.warn('Health', `Root-cause resolution failed for ${check.name}, alerting directly: ${e instanceof Error ? e.message : String(e)}`);
+      return { isRoot: true, chainEmail: null };
+    }
+  }
+
+  /** Broadcast the per-check status (always) plus any fail/recovery toast. */
+  private static emitAlerts(
+    check: CheckConfig,
+    result: CheckResult,
+    opts: { enteredFailure: boolean; recoveredNow: boolean; failTitle: string },
+  ) {
+    if (!this.io) return;
+    // Per-check status broadcast — always, regardless of alert gating, so
+    // the UI stays truthful.
+    this.io.emit('health:update', { checkId: check.id, result });
+    if (opts.enteredFailure) {
+      this.io.emit('health:alert', { type: 'error', title: opts.failTitle, message: result.message || 'Service is down' });
+    }
+    if (opts.recoveredNow) {
+      this.io.emit('health:alert', { type: 'success', title: `Service Recovered: ${check.name}`, message: 'Service is back online' });
+    }
+  }
+
   private static async runAndEmit(check: CheckConfig) {
     try {
       const result = await CheckRunner.run(check);
@@ -211,51 +319,23 @@ export class HealthService {
       // newest-first with history[0] === result.
       const history = HealthStore.getResults(check.id);
       // Require N consecutive fails before alerting (#1651); recovery
-      // only fires if a fail alert was actually sent. The decision is a
-      // pure function so it stays testable and extensible (#1652).
-      const { alertFailure: enteredFailure, alertRecovery: recoveredNow } =
+      // only fires if a fail alert was actually sent.
+      const { alertFailure: thresholdMet, alertRecovery: recoveredNow } =
         decideAlert(check, history);
 
-      // Emit if we have IO
-      if (this.io) {
-      // Broadcast update event (silent refresh)
-      this.io.emit('health:update', { checkId: check.id, result });
-        
-      if (enteredFailure) {
-         this.io.emit('health:alert', {
-           type: 'error',
-           title: `Check Failed: ${check.name}`,
-           message: result.message || 'Service is down'
-         });
-      }
-        
-      if (recoveredNow) {
-        this.io.emit('health:alert', {
-          type: 'success',
-          title: `Service Recovered: ${check.name}`,
-          message: 'Service is back online'
-        });
-      }
-      }
+      const { isRoot, chainEmail } = thresholdMet
+        ? await this.resolveRootAlert(check, result)
+        : { isRoot: false, chainEmail: null };
+      const enteredFailure = thresholdMet && isRoot;
+      const failTitle = chainEmail?.subject ?? `Check Failed: ${check.name}`;
 
-      if (enteredFailure) {
-        const buffered = NotificationBatcher.enqueue('fail', check, result);
-        if (!buffered) {
-          await sendEmailAlert(
-            `Check Failed: ${check.name}`,
-            formatAlertMessage('fail', check, result)
-          );
-        }
-      }
+      this.emitAlerts(check, result, { enteredFailure, recoveredNow, failTitle });
 
-      if (recoveredNow) {
-        const buffered = NotificationBatcher.enqueue('recovery', check, result);
-        if (!buffered) {
-          await sendEmailAlert(
-            `Service Recovered: ${check.name}`,
-            formatAlertMessage('recovery', check, result)
-          );
-        }
+      if (enteredFailure && !NotificationBatcher.enqueue('fail', check, result)) {
+        await sendEmailAlert(failTitle, chainEmail?.body ?? formatAlertMessage('fail', check, result));
+      }
+      if (recoveredNow && !NotificationBatcher.enqueue('recovery', check, result)) {
+        await sendEmailAlert(`Service Recovered: ${check.name}`, formatAlertMessage('recovery', check, result));
       }
     } catch (e) {
       logger.error('Health', `Error running check ${check.name}:`, e);

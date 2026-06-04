@@ -147,3 +147,44 @@ describe('NotificationBatcher', () => {
     expect(NotificationBatcher.enqueue('fail', check('auth'), result('fail'))).toBe(false);
   });
 });
+
+describe('NotificationBatcher root-cause coalescing (#1652)', () => {
+  function svc(name: string): CheckConfig {
+    return { id: `svc-${name}`, name: `Service: ${name}`, type: 'service', target: name, interval: 60, enabled: true, created_at: 't' };
+  }
+  function domain(id: string, target: string): CheckConfig {
+    return { id, name: `Domain — ${id}`, type: 'domain', target, interval: 60, enabled: true, created_at: 't', domainConfig: { expectedScheme: 'https', isPublic: true } };
+  }
+  const gateway: CheckConfig = { id: 'gw', name: 'Internet Gateway', type: 'ping', target: '192.168.178.1', interval: 60, enabled: true, created_at: 't' };
+
+  it('digest collapses the restart cascade to root failures only when the graph is wired', async () => {
+    const serviceDeps = new Map<string, string[]>([
+      ['authelia', []], ['immich', ['authelia']],
+    ]);
+    NotificationBatcher.setRootCauseResolution({
+      serviceDeps,
+      hosts: [{ domain: 'photos.dopp.cloud', service: 'immich', forwardPort: 1, created: true }],
+    });
+    NotificationBatcher.start({ maxMs: 10_000, settleMs: 50 });
+    // Whole cascade fails at boot: gateway + Authelia + the photos domain.
+    NotificationBatcher.enqueue('fail', gateway, result('fail'));
+    NotificationBatcher.enqueue('fail', svc('authelia'), result('fail'));
+    NotificationBatcher.enqueue('fail', domain('domain:photos', 'photos.dopp.cloud'), result('fail'));
+    await NotificationBatcher.flush('manual');
+    expect(sendEmailAlertMock).toHaveBeenCalledTimes(1);
+    const body = sendEmailAlertMock.mock.calls[0][1];
+    // Only the gateway (the deepest root) survives; downstream symptoms drop.
+    expect(body).toContain('Internet Gateway');
+    expect(body).not.toContain('photos.dopp.cloud');
+  });
+
+  it('without a wired graph the digest lists every still-failing check (legacy)', async () => {
+    NotificationBatcher.start({ maxMs: 10_000, settleMs: 50 });
+    NotificationBatcher.enqueue('fail', gateway, result('fail'));
+    NotificationBatcher.enqueue('fail', svc('authelia'), result('fail'));
+    await NotificationBatcher.flush('manual');
+    const body = sendEmailAlertMock.mock.calls[0][1];
+    expect(body).toContain('Internet Gateway');
+    expect(body).toContain('Service: authelia');
+  });
+});

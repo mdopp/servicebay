@@ -25,14 +25,30 @@ vi.mock('./serviceHealthBootstrap', () => ({
 // Keep the heavy init paths inert — we're only exercising the
 // twin-subscription branch.
 vi.mock('./init', () => ({ initializeDefaultChecks: vi.fn().mockResolvedValue(undefined) }));
-const { getResultsMock, runMock, sendEmailMock } = vi.hoisted(() => ({
+const { getResultsMock, runMock, sendEmailMock, getChecksMock, getLastResultMock, getConfigMock } = vi.hoisted(() => ({
   getResultsMock: vi.fn((_id: string) => [] as unknown[]),
   runMock: vi.fn((_check: unknown) => undefined as unknown),
   sendEmailMock: vi.fn((_subject: string, _message: string) => Promise.resolve()),
+  getChecksMock: vi.fn(() => [] as unknown[]),
+  getLastResultMock: vi.fn<(id: string) => unknown>(() => null),
+  getConfigMock: vi.fn(
+    () =>
+      Promise.resolve({ reverseProxy: { hosts: [] } }) as Promise<{
+        reverseProxy: {
+          hosts: Array<{ domain: string; service: string; forwardPort: number; created: boolean }>;
+        };
+      }>,
+  ),
 }));
 vi.mock('./store', () => ({
-  HealthStore: { getChecks: () => [], getResults: (id: string) => getResultsMock(id) },
+  HealthStore: {
+    getChecks: () => getChecksMock(),
+    getResults: (id: string) => getResultsMock(id),
+    getLastResult: (id: string) => getLastResultMock(id),
+  },
 }));
+vi.mock('@/lib/registry', () => ({ getTemplates: vi.fn().mockResolvedValue([]) }));
+vi.mock('@/lib/config', () => ({ getConfig: () => getConfigMock() }));
 vi.mock('./runner', () => ({
   CheckRunner: { run: (check: unknown) => runMock(check) },
 }));
@@ -160,9 +176,13 @@ describe('HealthService.runAndEmit alert gating (#1651)', () => {
     runMock.mockReset();
     sendEmailMock.mockReset().mockResolvedValue(undefined);
     getResultsMock.mockReset().mockReturnValue([]);
+    getChecksMock.mockReset().mockReturnValue([]);
+    getLastResultMock.mockReset().mockReturnValue(null);
     fakeIo.emit.mockClear();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (HealthService as any).io = fakeIo;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (HealthService as any).serviceDeps = new Map();
   });
 
   it('does not alert on a single fail below the domain threshold (3)', async () => {
@@ -206,5 +226,68 @@ describe('HealthService.runAndEmit alert gating (#1651)', () => {
     runMock.mockRejectedValue(new Error('probe blew up'));
     await expect(runAndEmit(check)).resolves.toBeUndefined();
     expect(sendEmailMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('HealthService.runAndEmit root-cause gating (#1652)', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const runAndEmit = (c: CheckConfig) => (HealthService as any).runAndEmit(c);
+  const cfg = (over: Partial<CheckConfig> & Pick<CheckConfig, 'id' | 'type'>): CheckConfig =>
+    ({ name: over.id, target: '', interval: 60, enabled: true, created_at: 't', ...over });
+
+  const gateway = cfg({ id: 'gw', type: 'ping', name: 'Internet Gateway', target: '192.168.178.1' });
+  const photos = cfg({
+    id: 'domain:photos', type: 'domain', target: 'photos.dopp.cloud', name: 'Domain — photos',
+    domainConfig: { expectedScheme: 'https', isPublic: true },
+  });
+  const failResult: CheckResult = { check_id: 'domain:photos', status: 'fail', message: 'down', timestamp: '2026-06-04T14:32:00Z' };
+
+  beforeEach(() => {
+    runMock.mockReset().mockResolvedValue(failResult);
+    sendEmailMock.mockReset().mockResolvedValue(undefined);
+    // photos is a domain → threshold 3; supply a 3-fail streak so the
+    // #1651 threshold is met and only the #1652 root-cause gate decides.
+    getResultsMock.mockReset().mockReturnValue([failResult, failResult, failResult]);
+    getChecksMock.mockReset().mockReturnValue([gateway, photos]);
+    fakeIo.emit.mockClear();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (HealthService as any).io = fakeIo;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (HealthService as any).serviceDeps = new Map();
+    getConfigMock.mockReset().mockResolvedValue({
+      reverseProxy: { hosts: [{ domain: 'photos.dopp.cloud', service: 'immich', forwardPort: 1, created: true }] },
+    });
+  });
+
+  it('suppresses a downstream symptom when its prerequisite (gateway) is also failing', async () => {
+    // gateway failing → photos is a downstream symptom, not a root.
+    getLastResultMock.mockImplementation((id: string) =>
+      id === 'gw' ? { status: 'fail' } : null);
+    await runAndEmit(photos);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(fakeIo.emit).not.toHaveBeenCalledWith('health:alert', expect.objectContaining({ type: 'error' }));
+    // Per-check status is still broadcast.
+    expect(fakeIo.emit).toHaveBeenCalledWith('health:update', { checkId: 'domain:photos', result: failResult });
+  });
+
+  it('alerts with a causal-chain email when the check IS the root (no prereq failing)', async () => {
+    getLastResultMock.mockReturnValue(null); // nothing else failing
+    await runAndEmit(photos);
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+    // Subject is the root-cause chain, not the legacy "Check Failed".
+    expect(sendEmailMock.mock.calls[0][0]).not.toContain('Check Failed');
+    expect(fakeIo.emit).toHaveBeenCalledWith('health:alert', expect.objectContaining({ type: 'error' }));
+  });
+
+  it('the gateway alerts as the root and names affected services', async () => {
+    const gwFail: CheckResult = { check_id: 'gw', status: 'fail', timestamp: '2026-06-04T14:32:00Z' };
+    runMock.mockResolvedValue(gwFail);
+    getResultsMock.mockReturnValue([gwFail, gwFail, gwFail]); // ping threshold 3
+    getLastResultMock.mockImplementation((id: string) =>
+      id === 'domain:photos' ? { status: 'fail' } : id === 'gw' ? { status: 'fail' } : null);
+    await runAndEmit(gateway);
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+    expect(sendEmailMock.mock.calls[0][0]).toContain('no internet');
+    expect(sendEmailMock.mock.calls[0][1]).toContain('immich');
   });
 });

@@ -25,6 +25,11 @@
 import type { CheckConfig, CheckResult } from './types';
 import { logger } from '@/lib/logger';
 import { sendEmailAlert } from '@/lib/email';
+import {
+  isRootCause,
+  makePrerequisiteContext,
+  type ServiceDependencyMap,
+} from './prerequisiteChecks';
 
 /** Hard cap on how long we'll hold alerts after boot. Covers the
  *  longest cold-start envelope (NPM + AdGuard + auth pods) plus a
@@ -81,6 +86,26 @@ export class NotificationBatcher {
    *  it — the timer callbacks fire-and-forget. */
   private static flushInFlight: Promise<void> | null = null;
 
+  /**
+   * Root-cause inputs (#1652). Injected by `HealthService.init` so the
+   * boot digest collapses a restart cascade to root failures only — the
+   * same resolution the steady-state alert path uses — without the
+   * batcher importing the registry/config layer directly. When unset the
+   * digest falls back to listing every still-failing check (legacy).
+   */
+  private static serviceDeps: ServiceDependencyMap | null = null;
+  private static hosts: import('../config').ProxyHostEntry[] = [];
+
+  /** Wire the root-cause graph for the boot digest. Called once from
+   *  `HealthService.init` after the dependency graph is built. */
+  static setRootCauseResolution(input: {
+    serviceDeps: ServiceDependencyMap;
+    hosts: import('../config').ProxyHostEntry[];
+  }): void {
+    this.serviceDeps = input.serviceDeps;
+    this.hosts = input.hosts;
+  }
+
   /** Initialise the grace window. Called from `HealthService.init`
    *  once per server start. Repeated calls are no-ops so HMR
    *  reloads in dev don't reset the timer. */
@@ -136,7 +161,15 @@ export class NotificationBatcher {
     // fail (its last observed state).
     const finalState = new Map<string, PendingAlert>();
     for (const a of this.pending) finalState.set(a.check.id, a);
-    const stillFailing = [...finalState.values()].filter(a => a.kind === 'fail');
+    const allFailing = [...finalState.values()].filter(a => a.kind === 'fail');
+    // Root-cause coalescing (#1652): a reboot/internet blip floods the
+    // buffer with the whole cascade. If the dependency graph is wired,
+    // keep only the roots — a check whose prerequisite is also in the
+    // failing set is a downstream symptom, named by its root's chain, not
+    // a separate digest line. Treat the buffered fail set as the "currently
+    // failing" universe (during boot the live per-check status hasn't
+    // settled, so the buffer is the better signal).
+    const stillFailing = this.coalesceToRoots(allFailing);
 
     const total = this.pending.length;
     this.pending = [];
@@ -174,6 +207,24 @@ export class NotificationBatcher {
     }
   }
 
+  /** Collapse a buffered fail set to root causes only (#1652). When the
+   *  dependency graph isn't wired, returns the input unchanged (legacy
+   *  behaviour). The failing universe is the buffer itself. */
+  private static coalesceToRoots(failing: PendingAlert[]): PendingAlert[] {
+    if (!this.serviceDeps || failing.length <= 1) return failing;
+    const failingIds = new Set(failing.map(a => a.check.id));
+    const ctx = makePrerequisiteContext({
+      checks: failing.map(a => a.check),
+      serviceDeps: this.serviceDeps,
+      config: { reverseProxy: { hosts: this.hosts } },
+      isFailing: (id: string) => failingIds.has(id),
+    });
+    const roots = failing.filter(a => isRootCause(a.check, ctx));
+    // Defensive: never collapse to nothing (a pure cycle would) — fall
+    // back to the full set so the operator always gets the digest.
+    return roots.length > 0 ? roots : failing;
+  }
+
   /** Test-only: reset module state so each test starts clean. */
   static _resetForTesting(): void {
     if (this.settleTimer) clearTimeout(this.settleTimer);
@@ -182,6 +233,8 @@ export class NotificationBatcher {
     this.maxGraceTimer = null;
     this.pending = [];
     this.active = false;
+    this.serviceDeps = null;
+    this.hosts = [];
   }
 
   /** Test-only: peek at the pending buffer. */
