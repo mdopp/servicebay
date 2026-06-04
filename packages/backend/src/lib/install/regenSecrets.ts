@@ -25,10 +25,11 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { DATA_DIR } from '@/lib/dirs';
-import { regenerateSecretKey } from '@/lib/secrets';
+import { regenerateSecretKey, hasPreservedEncryptedConfig } from '@/lib/secrets';
 import { logger } from '@/lib/logger';
 
 const AUTH_SECRET_ENV_PATH = path.join(DATA_DIR, '.auth-secret.env');
+const SECRET_KEY_PATH = path.join(DATA_DIR, 'secret.key');
 
 /**
  * Write a fresh `.auth-secret.env` to disk. Overwrites any existing file
@@ -63,4 +64,60 @@ export function regenerateWipedKeys(): RegenResult {
   const authSecretEnvPath = regenerateAuthSecretEnv();
   logger.info('StackReset', 'Regenerated secret.key + .auth-secret.env in-process after wipe (#1246).');
   return { secretKeyPath, authSecretEnvPath };
+}
+
+export interface PreserveOrRegenResult extends RegenResult {
+  /** `true` when preserved `enc:` config was detected and the existing
+   *  keys were KEPT (not regenerated); `false` when fresh keys were
+   *  generated (a genuinely-fresh box, or no encrypted config to protect). */
+  preserved: boolean;
+}
+
+/**
+ * Regenerate-vs-preserve gate for the two boot-critical key files (#1667).
+ *
+ * Mirrors the FCoS boot init units' "preserve if present" semantics, but
+ * with an explicit decrypt-protection guard: when the on-disk `config.json`
+ * carries `enc:` values, the existing `secret.key`/`.auth-secret.env` are
+ * the ONLY thing that can decrypt them (the FritzBox gateway password +
+ * every OIDC/SSO client secret). Regenerating fresh keys in that state
+ * orphans all of those credentials — the root cause of the #1559 SSO-
+ * breakage family on a wipe-config reinstall.
+ *
+ * Decision is unambiguous and conservative:
+ *   - preserved `enc:` config present AND both key files already exist
+ *     → KEEP the keys verbatim, regenerate nothing (`preserved: true`);
+ *   - otherwise (fresh box, no `enc:` config, or a key file missing while
+ *     no protected config exists) → generate fresh keys exactly as
+ *     `regenerateWipedKeys` does (`preserved: false`).
+ *
+ * Note: if encrypted config exists but a key file is somehow missing, we do
+ * NOT silently mint a new key over the preserved ciphertext (that would
+ * orphan it) — we leave the present file(s) untouched and surface that the
+ * encrypted config can no longer be recovered, rather than masking it.
+ * No key material is logged.
+ */
+export function regenerateWipedKeysUnlessPreservedConfig(): PreserveOrRegenResult {
+  if (hasPreservedEncryptedConfig()) {
+    const haveSecretKey = fs.existsSync(SECRET_KEY_PATH);
+    const haveAuthSecret = fs.existsSync(AUTH_SECRET_ENV_PATH);
+    if (haveSecretKey && haveAuthSecret) {
+      logger.info(
+        'StackReset',
+        'Preserved secret.key + .auth-secret.env — config.json carries enc: values that only the existing keys can decrypt (#1667).',
+      );
+      return { secretKeyPath: SECRET_KEY_PATH, authSecretEnvPath: AUTH_SECRET_ENV_PATH, preserved: true };
+    }
+    // Encrypted config exists but a key file is missing: minting a fresh
+    // key here would orphan the preserved ciphertext. Don't mask it —
+    // keep whatever survives and let decrypt() surface the mismatch.
+    logger.warn(
+      'StackReset',
+      'config.json carries enc: values but a key file is missing — NOT minting a fresh key over preserved ciphertext (#1667). ' +
+        'Encrypted credentials may be unrecoverable; restore the original secret.key/.auth-secret.env.',
+    );
+    return { secretKeyPath: SECRET_KEY_PATH, authSecretEnvPath: AUTH_SECRET_ENV_PATH, preserved: true };
+  }
+  const { secretKeyPath, authSecretEnvPath } = regenerateWipedKeys();
+  return { secretKeyPath, authSecretEnvPath, preserved: false };
 }

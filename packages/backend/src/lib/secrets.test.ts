@@ -110,6 +110,37 @@ describe('decrypt key-mismatch behaviour (#780)', () => {
   });
 });
 
+describe('hasPreservedEncryptedConfig (#1667)', () => {
+  it('returns true when config.json carries an enc: value', async () => {
+    const dir = freshDataDir();
+    const mod = await loadSecretsModule();
+    const sealed = mod.encrypt('gateway-password');
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ gateway: { password: sealed } }));
+    expect(mod.hasPreservedEncryptedConfig()).toBe(true);
+  });
+
+  it('returns false when config.json has no enc: values', async () => {
+    const dir = freshDataDir();
+    const mod = await loadSecretsModule();
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ serverName: 'OSCAR' }));
+    expect(mod.hasPreservedEncryptedConfig()).toBe(false);
+  });
+
+  it('returns false when config.json is absent (fresh box)', async () => {
+    freshDataDir();
+    const mod = await loadSecretsModule();
+    expect(mod.hasPreservedEncryptedConfig()).toBe(false);
+  });
+
+  it('does not treat an operator value merely containing "enc:" mid-string as encrypted config', async () => {
+    const dir = freshDataDir();
+    const mod = await loadSecretsModule();
+    // "enc:" not at the start of a JSON string value -> not our sealed marker.
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ note: 'see enc: docs' }));
+    expect(mod.hasPreservedEncryptedConfig()).toBe(false);
+  });
+});
+
 describe('secret.key file management', () => {
   it('creates secret.key with mode 0600 on first use', async () => {
     const dir = freshDataDir();

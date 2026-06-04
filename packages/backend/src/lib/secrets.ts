@@ -6,6 +6,7 @@ import { DATA_DIR } from './dirs';
 import { logger } from './logger';
 
 const SECRET_KEY_PATH = path.join(DATA_DIR, 'secret.key');
+const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 const ALGORITHM = 'aes-256-gcm';
 const PREFIX = 'enc:';
 
@@ -66,6 +67,45 @@ export function regenerateSecretKey(): string {
   fs.writeFileSync(SECRET_KEY_PATH, key, { mode: 0o600 });
   CACHED_KEY = key;
   return SECRET_KEY_PATH;
+}
+
+/**
+ * True iff the on-disk `config.json` carries at least one `enc:`-prefixed
+ * value — i.e. there is preserved encrypted config whose plaintext can
+ * only be recovered with the existing `secret.key`/`.auth-secret.env`.
+ *
+ * This is the regenerate-vs-preserve discriminator (#1667). Regenerating
+ * the encryption keys when such config exists orphans every sealed
+ * credential (the FritzBox gateway password + every OIDC/SSO client
+ * secret), which is the root cause of the #1559 SSO-breakage family on a
+ * wipe-config reinstall. The keys are per-box identity — same trust class
+ * as the nginx certs / zwave network keys that already survive — and must
+ * NOT be regenerated while there is preserved `enc:` config to protect.
+ *
+ * Conservative by construction:
+ *   - returns `true` ONLY when a config.json exists AND contains the
+ *     literal `enc:` marker (we scan the raw text, not the decrypted
+ *     values, so a stale/unreadable key still counts as "has secrets to
+ *     protect" — we never destroy the only thing that could decrypt them);
+ *   - returns `false` for a genuinely-fresh box (no config.json, or a
+ *     config with no `enc:` values) so it still generates fresh keys.
+ *
+ * No key material or secret value is read or logged here — only the
+ * presence of the `enc:` prefix in the raw file is detected.
+ */
+export function hasPreservedEncryptedConfig(configPath: string = CONFIG_PATH): boolean {
+  try {
+    if (!fs.existsSync(configPath)) return false;
+    const raw = fs.readFileSync(configPath, 'utf8');
+    // `enc:` (the encryption prefix) only appears as a JSON string value
+    // that secrets.ts sealed. A fresh ISO config has none.
+    return raw.includes(`"${PREFIX}`);
+  } catch {
+    // If we can't read it, fail safe toward *preserving* nothing — an
+    // unreadable config can't be the thing we're protecting, and the
+    // caller's own fresh-box generation must still proceed.
+    return false;
+  }
 }
 
 /** Per-process flag — once a decrypt fails because the loaded

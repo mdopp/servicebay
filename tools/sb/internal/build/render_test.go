@@ -217,6 +217,91 @@ func TestSetupRaid_MdadmPersistRerunSingleArray(t *testing.T) {
 	}
 }
 
+// TestSetupRaid_WipeConfigsPreservesKeysWhenEncConfig guards #1667: on a
+// wipe-configs reinstall the per-box encryption keys (secret.key /
+// .auth-secret.env) must be PRESERVED when there is preserved `enc:` config
+// to decrypt (the FritzBox gateway password + every OIDC/SSO client secret),
+// and only wiped on a genuinely-fresh box (no `enc:` config anywhere).
+// Regenerating them while preserved enc: config exists orphans all SSO
+// credentials — the root cause of the #1559 family. The test runs the real
+// shell idiom extracted from the rendered Butane against two fixtures.
+func TestSetupRaid_WipeConfigsPreservesKeysWhenEncConfig(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	in := RenderInputs{Settings: Settings{ServerName: "OSCAR", HostUser: "core", ServicebayChannel: "stable"}}
+	in.Settings.FactoryFresh = "wipe-configs"
+	out := in.Butane()
+
+	// Extract the `if [[ "wipe-configs" == "wipe-configs" ]]; then ... fi`
+	// block (the rendered guard) so the test exercises the shipped text.
+	const guard = `"wipe-configs" == "wipe-configs" ]]; then`
+	gi := strings.Index(out, guard)
+	if gi == -1 {
+		t.Fatal("wipe-configs guard not found in rendered Butane")
+	}
+	start := strings.LastIndex(out[:gi], "if [[")
+	if start == -1 {
+		t.Fatal("opening 'if [[' of wipe-configs block not found")
+	}
+	// Find the matching closing `fi` after the guard.
+	rest := out[gi:]
+	fiRel := strings.Index(rest, "\n          fi")
+	if fiRel == -1 {
+		t.Fatal("closing fi of wipe-configs block not found")
+	}
+	block := out[start : gi+fiRel+len("\n          fi")]
+
+	// De-indent to runnable bash.
+	var lines []string
+	for _, ln := range strings.Split(block, "\n") {
+		lines = append(lines, strings.TrimSpace(ln))
+	}
+	snippet := strings.Join(lines, "\n")
+
+	run := func(t *testing.T, configBody string, wantKeysKept bool) {
+		t.Helper()
+		dir := t.TempDir()
+		sb := filepath.Join(dir, "servicebay")
+		if err := os.MkdirAll(sb, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sb, "config.json"), []byte(configBody), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		secretKey := filepath.Join(sb, "secret.key")
+		authEnv := filepath.Join(sb, ".auth-secret.env")
+		for _, p := range []string{secretKey, authEnv} {
+			if err := os.WriteFile(p, []byte("seed"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// MOUNT_POINT is the parent so $MOUNT_POINT/servicebay/... resolves.
+		script := "set -uo pipefail\nMOUNT_POINT=" + dir + "\n" + snippet + "\n"
+		cmd := exec.Command("bash", "-c", script)
+		if combined, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("wipe-configs snippet failed: %v\n%s", err, combined)
+		}
+		// config.json is always removed by wipe-configs.
+		if _, err := os.Stat(filepath.Join(sb, "config.json")); !os.IsNotExist(err) {
+			t.Error("wipe-configs should remove config.json")
+		}
+		_, keyErr := os.Stat(secretKey)
+		_, authErr := os.Stat(authEnv)
+		keysKept := keyErr == nil && authErr == nil
+		if keysKept != wantKeysKept {
+			t.Errorf("secret.key/.auth-secret.env kept=%v, want %v (#1667)", keysKept, wantKeysKept)
+		}
+	}
+
+	t.Run("preserves keys when config carries enc: values", func(t *testing.T) {
+		run(t, `{"gateway":{"password":"enc:v1:aa:bb:cc"},"reverseProxy":{"npm":{"password":"enc:v1:dd:ee:ff"}}}`, true)
+	})
+	t.Run("wipes keys on a fresh box (no enc: config)", func(t *testing.T) {
+		run(t, `{"serverName":"OSCAR","publicDomain":"example.com"}`, false)
+	})
+}
+
 func TestRenderPreInstall_OnlyServerName(t *testing.T) {
 	in := RenderInputs{Settings: Settings{ServerName: "OSCAR"}}
 	out := in.PreInstall()
