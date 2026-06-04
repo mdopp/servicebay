@@ -15,11 +15,72 @@ import { logger } from '@/lib/logger';
 /** Outcome of a TR-064 call — shared by every router helper here so
  *  the probe-action layer can show the same status pill regardless of
  *  which call ran. `no_gateway` and `no_credentials` are user-fixable
- *  config gaps (Settings → Gateway); `failed` is everything else. */
+ *  config gaps (Settings → Gateway); `unsupported` means the FritzBox
+ *  model/firmware doesn't expose this TR-064 write action (so the
+ *  operator must set DNS manually — NOT an error, see #1672); `failed`
+ *  is everything else. */
 export type RouterCallResult = {
-  result: 'ok' | 'no_gateway' | 'no_credentials' | 'failed';
+  result: 'ok' | 'no_gateway' | 'no_credentials' | 'unsupported' | 'failed';
   detail?: string;
 };
+
+/** Parsed TR-064 SOAP fault — the `errorCode`/`errorDescription` AVM
+ *  returns inside a `<s:Fault>` body. */
+export interface SoapFault {
+  errorCode: number | null;
+  errorDescription: string;
+}
+
+/** Extract the UPnP `errorCode` + `errorDescription` from a TR-064 SOAP
+ *  fault body. FritzBox returns these inside
+ *  `<s:Fault><detail><UPnPError><errorCode>…`. Returns null when the
+ *  text isn't a recognisable SOAP fault (e.g. an HTML error page). */
+export function parseSoapFault(text: string): SoapFault | null {
+  if (!text || !/<(\w+:)?Fault[\s>]/i.test(text) && !/UPnPError/i.test(text)) return null;
+  const codeMatch = /<errorCode>\s*(\d+)\s*<\/errorCode>/i.exec(text);
+  const descMatch = /<errorDescription>([^<]*)<\/errorDescription>/i.exec(text);
+  const faultStringMatch = /<(?:\w+:)?faultstring>([^<]*)<\/(?:\w+:)?faultstring>/i.exec(text);
+  const errorCode = codeMatch ? parseInt(codeMatch[1], 10) : null;
+  const errorDescription = (descMatch?.[1] ?? faultStringMatch?.[1] ?? '').trim();
+  if (errorCode === null && !errorDescription) return null;
+  return { errorCode, errorDescription };
+}
+
+/** UPnP error codes that mean "this action isn't implemented on this
+ *  device/firmware" rather than a transient failure or a bad request.
+ *  401 = Invalid Action, 501 = Action Failed (AVM returns this for
+ *  SetDNSServers on models that don't expose the write), 602 = Optional
+ *  Action Not Implemented. On any of these we tell the operator to set
+ *  DNS manually and treat that as success — the write path simply isn't
+ *  available on their box (#1672). */
+const UNSUPPORTED_UPNP_CODES = new Set([401, 501, 602]);
+
+/** Decide whether an HTTP status + body from a TR-064 write means the
+ *  action is *unsupported* on this FritzBox (operator must set DNS by
+ *  hand — not an error), returning a structured result, or a real
+ *  failure with the actual SOAP fault surfaced. Shared by the DHCP and
+ *  WAN write helpers so both give the same actionable message. */
+export function classifyTr064WriteFailure(status: number, body: string, manualHint: string): RouterCallResult {
+  const fault = parseSoapFault(body);
+  // A bare HTTP 401 with no SOAP fault = credentials rejected at the
+  // transport layer (not an "Invalid Action" UPnP fault).
+  if (status === 401 && !fault) {
+    return { result: 'no_credentials', detail: 'FritzBox rejected the TR-064 credentials. Re-check Settings → Gateway.' };
+  }
+  if (fault && fault.errorCode !== null && UNSUPPORTED_UPNP_CODES.has(fault.errorCode)) {
+    return {
+      result: 'unsupported',
+      detail: `This FritzBox doesn't support setting DNS over TR-064 (UPnP ${fault.errorCode}${fault.errorDescription ? ` — ${fault.errorDescription}` : ''}). ${manualHint} Once DNS is set, ServiceBay verifies it via the LAN resolution path, so a manual setup reads green.`,
+    };
+  }
+  const faultDetail = fault
+    ? ` SOAP fault: ${fault.errorCode ?? '?'}${fault.errorDescription ? ` ${fault.errorDescription}` : ''}.`
+    : '';
+  return {
+    result: 'failed',
+    detail: `FritzBox declined the DNS write (HTTP ${status}).${faultDetail} ${manualHint}`,
+  };
+}
 
 /**
  * Build the DHCP DNS SOAP payload and credentials for FritzBox.
@@ -90,10 +151,11 @@ export async function setFritzBoxDhcpDns(targetIp: string): Promise<RouterCallRe
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       logger.warn('router:dnsConfig', `TR-064 SetDNSServers HTTP ${res.status}: ${text.slice(0, 200)}`);
-      return {
-        result: 'failed',
-        detail: `FritzBox returned HTTP ${res.status} — likely TR-064 is disabled (Settings → Home Network → FRITZ!Box Network → activate UPnP) or the credentials are wrong.`,
-      };
+      return classifyTr064WriteFailure(
+        res.status,
+        text,
+        `Set the DHCP DNS server to ${targetIp} manually in the FritzBox UI (Home Network → Network → Network Settings → IPv4 Addresses → DHCP server → Local DNS server).`,
+      );
     }
     // Touch the existing client so we know it's still reachable for
     // the next call — best-effort; ignore failures.
@@ -165,6 +227,57 @@ function buildWanDnsSoapBody(targetIp: string, serviceType: string): string {
  * returns HTTP 401 / 501 and we surface that as `failed` with a
  * pointer to the UI toggle.
  */
+/** Outcome of the per-WAN-service write loop: `ok`/`no_credentials` are
+ *  terminal; otherwise the last HTTP status + body are carried out so the
+ *  caller can classify unsupported-vs-failed once both services are tried. */
+interface WanWriteAttemptOutcome {
+  terminal: RouterCallResult | null;
+  lastStatus: number;
+  lastBody: string | null;
+  errors: string[];
+}
+
+async function tryWanDnsWrites(
+  targetIp: string,
+  gateway: { host: string; username?: string; password?: string; ssl?: boolean },
+): Promise<WanWriteAttemptOutcome> {
+  const { scheme, port, auth, attempts } = buildWanDnsPayload(targetIp, gateway);
+  const errors: string[] = [];
+  let lastStatus = 0;
+  let lastBody: string | null = null;
+  for (const a of attempts) {
+    try {
+      const url = `${scheme}://${gateway.host}:${port}${a.controlUrl}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/xml; charset=utf-8',
+          'SOAPAction': `"${a.serviceType}#SetDNSServers"`,
+          'Authorization': auth,
+        },
+        body: buildWanDnsSoapBody(targetIp, a.serviceType),
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (res.ok) {
+        logger.info('router:dnsConfig', `FritzBox SetDNSServers (WAN upstream) accepted via ${a.serviceType}`);
+        return { terminal: { result: 'ok' }, lastStatus, lastBody, errors };
+      }
+      const text = await res.text().catch(() => '');
+      const fault = parseSoapFault(text);
+      if (res.status === 401 && !fault) {
+        return { terminal: { result: 'no_credentials', detail: 'FritzBox rejected the TR-064 credentials. Re-check Settings → Gateway.' }, lastStatus, lastBody, errors };
+      }
+      lastStatus = res.status;
+      lastBody = text;
+      const faultStr = fault ? `${fault.errorCode ?? '?'} ${fault.errorDescription}` : text.slice(0, 120);
+      errors.push(`${a.serviceType}: HTTP ${res.status} ${faultStr.trim()}`);
+    } catch (e) {
+      errors.push(`${a.serviceType}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { terminal: null, lastStatus, lastBody, errors };
+}
+
 export async function setFritzBoxWanDns(targetIp: string): Promise<RouterCallResult> {
   const config = await getConfig();
   const gateway = config.gateway;
@@ -178,42 +291,19 @@ export async function setFritzBoxWanDns(targetIp: string): Promise<RouterCallRes
     };
   }
 
-  const { scheme, port, auth, attempts } = buildWanDnsPayload(targetIp, gateway);
-  const errors: string[] = [];
-  for (const a of attempts) {
-    try {
-      const url = `${scheme}://${gateway.host}:${port}${a.controlUrl}`;
-      const body = buildWanDnsSoapBody(targetIp, a.serviceType);
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'text/xml; charset=utf-8',
-          'SOAPAction': `"${a.serviceType}#SetDNSServers"`,
-          'Authorization': auth,
-        },
-        body,
-        signal: AbortSignal.timeout(8_000),
-      });
-      if (res.ok) {
-        logger.info('router:dnsConfig', `FritzBox SetDNSServers (WAN upstream) accepted via ${a.serviceType}`);
-        return { result: 'ok' };
-      }
-      const text = await res.text().catch(() => '');
-      if (res.status === 401) {
-        return {
-          result: 'no_credentials',
-          detail: 'FritzBox rejected the TR-064 credentials. Re-check Settings → Gateway.',
-        };
-      }
-      errors.push(`${a.serviceType}: HTTP ${res.status} ${text.slice(0, 120)}`);
-    } catch (e) {
-      errors.push(`${a.serviceType}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
+  const { terminal, lastStatus, lastBody, errors } = await tryWanDnsWrites(targetIp, gateway);
+  if (terminal) return terminal;
   logger.warn('router:dnsConfig', `FritzBox SetDNSServers (WAN upstream) failed: ${errors.join(' | ')}`);
+  if (lastBody !== null) {
+    return classifyTr064WriteFailure(
+      lastStatus,
+      lastBody,
+      'Set the upstream DNS manually in the FritzBox UI: Internet → Account Information → DNS Server → "Use other DNSv4 servers" → ' + targetIp + '. (If it\'s currently "From provider", switch it once and the manual value sticks.)',
+    );
+  }
   return {
     result: 'failed',
-    detail: 'FritzBox declined SetDNSServers on both WAN services. Most common cause: "Internet → Account Information → DNS Server" is set to "From provider" — switch it to "Use other DNSv4 servers" once and retry; subsequent TR-064 writes then succeed.',
+    detail: `FritzBox upstream-DNS write failed before it returned an HTTP status (${errors.join(' | ') || 'no response'}). Check that the FritzBox is reachable and TR-064/UPnP is enabled, or set the upstream DNS to ${targetIp} manually under Internet → Account Information → DNS Server.`,
   };
 }
 
@@ -281,11 +371,12 @@ async function waitForFritzBoxReconnect(
         return { ok: true, errors: [] };
       }
       const text = await res.text().catch(() => '');
-      if (res.status === 401) {
+      const fault = parseSoapFault(text);
+      if (res.status === 401 && !fault) {
         errors.push('401');
         break;
       }
-      errors.push(`${attempt.serviceType}: HTTP ${res.status} ${text.slice(0, 120)}`);
+      errors.push(`${attempt.serviceType}: HTTP ${res.status} ${(fault ? `${fault.errorCode ?? '?'} ${fault.errorDescription}` : text.slice(0, 120)).trim()}`);
     } catch (e) {
       errors.push(`${attempt.serviceType}: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -340,6 +431,6 @@ export async function reconnectFritzBox(): Promise<RouterCallResult> {
   logger.warn('router:dnsConfig', `FritzBox reconnect failed: ${errors.join(' | ')}`);
   return {
     result: 'failed',
-    detail: `FritzBox declined ForceTermination on both WAN services. Likely TR-064 is disabled (Settings → Home Network → FRITZ!Box Network → activate UPnP).`,
+    detail: `FritzBox declined ForceTermination on both WAN services (${errors.join(' | ') || 'no response'}). Likely TR-064 is disabled (Settings → Home Network → FRITZ!Box Network → activate UPnP), or this model doesn't expose the reconnect action — trigger "Neu verbinden" in the FritzBox UI under Internet → Online-Monitor instead.`,
   };
 }
