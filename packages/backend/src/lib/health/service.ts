@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger';
 import { HealthStore } from './store';
 import { CheckRunner } from './runner';
 import { CheckConfig, CheckResult } from './types';
+import { decideAlert } from './alertDecision';
 import { initializeDefaultChecks } from './init';
 import { sendEmailAlert } from '@/lib/email';
 import { NotificationBatcher } from './notificationBatcher';
@@ -206,13 +207,15 @@ export class HealthService {
   private static async runAndEmit(check: CheckConfig) {
     try {
       const result = await CheckRunner.run(check);
+      // CheckRunner.run has already persisted `result`, so history is
+      // newest-first with history[0] === result.
       const history = HealthStore.getResults(check.id);
-      const prev = history[1]; // [0] is current
-      const failed = result.status === 'fail';
-      const recovered = result.status === 'ok';
-      const enteredFailure = failed && (!prev || prev.status === 'ok');
-      const recoveredNow = recovered && prev && prev.status === 'fail';
-      
+      // Require N consecutive fails before alerting (#1651); recovery
+      // only fires if a fail alert was actually sent. The decision is a
+      // pure function so it stays testable and extensible (#1652).
+      const { alertFailure: enteredFailure, alertRecovery: recoveredNow } =
+        decideAlert(check, history);
+
       // Emit if we have IO
       if (this.io) {
       // Broadcast update event (silent refresh)
