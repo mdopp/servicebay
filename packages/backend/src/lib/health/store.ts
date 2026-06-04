@@ -135,4 +135,29 @@ export class HealthStore {
     const results = this.getResults(checkId);
     return results.length > 0 ? results[0] : null;
   }
+
+  /**
+   * Mark the most-recent persisted result for a check as having emitted a
+   * failure alert (#1661). `runAndEmit` calls this after the #1651 threshold
+   * and #1652 root-cause gates both pass, so the recovery side can later tell
+   * an alerted failure (recover) from a suppressed downstream symptom (stay
+   * silent). No-op if there is no persisted result yet.
+   */
+  static markLastResultAlerted(checkId: string): void {
+    const resultFile = path.join(RESULTS_DIR, `${checkId}.json`);
+    if (!fs.existsSync(resultFile)) return;
+    let results: CheckResult[];
+    try {
+      results = JSON.parse(fs.readFileSync(resultFile, 'utf-8'));
+    } catch {
+      return;
+    }
+    if (results.length === 0) return;
+    results[0].alerted = true;
+    try {
+      fs.writeFileSync(resultFile, JSON.stringify(results, null, 2));
+    } catch (e) {
+      logger.error('HealthStore', `Failed to mark alerted for ${checkId}:`, e);
+    }
+  }
 }

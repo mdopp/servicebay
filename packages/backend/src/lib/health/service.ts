@@ -346,6 +346,14 @@ export class HealthService {
       const enteredFailure = thresholdMet && isRoot;
       const failTitle = chainEmail?.subject ?? `Check Failed: ${check.name}`;
 
+      // Persist that THIS failure actually alerted (#1661), so the recovery
+      // side stays symmetric: a downstream symptom suppressed as a cascade
+      // leaf never gets the flag and therefore never emits a standalone
+      // "Service Recovered". Only the root's failure is flagged here.
+      if (enteredFailure) {
+        HealthStore.markLastResultAlerted(check.id);
+      }
+
       this.emitAlerts(check, result, { enteredFailure, recoveredNow, failTitle });
 
       if (enteredFailure && !NotificationBatcher.enqueue('fail', check, result)) {

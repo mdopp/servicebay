@@ -130,6 +130,17 @@ export interface CheckResult {
    * same field — each consumer narrows it.
    */
   payload?: unknown;
+  /**
+   * True when this `fail` result actually emitted a failure alert (#1661).
+   * Set by `runAndEmit` after the #1651 threshold AND the #1652 root-cause
+   * gate both passed — i.e. an operator-visible "Check Failed" / causal-chain
+   * email (or toast) went out for this tick. A downstream symptom suppressed
+   * as a cascade leaf never gets the flag, so the recovery side can stay
+   * symmetric: only a check that actually alerted on failure emits a
+   * standalone "Service Recovered". Absent/false on `ok` results and on
+   * suppressed fails.
+   */
+  alerted?: boolean;
 }
 
 /**

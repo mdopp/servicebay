@@ -7,6 +7,7 @@ import {
   isRootCause,
   enumerateDownstreamFailing,
   renderCausalChainEmail,
+  serviceOfCheck,
   type ServiceDependencyMap,
 } from './prerequisiteChecks';
 import type { CheckConfig, CheckResult } from './types';
@@ -102,6 +103,55 @@ describe('isRootCause', () => {
     expect(isRootCause(autheliaSvc, ctx)).toBe(true);
     expect(isRootCause(immichDomain, ctx)).toBe(false);
     expect(isRootCause(vaultDomain, ctx)).toBe(false);
+  });
+});
+
+describe('serviceOfCheck — template http/script slug binding (#1663)', () => {
+  // home-assistant ships an `http` API probe whose id slug leads with the
+  // service name; the service itself has a container check.
+  const haSvc = chk({ id: 'svc-home-assistant', type: 'service', target: 'home-assistant', name: 'Service: home-assistant' });
+  const haApi = chk({ id: 'home-assistant-api', type: 'http', target: 'http://ha:8123', name: 'home-assistant-api' });
+  const ollamaSvc = chk({ id: 'svc-ollama', type: 'service', target: 'ollama', name: 'Service: ollama' });
+  const ollamaApi = chk({ id: 'ollama-api', type: 'http', target: 'http://ollama:11434', name: 'ollama-api' });
+  const bareScript = chk({ id: 'ollama', type: 'script', target: 'echo', name: 'ollama' });
+  const orphanApi = chk({ id: 'nonexistent-api', type: 'http', target: 'http://x', name: 'nonexistent-api' });
+
+  const ctx = makePrerequisiteContext({
+    checks: [haSvc, haApi, ollamaSvc, ollamaApi, bareScript, orphanApi],
+    serviceDeps: new Map(),
+    config: undefined,
+    isFailing: () => false,
+  });
+
+  it('binds an http probe to its owning service via the longest slug prefix', () => {
+    // home-assistant-api → home-assistant (not "home"); the hyphenated
+    // service name must win the longest-prefix match.
+    expect(serviceOfCheck(haApi, ctx)).toBe('home-assistant');
+    expect(serviceOfCheck(ollamaApi, ctx)).toBe('ollama');
+  });
+
+  it('binds a bare-slug script probe to a same-named service', () => {
+    expect(serviceOfCheck(bareScript, ctx)).toBe('ollama');
+  });
+
+  it('returns null when no container-checked service owns the slug', () => {
+    expect(serviceOfCheck(orphanApi, ctx)).toBeNull();
+  });
+
+  it('an http probe gets its service container check as a prerequisite', () => {
+    expect(resolvePrerequisiteChecks(haApi, ctx)).toContain('svc-home-assistant');
+  });
+
+  it('a container outage makes the http probe a downstream symptom, not a root', () => {
+    const failingCtx = makePrerequisiteContext({
+      checks: [haSvc, haApi],
+      serviceDeps: new Map(),
+      config: undefined,
+      isFailing: (id) => id === 'svc-home-assistant' || id === 'home-assistant-api',
+    });
+    // container check is the root; the API probe collapses under it.
+    expect(isRootCause(haApi, failingCtx)).toBe(false);
+    expect(isRootCause(haSvc, failingCtx)).toBe(true);
   });
 });
 

@@ -40,11 +40,15 @@ const { getResultsMock, runMock, sendEmailMock, getChecksMock, getLastResultMock
       }>,
   ),
 }));
+const { markAlertedMock } = vi.hoisted(() => ({
+  markAlertedMock: vi.fn((_id: string) => undefined),
+}));
 vi.mock('./store', () => ({
   HealthStore: {
     getChecks: () => getChecksMock(),
     getResults: (id: string) => getResultsMock(id),
     getLastResult: (id: string) => getLastResultMock(id),
+    markLastResultAlerted: (id: string) => markAlertedMock(id),
   },
 }));
 vi.mock('@/lib/registry', () => ({ getTemplates: vi.fn().mockResolvedValue([]) }));
@@ -167,6 +171,8 @@ describe('HealthService bootstrap-on-sync (#935)', () => {
 describe('HealthService.runAndEmit alert gating (#1651)', () => {
   const check: CheckConfig = { id: 'domain:photos', name: 'Photos', type: 'domain' } as CheckConfig;
   const failResult: CheckResult = { check_id: 'domain:photos', status: 'fail', message: 'down', latency: 0, timestamp: 't' };
+  // A fail that actually emitted an alert carries the persisted #1661 flag.
+  const alertedFail: CheckResult = { ...failResult, alerted: true };
   const okResult: CheckResult = { check_id: 'domain:photos', status: 'ok', message: '', latency: 1, timestamp: 't' };
   // runAndEmit is a private static; reach it via cast (established pattern below).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -178,6 +184,7 @@ describe('HealthService.runAndEmit alert gating (#1651)', () => {
     getResultsMock.mockReset().mockReturnValue([]);
     getChecksMock.mockReset().mockReturnValue([]);
     getLastResultMock.mockReset().mockReturnValue(null);
+    markAlertedMock.mockReset();
     fakeIo.emit.mockClear();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (HealthService as any).io = fakeIo;
@@ -195,19 +202,22 @@ describe('HealthService.runAndEmit alert gating (#1651)', () => {
     expect(fakeIo.emit).toHaveBeenCalledWith('health:update', { checkId: 'domain:photos', result: failResult });
   });
 
-  it('alerts (emit + email) on the third consecutive fail', async () => {
+  it('alerts (emit + email) on the third consecutive fail and flags the result alerted', async () => {
     runMock.mockResolvedValue(failResult);
     getResultsMock.mockReturnValue([failResult, failResult, failResult]); // streak of 3
     await runAndEmit(check);
     expect(fakeIo.emit).toHaveBeenCalledWith('health:alert', expect.objectContaining({ type: 'error' }));
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
     expect(sendEmailMock.mock.calls[0][0]).toContain('Photos');
+    // #1661: the emitted failure persists the `alerted` flag so its recovery
+    // can later fire symmetrically.
+    expect(markAlertedMock).toHaveBeenCalledWith('domain:photos');
   });
 
-  it('sends a recovery alert only when a prior fail alert was sent', async () => {
+  it('sends a recovery alert only when a prior fail actually alerted', async () => {
     runMock.mockResolvedValue(okResult);
-    // ok now, preceded by a fail streak that met the threshold.
-    getResultsMock.mockReturnValue([okResult, failResult, failResult, failResult]);
+    // ok now, preceded by a fail streak that emitted an alert (#1661 flag).
+    getResultsMock.mockReturnValue([okResult, alertedFail, failResult, failResult]);
     await runAndEmit(check);
     expect(fakeIo.emit).toHaveBeenCalledWith('health:alert', expect.objectContaining({ type: 'success' }));
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
@@ -217,6 +227,16 @@ describe('HealthService.runAndEmit alert gating (#1651)', () => {
     runMock.mockResolvedValue(okResult);
     // ok now, only one prior fail (below the 3 threshold) → no alert was sent.
     getResultsMock.mockReturnValue([okResult, failResult]);
+    await runAndEmit(check);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(fakeIo.emit).not.toHaveBeenCalledWith('health:alert', expect.objectContaining({ type: 'success' }));
+  });
+
+  it('does not recover a downstream symptom whose fail was root-cause-suppressed (#1661)', async () => {
+    runMock.mockResolvedValue(okResult);
+    // The prior streak met the threshold (3 fails) but was suppressed as a
+    // cascade leaf, so none carry the `alerted` flag → no recovery email.
+    getResultsMock.mockReturnValue([okResult, failResult, failResult, failResult]);
     await runAndEmit(check);
     expect(sendEmailMock).not.toHaveBeenCalled();
     expect(fakeIo.emit).not.toHaveBeenCalledWith('health:alert', expect.objectContaining({ type: 'success' }));

@@ -87,8 +87,15 @@ export interface AlertDecision {
  *
  * Failure alert fires on the tick where the consecutive-fail streak first
  * **reaches** the threshold (not on every subsequent fail). Recovery fires
- * on the first `ok` tick only if the prior streak had reached the
- * threshold — i.e. a fail alert was actually sent.
+ * on the first `ok` tick only if a failure alert was actually emitted during
+ * the immediately-preceding fail streak — i.e. some result in that streak
+ * carries the persisted `alerted` flag (#1661). The flag is the single
+ * source of truth for "did the operator see a failure email": it is set only
+ * after BOTH the #1651 threshold and the #1652 root-cause gate passed, so a
+ * downstream symptom that was suppressed as a cascade leaf (streak met the
+ * threshold but it wasn't the root) never recovers. Falling back to a bare
+ * streak≥threshold check would re-introduce the recovery-side storm this
+ * decision exists to prevent.
  */
 export function decideAlert(check: CheckConfig, history: CheckResult[]): AlertDecision {
   const threshold = getFailureThreshold(check);
@@ -102,8 +109,20 @@ export function decideAlert(check: CheckConfig, history: CheckResult[]): AlertDe
   }
 
   // current.status === 'ok' → potential recovery. Recover only if the
-  // immediately-preceding fail streak had reached the alert threshold
-  // (otherwise no fail alert was ever sent, so there's nothing to recover).
-  const priorFailStreak = countConsecutiveFails(history.slice(1));
-  return { alertFailure: false, alertRecovery: priorFailStreak >= threshold };
+  // immediately-preceding fail streak actually emitted a failure alert
+  // (some result in it is flagged `alerted`). A streak that merely reached
+  // the threshold but was root-cause-suppressed (#1652) carries no flag, so
+  // it stays silent — keeping the failure and recovery sides symmetric.
+  const priorStreak = priorFailStreakResults(history);
+  return { alertFailure: false, alertRecovery: priorStreak.some(r => r.alerted === true) };
+}
+
+/** The contiguous fail results immediately preceding the head `ok` result. */
+function priorFailStreakResults(history: CheckResult[]): CheckResult[] {
+  const streak: CheckResult[] = [];
+  for (const r of history.slice(1)) {
+    if (r.status !== 'fail') break;
+    streak.push(r);
+  }
+  return streak;
 }
