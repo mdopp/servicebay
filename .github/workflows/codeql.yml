@@ -52,7 +52,7 @@ jobs:
 
       # Go's autobuild needs the toolchain; the JS analysis uses build-mode:none.
       - if: matrix.language == 'go'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.24'
           cache-dependency-path: tools/sb/go.sum
