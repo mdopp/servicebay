@@ -78,7 +78,7 @@
     "@vitest/coverage-v8": "4.1.8",
     "dependency-cruiser": "^17.4.3",
     "esbuild": "^0.28.0",
-    "eslint": "^9",
+    "eslint": "^10",
     "eslint-config-next": "16.2.7",
     "eslint-plugin-unused-imports": "^4.4.1",
     "husky": "^9.1.7",
