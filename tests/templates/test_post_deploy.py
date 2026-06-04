@@ -1105,6 +1105,125 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertIn("kept-data found", out)
             self.assertIn("re-wiring against the existing mesh", out)
 
+    def test_auth_oidc_block_reseeded_when_missing(self):
+        """#1687: after a backup-restore the restored configuration.yaml has
+        no auth_oidc: block; ensure_auth_oidc_config_block re-appends it from
+        the post-deploy env (secret/groups/domain) without clobbering the
+        user's existing content."""
+        import tempfile
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            os.makedirs(cfg, exist_ok=True)
+            cfg_file = os.path.join(cfg, "configuration.yaml")
+            with open(cfg_file, "w") as fh:
+                fh.write("default_config:\n\nfrontend:\n  themes: !include themes.yaml\n")
+            env = {
+                "DATA_DIR": tmp,
+                "HA_OIDC_SECRET": "s3cret",
+                "PUBLIC_DOMAIN": "dopp.cloud",
+                "HA_OIDC_ADMIN_GROUP": "admins",
+                "HA_OIDC_USER_GROUP": "family",
+            }
+            with run_with_env(env):
+                changed = m.ensure_auth_oidc_config_block()
+            self.assertTrue(changed)
+            content = open(cfg_file).read()
+            # User content preserved + auth_oidc appended with rendered values.
+            self.assertIn("frontend:", content)
+            self.assertIn("auth_oidc:", content)
+            self.assertIn("client_secret: s3cret", content)
+            self.assertIn("auth.dopp.cloud/.well-known/openid-configuration", content)
+            self.assertIn('admin: "admins"', content)
+
+            # Idempotent: a second pass leaves the (now-present) block alone.
+            with run_with_env(env):
+                again = m.ensure_auth_oidc_config_block()
+            self.assertFalse(again)
+            self.assertEqual(content, open(cfg_file).read())
+
+    def test_auth_oidc_block_skipped_without_secret(self):
+        """No HA_OIDC_SECRET → never write a half-filled auth_oidc block."""
+        import tempfile
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            os.makedirs(cfg, exist_ok=True)
+            cfg_file = os.path.join(cfg, "configuration.yaml")
+            with open(cfg_file, "w") as fh:
+                fh.write("default_config:\n")
+            with run_with_env({"DATA_DIR": tmp, "PUBLIC_DOMAIN": "dopp.cloud"}):
+                changed = m.ensure_auth_oidc_config_block()
+            self.assertFalse(changed)
+            self.assertNotIn("auth_oidc:", open(cfg_file).read())
+
+    def test_orphaned_helpers_detected_and_reported(self):
+        """#1686: a restored entity_registry stub on a helper platform whose
+        config_entry_id has no row in core.config_entries is reported as an
+        orphan; a helper with a resolvable entry and a normal (non-helper)
+        entity are not."""
+        import tempfile
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = os.path.join(tmp, "home-assistant", "homeassistant", ".storage")
+            os.makedirs(storage, exist_ok=True)
+            registry = {"data": {"entities": [
+                # Orphan: integration helper pointing at a missing entry.
+                {"entity_id": "sensor.senec_import", "platform": "integration",
+                 "config_entry_id": "gone1"},
+                # Orphan: template helper with a None config entry.
+                {"entity_id": "cover.garage", "platform": "template",
+                 "config_entry_id": None},
+                # Healthy helper: entry exists.
+                {"entity_id": "sensor.daily_energy", "platform": "utility_meter",
+                 "config_entry_id": "present1"},
+                # Not a helper platform → ignored even with a dangling entry.
+                {"entity_id": "light.kitchen", "platform": "hue",
+                 "config_entry_id": "gone2"},
+            ]}}
+            entries = {"data": {"entries": [{"entry_id": "present1"}]}}
+            with open(os.path.join(storage, "core.entity_registry"), "w") as fh:
+                json.dump(registry, fh)
+            with open(os.path.join(storage, "core.config_entries"), "w") as fh:
+                json.dump(entries, fh)
+
+            with run_with_env({"DATA_DIR": tmp}):
+                orphans = m.find_orphaned_helpers()
+                ids = {o["entity_id"] for o in orphans}
+                self.assertEqual(ids, {"sensor.senec_import", "cover.garage"})
+
+                buf = io.StringIO()
+                old = sys.stdout
+                sys.stdout = buf
+                try:
+                    m.report_orphaned_helpers()
+                finally:
+                    sys.stdout = old
+                report = buf.getvalue()
+            self.assertIn("2 Home Assistant helper(s) did not fully restore", report)
+            self.assertIn("sensor.senec_import", report)
+            self.assertIn("cover.garage", report)
+            self.assertNotIn("sensor.daily_energy", report)
+            self.assertNotIn("light.kitchen", report)
+
+    def test_orphaned_helpers_none_on_fresh_install(self):
+        """No entity_registry (fresh install / no restore) → no orphans, no
+        report, no crash."""
+        import tempfile
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "home-assistant", "homeassistant"), exist_ok=True)
+            with run_with_env({"DATA_DIR": tmp}):
+                self.assertEqual(m.find_orphaned_helpers(), [])
+                buf = io.StringIO()
+                old = sys.stdout
+                sys.stdout = buf
+                try:
+                    m.report_orphaned_helpers()
+                finally:
+                    sys.stdout = old
+            self.assertEqual(buf.getvalue(), "")
+
 
 class ClaudeDevScript(unittest.TestCase):
     def test_emits_ssh_credential_when_password_set(self):

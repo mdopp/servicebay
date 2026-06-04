@@ -333,6 +333,31 @@ describe('Templates render to valid Pod manifests', () => {
   }
 });
 
+// ─── 3b. Home Assistant base configuration.yaml wiring (#1687) ──────────────
+describe('Home Assistant base configuration.yaml ships the include wiring', () => {
+  const ha = templates.find(t => t.name === 'home-assistant')!;
+
+  it('the base config ships automation/script/scene !include lines', () => {
+    const cfg = ha.configs['configuration.yaml.mustache'];
+    expect(cfg, 'home-assistant must ship configuration.yaml.mustache').toBeTruthy();
+    expect(cfg).toMatch(/^automation: !include automations\.yaml$/m);
+    expect(cfg).toMatch(/^script: !include scripts\.yaml$/m);
+    expect(cfg).toMatch(/^scene: !include scenes\.yaml$/m);
+    // ServiceBay's required wiring is still present on a fresh install.
+    expect(cfg).toMatch(/^http:/m);
+    expect(cfg).toMatch(/^auth_oidc:/m);
+  });
+
+  it('every !include target file is shipped so the include never dangles', () => {
+    for (const f of ['automations.yaml', 'scripts.yaml', 'scenes.yaml']) {
+      expect(
+        ha.configs[`${f}.mustache`],
+        `home-assistant must ship ${f}.mustache so the !include target exists on first install`,
+      ).toBeDefined();
+    }
+  });
+});
+
 // ─── 4. Subdomain proxyPort references resolve ──────────────────────────────
 describe('Subdomain proxyPort references', () => {
   for (const t of templates) {
