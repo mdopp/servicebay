@@ -23,6 +23,7 @@ const baseCard: PortalCard = {
   icon: '',
   tagline: 'Auto-backup your family photos.',
   url: 'https://photos.home.arpa',
+  status: 'ok',
   primaryAction: null,
   secondaryActions: [],
   body: '',
