@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.94.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.93.1...servicebay-v4.94.0) (2026-06-04)
+
+
+### Features
+
+* **health,portal:** per-type alert failureThreshold + portal service status badge ([8818e61](https://github.com/mdopp/servicebay/commit/8818e61f860a51be2742b53d8330585f11589578))
+* **health:** per-type failureThreshold before alerting ([6a2aa29](https://github.com/mdopp/servicebay/commit/6a2aa29d4ab7ed8a6c1d8e8a8a7320f58147d66a)), closes [#1651](https://github.com/mdopp/servicebay/issues/1651)
+* **portal:** per-service up/down status badge on each card ([84fc192](https://github.com/mdopp/servicebay/commit/84fc192dd13742ce0a0b0f61408bd298fc89a15a)), closes [#1654](https://github.com/mdopp/servicebay/issues/1654)
+
 ## [4.93.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.93.0...servicebay-v4.93.1) (2026-06-03)
 
 
