@@ -28,6 +28,11 @@ const intervals = new Map<string, NodeJS.Timeout>();
 
 const CHECKS_FILE = path.join(DATA_DIR, 'checks.json');
 
+/** How often the boot-state heartbeat is refreshed (#1653) so the next
+ *  restart can diff the version + measure downtime. 60 s matches the
+ *  default check cadence and stays well inside the boot-grace window. */
+const HEARTBEAT_INTERVAL_MS = 60 * 1000;
+
 export class HealthService {
   private static io: Server | null = null;
 
@@ -62,6 +67,17 @@ export class HealthService {
     //     the cold-start race. See NotificationBatcher for the
     //     coalescing rules.
     NotificationBatcher.start();
+
+    // 1b-ii. Periodic boot-state heartbeat (#1653). Persists "we are up on
+    //     vX right now" so the NEXT restart can report the version change and
+    //     measure downtime as `now − lastSeenAt`. Cheap (one small JSON
+    //     write) and well under the boot-grace window so an unclean crash
+    //     still leaves a recent healthy timestamp.
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = setInterval(() => {
+      NotificationBatcher.heartbeat();
+    }, HEARTBEAT_INTERVAL_MS);
+    if (typeof this.heartbeatTimer.unref === 'function') this.heartbeatTimer.unref();
 
     // 1c. Daily self-diagnose run (#1423). The diagnose suite is heavy
     //     (multi-probe agent fan-out), so it runs once a day rather than
@@ -98,6 +114,7 @@ export class HealthService {
 
   private static checksWatcher: fs.FSWatcher | null = null;
   private static checksWatcherDebounce: NodeJS.Timeout | null = null;
+  private static heartbeatTimer: NodeJS.Timeout | null = null;
   private static bootstrappedNodes = new Set<string>();
   private static twinUnsubscribe: (() => void) | null = null;
 
