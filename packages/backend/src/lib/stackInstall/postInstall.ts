@@ -26,7 +26,7 @@
 
 import { renderTemplate } from '../template/render';
 import type { VariableMeta } from '@/lib/registry';
-import { expandForwardAuthSentinel } from './forwardAuth';
+import { expandForwardAuthSentinel, DEFAULT_AUTHELIA_PORT } from './forwardAuth';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { getConfig } from '@/lib/config';
 
@@ -74,9 +74,20 @@ function renderProxyConfig(
   // {{PUBLIC_DOMAIN}} / {{AUTHELIA_PORT}} placeholders still get
   // substituted from `view`.
   const expanded = expandForwardAuthSentinel(proxyConfig.advanced_config) ?? proxyConfig.advanced_config;
+  // #1677 — A forward-auth snippet that renders `{{AUTHELIA_PORT}}` to
+  // an empty string emits `proxy_pass http://127.0.0.1:/api/authz/...`,
+  // which nginx rejects with `[emerg] invalid port` — and one such bad
+  // host takes down the ENTIRE reverse proxy on the next reload/reboot.
+  // This happens whenever the `auth` template isn't part of the same
+  // install batch as the gated service (so `view` has no AUTHELIA_PORT),
+  // e.g. ollama installed on its own. Always seed a concrete default so
+  // the placeholder can never resolve to empty.
+  const safeView = expanded.includes('{{AUTHELIA_PORT}}') && !view.AUTHELIA_PORT
+    ? { ...view, AUTHELIA_PORT: DEFAULT_AUTHELIA_PORT }
+    : view;
   return {
     ...proxyConfig,
-    advanced_config: renderTemplate(expanded, view),
+    advanced_config: renderTemplate(expanded, safeView),
   };
 }
 

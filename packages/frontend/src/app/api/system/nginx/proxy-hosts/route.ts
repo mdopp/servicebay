@@ -7,7 +7,8 @@ import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
 import { agentManager } from '@/lib/agent/manager';
 import { listNodes } from '@/lib/nodes';
-import { AUTHELIA_LOCATION_HEADERS } from '@/lib/stackInstall/forwardAuth';
+import { AUTHELIA_LOCATION_HEADERS, sanitizeForwardAuthPort } from '@/lib/stackInstall/forwardAuth';
+import { checkPublicARecord, missingARecordMessage } from '@/lib/reverseProxy/publicDnsCheck';
 import { withLanDeniedPage, deployLanDeniedPage } from '@/lib/reverseProxy/lanDeniedPage';
 import { withProxyErrorPage, deployProxyErrorPages } from '@/lib/reverseProxy/proxyErrorPages';
 
@@ -462,23 +463,33 @@ async function patchProxyHostAdvancedConfig(
  * branchy string surgery — which is also why it's exported for unit tests.
  */
 export function buildForwardAuthPatch(
-    content: string,
+    original: string,
     upstreamHostHeader: string | undefined,
 ): { content: string } | { skip: string } {
     // Skip if not a forward-auth proxy_host.
-    if (!/auth_request\s+\/authelia/.test(content)) {
+    if (!/auth_request\s+\/authelia/.test(original)) {
         return { skip: 'no forward-auth' };
     }
+    // #1677 — Repair a malformed empty Authelia port (`127.0.0.1:/api/authz/`)
+    // that NPM regenerated from a bad stored advanced_config BEFORE any
+    // other skip/return path, so a host whose only defect is the empty
+    // port still gets fixed (the auth-request upstream is otherwise
+    // untouched by the Remote-*/Host surgery below). An empty port is an
+    // nginx `[emerg]` that would crash the whole proxy on reload, so this
+    // fix must land even when headers/Host are already present.
+    const portFix = sanitizeForwardAuthPort(original);
+    const content = portFix.content;
     // Skip if Remote-User is already inside the location / block.
     const locationMatch = content.match(/location\s+\/\s*\{[\s\S]*?\n\s*\}/);
     if (!locationMatch) {
-        return { skip: 'no `location /` block' };
+        // A port-only repair with no location block still needs writing.
+        return portFix.repaired ? { content } : { skip: 'no `location /` block' };
     }
     const locationBlock = locationMatch[0];
     const needsHeaders = !/proxy_set_header\s+Remote-User/.test(locationBlock);
     const needsHostRewrite = !!upstreamHostHeader && !locationBlock.includes(`proxy_set_header Host ${upstreamHostHeader}`);
     if (!needsHeaders && !needsHostRewrite) {
-        return { skip: 'already patched' };
+        return portFix.repaired ? { content } : { skip: 'already patched' };
     }
     let patchedLocation = locationBlock;
     if (needsHeaders) {
@@ -510,7 +521,7 @@ export function buildForwardAuthPatch(
             .replace(/(\s+)include conf\.d\/include\/proxy\.conf;/, `$1${PROXY_CONF_INLINE}\n    proxy_set_header Host ${upstreamHostHeader};`);
     }
     const newContent = content.replace(locationBlock, patchedLocation);
-    if (newContent === content) {
+    if (newContent === original) {
         return { skip: 'no replacement needed' };
     }
     return { content: newContent };
@@ -541,7 +552,27 @@ async function patchProxyHostConfFile(
             logger.warn('ProxyHosts', `Failed to patch ${confPath} for ${domain}: ${writeRes.error}`);
             return { patched: false, reason: writeRes.error };
         }
-        // Reload nginx to pick up the change.
+        // #1677 defense-in-depth — validate the whole config with `nginx -t`
+        // BEFORE reloading. A single malformed proxy_host (e.g. an empty
+        // Authelia port) makes `nginx -s reload` fail and, on a reboot,
+        // refuses to start nginx at all — taking down EVERY domain. If the
+        // new config doesn't pass, quarantine just this host: restore its
+        // previous .conf so the rest of the proxy keeps serving, and surface
+        // the [emerg] reason instead of reloading a config that crashes.
+        const testRes = await agent.sendCommand('exec', {
+            command: 'podman exec nginx-nginx-proxy-manager nginx -t 2>&1',
+        }).catch((e: unknown) => ({ error: e instanceof Error ? e.message : String(e) })) as { output?: string; stdout?: string; result?: string; error?: string };
+        const testOut = testRes?.output ?? testRes?.stdout ?? testRes?.result ?? '';
+        const testFailed = /\[emerg\]|test failed|invalid port/i.test(testOut) || !!testRes?.error;
+        if (testFailed) {
+            // Roll the offending host back to its pre-patch conf so it can't
+            // crash the proxy; the patch we just wrote never gets loaded.
+            await agent.sendCommand('write_file', { path: confPath, content, sudo: true }).catch(() => {});
+            const reason = `nginx -t rejected the patched config for ${domain}; quarantined (kept previous conf). ${testOut.split('\n').find(l => /\[emerg\]/i.test(l))?.trim() ?? testRes?.error ?? ''}`.trim();
+            logger.warn('ProxyHosts', reason);
+            return { patched: false, reason };
+        }
+        // Reload nginx to pick up the change (config validated above).
         await agent.sendCommand('exec', { command: 'podman exec nginx-nginx-proxy-manager nginx -s reload' }).catch(() => {});
         logger.info('ProxyHosts', `Patched ${domain} location / with forward-auth headers${upstreamHostHeader ? ` + Host=${upstreamHostHeader}` : ''}`);
         return { patched: true };
@@ -748,6 +779,19 @@ async function acquireCertId(
         logger.info('ProxyHosts', `Reusing existing NPM cert #${reusable} for ${domain} (avoids LE rate-limit churn on re-installs)`);
         return { certId: reusable, reused: true };
     }
+    // #1680 — Before firing a fresh HTTP-01 request, confirm the domain has
+    // a PUBLIC A record. LE validates against the internet-visible record,
+    // but the box's own resolver (AdGuard `*.<domain>` wildcard) always
+    // answers, masking a missing record — so a cert request just times out
+    // and leaves a silently cert-less host. Query a public resolver and, if
+    // there's no record, fail loudly with the exact "add A → <ip>" message
+    // instead of burning an ACME attempt. An inconclusive check (every
+    // resolver errored) does NOT block — we don't want a transient DNS
+    // outage to stop a legitimate cert.
+    const dns = await checkPublicARecord(domain);
+    if (!dns.hasRecord && !dns.inconclusive) {
+        return { error: missingARecordMessage(domain) };
+    }
     try {
         const res = await fetch(`${baseUrl}/api/nginx/certificates`, {
             method: 'POST',
@@ -939,8 +983,17 @@ export const POST = withApiHandler({}, async ({ request }) => {
             // idempotent (buildForwardAuthPatch no-ops when already present).
             const wantsForwardAuth = /auth_request\s+\/authelia|__authelia_forward_auth__/.test(host.proxyConfig?.advanced_config ?? '');
             const wantsStrictHost = !!host.proxyConfig?.strictUpstreamHost;
-            const wantsConfPatch = wantsForwardAuth || wantsStrictHost;
-            const upstreamHostHeader = wantsStrictHost
+            // #1683 — ollama's anti-DNS-rebind guard only accepts a LOCAL
+            // Host (127.0.0.1:<port>); proxy.conf's `Host $host` =
+            // ollama.dopp.cloud → 403, and naively appending a second
+            // `proxy_set_header Host` sends two Host lines → 400. The
+            // patcher replaces (not appends) the Host with this loopback
+            // value, regardless of the node's LAN forward_host.
+            const wantsLocalHost = !!host.proxyConfig?.localUpstreamHost;
+            const wantsConfPatch = wantsForwardAuth || wantsStrictHost || wantsLocalHost;
+            const upstreamHostHeader = wantsLocalHost
+                ? `127.0.0.1:${host.forwardPort}`
+                : wantsStrictHost
                 ? `${host.forwardHost ?? '127.0.0.1'}:${host.forwardPort}`
                 : undefined;
             try {

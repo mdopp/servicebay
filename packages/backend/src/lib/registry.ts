@@ -569,6 +569,17 @@ export interface ProxyConfig {
    * which is what most upstreams want.
    */
   strictUpstreamHost?: boolean;
+  /**
+   * #1683 — Set to true for upstreams that enforce an anti-DNS-rebind
+   * Host check and only accept a *local* Host (ollama: `127.0.0.1:11434`,
+   * `localhost`, or its `OLLAMA_HOST`). Like `strictUpstreamHost` the
+   * patcher inlines NPM's proxy.conf and sends a SINGLE Host header
+   * (replacing proxy.conf's `Host $host` — never appending a second
+   * Host line, which makes nginx forward two Hosts and the upstream
+   * 400s), but the value is forced to `127.0.0.1:<forwardPort>` so the
+   * upstream sees a loopback Host regardless of the node's LAN IP.
+   */
+  localUpstreamHost?: boolean;
 }
 
 export interface OidcClientConfig {
