@@ -137,7 +137,7 @@ export function serviceOfCheck(check: CheckConfig, ctx: PrerequisiteContext): st
     const host = ctx.hosts.find(h => h.domain === check.target);
     return host?.service ?? null;
   }
-  // Template-registered http/script/tcp probes carry an id slug whose leading
+  // Template-registered http/script probes carry an id slug whose leading
   // segment is the owning service (init.ts isOrphanTemplateCheck): the id is
   // `<service>` or `<service>-<suffix>`, e.g. `home-assistant-api`,
   // `ollama-api`. Bind one to its service when the leading slug segment(s)
@@ -146,7 +146,7 @@ export function serviceOfCheck(check: CheckConfig, ctx: PrerequisiteContext): st
   // names can themselves contain hyphens (`home-assistant`), so we
   // longest-match against the known container-check targets, not the first
   // segment alone.
-  if (check.type === 'http' || check.type === 'script' || check.type === 'tcp') {
+  if (check.type === 'http' || check.type === 'script') {
     return serviceFromTemplateSlug(check.id, ctx);
   }
   return null;
