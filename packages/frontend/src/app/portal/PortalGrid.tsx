@@ -171,7 +171,10 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
                 lands at the same Y on every card in a row. */}
             <div className="p-6 pb-3">
               <CardIcon card={card} />
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">{card.label}</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white">{card.label}</h2>
+                <StatusBadge status={card.status} reason={card.statusReason} />
+              </div>
               <p className="mt-2 text-sm text-gray-600 dark:text-gray-400 line-clamp-3 min-h-[3.75rem]">
                 {card.tagline ?? ''}
               </p>
@@ -297,6 +300,44 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
       <CardHelpModal card={activeCard} onClose={() => setActiveCardId(null)} />
     )}
     </>
+  );
+}
+
+/**
+ * Per-service up/down badge (#1654). Server-derived at page load from
+ * the twin health probe + domain reachability check + pod-active state.
+ *   - down     → red dot + "Down"
+ *   - degraded → amber dot + "Degraded"
+ *   - ok       → quiet green dot, no label (the default healthy state
+ *                shouldn't shout — only problems draw the eye).
+ *   - unknown  → nothing (no signal yet — don't imply a verdict).
+ * The portal is anonymous-readable (LAN), so the badge is a bare
+ * up/down indicator; `reason` is a short generic title, no internals.
+ */
+function StatusBadge({ status, reason }: { status: PortalCard['status']; reason?: string }) {
+  if (status === 'unknown') return null;
+  if (status === 'ok') {
+    return (
+      <span
+        title={reason ?? 'Online'}
+        className="inline-block w-2 h-2 rounded-full bg-emerald-500 shrink-0"
+        aria-label="Online"
+      />
+    );
+  }
+  const isDown = status === 'down';
+  const classes = isDown
+    ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+    : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300';
+  const dot = isDown ? 'bg-red-500' : 'bg-amber-500';
+  return (
+    <span
+      title={reason ?? (isDown ? 'Down' : 'Degraded')}
+      className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded shrink-0 ${classes}`}
+    >
+      <span className={`inline-block w-1.5 h-1.5 rounded-full ${dot}`} />
+      {isDown ? 'Down' : 'Degraded'}
+    </span>
   );
 }
 
