@@ -8,6 +8,14 @@ import (
 	"testing"
 )
 
+// shellQuote wraps s in single quotes, escaping any embedded single quote,
+// so an arbitrary filesystem path (e.g. a t.TempDir() that embeds a subtest
+// name with shell metacharacters like parens) is safe to splice into a
+// `bash -c` script as a literal.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 func TestSubstituteAllowed_Forms(t *testing.T) {
 	allow := map[string]bool{"FOO": true, "BAR": true}
 	vals := map[string]string{"FOO": "foo-val", "BAR": "bar-val"}
@@ -196,7 +204,7 @@ func TestSetupRaid_MdadmPersistRerunSingleArray(t *testing.T) {
 	}
 
 	// Run the persistence idiom twice (initial install + reinstall/re-run).
-	script := "set -euo pipefail\nexport PATH=\"" + dir + ":$PATH\"\n" + snippet + "\n" + snippet + "\n"
+	script := "set -euo pipefail\nexport PATH=" + shellQuote(dir) + ":\"$PATH\"\n" + snippet + "\n" + snippet + "\n"
 	cmd := exec.Command("bash", "-c", script)
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("persistence snippet failed: %v\n%s", err, combined)
@@ -277,7 +285,9 @@ func TestSetupRaid_WipeConfigsPreservesKeysWhenEncConfig(t *testing.T) {
 			}
 		}
 		// MOUNT_POINT is the parent so $MOUNT_POINT/servicebay/... resolves.
-		script := "set -uo pipefail\nMOUNT_POINT=" + dir + "\n" + snippet + "\n"
+		// Quote the path: t.TempDir() embeds the subtest name, which can
+		// contain shell metacharacters like parens (e.g. "(no enc: config)").
+		script := "set -uo pipefail\nMOUNT_POINT=" + shellQuote(dir) + "\n" + snippet + "\n"
 		cmd := exec.Command("bash", "-c", script)
 		if combined, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("wipe-configs snippet failed: %v\n%s", err, combined)
