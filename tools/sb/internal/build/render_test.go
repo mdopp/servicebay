@@ -1,6 +1,9 @@
 package build
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -115,6 +118,102 @@ func TestRenderButane_FactoryFresh(t *testing.T) {
 	in.Settings.FactoryFresh = "wipe-configs"
 	if got := in.Butane(); !strings.Contains(got, `"wipe-configs" == "wipe-configs"`) {
 		t.Error("wipe-configs not substituted into the setup-raid guard")
+	}
+}
+
+// TestRenderButane_MdadmConfIdempotent guards #1666: setup-raid.sh must NOT
+// blind-append the mdadm scan to /etc/mdadm.conf. A `>>` append wrote a second
+// identical ARRAY line on every reinstall, and a duplicate ARRAY name aborts the
+// next assembly ("Duplicate MD device names in conf file") → the data RAID never
+// assembles → var-mnt-data.mount fails → the box bricks on reinstall. The conf
+// must be rewritten fresh each run (truncating `>`) from a de-duplicated scan.
+func TestRenderButane_MdadmConfIdempotent(t *testing.T) {
+	out := RenderInputs{Settings: Settings{ServerName: "OSCAR", HostUser: "core", ServicebayChannel: "stable"}}.Butane()
+
+	// The bricking regression: no executable line may append to the conf. Scan
+	// line-by-line, ignoring comments (the fix references the old `>>` form in an
+	// explanatory comment).
+	for _, ln := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(ln)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.Contains(trimmed, ">> /etc/mdadm.conf") {
+			t.Errorf("setup-raid.sh blind-appends to /etc/mdadm.conf — #1666 duplicate-ARRAY brick: %q", trimmed)
+		}
+	}
+	// The fix: rewrite the conf fresh (truncating redirect) with a dedup of the scan.
+	if !strings.Contains(out, "} > /etc/mdadm.conf") {
+		t.Error("mdadm.conf is not rewritten fresh (truncating `> /etc/mdadm.conf`) — #1666")
+	}
+	if !strings.Contains(out, "mdadm --detail --scan | sort -u") {
+		t.Error("mdadm scan is not de-duplicated (`| sort -u`) before persisting — #1666")
+	}
+}
+
+// TestSetupRaid_MdadmPersistRerunSingleArray simulates a re-run/reinstall of the
+// conf-persistence step and asserts /etc/mdadm.conf ends with exactly ONE ARRAY
+// line, proving the fix is idempotent (the old `>>` append produced two). It runs
+// the actual shell idiom extracted from the rendered Butane against a stub `mdadm`
+// so the test exercises the real script text, not a copy.
+func TestSetupRaid_MdadmPersistRerunSingleArray(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	out := RenderInputs{Settings: Settings{ServerName: "OSCAR", HostUser: "core", ServicebayChannel: "stable"}}.Butane()
+
+	// Extract the persistence idiom (the `{ ... } > /etc/mdadm.conf` block) from
+	// the rendered script so we test the shipped text.
+	const marker = "} > /etc/mdadm.conf"
+	end := strings.Index(out, marker)
+	if end == -1 {
+		t.Fatal("persistence block not found in rendered Butane")
+	}
+	start := strings.LastIndex(out[:end], "{")
+	if start == -1 {
+		t.Fatal("opening brace of persistence block not found")
+	}
+	block := strings.TrimSpace(out[start : end+len(marker)])
+	// Butane indents inline-script lines; strip the common leading whitespace so
+	// the snippet is runnable bash. Also retarget the conf path into a tmpdir.
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "mdadm.conf")
+	var lines []string
+	for _, ln := range strings.Split(block, "\n") {
+		lines = append(lines, strings.TrimSpace(ln))
+	}
+	snippet := strings.Join(lines, "\n")
+	snippet = strings.ReplaceAll(snippet, "/etc/mdadm.conf", conf)
+
+	// Stub `mdadm`: emit a single deterministic ARRAY line for `--detail --scan`.
+	stub := filepath.Join(dir, "mdadm")
+	stubBody := "#!/usr/bin/env bash\n" +
+		"if [[ \"$1\" == \"--detail\" && \"$2\" == \"--scan\" ]]; then\n" +
+		"  echo 'ARRAY /dev/md/data metadata=1.2 name=any:data UUID=deadbeef:deadbeef:deadbeef:deadbeef'\n" +
+		"fi\n"
+	if err := os.WriteFile(stub, []byte(stubBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run the persistence idiom twice (initial install + reinstall/re-run).
+	script := "set -euo pipefail\nexport PATH=\"" + dir + ":$PATH\"\n" + snippet + "\n" + snippet + "\n"
+	cmd := exec.Command("bash", "-c", script)
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("persistence snippet failed: %v\n%s", err, combined)
+	}
+
+	data, err := os.ReadFile(conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := 0
+	for _, ln := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(ln), "ARRAY ") {
+			got++
+		}
+	}
+	if got != 1 {
+		t.Errorf("after a simulated re-run, /etc/mdadm.conf has %d ARRAY lines, want exactly 1 (#1666)\nconf:\n%s", got, data)
 	}
 }
 
