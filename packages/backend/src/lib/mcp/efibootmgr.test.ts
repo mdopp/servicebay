@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { parseEfibootmgr, assessUsbBootReadiness } from './efibootmgr';
+import {
+  parseEfibootmgr,
+  assessUsbBootReadiness,
+  selectInstallerBootDevice,
+  planUsbBoot,
+} from './efibootmgr';
 
 // Representative `efibootmgr -v` output: an OS entry, an active USB entry,
 // and an inactive removable entry. BootCurrent appears after the Boot#### rows.
@@ -55,5 +60,82 @@ describe('assessUsbBootReadiness', () => {
     expect(r.reinstallReady).toBe(false);
     expect(r.usbCandidates).toHaveLength(0);
     expect(r.hint).toMatch(/insert the installation usb/i);
+  });
+});
+
+// #1674 — a multi-slot card reader: /dev/sda is the internal disk, /dev/sdb is
+// the real FCoS installer USB (fedora-coreos + EFI-SYSTEM labels), /dev/sdc..sde
+// are empty card-reader slots. The mapping must pick /dev/sdb, not a slot.
+const LSBLK_MULTISLOT = JSON.stringify({
+  blockdevices: [
+    {
+      name: 'sda', path: '/dev/sda', type: 'disk', label: null,
+      children: [
+        { name: 'sda1', path: '/dev/sda1', type: 'part', label: 'boot' },
+        { name: 'sda2', path: '/dev/sda2', type: 'part', label: 'root' },
+      ],
+    },
+    {
+      name: 'sdb', path: '/dev/sdb', type: 'disk', label: 'fedora-coreos-installer',
+      children: [
+        { name: 'sdb1', path: '/dev/sdb1', type: 'part', label: 'ISO' },
+        { name: 'sdb2', path: '/dev/sdb2', type: 'part', label: 'EFI-SYSTEM' },
+      ],
+    },
+    { name: 'sdc', path: '/dev/sdc', type: 'disk', label: null }, // empty slot
+    { name: 'sdd', path: '/dev/sdd', type: 'disk', label: null }, // empty slot
+  ],
+});
+
+describe('selectInstallerBootDevice (#1674)', () => {
+  it('picks the disk carrying the fedora-coreos / EFI-SYSTEM labels, not an empty slot', () => {
+    const d = selectInstallerBootDevice(LSBLK_MULTISLOT);
+    expect(d?.disk).toBe('/dev/sdb');
+    expect(d?.efiPartNum).toBe(2);
+    expect(d?.efiPart).toBe('/dev/sdb2');
+  });
+
+  it('returns null when no installer device is present (no media inserted)', () => {
+    const noInstaller = JSON.stringify({
+      blockdevices: [
+        { name: 'sda', path: '/dev/sda', type: 'disk', children: [{ name: 'sda1', type: 'part', label: 'root' }] },
+        { name: 'sdc', path: '/dev/sdc', type: 'disk', label: null }, // empty slot only
+      ],
+    });
+    expect(selectInstallerBootDevice(noInstaller)).toBeNull();
+  });
+
+  it('returns null on malformed lsblk output', () => {
+    expect(selectInstallerBootDevice('not json')).toBeNull();
+  });
+});
+
+describe('planUsbBoot (#1674)', () => {
+  it('creates a direct device entry when the installer device is found', () => {
+    const device = selectInstallerBootDevice(LSBLK_MULTISLOT);
+    const plan = planUsbBoot(parseEfibootmgr(NO_USB), device);
+    expect(plan.mode).toBe('create');
+    expect(plan.device?.disk).toBe('/dev/sdb');
+    expect(plan.warning).toBeUndefined();
+  });
+
+  it('falls back to an ACTIVE existing UEFI entry without warning when no device is found', () => {
+    const plan = planUsbBoot(parseEfibootmgr(WITH_ACTIVE_USB), null);
+    expect(plan.mode).toBe('existingEntry');
+    expect(plan.bootNum).toBe('0003');
+    expect(plan.warning).toBeUndefined();
+  });
+
+  it('WARNS about an empty slot when the only removable entry is inactive', () => {
+    const plan = planUsbBoot(parseEfibootmgr(INACTIVE_USB), null);
+    expect(plan.mode).toBe('existingEntry');
+    expect(plan.bootNum).toBe('0007');
+    expect(plan.warning).toMatch(/empty card-reader slot/i);
+  });
+
+  it('warns with no usable target when neither a device nor a removable entry exists', () => {
+    const plan = planUsbBoot(parseEfibootmgr(NO_USB), null);
+    expect(plan.mode).toBe('none');
+    expect(plan.warning).toMatch(/insert the install usb/i);
   });
 });

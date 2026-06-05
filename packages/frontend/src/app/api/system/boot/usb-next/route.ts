@@ -4,6 +4,7 @@ import { agentManager } from '@/lib/agent/manager';
 import { listNodes } from '@/lib/nodes';
 import { logger } from '@/lib/logger';
 import { withApiHandler } from '@/lib/api/handler';
+import { parseEfibootmgr, selectInstallerBootDevice, planUsbBoot } from '@/lib/mcp/efibootmgr';
 
 export const dynamic = 'force-dynamic';
 
@@ -82,40 +83,70 @@ const PostBody = z.object({
   reboot: z.boolean().optional().default(false),
 });
 
+type Agent = Awaited<ReturnType<typeof getAgent>>;
+
+// resolveBootNum maps the next USB boot to the REAL FCoS installer device
+// (#1674). On a multi-slot card reader the old description-only heuristic armed
+// an empty slot; this finds the block device carrying the fedora-coreos /
+// EFI-SYSTEM labels and CREATES a direct UEFI entry to its \EFI\BOOT\BOOTX64.EFI
+// (the exact `efibootmgr -c -d <disk> -p <part>` recovery the operator ran by
+// hand). Only when no installer device is found does it fall back to an existing
+// removable UEFI entry — with a warning when that entry looks like an empty slot.
+// Returns the chosen boot number, an optional operator warning, and a `failed`
+// message when the create command itself errored.
+async function resolveBootNum(agent: Agent): Promise<{ bootNum?: string; warning?: string; failed?: string }> {
+  const efiRes = await agent.sendCommand('exec', { command: 'sudo -n efibootmgr -v' }) as { code?: number; stdout?: string };
+  const parsed = parseEfibootmgr(efiRes.code === 0 ? (efiRes.stdout ?? '') : '');
+
+  const lsblkRes = await agent.sendCommand('exec', { command: 'lsblk --json -O' }) as { code?: number; stdout?: string };
+  const device = lsblkRes.code === 0 ? selectInstallerBootDevice(lsblkRes.stdout ?? '') : null;
+
+  const plan = planUsbBoot(parsed, device);
+  if (plan.warning) {
+    logger.warn('api:system:boot:usb-next', plan.warning);
+  }
+
+  if (plan.mode === 'create' && plan.device) {
+    const { disk, efiPartNum, reason } = plan.device;
+    logger.info('api:system:boot:usb-next', `Creating UEFI entry for installer device ${disk} (${reason})`);
+    const createRes = await agent.sendCommand('exec', {
+      command: `sudo -n efibootmgr -c -d ${disk} -p ${efiPartNum} -L "ServiceBay Installer USB" -l '\\EFI\\BOOT\\BOOTX64.EFI'`,
+    }) as { code?: number; stdout?: string; stderr?: string };
+    if (createRes.code !== 0) {
+      return { failed: `Failed to create installer boot entry: ${createRes.stderr}` };
+    }
+    // efibootmgr prints the new entry; its BootNum is the just-created one.
+    const created = parseEfibootmgr(createRes.stdout ?? '').entries.find(e => e.description.includes('ServiceBay Installer USB'));
+    return { bootNum: created?.bootNum, warning: plan.warning };
+  }
+  return { bootNum: plan.bootNum, warning: plan.warning };
+}
+
 // `tokenScope: 'mutate'` — sets the firmware's one-shot BootNext (and optionally
 // reboots), so the sb "ensure USB boot" action can enable it with a scoped
 // token, matching the frontend's enable button.
 export const POST = withApiHandler({ body: PostBody, tokenScope: 'mutate' }, async ({ body }) => {
   try {
     const agent = await getAgent();
-    
+
     let bootNum = body.bootNum;
-    
+    let warning: string | undefined;
     if (!bootNum) {
-      const res = await agent.sendCommand('exec', { command: 'sudo -n efibootmgr -v' }) as { code?: number; stdout?: string };
-      if (res.code === 0) {
-        const stdout = res.stdout ?? '';
-        const lines = stdout.split('\n');
-        for (const line of lines) {
-          if (line.startsWith('Boot') && !line.startsWith('BootOrder') && !line.startsWith('BootNext') && !line.startsWith('BootCurrent')) {
-            const match = line.match(/^Boot([0-9A-Fa-f]+)(\*?)\s+(.+)$/);
-            if (match) {
-              const num = match[1];
-              const desc = match[3];
-              if (desc.toLowerCase().includes('usb') || desc.toLowerCase().includes('removable') || desc.includes('\\EFI\\boot\\')) {
-                bootNum = num;
-                break;
-              }
-            }
-          }
-        }
+      const resolved = await resolveBootNum(agent);
+      if (resolved.failed) {
+        return NextResponse.json({ error: resolved.failed }, { status: 500 });
       }
+      bootNum = resolved.bootNum;
+      warning = resolved.warning;
     }
-    
+
     if (!bootNum) {
-      return NextResponse.json({ error: 'No USB boot entry found or specified' }, { status: 400 });
+      return NextResponse.json(
+        { error: warning ?? 'No USB boot entry found or specified', warning },
+        { status: 400 },
+      );
     }
-    
+
     logger.info('api:system:boot:usb-next', `Activating UEFI boot entry Boot${bootNum}`);
     await agent.sendCommand('exec', { command: `sudo -n efibootmgr -A -b ${bootNum}` });
 
@@ -124,7 +155,7 @@ export const POST = withApiHandler({ body: PostBody, tokenScope: 'mutate' }, asy
     if (resBootNext.code !== 0) {
       return NextResponse.json({ error: `Failed to set BootNext: ${resBootNext.stderr}` }, { status: 500 });
     }
-    
+
     if (body.reboot) {
       logger.info('api:system:boot:usb-next', 'Rebooting system as requested...');
       // sudo -n: the agent runs as the rootless `core` user, which can't reboot
@@ -138,6 +169,7 @@ export const POST = withApiHandler({ body: PostBody, tokenScope: 'mutate' }, asy
     return NextResponse.json({
       success: true,
       bootNum,
+      warning,
       message: body.reboot ? 'One-shot BootNext set. System is rebooting.' : 'One-shot BootNext set successfully.',
     });
   } catch (err: unknown) {

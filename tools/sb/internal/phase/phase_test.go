@@ -1,6 +1,9 @@
 package phase
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func ids(actions []Action) []ActionID {
 	out := make([]ActionID, len(actions))
@@ -34,6 +37,11 @@ func TestDetect(t *testing.T) {
 		{"box up, wizard pending", true, BoxStatus{Reachable: true}, Installing},
 		{"box up, wizard done", true, BoxStatus{Reachable: true, WizardDone: true}, Ready},
 		{"box up wins over no-iso", false, BoxStatus{Reachable: true, WizardDone: true}, Ready},
+		// #1669: a reachable box that only rejected our token (401) is up and
+		// manageable — Ready, NOT fresh-setup — even with no ISO built. A stale
+		// token after a reinstall must not force a USB rebuild.
+		{"box up, stale token (401)", false, BoxStatus{Reachable: true, Unauthorized: true}, Ready},
+		{"box up, 401 wins over no-iso", false, BoxStatus{Reachable: true, Unauthorized: true}, Ready},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -41,6 +49,37 @@ func TestDetect(t *testing.T) {
 				t.Fatalf("Detect = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// TestReachableButUnauthorized is the #1669 acceptance: a reachable box with a
+// stale token (401) must surface as the manage phase with sign-in framing, NOT
+// fall to fresh-setup. Manage + stack-install stay selectable; the menu doesn't
+// push the operator to "build a USB".
+func TestReachableButUnauthorized(t *testing.T) {
+	s := Detect(false, BoxStatus{Reachable: true, Unauthorized: true})
+	if s.Phase != Ready {
+		t.Fatalf("401 box phase = %q, want Ready (manage, not fresh-setup)", s.Phase)
+	}
+	if !s.NeedsAuth {
+		t.Fatal("NeedsAuth should be set on a reachable-but-unauthorized box")
+	}
+	got := ids(ActionsFor(s))
+	hasInstall, hasConfig := false, false
+	for _, id := range got {
+		if id == InstallStacks {
+			hasInstall = true
+		}
+		if id == EditConfig {
+			hasConfig = true
+		}
+	}
+	if !hasInstall || !hasConfig {
+		t.Fatalf("manage actions must be reachable on a 401 box; got %v", got)
+	}
+	// The phase summary must prompt sign-in, not claim setup is done/incomplete.
+	if d := Describe(s); !strings.Contains(d, "sign in") {
+		t.Fatalf("Describe(401 box) = %q, want a sign-in prompt", d)
 	}
 }
 
