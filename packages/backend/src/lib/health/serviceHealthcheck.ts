@@ -67,6 +67,27 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 300_000;
 
 const MUSTACHE_RE = /\{\{.*?\}\}/;
 
+/**
+ * Recognise a `{{VAR}}` placeholder that survived `yaml.load`.
+ *
+ * An unquoted block-scalar value like `port: {{VAR}}` is valid YAML flow
+ * syntax: `{{VAR}: null}` — a single-key mapping whose key is itself the
+ * mapping `{VAR: null}`. `js-yaml` stringifies that object key via
+ * `String(key)`, yielding `{ '[object Object]': null }`. So a plain string
+ * Mustache match never fires (the value is an object, not a string) and the
+ * permissive bypass becomes dead code. Detect that signature here so an
+ * unquoted `{{VAR}}` placeholder passes permissive validation the same as
+ * the quoted `"{{VAR}}"` form. (#1688)
+ */
+function isMustachePlaceholder(value: unknown): boolean {
+  if (typeof value === 'string') return MUSTACHE_RE.test(value);
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const keys = Object.keys(value as Record<string, unknown>);
+    return keys.length === 1 && keys[0] === '[object Object]';
+  }
+  return false;
+}
+
 /** Parse duration scalars like `60s`, `2m`, `500ms`. Bare numbers
  *  default to seconds (matches the readiness parser's ergonomic rule). */
 function parseDuration(value: unknown): number | null {
@@ -144,6 +165,10 @@ function parseHttpHealthcheck(obj: Record<string, unknown>, errors: string[], pe
     return undefined;
   }
   if (typeof urlRaw !== 'string' || urlRaw.trim() === '') {
+    // A bare unquoted `url: {{VAR}}` survives yaml.load as an object, not a
+    // string — accept it permissively (resolved at runtime), like the tcp
+    // port path. (#1688)
+    if (permissive && isMustachePlaceholder(urlRaw)) return undefined;
     errors.push(`field \`url\` must be a non-empty string; got ${JSON.stringify(urlRaw)}`);
     return undefined;
   }
@@ -176,7 +201,7 @@ function parseTcpHealthcheck(obj: Record<string, unknown>, errors: string[], per
   } else {
     const p = asInt(portRaw);
     if (p === null) {
-      if (!permissive || typeof portRaw !== 'string' || !MUSTACHE_RE.test(portRaw)) {
+      if (!permissive || !isMustachePlaceholder(portRaw)) {
         errors.push(`field \`port\` must be a positive integer; got ${JSON.stringify(portRaw)}`);
       }
     } else {
