@@ -31,6 +31,7 @@ const baseCard: PortalCard = {
   recommendedApps: [],
   setupAssets: [],
   manualPairing: [],
+  sizeTier: 'compact',
 };
 
 describe('PortalGrid', () => {
@@ -231,6 +232,43 @@ describe('PortalGrid', () => {
     it('still shows the Open-URL button for ordinary URL-based cards', () => {
       render(<PortalGrid cards={[baseCard]} />);
       expect(screen.getByRole('link', { name: /^open$/i })).toBeDefined();
+    });
+  });
+
+  describe('sizeTier → column span (#1700)', () => {
+    /** Walk up from the card heading to the grid-cell wrapper (the div
+     *  that carries the `col-span-*` class). The wrapper is the heading's
+     *  nearest ancestor div with `rounded-2xl` (the card chrome). */
+    const cardWrapper = (label: string): HTMLElement => {
+      const heading = screen.getByRole('heading', { name: label });
+      const wrapper = heading.closest('div.rounded-2xl');
+      expect(wrapper).not.toBeNull();
+      return wrapper as HTMLElement;
+    };
+
+    it('gives a compact card md:col-span-3', () => {
+      render(<PortalGrid cards={[{ ...baseCard, sizeTier: 'compact' }]} />);
+      const cls = cardWrapper('Photos').className;
+      expect(cls).toContain('md:col-span-3');
+      expect(cls).toContain('col-span-1'); // mobile stays 1 col
+    });
+
+    it('gives a regular card md:col-span-4', () => {
+      render(<PortalGrid cards={[{ ...baseCard, sizeTier: 'regular' }]} />);
+      expect(cardWrapper('Photos').className).toContain('md:col-span-4');
+    });
+
+    it('gives a feature card md:col-span-6 (action-rich → wider)', () => {
+      render(<PortalGrid cards={[{ ...baseCard, sizeTier: 'feature' }]} />);
+      expect(cardWrapper('Photos').className).toContain('md:col-span-6');
+    });
+
+    it('renders a feature (action-rich) card wider than a compact one', () => {
+      const compact: PortalCard = { ...baseCard, id: 'a:x', label: 'Bare', sizeTier: 'compact' };
+      const feature: PortalCard = { ...baseCard, id: 'b:y', label: 'Files', sizeTier: 'feature' };
+      render(<PortalGrid cards={[compact, feature]} />);
+      expect(cardWrapper('Bare').className).toContain('md:col-span-3');
+      expect(cardWrapper('Files').className).toContain('md:col-span-6');
     });
   });
 

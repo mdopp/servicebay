@@ -299,6 +299,19 @@ class TestDnsResolvers(unittest.TestCase):
             result = agent.get_dns_resolvers()
         self.assertEqual(result, {'servers': [], 'source': 'unknown'})
 
+    def test_disk_import_binaries_on_safe_exec_allowlist(self):
+        # #1694 host-side mount + apply uses these via safe_exec (argv is
+        # assembled + validated TS-side in diskImport/mounter.ts + plan.ts).
+        for binary in ('lsblk', 'mount', 'umount', 'rsync', 'chown'):
+            self.assertIn(binary, agent.SAFE_EXEC_ALLOWLIST)
+
+    def test_safe_exec_allowlist_stays_minimal(self):
+        # Guard against speculative additions: the allow-list is binary-only,
+        # so every entry is a real consumer. `bash`/`sh` must never be on it
+        # (that would defeat the structured-argv hardening).
+        for shell in ('bash', 'sh', 'zsh', 'eval'):
+            self.assertNotIn(shell, agent.SAFE_EXEC_ALLOWLIST)
+
 
 if __name__ == '__main__':
     unittest.main()

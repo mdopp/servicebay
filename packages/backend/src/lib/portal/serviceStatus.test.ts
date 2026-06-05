@@ -5,7 +5,7 @@ vi.mock('@/lib/health/store', () => ({
   HealthStore: { getLastResult: (id: string) => getLastResult(id) },
 }));
 
-import { deriveCardStatus, hostFromUrl, resolveCardStatus } from './services';
+import { deriveCardStatus, hostFromUrl, resolveCardStatus, weight, sizeTierFromWeight } from './services';
 
 describe('deriveCardStatus (#1654)', () => {
   it('is unknown when there is no signal', () => {
@@ -55,6 +55,63 @@ describe('deriveCardStatus (#1654)', () => {
     expect(deriveCardStatus({ twinReady: true, domainOk: true })).toEqual({ status: 'ok' });
     expect(deriveCardStatus({ domainOk: true })).toEqual({ status: 'ok' });
     expect(deriveCardStatus({ twinReady: true })).toEqual({ status: 'ok' });
+  });
+});
+
+describe('weight + sizeTierFromWeight (#1700)', () => {
+  const input = (over: Partial<Parameters<typeof weight>[0]> = {}) => ({
+    hasPrimary: false,
+    secondaryActions: [],
+    setupAssets: [],
+    manualPairing: [],
+    recommendedApps: [],
+    ...over,
+  });
+
+  it('scores 0 for a card with no affordances', () => {
+    expect(weight(input())).toBe(0);
+  });
+
+  it('counts a primary affordance (Open URL / primaryAction) as 1', () => {
+    expect(weight(input({ hasPrimary: true }))).toBe(1);
+  });
+
+  it('sums every actionable affordance class', () => {
+    const w = weight(input({
+      hasPrimary: true,
+      secondaryActions: [{}, {}],
+      setupAssets: [{}],
+      manualPairing: [{}],
+      recommendedApps: [{}, {}, {}],
+    }));
+    // 1 + 2 + 1 + 1 + 3
+    expect(w).toBe(8);
+  });
+
+  it('maps weight ≤ 1 to compact', () => {
+    expect(sizeTierFromWeight(0)).toBe('compact');
+    expect(sizeTierFromWeight(1)).toBe('compact');
+  });
+
+  it('maps weight 2–3 to regular', () => {
+    expect(sizeTierFromWeight(2)).toBe('regular');
+    expect(sizeTierFromWeight(3)).toBe('regular');
+  });
+
+  it('maps weight ≥ 4 to feature', () => {
+    expect(sizeTierFromWeight(4)).toBe('feature');
+    expect(sizeTierFromWeight(9)).toBe('feature');
+  });
+
+  it('a bare "Open" card is compact; an asset+apps-rich card is feature', () => {
+    const bare = sizeTierFromWeight(weight(input({ hasPrimary: true })));
+    expect(bare).toBe('compact');
+    const rich = sizeTierFromWeight(weight(input({
+      hasPrimary: true,
+      setupAssets: [{}, {}],
+      recommendedApps: [{}, {}],
+    })));
+    expect(rich).toBe('feature');
   });
 });
 

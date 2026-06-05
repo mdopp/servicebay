@@ -89,9 +89,64 @@ export interface PortalCard {
   /** Optional short reason for a non-ok status. Kept generic — the portal
    *  is anonymous-readable (LAN), so this carries no sensitive detail. */
   statusReason?: string;
+  /** Coarse width tier (#1700), derived server-side from the count of
+   *  actionable affordances ({@link weight}) — NOT from body/tagline
+   *  length. Drives the card's column span on the portal grid so an
+   *  action-rich card renders wider than a bare "Open" card; height stays
+   *  content-driven. The client stays dumb (a literal-class lookup). */
+  sizeTier: PortalCardSizeTier;
 }
 
 export type PortalCardStatus = 'ok' | 'degraded' | 'down' | 'unknown';
+
+/** Card width tier (#1700). `compact` (weight ≤ 1) / `regular` (2–3) /
+ *  `feature` (≥ 4). Maps to a fixed column span in the portal grid. */
+export type PortalCardSizeTier = 'compact' | 'regular' | 'feature';
+
+/** The actionable-affordance fields {@link weight} scores. Each counts an
+ *  *actual thing the operator can do* in the card — a primary
+ *  action/Open URL, secondary buttons, setup assets (QR/deeplink/profile/
+ *  app install), manual-pairing steps, and recommended apps. Body and
+ *  tagline length are deliberately excluded. */
+export interface CardWeightInput {
+  /** True when the card has a primary affordance — an Open URL or an
+   *  explicit `primaryAction`. Counts as 1. */
+  hasPrimary: boolean;
+  secondaryActions: unknown[];
+  setupAssets: unknown[];
+  manualPairing: unknown[];
+  recommendedApps: unknown[];
+}
+
+/**
+ * Score a card's objective importance (#1700) by the count of actionable
+ * affordances it carries — explicitly NOT body/tagline length. Pure — no
+ * I/O — so it's unit-testable in isolation (mirrors {@link deriveCardStatus}).
+ *
+ *   weight = (has a primary action ? 1 : 0)
+ *          + secondaryActions + setupAssets + manualPairing + recommendedApps
+ */
+export function weight(input: CardWeightInput): number {
+  return (
+    (input.hasPrimary ? 1 : 0) +
+    input.secondaryActions.length +
+    input.setupAssets.length +
+    input.manualPairing.length +
+    input.recommendedApps.length
+  );
+}
+
+/** Map an importance {@link weight} to a coarse {@link PortalCardSizeTier}
+ *  (#1700). Thresholds live here (one place, tunable in review):
+ *    - `compact` — weight ≤ 1
+ *    - `regular` — weight 2–3
+ *    - `feature` — weight ≥ 4
+ */
+export function sizeTierFromWeight(w: number): PortalCardSizeTier {
+  if (w <= 1) return 'compact';
+  if (w <= 3) return 'regular';
+  return 'feature';
+}
 
 /** The signals `deriveCardStatus` folds into a coarse status. Each is
  *  optional — a missing signal contributes nothing (it can't make the
@@ -347,6 +402,17 @@ function assemblePortalCard(
   parsedBody: string,
   status: { status: PortalCardStatus; statusReason?: string },
 ): PortalCard {
+  const secondaryActions = def.actions ?? [];
+  const recommendedApps = def.recommended_apps ?? [];
+  const setupAssets = def.setup_assets ?? [];
+  const manualPairing = def.manual_pairing ?? [];
+  const cardWeight = weight({
+    hasPrimary: Boolean(url) || Boolean(def.primary_action),
+    secondaryActions,
+    setupAssets,
+    manualPairing,
+    recommendedApps,
+  });
   return {
     id: `${serviceName}:${subdomainVar || 'default'}`,
     name: serviceName,
@@ -358,13 +424,14 @@ function assemblePortalCard(
     tagline: def.tagline ?? '',
     url: url ?? '',
     primaryAction: def.primary_action ?? null,
-    secondaryActions: def.actions ?? [],
+    secondaryActions,
     body: parsedBody,
-    recommendedApps: def.recommended_apps ?? [],
-    setupAssets: def.setup_assets ?? [],
-    manualPairing: def.manual_pairing ?? [],
+    recommendedApps,
+    setupAssets,
+    manualPairing,
     status: status.status,
     ...(status.statusReason ? { statusReason: status.statusReason } : {}),
+    sizeTier: sizeTierFromWeight(cardWeight),
   };
 }
 

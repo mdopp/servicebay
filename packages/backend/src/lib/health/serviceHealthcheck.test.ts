@@ -121,6 +121,37 @@ port: "{{LDAP_PORT}}"
     expect(r.ok).toBe(true);
   });
 
+  it('permissive (default): accepts an unquoted block-scalar `{{VAR}}` tcp port (#1688)', () => {
+    // Unquoted, yaml.load mangles `{{VAR}}` into an object — the permissive
+    // bypass must still recognise it as a placeholder.
+    const r = parseHealthcheckYaml(`
+kind: tcp
+host: localhost
+port: {{GATEKEEPER_PORT}}
+`);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.config.port).toBeUndefined();
+  });
+
+  it('non-permissive: a real numeric tcp port still parses', () => {
+    const r = parseHealthcheckYaml(
+      'kind: tcp\nhost: localhost\nport: 445',
+      { permissive: false },
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.config.port).toBe(445);
+  });
+
+  it('permissive (default): accepts an unquoted block-scalar `{{VAR}}` http url (#1688)', () => {
+    const r = parseHealthcheckYaml(`
+kind: http
+url: {{HEALTH_URL}}
+`);
+    expect(r.ok).toBe(true);
+  });
+
   it('strict: rejects un-resolved `{{VAR}}` placeholders in url', () => {
     const r = parseHealthcheckYaml(
       'url: not-a-url-{{X}}\ninterval: 30s',
