@@ -9,7 +9,7 @@ YAML, manage proxy routes, run backups, configure health checks, and more.
 
 ### 1. Create an API token (recommended)
 
-Open **Settings → Integrations → MCP Server → API tokens → New token**.
+Open **Settings → Security → API tokens → New token**.
 Pick a name (e.g. `Claude Code on workstation`) and the scopes you want
 this client to have:
 
@@ -30,7 +30,7 @@ claude mcp add --transport http servicebay \
 ```
 
 Replace `<YOUR_SERVICEBAY_URL>` with the URL you used to log in (the same
-one shown in the **MCP Server** card on Settings → Integrations).
+one shown in the **MCP Server** card on Settings → Security).
 
 > **Legacy: session cookie.** Pre-existing MCP setups that pass
 > `Cookie: session=<JWT>` still work and have full scopes. New clients
