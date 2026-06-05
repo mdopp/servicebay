@@ -63,11 +63,18 @@ export const DIAGNOSE_INTERVAL_SECONDS = 24 * 60 * 60;
  * just reads the freshly-persisted results back out to return them for
  * the scheduler's `health:update` SSE emit. Called daily by the
  * HealthService scheduler and on-demand by the per-row "run now" action.
+ *
+ * `opts.manual` distinguishes the operator-triggered re-run (the health-page
+ * "Run" button) from the scheduled tick: it threads into reader probes over
+ * expensive checks (`sso_verify`, #1709) so a manual re-run actually
+ * re-executes the verification instead of re-displaying the stored report.
+ * The scheduled path leaves it false → no per-tick ephemeral-user churn.
  */
 export async function runDiagnoseChecks(
   nodeName = 'Local',
+  opts: { manual?: boolean } = {},
 ): Promise<CheckResult[]> {
-  const { probes } = await runDiagnose(nodeName);
+  const { probes } = await runDiagnose(nodeName, { manual: opts.manual });
   const results = probes
     .map(probe => HealthStore.getLastResult(diagnoseCheckId(probe.id)))
     .filter((r): r is CheckResult => r !== null);

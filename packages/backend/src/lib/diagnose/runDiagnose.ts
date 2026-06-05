@@ -201,6 +201,14 @@ export interface DiagnoseResult {
   probes: DiagnoseProbe[];
 }
 
+/** Options for a diagnose run. `manual` distinguishes an operator-triggered
+ *  re-run (the health-page "Run" button) from a scheduled tick — it threads
+ *  into "reader" probes over expensive checks (e.g. `sso_verify`, #1709) so a
+ *  manual re-run actually re-executes instead of re-displaying the cache. */
+export interface RunDiagnoseOptions {
+  manual?: boolean;
+}
+
 /** Build the consolidated `sso_verify` ("Login / SSO") probe row
  *  (#1455 + #1535).
  *
@@ -219,14 +227,16 @@ export interface DiagnoseResult {
  *
  *  Extracted from the orchestrator so the try/catch + merge shape doesn't
  *  add to `runDiagnose`'s already-large complexity budget. */
-async function buildSsoVerifyProbe(nodeName: string): Promise<DiagnoseProbe> {
+async function buildSsoVerifyProbe(nodeName: string, manual: boolean): Promise<DiagnoseProbe> {
   try {
     const [oidc, sso] = await Promise.all([
       checkOidcProviderReachable(nodeName).catch((e): Awaited<ReturnType<typeof checkOidcProviderReachable>> => ({
         status: 'info',
         detail: `OIDC reachability check skipped: ${e instanceof Error ? e.message : String(e)}`,
       })),
-      checkSsoVerify(),
+      // #1709: a manual re-run actually re-verifies (real verifySso, persist
+      // fresh report); a scheduled tick reads the stored report only.
+      checkSsoVerify({ manual, node: nodeName }),
     ]);
     const rank = { ok: 0, info: 0, warn: 1, fail: 2 } as const;
     // OIDC-provider-down outranks an SSO-report finding: if Authelia
@@ -257,7 +267,8 @@ async function buildSsoVerifyProbe(nodeName: string): Promise<DiagnoseProbe> {
 
 /** Run the diagnose probe battery against `nodeName`. Pure orchestrator —
  *  the route returns this verbatim under NextResponse.json. */
-export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseResult> {
+export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseOptions = {}): Promise<DiagnoseResult> {
+  const manual = opts.manual ?? false;
   const probes: DiagnoseProbe[] = [];
   const exec = async (command: string, timeoutMs = 8000): Promise<ExecResult> => {
     try {
@@ -886,7 +897,7 @@ export async function runDiagnose(nodeName: string = 'Local'): Promise<DiagnoseR
   //     green) and carries the persisted end-to-end login report (real
   //     family-group login reaches every user domain, is blocked from
   //     admin-only ones) with an on-demand "Run SSO check" action.
-  probes.push(await buildSsoVerifyProbe(nodeName));
+  probes.push(await buildSsoVerifyProbe(nodeName, manual));
 
   // 14c) Proxy route create-failures (B12) are now folded into the
   //     consolidated `dangling_proxy` ("Reverse-proxy routes") row above

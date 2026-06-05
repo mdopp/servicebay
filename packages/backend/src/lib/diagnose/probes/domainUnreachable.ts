@@ -37,7 +37,7 @@
  * `domain_external_reachability` (letsdebug).
  */
 
-import dns from 'dns/promises';
+import { Resolver } from 'dns/promises';
 import { getConfig, type ProxyHostEntry, type AppConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { listRewrites } from '@/lib/adguard/rewrites';
@@ -123,15 +123,50 @@ function actionsForCause(cause: DiagnosisCause): string[] {
   }
 }
 
-async function resolveOrNull(hostname: string): Promise<string[] | null> {
+/**
+ * Outcome of a DNS A-record resolution, with the timeout/SERVFAIL ≠
+ * NXDOMAIN distinction the probe needs (#1708).
+ *
+ *  - `resolved`     — got ≥1 A record.
+ *  - `nxdomain`     — the resolver gave a *definitive* "no such record"
+ *                     answer (NXDOMAIN / NODATA / empty). Only this may be
+ *                     reported as "A-record missing".
+ *  - `inconclusive` — timeout / SERVFAIL / connection-refused / any other
+ *                     transient error. We couldn't tell, so we must NOT
+ *                     conclude "missing" — fall through to the
+ *                     resolver-independent reachability probe instead.
+ */
+type DnsOutcome =
+  | { kind: 'resolved'; addresses: string[] }
+  | { kind: 'nxdomain' }
+  | { kind: 'inconclusive'; detail: string };
+
+/**
+ * Node error codes that mean the resolver gave a *definitive* answer of
+ * "no A record for this name" — as opposed to "I couldn't reach / didn't
+ * hear back from the authoritative server". Anything outside this set
+ * (ETIMEOUT, ESERVFAIL, EREFUSED, ECONNREFUSED, …) is inconclusive.
+ */
+const DEFINITIVE_NO_RECORD_CODES = new Set(['ENOTFOUND', 'ENODATA', 'NXDOMAIN', 'NODATA']);
+
+/**
+ * Resolve a hostname's A records via `dns.resolve4` (a real DNS query
+ * through c-ares — async, NOT bound to the libuv getaddrinfo threadpool,
+ * and it surfaces NXDOMAIN vs timeout distinctly). `dns.lookup` was the
+ * old path; under ~19 concurrent lookups it queued 4-at-a-time on the
+ * threadpool and the tail blew the 3 s race, then a *timeout* was
+ * misreported as a missing A-record (#1708). resolve4 has neither problem.
+ */
+async function resolveA(hostname: string): Promise<DnsOutcome> {
   try {
-    const records = await Promise.race([
-      dns.lookup(hostname, { all: true }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('dns timeout')), DNS_TIMEOUT_MS)),
-    ]);
-    return records.map(r => r.address);
-  } catch {
-    return null;
+    const resolver = new Resolver({ timeout: DNS_TIMEOUT_MS, tries: 1 });
+    const records = await resolver.resolve4(hostname);
+    if (records.length === 0) return { kind: 'nxdomain' };
+    return { kind: 'resolved', addresses: records };
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException)?.code;
+    if (code && DEFINITIVE_NO_RECORD_CODES.has(code)) return { kind: 'nxdomain' };
+    return { kind: 'inconclusive', detail: code ?? (e instanceof Error ? e.message : String(e)) };
   }
 }
 
@@ -246,10 +281,15 @@ async function diagnoseDomain(host: ProxyHostEntry, config: AppConfig): Promise<
       };
     }
   } else {
-    // Public domain — verify the public resolver returns at least one
-    // address. If it doesn't, the A-record is missing entirely.
-    const ips = await resolveOrNull(domain);
-    if (!ips || ips.length === 0) {
+    // Public domain — verify the resolver returns at least one address.
+    // Crucially (#1708): only a *definitive* NXDOMAIN/empty answer means
+    // the A-record is missing. A DNS timeout / SERVFAIL is inconclusive —
+    // the resolver was slow or contended, not authoritative — so we must
+    // NOT conclude "missing"; we fall through to the resolver-independent
+    // Host-header reachability probe below, which is what actually proves
+    // the domain is reachable.
+    const dnsOutcome = await resolveA(domain);
+    if (dnsOutcome.kind === 'nxdomain') {
       return {
         status: 'fail',
         reason: 'Hostname does not resolve via public DNS. A-record likely missing.',
@@ -257,6 +297,7 @@ async function diagnoseDomain(host: ProxyHostEntry, config: AppConfig): Promise<
         cause: 'public_dns_missing',
       };
     }
+    // 'resolved' or 'inconclusive' → fall through to the Host-header probe.
   }
 
   // 3. Routing test — talk to NPM directly on the LAN IP with
