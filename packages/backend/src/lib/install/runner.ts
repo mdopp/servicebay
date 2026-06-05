@@ -399,6 +399,43 @@ export function findEmptyYamlVars(yaml: string, view: Record<string, string>): s
   return [...directRefs].filter(r => !sectionVars.has(r) && (!(r in view) || view[r] === ''));
 }
 
+/**
+ * #1724 — before the auth stack overwrites Authelia's `configuration.yml`,
+ * merge any OIDC clients already on disk that the fresh render doesn't own
+ * back into the file-to-be-written. Without this, redeploying `auth` wipes
+ * every other stack's incrementally-registered SSO client.
+ *
+ * Mutates the matching `extraFiles` entry in place. Best-effort: any failure
+ * to read the existing config leaves the fresh render untouched (the
+ * post-deploy `ensureOidcClients` reconcile is the backstop) — never throws.
+ */
+export async function preserveAutheliaOidcClients(
+  jobId: string,
+  node: string | undefined,
+  extraFiles: { path: string; content: string }[],
+): Promise<void> {
+  // Authelia's config is the only `configuration.yml` the auth stack writes.
+  const cf = extraFiles.find(f => f.path.endsWith('/configuration.yml') || f.path.endsWith('configuration.yml'));
+  if (!cf) return;
+
+  try {
+    const { agentManager } = await import('@/lib/agent/manager');
+    const agent = await agentManager.ensureAgent(node || 'Local');
+    const readRes = await agent.sendCommand('read_file', { path: cf.path }).catch(() => null);
+    const existing = readRes ? (readRes.content || readRes.stdout || '') : '';
+    if (!existing) return; // fresh install — nothing on disk to preserve
+
+    const { mergeAutheliaOidcClients } = await import('@/lib/capabilities/autheliaClientMerge');
+    const merged = mergeAutheliaOidcClients(cf.content, existing);
+    if (merged !== cf.content) {
+      cf.content = merged;
+      await log(jobId, 'ℹ️ Preserved existing Authelia OIDC client registrations across the auth redeploy (#1724).');
+    }
+  } catch (e) {
+    await log(jobId, `⚠️ Could not preserve existing Authelia OIDC clients (${e instanceof Error ? e.message : String(e)}); the post-deploy reconcile will re-register this install's clients.`);
+  }
+}
+
 /** Deploy a single template via /api/services?stream=1. Returns true on
  *  successful deploy, false on terminal failure. Retries transient
  *  failures up to MAX_DEPLOY_ATTEMPTS. */
@@ -507,6 +544,15 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
       // existing `.mustache` behaviour for config files.
       content: cf.renderContent === false ? cf.content : renderTemplate(cf.content, view),
     }));
+
+  // #1724 — the auth template's `configuration.yml.mustache` only ships its own
+  // baked-in `servicebay` OIDC client. Other SSO stacks register their clients
+  // incrementally into the on-disk config; a fresh render would OVERWRITE and
+  // DROP them, breaking every other service's SSO with `invalid_client` until
+  // each stack is individually redeployed. Before writing the auth config, read
+  // the current on-disk `configuration.yml` and merge back any clients the
+  // fresh render doesn't own — preserving each client's secret (no rotation).
+  await preserveAutheliaOidcClients(jobId, input.node, extraFiles);
 
   // Optional per-template post-deploy.py — server runs it after the unit
   // starts; output streams back via `progress` events. Parsed below for
