@@ -17,7 +17,7 @@ import { getConfig } from '../../config';
 registerProbe({
   type: 'http',
   async run(check) {
-    await assertHttpTargetAllowed(check.target);
+    await assertHttpTargetAllowed(check.target, { systemCheck: check.systemCheck });
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     try {

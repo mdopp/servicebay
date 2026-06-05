@@ -45,6 +45,19 @@ export interface CheckConfig {
    * used. A value of 1 restores the legacy "alert on first fail" behaviour.
    */
   failureThreshold?: number;
+  /**
+   * A ServiceBay self-created check of a *known-local* hostNetwork service
+   * (#1670) — e.g. the template-registered `home-assistant-api`
+   * (`http://127.0.0.1:8123/`) or `ollama-api` (`http://127.0.0.1:11434/`)
+   * probes a stack's post-deploy registers via the internal-token POST.
+   * These legitimately target loopback, so the monitoring SSRF guard (which
+   * exists to stop a *user-supplied* check from reaching internal hosts) must
+   * not false-red them. Only the internal-token POST path stamps this true,
+   * and the guard still requires the target itself to be a recognised
+   * loopback service — a user-supplied internal URL never carries the flag
+   * and stays blocked.
+   */
+  systemCheck?: boolean;
   // HTTP specific options
   httpConfig?: {
     expectedStatus?: number;

@@ -29,6 +29,21 @@ export function isDiagnoseRow(check: Check): boolean {
   return Boolean((check as Check & { diagnose?: unknown }).diagnose);
 }
 
+/**
+ * "Last checked" cell text for a row (#1671). Synthetic diagnose rows run on
+ * the daily self-diagnose cadence, not the per-minute check poll, so a raw
+ * timestamp on a diagnose row reads as misleadingly "stale" next to every
+ * other (60s-polled) row. Suffix the cadence so a ~20h-old self-diagnose
+ * timestamp is understood as fresh-for-its-schedule rather than broken. Real
+ * checks keep the plain timestamp. `Never` until the first run lands.
+ */
+export function lastCheckedLabel(check: Check): string {
+  if (!check.lastRun) return 'Never';
+  const stamp = new Date(check.lastRun).toLocaleString();
+  if (isDiagnoseRow(check)) return `${stamp} (daily self-diagnose)`;
+  return stamp;
+}
+
 /** Per-row status presentation (icon tint + badge background). Module-level
  *  so the row renderer stays a thin map. */
 const ROW_STATUS_META: Record<RowStatus, { color: string; bg: string; Icon: typeof CheckCircle }> = {
@@ -225,7 +240,7 @@ export default function HealthChecks({
                                     </p>
                                 )}
                                 <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                                    Last checked: {check.lastRun ? new Date(check.lastRun).toLocaleString() : 'Never'}
+                                    Last checked: {lastCheckedLabel(check)}
                                 </p>
                             </div>
                         </div>
@@ -269,14 +284,26 @@ export default function HealthChecks({
                             </button>
                             {isDiagnose ? (
                                 /* Synthetic diagnose row: not editable config — expose the
-                                   self-repair popup instead of Edit/Delete (#1423). */
-                                <button
-                                    onClick={() => handleOpenRepair(check)}
-                                    className="p-2 hover:bg-violet-100 dark:hover:bg-violet-900/30 rounded-lg transition-colors"
-                                    title="Self-repair options"
-                                >
-                                    <Wrench className="w-4 h-4 text-violet-600 dark:text-violet-400" />
-                                </button>
+                                   self-repair popup instead of Edit/Delete (#1423). It still
+                                   gets the History drawer (#1671): its results are persisted
+                                   under the `diagnose:<id>` key just like any other check, so
+                                   the same history view applies — only Edit/Delete don't. */
+                                <>
+                                    <button
+                                        onClick={() => handleViewHistory(check)}
+                                        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                        title="View history"
+                                    >
+                                        <History className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                                    </button>
+                                    <button
+                                        onClick={() => handleOpenRepair(check)}
+                                        className="p-2 hover:bg-violet-100 dark:hover:bg-violet-900/30 rounded-lg transition-colors"
+                                        title="Self-repair options"
+                                    >
+                                        <Wrench className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                                    </button>
+                                </>
                             ) : (
                                 <>
                                     <button

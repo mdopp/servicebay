@@ -2,15 +2,68 @@ import { lookup } from 'dns/promises';
 import { isIP } from 'net';
 
 /**
+ * Loopback ports of the known-local hostNetwork services ServiceBay
+ * monitors itself (#1670). A stack's post-deploy registers an HTTP health
+ * check against its own loopback endpoint via the internal-token POST
+ * (`home-assistant-api` → `127.0.0.1:8123`, `ollama-api` →
+ * `127.0.0.1:11434`); on the single-node home box those are the box's *own*
+ * services, not a user-supplied target. Keeping the list explicit (rather
+ * than "any loopback") means even a system check can only bypass the guard
+ * for a recognised service port — an internal-token check of some other
+ * loopback port still goes through the normal private-address rejection.
+ */
+const KNOWN_LOCAL_SERVICE_PORTS = new Set<number>([
+  8123, // Home Assistant
+  11434, // Ollama
+]);
+
+const LOOPBACK_HOSTS = new Set<string>(['127.0.0.1', '::1', 'localhost']);
+
+/**
+ * True when `rawUrl` is a ServiceBay self-check of a known-local hostNetwork
+ * service: a loopback host AND a recognised service port (#1670). This — and
+ * only this — is what a `systemCheck` is allowed to bypass the guard for.
+ * User-supplied internal URLs (arbitrary host/port, RFC1918 LAN hosts) return
+ * false here and stay subject to the guard.
+ */
+export function isKnownLocalSystemTarget(rawUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  // URL.hostname keeps the brackets around an IPv6 literal (`[::1]`).
+  const host = url.hostname.toLowerCase().replace(/^\[(.*)\]$/, '$1');
+  if (!LOOPBACK_HOSTS.has(host) && !host.endsWith('.localhost')) return false;
+  const defaultPort = url.protocol === 'https:' ? 443 : 80;
+  const port = url.port ? Number(url.port) : defaultPort;
+  return KNOWN_LOCAL_SERVICE_PORTS.has(port);
+}
+
+/**
  * Reject targets that resolve to private/loopback/link-local addresses unless
  * MONITORING_ALLOW_INTERNAL=1 is set. Home-lab deploys typically need to
  * monitor RFC1918 hosts, so the env var lets operators opt in explicitly.
  *
+ * `systemCheck` (#1670): a ServiceBay self-created check of a known-local
+ * hostNetwork service bypasses the guard — but only when the target itself is
+ * a recognised loopback service ({@link isKnownLocalSystemTarget}). The guard
+ * exists to stop a *user-supplied* monitoring target from reaching internal
+ * hosts; ServiceBay's own self-checks of HA/Ollama on `127.0.0.1` are not
+ * that, and shouldn't permanently false-red on a healthy box. A user-supplied
+ * internal URL carries no `systemCheck` flag and is still rejected.
+ *
  * Throws a descriptive Error on rejection. Returns the resolved IP string
  * (informational only) on accept.
  */
-export async function assertHttpTargetAllowed(rawUrl: string): Promise<void> {
+export async function assertHttpTargetAllowed(
+  rawUrl: string,
+  opts: { systemCheck?: boolean } = {},
+): Promise<void> {
   if (process.env.MONITORING_ALLOW_INTERNAL === '1') return;
+  if (opts.systemCheck && isKnownLocalSystemTarget(rawUrl)) return;
 
   let url: URL;
   try {
@@ -23,26 +76,32 @@ export async function assertHttpTargetAllowed(rawUrl: string): Promise<void> {
   }
 
   const host = url.hostname;
-  const candidates: string[] = [];
-  if (isIP(host)) {
-    candidates.push(host);
-  } else {
-    const lower = host.toLowerCase();
-    if (lower === 'localhost' || lower.endsWith('.localhost')) {
-      throw new Error('Internal hostname blocked (set MONITORING_ALLOW_INTERNAL=1 to allow)');
-    }
-    try {
-      const addrs = await lookup(host, { all: true });
-      for (const a of addrs) candidates.push(a.address);
-    } catch (e) {
-      throw new Error(`DNS lookup failed for ${host}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
+  const candidates = await resolveCandidateIps(host);
   for (const ip of candidates) {
     if (isPrivateAddress(ip)) {
       throw new Error(`Internal address blocked: ${host} → ${ip} (set MONITORING_ALLOW_INTERNAL=1 to allow)`);
     }
+  }
+}
+
+/**
+ * Resolve a URL host to the candidate IPs the guard inspects. A literal IP
+ * is its own candidate; a `localhost`/`*.localhost` name is rejected
+ * outright; any other name is DNS-resolved (all records). Split out of
+ * {@link assertHttpTargetAllowed} to keep that function under the complexity
+ * budget.
+ */
+async function resolveCandidateIps(host: string): Promise<string[]> {
+  if (isIP(host)) return [host];
+  const lower = host.toLowerCase();
+  if (lower === 'localhost' || lower.endsWith('.localhost')) {
+    throw new Error('Internal hostname blocked (set MONITORING_ALLOW_INTERNAL=1 to allow)');
+  }
+  try {
+    const addrs = await lookup(host, { all: true });
+    return addrs.map(a => a.address);
+  } catch (e) {
+    throw new Error(`DNS lookup failed for ${host}: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
