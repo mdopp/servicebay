@@ -1,23 +1,31 @@
 ---
 lucide_icon: "bot"
+category: "Development"
 tagline: "Code against your repos from anywhere — a Claude Code dev box that lives on the home server, no laptop required."
 # claude-dev has no subdomain / proxy host, so there's no "Open" URL.
 # The card renders via the appless path (#1618): the primary action is
 # the web terminal deep-link that attaches to the container's persistent
 # `claude` tmux session (#1617), and the VS Code Remote-SSH handoff is a
 # desktop-only secondary action.
+#
+# The container that `podman play kube` creates is named
+# `<pod>-<container>` = `claude-dev-claude-dev` (pod `claude-dev` +
+# container `claude-dev`), NOT `claude-dev`. The terminal deep-link must
+# target that real container name, or `podman exec` finds no such
+# container (#1681).
 primary_action:
   type: "in_app"
   label: "Open terminal"
-  href: "/terminal?node=Local&container=claude-dev&attach=claude"
+  href: "/terminal?node=Local&container=claude-dev-claude-dev&attach=claude"
   icon: "bot"
 actions:
   # vscode:// hands off to the desktop VS Code app's Remote-SSH. The host
-  # and port can't be baked into this link (they come from the install —
-  # the box's LAN IP and the CLAUDE_DEV_SSH_PORT you set), so the literal
-  # template here is a placeholder; the body documents the real command to
-  # copy. desktop_only defaults true for external_scheme, so the phone UI
-  # hides this button.
+  # and port come from the install (the box's LAN IP and the
+  # CLAUDE_DEV_SSH_PORT you set), so the `HOST`/`PORT` tokens below are
+  # interpolated at render time by the portal card builder (#1682). The
+  # body keeps the copy-the-command fallback for outside-LAN / dyn-DNS.
+  # desktop_only defaults true for external_scheme, so the phone UI hides
+  # this button.
   - type: "external_scheme"
     label: "Open in VS Code (desktop)"
     href: "vscode://vscode-remote/ssh-remote+dev@HOST:PORT/workspace"

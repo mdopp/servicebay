@@ -33,6 +33,7 @@ vi.mock('@/lib/templateTier', () => ({ parseTemplateTier: () => 'app' }));
 vi.mock('@/lib/templateLabel', () => ({ parseTemplateLabel: () => 'Immich' }));
 vi.mock('./userGuide', () => ({
   parseUserGuide: () => ({ frontmatter: {}, body: 'body' }),
+  DEFAULT_PORTAL_CATEGORY: 'System',
 }));
 
 // fs reads: template.yml (any non-null string) + variables.json (a subdomain var).

@@ -9,7 +9,12 @@ import { agentManager } from '@/lib/agent/manager';
 import { listNodes } from '@/lib/nodes';
 import { AUTHELIA_LOCATION_HEADERS, sanitizeForwardAuthPort } from '@/lib/stackInstall/forwardAuth';
 import { checkPublicARecord, missingARecordMessage } from '@/lib/reverseProxy/publicDnsCheck';
-import { withLanDeniedPage, deployLanDeniedPage } from '@/lib/reverseProxy/lanDeniedPage';
+import {
+    withLanDeniedPage,
+    deployLanDeniedPage,
+    withForwardAuthDeniedPage,
+    deployForwardAuthDeniedPage,
+} from '@/lib/reverseProxy/lanDeniedPage';
 import { withProxyErrorPage, deployProxyErrorPages } from '@/lib/reverseProxy/proxyErrorPages';
 
 export const dynamic = 'force-dynamic';
@@ -1006,6 +1011,21 @@ export const POST = withApiHandler({}, async ({ request }) => {
                 : wantsStrictHost
                 ? `${host.forwardHost ?? '127.0.0.1'}:${host.forwardPort}`
                 : undefined;
+            // #1684 — A forward-auth host's 403 is an Authelia AUTHORIZATION
+            // deny (signed-in but wrong group), NOT the LAN-only deny. Wire
+            // its `error_page 403` to a branded explainer that names the
+            // required group (derived from this domain's access_control rule)
+            // and echoes the signed-in $user/$groups via SSI — instead of the
+            // misleading LAN-only page. A forward-auth host is not LAN-bound
+            // (it serves https with a cert), so the two `error_page 403`
+            // owners never collide. Best-effort; preserves existing directives.
+            if (wantsForwardAuth && accessListId === 0) {
+                host.proxyConfig = {
+                    ...host.proxyConfig,
+                    advanced_config: withForwardAuthDeniedPage(host.proxyConfig?.advanced_config, host.domain),
+                };
+                await deployForwardAuthDeniedPage(host.domain, errorPageDomain, node);
+            }
             try {
                 createdHost = await createProxyHost(npm.apiUrl, token, host, accessListId);
                 results.push({ domain: host.domain, success: true, lanRestricted: accessListId !== 0 });

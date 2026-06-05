@@ -753,6 +753,32 @@ async function runJob(jobId: string): Promise<void> {
     await log(jobId, `⚠️ LAN IP capture failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // #1668 — reconcile orphan container records from podman's preserved DB.
+  //
+  // podman's container DB lives on the preserved RAID and survives an
+  // OS-disk reinstall, but the quadlet units that managed those containers
+  // do not. After a wipe-and-reinstall the DB can hold stale records whose
+  // managing `PODMAN_SYSTEMD_UNIT` no longer exists on disk — they surface
+  // as ghost "Unmanaged Bundle" pods (e.g. an exited `hermes-hermes`
+  // labelled `PODMAN_SYSTEMD_UNIT=hermes.service` where that unit is gone).
+  //
+  // The reconcile is STRICT: it removes only records that are labelled +
+  // not running + whose managing unit file is absent. The CURRENT running
+  // hermes/OSCAR service (running, quadlet present) is never touched.
+  // Best-effort — a failure here must not block the install.
+  try {
+    const { reconcileOrphanContainers } = await import('./reconcileOrphanContainers');
+    const result = await reconcileOrphanContainers(undefined);
+    if (result.removed.length > 0) {
+      await log(jobId, `Reconciled ${result.removed.length} orphan container record(s) from preserved storage: ${result.removed.join(', ')}`);
+    }
+    if (result.failed.length > 0) {
+      await log(jobId, `⚠️ ${result.failed.length} orphan container(s) could not be removed: ${result.failed.map(f => f.name).join(', ')}`);
+    }
+  } catch (e) {
+    await log(jobId, `(note) orphan-container reconcile skipped: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   const checked = input.items.filter(i => i.checked);
   if (checked.length === 0) {
     await log(jobId, '⚠️ No services selected to install — aborting.');

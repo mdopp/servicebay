@@ -229,5 +229,76 @@ class TestAgent(unittest.TestCase):
         finally:
             agent.DEBUG_MODE = original_debug
 
+class TestDnsResolvers(unittest.TestCase):
+    """#1676 — read the box's effective DNS resolvers for the System health
+    Networks section. The agent reports the raw IP list; labelling + the
+    public-resolver warning live frontend-side."""
+
+    def test_parse_resolvectl_global_and_link(self):
+        text = (
+            "Global\n"
+            "         Protocols: -LLMNR\n"
+            "       DNS Servers: 127.0.0.1\n"
+            "Link 2 (eth0)\n"
+            "    Current Scopes: DNS\n"
+            "       DNS Servers: 192.168.178.1 8.8.8.8\n"
+        )
+        self.assertEqual(
+            agent.parse_resolvectl_servers(text),
+            ['127.0.0.1', '192.168.178.1', '8.8.8.8'],
+        )
+
+    def test_parse_resolvectl_continuation_and_dedupe(self):
+        text = (
+            "       DNS Servers: 192.168.178.1\n"
+            "                    8.8.8.8\n"
+            "                    192.168.178.1\n"  # dup, dropped
+            "    Fallback DNS Servers: 1.1.1.1\n"  # a labelled line, not a continuation
+        )
+        servers = agent.parse_resolvectl_servers(text)
+        self.assertEqual(servers[0], '192.168.178.1')
+        self.assertIn('8.8.8.8', servers)
+        # 192.168.178.1 appears once only
+        self.assertEqual(servers.count('192.168.178.1'), 1)
+
+    def test_parse_resolvectl_strips_iface_scope(self):
+        self.assertEqual(
+            agent.parse_resolvectl_servers('       DNS Servers: fe80::1%eth0\n'),
+            ['fe80::1'],
+        )
+
+    def test_parse_resolv_conf(self):
+        text = (
+            "# generated\n"
+            "; comment\n"
+            "nameserver 192.168.178.1\n"
+            "nameserver 8.8.8.8\n"
+            "search lan\n"
+        )
+        self.assertEqual(agent.parse_resolv_conf(text), ['192.168.178.1', '8.8.8.8'])
+
+    def test_get_dns_resolvers_prefers_resolvectl(self):
+        with patch.object(agent, '_executor') as mock_exec:
+            mock_exec.execute.return_value = ('       DNS Servers: 127.0.0.1\n', '', 0)
+            result = agent.get_dns_resolvers()
+        self.assertEqual(result, {'servers': ['127.0.0.1'], 'source': 'resolvectl'})
+
+    def test_get_dns_resolvers_falls_back_to_resolv_conf(self):
+        def fake_execute(cmd, check=True):
+            if cmd[0] == 'resolvectl':
+                return ('', 'not found', 1)
+            return ('nameserver 192.168.178.1\n', '', 0)
+        with patch.object(agent, '_executor') as mock_exec:
+            mock_exec.execute.side_effect = fake_execute
+            result = agent.get_dns_resolvers()
+        self.assertEqual(result, {'servers': ['192.168.178.1'], 'source': 'resolv.conf'})
+
+    def test_get_dns_resolvers_unknown_when_nothing_readable(self):
+        with patch.object(agent, '_executor') as mock_exec:
+            mock_exec.execute.return_value = ('', 'err', 1)
+            result = agent.get_dns_resolvers()
+        self.assertEqual(result, {'servers': [], 'source': 'unknown'})
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -170,6 +170,216 @@ export const LAN_DENIED_PAGE_HTML = `<!DOCTYPE html>
 </html>
 `;
 
+/* -------------------------------------------------------------------------
+ * #1684 — forward-auth (Authelia authorization deny) 403 explainer.
+ *
+ * A forward-auth host's 403 is NOT the LAN-only deny: it's Authelia saying
+ * "you ARE signed in, but you're not in the group this service requires"
+ * (or an upstream-app 403). Routing that 403 to the LAN-only page above is
+ * misleading — the user is on the LAN, signed in, and just missing a group.
+ *
+ * ServiceBay owns the Authelia `access_control.rules` (templates/auth/
+ * configuration.yml.mustache), so it KNOWS each domain's required subject:
+ *   - admin / nginx / dns / ldap     → group `admins`
+ *   - everything else (`*.<domain>`) → group `family` or `admins`
+ * We surface that required group, plus WHO the user is, on the deny page.
+ *
+ * The signed-in identity comes for free: the forward-auth snippet already
+ * runs `auth_request_set $user $upstream_http_remote_user` /
+ * `$groups $upstream_http_remote_groups` (forwardAuth.ts), and Authelia
+ * returns Remote-User/Remote-Groups on the deny response too, so nginx has
+ * `$user` / `$groups` in scope at error_page time. The page echoes them via
+ * SSI — same self-contained, backend-independent mechanism as #1415.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The forward-auth deny page is HOST-SPECIFIC — it bakes in the required
+ * group for that domain's access_control rule (admin hosts need `admins`,
+ * others `family`/`admins`). So each forward-auth host gets its own file,
+ * slugged by domain, rather than one shared page (which would clobber).
+ */
+function forwardAuthDeniedSlug(domain: string): string {
+  return (domain || 'host').toLowerCase().replace(/[^a-z0-9.-]/g, '_');
+}
+
+/** Path of a host's forward-auth deny explainer INSIDE the NPM container. */
+export function forwardAuthDeniedContainerPath(domain: string): string {
+  return `/data/nginx/servicebay/forward-auth-denied-${forwardAuthDeniedSlug(domain)}.html`;
+}
+
+/** Host-side path of a host's forward-auth deny explainer under NPM's data volume. */
+export function forwardAuthDeniedHostPath(domain: string): string {
+  return `/mnt/data/stacks/nginx-proxy-manager/data/nginx/servicebay/forward-auth-denied-${forwardAuthDeniedSlug(domain)}.html`;
+}
+
+/** Internal URI the forward-auth 403 is re-routed to. */
+const FORWARD_AUTH_DENIED_INTERNAL_URI = '/servicebay-forward-auth-denied';
+
+/** Sentinel marker for idempotent appends / detection. */
+const FORWARD_AUTH_DENIED_MARKER = '# servicebay-forward-auth-denied-explainer (#1684)';
+
+/** Admin-only subdomains per the auth template's access_control rules. */
+const ADMIN_ONLY_SUBDOMAINS = new Set(['admin', 'nginx', 'dns', 'ldap']);
+
+/**
+ * Derive the group(s) that grant access to a domain, from the Authelia
+ * `access_control.rules` ServiceBay generates (templates/auth/
+ * configuration.yml.mustache). Pure + deterministic — mirrors the rule
+ * table so the deny page can name the required group without reading the
+ * live config:
+ *   - admin / nginx / dns / ldap     → `['admins']`
+ *   - anything else                  → `['family', 'admins']`
+ *
+ * `domain` may be a bare host (`ollama.dopp.cloud`) or just the leftmost
+ * label; only the first label is inspected.
+ */
+export function requiredGroupsForDomain(domain: string | undefined): string[] {
+  const label = (domain ?? '').trim().toLowerCase().split('.')[0] ?? '';
+  return ADMIN_ONLY_SUBDOMAINS.has(label) ? ['admins'] : ['family', 'admins'];
+}
+
+/**
+ * The nginx directives that wire a forward-auth host's 403 to the branded
+ * deny page. `ssi on` so the page can echo `$user` / `$groups`. The required
+ * group is baked into the served HTML per-host (so it can be SSI-free), not
+ * into this snippet — keeping the snippet identical across hosts and
+ * idempotent on the marker.
+ *
+ * `error_page 403 /…` (no `=`) preserves the original 403 — the request is
+ * still denied, the user just gets an explanation of WHICH group they need.
+ */
+export function forwardAuthDeniedAdvancedConfig(domain: string): string {
+  return [
+    FORWARD_AUTH_DENIED_MARKER,
+    `error_page 403 ${FORWARD_AUTH_DENIED_INTERNAL_URI};`,
+    `location = ${FORWARD_AUTH_DENIED_INTERNAL_URI} {`,
+    '    internal;',
+    '    ssi on;',
+    '    default_type text/html;',
+    `    alias ${forwardAuthDeniedContainerPath(domain)};`,
+    '}',
+  ].join('\n');
+}
+
+/**
+ * Append the forward-auth deny directives to an existing `advanced_config`.
+ * Idempotent on {@link FORWARD_AUTH_DENIED_MARKER}; preserves any existing
+ * directives (the forward-auth block itself, timeouts, the #1583 proxy-error
+ * block, …). Mirrors {@link withLanDeniedPage}.
+ *
+ * NOTE: a host is EITHER LAN-only (gets {@link withLanDeniedPage}) OR
+ * forward-auth (gets this) for its 403 routing — never both, so the two
+ * `error_page 403` directives never collide on one host.
+ */
+export function withForwardAuthDeniedPage(advancedConfig: string | undefined, domain: string): string {
+  const base = advancedConfig ?? '';
+  if (base.includes(FORWARD_AUTH_DENIED_MARKER)) return base;
+  const snippet = forwardAuthDeniedAdvancedConfig(domain);
+  if (base.trim() === '') return snippet;
+  return `${base.replace(/\s*$/, '')}\n\n${snippet}`;
+}
+
+/** Render the required-group phrase: `family` or `admins`. */
+function renderRequiredGroups(groups: string[]): string {
+  const quoted = groups.map((g) => `<code>${g}</code>`);
+  if (quoted.length <= 1) return quoted[0] ?? '';
+  if (quoted.length === 2) return `${quoted[0]} or ${quoted[1]}`;
+  return `${quoted.slice(0, -1).join(', ')} or ${quoted[quoted.length - 1]}`;
+}
+
+/**
+ * Build the branded forward-auth deny explainer for a specific host. Names
+ * WHAT'S REQUIRED (the group that grants access, baked in from the domain's
+ * access_control rule) and WHO the user is (signed-in `$user` + `$groups`,
+ * echoed live via nginx SSI). Self-contained: inline CSS, no external assets,
+ * no JS, no ServiceBay-backend dependency — renders straight out of nginx.
+ *
+ * Distinct from the LAN-only page (#1415): the user here IS on the network and
+ * IS signed in; they're just missing a group. The copy says exactly that and
+ * points them at asking an admin to add the group.
+ *
+ * @param domain the host this page is served for (e.g. `ollama.dopp.cloud`).
+ * @param publicDomain operator's public domain, used to link `auth.<domain>`.
+ */
+const FORWARD_AUTH_DENIED_CSS = `
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    line-height: 1.55;
+  }
+  .card {
+    width: 100%;
+    max-width: 560px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 32px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 16px; color: #f8fafc; }
+  .brand { font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; color: #94a3b8; margin: 0 0 20px; }
+  p { margin: 0 0 14px; color: #cbd5e1; }
+  .ip, code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: #f1f5f9;
+  }
+  .ip {
+    display: inline-block;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 2px 8px;
+  }
+  a { color: #60a5fa; }
+  ol { margin: 8px 0 18px; padding-left: 22px; color: #cbd5e1; }
+  ol li { margin: 0 0 8px; }
+  .footer { margin: 18px 0 0; font-size: 0.85rem; color: #64748b; border-top: 1px solid #334155; padding-top: 16px; }`;
+
+export function buildForwardAuthDeniedPageHtml(domain?: string, publicDomain?: string): string {
+  const host = (domain ?? '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  const hostLabel = host || 'This service';
+  const requiredPhrase = renderRequiredGroups(requiredGroupsForDomain(host));
+  const pubDomain = (publicDomain ?? '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  const authUrl = pubDomain ? `https://auth.${pubDomain}` : '';
+  const signOutLine = authUrl
+    ? `<li>If you signed in with the wrong account, sign out at <a href="${authUrl}">${authUrl}</a> and sign back in.</li>`
+    : '';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>You don't have access to this service</title>
+<style>${FORWARD_AUTH_DENIED_CSS}</style>
+</head>
+<body>
+  <main class="card">
+    <p class="brand">ServiceBay</p>
+    <h1>You don't have access to this service</h1>
+    <p>You're signed in, but your account isn't allowed to open <strong>${hostLabel}</strong>.</p>
+    <p><strong>${hostLabel}</strong> needs group ${requiredPhrase}.</p>
+    <p>You're signed in as <span class="ip"><!--# echo var="user" encoding="none" --></span> with groups <span class="ip"><!--# echo var="groups" encoding="none" --></span>.</p>
+    <p>To get in:</p>
+    <ol>
+      <li><strong>Ask an administrator</strong> to add your account to group ${requiredPhrase}.</li>
+      ${signOutLine}
+    </ol>
+    <p class="footer">This isn't a network or DNS problem &mdash; you reached the right service, your account just lacks the required group.</p>
+  </main>
+</body>
+</html>
+`;
+}
+
 /**
  * Ship the explainer HTML into NPM's data volume so the `alias` in
  * {@link LAN_DENIED_ADVANCED_CONFIG} can serve it. Best-effort: returns
@@ -198,6 +408,42 @@ export async function deployLanDeniedPage(node?: string): Promise<boolean> {
     return true;
   } catch (e) {
     logger.warn('ProxyHosts', `Failed to deploy LAN-only explainer page: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
+}
+
+/**
+ * #1684 — Ship the forward-auth (Authelia authorization deny) 403 explainer
+ * into NPM's data volume for a specific host, so the per-host `error_page 403`
+ * → SSI location can serve it. The page is host-specific (it names the
+ * required group derived from that domain's access_control rule), so unlike
+ * the single LAN-only page this is written once per forward-auth host.
+ * Best-effort: a write hiccup just leaves the old bare openresty 403, exactly
+ * the pre-#1684 behaviour, so it must never fail an install.
+ */
+export async function deployForwardAuthDeniedPage(
+  domain: string,
+  publicDomain?: string,
+  node?: string,
+): Promise<boolean> {
+  try {
+    const nodes = await listNodes();
+    const nodeName = node ?? nodes[0]?.Name ?? 'Local';
+    const agent = agentManager.getAgent(nodeName);
+    const hostPath = forwardAuthDeniedHostPath(domain);
+    const res = (await agent.sendCommand('write_file', {
+      path: hostPath,
+      content: buildForwardAuthDeniedPageHtml(domain, publicDomain),
+      sudo: true,
+    })) as { result?: string; error?: string };
+    if (res?.error) {
+      logger.warn('ProxyHosts', `Failed to deploy forward-auth deny explainer for ${domain}: ${res.error}`);
+      return false;
+    }
+    logger.info('ProxyHosts', `Deployed forward-auth 403 explainer for ${domain} to ${hostPath}`);
+    return true;
+  } catch (e) {
+    logger.warn('ProxyHosts', `Failed to deploy forward-auth deny explainer for ${domain}: ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
 }
