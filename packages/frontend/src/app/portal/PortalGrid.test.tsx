@@ -19,6 +19,7 @@ const baseCard: PortalCard = {
   name: 'immich',
   subdomainVar: 'IMMICH_SUBDOMAIN',
   label: 'Photos',
+  category: 'Media',
   lucideIcon: 'camera',
   icon: '',
   tagline: 'Auto-backup your family photos.',
