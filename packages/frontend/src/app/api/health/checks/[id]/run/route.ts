@@ -20,9 +20,15 @@ export const POST = withApiHandlerParams<undefined, undefined, Params>(
     // #1423: diagnose rows are synthetic (not in checks.json). Running
     // one re-runs the whole suite on-demand and returns this probe's
     // freshly-persisted result.
+    //
+    // #1709: this is the operator clicking "Run" — a *manual* re-run, so
+    // pass manual:true. That makes reader probes over expensive checks
+    // (sso_verify) actually re-execute the verification rather than
+    // re-displaying a stale stored report. The scheduled tick stays
+    // read-only (it calls runDiagnoseChecks without the flag).
     if (isDiagnoseCheckId(id)) {
       try {
-        const results = await runDiagnoseChecks('Local');
+        const results = await runDiagnoseChecks('Local', { manual: true });
         const result = results.find(r => r.check_id === id);
         if (!result) {
           return NextResponse.json({ error: 'Diagnose probe not found' }, { status: 404 });

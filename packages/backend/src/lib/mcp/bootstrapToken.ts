@@ -21,9 +21,14 @@
  * Lifecycle (config.auth.bootstrapToken):
  *   install      → { hash, scope: 'read' }
  *   first boot   → above + { expiresAt }   (set by lazyInitializeExpiry)
- *   first user-minted MCP token → entry deleted (revoke from tokens.ts)
- *   manual click → entry deleted (revoke API)
+ *   first user-minted MCP token → expired in place (revoke from apiTokenRoutes.ts)
+ *   manual click → expired in place (revoke API)
  *   30 min later → entry stays, validation rejects (expired)
+ *
+ * "Revoke" expires the token (expiresAt → past) but KEEPS the hash, so the
+ * operator can re-activate it later (#1419/#1552) — same token value, no new
+ * credential. An expired token is already inert (verifyBootstrapToken rejects
+ * on expiry), so deactivating-not-deleting carries no extra attack surface.
  */
 
 import crypto from 'crypto';
@@ -165,32 +170,35 @@ export async function verifyBootstrapToken(
   };
 }
 
-/** Delete the bootstrap-token entry from config. Called from the
+/** Deactivate (expire) the bootstrap-token entry. Called from the
  *  Settings UI, and automatically when the operator mints their first
- *  named MCP token (see tokens.ts createToken). Returns true iff
- *  there was something to revoke. */
+ *  named MCP token (see apiTokenRoutes.ts createTokenHandler). The hash
+ *  is KEPT but `expiresAt` is set to the epoch, so the token is inert
+ *  (verifyBootstrapToken rejects on expiry) yet stays re-activatable
+ *  (#1419/#1552 — reactivateBootstrapToken resets the TTL on the same
+ *  hash). Returns true iff there was something to deactivate. */
 export async function revokeBootstrapToken(): Promise<boolean> {
   const config = await getConfig();
-  if (!config.auth?.bootstrapToken?.hash) return false;
-  // deepMerge in updateConfig only acts on keys present on the source
-  // object, so `delete auth.bootstrapToken` would leave the existing
-  // entry intact. Explicit `undefined` falls through deepMerge's
-  // is-object branch and lands in the result as undefined, which
-  // JSON.stringify drops on save — that's the actual delete.
+  const bt = config.auth?.bootstrapToken;
+  if (!bt?.hash) return false;
+  // Keep the hash; set expiresAt to the epoch so the token is expired
+  // (and therefore rejected by verifyBootstrapToken) but the operator
+  // can still re-activate it from Settings → Security. Deleting the
+  // entry (the old behaviour) made re-activation impossible (#1705).
   await updateConfig({
     auth: {
-      ...config.auth,
-      bootstrapToken: undefined,
+      bootstrapToken: { ...bt, expiresAt: new Date(0).toISOString() },
     },
   });
-  logger.info('mcp:bootstrap', 'Bootstrap MCP token revoked.');
+  logger.info('mcp:bootstrap', 'Bootstrap MCP token deactivated (expired in place; re-activatable).');
   return true;
 }
 
 /** Surface state for the Settings UI. `present` is true whenever the
  *  bootstrap entry still exists (hash set) even if its window has lapsed —
- *  the UI uses it to offer re-activation (#1419). Once a named token is
- *  minted the entry is deleted, so `present` goes false permanently. */
+ *  the UI uses it to offer re-activation (#1419). Minting a named token (or
+ *  a manual revoke) now EXPIRES the token in place rather than deleting it,
+ *  so `present` stays true and the entry remains re-activatable (#1705). */
 export async function getBootstrapTokenStatus(): Promise<
   | { active: false; present: boolean }
   | { active: true; present: true; expiresAt: string | null; minutesRemaining: number | null }
@@ -225,10 +233,11 @@ export async function getBootstrapTokenStatus(): Promise<
 
 /** Re-activate (un-expire) the existing bootstrap token for another TTL_MIN
  *  window — same hash/identity, so an already-configured MCP client keeps
- *  working after it. No-op if the entry was already revoked (the first
- *  named-token mint deletes it). The token stays LAN-only + read-scope: its
- *  own verify gate (isLanIp) is unchanged, so re-activation only resets the
- *  clock. (#1419) */
+ *  working after it. No-op only if no bootstrap entry was ever installed
+ *  (the hash is now KEPT across mint/revoke — they just expire it — so this
+ *  works even after the operator minted named tokens, #1705). The token
+ *  stays LAN-only + read-scope: its own verify gate (isLanIp) is unchanged,
+ *  so re-activation only resets the clock. (#1419) */
 export async function reactivateBootstrapToken(): Promise<
   | { ok: true; expiresAt: string; minutesRemaining: number }
   | { ok: false; reason: 'no-bootstrap-token' }

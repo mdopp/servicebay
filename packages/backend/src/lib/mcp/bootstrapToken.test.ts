@@ -185,7 +185,7 @@ describe('lazyInitializeExpiry', () => {
 });
 
 describe('revokeBootstrapToken', () => {
-  it('removes the bootstrapToken entry from auth', async () => {
+  it('deactivates by expiring in place — KEEPS the hash, sets expiresAt to the past (#1705)', async () => {
     mockGetConfig.mockResolvedValue({
       auth: {
         username: 'admin',
@@ -195,9 +195,10 @@ describe('revokeBootstrapToken', () => {
     });
     expect(await revokeBootstrapToken()).toBe(true);
     const arg = mockUpdateConfig.mock.calls[0][0];
-    expect(arg.auth.bootstrapToken).toBeUndefined();
-    expect(arg.auth.username).toBe('admin');
-    expect(arg.auth.passwordHash).toBe('kept');
+    // Hash is preserved (so it stays re-activatable), but expiresAt is in the past.
+    expect(arg.auth.bootstrapToken.hash).toBe('abc');
+    expect(arg.auth.bootstrapToken.scope).toBe('read');
+    expect(Date.parse(arg.auth.bootstrapToken.expiresAt)).toBeLessThan(Date.now());
   });
 
   it('returns false when nothing to revoke', async () => {
@@ -271,11 +272,56 @@ describe('reactivateBootstrapToken (#1419)', () => {
     expect(Date.parse(arg.auth.bootstrapToken.expiresAt)).toBeGreaterThan(Date.now());
   });
 
-  it('is a no-op (no-bootstrap-token) once the entry was revoked', async () => {
+  it('is a no-op (no-bootstrap-token) only when no entry was ever installed', async () => {
     mockGetConfig.mockResolvedValue({ auth: {} });
     const r = await reactivateBootstrapToken();
     expect(r).toEqual({ ok: false, reason: 'no-bootstrap-token' });
     expect(mockUpdateConfig).not.toHaveBeenCalled();
+  });
+});
+
+// End-to-end: minting a named token deactivates (but keeps) the bootstrap
+// token, so it stays re-activatable and a configured MCP client reconnects
+// with the SAME token value (#1705 — the regression that #322 deletion caused).
+describe('mint → re-activate → reconnect round-trip (#1705)', () => {
+  const RAW = 'bootstrap-secret';
+
+  // Drive an actual revoke (simulating the first named-token mint), capturing
+  // the written config so a follow-up getConfig sees the deactivated entry.
+  async function deactivateAndCapture() {
+    mockGetConfig.mockResolvedValue({
+      auth: { bootstrapToken: { hash: sha256(RAW), scope: 'read', expiresAt: new Date(Date.now() + 60_000).toISOString() } },
+    });
+    await revokeBootstrapToken();
+    const written = mockUpdateConfig.mock.calls[0][0].auth.bootstrapToken;
+    mockGetConfig.mockResolvedValue({ auth: { bootstrapToken: written } });
+    return written;
+  }
+
+  it('after a mint-revoke, status is present:true / active:false (re-activatable, not gone)', async () => {
+    await deactivateAndCapture();
+    expect(await getBootstrapTokenStatus()).toEqual({ active: false, present: true });
+  });
+
+  it('an un-reactivated (still-expired) bootstrap token stays inert — verify rejects', async () => {
+    await deactivateAndCapture();
+    await expect(verifyBootstrapToken(RAW, '192.168.1.10')).rejects.toThrow('Bootstrap token expired');
+  });
+
+  it('reactivate resets the TTL on the kept hash, then verify succeeds from a LAN IP', async () => {
+    await deactivateAndCapture();
+    mockUpdateConfig.mockClear();
+
+    const r = await reactivateBootstrapToken();
+    expect(r.ok).toBe(true);
+
+    // Persist the reactivation result and verify the ORIGINAL token value works.
+    const written = mockUpdateConfig.mock.calls[0][0].auth.bootstrapToken;
+    expect(written.hash).toBe(sha256(RAW));
+    mockGetConfig.mockResolvedValue({ auth: { bootstrapToken: written } });
+
+    const ctx = await verifyBootstrapToken(RAW, '192.168.1.10');
+    expect(ctx).toEqual({ user: 'bootstrap', scopes: ['read'], tokenId: 'bootstrap' });
   });
 });
 

@@ -40,11 +40,29 @@ vi.mock('@/lib/adguard/rewrites', () => ({
   listRewrites: vi.fn(() => Promise.resolve([])),
 }));
 
-import { dispatchProbeAction, actionsForProbe } from '../actions';
+// dns/promises Resolver — drive resolve4 per-test so we can simulate a
+// timeout (inconclusive) vs. a definitive NXDOMAIN (#1708).
+const resolve4Mock = vi.fn<(domain: string) => Promise<string[]>>();
+let resolve4Impl: (domain: string) => Promise<string[]>;
+vi.mock('dns/promises', () => {
+  class MockResolver {
+    setServers() {}
+    resolve4(domain: string) {
+      return resolve4Mock(domain);
+    }
+  }
+  return { default: { Resolver: MockResolver }, Resolver: MockResolver };
+});
+
+import { dispatchProbeAction, actionsForProbe, type ProbeItem } from '../actions';
+import { checkDomainUnreachable } from './domainUnreachable';
 import './domainUnreachable';
+import { getConfig } from '@/lib/config';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resolve4Impl = async () => ['203.0.113.7']; // default: resolves
+  resolve4Mock.mockImplementation((domain: string) => resolve4Impl(domain));
 });
 
 describe('domain_unreachable.action registration', () => {
@@ -128,5 +146,77 @@ describe('domain_unreachable.show_public_dns_instructions', () => {
     });
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/No domain supplied/);
+  });
+});
+
+// #1708 — a DNS *timeout* (inconclusive) must NOT be reported as a missing
+// A-record. Only a definitive NXDOMAIN/empty answer may say "missing".
+describe('domain_unreachable.dns-timeout-vs-nxdomain (#1708)', () => {
+  const publicHost = {
+    domain: 'home.example.com',
+    service: 'home',
+    forwardPort: 8123,
+    created: true,
+    exposure: 'public' as const,
+  };
+
+  function configWith(hosts: unknown[]) {
+    (getConfig as any).mockResolvedValueOnce({
+      reverseProxy: { publicDomain: 'example.com', lanIp: '192.168.1.10', hosts },
+    });
+  }
+
+  it('a DNS timeout falls through to the fetch probe — NOT "A-record missing"', async () => {
+    configWith([publicHost]);
+    // Resolver times out / SERVFAILs → inconclusive (code not in the
+    // definitive-no-record set).
+    resolve4Impl = async () => {
+      const err = new Error('dns timeout') as NodeJS.ErrnoException;
+      err.code = 'ETIMEOUT';
+      throw err;
+    };
+    // The resolver-independent Host-header probe proves reachability: NPM
+    // answers 301 → https://<domain>/ which `diagnoseDomain` treats as healthy.
+    const fetchMock = vi.fn(async () => ({
+      status: 301,
+      text: async () => '',
+      headers: new Headers({ location: 'https://home.example.com/' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await checkDomainUnreachable();
+    // Reachable → no broken rows, no "A-record missing".
+    expect(res.status).toBe('ok');
+    const items = (res.items ?? []) as ProbeItem[];
+    expect(items.find(i => i.id === 'home.example.com')).toBeUndefined();
+    expect(JSON.stringify(res)).not.toMatch(/A-record likely missing/);
+    // The fetch (reachability) probe was actually consulted.
+    expect(fetchMock).toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('a definitive NXDOMAIN still reports red "A-record missing"', async () => {
+    configWith([publicHost]);
+    resolve4Impl = async () => {
+      const err = new Error('queryA ENOTFOUND') as NodeJS.ErrnoException;
+      err.code = 'ENOTFOUND';
+      throw err;
+    };
+    const res = await checkDomainUnreachable();
+    expect(res.status).toBe('fail');
+    const items = (res.items ?? []) as ProbeItem[];
+    const row = items.find(i => i.id === 'home.example.com');
+    expect(row).toBeDefined();
+    expect(row!.status).toBe('fail');
+    expect(row!.detail).toMatch(/A-record likely missing/);
+  });
+
+  it('an empty answer (zero A records) is treated as NXDOMAIN', async () => {
+    configWith([publicHost]);
+    resolve4Impl = async () => [];
+    const res = await checkDomainUnreachable();
+    expect(res.status).toBe('fail');
+    const items = (res.items ?? []) as ProbeItem[];
+    expect(items.find(i => i.id === 'home.example.com')!.detail).toMatch(/A-record likely missing/);
   });
 });

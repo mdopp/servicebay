@@ -151,9 +151,46 @@ export function reportToProbe(stored: StoredSsoVerifyReport | null): SsoVerifyPr
   };
 }
 
-/** Read the persisted report and render it as a probe. Never throws — a
- *  store read error degrades to "not run yet" (info). */
-export async function checkSsoVerify(): Promise<SsoVerifyProbeResult> {
+/** Options threaded from the diagnose orchestrator into this probe.
+ *
+ *  `manual` is the crux of #1709: a *scheduled* diagnose tick reads the
+ *  stored report only (the full create→login→…→delete spine is expensive —
+ *  spinning a real LLDAP user on every poll is unacceptable). A *manual*
+ *  re-run (operator clicks "Run" on the row) must actually re-verify, just
+ *  like the `run_now` action — otherwise the re-run is a UX lie that
+ *  re-displays a stale report while only advancing the timestamp. */
+export interface SsoVerifyProbeOptions {
+  /** True when the operator explicitly re-ran this probe (vs. a scheduled
+   *  tick). Drives the read-cache vs. re-execute decision. */
+  manual?: boolean;
+  /** Node to verify against; passed to `verifySso`. */
+  node?: string;
+}
+
+/** Render the probe. On a *scheduled* tick this reads the persisted report
+ *  (cheap). On a *manual* re-run (#1709) it executes the real `verifySso()`,
+ *  persists the fresh report, and renders that — so re-run actually re-runs.
+ *  Never throws — a store/verify error degrades to an info row. */
+export async function checkSsoVerify(opts: SsoVerifyProbeOptions = {}): Promise<SsoVerifyProbeResult> {
+  if (opts.manual) {
+    try {
+      const report = await verifySso({ node: opts.node ?? 'Local' });
+      const stored = await saveSsoVerifyReport(report);
+      return reportToProbe(stored);
+    } catch (e) {
+      // A live-verify failure must not erase the row — fall back to the
+      // last stored report so the operator still sees the previous result.
+      logger.warn(`diagnose:${PROBE_ID}`, `manual re-verify threw: ${e instanceof Error ? e.message : String(e)}`);
+      try {
+        return reportToProbe(await loadSsoVerifyReport());
+      } catch {
+        return {
+          status: 'info',
+          detail: `SSO re-verification could not run: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+    }
+  }
   try {
     const stored = await loadSsoVerifyReport();
     return reportToProbe(stored);

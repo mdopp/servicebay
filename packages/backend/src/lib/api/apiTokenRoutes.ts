@@ -41,8 +41,10 @@ export async function createTokenHandler({ request }: { request: Request }) {
     });
 
     // First user-minted token closes the bootstrap-token bridge (#322).
-    // The operator now has a real, scoped credential — keeping the
-    // bootstrap entry around any longer is just attack surface.
+    // The operator now has a real, scoped credential, so the bootstrap
+    // token is expired (deactivated, not deleted — #1705). It stays
+    // re-activatable from Settings → Security for reconnecting an MCP
+    // client with the same token value (#1419/#1552).
     try {
       await revokeBootstrapToken();
     } catch (e) {

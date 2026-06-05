@@ -36,8 +36,12 @@ export interface StoredSsoVerifyReport {
  * file. Best-effort: a write failure is logged and swallowed — the
  * verification itself already ran; failing to cache it must not bubble
  * into the install runner or the on-demand action.
+ *
+ * Returns the stored shape (`{ at, report }`) it just persisted so a
+ * caller (e.g. the manual sso_verify re-run, #1709) can render the *fresh*
+ * report — with its current timestamp — without a follow-up read race.
  */
-export async function saveSsoVerifyReport(report: SsoVerifyReport): Promise<void> {
+export async function saveSsoVerifyReport(report: SsoVerifyReport): Promise<StoredSsoVerifyReport> {
   const payload: StoredSsoVerifyReport = { at: new Date().toISOString(), report };
   try {
     await fs.mkdir(DATA_DIR, { recursive: true });
@@ -47,6 +51,7 @@ export async function saveSsoVerifyReport(report: SsoVerifyReport): Promise<void
   } catch (e) {
     logger.warn('ssoVerifyStore', `could not persist SSO verify report: ${e instanceof Error ? e.message : String(e)}`);
   }
+  return payload;
 }
 
 /**
