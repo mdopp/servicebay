@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.99.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.98.0...servicebay-v4.99.0) (2026-06-05)
+
+
+### Features
+
+* **dashboards:** fold DNS resolvers into Network card + half-width Graphics/Network ([d1f9295](https://github.com/mdopp/servicebay/commit/d1f92959d150428ae2ceda06112dfd2008f0c786)), closes [#1706](https://github.com/mdopp/servicebay/issues/1706) [#1707](https://github.com/mdopp/servicebay/issues/1707)
+
+
+### Bug Fixes
+
+* **diagnose:** DNS timeout ≠ NXDOMAIN + sso_verify re-runs on manual ([ccd8b43](https://github.com/mdopp/servicebay/commit/ccd8b439e7cc826dc194a57c88357cdc2514f2cb)), closes [#1708](https://github.com/mdopp/servicebay/issues/1708) [#1709](https://github.com/mdopp/servicebay/issues/1709)
+* **mcp:** re-activatable bootstrap token — expire in place, don't delete ([28b7571](https://github.com/mdopp/servicebay/commit/28b757129b4687093869b657daef754b36e7443a)), closes [#1705](https://github.com/mdopp/servicebay/issues/1705)
+* SystemInfo layout polish + diagnose probe correctness + re-activatable bootstrap token ([f5c8889](https://github.com/mdopp/servicebay/commit/f5c8889a3c579697b80e0d5f8bba02f3182ca901))
+
 ## [4.98.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.97.0...servicebay-v4.98.0) (2026-06-05)
 
 
