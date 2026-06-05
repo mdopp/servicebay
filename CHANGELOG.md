@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.99.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.99.1...servicebay-v4.99.2) (2026-06-05)
+
+
+### Bug Fixes
+
+* **media:** self-heal ABS OIDC secret + wire Jellyfin to LLDAP SSO ([153faf1](https://github.com/mdopp/servicebay/commit/153faf19223bf31b7e496470acd32a7eff3b2a60))
+* **media:** self-heal ABS OIDC secret + wire Jellyfin to LLDAP SSO ([9e7b412](https://github.com/mdopp/servicebay/commit/9e7b412b458c597f35770653579bb4ad1c46c6cc)), closes [#1717](https://github.com/mdopp/servicebay/issues/1717) [#1718](https://github.com/mdopp/servicebay/issues/1718)
+
 ## [4.99.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.99.0...servicebay-v4.99.1) (2026-06-05)
 
 
