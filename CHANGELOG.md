@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.97.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.96.0...servicebay-v4.97.0) (2026-06-05)
+
+
+### Features
+
+* **health:** show effective DNS resolvers in System Networks section ([2c7db4e](https://github.com/mdopp/servicebay/commit/2c7db4e2daa594f6a083c858e5f07ff092e0d4e4)), closes [#1676](https://github.com/mdopp/servicebay/issues/1676)
+
+
+### Bug Fixes
+
+* forward-auth 403 explainer, orphan-container reconcile, Claude Dev card, DNS-resolvers health UI ([ca33fa4](https://github.com/mdopp/servicebay/commit/ca33fa4e2f4dac0362f1d4f0cd56fd28ff055fe4))
+* **install:** reconcile orphan podman container records on reinstall ([7f9f58b](https://github.com/mdopp/servicebay/commit/7f9f58b2aed9043a70a2a40d109b4eca0ad35db8)), closes [#1668](https://github.com/mdopp/servicebay/issues/1668)
+* **portal:** read lanIp from config.reverseProxy for Claude Dev host ([e6099bb](https://github.com/mdopp/servicebay/commit/e6099bbb7c7858135ffb8d60497c0b3729eb6048))
+* **portal:** repair Claude Dev card terminal, category + VS Code link ([c8e9c9c](https://github.com/mdopp/servicebay/commit/c8e9c9c720df060b7821a5daacda157239444a6b)), closes [#1681](https://github.com/mdopp/servicebay/issues/1681) [#1682](https://github.com/mdopp/servicebay/issues/1682)
+* **reverseProxy:** name the missing group on a forward-auth 403 deny ([51b473d](https://github.com/mdopp/servicebay/commit/51b473d1f60264db2f1b40499ef3e61ebedc372c)), closes [#1684](https://github.com/mdopp/servicebay/issues/1684)
+
 ## [4.96.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.95.2...servicebay-v4.96.0) (2026-06-05)
 
 
