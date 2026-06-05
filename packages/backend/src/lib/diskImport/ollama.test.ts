@@ -3,7 +3,7 @@ import { requestLabel } from './ollama';
 
 /** A fetch mock that returns one Ollama generate envelope with `response` = body. */
 function fetchReturning(responseField: unknown, init: { ok?: boolean } = {}) {
-  return vi.fn(async () =>
+  return vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
     ({
       ok: init.ok ?? true,
       json: async () => ({ response: responseField }),

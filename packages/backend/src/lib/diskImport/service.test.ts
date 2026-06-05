@@ -102,7 +102,7 @@ describe('applyImportPlan — the review gate', () => {
   });
 
   it('applies the exact plan from a prior scan and consumes the session', async () => {
-    const { exec, calls } = mockExec({ find: ok(FIND_OUT) });
+    const { exec } = mockExec({ find: ok(FIND_OUT) });
     const scan = await scanDevice({ exec, device: '/dev/sda1', catalogPath: ':memory:' });
 
     // No immich config wired → photos throw on apply; use a residue-only disk to
