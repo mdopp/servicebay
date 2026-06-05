@@ -210,6 +210,27 @@ export function buildContainerInnerCmd(attachSession?: string): string {
   return `if command -v tmux >/dev/null 2>&1; then exec tmux new -A -s ${attachSession}; else ${BARE_SHELL_CMD}; fi`;
 }
 
+/**
+ * Build the remote/host shell command that execs into a container,
+ * guarded by an existence check (#1681).
+ *
+ * The terminal deep-link targets a container by name (e.g. claude-dev's
+ * real `claude-dev-claude-dev`). If that name is wrong/absent, a bare
+ * `podman exec` errors opaquely — and worse, an upstream caller that
+ * doesn't realise the target is a container can drop the operator onto
+ * the *host* shell, which looks like it "worked" but silently puts them
+ * on the box instead of inside the container. So we front the exec with
+ * `podman container exists <id>`: on a miss we print an explicit
+ * "no such container" line and exit non-zero (the PTY shows the error),
+ * rather than falling through to anything. The container id is validated
+ * by the caller's grammar (`container:<node>:<id>`), so it's safe to
+ * interpolate.
+ */
+export function buildContainerExecCmd(containerId: string, innerCmd: string): string {
+  const exec = `podman exec -it -e TERM=xterm-256color ${containerId} sh -c '${innerCmd}'`;
+  return `if podman container exists ${containerId}; then ${exec}; else echo "Error: no such container: ${containerId} — the terminal deep-link target does not exist (not falling back to the host shell)." >&2; exit 1; fi`;
+}
+
 export async function resolvePtySpec(id: string): Promise<PtySpec> {
   const defaultShell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || 'bash');
 
@@ -263,7 +284,7 @@ export async function resolvePtySpec(id: string): Promise<PtySpec> {
           args.push('-o', 'UserKnownHostsFile=/dev/null');
           args.push('-t');
           args.push(`${uri.username}@${uri.hostname}`);
-          args.push(`podman exec -it -e TERM=xterm-256color ${containerId} sh -c '${innerCmd}'`);
+          args.push(buildContainerExecCmd(containerId, innerCmd));
           return { shell: 'ssh', args, fallbackWarning: '' };
         }
       }
@@ -275,9 +296,13 @@ export async function resolvePtySpec(id: string): Promise<PtySpec> {
     // in PATH. Container-mode installs don't reach this — see the SSH branch
     // above. Kept so a hypothetical `node:` install (or a future packaged
     // binary) still works without a per-node SSH config entry.
+    //
+    // Routed through `sh -c` so the same `podman container exists` guard
+    // (#1681) applies here: a missing/mis-named container surfaces an explicit
+    // error instead of an opaque podman failure (and never a host shell).
     return {
-      shell: 'podman',
-      args: ['exec', '-it', '-e', 'TERM=xterm-256color', containerId, 'sh', '-c', innerCmd],
+      shell: 'sh',
+      args: ['-c', buildContainerExecCmd(containerId, innerCmd)],
       fallbackWarning: '',
     };
   }

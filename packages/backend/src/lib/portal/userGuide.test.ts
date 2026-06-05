@@ -419,3 +419,43 @@ body
     });
   });
 });
+
+describe('parseUserGuide — category (#1682)', () => {
+  it('parses a top-level category from the frontmatter', () => {
+    const raw = `---
+category: "Development"
+tagline: "A dev box"
+primary_action:
+  type: "in_app"
+  label: "Open terminal"
+  href: "/terminal?container=claude-dev-claude-dev&attach=claude"
+---
+body
+`;
+    const result = parseUserGuide(raw, 'claude-dev');
+    expect(result!.frontmatter.category).toBe('Development');
+  });
+
+  it('ignores an unknown category value (falls back to default later)', () => {
+    const raw = `---
+category: "Nonsense"
+tagline: "x"
+---
+body
+`;
+    const result = parseUserGuide(raw, 'x');
+    expect(result!.frontmatter.category).toBeUndefined();
+  });
+
+  it('parses a per-card category inside cards[]', () => {
+    const raw = `---
+cards:
+  - subdomain_var: "ABS_SUBDOMAIN"
+    category: "Media"
+---
+body
+`;
+    const result = parseUserGuide(raw, 'media');
+    expect(result!.frontmatter.cards?.[0].category).toBe('Media');
+  });
+});

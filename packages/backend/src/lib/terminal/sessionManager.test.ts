@@ -19,7 +19,7 @@ vi.mock('node-pty', () => ({
   spawn: vi.fn(),
 }));
 
-import { resolvePtySpec, buildContainerInnerCmd } from './sessionManager';
+import { resolvePtySpec, buildContainerInnerCmd, buildContainerExecCmd } from './sessionManager';
 
 beforeEach(() => {
   state.nodes = [];
@@ -63,14 +63,17 @@ describe('resolvePtySpec — container terminals', () => {
     expect(spec.args[spec.args.length - 1]).toContain('xyz789');
   });
 
-  it('falls back to direct podman when no matching node is registered (bare-metal install)', async () => {
+  it('falls back to direct podman (via sh -c, existence-guarded) when no matching node is registered (bare-metal install)', async () => {
     state.nodes = []; // no Local node — bare-metal/dev mode
 
     const spec = await resolvePtySpec('container:local:abc123');
 
-    expect(spec.shell).toBe('podman');
-    expect(spec.args[0]).toBe('exec');
-    expect(spec.args).toContain('abc123');
+    expect(spec.shell).toBe('sh');
+    expect(spec.args[0]).toBe('-c');
+    const cmd = spec.args[1];
+    expect(cmd).toContain('podman container exists abc123');
+    expect(cmd).toContain('podman exec -it');
+    expect(cmd).toContain('abc123');
   });
 
   it('falls back to direct podman when the matched node has a non-ssh URI', async () => {
@@ -82,7 +85,8 @@ describe('resolvePtySpec — container terminals', () => {
 
     const spec = await resolvePtySpec('container:local:abc123');
 
-    expect(spec.shell).toBe('podman');
+    expect(spec.shell).toBe('sh');
+    expect(spec.args[1]).toContain('podman exec -it');
   });
 
   it('throws when the container id is empty', async () => {
@@ -107,7 +111,7 @@ describe('resolvePtySpec — container terminals', () => {
 
     const spec = await resolvePtySpec('container:Local:dev:attach=claude');
 
-    expect(spec.shell).toBe('podman');
+    expect(spec.shell).toBe('sh');
     const inner = spec.args[spec.args.length - 1];
     expect(inner).toContain('tmux new -A -s claude');
   });
@@ -118,13 +122,57 @@ describe('resolvePtySpec — container terminals', () => {
     const spec = await resolvePtySpec('container:Local:my-ctr:attach=sess');
 
     // The attach segment must NOT be mistaken for the container id.
-    expect(spec.args).toContain('my-ctr');
-    expect(spec.args).not.toContain('attach=sess');
+    const cmd = spec.args[spec.args.length - 1];
+    expect(cmd).toContain('my-ctr');
+    expect(cmd).not.toContain('attach=sess');
   });
 
   it('rejects an attach session name with shell metacharacters', async () => {
     await expect(resolvePtySpec("container:Local:dev:attach=foo;rm -rf /"))
       .rejects.toThrow(/Invalid attach session name/);
+  });
+});
+
+describe('container existence guard (#1681)', () => {
+  it('guards the SSH-path exec with `podman container exists` and surfaces an error on a miss (no host fallback)', async () => {
+    state.nodes = [{ Name: 'Local', URI: 'ssh://core@127.0.0.1', Identity: '/k' }];
+
+    // The claude-dev card's real container is `claude-dev-claude-dev`
+    // (pod + container), not `claude-dev`.
+    const spec = await resolvePtySpec('container:Local:claude-dev-claude-dev:attach=claude');
+    const remoteCmd = spec.args[spec.args.length - 1];
+
+    expect(remoteCmd).toContain('podman container exists claude-dev-claude-dev');
+    expect(remoteCmd).toContain('podman exec -it');
+    expect(remoteCmd).toContain('tmux new -A -s claude');
+    // On a miss it errors explicitly and exits — it must NOT drop to a host shell.
+    expect(remoteCmd).toContain('no such container');
+    expect(remoteCmd).toContain('not falling back to the host shell');
+    expect(remoteCmd).toContain('exit 1');
+  });
+
+  it('guards the direct-podman (bare-metal) path with the same existence check', async () => {
+    state.nodes = [];
+
+    const spec = await resolvePtySpec('container:Local:claude-dev-claude-dev:attach=claude');
+    const cmd = spec.args[spec.args.length - 1];
+
+    expect(cmd).toContain('podman container exists claude-dev-claude-dev');
+    expect(cmd).toContain('no such container');
+    expect(cmd).toContain('exit 1');
+  });
+});
+
+describe('buildContainerExecCmd', () => {
+  it('fronts the exec with an existence check and errors (not host-shell) on a miss', () => {
+    const inner = buildContainerInnerCmd('claude');
+    const cmd = buildContainerExecCmd('claude-dev-claude-dev', inner);
+
+    expect(cmd).toContain('podman container exists claude-dev-claude-dev');
+    expect(cmd).toContain('podman exec -it -e TERM=xterm-256color claude-dev-claude-dev');
+    expect(cmd).toContain('tmux new -A -s claude');
+    expect(cmd).toMatch(/no such container.*not falling back to the host shell/);
+    expect(cmd).toContain('exit 1');
   });
 });
 

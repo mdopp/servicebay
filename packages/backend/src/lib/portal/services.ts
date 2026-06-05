@@ -29,7 +29,7 @@ import { parseTemplateTier } from '@/lib/templateTier';
 import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getTemplateUserGuide } from '@/lib/registry';
 import { logger } from '@/lib/logger';
-import { parseUserGuide, type PortalIconName, type RecommendedApp, type SetupAsset, type ManualPairing, type PortalAction } from './userGuide';
+import { parseUserGuide, DEFAULT_PORTAL_CATEGORY, type PortalIconName, type RecommendedApp, type SetupAsset, type ManualPairing, type PortalAction, type PortalCategory } from './userGuide';
 
 const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 
@@ -47,6 +47,10 @@ export interface PortalCard {
   subdomainVar: string;
   /** User-facing label */
   label: string;
+  /** Grouping bucket (#1682). Falls back to `System` when the guide
+   *  declares no `category:`. Lets the portal file a card under a
+   *  user-facing section (e.g. claude-dev → "Development"). */
+  category: PortalCategory;
   /** Lucide icon name */
   lucideIcon: PortalIconName | null;
   /** Legacy emoji icon */
@@ -150,6 +154,55 @@ export function deriveCardStatus(
     return { status: 'degraded', statusReason: 'Running in a degraded state' };
   }
   return { status: 'ok' };
+}
+
+/**
+ * Resolve the box's reachable host for a desktop-handoff link (#1682).
+ * The VS Code Remote-SSH deep link needs a real host: prefer the
+ * install-detected LAN IP (the same address that serves the portal),
+ * falling back to the active domain when no IP is recorded yet.
+ */
+function resolveBoxHost(config: AppConfig): string {
+  return config.lanIp?.trim() || getActiveDomain(config);
+}
+
+/**
+ * Interpolate `HOST`/`PORT` placeholders in an `external_scheme` action
+ * href (#1682). Template authors ship a literal placeholder href —
+ * `vscode://...ssh-remote+dev@HOST:PORT/workspace` — because the box IP
+ * and the SSH port come from the install, not the template. ServiceBay
+ * knows both, so we substitute them at render time. Word-boundary
+ * matching keeps it from corrupting other URL text. `in_app` actions are
+ * returned unchanged (their hrefs are root-relative paths, no host/port).
+ *
+ * Pure — the caller supplies the resolved `host`/`port`. Returns a new
+ * PortalAction (never mutates the parsed frontmatter object).
+ */
+export function interpolateActionHref(
+  action: PortalAction,
+  host: string,
+  port: string,
+): PortalAction {
+  if (action.type !== 'external_scheme') return action;
+  if (!/\bHOST\b|\bPORT\b/.test(action.href)) return action;
+  const href = action.href
+    .replace(/\bHOST\b/g, host)
+    .replace(/\bPORT\b/g, port);
+  return { ...action, href };
+}
+
+/** Resolve a template variable's effective value (operator override in
+ *  `templateSettings`, else schema default). Used for the SSH port in the
+ *  VS Code deep link. Returns the schema/operator string as-is. */
+function resolveVarValue(
+  config: AppConfig,
+  variables: Record<string, { default?: string }>,
+  varName: string,
+): string | undefined {
+  const override = config.templateSettings?.[varName];
+  if (typeof override === 'string' && override.trim()) return override.trim();
+  const def = variables[varName]?.default;
+  return typeof def === 'string' && def.trim() ? def.trim() : undefined;
 }
 
 /** Read a template's variables.json (best-effort, returns empty record on miss).
@@ -271,6 +324,7 @@ export async function resolveServiceUrl(
 interface PortalCardDef {
   subdomain_var: string;
   label?: string;
+  category?: PortalCategory;
   lucide_icon?: PortalIconName;
   icon?: string;
   tagline?: string;
@@ -298,6 +352,7 @@ function assemblePortalCard(
     name: serviceName,
     subdomainVar,
     label: def.label ?? templateLabel,
+    category: def.category ?? DEFAULT_PORTAL_CATEGORY,
     lucideIcon: def.lucide_icon ?? null,
     icon: def.icon ?? '',
     tagline: def.tagline ?? '',
@@ -345,6 +400,42 @@ export function resolveCardStatus(
   });
 }
 
+/** Resolve the SSH-port substitution for an `external_scheme` deep link
+ *  (#1682). Reads the template's first `*_SSH_PORT` variable (operator
+ *  override > schema default); defaults to "2222" so the link is never
+ *  left with a literal `PORT`. */
+async function resolveSshPort(config: AppConfig, templateName: string): Promise<string> {
+  const variables = await readVariables(templateName);
+  const portVar = Object.keys(variables).find(k => k.endsWith('_SSH_PORT'));
+  const resolved = portVar ? resolveVarValue(config, variables, portVar) : undefined;
+  return resolved ?? '2222';
+}
+
+/** Interpolate any `external_scheme` action hrefs in a card def with the
+ *  real box host + SSH port (#1682), so a `vscode://...HOST:PORT...`
+ *  placeholder becomes a working Remote-SSH deep link. No-op when the
+ *  def carries no host/port placeholders. */
+async function interpolateCardActions(
+  config: AppConfig,
+  templateName: string,
+  def: PortalCardDef,
+): Promise<PortalCardDef> {
+  const hasPlaceholder =
+    (def.primary_action && /\bHOST\b|\bPORT\b/.test(def.primary_action.href)) ||
+    (def.actions ?? []).some(a => /\bHOST\b|\bPORT\b/.test(a.href));
+  if (!hasPlaceholder) return def;
+
+  const host = resolveBoxHost(config);
+  const port = await resolveSshPort(config, templateName);
+  return {
+    ...def,
+    primary_action: def.primary_action
+      ? interpolateActionHref(def.primary_action, host, port)
+      : def.primary_action,
+    actions: def.actions?.map(a => interpolateActionHref(a, host, port)),
+  };
+}
+
 /**
  * Build a single portal card entry from a parsed definition.
  */
@@ -367,7 +458,8 @@ async function buildPortalCardEntry(
   }
   const subdomainVar = def.subdomain_var || (await firstSubdomainVar(svc.name)) || '';
   const status = resolveCardStatus(svc.active, svc.name, url, twinHealthByService);
-  return assemblePortalCard(def, svc.name, templateLabel, url, subdomainVar, parsedBody, status);
+  const resolvedDef = await interpolateCardActions(config, svc.name, def);
+  return assemblePortalCard(resolvedDef, svc.name, templateLabel, url, subdomainVar, parsedBody, status);
 }
 
 /**
@@ -420,6 +512,7 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
       ?? [{
         // Implicit single card — use the first *_SUBDOMAIN variable.
         subdomain_var: '',
+        category: parsed.frontmatter.category,
         lucide_icon: parsed.frontmatter.lucide_icon,
         icon: parsed.frontmatter.icon,
         tagline: parsed.frontmatter.tagline,
@@ -431,7 +524,10 @@ export async function buildPortalCards(node: string = 'Local'): Promise<PortalCa
       }];
 
     for (const def of cardDefs) {
-      const card = await buildPortalCardEntry(config, svc, def, templateLabel, parsed.body, twinHealthByService);
+      // A per-card `category` wins; otherwise inherit the template's
+      // top-level frontmatter category (#1682).
+      const defWithCategory = { ...def, category: def.category ?? parsed.frontmatter.category };
+      const card = await buildPortalCardEntry(config, svc, defWithCategory, templateLabel, parsed.body, twinHealthByService);
       if (card) cards.push(card);
     }
   }

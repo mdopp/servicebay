@@ -138,6 +138,28 @@ export interface ManualPairing {
  */
 export type PortalActionType = 'in_app' | 'external_scheme';
 
+/**
+ * Coarse grouping bucket a portal card belongs to (#1682). Lets a
+ * template author file a card under a user-facing section instead of
+ * the implicit "System" default. The canonical case is `claude-dev`:
+ * an appless dev box that should read as **Development**, not infra
+ * "System". Authors set `category:` in the frontmatter; the portal
+ * groups cards by it. Unknown/missing values fall back to `System`.
+ */
+export type PortalCategory = 'System' | 'Development' | 'Media' | 'Home' | 'Files' | 'Productivity';
+const KNOWN_CATEGORIES: ReadonlySet<PortalCategory> = new Set([
+  'System', 'Development', 'Media', 'Home', 'Files', 'Productivity',
+]);
+export const DEFAULT_PORTAL_CATEGORY: PortalCategory = 'System';
+
+/** Validate a frontmatter `category:` value against the allowlist,
+ *  returning undefined for anything unrecognized (the card builder
+ *  then falls back to {@link DEFAULT_PORTAL_CATEGORY}). */
+function parseCategory(input: unknown): PortalCategory | undefined {
+  if (typeof input !== 'string') return undefined;
+  return KNOWN_CATEGORIES.has(input as PortalCategory) ? (input as PortalCategory) : undefined;
+}
+
 /** External URI schemes a card action may use. Allowlisted so a
  *  template author can't smuggle `javascript:`/`data:` into an action
  *  link. Each is a registered desktop-app handoff scheme. */
@@ -201,6 +223,9 @@ export interface UserGuideCard {
   subdomain_var: string;
   /** Optional override label; falls back to the template label. */
   label?: string;
+  /** Grouping bucket (#1682). Falls back to the top-level frontmatter
+   *  category (then `System`) when unset. */
+  category?: PortalCategory;
   lucide_icon?: PortalIconName;
   icon?: string;
   tagline?: string;
@@ -219,6 +244,11 @@ export interface UserGuideFrontmatter {
    *  here. When present, top-level icon/tagline/etc. are ignored and
    *  one PortalCard is emitted per entry. */
   cards?: UserGuideCard[];
+
+  /** Grouping bucket for this template's card(s) (#1682). When unset
+   *  the card builder uses {@link DEFAULT_PORTAL_CATEGORY} (`System`).
+   *  A per-card `category` (in `cards[]`) overrides this. */
+  category?: PortalCategory;
 
   /** Lucide icon name (line-art, matches ServiceBay's dashboard
    *  chrome). Preferred over the legacy emoji `icon` field. Used
@@ -422,6 +452,8 @@ function parseCardEntry(entry: unknown): UserGuideCard | null {
   }
   const card: UserGuideCard = { subdomain_var: e.subdomain_var };
   if (typeof e.label === 'string' && e.label.trim()) card.label = e.label.trim();
+  const cardCategory = parseCategory(e.category);
+  if (cardCategory) card.category = cardCategory;
   if (typeof e.icon === 'string') card.icon = e.icon;
   if (typeof e.lucide_icon === 'string' && PORTAL_ICON_SET.has(e.lucide_icon)) {
     card.lucide_icon = e.lucide_icon as PortalIconName;
@@ -431,24 +463,34 @@ function parseCardEntry(entry: unknown): UserGuideCard | null {
   return card;
 }
 
+/** Resolve the recommended-apps list: prefer `recommended_apps`, fall
+ *  back to lifting legacy `mobile_apps` so older guides keep working.
+ *  Returns undefined when neither yields entries. */
+function resolveRecommendedApps(data: Record<string, unknown>): RecommendedApp[] | undefined {
+  if (Array.isArray(data.recommended_apps)) {
+    const apps = parseRecommendedApps(data.recommended_apps);
+    return apps.length > 0 ? apps : undefined;
+  }
+  if (Array.isArray(data.mobile_apps)) {
+    const lifted = liftMobileApps(data.mobile_apps);
+    return lifted.length > 0 ? lifted : undefined;
+  }
+  return undefined;
+}
+
 /** Extract frontmatter fields from parsed YAML data. */
 function parseUserGuideSection(data: Record<string, unknown>): UserGuideFrontmatter {
   const fm: UserGuideFrontmatter = {};
+  const category = parseCategory(data.category);
+  if (category) fm.category = category;
   if (typeof data.icon === 'string') fm.icon = data.icon;
   if (typeof data.lucide_icon === 'string' && PORTAL_ICON_SET.has(data.lucide_icon)) {
     fm.lucide_icon = data.lucide_icon as PortalIconName;
   }
   if (typeof data.tagline === 'string') fm.tagline = data.tagline;
 
-  // Prefer `recommended_apps` when present; fall back to lifting
-  // legacy `mobile_apps` so older guides keep working.
-  if (Array.isArray(data.recommended_apps)) {
-    const apps = parseRecommendedApps(data.recommended_apps);
-    if (apps.length > 0) fm.recommended_apps = apps;
-  } else if (Array.isArray(data.mobile_apps)) {
-    const lifted = liftMobileApps(data.mobile_apps);
-    if (lifted.length > 0) fm.recommended_apps = lifted;
-  }
+  const recommendedApps = resolveRecommendedApps(data);
+  if (recommendedApps) fm.recommended_apps = recommendedApps;
 
   if (Array.isArray(data.cards)) {
     const cards = data.cards
