@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -80,6 +81,18 @@ REQUEST_TIMEOUT = 30.0
 # suite can shrink the budget.
 JELLYFIN_READY_TIMEOUT = 5 * 60
 JELLYFIN_READY_INTERVAL = 5
+
+# Pod-container names. Podman names a Pod's containers `<pod>-<container>`;
+# this pod is `media`, the containers are `audiobookshelf` and `jellyfin`
+# (see template.yml). Used by the DB-level OIDC reconcile (#1717) and the
+# Jellyfin LDAP plugin restart (#1718).
+ABS_CONTAINER = "media-audiobookshelf"
+JELLYFIN_CONTAINER = "media-jellyfin"
+
+# Audiobookshelf stores its server settings — including the OIDC
+# client_secret — as a single JSON row in this SQLite DB inside the
+# container's /config volume. Used by the no-login DB reconcile (#1717).
+ABS_DB_PATH = "/config/absdatabase.sqlite"
 
 
 def request_json(
@@ -481,6 +494,263 @@ def configure_abs_oidc(
     return False
 
 
+def _abs_sqlite(sql: str) -> tuple[int, str]:
+    """Run a single SQL statement against Audiobookshelf's SQLite DB inside
+    the running container as `podman exec … sqlite3`. Returns (returncode,
+    stripped stdout).
+
+    Same host-side capability the file-share / home-assistant post-deploys
+    use. The advplyr/audiobookshelf image ships `sqlite3`. We pass the SQL
+    on argv (no shell), and never put a secret in the SQL string — the
+    re-stamp binds the new secret via `json_set(..., json(:value))` style
+    quoting done in SQL with the value carried as a separate `-cmd` bind is
+    not available in plain sqlite3, so the caller escapes the value with
+    json_quote() server-side instead (see reconcile_abs_oidc_secret_in_db).
+    """
+    cmd = [
+        "podman", "exec", ABS_CONTAINER,
+        "sqlite3", ABS_DB_PATH, sql,
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, timeout=30,
+        )
+        return result.returncode, (result.stdout or "").strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"   ⚠️ sqlite3 exec against {ABS_CONTAINER} failed: {exc}")
+        return 1, ""
+
+
+def reconcile_abs_oidc_secret_in_db(oidc_secret: str) -> bool:
+    """Re-stamp Audiobookshelf's stored OIDC client_secret to match
+    Authelia's freshly-registered one, writing straight to the SQLite DB —
+    no admin login required.
+
+    Why this exists (#1717): ABS keeps its OIDC client_secret in its
+    settings DB (survived DATA across a `wipe-configs` reinstall) while
+    Authelia regenerates its copy from CONFIG. The two drift and the token
+    exchange at /api/oidc/token fails with `invalid_client` — an endless
+    login loop. The normal repair is the admin-authenticated PATCH
+    /api/auth-settings in `configure_abs_oidc`, but on a wipe-configs
+    reinstall the freshly-generated ABS_ADMIN_PASSWORD no longer matches
+    the preserved admin row, so the admin login fails and that path never
+    runs. This DB-level reconcile is the no-token fallback — same class as
+    the LLDAP FORCE_RESET / NPM in-place rekey / Immich DB re-stamp (#1556).
+
+    ABS stores its server settings as a single JSON row in the `settings`
+    table keyed `server-settings`; the OIDC secret lives at
+    `$.authOpenIDClientSecret`. We only touch that leaf, only when a
+    `server-settings` row already exists (populated DATA) and its stored
+    secret differs from the wizard's. The new value is quoted by SQLite's
+    `json_quote()` so no manual escaping is needed and ABS user/library
+    data is never touched. Returns True iff it wrote a change.
+    """
+    # Read the currently-stored secret. json_extract returns NULL (empty
+    # stdout) when the row or the key is absent.
+    code, current = _abs_sqlite(
+        "SELECT json_extract(value, '$.authOpenIDClientSecret') "
+        "FROM settings WHERE key='server-settings';"
+    )
+    if code != 0:
+        log("   ⚠️ Could not read Audiobookshelf's stored OIDC secret from the DB — "
+            "skipping DB reconcile. SSO may need a manual secret re-paste.")
+        return False
+    # Empty result: no server-settings row yet, or no OIDC secret stored
+    # (fresh DATA). Nothing to reconcile — the API path seeds it once the
+    # admin login succeeds.
+    if not current:
+        log("   ℹ️ No stored OIDC secret in Audiobookshelf's DB yet — nothing to "
+            "reconcile (fresh data; the API path seeds it once admin login succeeds).")
+        return False
+    if current == oidc_secret:
+        log("   ✅ Audiobookshelf's stored OIDC secret already matches Authelia — no reconcile needed.")
+        return False
+
+    # Re-stamp just the nested authOpenIDClientSecret, preserving every
+    # other server-settings field. The secret is wrapped in json_quote()
+    # so SQLite does the literal quoting — no manual escaping, and the
+    # value never lands in a log line. `json_set` rewrites only the named
+    # leaf; the rest of the settings blob is untouched.
+    escaped = oidc_secret.replace("'", "''")
+    code, _ = _abs_sqlite(
+        "UPDATE settings SET value = "
+        "json_set(value, '$.authOpenIDClientSecret', "
+        f"json_extract(json_quote('{escaped}'), '$')) "
+        "WHERE key='server-settings';"
+    )
+    if code != 0:
+        log("   ⚠️ Failed to re-stamp Audiobookshelf's OIDC secret in the DB — "
+            "SSO may need a manual secret re-paste from the ABS UI.")
+        return False
+    log("   ✅ Reconciled Audiobookshelf's stored OIDC secret to match Authelia (DB re-stamp).")
+    # ABS reads server-settings into memory at startup, so the running
+    # process keeps the stale secret until restart. Bounce the container
+    # so the reconciled secret takes effect without operator action.
+    try:
+        subprocess.run(
+            ["podman", "container", "restart", ABS_CONTAINER],
+            capture_output=True, text=True, check=False, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"   ⚠️ Could not restart {ABS_CONTAINER} after the secret re-stamp ({exc}); "
+            "restart the media stack so ABS picks up the reconciled OIDC secret.")
+    return True
+
+
+# ── Jellyfin LDAP-Authentication plugin → LLDAP (#1718) ──────────────────
+
+
+# The Jellyfin LDAP-Authentication plugin reads its config from this XML
+# file inside the container's /config volume, which maps to
+# {DATA_DIR}/media/jellyfin-config on the host. Writing it host-side (and
+# bouncing the container) is deterministic + idempotent — same pattern as
+# the HA zwave external-settings seed.
+JELLYFIN_LDAP_CONFIG_REL = os.path.join(
+    "media", "jellyfin-config", "plugins", "configurations", "LDAP-Auth.xml",
+)
+
+
+def render_ldap_plugin_config(
+    ldap_host: str,
+    ldap_port: str,
+    base_dn: str,
+    bind_dn: str,
+    bind_password: str,
+    admin_group_dn: str,
+) -> str:
+    """Render the Jellyfin LDAP-Auth plugin's `LDAP-Auth.xml`.
+
+    Mirrors how Radicale binds LLDAP (templates/radicale/template.yml):
+      - server  ldap://host.containers.internal:3890
+      - base    dc=dopp,dc=cloud, users under ou=people
+      - bind    uid=admin,ou=people,dc=dopp,dc=cloud
+      - filter  (&(objectClass=person)(uid={0}))  → here the plugin uses
+                its own `{username}` token, so the search filter is
+                `(uid={username})` scoped under the people OU.
+      - admin   members of the LLDAP `lldap_admin` group map to Jellyfin
+                admins; everyone else gets a standard Jellyfin user.
+
+    `EnableLdapAdminFilter` + `LdapAdminBaseDn`/`LdapAdminFilter` gate who
+    becomes a Jellyfin admin. `CreateUsersFromLdap` auto-provisions a
+    Jellyfin account on first LDAP login. The local `admin` account stays
+    a working break-glass login — this plugin adds LDAP as an *additional*
+    auth provider; it does not disable Jellyfin's own user DB.
+    """
+    people_base = f"ou=people,{base_dn}"
+    # `{username}` is the plugin's substitution token for the typed login.
+    search_filter = "(&amp;(objectClass=person)(uid={username}))"
+    admin_filter = f"(memberOf={admin_group_dn})"
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<PluginConfiguration xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
+        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">\n'
+        f"  <LdapServer>{ldap_host}</LdapServer>\n"
+        "  <LdapBaseDn>" + people_base + "</LdapBaseDn>\n"
+        f"  <LdapPort>{ldap_port}</LdapPort>\n"
+        "  <UseSsl>false</UseSsl>\n"
+        "  <UseStartTls>false</UseStartTls>\n"
+        "  <SkipSslVerify>false</SkipSslVerify>\n"
+        f"  <LdapBindUser>{bind_dn}</LdapBindUser>\n"
+        f"  <LdapBindPassword>{bind_password}</LdapBindPassword>\n"
+        f"  <LdapSearchFilter>{search_filter}</LdapSearchFilter>\n"
+        "  <LdapAdminBaseDn>" + people_base + "</LdapAdminBaseDn>\n"
+        f"  <LdapAdminFilter>{admin_filter}</LdapAdminFilter>\n"
+        "  <EnableLdapAdminFilterMemberUid>false</EnableLdapAdminFilterMemberUid>\n"
+        "  <LdapSearchAttributes>uid, cn, mail, displayName</LdapSearchAttributes>\n"
+        "  <LdapUsernameAttribute>uid</LdapUsernameAttribute>\n"
+        "  <LdapPasswordAttribute>userPassword</LdapPasswordAttribute>\n"
+        "  <EnableAllUsers>true</EnableAllUsers>\n"
+        "  <EnableAdminUsers>true</EnableAdminUsers>\n"
+        "  <CreateUsersFromLdap>true</CreateUsersFromLdap>\n"
+        "  <AllowPassChange>false</AllowPassChange>\n"
+        "</PluginConfiguration>\n"
+    )
+
+
+def ensure_jellyfin_ldap_plugin(
+    base_url: str,
+    token: str | None,
+    ldap_port: str,
+    base_dn: str,
+    bind_password: str,
+) -> bool:
+    """Install + configure the Jellyfin LDAP-Authentication plugin so the
+    family signs in with their LLDAP (Authelia) credentials (#1718).
+
+    Idempotent + self-healing: it (re)writes `LDAP-Auth.xml` on every
+    deploy so a config that drifts (or was lost on a wipe-configs
+    reinstall) is restored with no operator step. The local Jellyfin admin
+    stays a working break-glass login — LDAP is added as an additional
+    auth provider, it does not replace Jellyfin's user DB.
+
+    The plugin binary is installed via Jellyfin's package API (needs the
+    admin token); the config write does not. So even when the admin login
+    failed (no token), the config is still stamped — a subsequent deploy
+    with a working token completes the binary install."""
+    if not bind_password:
+        log("   ℹ️ Jellyfin LDAP wiring skipped — no LLDAP admin password in env "
+            "(install the `auth` stack so LLDAP_ADMIN_PASSWORD is inherited).")
+        return False
+
+    # host.containers.internal is the name podman puts in every container's
+    # /etc/hosts pointing at the host — Radicale binds LLDAP the same way
+    # (it lives in the hostNetwork `auth` pod, unreachable on the media
+    # pod's own loopback/LAN IP). #817.
+    ldap_host = "host.containers.internal"
+    bind_dn = f"uid=admin,ou=people,{base_dn}"
+    admin_group_dn = f"cn=lldap_admin,ou=groups,{base_dn}"
+
+    # 1. Install the plugin binary via the package API (best-effort, needs
+    #    a token). Jellyfin no-ops a re-install of an already-present
+    #    plugin, so this is safe to run every deploy.
+    if token:
+        code, _ = request_json(
+            "POST", f"{base_url}/Packages/Installed/LDAP%20Authentication",
+            None,
+            extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+        )
+        if code in (200, 204):
+            log("   ✅ Jellyfin LDAP-Authentication plugin install requested.")
+        else:
+            log(f"   (note) Could not request LDAP plugin install via API (HTTP {code}); "
+                "if LDAP login is missing, install 'LDAP Authentication' from Dashboard → Plugins → Catalog.")
+    else:
+        log("   (note) No Jellyfin admin token — skipping plugin-binary install this run; "
+            "the LDAP config is still written and a later deploy completes the install.")
+
+    # 2. (Re)write the plugin config on disk — the idempotent, self-healing
+    #    part. Always runs (no token needed) so a drifted/lost config is
+    #    restored every deploy.
+    data_dir = env("DATA_DIR", "/mnt/data/stacks")
+    config_path = os.path.join(data_dir, JELLYFIN_LDAP_CONFIG_REL)
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    xml = render_ldap_plugin_config(
+        ldap_host, ldap_port, base_dn, bind_dn, bind_password, admin_group_dn,
+    )
+    try:
+        with open(config_path, "w", encoding="utf-8") as fh:
+            fh.write(xml)
+    except OSError as exc:
+        log(f"   ⚠️ Could not write Jellyfin LDAP plugin config at {config_path} ({exc}) — "
+            "configure LDAP manually in Dashboard → Plugins → LDAP-Auth.")
+        return False
+    log(f"   ✅ Jellyfin LDAP-Auth config written → LLDAP at ldap://{ldap_host}:{ldap_port} "
+        f"(base ou=people,{base_dn}; local admin kept as break-glass).")
+
+    # 3. Bounce Jellyfin so the plugin reloads its config. Best-effort —
+    #    a failed restart just means the config applies on the next stack
+    #    restart, not an install-blocking error.
+    try:
+        subprocess.run(
+            ["podman", "container", "restart", JELLYFIN_CONTAINER],
+            capture_output=True, text=True, check=False, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"   ⚠️ Could not restart {JELLYFIN_CONTAINER} after writing the LDAP config ({exc}); "
+            "restart the media stack so Jellyfin reloads the LDAP plugin.")
+    return True
+
+
 def main() -> int:
     host = env("HOST", "<server-ip>")
 
@@ -525,13 +795,28 @@ def main() -> int:
         ready = jellyfin_run_first_setup(
             jellyfin_base, jf_user, jf_password, env("TZ", "Europe/Berlin"),
         )
+        jf_token: str | None = None
         if ready:
-            token = jellyfin_get_token(jellyfin_base, jf_user, jf_password)
-            if token:
-                jellyfin_enable_quick_connect(jellyfin_base, token)
+            jf_token = jellyfin_get_token(jellyfin_base, jf_user, jf_password)
+            if jf_token:
+                jellyfin_enable_quick_connect(jellyfin_base, jf_token)
                 jellyfin_add_music_library(
-                    jellyfin_base, token, env("JELLYFIN_MEDIA_PATH", "/mnt/data/stacks/file-share/data"),
+                    jellyfin_base, jf_token, env("JELLYFIN_MEDIA_PATH", "/mnt/data/stacks/file-share/data"),
                 )
+
+        # ── Jellyfin → LLDAP SSO (#1718) ──────────────────────────────
+        # Wire the LDAP-Auth plugin against LLDAP so the family signs in
+        # with their Authelia/LLDAP credentials. Idempotent + self-healing
+        # on every deploy; the config write runs even without an admin
+        # token (the binary install needs one, the config does not).
+        log("Wiring Jellyfin → LLDAP (LDAP-Auth plugin)…")
+        ensure_jellyfin_ldap_plugin(
+            jellyfin_base,
+            jf_token,
+            env("LLDAP_LDAP_PORT", "3890"),
+            env("LLDAP_BASE_DN", "dc=dopp,dc=cloud"),
+            env("LLDAP_ADMIN_PASSWORD"),
+        )
 
     # ── ABS OIDC auto-configuration ───────────────────────────────────────
     abs_oidc_secret = env("ABS_OIDC_SECRET")
@@ -539,6 +824,15 @@ def main() -> int:
     abs_oidc_ok = False
     if abs_oidc_secret and public_domain:
         abs_oidc_ok = configure_abs_oidc(abs_port, abs_user, abs_password, public_domain, abs_oidc_secret)
+        if not abs_oidc_ok:
+            # The admin-authenticated PATCH path failed — most often
+            # because ABS_ADMIN_PASSWORD drifted from the preserved admin
+            # row on a wipe-configs reinstall, so the login never returned
+            # a token. Fall back to the no-login DB re-stamp so the OIDC
+            # client_secret converges to Authelia's with no manual step
+            # (#1717). Same class as the Immich DB reconcile (#1556).
+            log("   Attempting a DB-level ABS OIDC secret reconcile (no admin login required)…")
+            abs_oidc_ok = reconcile_abs_oidc_secret_in_db(abs_oidc_secret)
 
     if not abs_oidc_ok and abs_oidc_secret:
         # Auto-config failed or prerequisites missing — surface secret for manual paste.

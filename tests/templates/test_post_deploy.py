@@ -808,6 +808,294 @@ class MediaScript(unittest.TestCase):
         )
         self.assertLess(get_first, post_user)
 
+    # ── #1717: Audiobookshelf OIDC client_secret DB re-stamp ──────────────
+    #
+    # On a wipe-configs reinstall ABS keeps its OIDC client_secret in
+    # absdatabase.sqlite (DATA) while Authelia regenerates its copy
+    # (CONFIG) → invalid_client login loop. The admin-API repair path can't
+    # run when ABS_ADMIN_PASSWORD also drifted (login fails), so the script
+    # falls back to a no-token sqlite3 re-stamp of the stored secret.
+
+    def _abs_sqlite_recorder(self, select_value: str):
+        """Return (run_fn, calls) faking `podman exec … sqlite3` and the
+        post-reconcile `podman container restart`. SELECT returns
+        `select_value`; UPDATE returns rc 0; both are recorded so the test
+        can assert the new secret was written + ABS bounced."""
+        calls: list[dict[str, Any]] = []
+
+        class _CP:
+            def __init__(self, rc=0, out=""):
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = ""
+
+        def run_fn(cmd, *_a, **_kw):
+            calls.append({"cmd": list(cmd)})
+            if "sqlite3" in cmd:
+                sql = cmd[-1]
+                if sql.strip().upper().startswith("SELECT"):
+                    return _CP(0, select_value)
+                return _CP(0, "")
+            # podman container restart
+            return _CP(0, "")
+
+        return run_fn, calls
+
+    def _media_responses_abs_login_fails(self):
+        """Mock set where ABS /login always 401s (drifted admin pw), but
+        Authelia discovery succeeds — so configure_abs_oidc bails before
+        the PATCH and main() reaches the DB-reconcile fallback. The
+        media-init seed returns alreadySetup so seed_audiobookshelf exits
+        immediately. Jellyfin endpoints are absent (no
+        JELLYFIN_ADMIN_PASSWORD in these tests)."""
+        return {
+            "/api/system/media/init": {"status": 200, "body": {"alreadySetup": True}},
+            "/login": {"status": 401, "body": {}},
+            "/.well-known/openid-configuration": {"status": 200, "body": {
+                "authorization_endpoint": "https://auth.dopp.cloud/api/oidc/authorization",
+                "token_endpoint": "https://auth.dopp.cloud/api/oidc/token",
+                "userinfo_endpoint": "https://auth.dopp.cloud/api/oidc/userinfo",
+                "jwks_uri": "https://auth.dopp.cloud/jwks.json",
+            }},
+        }
+
+    def test_abs_oidc_db_restamp_on_admin_login_failure(self):
+        """ABS admin login fails (drifted pw) + the stored secret differs →
+        the script re-stamps it straight into absdatabase.sqlite and
+        bounces ABS, no admin token needed (#1717)."""
+        m = load_script("media")
+        env = {
+            "HOST": "h",
+            "ABS_ADMIN_PASSWORD": "regenerated-pw",
+            "ABS_PORT": "13378",
+            "ABS_OIDC_SECRET": "fresh-authelia-secret",
+            "PUBLIC_DOMAIN": "dopp.cloud",
+        }
+        run_fn, calls = self._abs_sqlite_recorder("stale-abs-secret")
+        import urllib.request
+        import subprocess as subprocess_mod
+        import time as time_mod
+        with run_with_env(env), \
+                mock.patch.object(urllib.request, "urlopen",
+                                  fake_urlopen_factory(self._media_responses_abs_login_fails())), \
+                mock.patch.object(time_mod, "sleep", lambda _s: None), \
+                mock.patch.object(subprocess_mod, "run", run_fn):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        self.assertIn("DB-level ABS OIDC secret reconcile", out)
+        self.assertIn("Reconciled Audiobookshelf's stored OIDC secret", out)
+        # Exactly one UPDATE was issued against the settings row.
+        sql_calls = [" ".join(c["cmd"]) for c in calls if "sqlite3" in c["cmd"]]
+        updates = [s for s in sql_calls if "UPDATE settings" in s]
+        self.assertEqual(len(updates), 1, sql_calls)
+        self.assertIn("fresh-authelia-secret", updates[0])
+        self.assertIn("authOpenIDClientSecret", updates[0])
+        # ABS was bounced so the running process reloads the new secret.
+        self.assertTrue(
+            any(c["cmd"][:3] == ["podman", "container", "restart"]
+                and c["cmd"][-1] == "media-audiobookshelf" for c in calls),
+            calls,
+        )
+        # The secret must not leak into a user-visible log line (#321).
+        log_only = "\n".join(
+            line for line in out.splitlines() if not line.startswith("__SB_CREDENTIAL__ ")
+        )
+        self.assertNotIn("fresh-authelia-secret", log_only)
+        self.assertNotIn("stale-abs-secret", log_only)
+
+    def test_abs_oidc_db_restamp_noop_when_secret_matches(self):
+        """Idempotent: when the stored secret already matches Authelia, no
+        UPDATE is issued and ABS is not restarted."""
+        m = load_script("media")
+        env = {
+            "HOST": "h",
+            "ABS_ADMIN_PASSWORD": "regenerated-pw",
+            "ABS_PORT": "13378",
+            "ABS_OIDC_SECRET": "matching-secret",
+            "PUBLIC_DOMAIN": "dopp.cloud",
+        }
+        run_fn, calls = self._abs_sqlite_recorder("matching-secret")
+        import urllib.request
+        import subprocess as subprocess_mod
+        import time as time_mod
+        with run_with_env(env), \
+                mock.patch.object(urllib.request, "urlopen",
+                                  fake_urlopen_factory(self._media_responses_abs_login_fails())), \
+                mock.patch.object(time_mod, "sleep", lambda _s: None), \
+                mock.patch.object(subprocess_mod, "run", run_fn):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        self.assertIn("already matches Authelia", out)
+        sql_calls = [" ".join(c["cmd"]) for c in calls if "sqlite3" in c["cmd"]]
+        self.assertFalse(any("UPDATE settings" in s for s in sql_calls), sql_calls)
+        self.assertFalse(
+            any(c["cmd"][:3] == ["podman", "container", "restart"] for c in calls),
+            calls,
+        )
+
+    def test_abs_oidc_db_restamp_skipped_when_no_stored_secret(self):
+        """Fresh DATA (no server-settings secret yet) → nothing to
+        reconcile; the API path seeds it once admin login works."""
+        m = load_script("media")
+        env = {
+            "HOST": "h",
+            "ABS_ADMIN_PASSWORD": "regenerated-pw",
+            "ABS_PORT": "13378",
+            "ABS_OIDC_SECRET": "fresh-secret",
+            "PUBLIC_DOMAIN": "dopp.cloud",
+        }
+        run_fn, calls = self._abs_sqlite_recorder("")  # empty SELECT
+        import urllib.request
+        import subprocess as subprocess_mod
+        import time as time_mod
+        with run_with_env(env), \
+                mock.patch.object(urllib.request, "urlopen",
+                                  fake_urlopen_factory(self._media_responses_abs_login_fails())), \
+                mock.patch.object(time_mod, "sleep", lambda _s: None), \
+                mock.patch.object(subprocess_mod, "run", run_fn):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        self.assertIn("nothing to reconcile", out)
+        sql_calls = [" ".join(c["cmd"]) for c in calls if "sqlite3" in c["cmd"]]
+        self.assertFalse(any("UPDATE settings" in s for s in sql_calls), sql_calls)
+
+    # ── #1718: Jellyfin LDAP-Auth plugin → LLDAP ─────────────────────────
+
+    def test_jellyfin_ldap_config_rendered_with_lldap_bind(self):
+        """render_ldap_plugin_config emits the correct LLDAP bind/base/
+        filter/group-map (mirrors Radicale's bind)."""
+        m = load_script("media")
+        xml = m.render_ldap_plugin_config(
+            ldap_host="host.containers.internal",
+            ldap_port="3890",
+            base_dn="dc=dopp,dc=cloud",
+            bind_dn="uid=admin,ou=people,dc=dopp,dc=cloud",
+            bind_password="lldap-pass",
+            admin_group_dn="cn=lldap_admin,ou=groups,dc=dopp,dc=cloud",
+        )
+        self.assertIn("<LdapServer>host.containers.internal</LdapServer>", xml)
+        self.assertIn("<LdapPort>3890</LdapPort>", xml)
+        self.assertIn("<LdapBaseDn>ou=people,dc=dopp,dc=cloud</LdapBaseDn>", xml)
+        self.assertIn("<LdapBindUser>uid=admin,ou=people,dc=dopp,dc=cloud</LdapBindUser>", xml)
+        # Filter mirrors Radicale: (&(objectClass=person)(uid={username}))
+        # — the ampersand is XML-escaped.
+        self.assertIn("(&amp;(objectClass=person)(uid={username}))", xml)
+        # Admin-group map → Jellyfin admin.
+        self.assertIn("(memberOf=cn=lldap_admin,ou=groups,dc=dopp,dc=cloud)", xml)
+        # Auto-provision LDAP users so the family logs in without a manual
+        # per-user step.
+        self.assertIn("<CreateUsersFromLdap>true</CreateUsersFromLdap>", xml)
+
+    def test_jellyfin_ldap_plugin_config_written_and_idempotent(self):
+        """ensure_jellyfin_ldap_plugin writes LDAP-Auth.xml under the
+        jellyfin-config volume, installs the plugin via the package API,
+        bounces Jellyfin, and re-applies identically on a second run
+        (self-healing / idempotent)."""
+        import tempfile
+        m = load_script("media")
+        responses = {
+            "/Packages/Installed/LDAP%20Authentication": {"status": 204, "body": None},
+        }
+        restarts: list[list[str]] = []
+
+        class _CP:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def run_fn(cmd, *_a, **_kw):
+            restarts.append(list(cmd))
+            return _CP()
+
+        import urllib.request
+        import subprocess as subprocess_mod
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(
+                tmp, "media", "jellyfin-config", "plugins",
+                "configurations", "LDAP-Auth.xml",
+            )
+            env = {"DATA_DIR": tmp}
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory(responses)), \
+                    mock.patch.object(subprocess_mod, "run", run_fn):
+                ok = m.ensure_jellyfin_ldap_plugin(
+                    "http://127.0.0.1:8096", "jf-token",
+                    "3890", "dc=dopp,dc=cloud", "lldap-pass",
+                )
+            self.assertTrue(ok)
+            self.assertTrue(os.path.isfile(cfg_path))
+            with open(cfg_path, encoding="utf-8") as fh:
+                first = fh.read()
+            self.assertIn("<LdapServer>host.containers.internal</LdapServer>", first)
+            self.assertIn("<LdapBindUser>uid=admin,ou=people,dc=dopp,dc=cloud</LdapBindUser>", first)
+            # Jellyfin was bounced so the plugin reloads its config.
+            self.assertTrue(
+                any(c[:3] == ["podman", "container", "restart"]
+                    and c[-1] == "media-jellyfin" for c in restarts),
+                restarts,
+            )
+            # Idempotent second run → byte-identical config.
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory(responses)), \
+                    mock.patch.object(subprocess_mod, "run", run_fn):
+                m.ensure_jellyfin_ldap_plugin(
+                    "http://127.0.0.1:8096", "jf-token",
+                    "3890", "dc=dopp,dc=cloud", "lldap-pass",
+                )
+            with open(cfg_path, encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), first)
+
+    def test_jellyfin_ldap_config_written_without_admin_token(self):
+        """Even when the Jellyfin admin login failed (no token), the LDAP
+        config is still stamped so a later deploy with a token completes
+        the binary install — the config write needs no token."""
+        import tempfile
+        m = load_script("media")
+
+        class _CP:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        import urllib.request
+        import urllib.error
+        import subprocess as subprocess_mod
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(
+                tmp, "media", "jellyfin-config", "plugins",
+                "configurations", "LDAP-Auth.xml",
+            )
+            env = {"DATA_DIR": tmp}
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen",
+                                      lambda *_a, **_kw: (_ for _ in ()).throw(urllib.error.URLError("no token path hit"))), \
+                    mock.patch.object(subprocess_mod, "run", lambda *a, **kw: _CP()):
+                ok = m.ensure_jellyfin_ldap_plugin(
+                    "http://127.0.0.1:8096", None,
+                    "3890", "dc=dopp,dc=cloud", "lldap-pass",
+                )
+            self.assertTrue(ok)
+            self.assertTrue(os.path.isfile(cfg_path))
+
+    def test_jellyfin_ldap_skipped_without_lldap_password(self):
+        """No LLDAP_ADMIN_PASSWORD → skip the LDAP wiring with a clear
+        breadcrumb (auth stack not installed) instead of writing a config
+        with an empty bind password."""
+        import tempfile
+        m = load_script("media")
+        with tempfile.TemporaryDirectory() as tmp:
+            with run_with_env({"DATA_DIR": tmp}):
+                ok = m.ensure_jellyfin_ldap_plugin(
+                    "http://127.0.0.1:8096", "jf-token",
+                    "3890", "dc=dopp,dc=cloud", "",
+                )
+            self.assertFalse(ok)
+            cfg_path = os.path.join(
+                tmp, "media", "jellyfin-config", "plugins",
+                "configurations", "LDAP-Auth.xml",
+            )
+            self.assertFalse(os.path.isfile(cfg_path))
+
 
 class HomeAssistantScript(unittest.TestCase):
     """The HA post-deploy is gated on Z-Wave device presence (skips

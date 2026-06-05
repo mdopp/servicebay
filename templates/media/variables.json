@@ -76,6 +76,20 @@
     "description": "Public domain (used to build the JELLYFIN_PublishedServerUrl env that mobile apps probe for backend URLs).",
     "default": "dopp.cloud"
   },
+  "LLDAP_LDAP_PORT": {
+    "type": "text",
+    "description": "LLDAP LDAP-protocol port — Jellyfin's LDAP-Auth plugin binds LLDAP here for SSO (#1718). Inherited from the auth template.",
+    "default": "3890"
+  },
+  "LLDAP_BASE_DN": {
+    "type": "text",
+    "description": "LLDAP base DN (e.g. dc=dopp,dc=cloud) — Jellyfin's LDAP-Auth plugin search base. Inherited from the auth template.",
+    "default": "dc=dopp,dc=cloud"
+  },
+  "LLDAP_ADMIN_PASSWORD": {
+    "type": "secret",
+    "description": "LLDAP admin password — Jellyfin's LDAP-Auth plugin uses it as the bind DN for user lookup (#1718). Inherited from the auth template when both are installed together."
+  },
   "MEDIA_SUBDOMAIN": {
     "type": "subdomain",
     "description": "Subdomain for Jellyfin (web UI + Symfonium/Findroid/Streamyfin endpoint). Quick Connect handles mobile-app pairing — the app shows a 6-digit code, you confirm it once in the web UI (which can be SSO'd via jellyfin-plugin-sso if installed) and the app is paired without a shared password.",
