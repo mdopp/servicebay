@@ -19,8 +19,16 @@ export interface SafeExecResult {
  * ONLY way disk-import touches the host. The implementation rejects (throws) on
  * a transport/agent error reply — see project memory `agent.sendCommand rejects
  * on error replies`: callers must NOT treat a thrown EACCES as success.
+ *
+ * PRIVILEGE (#1713): pass `sudo: true` for host ops that genuinely need root —
+ * `mkdir` under root-owned `/run`, `mount -o ro`, `umount`, `chown` to the
+ * share gid, `rsync`/`mkdir` into `/mnt/data`. The agent prepends `sudo -n`
+ * (passwordless, non-interactive) and STILL enforces the allow-list on the
+ * real binary. The default is unprivileged: read-only enumeration (`lsblk`,
+ * `find`, `sha256sum`) never escalates. Privilege does NOT relax any of the
+ * argv guards in this module — they are re-asserted regardless.
  */
-export type SafeExec = (argv: string[], options?: { timeoutMs?: number }) => Promise<SafeExecResult>;
+export type SafeExec = (argv: string[], options?: { timeoutMs?: number; sudo?: boolean }) => Promise<SafeExecResult>;
 
 /**
  * The share data root that every import target lives under, RELATIVE-joined.

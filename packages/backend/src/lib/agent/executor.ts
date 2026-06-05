@@ -71,14 +71,18 @@ export class AgentExecutor implements Executor {
    * shell semantics; those are the migration target for future
    * hardening passes.
    */
-  async execSafe(argv: string[], options: { timeoutMs?: number } = {}): Promise<{ stdout: string; stderr: string; code: number }> {
+  async execSafe(argv: string[], options: { timeoutMs?: number; sudo?: boolean } = {}): Promise<{ stdout: string; stderr: string; code: number }> {
     if (!Array.isArray(argv) || argv.length === 0) {
       throw new Error('execSafe requires a non-empty argv array');
     }
     await this.ensureConnected();
     const truncatedCmd = argv.join(' ').slice(0, 100);
-    logger.info(`Executor:${this.agent.nodeName}`, `safe_exec: ${truncatedCmd}`);
-    const res = await this.agent.sendCommand('safe_exec', { argv }, { timeoutMs: options.timeoutMs });
+    // Opt-in privilege (#1713): only callers that pass `sudo: true` escalate;
+    // the agent prepends `sudo -n` and still enforces the allow-list on the
+    // real argv[0]. Default stays unprivileged.
+    const sudo = options.sudo === true;
+    logger.info(`Executor:${this.agent.nodeName}`, `safe_exec${sudo ? ' (sudo)' : ''}: ${truncatedCmd}`);
+    const res = await this.agent.sendCommand('safe_exec', { argv, sudo }, { timeoutMs: options.timeoutMs });
     return { stdout: res.stdout ?? '', stderr: res.stderr ?? '', code: res.code ?? -1 };
   }
 

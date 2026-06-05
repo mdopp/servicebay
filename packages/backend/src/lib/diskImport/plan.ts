@@ -173,13 +173,18 @@ async function applyItem(item: ImportPlanItem, ctx: ItemCtx): Promise<ApplyOutco
 /** rsync the source file into its destination, then chown to the share gid. */
 async function copyAndOwn(src: string, dest: string, ctx: ItemCtx): Promise<void> {
   const destDir = dest.slice(0, dest.lastIndexOf('/'));
-  await runOk(ctx.exec, ['mkdir', '-p', destDir], 'mkdir dest dir');
+  // Privileged (#1713): the file-share data tree under /mnt/data is owned by
+  // container subuids, not `core`, so creating dirs, rsync-copying in, and
+  // chowning all need root. The destination path is validated to stay under
+  // file-share/data/ by resolveShareTarget BEFORE this runs — privilege does
+  // not relax that guard.
+  await runOk(ctx.exec, ['mkdir', '-p', destDir], 'mkdir dest dir', { sudo: true });
   // `-a` preserves metadata; the source mount is read-only so this only reads
   // from it. Explicit src/dest argv — no globbing, no `--delete`.
-  await runOk(ctx.exec, ['rsync', '-a', src, dest], 'rsync');
+  await runOk(ctx.exec, ['rsync', '-a', src, dest], 'rsync', { sudo: true });
   // chown to the share GID ONLY (`:<gid>` leaves the uid untouched). Single
   // file target — never recursive, never an arbitrary path.
-  await runOk(ctx.exec, ['chown', `:${ctx.shareGid}`, dest], 'chown');
+  await runOk(ctx.exec, ['chown', `:${ctx.shareGid}`, dest], 'chown', { sudo: true });
 }
 
 /**
@@ -190,8 +195,12 @@ async function supersedeExisting(target: string, ctx: ItemCtx): Promise<void> {
   const current = resolveShareTarget(target);
   const parked = resolveSupersededPath(`${dateBucket(ctx.now())}/${stripLeadingSlash(target)}`);
   const parkedDir = parked.slice(0, parked.lastIndexOf('/'));
-  await runOk(ctx.exec, ['mkdir', '-p', parkedDir], 'mkdir superseded dir');
-  await runOk(ctx.exec, ['mv', current, parked], 'mv to _superseded');
+  // Privileged (#1713): both the existing file and the _superseded tree live
+  // under the root-owned file-share data root. `current` and `parked` are both
+  // resolved under file-share/data/ (resolveShareTarget / resolveSupersededPath)
+  // — neither can escape the share root.
+  await runOk(ctx.exec, ['mkdir', '-p', parkedDir], 'mkdir superseded dir', { sudo: true });
+  await runOk(ctx.exec, ['mv', current, parked], 'mv to _superseded', { sudo: true });
 }
 
 /** Upload a single photo file to Immich via the CLI container (checksum dedup). */
@@ -229,8 +238,13 @@ function baseOf(p: string): string {
   return i === -1 ? p : p.slice(i + 1);
 }
 
-async function runOk(exec: SafeExec, argv: string[], what: string): Promise<void> {
-  const { code, stderr } = await exec(argv);
+async function runOk(
+  exec: SafeExec,
+  argv: string[],
+  what: string,
+  options?: { sudo?: boolean },
+): Promise<void> {
+  const { code, stderr } = await exec(argv, options);
   if (code !== 0) {
     throw new Error(`disk-import: ${what} failed (code ${code}): ${stderr}`);
   }
