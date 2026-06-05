@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.96.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.95.2...servicebay-v4.96.0) (2026-06-05)
+
+
+### Features
+
+* **health:** nginx_config_valid probe runs nginx -t in the NPM container ([2f4d9e7](https://github.com/mdopp/servicebay/commit/2f4d9e7e9c18b3b856cec51d325becb06be44ee1)), closes [#1678](https://github.com/mdopp/servicebay/issues/1678)
+
+
+### Bug Fixes
+
+* box-DNS resolution, monitoring trust, sb launcher/boot, SQLite WAL, nginx config-valid probe ([c218dff](https://github.com/mdopp/servicebay/commit/c218dffcacfc013d79c454e9fcdc206797cfbe7b))
+* **health:** system self-checks bypass SSRF guard + diagnose rows get history ([9e25f44](https://github.com/mdopp/servicebay/commit/9e25f449cdd40fe98b6c560b056fb5868c418360)), closes [#1670](https://github.com/mdopp/servicebay/issues/1670) [#1671](https://github.com/mdopp/servicebay/issues/1671)
+* **router:** box DNS points at AdGuard + LAN-path verification for DNS probes ([9461ad2](https://github.com/mdopp/servicebay/commit/9461ad27d9887a815466d1f55d7cfcec953bb39f)), closes [#1672](https://github.com/mdopp/servicebay/issues/1672) [#1675](https://github.com/mdopp/servicebay/issues/1675)
+* **sb:** stale token != not-set-up; usb-next boots the real installer device ([6edb80e](https://github.com/mdopp/servicebay/commit/6edb80e232dc6e9128192d3c3051767f0153d821)), closes [#1669](https://github.com/mdopp/servicebay/issues/1669) [#1674](https://github.com/mdopp/servicebay/issues/1674)
+* **templates:** WAL-mode Authelia + NPM SQLite to stop "database is locked" ([8bebee6](https://github.com/mdopp/servicebay/commit/8bebee6e88f0e8d812d99f9ef68e77e242d3896f)), closes [#1679](https://github.com/mdopp/servicebay/issues/1679)
+
 ## [4.95.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.95.1...servicebay-v4.95.2) (2026-06-04)
 
 
