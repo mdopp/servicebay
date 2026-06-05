@@ -94,7 +94,7 @@ describe('claude-dev portal card (#1682)', () => {
     listServices.mockReset().mockResolvedValue([svc('claude-dev', true)]);
     getServices.mockReset().mockReturnValue([]);
     getLastResult.mockReset().mockReturnValue(null);
-    configState.config = { reverseProxy: { hosts: [] }, templateSettings: {}, lanIp: '192.168.178.100' };
+    configState.config = { reverseProxy: { hosts: [], lanIp: '192.168.178.100' }, templateSettings: {} };
   });
 
   it('files the appless card under its declared category "Development"', async () => {
@@ -115,9 +115,8 @@ describe('claude-dev portal card (#1682)', () => {
 
   it('honours an operator-overridden CLAUDE_DEV_SSH_PORT from templateSettings', async () => {
     configState.config = {
-      reverseProxy: { hosts: [] },
+      reverseProxy: { hosts: [], lanIp: '192.168.178.100' },
       templateSettings: { CLAUDE_DEV_SSH_PORT: '2244' },
-      lanIp: '192.168.178.100',
     };
     const cards = await buildPortalCards();
     const vscode = cards[0].secondaryActions.find(a => a.type === 'external_scheme');

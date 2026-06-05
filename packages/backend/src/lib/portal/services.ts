@@ -163,7 +163,7 @@ export function deriveCardStatus(
  * falling back to the active domain when no IP is recorded yet.
  */
 function resolveBoxHost(config: AppConfig): string {
-  return config.lanIp?.trim() || getActiveDomain(config);
+  return config.reverseProxy?.lanIp?.trim() || getActiveDomain(config);
 }
 
 /**
