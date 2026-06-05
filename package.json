@@ -23,6 +23,7 @@
     "test:e2e": "playwright test --config tests/e2e/playwright.config.ts",
     "gen-template-docs": "tsx scripts/gen-template-docs.ts",
     "sb-config-upload": "tsx scripts/sb-config-upload.ts",
+    "disk-import": "tsx scripts/disk-import.ts",
     "check:invariants": "tsx scripts/check-invariants.ts",
     "check:deps": "depcruise --config .dependency-cruiser.cjs packages/frontend/src packages/backend/src",
     "check:arch": "npm run check:invariants && npm run check:deps",
