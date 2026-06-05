@@ -107,6 +107,12 @@ SAFE_EXEC_ALLOWLIST = frozenset({
     'umount',        # unmount the source after the import
     'rsync',         # copy non-photo files into file-share/data/<category>/
     'chown',         # set group ownership of copied files to the share gid
+    # Disk-import UI card (#1697) — the scan phase host-walks the read-only
+    # mount and hashes size-collision candidates so the plan can dedup. Both run
+    # via safe_exec with argv assembled TS-side in diskImport/hostScan.ts; paths
+    # are confined to the controlled MOUNT_BASE mountpoint. (`find` is already
+    # allow-listed above for the diagnose enumeration probes.)
+    'sha256sum',     # content hash of source files for dedup (read-only)
 })
 AGENT_CLEANUP_MAX_AGE_MINUTES = os.getenv('SERVICEBAY_AGENT_CLEANUP_MAX_AGE_MINUTES')
 try:

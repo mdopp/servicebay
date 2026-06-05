@@ -436,6 +436,45 @@ Landed in #1470 (2026-06-01). Closes #1453 (verifySso), #1454 (auto-run post-ins
 
 ---
 
+## Disk-import "Import data" card: review gate + non-blocking actions[]
+
+**Decision.** The disk-import flow (Settings → Sharing → "Import data") is
+**device → scan → review → CONFIRM → apply**. The scan mounts the USB
+**read-only**, sorts everything deterministically, and writes **nothing** — it
+returns a plan + a `sessionId`. The apply route refuses unless it is handed back
+that `sessionId` (a plan scanned in this process) **and** an explicit
+`confirmed: true`. There is no path to apply an unreviewed plan.
+
+**Unavoidable input surfaces as `actions[]`, and never blocks.** Folders the
+classifier can't place (music vs audiobook, an unknown extension) and target
+conflicts (two different files → same path) are surfaced as Diagnose-style
+`actions[]` in the review. Each carries a **safe default** (ambiguous → filed
+under `documents/`; conflict → newer file wins, older parked in `_superseded/`,
+nothing deleted), so the import runs fine if the user resolves none of them. The
+card says so explicitly ("These don't block the import"). This is the UX
+philosophy (`feedback_ux_philosophy`): self-heal/auto-sort silently, ask only for
+the two genuinely unavoidable inputs — *which device* and *the confirm* — and
+treat ambiguity as advisory follow-ups, not a wall.
+
+**Why.** This is the product feature for families migrating off the cloud, run by
+non-experts. A blocking question per ambiguous folder would stall a 50k-file
+import; a silent auto-apply would risk an unreviewed move. The read-only mount +
+explicit confirm gives the same safety as the CLI's review gate (#1696) without a
+wall of prompts.
+
+**Where enforced.**
+- `packages/backend/src/lib/diskImport/service.ts` — the in-process review-gate
+  store (`scanDevice` → `sessionId`; `applyImportPlan` requires it) + `actions[]`
+  derivation.
+- `packages/frontend/src/app/api/system/disk-import/{list-devices,scan,apply}/route.ts`
+  — thin wiring over the service; apply requires `sessionId` + `confirmed: true`.
+- `packages/frontend/src/app/(dashboard)/settings/_lib/sections/DiskImportSection.tsx`
+  — the card; ambiguous items render as a non-blocking advisory list.
+
+Landed in #1697 (disk-import epic #1698; engine #1693, host-apply #1694).
+
+---
+
 ## Maintaining this doc
 
 Add an entry when:
