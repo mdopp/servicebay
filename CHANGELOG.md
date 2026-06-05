@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.98.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.97.0...servicebay-v4.98.0) (2026-06-05)
+
+
+### Features
+
+* **disk-import:** deterministic engine core — classify, dedup, catalog ([c162759](https://github.com/mdopp/servicebay/commit/c162759a247d9271918b50bfff2ae1ed8a84fba5)), closes [#1693](https://github.com/mdopp/servicebay/issues/1693)
+* **disk-import:** host mount + resumable apply via safe_exec ([5d81fcd](https://github.com/mdopp/servicebay/commit/5d81fcd60ca16d04cdbbe5c32f82d2007c8509b9)), closes [#1694](https://github.com/mdopp/servicebay/issues/1694)
+* **disk-import:** import engine + host-apply + CLI + UI card; portal card sizing; healthcheck block-scalar var fix ([79c7622](https://github.com/mdopp/servicebay/commit/79c762212f4328f6c115c4376986ec03a1ade200))
+* **disk-import:** local-Ollama classifier — advisory review-plan suggestions ([86abb5b](https://github.com/mdopp/servicebay/commit/86abb5b56fb17908e6734fa76ba8756772ae1ea8)), closes [#1695](https://github.com/mdopp/servicebay/issues/1695)
+* **disk-import:** repeatable CLI with review gate ([6674bf0](https://github.com/mdopp/servicebay/commit/6674bf0e2c9840f5785827cd932b8c6f8a4418f3)), closes [#1696](https://github.com/mdopp/servicebay/issues/1696)
+* **disk-import:** ServiceBay 'Import data' card — routes + settings section ([0552c01](https://github.com/mdopp/servicebay/commit/0552c018711357e860f47f075bba8e88ee818e34)), closes [#1697](https://github.com/mdopp/servicebay/issues/1697)
+* **portal:** weight-driven card sizeTier + content-driven grid heights ([3db1a37](https://github.com/mdopp/servicebay/commit/3db1a379e86e1e4eeaa9aae38465c542bb6bae24)), closes [#1700](https://github.com/mdopp/servicebay/issues/1700)
+
+
+### Bug Fixes
+
+* **health:** accept unquoted block-scalar {{VAR}} healthcheck port ([fc642bc](https://github.com/mdopp/servicebay/commit/fc642bc023b4b409ad6ea2bbcd00800df6f3c68a)), closes [#1688](https://github.com/mdopp/servicebay/issues/1688)
+
 ## [4.97.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.96.0...servicebay-v4.97.0) (2026-06-05)
 
 
