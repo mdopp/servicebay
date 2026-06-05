@@ -185,6 +185,74 @@ class NginxScript(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(parse_credentials(out), [])
 
+    def test_wal_switch_is_idempotent_and_reports_wal(self):
+        """#1679: ensure_sqlite_wal flips a real (delete-mode) sqlite DB to WAL,
+        and a second run is a no-op that still reports WAL — proving the on-disk
+        header persists and re-running never errors."""
+        import sqlite3
+        import tempfile
+        m = load_script("nginx")
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "database.sqlite")
+            conn = sqlite3.connect(db)
+            conn.execute("PRAGMA journal_mode=DELETE;")
+            conn.execute("CREATE TABLE t (id INTEGER);")
+            conn.commit()
+            conn.close()
+
+            self.assertTrue(m.ensure_sqlite_wal(db, "NPM"))
+            # The header now records WAL.
+            with sqlite3.connect(db) as c:
+                self.assertEqual(c.execute("PRAGMA journal_mode;").fetchone()[0].lower(), "wal")
+            # Idempotent second run.
+            self.assertTrue(m.ensure_sqlite_wal(db, "NPM"))
+
+    def test_wal_switch_skips_missing_db(self):
+        """A fresh install (no DB file yet) is a clean skip, not an error."""
+        import tempfile
+        m = load_script("nginx")
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = os.path.join(tmp, "database.sqlite")
+            self.assertFalse(m.ensure_sqlite_wal(missing, "NPM"))
+
+    def test_wal_switch_skips_invalid_db(self):
+        """A non-sqlite / torn file is rejected on the header check, never
+        opened-and-mutated (no stray -wal/-shm sidecars)."""
+        import tempfile
+        m = load_script("nginx")
+        with tempfile.TemporaryDirectory() as tmp:
+            junk = os.path.join(tmp, "database.sqlite")
+            with open(junk, "wb") as fh:
+                fh.write(b"not a sqlite db at all")
+            self.assertFalse(m.ensure_sqlite_wal(junk, "NPM"))
+            # No sidecar files were created beside the junk file.
+            self.assertFalse(os.path.exists(junk + "-wal"))
+            self.assertFalse(os.path.exists(junk + "-shm"))
+
+    def test_main_runs_wal_switch_on_the_resolved_db_path(self):
+        """main() calls ensure_sqlite_wal against the template-mounted DB path
+        ({DATA_DIR}/nginx-proxy-manager/data/database.sqlite) even with no admin
+        password — a returning install still gets the concurrency fix."""
+        import sqlite3
+        import tempfile
+        m = load_script("nginx")
+        with tempfile.TemporaryDirectory() as tmp:
+            dbdir = os.path.join(tmp, "nginx-proxy-manager", "data")
+            os.makedirs(dbdir, exist_ok=True)
+            db = os.path.join(dbdir, "database.sqlite")
+            # A real (header-bearing) DB — a bare connect()+close() leaves a
+            # zero-byte file with no sqlite header (header lands on first write).
+            c = sqlite3.connect(db)
+            c.execute("CREATE TABLE t (id INTEGER);")
+            c.commit()
+            c.close()
+            with run_with_env({"DATA_DIR": tmp}):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertIn("NPM SQLite DB is in WAL mode", out)
+            with sqlite3.connect(db) as c:
+                self.assertEqual(c.execute("PRAGMA journal_mode;").fetchone()[0].lower(), "wal")
+
 
 class VaultwardenScript(unittest.TestCase):
     def test_sso_enabled_message(self):
@@ -319,6 +387,60 @@ class AuthScript(unittest.TestCase):
             rc, out = capture_main(m)
         self.assertEqual(rc, 0)
         self.assertIn("Could not fully seed LLDAP groups after 3 attempts", out)
+
+    def test_wal_switch_flips_authelia_db_and_is_idempotent(self):
+        """#1679: ensure_sqlite_wal flips Authelia's db.sqlite3 to WAL and a
+        repeat run stays WAL with no error (persisted header)."""
+        import sqlite3
+        import tempfile
+        m = load_script("auth")
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "db.sqlite3")
+            conn = sqlite3.connect(db)
+            conn.execute("PRAGMA journal_mode=DELETE;")
+            conn.execute("CREATE TABLE t (id INTEGER);")
+            conn.commit()
+            conn.close()
+            self.assertTrue(m.ensure_sqlite_wal(db, "Authelia"))
+            with sqlite3.connect(db) as c:
+                self.assertEqual(c.execute("PRAGMA journal_mode;").fetchone()[0].lower(), "wal")
+            self.assertTrue(m.ensure_sqlite_wal(db, "Authelia"))
+
+    def test_wal_switch_guards_missing_and_invalid_db(self):
+        """Missing file → clean skip; non-sqlite file → header-rejected, never
+        mutated (no stray sidecars)."""
+        import tempfile
+        m = load_script("auth")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(m.ensure_sqlite_wal(os.path.join(tmp, "db.sqlite3"), "Authelia"))
+            junk = os.path.join(tmp, "db.sqlite3")
+            with open(junk, "wb") as fh:
+                fh.write(b"garbage")
+            self.assertFalse(m.ensure_sqlite_wal(junk, "Authelia"))
+            self.assertFalse(os.path.exists(junk + "-wal"))
+
+    def test_main_runs_authelia_wal_switch(self):
+        """main() flips the template-mounted Authelia DB
+        ({DATA_DIR}/auth/authelia-data/db.sqlite3) — runs before the LLDAP env
+        gate so it fires even with no LLDAP password."""
+        import sqlite3
+        import tempfile
+        m = load_script("auth")
+        with tempfile.TemporaryDirectory() as tmp:
+            dbdir = os.path.join(tmp, "auth", "authelia-data")
+            os.makedirs(dbdir, exist_ok=True)
+            db = os.path.join(dbdir, "db.sqlite3")
+            c = sqlite3.connect(db)
+            c.execute("CREATE TABLE t (id INTEGER);")
+            c.commit()
+            c.close()
+            # No LLDAP_ADMIN_PASSWORD → main() returns early after the WAL step.
+            with run_with_env({"DATA_DIR": tmp}):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertIn("Authelia SQLite DB is in WAL mode", out)
+            with sqlite3.connect(db) as c:
+                self.assertEqual(c.execute("PRAGMA journal_mode;").fetchone()[0].lower(), "wal")
 
     def test_smtp_notifier_disables_fatal_startup_check(self):
         """Authelia's notifier startup check is fatal on failure, so a

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 import time
 import urllib.error
@@ -56,6 +57,86 @@ def emit_credential(**fields: object) -> None:
 def log(msg: str) -> None:
     sys.stdout.write(msg + "\n")
     sys.stdout.flush()
+
+
+# SQLite header magic — the first 16 bytes of every valid sqlite3 file are
+# "SQLite format 3\0". We check this before touching the file so a half-written
+# / corrupt / non-sqlite path can never be opened-and-mutated (a WAL switch on a
+# garbage file would only add confusing -wal/-shm sidecars). #1679.
+SQLITE_HEADER = b"SQLite format 3\x00"
+
+
+def ensure_sqlite_wal(db_path: str, label: str, busy_timeout_ms: int = 30000) -> bool:
+    """Switch a SQLite DB to WAL journal mode (idempotent, host-side).
+
+    Why (#1679): Authelia (and NPM) ship their SQLite DB in the default
+    `journal_mode=delete` rollback journal, where a writer takes an EXCLUSIVE
+    lock that blocks every concurrent reader. On this box's degraded 1-of-2
+    RAID1, one slow-fsync write holds that lock past the short busy_timeout and
+    concurrent logins fail `database is locked` (firstfactor 401 / OIDC
+    server_error). WAL lets readers run concurrently with a single writer, so a
+    slow write degrades latency, not correctness. Neither app exposes a
+    journal_mode config knob, so we flip it on disk once after deploy — WAL is
+    recorded in the DB header, so it persists and the app adopts it on its next
+    open. Re-running is a no-op (already `wal`).
+
+    Runs on the host (post-deploy runs as root on FCoS) against the bind-mounted
+    DB file — no dependency on a `sqlite3` CLI being present in the service's
+    container image. Fail-soft by contract: a missing file, an invalid sqlite
+    header, or a transient lock is logged and skipped, never raised — the app
+    keeps working with whatever journal mode it has.
+
+    Returns True iff the DB is in WAL mode after the call.
+    """
+    if not os.path.isfile(db_path):
+        # Fresh install: the app hasn't created its DB yet. Nothing to do — the
+        # app will create it in `delete` mode, and the next deploy's post-deploy
+        # run flips it. (We deliberately do NOT pre-create it: an empty file
+        # would have no schema and could confuse the app's own init.)
+        log(f"ℹ️ {label} SQLite DB not present yet at {db_path} — skipping WAL switch (will apply on next deploy).")
+        return False
+
+    # Validate the sqlite header before opening — never mutate a non-sqlite /
+    # torn file.
+    try:
+        with open(db_path, "rb") as fh:
+            header = fh.read(16)
+    except OSError as e:
+        log(f"⚠️ Could not read {label} SQLite DB at {db_path} ({e}) — skipping WAL switch.")
+        return False
+    if header != SQLITE_HEADER:
+        log(f"⚠️ {db_path} is not a valid SQLite database (bad header) — skipping {label} WAL switch.")
+        return False
+
+    try:
+        # A short timeout so we don't hang the deploy if the app is mid-write;
+        # if we can't get in now, the header flip just lands on the next deploy.
+        conn = sqlite3.connect(db_path, timeout=10)
+        try:
+            conn.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)};")
+            mode = conn.execute("PRAGMA journal_mode=WAL;").fetchone()
+            current = (mode[0] if mode else "").lower()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        # `database is locked` here is exactly the condition WAL fixes; it's
+        # transient (the app's slow write will finish). Log and let the next
+        # deploy retry rather than failing the install.
+        log(f"⚠️ Could not switch {label} SQLite DB to WAL ({e}) — leaving journal mode as-is; will retry on next deploy.")
+        return False
+
+    if current == "wal":
+        log(f"✅ {label} SQLite DB is in WAL mode (busy_timeout {busy_timeout_ms}ms) — concurrent reads no longer block on the writer.")
+        return True
+    log(f"⚠️ {label} SQLite DB did not switch to WAL (journal_mode={current or 'unknown'}) — likely a live lock; will retry on next deploy.")
+    return False
+
+
+def authelia_db_path() -> str:
+    """Host path of Authelia's SQLite DB. Must track the `authelia-data`
+    hostPath mount in template.yml (`{{DATA_DIR}}/auth/authelia-data`)."""
+    base = env("DATA_DIR", "/mnt/data")
+    return os.path.join(base, "auth", "authelia-data", "db.sqlite3")
 
 
 def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tuple[int, dict[str, object] | None]:
@@ -126,6 +207,11 @@ def main() -> int:
     sb_api = env("SB_API_URL", "http://localhost:3000")
     public_domain = env("PUBLIC_DOMAIN")
     operator_email = env("OPERATOR_EMAIL")
+
+    # ── Authelia SQLite → WAL (#1679) ────────────────────────────────────
+    # Independent of the LLDAP credential/seed flow below; do it first so a
+    # returning install gets the concurrency fix even if LLDAP env is missing.
+    ensure_sqlite_wal(authelia_db_path(), "Authelia")
 
     lldap_password = env("LLDAP_ADMIN_PASSWORD")
     lldap_port = env("LLDAP_PORT", "17170")
