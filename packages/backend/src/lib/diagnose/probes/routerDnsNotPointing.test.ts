@@ -17,7 +17,9 @@ vi.mock('@/lib/router/dnsConfig', () => ({
   reconnectFritzBox: vi.fn(() => Promise.resolve(state.reconnectResult)),
 }));
 
-const lanResolve = vi.fn(() => Promise.resolve(null as string[] | null));
+const lanResolve = vi.fn(
+  (_host: string, _ip: string): Promise<string[] | null> => Promise.resolve(null),
+);
 vi.mock('@/lib/router/lanResolver', () => ({
   resolve4ViaLan: (h: string, ip: string) => lanResolve(h, ip),
 }));

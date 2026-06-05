@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const sendCommand = vi.fn();
-const ensureAgent = vi.fn(() => Promise.resolve({ sendCommand }));
+const ensureAgent = vi.fn((_name: string) => Promise.resolve({ sendCommand }));
 
 vi.mock('@/lib/agent/manager', () => ({
   agentManager: { ensureAgent: (n: string) => ensureAgent(n) },
