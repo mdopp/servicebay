@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.99.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.99.0...servicebay-v4.99.1) (2026-06-05)
+
+
+### Bug Fixes
+
+* **backups:** collapse Backup Sync config body when disabled ([87e7b4c](https://github.com/mdopp/servicebay/commit/87e7b4c11fbe7e37a37a916e0902fff087cfb241)), closes [#1710](https://github.com/mdopp/servicebay/issues/1710)
+* disk-import privileged host exec + backup-sync collapse ([d58d788](https://github.com/mdopp/servicebay/commit/d58d788a13e52353f6c1faba6d20d0acf0768828))
+* **diskImport:** run privileged host ops via opt-in safe_exec sudo ([4dcd2a4](https://github.com/mdopp/servicebay/commit/4dcd2a47e6e68bdb058386db557b8c4fb7dcb1ae)), closes [#1713](https://github.com/mdopp/servicebay/issues/1713)
+
 ## [4.99.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.98.0...servicebay-v4.99.0) (2026-06-05)
 
 
