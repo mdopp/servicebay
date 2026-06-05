@@ -18,6 +18,18 @@ import type { AppPlatform, PortalAction, PortalIconName, SetupAssetKind } from '
 
 type IconComponent = typeof Camera;
 
+/** Per-tier column span on the 12-col `md` grid (#1700). Action-rich
+ *  cards get more width; light cards get less; height stays
+ *  content-driven (the grid uses `items-start`, not stretch). These MUST
+ *  be literal Tailwind classes — Tailwind can't see an interpolated
+ *  `col-span-${n}`, so they'd get purged. Keyed by the server-derived
+ *  `sizeTier` (`packages/backend/src/lib/portal/services.ts`). */
+const SIZE_TIER_SPAN: Record<PortalCard['sizeTier'], string> = {
+  compact: 'md:col-span-3', // 4 per row
+  regular: 'md:col-span-4', // 3 per row
+  feature: 'md:col-span-6', // 2 per row
+};
+
 /** Maps the kebab-case Lucide names allowlisted in user-guide
  *  frontmatter to their imported components. Keep in sync with
  *  PORTAL_ICONS in userGuide.ts. */
@@ -159,23 +171,24 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
 
   return (
     <>
-    <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+    <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
       {cards.map(card => {
         return (
           <div
             key={card.id}
-            className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden flex flex-col"
+            className={`bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden flex flex-col col-span-1 ${SIZE_TIER_SPAN[card.sizeTier]}`}
           >
-            {/* Header — icon + title + tagline. The tagline area is
-                clamped to 3 lines + min-h so the Open button below
-                lands at the same Y on every card in a row. */}
+            {/* Header — icon + title + tagline. The tagline is clamped
+                to 3 lines; height is content-driven now (#1700), so the
+                old `min-h` equal-Y filler is dropped — `items-start` on
+                the grid stops the row-stretch. */}
             <div className="p-6 pb-3">
               <CardIcon card={card} />
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-bold text-gray-900 dark:text-white">{card.label}</h2>
                 <StatusBadge status={card.status} reason={card.statusReason} />
               </div>
-              <p className="mt-2 text-sm text-gray-600 dark:text-gray-400 line-clamp-3 min-h-[3.75rem]">
+              <p className="mt-2 text-sm text-gray-600 dark:text-gray-400 line-clamp-3">
                 {card.tagline ?? ''}
               </p>
             </div>
@@ -189,12 +202,10 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
               <CardCta card={card} isMobile={isMobile} />
             </div>
 
-            {/* Variable content below — fills the rest of the card so
-                grid-cell heights stay equal even with different
-                amounts of recommended apps / setup assets. */}
-            <div className="px-6 pt-3 pb-6 space-y-3 flex-1">
-              {/* (the original wrapper continues; adjusted closing
-                   tag is below — left here so the diff is contained.) */}
+            {/* Variable content below. Height is content-driven (#1700) —
+                no `flex-1` filler; cards no longer stretch to a row's
+                tallest sibling. */}
+            <div className="px-6 pt-3 pb-6 space-y-3">
 
               {card.setupAssets.length > 0 && (
                 <div className="space-y-1.5">
