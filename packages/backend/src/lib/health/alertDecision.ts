@@ -40,6 +40,10 @@ export const DEFAULT_FAILURE_THRESHOLDS: Partial<Record<CheckType, number>> = {
   backup: 1,
   cert_expiry: 1,
   cert_request_failure: 1,
+  // An invalid on-disk nginx config is true the instant `nginx -t`
+  // observes it — and it will brick the proxy on the next reboot — so
+  // alert immediately rather than waiting for consecutive fails (#1678).
+  nginx_config_valid: 1,
 };
 
 /**

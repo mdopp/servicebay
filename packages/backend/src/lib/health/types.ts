@@ -18,6 +18,11 @@ export type CheckType =
   | 'npm_auth'
   | 'cert_expiry'
   | 'cert_request_failure'
+  // #1678: runs `nginx -t` inside the NPM container on a ~5-min interval
+  // to catch a malformed on-disk proxy-host config (the #1677 landmine)
+  // while nginx is still serving on the old, already-loaded config —
+  // turning a silent crash-on-next-reboot into a red check + alert now.
+  | 'nginx_config_valid'
   // DoH-based external view that replaces the continuous letsdebug
   // sweep. Cheap enough to run every 15 min (no third-party rate
   // limits — Cloudflare's 1.1.1.1 DoH absorbs household-grade traffic

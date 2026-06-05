@@ -147,6 +147,7 @@ function addDefaultPhase3bChecks(exists: (type: string, target: string) => boole
     { id: 'npm_auth', name: 'NPM admin auth', interval: 900 },
     { id: 'cert_expiry', name: 'TLS certificate expiry', interval: 3600 },
     { id: 'cert_request_failure', name: 'Let\'s Encrypt cert requests', interval: 600 },
+    { id: 'nginx_config_valid', name: 'Nginx config validity', interval: 300 },
   ];
   for (const cfg of phase3bChecks) {
     if (!exists(cfg.id, 'Local')) {
@@ -154,7 +155,7 @@ function addDefaultPhase3bChecks(exists: (type: string, target: string) => boole
       HealthStore.saveCheck({
         id: cfg.id,
         name: cfg.name,
-        type: cfg.id as 'lan_ip_drift' | 'npm_auth' | 'cert_expiry' | 'cert_request_failure',
+        type: cfg.id as 'lan_ip_drift' | 'npm_auth' | 'cert_expiry' | 'cert_request_failure' | 'nginx_config_valid',
         target: 'Local',
         interval: cfg.interval,
         enabled: true,
