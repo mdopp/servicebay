@@ -1,5 +1,32 @@
 # Media (Audiobookshelf + Jellyfin) — template changelog
 
+## Pending — #1717 / #1718 (media SSO auth reconciliation)
+
+Two auth-survival fixes; additive variables only, no on-disk data move,
+no schema bump.
+
+- **#1717 — Audiobookshelf OIDC client_secret self-heal.** After a
+  reinstall-over-preserved-data the stored OIDC `client_secret` in ABS's
+  `absdatabase.sqlite` drifts from Authelia's re-rendered value →
+  `invalid_client` login loop. `configure_abs_oidc` already re-stamps it
+  via the admin API, but that needs an admin login — which also fails when
+  `ABS_ADMIN_PASSWORD` drifted. `post-deploy.py` now falls back to a
+  no-login DB re-stamp (`podman exec media-audiobookshelf sqlite3 …
+  json_set` on the `server-settings` row) and restarts ABS. Same class as
+  the Immich DB reconcile (#1556). Idempotent; never touches ABS user data.
+- **#1718 — Jellyfin wired to LLDAP (SSO).** Jellyfin previously used a
+  local admin only. `post-deploy.py` now installs the Jellyfin
+  LDAP-Authentication plugin and writes `LDAP-Auth.xml` (host-side, every
+  deploy → idempotent + self-healing) pointed at LLDAP
+  (`ldap://host.containers.internal:{{LLDAP_LDAP_PORT}}`, base
+  `ou=people,{{LLDAP_BASE_DN}}`, bind `uid=admin,ou=people,…`, filter
+  `(&(objectClass=person)(uid={username}))`, `lldap_admin` group → Jellyfin
+  admin). The local Jellyfin `admin` stays a **break-glass** login — LDAP
+  is added as an additional provider, not a replacement.
+- `variables.json`: adds `LLDAP_LDAP_PORT`, `LLDAP_BASE_DN`,
+  `LLDAP_ADMIN_PASSWORD` (inherited from the `auth` template — same as
+  Radicale).
+
 ## Pending — #1018
 
 Folder names under the file-share data root are lowercase by convention
