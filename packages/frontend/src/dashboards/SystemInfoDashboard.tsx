@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { getSystemUpdates } from '@/app/actions/system';
 import { logger } from '@servicebay/api-client';
-import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check, Info, Monitor, Settings } from 'lucide-react';
+import { RefreshCw, Cpu, HardDrive, Network, Server, Package, Copy, Check, Info, Monitor, Settings, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { summarizeDnsResolvers, type DnsResolverLabel } from '@/dashboards/_lib/dnsResolvers';
 import { useToast } from '@/providers/ToastProvider';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import { useSocket } from '@/hooks/useSocket';
@@ -162,7 +163,14 @@ export function SystemInfoContent() {
       );
   }
 
-  const { cpuUsage, memoryUsage, totalMemory, os, disks, network, cpu, gpus } = resources;
+  const { cpuUsage, memoryUsage, totalMemory, os, disks, network, dnsResolvers, cpu, gpus } = resources;
+
+  // The box's own non-internal IPs — a resolver matching one of these is the
+  // box pointing at its own AdGuard.
+  const boxAddresses = network
+    ? Object.values(network).flat().filter(a => !a.internal).map(a => a.address)
+    : [];
+  const dnsSummary = summarizeDnsResolvers(dnsResolvers, boxAddresses);
 
   return (
       <div className="p-4 md:p-6 space-y-6">
@@ -432,6 +440,62 @@ export function SystemInfoContent() {
                         <div className="col-span-full text-center text-gray-400 py-4">No network information available</div>
                     )}
                 </div>
+            </div>
+
+            {/* DNS Resolvers — the box's effective resolver list, labelled.
+                A public resolver here is the #1559 split-horizon trap (breaks
+                *.<domain> SSO resolution after reinstall), so it warns. */}
+            <div className="md:col-span-2 bg-white dark:bg-gray-800 p-5 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
+                <h3 className="text-lg font-medium mb-4 flex items-center gap-2">
+                    <Network size={20} /> DNS Resolvers ({dnsSummary.resolvers.length})
+                </h3>
+
+                {dnsSummary.hasPublicResolver && (
+                    <div className="mb-4 flex items-start gap-2 p-3 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 text-sm">
+                        <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+                        <div>
+                            <div className="font-medium">A public DNS resolver is configured</div>
+                            <div className="text-xs mt-0.5 opacity-90">
+                                Public resolvers don&apos;t know your LAN addresses, so they can silently break
+                                split-horizon resolution of <span className="font-mono">*.&lt;domain&gt;</span> after a
+                                reinstall (SSO logins fail). Point the box at AdGuard / the router instead.
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                <div className="space-y-2">
+                    {dnsSummary.resolvers.map((r, i) => {
+                        const labelStyles: Record<DnsResolverLabel, string> = {
+                            AdGuard: 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-100',
+                            router: 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-100',
+                            public: 'bg-amber-100 dark:bg-amber-900 text-amber-800 dark:text-amber-100',
+                            other: 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300',
+                        };
+                        return (
+                            <div key={i} className="flex items-center justify-between gap-2 text-sm border border-gray-100 dark:border-gray-800 rounded px-3 py-2">
+                                <span className="font-mono break-all">{r.address}</span>
+                                <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded shrink-0 ${labelStyles[r.label]}`}>
+                                    {r.label}
+                                </span>
+                            </div>
+                        );
+                    })}
+                    {dnsSummary.resolvers.length === 0 && (
+                        <div className="text-center text-gray-400 py-4">No DNS resolver information available</div>
+                    )}
+                </div>
+
+                {dnsSummary.resolvers.length > 0 && !dnsSummary.hasPublicResolver && (
+                    <div className="mt-3 flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+                        <ShieldCheck size={14} />
+                        <span>All resolvers are local (AdGuard / router) — split-horizon resolution is safe.</span>
+                    </div>
+                )}
+
+                {dnsResolvers?.source && dnsResolvers.source !== 'unknown' && (
+                    <div className="mt-2 text-[10px] text-gray-400">source: {dnsResolvers.source}</div>
+                )}
             </div>
         </div>
       </div>

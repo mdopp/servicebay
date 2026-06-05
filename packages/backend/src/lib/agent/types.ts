@@ -29,6 +29,15 @@ export interface SystemResources {
     family: string; // IPv4 or IPv6
     internal: boolean;
   }[]>;
+  /** The box's effective DNS resolvers, read from `resolvectl status`
+   *  (preferred) or `/etc/resolv.conf`. Raw IP list only — the System
+   *  health Networks section labels each (AdGuard / router / public) and
+   *  warns when a public resolver is present (the #1559 split-horizon
+   *  trap). `source` records which file the list came from. */
+  dnsResolvers?: {
+    servers: string[];
+    source: 'resolvectl' | 'resolv.conf' | 'unknown';
+  };
   /** GPUs detected on the host. Empty / undefined on hosts without
    *  one. Memory fields are in bytes (consistent with disks). For now
    *  populated by nvidia-smi only; other vendors can hang off the

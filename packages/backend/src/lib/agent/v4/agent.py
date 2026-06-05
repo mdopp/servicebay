@@ -150,6 +150,9 @@ class SystemResources:
     os: Optional[Dict[str, Any]] = None
     network: Optional[Dict[str, Any]] = None
     disks: Optional[List[Dict[str, Any]]] = None
+    # Effective DNS resolvers: {'servers': [...ip...], 'source': 'resolvectl'|'resolv.conf'|'unknown'}.
+    # Raw list only — labelling/public-resolver warning happens frontend-side.
+    dnsResolvers: Optional[Dict[str, Any]] = None
     cpu: Optional[Dict[str, Any]] = None
     # GPUs detected via `nvidia-smi --query-gpu=...` when present. Empty
     # list on hosts without NVIDIA (or without the kernel module loaded).
@@ -1527,6 +1530,94 @@ def get_network_interfaces():
     except Exception:
         return {}
 
+def parse_resolvectl_servers(text):
+    """Extract DNS resolver IPs from `resolvectl status` output.
+
+    resolvectl prints both global and per-link 'DNS Servers:' lines, e.g.
+
+        Global
+               DNS Servers: 127.0.0.1
+        Link 2 (eth0)
+               DNS Servers: 192.168.178.1 8.8.8.8
+
+    A 'DNS Servers:' line may be followed by continuation lines (indented,
+    no label) carrying further addresses. We collect every address in
+    first-seen order, de-duplicated. Pure string parsing so it is unit
+    testable without a live systemd-resolved.
+    """
+    servers = []
+    seen = set()
+    collecting = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if 'DNS Servers:' in line:
+            collecting = True
+            line = line.split('DNS Servers:', 1)[1].strip()
+        elif collecting:
+            # Continuation lines are indented and carry only addresses; any
+            # line that introduces a new labelled field ends the run.
+            if not raw.startswith((' ', '\t')) or ':' in line:
+                collecting = False
+                continue
+        else:
+            continue
+        for token in line.split():
+            # Drop systemd's interface-scope suffix (fe80::1%eth0) for labelling.
+            addr = token.split('%', 1)[0]
+            if addr and addr not in seen:
+                seen.add(addr)
+                servers.append(addr)
+    return servers
+
+
+def parse_resolv_conf(text):
+    """Extract nameserver IPs from /etc/resolv.conf content, in order."""
+    servers = []
+    seen = set()
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith('#') or line.startswith(';'):
+            continue
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == 'nameserver':
+            addr = parts[1].split('%', 1)[0]
+            if addr and addr not in seen:
+                seen.add(addr)
+                servers.append(addr)
+    return servers
+
+
+def get_dns_resolvers():
+    """Read the box's effective DNS resolvers.
+
+    Prefers `resolvectl status` (systemd-resolved, the source of truth on
+    Fedora CoreOS) and falls back to /etc/resolv.conf. Routed through the
+    executor so a containerised agent reads the HOST's resolvers (the
+    container's own resolv.conf is irrelevant — #1559 is a host-side
+    split-horizon trap). Labelling/warning is done frontend-side so it is
+    fast-gate (vitest) testable; the agent only reports the raw list.
+    """
+    try:
+        stdout, _, code = _executor.execute(['resolvectl', 'status'], check=False)
+        if code == 0 and stdout.strip():
+            servers = parse_resolvectl_servers(stdout)
+            if servers:
+                return {'servers': servers, 'source': 'resolvectl'}
+    except Exception:
+        pass
+
+    try:
+        stdout, _, code = _executor.execute(['cat', '/etc/resolv.conf'], check=False)
+        if code == 0 and stdout.strip():
+            servers = parse_resolv_conf(stdout)
+            if servers:
+                return {'servers': servers, 'source': 'resolv.conf'}
+    except Exception:
+        pass
+
+    return {'servers': [], 'source': 'unknown'}
+
+
 def get_sys_resources():
     # 1. Memory
     res_mem_total = 0
@@ -1620,7 +1711,12 @@ def get_sys_resources():
     
     # 6. Network
     network_info = get_network_interfaces()
-    
+
+    # 7. DNS resolvers — the box's effective resolver list. Surfaced in the
+    # System health Networks section so a public-resolver fallback (the #1559
+    # split-horizon trap) is visible.
+    dns_resolvers = get_dns_resolvers()
+
     # Use dataclass and return dict
     return asdict(SystemResources(
         cpuUsage=res_cpu_usage,
@@ -1630,6 +1726,7 @@ def get_sys_resources():
         os=os_info,
         disks=disks,
         network=network_info,
+        dnsResolvers=dns_resolvers,
         cpu=res_cpu_info,
         gpus=get_gpus(),
     ))
