@@ -351,10 +351,22 @@ export async function resolveServiceDataDir(service: string): Promise<string> {
 // /data/database.sqlite to /data/database.sqlite.sb-backup using sqlite3's
 // online `.backup`, then `mv` over the canonical name so the file-copy producer
 // reads a torn-free copy. NPM's image bundles sqlite3.
+//
+// Since #1679 the live DB runs in WAL mode (the auth/nginx post-deploys flip
+// `journal_mode=WAL`), so committed writes can sit in the `-wal` sidecar rather
+// than the main file. We first `wal_checkpoint(TRUNCATE)` to fold the WAL back
+// into the main DB and truncate the sidecar — so even a plain reader of
+// database.sqlite would be consistent — then take the online `.backup` (itself
+// WAL-aware) into a single self-contained file the producer stages under the
+// canonical name. The checkpoint is best-effort (a busy DB may not fully
+// checkpoint); `.backup` guarantees consistency regardless.
 const NPM_SQLITE_SNAPSHOT_SH = [
   'set -e',
   "DB=/data/database.sqlite",
   'if [ ! -f "$DB" ]; then echo "nodb"; exit 0; fi',
+  // Fold the WAL back into the main DB so the snapshot has no dependence on the
+  // -wal/-shm sidecars. Best-effort: ignore a non-zero (busy) checkpoint.
+  'sqlite3 "$DB" "PRAGMA wal_checkpoint(TRUNCATE);" || true',
   // `.backup` produces a transactionally-consistent copy even mid-write.
   'sqlite3 "$DB" ".backup \'$DB.sb-snap\'"',
   'mv -f "$DB.sb-snap" "$DB.sb-backup"',

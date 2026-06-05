@@ -20,6 +20,13 @@ const (
 type BoxStatus struct {
 	Reachable  bool
 	WizardDone bool
+	// Unauthorized is true when the box is reachable but rejected our saved
+	// credential with a 401 (#1669). A 401 means the box IS up and serving the
+	// real app behind auth — typically a stale token after a reinstall — so it
+	// must NOT be confused with "not set up yet". The launcher surfaces sign-in
+	// / token-mint and keeps Manage + stack-install reachable, rather than
+	// falling to the fresh-setup phase and forcing a needless USB rebuild.
+	Unauthorized bool
 }
 
 // State is the derived phase plus the raw facts it came from.
@@ -28,13 +35,26 @@ type State struct {
 	ISOBuilt     bool
 	BoxReachable bool
 	WizardDone   bool
+	// NeedsAuth mirrors BoxStatus.Unauthorized: the box is up and manageable but
+	// our credential is stale/absent, so the manage panels will route through
+	// sign-in. The menu uses it to frame the phase as "sign in" rather than
+	// "install running".
+	NeedsAuth bool
 }
 
 // Detect derives the lifecycle phase from the probed facts.
+//
+// Key distinction (#1669): a box that answers 401 is REACHABLE-but-unauthorized,
+// not unreachable and not unset-up. A stale saved token after a reinstall must
+// not drop the launcher to fresh-setup (which greys out Manage/stack-install and
+// forces a USB rebuild). So a reachable box whose wizard is done OR which only
+// rejected our token (Unauthorized) resolves to Ready (manage) — the manage
+// panels then prompt to sign in. Only a reachable box that is genuinely still
+// installing (splash serving, no 401) stays in Installing.
 func Detect(isoBuilt bool, status BoxStatus) State {
 	var p Lifecycle
 	switch {
-	case status.Reachable && status.WizardDone:
+	case status.Reachable && (status.WizardDone || status.Unauthorized):
 		p = Ready
 	case status.Reachable:
 		p = Installing
@@ -43,7 +63,7 @@ func Detect(isoBuilt bool, status BoxStatus) State {
 	default:
 		p = NoISO
 	}
-	return State{Phase: p, ISOBuilt: isoBuilt, BoxReachable: status.Reachable, WizardDone: status.WizardDone}
+	return State{Phase: p, ISOBuilt: isoBuilt, BoxReachable: status.Reachable, WizardDone: status.WizardDone, NeedsAuth: status.Unauthorized}
 }
 
 // ActionID identifies a menu entry. Handoff actions (build/watch) are run by
@@ -249,13 +269,20 @@ func Journey(s State) []JourneyRow {
 			{Action: quitAction},
 		}
 	case Ready:
+		// step-3 signpost: a plain "setup complete" when the wizard is confirmed
+		// done, or a "box is up — sign in" prompt when we only know the box is
+		// reachable because it rejected our token (#1669: reachable-but-unauthorized).
+		step3 := signpost("Install complete — setup wizard finished", "")
+		if s.NeedsAuth {
+			step3 = signpost("Box is up — sign in to manage it (your saved access expired)", "")
+		}
 		return []JourneyRow{
 			phaseHeader(1, h1, true, false),
 			{Action: uploadStep(s), Sub: true},
 			phaseHeader(2, h2, true, false),
 			{Action: buildAction(s), Sub: true},
 			phaseHeader(3, h3, true, false),
-			{Action: signpost("Install complete — setup wizard finished", ""), Sub: true, Done: true},
+			{Action: step3, Sub: true, Done: true},
 			phaseHeader(4, h4, false, false),
 			{Action: installStacksAction, Sub: true, Recommended: true},
 			{Action: editConfigAction, Sub: true},
@@ -292,6 +319,9 @@ func Describe(s State) string {
 	case Installing:
 		return "Box is reachable; an install is actively running."
 	case Ready:
+		if s.NeedsAuth {
+			return "Box is up and reachable — sign in to manage it below."
+		}
 		return "Box is up and reachable — manage it below."
 	default:
 		return ""

@@ -11,8 +11,11 @@ vi.mock('@/lib/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-vi.mock('dns/promises', () => ({
-  default: { resolve4: (h: string) => resolve4(h) },
+// The probe now resolves via the LAN path (AdGuard) rather than the OS
+// resolver — mock that helper. The mock returns A-records by hostname so
+// the per-call assertions below still pin which domains were looked up.
+vi.mock('@/lib/router/lanResolver', () => ({
+  resolve4ViaLan: (h: string) => resolve4(h),
 }));
 
 import { checkDomainResolvesToBox } from './domainResolvesToBox';
@@ -58,7 +61,8 @@ describe('domain_resolves_to_box', () => {
     getConfig.mockResolvedValue({
       reverseProxy: { publicDomain: 'dopp.cloud', lanIp: '192.168.178.100', hosts: [] },
     });
-    resolve4.mockRejectedValue(new Error('ENOTFOUND'));
+    // resolve4ViaLan swallows resolver errors and returns null — mirror that.
+    resolve4.mockResolvedValue(null);
     const r = await checkDomainResolvesToBox();
     expect(r.status).toBe('fail');
     expect(r.detail).toContain('does not resolve');
@@ -74,6 +78,23 @@ describe('domain_resolves_to_box', () => {
     expect(r.status).toBe('fail');
     expect(r.detail).toContain('expected 192.168.178.100');
     expect(r.hint).toContain('DHCP DNS');
+  });
+
+  it('resolves via the LAN/AdGuard path (not the OS resolver) — passes the box lanIp through', async () => {
+    const lanSpy = vi.fn().mockResolvedValue(['192.168.178.100']);
+    const mod = await import('@/lib/router/lanResolver');
+    const orig = mod.resolve4ViaLan;
+    // Re-point the mocked helper to a spy that records the (host, lanIp) pair.
+    (resolve4 as unknown as { mockImplementation: (f: (h: string) => unknown) => void }).mockImplementation(
+      (h: string) => lanSpy(h, '192.168.178.100'),
+    );
+    getConfig.mockResolvedValue({
+      reverseProxy: { publicDomain: 'dopp.cloud', lanIp: '192.168.178.100', hosts: [] },
+    });
+    const r = await checkDomainResolvesToBox();
+    expect(r.status).toBe('ok');
+    expect(lanSpy).toHaveBeenCalledWith('auth.dopp.cloud', '192.168.178.100');
+    void orig;
   });
 
   it('skips LAN-only hosts (resolved via AdGuard rewrites, not the box resolver)', async () => {

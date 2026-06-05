@@ -1422,6 +1422,24 @@ async function runJob(jobId: string): Promise<void> {
   await log(jobId, 'Provisioning AdGuard DNS rewrites + portal routing...');
   await provisionPortalWithRetries((line: string) => { void log(jobId, line); });
 
+  // #1675 — now that AdGuard is up, re-point the BOX's own resolver at it
+  // (127.0.0.1) with the router as fallback and NO public 8.8.8.8. The
+  // install baked a public fallback for bootstrap (before AdGuard existed);
+  // leaving it in place lets the box resolve `*.<publicDomain>` to the
+  // PUBLIC IP, the #1559 trap one layer down. Best-effort: a failure logs
+  // and never fails the install.
+  try {
+    const { repointBoxResolverToAdguard } = await import('@/lib/router/boxResolverDns');
+    const dnsResult = await repointBoxResolverToAdguard(input.node || 'Local');
+    if (dnsResult.result === 'ok') {
+      await log(jobId, `✅ ${dnsResult.detail}`);
+    } else {
+      await log(jobId, `(note) box resolver re-point skipped/failed: ${dnsResult.detail}`);
+    }
+  } catch (e) {
+    await log(jobId, `(note) box resolver re-point failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
   await patchJob(jobId, {
     phase: 'done',
     endedAt: new Date().toISOString(),

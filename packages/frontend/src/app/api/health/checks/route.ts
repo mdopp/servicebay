@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { withApiHandler } from '@/lib/api/handler';
 import { HealthCheckTarget, NodeName } from '@/lib/api/schemas';
 import { getDiagnoseChecksEnriched } from '@/lib/diagnose/diagnoseChecks';
+import { isKnownLocalSystemTarget } from '@/lib/health/ssrfGuard';
 
 export const GET = withApiHandler({}, async () => {
   const checks = HealthStore.getChecks();
@@ -52,7 +53,18 @@ const CheckPostBody = z.object({
   }).optional(),
 });
 
-export const POST = withApiHandler({ body: CheckPostBody }, async ({ body }) => {
+export const POST = withApiHandler({ body: CheckPostBody }, async ({ body, auth }) => {
+  // #1670: a ServiceBay self-created check of a known-local hostNetwork
+  // service (HA `127.0.0.1:8123`, Ollama `:11434`) bypasses the monitoring
+  // SSRF guard. Only the internal-token path (a stack's post-deploy, `auth.user
+  // === 'internal'`) targeting a recognised loopback service earns the flag —
+  // a user-supplied check (cookie session / UI) never does, so a user can't
+  // self-grant the bypass for an arbitrary internal URL.
+  const systemCheck =
+    auth?.user === 'internal' &&
+    body.type === 'http' &&
+    isKnownLocalSystemTarget(body.target);
+
   const check: CheckConfig = {
     id: body.id || uuidv4(),
     created_at: body.created_at || new Date().toISOString(),
@@ -63,6 +75,7 @@ export const POST = withApiHandler({ body: CheckPostBody }, async ({ body }) => 
     interval: body.interval || 60,
     nodeName: body.nodeName,
     httpConfig: body.httpConfig,
+    ...(systemCheck ? { systemCheck: true } : {}),
   };
 
   HealthStore.saveCheck(check);

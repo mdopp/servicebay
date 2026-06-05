@@ -34,12 +34,11 @@
  * reinstall, #1559).
  */
 
-import dns from 'dns/promises';
 import { getConfig, type ProxyHostEntry, type AppConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
+import { resolve4ViaLan } from '@/lib/router/lanResolver';
 
 const PROBE_ID = 'domain_resolves_to_box';
-const DNS_TIMEOUT_MS = 3000;
 
 /** SSO-precondition subdomains under `publicDomain` that always need to
  *  resolve to the box, whether or not a proxy host is recorded for them
@@ -82,21 +81,6 @@ function buildCoreDomains(config: AppConfig): string[] {
   return Array.from(new Set(domains));
 }
 
-/** Resolve a hostname's IPv4 A-records via the OS resolver, with a hard
- *  timeout. Returns null on NXDOMAIN / SERVFAIL / timeout / any error —
- *  the caller treats null as "does not resolve". */
-async function resolve4OrNull(hostname: string): Promise<string[] | null> {
-  try {
-    const records = await Promise.race([
-      dns.resolve4(hostname),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('dns timeout')), DNS_TIMEOUT_MS)),
-    ]);
-    return records.length > 0 ? records : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function checkDomainResolvesToBox(): Promise<DomainResolvesToBoxResult> {
   const config = await getConfig();
   const lanIp = config.reverseProxy?.lanIp;
@@ -117,7 +101,11 @@ export async function checkDomainResolvesToBox(): Promise<DomainResolvesToBoxRes
 
   const resolutions: DomainResolution[] = await Promise.all(
     domains.map(async (domain): Promise<DomainResolution> => {
-      const addresses = await resolve4OrNull(domain);
+      // Resolve via the LAN path (AdGuard), not the OS resolver — the OS
+      // resolver may carry a public fallback that answers with the box's
+      // PUBLIC IP (split-horizon the LAN doesn't see), false-reding a box
+      // whose LAN clients all resolve correctly through AdGuard (#1672/#1675).
+      const addresses = await resolve4ViaLan(domain, lanIp);
       return {
         domain,
         addresses,

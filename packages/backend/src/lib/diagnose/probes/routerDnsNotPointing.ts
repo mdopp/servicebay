@@ -31,6 +31,7 @@
 import { getConfig, updateConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { reconnectFritzBox, setFritzBoxDhcpDns, setFritzBoxWanDns } from '@/lib/router/dnsConfig';
+import { resolve4ViaLan } from '@/lib/router/lanResolver';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
 
 const PROBE_ID = 'router_dns_not_pointing';
@@ -210,13 +211,35 @@ async function gatewayDnsHasLanIp(
   return { dns, ok };
 }
 
+// lanPathResolvesToBox checks the EFFECTIVE DHCP-DNS by resolving a core
+// service domain through AdGuard (the LAN path) and confirming the answer
+// is the box's LAN IP. This is the source-of-truth for a manually- or
+// DHCP-correctly-configured box where the TR-064 *read* fails or isn't
+// supported (#1672): if `*.<publicDomain>` resolves to the box via AdGuard,
+// the DNS handout is working regardless of what TR-064 reports.
+async function lanPathResolvesToBox(
+  publicDomain: string | undefined,
+  lanIp: string,
+  resolve: (host: string, lanIp: string) => Promise<string[] | null> = resolve4ViaLan,
+): Promise<boolean> {
+  const domain = publicDomain?.trim();
+  if (!domain) return false;
+  const addresses = await resolve(`auth.${domain}`, lanIp);
+  return !!addresses && addresses.includes(lanIp);
+}
+
 // okRoutingDetail explains which valid DNS topology is in effect, for the OK message.
-function okRoutingDetail(dhcpOk: boolean, upstreamOk: boolean, lanIp: string): string {
+function okRoutingDetail(dhcpOk: boolean, upstreamOk: boolean, lanPathOk: boolean, lanIp: string): string {
   const detail = ['Router DNS routing is working.'];
   if (dhcpOk) {
     detail.push(`Pattern: AdGuard as LAN DNS — FritzBox hands out ServiceBay (${lanIp}) via DHCP option 6, so LAN clients query AdGuard directly.`);
   } else if (upstreamOk) {
     detail.push(`Pattern: FritzBox stays as LAN DNS, AdGuard is upstream — FritzBox's own resolver queries ServiceBay (${lanIp}). All LAN queries flow client → FritzBox → AdGuard → internet.`);
+  } else if (lanPathOk) {
+    // The effective LAN path works even though TR-064 didn't confirm it —
+    // a manual/DHCP-correct setup (e.g. a FritzBox model that doesn't expose
+    // SetDNSServers over TR-064). Resolution is the source of truth.
+    detail.push(`Your service domains resolve to ServiceBay (${lanIp}) via AdGuard — the effective LAN DNS path is correct (verified by resolution, not just a TR-064 read).`);
   } else {
     // adguardOk alone — AdGuard sees client traffic (non-FritzBox setup or
     // TR-064 unreachable); the traffic signal is the source of truth.
@@ -279,8 +302,16 @@ export async function checkRouterDnsNotPointing(): Promise<RouterDnsProbeResult>
   const upstreamOk = upstream.ok;
   const upstreamDns = upstream.dns;
 
-  if (dhcpOk || upstreamOk || adguardOk) {
-    return { status: 'ok', detail: okRoutingDetail(dhcpOk, upstreamOk, lanIp) };
+  // Effective-path signal: a manually/DHCP-correctly configured box where
+  // the TR-064 read fails or is unsupported still reads green if a core
+  // service domain resolves to the box via AdGuard (#1672).
+  const lanPathOk =
+    dhcpOk || upstreamOk || adguardOk
+      ? false
+      : await lanPathResolvesToBox(config.reverseProxy?.publicDomain, lanIp);
+
+  if (dhcpOk || upstreamOk || adguardOk || lanPathOk) {
+    return { status: 'ok', detail: okRoutingDetail(dhcpOk, upstreamOk, lanPathOk, lanIp) };
   }
 
   const detail = await buildWarnDetail(config, lanIp, dhcpDns, upstreamDns, adguard);
@@ -304,6 +335,16 @@ async function configureFritzbox(): Promise<ProbeActionResult> {
     return {
       ok: true,
       message: `✅ FritzBox DHCP DNS set to ${lanIp}. Devices will pick up the new server when their lease renews (usually within an hour; restart Wi-Fi for an immediate refresh).`,
+      refresh: true,
+    };
+  }
+  if (result.result === 'unsupported') {
+    // The model doesn't expose the TR-064 write — that's not a failure,
+    // the operator just sets DNS by hand. The probe re-verifies via the
+    // LAN resolution path, so a manual setup still reads green (#1672).
+    return {
+      ok: true,
+      message: `ℹ️ ${result.detail ?? `This FritzBox can't set DHCP DNS over TR-064 — set the DHCP DNS server to ${lanIp} manually in the FritzBox UI.`}`,
       refresh: true,
     };
   }
@@ -331,6 +372,13 @@ async function configureFritzboxUpstream(): Promise<ProbeActionResult> {
     return {
       ok: true,
       message: `✅ FritzBox upstream DNS set to ${lanIp}. FritzBox keeps handing itself out as your LAN's DNS, but now forwards every query through AdGuard — household-wide filtering with no client-side changes. Takes effect immediately on the box.`,
+      refresh: true,
+    };
+  }
+  if (result.result === 'unsupported') {
+    return {
+      ok: true,
+      message: `ℹ️ ${result.detail ?? `This FritzBox can't set upstream DNS over TR-064 — set it to ${lanIp} manually under Internet → Account Information → DNS Server.`}`,
       refresh: true,
     };
   }

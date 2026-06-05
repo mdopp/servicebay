@@ -284,9 +284,14 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     // expensive/impossible to regenerate (Let's Encrypt rate limits, access
     // lists) — consistent with HA keeping its zwave_js keys.
 
-    // database.sqlite is WAL-mode and live; a plain file-copy can tear it, so
-    // the producer takes a consistent in-container `sqlite3 .backup` snapshot
-    // over the same exec path npmAdminRekey uses.
+    // database.sqlite is WAL-mode (since #1679 the nginx post-deploy flips
+    // `journal_mode=WAL`) and live; a plain file-copy can tear it AND would miss
+    // committed writes still sitting in the `-wal` sidecar. The producer's
+    // collector handles both: it `wal_checkpoint(TRUNCATE)`s the WAL into the
+    // main DB, then takes a consistent in-container `sqlite3 .backup` snapshot
+    // (over the same exec path npmAdminRekey uses) and stages that single
+    // self-contained file under the canonical name. The `-wal`/`-shm` sidecars
+    // are never staged (they're not in `include`), so the restored DB is whole.
     collector: { kind: 'npm-sqlite' },
   },
 ];

@@ -6,9 +6,11 @@ package probes
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"sb/internal/build"
 	"sb/internal/phase"
@@ -119,6 +121,65 @@ func tokenPath(host string) string {
 	return filepath.Join(dir, "servicebay", safe+".token")
 }
 
+// authStatus is the outcome of an authenticated probe with the saved token.
+type authStatus int
+
+const (
+	authUnknown      authStatus = iota // couldn't tell (no token, transport error)
+	authOK                             // the box accepted our token (2xx)
+	authUnauthorized                   // the box answered 401 — token stale/expired (#1669)
+)
+
+// classifyBoxStatus folds the raw probe facts into a phase.BoxStatus. Pure, so
+// the reachable-but-unauthorized distinction (#1669) is unit-testable without a
+// live box: tcpOpen + appServing come from the unauthenticated probes, auth from
+// the token probe. A 401 from the box means it IS up (serving the real app
+// behind auth) — surfaced as Unauthorized, NOT as "not set up".
+func classifyBoxStatus(tcpOpen, appServing bool, auth authStatus) phase.BoxStatus {
+	if !tcpOpen {
+		return phase.BoxStatus{}
+	}
+	// The box answered 401 to an authenticated request: it's reachable and the
+	// real app is up, just rejecting our (stale) credential. Even if the
+	// unauthenticated title sniff didn't recognise takeover, a 401 is proof the
+	// app is serving — so the box is manageable, pending sign-in.
+	if auth == authUnauthorized {
+		return phase.BoxStatus{Reachable: true, WizardDone: appServing, Unauthorized: true}
+	}
+	return phase.BoxStatus{Reachable: true, WizardDone: appServing}
+}
+
+// probeAuth issues a lightweight authenticated GET with the saved token and
+// classifies the result. /api/settings is read-scoped and cheap. A 401 → stale
+// token (authUnauthorized); a 2xx → authOK; anything else (no token, transport
+// error, 5xx) → authUnknown, so a flaky box never spuriously flips the phase.
+func probeAuth(host, port string) authStatus {
+	token := ResolveToken(host)
+	if token == "" {
+		return authUnknown
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+host+":"+port+"/api/settings", nil)
+	if err != nil {
+		return authUnknown
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return authUnknown
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized:
+		return authUnauthorized
+	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+		return authOK
+	default:
+		return authUnknown
+	}
+}
+
 // BoxStatus classifies the box by what it's actually serving, not by a job
 // record. WizardDone ("up and manageable") keys off whether the REAL app is
 // serving — the same takeover signal the watch dashboard uses — rather than
@@ -128,6 +189,12 @@ func tokenPath(host string) string {
 //   - port closed            → not reachable (pre-boot / rebooting)
 //   - install splash serving → reachable, not done → Installing (watch leads)
 //   - real app serving       → reachable + done   → Ready (manage)
+//   - box answers 401        → reachable + Unauthorized → Ready, prompt sign-in (#1669)
+//
+// A stale saved token after a reinstall used to read as "box not set up"
+// (every authed call 401s → the launcher fell to fresh-setup and greyed out
+// Manage/stack-install, forcing a needless USB rebuild). The auth probe now
+// catches the 401 and keeps the box manageable, pending sign-in.
 func BoxStatus(_ context.Context) phase.BoxStatus {
 	t := ResolveTarget()
 	if t.Host == "" {
@@ -136,5 +203,5 @@ func BoxStatus(_ context.Context) phase.BoxStatus {
 	if !watch.TCPOpen(t.Host, t.Port) {
 		return phase.BoxStatus{}
 	}
-	return phase.BoxStatus{Reachable: true, WizardDone: watch.AppServing(t.Host, t.Port)}
+	return classifyBoxStatus(true, watch.AppServing(t.Host, t.Port), probeAuth(t.Host, t.Port))
 }
