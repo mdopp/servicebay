@@ -1,0 +1,132 @@
+import { describe, it, expect, vi } from 'vitest';
+import {
+  listBlockDevices,
+  mountReadOnly,
+  unmount,
+  mountpointFor,
+  assertSafeDevice,
+  MOUNT_BASE,
+} from './mounter';
+import type { SafeExec, SafeExecResult } from './hostExec';
+
+const ok = (stdout = ''): SafeExecResult => ({ stdout, stderr: '', code: 0 });
+
+/**
+ * A SafeExec mock that records argv and dispatches by binary. It mirrors the
+ * real agent.sendCommand contract: an "error reply" is a THROW, not a returned
+ * `{error}` (project memory `agent.sendCommand rejects on error replies`).
+ */
+function mockExec(
+  byBinary: Record<string, SafeExecResult | ((argv: string[]) => SafeExecResult)> = {},
+): { exec: SafeExec; calls: string[][] } {
+  const calls: string[][] = [];
+  const exec: SafeExec = vi.fn(async (argv: string[]) => {
+    calls.push(argv);
+    const handler = byBinary[argv[0]];
+    if (handler === undefined) return ok();
+    return typeof handler === 'function' ? handler(argv) : handler;
+  });
+  return { exec, calls };
+}
+
+describe('listBlockDevices', () => {
+  it('flattens the lsblk tree, carries removable to children, and skips loop devices', async () => {
+    const tree = {
+      blockdevices: [
+        {
+          name: 'sda', path: '/dev/sda', size: 16000000000, type: 'disk', rm: true,
+          children: [
+            { name: 'sda1', path: '/dev/sda1', size: 15000000000, fstype: 'exfat', label: 'USB', mountpoint: null, type: 'part' },
+          ],
+        },
+        { name: 'loop0', path: '/dev/loop0', size: 1000, type: 'loop' },
+        { name: 'nvme0n1', path: '/dev/nvme0n1', size: 500000000000, fstype: 'ext4', mountpoint: '/', type: 'disk', rm: false },
+      ],
+    };
+    const { exec, calls } = mockExec({ lsblk: ok(JSON.stringify(tree)) });
+
+    const devices = await listBlockDevices(exec);
+
+    // lsblk called with -J -b and read-only fields.
+    expect(calls[0][0]).toBe('lsblk');
+    expect(calls[0]).toContain('-J');
+    expect(calls[0]).toContain('-b');
+
+    const sda1 = devices.find(d => d.path === '/dev/sda1')!;
+    expect(sda1.removable).toBe(true); // inherited from parent sda
+    expect(sda1.fstype).toBe('exfat');
+    expect(sda1.size).toBe(15000000000);
+
+    const root = devices.find(d => d.path === '/dev/nvme0n1')!;
+    expect(root.removable).toBe(false);
+    expect(root.mountpoint).toBe('/');
+
+    // loop device dropped.
+    expect(devices.some(d => d.path === '/dev/loop0')).toBe(false);
+  });
+
+  it('throws on a non-zero lsblk exit (does not swallow the error)', async () => {
+    const { exec } = mockExec({ lsblk: { stdout: '', stderr: 'boom', code: 1 } });
+    await expect(listBlockDevices(exec)).rejects.toThrow(/lsblk failed/);
+  });
+});
+
+describe('mountReadOnly', () => {
+  it('mkdirs the mountpoint then mounts -o ro (never rw) at a controlled path', async () => {
+    const { exec, calls } = mockExec();
+    const mp = await mountReadOnly(exec, '/dev/sda1');
+
+    expect(mp).toBe(`${MOUNT_BASE}/sda1`);
+    const mkdir = calls.find(c => c[0] === 'mkdir')!;
+    expect(mkdir).toEqual(['mkdir', '-p', mp]);
+
+    const mount = calls.find(c => c[0] === 'mount')!;
+    expect(mount).toEqual(['mount', '-o', 'ro', '/dev/sda1', mp]);
+    // Absolutely no read-write mount.
+    expect(mount).not.toContain('rw');
+    expect(mount.join(' ')).not.toMatch(/\brw\b/);
+  });
+
+  it('throws (no mount) on an unsafe device path — shell metacharacters', async () => {
+    const { exec, calls } = mockExec();
+    await expect(mountReadOnly(exec, '/dev/sda1; rm -rf /')).rejects.toThrow(/unsafe device/);
+    await expect(mountReadOnly(exec, '/dev/../etc/shadow')).rejects.toThrow(/unsafe device/);
+    expect(calls).toHaveLength(0); // nothing reached the host
+  });
+
+  it('surfaces a failed mount as a thrown error', async () => {
+    const { exec } = mockExec({ mount: { stdout: '', stderr: 'wrong fs', code: 32 } });
+    await expect(mountReadOnly(exec, '/dev/sda1')).rejects.toThrow(/mount -o ro failed/);
+  });
+});
+
+describe('unmount', () => {
+  it('umounts a path inside MOUNT_BASE', async () => {
+    const { exec, calls } = mockExec();
+    await unmount(exec, `${MOUNT_BASE}/sda1`);
+    expect(calls[0]).toEqual(['umount', `${MOUNT_BASE}/sda1`]);
+  });
+
+  it('refuses to umount a path outside MOUNT_BASE', async () => {
+    const { exec, calls } = mockExec();
+    await expect(unmount(exec, '/')).rejects.toThrow(/outside/);
+    await expect(unmount(exec, '/mnt/data/stacks')).rejects.toThrow(/outside/);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('path guards', () => {
+  it('assertSafeDevice accepts /dev nodes and rejects traversal/metacharacters', () => {
+    expect(() => assertSafeDevice('/dev/sda1')).not.toThrow();
+    expect(() => assertSafeDevice('/dev/nvme0n1p3')).not.toThrow();
+    expect(() => assertSafeDevice('/etc/passwd')).toThrow();
+    expect(() => assertSafeDevice('/dev/sda1 --bind')).toThrow();
+    expect(() => assertSafeDevice('/dev/$(whoami)')).toThrow();
+  });
+
+  it('mountpointFor refuses an unsafe explicit name', () => {
+    expect(mountpointFor('/dev/sda1', 'usb0')).toBe(`${MOUNT_BASE}/usb0`);
+    expect(() => mountpointFor('/dev/sda1', '../escape')).toThrow(/unsafe mountpoint/);
+    expect(() => mountpointFor('/dev/sda1', 'a/b')).toThrow(/unsafe mountpoint/);
+  });
+});

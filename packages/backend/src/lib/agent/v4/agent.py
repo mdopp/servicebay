@@ -97,6 +97,16 @@ SAFE_EXEC_ALLOWLIST = frozenset({
     'mv',            # rename helper (callers validate paths)
     'test',          # exists() probe in the agent executor
     'ping',          # router-DNS probe
+    # Disk-import (#1694) — host-side mount + apply of an approved plan. These
+    # run via safe_exec with argv assembled + validated TS-side in
+    # diskImport/mounter.ts + plan.ts (device paths are /dev/... only; mount is
+    # `-o ro` to a controlled mountpoint; chown is `:<gid>` to the share gid
+    # only — never arbitrary uid:gid; every dest stays under file-share/data/).
+    'lsblk',         # enumerate source USB block devices (lsblk -J)
+    'mount',         # mount the source READ-ONLY (-o ro) — never read-write
+    'umount',        # unmount the source after the import
+    'rsync',         # copy non-photo files into file-share/data/<category>/
+    'chown',         # set group ownership of copied files to the share gid
 })
 AGENT_CLEANUP_MAX_AGE_MINUTES = os.getenv('SERVICEBAY_AGENT_CLEANUP_MAX_AGE_MINUTES')
 try:
