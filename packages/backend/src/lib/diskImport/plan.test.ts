@@ -12,16 +12,24 @@ const FIXED_NOW = Date.UTC(2026, 5, 5); // 2026-06-05
 
 function mockExec(
   byBinary: Record<string, SafeExecResult | ((argv: string[]) => SafeExecResult)> = {},
-): { exec: SafeExec; calls: string[][] } {
+): { exec: SafeExec; calls: string[][]; opts: ({ timeoutMs?: number; sudo?: boolean } | undefined)[] } {
   const calls: string[][] = [];
+  const opts: ({ timeoutMs?: number; sudo?: boolean } | undefined)[] = [];
   // Mirrors agent.sendCommand: an error reply is a THROW, not a returned {error}.
-  const exec: SafeExec = vi.fn(async (argv: string[]) => {
+  const exec: SafeExec = vi.fn(async (argv: string[], options?) => {
     calls.push(argv);
+    opts.push(options);
     const handler = byBinary[argv[0]];
     if (handler === undefined) return ok;
     return typeof handler === 'function' ? handler(argv) : handler;
   });
-  return { exec, calls };
+  return { exec, calls, opts };
+}
+
+/** sudo flag passed alongside the first call whose argv[0] === binary. */
+function sudoFor(calls: string[][], opts: ({ sudo?: boolean } | undefined)[], binary: string): boolean | undefined {
+  const i = calls.findIndex(c => c[0] === binary);
+  return i === -1 ? undefined : opts[i]?.sudo;
 }
 
 function record(over: Partial<ImportRecord> = {}): ImportRecord {
@@ -44,7 +52,7 @@ function baseOpts(exec: SafeExec, catalog: ImportCatalog, hashOf: HashResolver) 
 
 describe('applyPlan — copy + chown', () => {
   it('rsyncs from the read-only mount into file-share/data and chowns to the share gid only', async () => {
-    const { exec, calls } = mockExec();
+    const { exec, calls, opts } = mockExec();
     const catalog = new ImportCatalog(':memory:');
     const res = await applyPlan(planOf(item()), baseOpts(exec, catalog, hashConst('a'.repeat(64))));
 
@@ -59,6 +67,11 @@ describe('applyPlan — copy + chown', () => {
     expect(chown).toEqual(['chown', `:${GID}`, dest]); // group only, never uid, never -R
     expect(chown).not.toContain('-R');
     expect(chown[1]).toMatch(/^:\d+$/);
+
+    // The /mnt/data writes all run privileged (#1713): mkdir, rsync, chown.
+    expect(sudoFor(calls, opts, 'mkdir')).toBe(true);
+    expect(sudoFor(calls, opts, 'rsync')).toBe(true);
+    expect(sudoFor(calls, opts, 'chown')).toBe(true);
 
     expect(res.applied).toBe(1);
     expect(res.items[0].outcome).toBe('copied');
@@ -79,7 +92,7 @@ describe('applyPlan — copy + chown', () => {
 
 describe('applyPlan — conflict routes to _superseded', () => {
   it('moves the existing target into _superseded/<date>/ before copying the newer file', async () => {
-    const { exec, calls } = mockExec();
+    const { exec, calls, opts } = mockExec();
     const catalog = new ImportCatalog(':memory:');
     const conflict = item({ action: 'conflict', target: 'documents/report.pdf', record: record({ sourcePath: '/report.pdf', name: 'report.pdf', ext: 'pdf' }), category: 'documents' });
 
@@ -88,6 +101,8 @@ describe('applyPlan — conflict routes to _superseded', () => {
     const mv = calls.find(c => c[0] === 'mv')!;
     const parked = resolveSupersededPath('2026-06-05/documents/report.pdf');
     expect(mv).toEqual(['mv', resolveShareTarget('documents/report.pdf'), parked]);
+    // The _superseded move into /mnt/data is privileged (#1713).
+    expect(sudoFor(calls, opts, 'mv')).toBe(true);
     // Then the newer file is copied in.
     expect(calls.some(c => c[0] === 'rsync')).toBe(true);
     expect(res.items[0].outcome).toBe('superseded');
@@ -97,7 +112,7 @@ describe('applyPlan — conflict routes to _superseded', () => {
 
 describe('applyPlan — photos go to Immich, not file-share', () => {
   it('runs the immich CLI and never rsyncs photos into the share', async () => {
-    const { exec, calls } = mockExec();
+    const { exec, calls, opts } = mockExec();
     const catalog = new ImportCatalog(':memory:');
     const photo = item({ category: 'photos', target: 'photos/IMG_1.jpg', record: record({ sourcePath: '/IMG_1.jpg', name: 'img_1.jpg', ext: 'jpg' }) });
 
@@ -108,6 +123,8 @@ describe('applyPlan — photos go to Immich, not file-share', () => {
 
     const podman = calls.find(c => c[0] === 'podman')!;
     expect(podman).toContain('upload');
+    // Immich upload runs through ROOTLESS podman as `core` — must NOT escalate.
+    expect(sudoFor(calls, opts, 'podman')).not.toBe(true);
     expect(podman.join(' ')).toContain('IMMICH_INSTANCE_URL=http://immich:2283');
     // API key passed via env, never bare on argv positionally beyond the -e pair.
     expect(podman).toContain('IMMICH_API_KEY=secret-key');

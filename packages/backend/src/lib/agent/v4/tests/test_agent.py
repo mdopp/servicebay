@@ -312,6 +312,75 @@ class TestDnsResolvers(unittest.TestCase):
         for shell in ('bash', 'sh', 'zsh', 'eval'):
             self.assertNotIn(shell, agent.SAFE_EXEC_ALLOWLIST)
 
+    # ---- safe_exec opt-in sudo (#1713) ----
+
+    def _run_safe_exec(self, argv, sudo=None):
+        """Drive the safe_exec branch of handle_command with a mocked executor
+        and capture (the argv actually executed, the reply dict)."""
+        import threading
+        inst = agent.Agent.__new__(agent.Agent)
+        inst.io_lock = threading.Lock()
+
+        captured = {}
+
+        def fake_execute(run_argv, check=False, timeout=None, stdin_data=None):
+            captured['argv'] = run_argv
+            return ('out', '', 0)
+
+        payload = {'argv': argv}
+        if sudo is not None:
+            payload['sudo'] = sudo
+        msg = {'action': 'safe_exec', 'id': 'req-1', 'payload': payload}
+
+        replies = []
+        real_dumps = json.dumps
+
+        class _CapStdout:
+            def write(self, s):
+                # handle_command writes `json + "\0"`.
+                for chunk in s.split('\0'):
+                    if chunk:
+                        replies.append(real_dumps and json.loads(chunk))
+            def flush(self):
+                pass
+
+        with patch.object(agent._executor, 'execute', side_effect=fake_execute), \
+             patch('agent.sys.stdout', _CapStdout()):
+            inst.handle_command(msg)
+
+        reply = replies[-1]['payload'] if replies else {}
+        return captured.get('argv'), reply
+
+    def test_safe_exec_default_is_unprivileged(self):
+        # No `sudo` flag → run the argv verbatim, no `sudo -n` prepended.
+        run_argv, reply = self._run_safe_exec(['lsblk', '-J'])
+        self.assertEqual(run_argv, ['lsblk', '-J'])
+        self.assertIsNone(reply.get('error'))
+        self.assertEqual(reply['result']['code'], 0)
+
+    def test_safe_exec_sudo_false_is_unprivileged(self):
+        run_argv, _ = self._run_safe_exec(['lsblk', '-J'], sudo=False)
+        self.assertEqual(run_argv, ['lsblk', '-J'])
+
+    def test_safe_exec_sudo_true_prepends_sudo_n(self):
+        # Opt-in privilege mirrors the write_file branch: `sudo -n <argv>`.
+        run_argv, reply = self._run_safe_exec(['mount', '-o', 'ro', '/dev/sda1', '/run/servicebay/disk-import/sda1'], sudo=True)
+        self.assertEqual(run_argv[:2], ['sudo', '-n'])
+        self.assertEqual(run_argv[2:], ['mount', '-o', 'ro', '/dev/sda1', '/run/servicebay/disk-import/sda1'])
+        self.assertIsNone(reply.get('error'))
+
+    def test_safe_exec_sudo_still_enforces_allowlist_on_real_binary(self):
+        # Escalation can't smuggle an un-allow-listed binary: argv[0] (the real
+        # binary, not `sudo`) is still checked against SAFE_EXEC_ALLOWLIST.
+        run_argv, reply = self._run_safe_exec(['rm', '-rf', '/'], sudo=True)
+        # 'rm' is allow-listed, so it runs — proving the check is on argv[0]
+        # and sudo is wrapped around it, not bypassing the list.
+        self.assertEqual(run_argv[:2], ['sudo', '-n'])
+        # An un-allow-listed binary is rejected even with sudo:true.
+        run_argv2, reply2 = self._run_safe_exec(['dd', 'if=/dev/zero'], sudo=True)
+        self.assertIsNone(run_argv2)  # never reached the executor
+        self.assertIn('allow-list', reply2.get('error', ''))
+
 
 if __name__ == '__main__':
     unittest.main()

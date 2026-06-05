@@ -18,15 +18,23 @@ const ok = (stdout = ''): SafeExecResult => ({ stdout, stderr: '', code: 0 });
  */
 function mockExec(
   byBinary: Record<string, SafeExecResult | ((argv: string[]) => SafeExecResult)> = {},
-): { exec: SafeExec; calls: string[][] } {
+): { exec: SafeExec; calls: string[][]; opts: ({ timeoutMs?: number; sudo?: boolean } | undefined)[] } {
   const calls: string[][] = [];
-  const exec: SafeExec = vi.fn(async (argv: string[]) => {
+  const opts: ({ timeoutMs?: number; sudo?: boolean } | undefined)[] = [];
+  const exec: SafeExec = vi.fn(async (argv: string[], options?) => {
     calls.push(argv);
+    opts.push(options);
     const handler = byBinary[argv[0]];
     if (handler === undefined) return ok();
     return typeof handler === 'function' ? handler(argv) : handler;
   });
-  return { exec, calls };
+  return { exec, calls, opts };
+}
+
+/** The sudo flag passed alongside the first call whose argv[0] === binary. */
+function sudoFor(calls: string[][], opts: ({ sudo?: boolean } | undefined)[], binary: string): boolean | undefined {
+  const i = calls.findIndex(c => c[0] === binary);
+  return i === -1 ? undefined : opts[i]?.sudo;
 }
 
 describe('listBlockDevices', () => {
@@ -43,7 +51,7 @@ describe('listBlockDevices', () => {
         { name: 'nvme0n1', path: '/dev/nvme0n1', size: 500000000000, fstype: 'ext4', mountpoint: '/', type: 'disk', rm: false },
       ],
     };
-    const { exec, calls } = mockExec({ lsblk: ok(JSON.stringify(tree)) });
+    const { exec, calls, opts } = mockExec({ lsblk: ok(JSON.stringify(tree)) });
 
     const devices = await listBlockDevices(exec);
 
@@ -51,6 +59,9 @@ describe('listBlockDevices', () => {
     expect(calls[0][0]).toBe('lsblk');
     expect(calls[0]).toContain('-J');
     expect(calls[0]).toContain('-b');
+
+    // lsblk is a READ-ONLY enumeration — it must NOT run privileged (#1713).
+    expect(sudoFor(calls, opts, 'lsblk')).not.toBe(true);
 
     const sda1 = devices.find(d => d.path === '/dev/sda1')!;
     expect(sda1.removable).toBe(true); // inherited from parent sda
@@ -73,7 +84,7 @@ describe('listBlockDevices', () => {
 
 describe('mountReadOnly', () => {
   it('mkdirs the mountpoint then mounts -o ro (never rw) at a controlled path', async () => {
-    const { exec, calls } = mockExec();
+    const { exec, calls, opts } = mockExec();
     const mp = await mountReadOnly(exec, '/dev/sda1');
 
     expect(mp).toBe(`${MOUNT_BASE}/sda1`);
@@ -85,6 +96,10 @@ describe('mountReadOnly', () => {
     // Absolutely no read-write mount.
     expect(mount).not.toContain('rw');
     expect(mount.join(' ')).not.toMatch(/\brw\b/);
+
+    // mkdir (under root-owned /run) and mount BOTH run privileged (#1713).
+    expect(sudoFor(calls, opts, 'mkdir')).toBe(true);
+    expect(sudoFor(calls, opts, 'mount')).toBe(true);
   });
 
   it('throws (no mount) on an unsafe device path — shell metacharacters', async () => {
@@ -102,9 +117,11 @@ describe('mountReadOnly', () => {
 
 describe('unmount', () => {
   it('umounts a path inside MOUNT_BASE', async () => {
-    const { exec, calls } = mockExec();
+    const { exec, calls, opts } = mockExec();
     await unmount(exec, `${MOUNT_BASE}/sda1`);
     expect(calls[0]).toEqual(['umount', `${MOUNT_BASE}/sda1`]);
+    // umount needs root too (#1713).
+    expect(sudoFor(calls, opts, 'umount')).toBe(true);
   });
 
   it('refuses to umount a path outside MOUNT_BASE', async () => {

@@ -2104,6 +2104,17 @@ class Agent:
                 argv = payload_dict.get('argv')
                 stdin_data = payload_dict.get('stdin')
                 raw_timeout = payload_dict.get('timeout')
+                # Opt-in privilege escalation (#1713). Default is the historic
+                # unprivileged behaviour (run as `core`); only callers that
+                # explicitly pass `sudo: true` get `sudo -n` prepended. This
+                # mirrors the write_file sudo branch exactly: FCoS gives `core`
+                # passwordless sudo via the default `%wheel ... NOPASSWD: ALL`
+                # drop-in (core is in `wheel`), and `-n` fails fast (no TTY
+                # prompt) if that ever changes. Disk-import's host ops (mkdir
+                # under root-owned /run, mount -o ro, umount, chown to the share
+                # gid, rsync into /mnt/data) all need root; `lsblk` and the
+                # read-only scan (`find`/`sha256sum`) stay unprivileged.
+                use_sudo = bool(payload_dict.get('sudo'))
                 try:
                     timeout_val: Optional[float] = float(raw_timeout) if raw_timeout is not None else None
                 except (TypeError, ValueError):
@@ -2115,9 +2126,14 @@ class Agent:
                     if binary not in SAFE_EXEC_ALLOWLIST:
                         reply(error=f"safe_exec: binary '{binary}' is not on the allow-list. Add it to SAFE_EXEC_ALLOWLIST in agent.py with an audit comment, or use the legacy 'exec' path explicitly.")
                     else:
-                        log_info(f"safe_exec: {' '.join(argv)}")
+                        # The allow-list check is on argv[0] (the real binary),
+                        # NOT on `sudo` — so escalation can never smuggle in an
+                        # un-allow-listed binary: argv[0] must still be on the
+                        # allow-list before we wrap it. `-n` = non-interactive.
+                        run_argv = ['sudo', '-n', *argv] if use_sudo else argv
+                        log_info(f"safe_exec{' (sudo)' if use_sudo else ''}: {' '.join(argv)}")
                         stdout, stderr, returncode = _executor.execute(
-                            argv,
+                            run_argv,
                             check=False,
                             timeout=timeout_val,
                             stdin_data=stdin_data,

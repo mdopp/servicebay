@@ -153,10 +153,13 @@ export async function mountReadOnly(
   name?: string,
 ): Promise<string> {
   const mountpoint = mountpointFor(device, name);
-  await runOk(exec, ['mkdir', '-p', mountpoint], 'mkdir mountpoint');
+  // Privileged: /run is root-owned, and only root can mount. We pass sudo:true
+  // (see hostExec.SafeExec); the agent escalates via `sudo -n`. The argv guards
+  // above (assertSafeDevice / mountpointFor) are unaffected by privilege.
+  await runOk(exec, ['mkdir', '-p', mountpoint], 'mkdir mountpoint', { sudo: true });
   // `-o ro` only. We never pass a caller-supplied option string — the option
   // set is a fixed literal so no `rw`/`exec`/`dev` can be smuggled in.
-  await runOk(exec, ['mount', '-o', 'ro', device, mountpoint], 'mount -o ro');
+  await runOk(exec, ['mount', '-o', 'ro', device, mountpoint], 'mount -o ro', { sudo: true });
   return mountpoint;
 }
 
@@ -166,12 +169,18 @@ export async function unmount(exec: SafeExec, mountpoint: string): Promise<void>
   if (mountpoint !== MOUNT_BASE && !mountpoint.startsWith(`${MOUNT_BASE}/`)) {
     throw new Error(`disk-import: refusing to umount path outside ${MOUNT_BASE}: ${mountpoint}`);
   }
-  await runOk(exec, ['umount', mountpoint], 'umount');
+  // Privileged: unmounting requires root, same as mount above.
+  await runOk(exec, ['umount', mountpoint], 'umount', { sudo: true });
 }
 
 /** Run a safe_exec argv and throw with context on a non-zero exit. */
-async function runOk(exec: SafeExec, argv: string[], what: string): Promise<void> {
-  const { code, stderr } = await exec(argv);
+async function runOk(
+  exec: SafeExec,
+  argv: string[],
+  what: string,
+  options?: { sudo?: boolean },
+): Promise<void> {
+  const { code, stderr } = await exec(argv, options);
   if (code !== 0) {
     throw new Error(`disk-import: ${what} failed (code ${code}): ${stderr}`);
   }

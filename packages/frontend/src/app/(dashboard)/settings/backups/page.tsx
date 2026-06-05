@@ -971,6 +971,7 @@ export default function BackupsSettingsPage() {
           )}
         </div>
 
+        {backupSync.enabled && (
         <div className="p-4 space-y-4">
           {/* Sources — an operator-configurable list of directories, each with
               its own .gitignore-style exclude patterns. Each source rsyncs into
@@ -1187,6 +1188,7 @@ export default function BackupsSettingsPage() {
             </div>
           )}
         </div>
+        )}
       </div>
 
       <ConfirmModal
