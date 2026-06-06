@@ -13,6 +13,10 @@ import { NAVIGATION_ENTRIES, isNavActive } from '@/config/navigation';
 // `@/config/navigation`. (#845)
 export const dashboards = NAVIGATION_ENTRIES;
 
+// Renders nothing — lets SectionHelp act as a plain text link (no icon) in the
+// tidied footer's inline secondary-link row.
+const NoIcon = () => null;
+
 export default function Sidebar() {
     const pathname = usePathname() || '';
   const searchParams = useSearchParams();
@@ -233,38 +237,71 @@ export default function Sidebar() {
             <div className={isCollapsed ? '' : 'px-3.5 py-0.5'}>
                 <DomainTag username={null} collapsed={isCollapsed} />
             </div>
-            {currentUser && (
-                <button
-                    type="button"
-                    onClick={handleLogout}
-                    className={`w-full flex items-center px-3.5 py-2.5 rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] transition-all border border-transparent ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
-                    title={currentUser.source === 'session' ? 'Log out of ServiceBay' : 'Log out — drops the Authelia session'}
-                >
-                    <LogOut size={18} className="shrink-0" />
-                    {!isCollapsed && <span className="text-sm font-semibold whitespace-nowrap overflow-hidden">Log out</span>}
-                </button>
+            {/* Secondary links. Expanded: one compact inline text row (tidy,
+                Solilos-style). Collapsed: the icon buttons, stacked. (#sidebar-footer) */}
+            {!isCollapsed ? (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3.5 pt-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">
+                    <SectionHelp
+                        helpId="changelog"
+                        title="What's new in ServiceBay"
+                        icon={NoIcon}
+                        label="What's new"
+                        className="!p-0 !bg-transparent !border-0 !rounded-none !gap-0 text-xs font-medium text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:!no-underline hover:!opacity-100"
+                    />
+                    <span className="text-gray-300 dark:text-gray-700 select-none" aria-hidden>·</span>
+                    <a
+                        href="https://github.com/mdopp/servicebay"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+                    >
+                        GitHub
+                    </a>
+                    {currentUser && (
+                        <>
+                            <span className="text-gray-300 dark:text-gray-700 select-none" aria-hidden>·</span>
+                            <button
+                                type="button"
+                                onClick={handleLogout}
+                                className="hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+                                title={currentUser.source === 'session' ? 'Log out of ServiceBay' : 'Log out — drops the Authelia session'}
+                            >
+                                Log out
+                            </button>
+                        </>
+                    )}
+                </div>
+            ) : (
+                <>
+                    {currentUser && (
+                        <button
+                            type="button"
+                            onClick={handleLogout}
+                            className="w-full flex items-center justify-center px-3.5 py-2.5 rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] transition-all border border-transparent"
+                            title={currentUser.source === 'session' ? 'Log out of ServiceBay' : 'Log out — drops the Authelia session'}
+                        >
+                            <LogOut size={18} className="shrink-0" />
+                        </button>
+                    )}
+                    <div className="flex justify-center">
+                        <SectionHelp
+                            helpId="changelog"
+                            title="What's new in ServiceBay"
+                            icon={Sparkles}
+                            className="p-2 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
+                        />
+                    </div>
+                    <a
+                        href="https://github.com/mdopp/servicebay"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full flex items-center justify-center px-3.5 py-3 rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] transition-all border border-transparent"
+                        title="View on GitHub"
+                    >
+                        <Code size={20} className="shrink-0" />
+                    </a>
+                </>
             )}
-            <div className={isCollapsed ? 'flex justify-center' : ''}>
-                <SectionHelp
-                    helpId="changelog"
-                    title="What's new in ServiceBay"
-                    icon={Sparkles}
-                    label={isCollapsed ? undefined : "What's new"}
-                    className={isCollapsed
-                        ? 'p-2 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'
-                        : 'w-full flex items-center gap-3.5 px-3.5 py-3 rounded-xl text-gray-500 hover:text-gray-950 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] transition-colors border border-transparent !bg-transparent font-semibold'}
-                />
-            </div>
-            <a
-                href="https://github.com/mdopp/servicebay"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`w-full flex items-center px-3.5 py-3 rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] transition-all border border-transparent ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
-                title="View on GitHub"
-            >
-                <Code size={20} className="shrink-0" />
-                {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">GitHub Repo</span>}
-            </a>
         </div>
     </div>
   );
