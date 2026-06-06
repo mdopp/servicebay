@@ -58,6 +58,46 @@ async function listOidcClientIds(template: string): Promise<string[]> {
   return ids;
 }
 
+/**
+ * ADR 0009 Phase 2 (#1741) — build the `templates[] + variables` payload for a
+ * standalone OIDC reconcile triggered by the `sso_verify` diagnose heal-action.
+ *
+ * Unlike the install path (which receives the live `StackVariable[]` from the
+ * job), an on-demand reconcile has no job context — it must reconstruct the
+ * payload from durable state:
+ *   - `PUBLIC_DOMAIN` ← `config.reverseProxy.publicDomain` (the apex the wizard
+ *     persisted; without it there are no OIDC clients to reconcile).
+ *   - each subdomain value ← the template's `variables.json` `default`. Subdomain
+ *     overrides aren't persisted anywhere readable post-install, and the default
+ *     is the canonical value every OIDC client was registered against; the POST
+ *     endpoint is reconcile-first and skips already-registered client_ids, so a
+ *     stale subdomain just no-ops on the existing client (never rotates a secret).
+ *
+ * Returns `null` when there's nothing to reconcile (no public domain, or no
+ * installed template declares an OIDC client) so the caller can short-circuit.
+ */
+export async function buildOidcReconcilePayload(opts: {
+  installedTemplates: string[];
+  publicDomain: string | undefined;
+}): Promise<{ templates: { name: string }[]; variables: Record<string, string> } | null> {
+  if (!opts.publicDomain) return null;
+  const variables: Record<string, string> = { PUBLIC_DOMAIN: opts.publicDomain };
+  const templates: { name: string }[] = [];
+  for (const name of opts.installedTemplates) {
+    const meta = await getTemplateVariables(name).catch(() => null);
+    if (!meta) continue;
+    let hasOidc = false;
+    for (const [varName, varMeta] of Object.entries(meta)) {
+      if (varMeta.type !== 'subdomain' || !varMeta.oidcClient?.client_id) continue;
+      hasOidc = true;
+      if (varMeta.default) variables[varName] = varMeta.default;
+    }
+    if (hasOidc) templates.push({ name });
+  }
+  if (templates.length === 0) return null;
+  return { templates, variables };
+}
+
 export async function handleInstalled(event: FeatureInstalledEvent): Promise<HandlerResult> {
   const ids = await listOidcClientIds(event.template);
   if (ids.length === 0) return { ok: true };

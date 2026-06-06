@@ -45,6 +45,8 @@
 import { agentManager } from '@/lib/agent/manager';
 import { getConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
+import { internalFetch } from '@/lib/api/internalFetch';
+import { buildOidcReconcilePayload } from '@/lib/capabilities/authelia';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
 
 // #1535 — folded into the consolidated `sso_verify` ("Login / SSO")
@@ -336,6 +338,82 @@ async function restartAuthelia({ node }: { node: string }): Promise<ProbeActionR
     };
   }
 }
+
+// Turn the oidc-clients POST response into the action result the diagnose card
+// renders: a one-line summary + the add/skip diff in the details block.
+function reconcileResult(data: { added?: unknown; skipped?: unknown }): ProbeActionResult {
+  const added = Array.isArray(data.added) ? (data.added as string[]) : [];
+  const skipped = Array.isArray(data.skipped) ? (data.skipped as string[]) : [];
+  const summary =
+    added.length > 0
+      ? `Registered ${added.length} OIDC client(s); ${skipped.length} already present.`
+      : `All ${skipped.length} OIDC client(s) already registered — no change.`;
+  const details = [
+    added.length > 0 ? `added: ${added.join(', ')}` : 'added: (none)',
+    skipped.length > 0 ? `skipped: ${skipped.join(', ')}` : 'skipped: (none)',
+  ].join('\n');
+  return { ok: true, message: summary, details, refresh: true };
+}
+
+// reconcileOidcClients re-registers every installed template's OIDC client with
+// Authelia, reusing each client's persisted secret (the POST endpoint is
+// reconcile-first per #1738 — it skips already-registered client_ids and never
+// rotates a secret). Surgical, idempotent, explicitly-triggered only: ADR 0009
+// Phase 2 (#1741). The diff (added[]/skipped[]) is surfaced in the result so the
+// operator sees exactly what changed.
+async function reconcileOidcClients(): Promise<ProbeActionResult> {
+  const cfg = await getConfig();
+  const payload = await buildOidcReconcilePayload({
+    installedTemplates: Object.keys(cfg.installedTemplates ?? {}),
+    publicDomain: cfg.reverseProxy?.publicDomain,
+  });
+  if (!payload) {
+    return {
+      ok: true,
+      message:
+        'Nothing to reconcile — no public domain configured or no installed service declares an OIDC client.',
+      refresh: false,
+    };
+  }
+
+  let res: Response;
+  try {
+    res = await internalFetch('/api/system/authelia/oidc-clients', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return { ok: false, message: `OIDC reconcile failed: ${message}`, refresh: false };
+  }
+
+  if (res.status === 404) {
+    return {
+      ok: false,
+      message: 'Authelia is not deployed — install the auth stack before reconciling OIDC clients.',
+      refresh: false,
+    };
+  }
+
+  const data = (await res.json().catch(() => ({}))) as { added?: unknown; skipped?: unknown; error?: unknown };
+  if (!res.ok) {
+    const message = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
+    return { ok: false, message: `OIDC reconcile failed: ${message}`, refresh: false };
+  }
+  return reconcileResult(data);
+}
+
+registerProbeAction(
+  PROBE_ID,
+  {
+    id: 'reconcile_oidc_clients',
+    label: 'Reconcile OIDC clients',
+    description:
+      'Re-registers every installed service’s OIDC client with Authelia, reusing each client’s persisted secret (never regenerating). Use when a single client drifted (manual edit, removed outside ServiceBay) and SSO returns invalid_client — a surgical alternative to a full reinstall. Idempotent: already-registered clients are left untouched.',
+  },
+  reconcileOidcClients,
+);
 
 registerProbeAction(
   PROBE_ID,
