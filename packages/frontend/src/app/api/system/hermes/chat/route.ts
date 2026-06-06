@@ -11,6 +11,23 @@ import {
 } from '@/lib/hermes/client';
 
 /**
+ * Turn a thrown {@link HermesError} into the right 503 message. A `401`
+ * means Hermes is reachable but rejected the bearer key — ServiceBay's
+ * stored key has drifted from the externally-deployed engine's
+ * `API_SERVER_KEY` (#1761). That is a DISTINCT, actionable failure from a
+ * genuine outage, so it gets a distinct message pointing at the reconcile
+ * heal-action, never the "Is the Hermes service running?" line used for a
+ * real connection failure. Both stay 503 (the assistant is unavailable to
+ * the caller either way) and never leak the key.
+ */
+function hermesUnavailableMessage(e: HermesError): string {
+  if (e.status === 401) {
+    return 'Hermes authentication failed — the stored API key does not match the running engine. Open Settings → Self-Diagnose and run "Reconcile Hermes API key".';
+  }
+  return 'Hermes is unavailable. Is the Hermes service running?';
+}
+
+/**
  * Maintenance-chat seam (#1754, epic #1704) — the native chat panel (#1755,
  * part B) POSTs operator turns here.
  *
@@ -57,7 +74,7 @@ export const GET = withApiHandler({}, async ({ auth }) => {
     return NextResponse.json({ messages });
   } catch (e) {
     if (e instanceof HermesError) {
-      return apiError(new Error('Hermes is unavailable. Is the Hermes service running?'), {
+      return apiError(new Error(hermesUnavailableMessage(e)), {
         status: 503,
         tag: 'hermes',
         exposeMessage: true,
@@ -91,8 +108,10 @@ export const POST = withApiHandler({ body: bodySchema }, async ({ body, auth }) 
     if (e instanceof HermesError) {
       // Hermes unreachable or returned an error — surface as 503 so the
       // panel can show "the assistant is unavailable" without leaking the
-      // key or internal detail.
-      return apiError(new Error('Hermes is unavailable. Is the Hermes service running?'), {
+      // key or internal detail. A 401 (key drift) gets a DISTINCT message
+      // pointing at the reconcile heal-action (#1761), not the generic
+      // "is it running?" line.
+      return apiError(new Error(hermesUnavailableMessage(e)), {
         status: 503,
         tag: 'hermes',
         exposeMessage: true,

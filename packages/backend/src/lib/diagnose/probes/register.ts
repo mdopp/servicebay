@@ -30,5 +30,6 @@ import './domainUnreachable';
 import './lanIpChanged';
 import './oidcProviderReachable';
 import './ssoVerify';
+import './hermesChat';
 
 export {};
