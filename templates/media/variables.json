@@ -34,22 +34,15 @@
   },
   "ABS_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for Audiobookshelf",
+    "description": "Subdomain for audiobooks. Audiobookshelf is retired (#1725/#1730); `books.<domain>` now serves Jellyfin's /media/audiobooks library — the operator keeps the `books` URL but it routes to Jellyfin (JELLYFIN_PORT). No OIDC client: Jellyfin authenticates via LLDAP (#1718), not a per-service OIDC secret.",
     "default": "books",
     "exposure": "public",
-    "proxyPort": "ABS_PORT",
+    "proxyPort": "JELLYFIN_PORT",
     "proxyConfig": {
       "allow_websocket_upgrade": true,
       "block_exploits": true,
-      "ssl_forced": true
-    },
-    "oidcClient": {
-      "client_id": "audiobookshelf",
-      "client_name": "Audiobookshelf",
-      "authorization_policy": "one_factor",
-      "redirect_uris": ["/auth/openid/callback", "/auth/openid/mobile-redirect"],
-      "scopes": ["openid", "profile", "email", "groups"],
-      "clientSecretVar": "ABS_OIDC_SECRET"
+      "ssl_forced": true,
+      "advanced_config": "# Jellyfin needs a higher body limit for chunked uploads (cover\n# art replacement, library imports). Default NPM cap of 1MB rejects\n# those.\nclient_max_body_size 100M;"
     }
   },
   "JELLYFIN_PORT": {
