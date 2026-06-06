@@ -29,6 +29,44 @@ const bodySchema = z.object({
   input: z.string().min(1, 'input is required'),
 });
 
+/**
+ * Load the maintenance session's persisted conversation so the panel can
+ * restore it on mount (#1760). Same server-side seam as POST — the Hermes key
+ * never leaves the backend. GET is non-mutating so it skips the requireSession
+ * gate; `/api/system/*` is gated by the proxy. Returns `{ messages }` on 200,
+ * a graceful 503 when Hermes is not configured / unreachable.
+ */
+export const GET = withApiHandler({}, async ({ auth }) => {
+  const userId = auth?.user ?? 'servicebay-operator';
+
+  const config = await getConfig();
+  const conn = resolveHermesConnection(config);
+  const client = new HermesClient(conn);
+
+  if (!client.configured) {
+    return apiError(new Error('Hermes is not configured on this server'), {
+      status: 503,
+      tag: 'hermes',
+      exposeMessage: true,
+    });
+  }
+
+  try {
+    const sessionId = await getOrCreateMaintenanceSession(client, userId);
+    const messages = await client.getMessages(sessionId);
+    return NextResponse.json({ messages });
+  } catch (e) {
+    if (e instanceof HermesError) {
+      return apiError(new Error('Hermes is unavailable. Is the Hermes service running?'), {
+        status: 503,
+        tag: 'hermes',
+        exposeMessage: true,
+      });
+    }
+    return apiError(e, { tag: 'hermes' });
+  }
+});
+
 export const POST = withApiHandler({ body: bodySchema }, async ({ body, auth }) => {
   // The session gate guarantees `auth` is set on this mutating route.
   const userId = auth?.user ?? 'servicebay-operator';
