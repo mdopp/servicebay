@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.105.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.104.0...servicebay-v4.105.0) (2026-06-06)
+
+
+### Features
+
+* **hermes:** chat history reload, API-key reconcile, and image-gated update availability ([51168f0](https://github.com/mdopp/servicebay/commit/51168f0070a0b4404b5dcead141c89b5b620c8d2))
+
+
+### Bug Fixes
+
+* **hermes:** reconcile API key with running engine + distinguish 401 from outage ([b682d15](https://github.com/mdopp/servicebay/commit/b682d15f3c32247667c719ab4a20cb600735d9c0)), closes [#1761](https://github.com/mdopp/servicebay/issues/1761)
+* **hermes:** reload maintenance chat history on mount ([cc998a5](https://github.com/mdopp/servicebay/commit/cc998a5774c331a69494213e2c102baaf35db611)), closes [#1760](https://github.com/mdopp/servicebay/issues/1760)
+* **updater:** gate update-available on image digest, not just release tag ([b6497e8](https://github.com/mdopp/servicebay/commit/b6497e8b298baefcffbf8e3d9fc22e8ff6e4e238)), closes [#1762](https://github.com/mdopp/servicebay/issues/1762)
+
 ## [4.104.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.103.0...servicebay-v4.104.0) (2026-06-06)
 
 
