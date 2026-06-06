@@ -26,6 +26,13 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush, replace: mockPush }),
 }));
 
+// Sidebar consumes the digital twin (#1755 gates the Maintenance Chat link on
+// installedTemplates). These structural tests render Sidebar bare, outside a
+// DigitalTwinProvider, so stub the hook to a no-twin snapshot.
+vi.mock('@/hooks/useDigitalTwin', () => ({
+  useDigitalTwin: () => ({ data: null, isConnected: false, lastUpdate: 0, isNodeSynced: () => false }),
+}));
+
 const withToast = (ui: React.ReactNode) => render(<ToastProvider>{ui}</ToastProvider>);
 
 function setViewport(width: number) {

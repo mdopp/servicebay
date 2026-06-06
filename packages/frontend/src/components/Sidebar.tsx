@@ -2,11 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ChevronLeft, Code, Users, ExternalLink, Sparkles, Home, User as UserIcon, LogOut } from 'lucide-react';
+import { ChevronLeft, Code, Users, ExternalLink, Sparkles, Home, User as UserIcon, LogOut, MessageCircle } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
 import DomainTag from './DomainTag';
 import { NAVIGATION_ENTRIES, isNavActive } from '@/config/navigation';
+import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
 // Back-compat re-export — MobileNav imports `dashboards` from here.
 // New code should import NAVIGATION_ENTRIES directly from
@@ -22,6 +23,11 @@ export default function Sidebar() {
   const searchParams = useSearchParams();
   const node = searchParams?.get('node');
   const router = useRouter();
+  const { data: twin } = useDigitalTwin();
+  // #1755 — the maintenance chat link only appears once Hermes is installed
+  // (the assistant has nothing to talk to otherwise). Gated on the live
+  // digital-twin installedTemplates, like the rest of the service-aware UI.
+  const hermesInstalled = Boolean(twin?.installedTemplates?.includes('hermes'));
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showCollapsedNodeLabel, setShowCollapsedNodeLabel] = useState(false);
   const [lldapUrl, setLldapUrl] = useState<string | null>(null);
@@ -174,6 +180,20 @@ export default function Sidebar() {
                     </button>
                 );
             })}
+            {hermesInstalled && (
+                <button
+                    onClick={() => router.push(`/chat${node ? `?node=${node}` : ''}`)}
+                    className={`w-full text-left px-3.5 py-3 rounded-xl flex items-center transition-all border ${
+                        isNavActive(pathname, '/chat')
+                        ? 'bg-blue-50 dark:bg-blue-600/10 border-blue-100 dark:border-blue-500/20 text-blue-600 dark:text-blue-400 font-bold shadow-sm shadow-blue-500/5'
+                        : 'border-transparent hover:bg-gray-200/60 dark:hover:bg-white/[0.02] text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                    } ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
+                    title={isCollapsed ? 'Maintenance Chat' : ''}
+                >
+                    <MessageCircle size={20} className={`shrink-0 ${isNavActive(pathname, '/chat') ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-500'}`} />
+                    {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">Maintenance Chat</span>}
+                </button>
+            )}
             {lldapUrl && (
                 <a
                     href={lldapUrl}
