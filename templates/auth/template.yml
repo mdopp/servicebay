@@ -6,7 +6,9 @@ metadata:
     app: auth
   annotations:
     servicebay.label: "Sign-In Gate"
-    servicebay.schema-version: "1"
+    # v2 (#1737): authelia container now waits for LLDAP's LDAP socket before
+    # starting, eliminating the fatal startup-race crash. No data move.
+    servicebay.schema-version: "2"
     servicebay.tier: "infrastructure"
     # post-deploy.py calls /api/system/lldap/* and /api/system/authelia/*.
     # Pin the API versions (#588) so core refuses to invoke this script if
@@ -64,8 +66,37 @@ spec:
         name: lldap-data
 
   # 2. Authelia — SSO portal + OIDC IdP, backed by LLDAP via localhost.
+  #    #1737: containers in a pod start in PARALLEL — YAML order is not start
+  #    order. Authelia's startup LDAP check then races LLDAP's socket and the
+  #    process exits fatally ("error dialing 'ldap://localhost:3890':
+  #    connection refused / fatal: ... startup checks"). systemd Restart=
+  #    eventually recovers, but every restart/reboot/redeploy opened an SSO
+  #    outage window. Per ADR 0009 (prevent, don't repair-after) we gate the
+  #    authelia start on LLDAP's LDAP socket being open with a deterministic,
+  #    no-LLM, bounded wait wrapper, then hand off to the image's normal
+  #    entrypoint (no args → preserves authelia's default /config discovery
+  #    + the entrypoint's PUID/su-exec handling).
+  #    - `nc` ships in the authelia image at /bin/nc (busybox); `nc -z` is a
+  #      pure socket probe (no LDAP auth, no data written).
+  #    - Bounded to ~120s so a genuinely-down LLDAP still surfaces a clear
+  #      failure (and systemd Restart= retries) instead of hanging forever.
   - name: authelia
     image: docker.io/authelia/authelia:latest
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        i=0
+        until nc -z localhost {{LLDAP_LDAP_PORT}}; do
+          i=$((i+1))
+          if [ "$i" -ge 120 ]; then
+            echo "authelia: LLDAP LDAP socket :{{LLDAP_LDAP_PORT}} not ready after ${i}s; starting anyway (systemd will restart on fatal exit)" >&2
+            break
+          fi
+          [ "$i" -eq 1 ] && echo "authelia: waiting for LLDAP LDAP socket localhost:{{LLDAP_LDAP_PORT}} ..."
+          sleep 1
+        done
+        echo "authelia: LLDAP LDAP socket reachable; starting authelia"
+        exec /app/entrypoint.sh
     ports:
       - containerPort: {{AUTHELIA_PORT}}
     volumeMounts:
