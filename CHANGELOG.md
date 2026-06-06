@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.101.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.100.0...servicebay-v4.101.0) (2026-06-06)
+
+
+### Features
+
+* **mcp:** add server instructions + teach the service-container model ([7ab4b80](https://github.com/mdopp/servicebay/commit/7ab4b80e149967a92c284880dd854db975aab011)), closes [#1732](https://github.com/mdopp/servicebay/issues/1732)
+
+
+### Bug Fixes
+
+* **media:** drop shared-tree SELinux relabel + finish ABS retirement ([b6daac6](https://github.com/mdopp/servicebay/commit/b6daac6a4b35a96ddbe0001d5f73dd0ea248a5a8)), closes [#1730](https://github.com/mdopp/servicebay/issues/1730) [#1731](https://github.com/mdopp/servicebay/issues/1731)
+* **media:** finish ABS retirement + drop shared-tree SELinux relabel; managed-Quadlet detection; MCP self-description ([2f390f5](https://github.com/mdopp/servicebay/commit/2f390f5a71d54838b4507446f3dbf5971ded628f))
+* **services:** treat single-container Quadlets in installedTemplates as managed ([b9d3a7a](https://github.com/mdopp/servicebay/commit/b9d3a7a6fbc5a51212520c1c79f2ae1d7dad7ea9)), closes [#1733](https://github.com/mdopp/servicebay/issues/1733)
+
 ## [4.100.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.99.2...servicebay-v4.100.0) (2026-06-06)
 
 
