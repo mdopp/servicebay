@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.100.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.99.2...servicebay-v4.100.0) (2026-06-06)
+
+
+### Features
+
+* **media:** retire Audiobookshelf for fresh installs, serve audiobooks via Jellyfin ([526c67b](https://github.com/mdopp/servicebay/commit/526c67b88899142f70f0dbfdd47b53768df0f0f8)), closes [#1725](https://github.com/mdopp/servicebay/issues/1725)
+
+
+### Bug Fixes
+
+* **auth:** preserve other stacks' Authelia OIDC clients on auth redeploy ([ea3ee4e](https://github.com/mdopp/servicebay/commit/ea3ee4e2d9a73a3bb38271336407e096cf1b3cc5)), closes [#1724](https://github.com/mdopp/servicebay/issues/1724)
+
 ## [4.99.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.99.1...servicebay-v4.99.2) (2026-06-05)
 
 
