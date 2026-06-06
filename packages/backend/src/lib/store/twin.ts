@@ -353,7 +353,7 @@ export class DigitalTwinStore {
     public rebuildBundlesNow(nodeId: string): void {
         const node = this.nodes[nodeId];
         if (!node) return;
-        const built = buildServiceBundlesForNode({ nodeName: nodeId, services: node.services, containers: node.containers, files: node.files });
+        const built = buildServiceBundlesForNode({ nodeName: nodeId, services: node.services, containers: node.containers, files: node.files, installedTemplates: this.installedTemplates });
         const dismissed = new Set(node.dismissedBundles || []);
         node.unmanagedBundles = dismissed.size > 0 ? built.filter(b => !dismissed.has(b.id)) : built;
         this.notifyListeners();
@@ -979,10 +979,29 @@ export class DigitalTwinStore {
       this.notifyListeners();
   }
 
+  // #1733: base names of services ServiceBay installed (config.installedTemplates
+  // keys). Fed by the server on config load/sync so the bundle builder can treat
+  // a single-container .container Quadlet (no pod, e.g. the ollama GPU fixup) as
+  // managed instead of a Standalone container.
+  public installedTemplates: Set<string> = new Set();
+
+  public setInstalledTemplates(names: Iterable<string>): void {
+      const next = new Set(names);
+      // Rebuild bundles only when the set actually changed — avoids churn on
+      // every config read.
+      const changed = next.size !== this.installedTemplates.size
+          || [...next].some(n => !this.installedTemplates.has(n));
+      this.installedTemplates = next;
+      if (changed) {
+          Object.keys(this.nodes).forEach(nodeId => this.rebuildBundlesNow(nodeId));
+      }
+  }
+
   public getSnapshot() {
       return {
           instanceId: this.instanceId,
           serverName: this.serverName,
+          installedTemplates: [...this.installedTemplates],
           nodes: this.nodes,
           gateway: this.gateway,
           proxyState: this.proxyState

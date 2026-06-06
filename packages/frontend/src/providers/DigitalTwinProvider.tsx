@@ -8,6 +8,10 @@ import { logger } from '@servicebay/api-client';
 export interface DigitalTwinSnapshot {
   instanceId?: string;
   serverName?: string | null;
+  // #1733: base names ServiceBay installed (config.installedTemplates keys);
+  // lets the service view treat a single-container .container Quadlet (no pod)
+  // as managed rather than a Standalone container.
+  installedTemplates?: string[];
   nodes: Record<string, NodeTwin>;
   gateway: GatewayState;
   proxyState: ProxyState;

@@ -117,7 +117,7 @@ export interface ServiceUnit {
   active?: boolean;
   isReverseProxy?: boolean;
   isServiceBay?: boolean;
-  isManaged?: boolean; // True if backed by a .kube file (ServiceBay Stack)
+  isManaged?: boolean; // True if backed by a .kube/.container Quadlet (ServiceBay Stack), or whose base name is in config.installedTemplates (#1733 — single-container GPU Quadlets like ollama.container).
   isPrimaryProxy?: boolean; // Managed by TwinStore (Consistency)
   associatedContainerIds?: string[]; // IDs of containers managed by this service (SINGLE SOURCE OF TRUTH)
   ports?: PortMapping[];

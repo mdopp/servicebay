@@ -87,3 +87,62 @@ describe('buildServiceViewModel — display fields (#844)', () => {
     expect(vm?.yamlBasename).toBeNull();
   });
 });
+
+describe('buildServiceViewModel — managed detection for .container Quadlets (#1733)', () => {
+  // A single-container .container Quadlet (the ollama GPU fixup, #1026) has no
+  // .kube/pod, so the agent may not flag it managed. When its base name is in
+  // installedTemplates it must still resolve as a managed service, not fall
+  // through to null (which would group it under Standalone Containers).
+  function makeContainerUnit(overrides: Partial<ServiceUnit> = {}): ServiceUnit {
+    return makeUnit({
+      name: 'ollama.service',
+      path: '/var/home/core/.config/containers/systemd/ollama.container',
+      isManaged: false,
+      ...overrides,
+    });
+  }
+
+  it('resolves managed when base name is in installedTemplates even with isManaged=false and no .kube', () => {
+    const vm = buildServiceViewModel({
+      unit: makeContainerUnit(),
+      nodeName: 'Local',
+      nodeState: makeTwin(),
+      installedTemplates: ['ollama'],
+    });
+    expect(vm).not.toBeNull();
+    expect(vm?.isManaged).toBe(true);
+    expect(vm?.type).toBe('kube');
+    expect(vm?.displayName).toBe('ollama');
+  });
+
+  it('still returns null for an unflagged .container unit NOT in installedTemplates', () => {
+    const vm = buildServiceViewModel({
+      unit: makeContainerUnit({ name: 'stray.service' }),
+      nodeName: 'Local',
+      nodeState: makeTwin(),
+      installedTemplates: ['ollama'],
+    });
+    expect(vm).toBeNull();
+  });
+
+  it('still resolves managed via the agent isManaged flag with no installedTemplates passed', () => {
+    const vm = buildServiceViewModel({
+      unit: makeContainerUnit({ isManaged: true }),
+      nodeName: 'Local',
+      nodeState: makeTwin(),
+    });
+    expect(vm).not.toBeNull();
+    expect(vm?.isManaged).toBe(true);
+  });
+
+  it('is generic — any installedTemplates base name resolves, not just ollama', () => {
+    const vm = buildServiceViewModel({
+      unit: makeContainerUnit({ name: 'whisper.service', path: '/x/whisper.container' }),
+      nodeName: 'Local',
+      nodeState: makeTwin(),
+      installedTemplates: ['whisper'],
+    });
+    expect(vm).not.toBeNull();
+    expect(vm?.isManaged).toBe(true);
+  });
+});
