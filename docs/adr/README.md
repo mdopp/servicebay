@@ -25,3 +25,4 @@ ratcheted invariants see [../ARCHITECTURE_INVARIANTS.md](../ARCHITECTURE_INVARIA
 | [0006](0006-authelia-apex-deny-vs-wildcard.md) | Authelia: bare apex is default-deny; only `*.<domain>` is `one_factor` |
 | [0007](0007-container-network-isolation-and-carveouts.md) | App pods move off `hostNetwork`; named carve-outs stay on host networking |
 | [0008](0008-tui-desired-state-and-journey.md) | TUI = desired-state stack editor + numbered setup-journey menu |
+| [0009](0009-service-tokens-and-trust.md) | Tokens & trust between services: per-box identity secrets, SSO, scoped named tokens, the LAN-only bootstrap reconnect bridge, allow-listed host exec |
