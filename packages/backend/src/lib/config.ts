@@ -355,6 +355,18 @@ export interface AppConfig {
   setupCompleted?: boolean;
   stackSetupPending?: boolean;
   /**
+   * Hermes maintenance-chat state (#1754, epic #1704). The Hermes API
+   * connection itself (loopback port + bearer key) is NOT stored here —
+   * the port comes from `templateSettings.HERMES_API_PORT` and the key
+   * from `installedSecrets.HERMES_API_KEY` (encrypted at rest, server-side
+   * only, never sent to the browser). This block holds only the id of the
+   * single designated maintenance session so it's stable across calls.
+   */
+  hermes?: {
+    /** Id of the persistent admin-for-families maintenance session. */
+    maintenanceSessionId?: string;
+  };
+  /**
    * Set by `setup-config-merge.service` on re-install when an existing
    * config.json was merged with a freshly-staged ISO config. The
    * dashboard reads `reinstall.completedAt` to show a "Welcome back —
