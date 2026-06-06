@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.102.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.102.1...servicebay-v4.102.2) (2026-06-06)
+
+
+### Bug Fixes
+
+* **auth:** add migrations/v1-to-v2.py to complete the auth schema-v2 chain ([bb2dcbb](https://github.com/mdopp/servicebay/commit/bb2dcbbb1ec85f72c5f8573fc342a5267cd23b21))
+* **auth:** add migrations/v1-to-v2.py to complete the auth schema-v2 chain ([2c50a8b](https://github.com/mdopp/servicebay/commit/2c50a8b510dd697391ae33b7c674f9ef2d3f4628)), closes [#1749](https://github.com/mdopp/servicebay/issues/1749)
+
 ## [4.102.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.102.0...servicebay-v4.102.1) (2026-06-06)
 
 
