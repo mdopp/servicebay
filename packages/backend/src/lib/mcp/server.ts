@@ -438,7 +438,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   // --- Get Service Files ---
   server.tool(
     'get_service_files',
-    'Get kube YAML, compose YAML, and systemd unit files for a service',
+    'Get the on-disk files for a service. Returns `kubeContent` = the systemd `.kube` Quadlet unit ([Kube]/[Install] sections), and `yamlContent` = the Kubernetes Pod-spec `.yml` (apiVersion/kind/spec). WARNING: these field names are REVERSED relative to update_service_yaml — to edit and write back the pod spec, pass this tool\'s `yamlContent` into update_service_yaml\'s `kubeContent`/`podSpecContent` param, NOT this tool\'s `kubeContent` (that is the Quadlet unit, which update_service_yaml regenerates on its own).',
     { name: z.string().describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
       const nodeName = await resolveNode(node);
@@ -803,24 +803,42 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   // --- Update Service YAML (edit then redeploy) ---
   server.tool(
     'update_service_yaml',
-    'Replace a service\'s kube YAML and redeploy it. Use `get_service_files` first, modify, then call this. The file is written and `systemctl --user daemon-reload` + service restart is triggered.',
+    'Replace a service\'s Kubernetes Pod-spec `.yml` and redeploy it. Use `get_service_files` first, modify, then call this. NOTE the field-name mismatch: the content this tool wants (in `kubeContent`/`podSpecContent`) is the POD SPEC — i.e. the `yamlContent` returned by get_service_files (apiVersion/kind/spec), NOT its `kubeContent` (the `.kube` Quadlet unit). The Quadlet unit is regenerated automatically; do not pass it here. The file is written and `systemctl --user daemon-reload` + service restart is triggered.',
     {
       name: z.string().regex(/^[a-zA-Z0-9_.-]+$/, 'invalid service name').describe('Service name'),
-      kubeContent: z.string().min(1).describe('Full kube YAML content (replaces existing)'),
+      kubeContent: z.string().min(1).optional().describe('The Pod-spec `.yml` content (the `yamlContent` from get_service_files, apiVersion/kind/spec) — NOT the `.kube` Quadlet unit. Historical name; prefer `podSpecContent`. One of kubeContent / podSpecContent is required.'),
+      podSpecContent: z.string().min(1).optional().describe('Alias for kubeContent — the Pod-spec `.yml` content (apiVersion/kind/spec). Clearer name for the same field; takes precedence if both are given.'),
       yamlContent: z.string().optional().describe('Optional companion compose/config YAML'),
       yamlFileName: z.string().optional().describe('Filename for companion YAML (default: <name>.yaml)'),
       node: nodeParam,
     },
-    async ({ name, kubeContent, yamlFileName, node }) => {
+    async ({ name, kubeContent, podSpecContent, yamlFileName, node }) => {
       const nodeName = await resolveNode(node);
       try {
+        const podSpec = podSpecContent ?? kubeContent;
+        if (!podSpec) {
+          return errorResult('Error updating service: provide the Pod-spec `.yml` content via `podSpecContent` (or `kubeContent`).');
+        }
+        // Field-name footgun guard: get_service_files returns the `.kube`
+        // Quadlet unit under `kubeContent`. If a caller round-trips that field
+        // verbatim into here, the `[Kube]`/`[Unit]` systemd unit would be
+        // written into the Pod-spec `.yml` and clobber the manifest. Reject it
+        // with a pointer to the right field rather than silently swapping the
+        // on-disk files (memory: reference_box_credential_rekey_mechanics).
+        if (/^\s*\[(Unit|Kube|Install|Container|Service)\]/m.test(podSpec)) {
+          return errorResult(
+            'Error updating service: the content looks like a systemd `.kube` Quadlet unit (has a [Kube]/[Unit] section), not a Pod-spec `.yml`. ' +
+            'update_service_yaml expects the POD SPEC — that is the `yamlContent` field from get_service_files (apiVersion/kind/spec), NOT its `kubeContent`. ' +
+            'The Quadlet unit is regenerated automatically; pass the pod spec instead.',
+          );
+        }
         const resolvedYamlFileName = yamlFileName ?? `${name}.yml`;
         const generatedKubeUnit = `[Kube]\nYaml=${resolvedYamlFileName}\nAutoUpdate=registry\n\n[Install]\nWantedBy=default.target`;
         await ServiceManager.deployKubeService(
           nodeName,
           name,
           generatedKubeUnit,
-          kubeContent,
+          podSpec,
           resolvedYamlFileName,
         );
         return textResult(`Service "${name}" updated and redeployed`);
