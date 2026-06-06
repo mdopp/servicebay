@@ -40,6 +40,67 @@ function generateSecret(length = 32): string {
   return Array.from(bytes).map(b => chars[b % chars.length]).join('');
 }
 
+/**
+ * Strip Authelia's stored-secret format prefix off an on-disk
+ * `client_secret`. Authelia stores plaintext client secrets as
+ * `$plaintext$<secret>` (and hashed ones as `$pbkdf2-sha512$…` / `$argon2…`).
+ * The service side (immich system_metadata, vaultwarden env, …) holds the
+ * RAW secret, so a reused secret must be the un-prefixed plaintext.
+ *
+ * Returns the raw plaintext for a `$plaintext$`-prefixed value, the value
+ * verbatim if it carries no recognised prefix, or `null` for a hashed
+ * secret (which can't be recovered to plaintext — caller must regenerate).
+ */
+export function extractPlaintextSecret(stored: unknown): string | null {
+  if (typeof stored !== 'string' || !stored) return null;
+  if (stored.startsWith('$plaintext$')) {
+    const raw = stored.slice('$plaintext$'.length);
+    return raw || null;
+  }
+  // A hashed secret ($pbkdf2…/$argon2…) is one-way — not reusable as the
+  // raw value the service holds. Signal "no reusable plaintext".
+  if (stored.startsWith('$')) return null;
+  // No prefix → already raw plaintext (legacy / hand-edited config).
+  return stored;
+}
+
+/**
+ * #1738 — pick the client_secret for a (re)registration, reconcile-first.
+ *
+ * The invariant (ADR 0009): the secret in Authelia's client and the secret
+ * the consuming service holds must be the SAME value, and re-registering an
+ * existing client must NEVER rotate it (regeneration is the drift that
+ * caused `invalid_client` after every reinstall/redeploy).
+ *
+ * Resolution order:
+ *   1. **Persisted on-disk secret** (the already-registered client's
+ *      `client_secret`, un-prefixed) — the source of truth the service was
+ *      configured against. Reuse it verbatim. This is the reconcile path.
+ *   2. **Wizard-supplied secret** (`variables[clientSecretVar]`) — first
+ *      install, where the same value is written to the service env and here.
+ *   3. **Generate once** — brand-new client with no persisted and no
+ *      supplied secret.
+ *
+ * @param persistedSecret  the existing client's on-disk `client_secret`
+ *                         (with Authelia's `$plaintext$` prefix), or
+ *                         undefined when the client isn't registered yet.
+ * @param suppliedSecret   `variables[clientSecretVar]`, when the template
+ *                         pins a secret var and the wizard provided a value.
+ * @param generate         secret factory (injected for testability).
+ * @returns `{ secret, reused }` — `reused` true when an existing secret was
+ *          kept (cases 1 & 2 with a real value), false when generated.
+ */
+export function resolveOidcClientSecret(
+  persistedSecret: string | undefined,
+  suppliedSecret: string | undefined,
+  generate: () => string = generateSecret,
+): { secret: string; reused: boolean } {
+  const persisted = extractPlaintextSecret(persistedSecret);
+  if (persisted) return { secret: persisted, reused: true };
+  if (suppliedSecret) return { secret: suppliedSecret, reused: true };
+  return { secret: generate(), reused: false };
+}
+
 interface OidcClientsRequest {
   /** Template names to extract OIDC client definitions from */
   templates: { name: string; source?: string }[];
@@ -84,10 +145,14 @@ export const POST = withApiHandler({}, async ({ request }) => {
           .filter((uri): uri is string => uri !== null);
         if (redirectUris.length === 0) continue; // skip rather than register an empty client
 
-        // If the template references an env-var-pinned secret (`clientSecretVar`),
-        // use the wizard-provided value so the SAME secret is in both the
-        // service's env and Authelia's clients[]. Otherwise auto-generate.
-        const sharedSecret = oidc.clientSecretVar
+        // #1738 — defer the client_secret decision until after we've read
+        // the on-disk Authelia config: a client that's already registered
+        // must REUSE its persisted secret (the value the service was
+        // configured against), never a freshly generated one. We carry the
+        // wizard-supplied value (when the template pins a `clientSecretVar`)
+        // and resolve the final secret per-client below via
+        // `resolveOidcClientSecret`.
+        const suppliedSecret = oidc.clientSecretVar
           ? body.variables[oidc.clientSecretVar]
           : undefined;
 
@@ -97,7 +162,7 @@ export const POST = withApiHandler({}, async ({ request }) => {
           authorization_policy: oidc.authorization_policy,
           redirect_uris: redirectUris,
           scopes: oidc.scopes,
-          client_secret: sharedSecret || generateSecret(),
+          supplied_secret: suppliedSecret,
           // RFC 6749 default is `client_secret_basic`. Templates whose
           // OIDC client library uses a different default (Immich's admin
           // API explicitly sends `client_secret_post`) override here.
@@ -176,20 +241,39 @@ export const POST = withApiHandler({}, async ({ request }) => {
     const existingClients = autheliaConfig?.identity_providers?.oidc?.clients || [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const existingIds = new Set(existingClients.map((c: any) => c.client_id));
+    // #1738 — map of already-persisted client_secret per client_id, so a
+    // re-registration reconciles to the value the service was configured
+    // against instead of minting a fresh one (the `invalid_client` drift).
+    const persistedSecretById = new Map<string, string>();
+    for (const c of existingClients) {
+      if (typeof c?.client_id === 'string' && typeof c?.client_secret === 'string') {
+        persistedSecretById.set(c.client_id, c.client_secret);
+      }
+    }
 
     const added: string[] = [];
     const skipped: string[] = [];
 
     for (const client of clients) {
       if (existingIds.has(client.client_id)) {
+        // Already registered → leave it (and its persisted secret) untouched.
+        // Reconcile-first by contract: we never rotate an existing secret.
         skipped.push(client.client_id);
         continue;
       }
 
+      // #1738 — pick the secret reconcile-first: a persisted on-disk value
+      // (if this client_id was registered before) wins, else the
+      // wizard/installedSecrets-supplied value, else generate exactly once.
+      const { secret } = resolveOidcClientSecret(
+        persistedSecretById.get(client.client_id),
+        client.supplied_secret,
+      );
+
       existingClients.push({
         client_id: client.client_id,
         client_name: client.client_name,
-        client_secret: `$plaintext$${client.client_secret}`,
+        client_secret: `$plaintext$${secret}`,
         public: false,
         authorization_policy: client.authorization_policy || 'one_factor',
         redirect_uris: client.redirect_uris,

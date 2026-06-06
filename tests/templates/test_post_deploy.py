@@ -686,23 +686,21 @@ class FileShareScript(unittest.TestCase):
 class MediaScript(unittest.TestCase):
     def test_no_passwords_emits_nothing_and_returns_zero(self):
         m = load_script("media")
-        # No ABS_ADMIN_PASSWORD / NAVIDROME_ADMIN_PASSWORD → seed_media
-        # short-circuits, no HTTP calls.
+        # No JELLYFIN_ADMIN_PASSWORD → main short-circuits the Jellyfin
+        # banner + first-run, no HTTP calls, no credentials emitted.
         with run_with_env({"HOST": "h"}):
             rc, out = capture_main(m)
         self.assertEqual(rc, 0)
         self.assertEqual(parse_credentials(out), [])
-        self.assertIn("no admin password", out)
 
     def test_credentials_emitted_with_mocked_seed(self):
         m = load_script("media")
-        # Jellyfin doesn't reach the proxy media-init path — its setup
-        # talks straight to /System/Info/Public and the /Startup/* +
-        # /Users/AuthenticateByName endpoints. Mock all of those so
-        # the script walks happy-path without a real Jellyfin behind
-        # 127.0.0.1.
+        # Jellyfin's setup talks straight to /System/Info/Public and the
+        # /Startup/* + /Users/AuthenticateByName endpoints. Mock all of
+        # those so the script walks happy-path without a real Jellyfin
+        # behind 127.0.0.1. (Audiobookshelf retired in #1725/#1740 —
+        # Jellyfin is the only media credential now.)
         responses = {
-            "/api/system/media/init": {"status": 200, "body": {"ok": True, "alreadySetup": True}},
             "/System/Info/Public": {"status": 200, "body": {"StartupWizardCompleted": False}},
             "/Startup/FirstUser": {"status": 200, "body": {"Name": "stub"}},
             "/Startup/Configuration": {"status": 204, "body": None},
@@ -716,8 +714,6 @@ class MediaScript(unittest.TestCase):
         env = {
             "HOST": "h",
             "SB_API_URL": "http://sb.test",
-            "ABS_ADMIN_PASSWORD": "abs-pass",
-            "ABS_PORT": "13378",
             "JELLYFIN_ADMIN_PASSWORD": "jf-pass",
             "JELLYFIN_PORT": "8096",
         }
@@ -726,15 +722,13 @@ class MediaScript(unittest.TestCase):
             rc, out = capture_main(m)
         self.assertEqual(rc, 0)
         services = {c["service"] for c in parse_credentials(out)}
-        self.assertIn("Audiobookshelf", services)
         self.assertIn("Jellyfin", services)
-        # Neither admin password may leak into user-visible log lines
+        # The admin password may not leak into user-visible log lines
         # (#321) — only travel via __SB_CREDENTIAL__ markers.
         log_only = "\n".join(
             line for line in out.splitlines()
             if not line.startswith("__SB_CREDENTIAL__ ")
         )
-        self.assertNotIn("abs-pass", log_only)
         self.assertNotIn("jf-pass", log_only)
 
     # ── #1725: Audiobookshelf retired; Jellyfin serves audiobooks ─────────
@@ -947,157 +941,6 @@ class MediaScript(unittest.TestCase):
             if meth == "POST" and u.endswith("/Startup/User")
         )
         self.assertLess(get_first, post_user)
-
-    # ── #1717: Audiobookshelf OIDC client_secret DB re-stamp ──────────────
-    #
-    # On a wipe-configs reinstall ABS keeps its OIDC client_secret in
-    # absdatabase.sqlite (DATA) while Authelia regenerates its copy
-    # (CONFIG) → invalid_client login loop. The admin-API repair path can't
-    # run when ABS_ADMIN_PASSWORD also drifted (login fails), so the script
-    # falls back to a no-token sqlite3 re-stamp of the stored secret.
-
-    def _abs_sqlite_recorder(self, select_value: str):
-        """Return (run_fn, calls) faking `podman exec … sqlite3` and the
-        post-reconcile `podman container restart`. SELECT returns
-        `select_value`; UPDATE returns rc 0; both are recorded so the test
-        can assert the new secret was written + ABS bounced."""
-        calls: list[dict[str, Any]] = []
-
-        class _CP:
-            def __init__(self, rc=0, out=""):
-                self.returncode = rc
-                self.stdout = out
-                self.stderr = ""
-
-        def run_fn(cmd, *_a, **_kw):
-            calls.append({"cmd": list(cmd)})
-            if "sqlite3" in cmd:
-                sql = cmd[-1]
-                if sql.strip().upper().startswith("SELECT"):
-                    return _CP(0, select_value)
-                return _CP(0, "")
-            # podman container restart
-            return _CP(0, "")
-
-        return run_fn, calls
-
-    def _media_responses_abs_login_fails(self):
-        """Mock set where ABS /login always 401s (drifted admin pw), but
-        Authelia discovery succeeds — so configure_abs_oidc bails before
-        the PATCH and main() reaches the DB-reconcile fallback. The
-        media-init seed returns alreadySetup so seed_audiobookshelf exits
-        immediately. Jellyfin endpoints are absent (no
-        JELLYFIN_ADMIN_PASSWORD in these tests)."""
-        return {
-            "/api/system/media/init": {"status": 200, "body": {"alreadySetup": True}},
-            "/login": {"status": 401, "body": {}},
-            "/.well-known/openid-configuration": {"status": 200, "body": {
-                "authorization_endpoint": "https://auth.dopp.cloud/api/oidc/authorization",
-                "token_endpoint": "https://auth.dopp.cloud/api/oidc/token",
-                "userinfo_endpoint": "https://auth.dopp.cloud/api/oidc/userinfo",
-                "jwks_uri": "https://auth.dopp.cloud/jwks.json",
-            }},
-        }
-
-    def test_abs_oidc_db_restamp_on_admin_login_failure(self):
-        """ABS admin login fails (drifted pw) + the stored secret differs →
-        the script re-stamps it straight into absdatabase.sqlite and
-        bounces ABS, no admin token needed (#1717)."""
-        m = load_script("media")
-        env = {
-            "HOST": "h",
-            "ABS_ADMIN_PASSWORD": "regenerated-pw",
-            "ABS_PORT": "13378",
-            "ABS_OIDC_SECRET": "fresh-authelia-secret",
-            "PUBLIC_DOMAIN": "dopp.cloud",
-        }
-        run_fn, calls = self._abs_sqlite_recorder("stale-abs-secret")
-        import urllib.request
-        import subprocess as subprocess_mod
-        import time as time_mod
-        with run_with_env(env), \
-                mock.patch.object(urllib.request, "urlopen",
-                                  fake_urlopen_factory(self._media_responses_abs_login_fails())), \
-                mock.patch.object(time_mod, "sleep", lambda _s: None), \
-                mock.patch.object(subprocess_mod, "run", run_fn):
-            rc, out = capture_main(m)
-        self.assertEqual(rc, 0)
-        self.assertIn("DB-level ABS OIDC secret reconcile", out)
-        self.assertIn("Reconciled Audiobookshelf's stored OIDC secret", out)
-        # Exactly one UPDATE was issued against the settings row.
-        sql_calls = [" ".join(c["cmd"]) for c in calls if "sqlite3" in c["cmd"]]
-        updates = [s for s in sql_calls if "UPDATE settings" in s]
-        self.assertEqual(len(updates), 1, sql_calls)
-        self.assertIn("fresh-authelia-secret", updates[0])
-        self.assertIn("authOpenIDClientSecret", updates[0])
-        # ABS was bounced so the running process reloads the new secret.
-        self.assertTrue(
-            any(c["cmd"][:3] == ["podman", "container", "restart"]
-                and c["cmd"][-1] == "media-audiobookshelf" for c in calls),
-            calls,
-        )
-        # The secret must not leak into a user-visible log line (#321).
-        log_only = "\n".join(
-            line for line in out.splitlines() if not line.startswith("__SB_CREDENTIAL__ ")
-        )
-        self.assertNotIn("fresh-authelia-secret", log_only)
-        self.assertNotIn("stale-abs-secret", log_only)
-
-    def test_abs_oidc_db_restamp_noop_when_secret_matches(self):
-        """Idempotent: when the stored secret already matches Authelia, no
-        UPDATE is issued and ABS is not restarted."""
-        m = load_script("media")
-        env = {
-            "HOST": "h",
-            "ABS_ADMIN_PASSWORD": "regenerated-pw",
-            "ABS_PORT": "13378",
-            "ABS_OIDC_SECRET": "matching-secret",
-            "PUBLIC_DOMAIN": "dopp.cloud",
-        }
-        run_fn, calls = self._abs_sqlite_recorder("matching-secret")
-        import urllib.request
-        import subprocess as subprocess_mod
-        import time as time_mod
-        with run_with_env(env), \
-                mock.patch.object(urllib.request, "urlopen",
-                                  fake_urlopen_factory(self._media_responses_abs_login_fails())), \
-                mock.patch.object(time_mod, "sleep", lambda _s: None), \
-                mock.patch.object(subprocess_mod, "run", run_fn):
-            rc, out = capture_main(m)
-        self.assertEqual(rc, 0)
-        self.assertIn("already matches Authelia", out)
-        sql_calls = [" ".join(c["cmd"]) for c in calls if "sqlite3" in c["cmd"]]
-        self.assertFalse(any("UPDATE settings" in s for s in sql_calls), sql_calls)
-        self.assertFalse(
-            any(c["cmd"][:3] == ["podman", "container", "restart"] for c in calls),
-            calls,
-        )
-
-    def test_abs_oidc_db_restamp_skipped_when_no_stored_secret(self):
-        """Fresh DATA (no server-settings secret yet) → nothing to
-        reconcile; the API path seeds it once admin login works."""
-        m = load_script("media")
-        env = {
-            "HOST": "h",
-            "ABS_ADMIN_PASSWORD": "regenerated-pw",
-            "ABS_PORT": "13378",
-            "ABS_OIDC_SECRET": "fresh-secret",
-            "PUBLIC_DOMAIN": "dopp.cloud",
-        }
-        run_fn, calls = self._abs_sqlite_recorder("")  # empty SELECT
-        import urllib.request
-        import subprocess as subprocess_mod
-        import time as time_mod
-        with run_with_env(env), \
-                mock.patch.object(urllib.request, "urlopen",
-                                  fake_urlopen_factory(self._media_responses_abs_login_fails())), \
-                mock.patch.object(time_mod, "sleep", lambda _s: None), \
-                mock.patch.object(subprocess_mod, "run", run_fn):
-            rc, out = capture_main(m)
-        self.assertEqual(rc, 0)
-        self.assertIn("nothing to reconcile", out)
-        sql_calls = [" ".join(c["cmd"]) for c in calls if "sqlite3" in c["cmd"]]
-        self.assertFalse(any("UPDATE settings" in s for s in sql_calls), sql_calls)
 
     # ── #1718: Jellyfin LDAP-Auth plugin → LLDAP ─────────────────────────
 
