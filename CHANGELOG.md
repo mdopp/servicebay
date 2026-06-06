@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.104.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.103.0...servicebay-v4.104.0) (2026-06-06)
+
+
+### Features
+
+* **frontend:** native Hermes maintenance chat panel + /chat route ([91503cd](https://github.com/mdopp/servicebay/commit/91503cd2fe2b5ed8c4727efb8a1030c1f276f541))
+* **frontend:** native Hermes maintenance chat panel + /chat route ([67fac03](https://github.com/mdopp/servicebay/commit/67fac03a192c4858f6a9e49a702aef198aff7c7c)), closes [#1755](https://github.com/mdopp/servicebay/issues/1755)
+
 ## [4.103.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.102.2...servicebay-v4.103.0) (2026-06-06)
 
 
