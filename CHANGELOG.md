@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.102.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.102.0...servicebay-v4.102.1) (2026-06-06)
+
+
+### Bug Fixes
+
+* **auth:** add default_redirection_url for portal-direct Authelia login ([98d77e2](https://github.com/mdopp/servicebay/commit/98d77e2455899bc50411bb62f5be17c8afd4f202)), closes [#1742](https://github.com/mdopp/servicebay/issues/1742)
+* **auth:** land portal-direct login on www via default_redirection_url ([6824eea](https://github.com/mdopp/servicebay/commit/6824eea98f60bb5616432f96bbec2d811ba223d8))
+
 ## [4.102.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.101.0...servicebay-v4.102.0) (2026-06-06)
 
 
