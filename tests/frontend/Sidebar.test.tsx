@@ -11,6 +11,14 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush })
 }));
 
+// Sidebar consumes the digital twin (#1755 gates the Maintenance Chat link on
+// installedTemplates). These tests render Sidebar outside a DigitalTwinProvider,
+// so stub the hook with a mutable snapshot the per-test setup can vary.
+const twinRef: { current: { installedTemplates?: string[] } | null } = { current: null };
+vi.mock('@/hooks/useDigitalTwin', () => ({
+  useDigitalTwin: () => ({ data: twinRef.current, isConnected: false, lastUpdate: 0, isNodeSynced: () => false }),
+}));
+
 describe('Sidebar', () => {
     let fetchSpy: ReturnType<typeof vi.spyOn>;
     // Route-aware mock. `mockResolvedValue` would hand back the same Response
@@ -40,6 +48,7 @@ describe('Sidebar', () => {
         window.dispatchEvent(new Event('resize'));
 
         lldapResponse.url = null;
+        twinRef.current = null;
         fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((url) => Promise.resolve(mockFetch(url)));
     });
 
@@ -144,5 +153,17 @@ describe('Sidebar', () => {
         const buttons = screen.getAllByRole('button');
         const navTexts = buttons.map(b => b.textContent).filter(Boolean);
         expect(navTexts).not.toContain('Users & Groups');
+    });
+
+    it('hides the Maintenance Chat link when hermes is not installed (#1755)', () => {
+        twinRef.current = { installedTemplates: ['auth', 'media'] };
+        render(<Sidebar />);
+        expect(screen.queryByText('Maintenance Chat')).toBeNull();
+    });
+
+    it('shows the Maintenance Chat link when hermes is installed (#1755)', () => {
+        twinRef.current = { installedTemplates: ['auth', 'hermes'] };
+        render(<Sidebar />);
+        expect(screen.getByText('Maintenance Chat')).toBeDefined();
     });
 });
