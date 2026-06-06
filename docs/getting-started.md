@@ -4,7 +4,7 @@ OSCAR is a thin household layer on top of [Hermes Agent](https://github.com/Nous
 
 This page is the honest "what can I run today" walkthrough, in three tiers. Start at Tier 1; each tier is a superset of the one before.
 
-> **Why this exists.** The architecture (`oscar-architecture.md`) describes the *end state*. This page describes the *entry point*. As of May 2026 Hermes ships native Home-Assistant control, a local document-retrieval skill (`qmd`), voice mode, Honcho memory with per-user peers, and 20+ messaging gateways — so Tiers 1 and 2 deliver real value with zero OSCAR code.
+> **Why this exists.** The architecture (`solbay-architecture.md`) describes the *end state*. This page describes the *entry point*. As of May 2026 Hermes ships native Home-Assistant control, a local document-retrieval skill (`qmd`), voice mode, Honcho memory with per-user peers, and 20+ messaging gateways — so Tiers 1 and 2 deliver real value with zero OSCAR code.
 
 ---
 
@@ -49,7 +49,7 @@ The `qmd` skill is a local hybrid-retrieval engine (BM25 + vector + LLM rerank) 
 hermes skills install official/research/qmd
 ```
 
-Point it at a folder of markdown notes. Household "memory" — a book you read, a decision you made, a receipt's key facts — can start life as a markdown note that `qmd` indexes. (Whether OSCAR ever needs a *structured* books/records database on top of this is an open Phase-3a question — see `oscar-architecture.md`.)
+Point it at a folder of markdown notes. Household "memory" — a book you read, a decision you made, a receipt's key facts — can start life as a markdown note that `qmd` indexes. (Whether OSCAR ever needs a *structured* books/records database on top of this is an open Phase-3a question — see `solbay-architecture.md`.)
 
 Source: [qmd skill](https://hermes-agent.nousresearch.com/docs/user-guide/skills/optional/research/research-qmd).
 
@@ -92,7 +92,7 @@ Four of five intents, substantially, from `pip install` + config. That is the ho
 
 ## Tier 3 — the household deployment
 
-Tier 3 is what the rest of the OSCAR product builds: OSCAR as a ServiceBay-managed deployment, for a household rather than one person. OSCAR lives in its own repo ([`mdopp/oscar`](https://github.com/mdopp/oscar)) as an external ServiceBay registry — enable it at FCoS install time (or via Settings → Registries) and the four OSCAR templates (`ollama`, `hermes`, `hermes-webui`, `oscar-household`) plus the `oscar` stack appear in the wizard.
+Tier 3 is what the rest of the OSCAR product builds: OSCAR as a ServiceBay-managed deployment, for a household rather than one person. OSCAR lives in its own repo ([`mdopp/solbay`](https://github.com/mdopp/solbay)) as an external ServiceBay registry — enable it at FCoS install time (or via Settings → Registries) and the four OSCAR templates (`ollama`, `hermes`, `hermes-webui`, `oscar-household`) plus the `oscar` stack appear in the wizard.
 
 What Tier 3 adds over Tier 2:
 
@@ -102,7 +102,7 @@ What Tier 3 adds over Tier 2:
 - **Voice = identity** — speaker-ID maps a voice to an LLDAP resident and the right Honcho peer (Phase 2).
 - **German-household defaults** and the per-resident harness composition.
 
-Walkthrough: [`mdopp/oscar`'s README](https://github.com/mdopp/oscar#readme). Enable the OSCAR registry during FCoS install (the prompt defaults to `Y`), or add `https://github.com/mdopp/oscar` to Settings → Registries on an existing install.
+Walkthrough: [`mdopp/solbay`'s README](https://github.com/mdopp/solbay#readme). Enable the OSCAR registry during FCoS install (the prompt defaults to `Y`), or add `https://github.com/mdopp/solbay` to Settings → Registries on an existing install.
 
 ---
 
