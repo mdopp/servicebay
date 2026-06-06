@@ -68,6 +68,7 @@ import {
 import {
   ensureProxyHosts,
   ensureOidcClients,
+  ensureHermesApiKey,
 } from './postInstallDispatcher';
 
 // Re-export the surface previously exposed from this module so the
@@ -1436,6 +1437,13 @@ async function runJob(jobId: string): Promise<void> {
   // read), and a missed registration only surfaces when the operator
   // tries to SSO into the affected service.
   await ensureOidcClients(jobId, Array.from(newlyDeployed), variables);
+
+  // #1761 — Hermes ships as an external OSCAR template ServiceBay doesn't
+  // render, so the engine's API_SERVER_KEY and ServiceBay's stored
+  // HERMES_API_KEY drift on (re)deploy → chat route gets 401. When hermes
+  // was deployed in this install, adopt the running engine's key
+  // (reconcile-not-generate). Best-effort; the diagnose heal-action retries.
+  await ensureHermesApiKey(jobId, Array.from(newlyDeployed), input.node);
 
   // Build the final credentials manifest for the Done UI. Handler
   // already persisted per-template entries to `config.installManifest`

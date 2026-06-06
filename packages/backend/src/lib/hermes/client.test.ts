@@ -132,6 +132,59 @@ describe('HermesClient.chat', () => {
   });
 });
 
+describe('HermesClient.getMessages', () => {
+  it('maps the {data:[{role,content}]} envelope to the panel {role,text} shape', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      jsonResponse({
+        data: [
+          { role: 'user', content: 'hi' },
+          { role: 'assistant', content: 'hello back' },
+        ],
+      }),
+    );
+
+    const msgs = await new HermesClient(CONN).getMessages('sess-1');
+    expect(msgs).toEqual([
+      { role: 'user', text: 'hi' },
+      { role: 'assistant', text: 'hello back' },
+    ]);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://127.0.0.1:8642/api/sessions/sess-1/messages');
+    expect(init?.method).toBe('GET');
+  });
+
+  it('collapses non-user roles to assistant and drops empty/invalid turns', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      jsonResponse({
+        data: [
+          { role: 'system', content: 'persona' },
+          { role: 'tool', content: '' },
+          { role: 'user', content: 'q' },
+          { not: 'a message' },
+        ],
+      }),
+    );
+    const msgs = await new HermesClient(CONN).getMessages('s');
+    expect(msgs).toEqual([
+      { role: 'assistant', text: 'persona' },
+      { role: 'user', text: 'q' },
+    ]);
+  });
+
+  it('returns an empty history when the session 404s (wiped session)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => jsonResponse({}, 404));
+    expect(await new HermesClient(CONN).getMessages('gone')).toEqual([]);
+  });
+
+  it('throws HermesError when fetch rejects (Hermes unreachable)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      throw new Error('ECONNREFUSED');
+    });
+    await expect(new HermesClient(CONN).getMessages('s')).rejects.toBeInstanceOf(HermesError);
+  });
+});
+
 describe('getOrCreateMaintenanceSession', () => {
   it('creates the session once with the persona and persists the id', async () => {
     const fetchMock = vi

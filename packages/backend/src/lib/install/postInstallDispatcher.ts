@@ -27,6 +27,7 @@ import { buildProxyHosts, type StackVariable } from '@/lib/stackInstall/postInst
 import { appendLog } from './jobStore';
 import { emitJobLog } from './socketBridge';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
+import { reconcileHermesApiKey } from '@/lib/hermes/reconcileHermesApiKey';
 
 /** Best-effort jobStore log helper — mirrors the private one in runner.ts.
  *  Kept local so neither module has to import the other. */
@@ -159,5 +160,40 @@ export async function ensureOidcClients(
     }
   } catch (e) {
     await log(jobId, `⚠️ Authelia OIDC reconciliation failed: ${e instanceof Error ? e.message : String(e)}. Settings → Self-Diagnose → Reprovision will retry.`);
+  }
+}
+
+/**
+ *  Last-mile guard for the Hermes maintenance-chat API key (#1761). Hermes
+ *  ships as an external OSCAR template ServiceBay does NOT render: it is
+ *  deployed with its own `API_SERVER_KEY`, while ServiceBay separately
+ *  generated+persisted a `HERMES_API_KEY` at install — so the two drift, the
+ *  chat route sends the wrong bearer, and Hermes answers 401.
+ *
+ *  This pass runs only when `hermes` was (re)deployed in this install: it
+ *  reads the key the running hermes container actually uses and adopts it
+ *  into `installedSecrets.HERMES_API_KEY` (reconcile-not-generate, mirroring
+ *  the OIDC reconcile). Idempotent — a no-op when the keys already match.
+ *  Best-effort: a failure is a soft warning (the diagnose heal-action is the
+ *  manual fallback), never fatal. SECURITY: the key is read over the loopback
+ *  exec seam, stored encrypted, and never logged here.
+ */
+export async function ensureHermesApiKey(
+  jobId: string,
+  templateNames: string[],
+  node: string | undefined,
+): Promise<void> {
+  if (!templateNames.includes('hermes')) return;
+  try {
+    const result = await reconcileHermesApiKey(node || 'Local');
+    if (result.outcome === 'changed') {
+      await log(jobId, `🔑 ${result.message}`);
+    } else if (result.outcome === 'aligned') {
+      await log(jobId, `✅ ${result.message}`);
+    } else {
+      await log(jobId, `⚠️ ${result.message} Settings → Self-Diagnose → "Reconcile Hermes API key" will retry.`);
+    }
+  } catch (e) {
+    await log(jobId, `⚠️ Hermes API-key reconcile failed: ${e instanceof Error ? e.message : String(e)}. Settings → Self-Diagnose → "Reconcile Hermes API key" will retry.`);
   }
 }

@@ -14,6 +14,11 @@
  * of scope here). When the route returns 503 (Hermes not installed / not
  * running) we show a calm "Hermes is unavailable" notice rather than
  * crashing or pretending the message went through.
+ *
+ * On mount the panel loads the session's prior conversation via GET
+ * /api/system/hermes/chat (#1760) so leaving and returning to the page shows
+ * the history that persists server-side, rather than an empty log. A 503 on
+ * that load falls back to the empty/unavailable state.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -90,6 +95,18 @@ function TypingIndicator() {
   );
 }
 
+function LoadingState() {
+  return (
+    <div
+      data-testid="hermes-loading"
+      className="h-full flex flex-col items-center justify-center text-center text-gray-500 dark:text-gray-400 gap-3"
+    >
+      <Bot size={40} className="text-blue-500/70 animate-pulse" />
+      <p className="text-sm">Loading your conversation…</p>
+    </div>
+  );
+}
+
 function UnavailableNotice({ message }: { message: string }) {
   return (
     <div
@@ -142,13 +159,53 @@ function Composer({
   );
 }
 
+/** One persisted turn as returned by GET /api/system/hermes/chat. */
+interface HistoryMessage {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+/**
+ * On mount, restore the prior conversation that persists server-side (#1760)
+ * via GET /api/system/hermes/chat. A 503 (Hermes down) falls back to the empty
+ * state; a transport failure does too — never crash, never fabricate. Runs
+ * once. `setMessages` populates the log; `setLoading(false)` ends the spinner.
+ */
+function useLoadHistory(setMessages: (m: ChatMessage[]) => void, setLoading: (v: boolean) => void) {
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/system/hermes/chat', { method: 'GET' });
+        if (cancelled || res.status === 503) return;
+        const body = await res.json().catch(() => ({}));
+        if (cancelled || !res.ok) return;
+        const history: HistoryMessage[] = Array.isArray(body?.messages) ? body.messages : [];
+        if (history.length > 0) setMessages(history.map((m) => makeMessage(m.role, m.text)));
+      } catch {
+        // Could not reach our own route — fall back to empty, don't crash.
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+}
+
 /** Drives the conversation state + the call to the server-side chat seam. */
 function useHermesChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sending, setSending] = useState(false);
+  // True while the mount-time history load is in flight (before any send).
+  const [loading, setLoading] = useState(true);
   // When the route reports 503 the assistant is unavailable — we surface a
   // banner rather than fabricating a reply (memory feedback_dont_mask_failures).
   const [unavailable, setUnavailable] = useState<string | null>(null);
+
+  useLoadHistory(setMessages, setLoading);
 
   const send = useCallback(
     async (text: string) => {
@@ -196,11 +253,11 @@ function useHermesChat() {
     [sending],
   );
 
-  return { messages, sending, unavailable, send };
+  return { messages, sending, loading, unavailable, send };
 }
 
 export default function HermesChatPanel() {
-  const { messages, sending, unavailable, send } = useHermesChat();
+  const { messages, sending, loading, unavailable, send } = useHermesChat();
   const [input, setInput] = useState('');
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -227,7 +284,8 @@ export default function HermesChatPanel() {
     [submit],
   );
 
-  const showEmptyState = messages.length === 0 && !sending && !unavailable;
+  const showLoading = loading && messages.length === 0;
+  const showEmptyState = !showLoading && messages.length === 0 && !sending && !unavailable;
 
   return (
     <div className="h-full flex flex-col p-4 gap-4">
@@ -236,6 +294,7 @@ export default function HermesChatPanel() {
         data-testid="hermes-chat-log"
         className="flex-1 min-h-0 overflow-y-auto rounded-2xl border border-gray-200/70 dark:border-white/5 bg-white/60 dark:bg-white/[0.02] backdrop-blur p-4 space-y-4"
       >
+        {showLoading && <LoadingState />}
         {showEmptyState && <EmptyState />}
         {messages.map((m) => (
           <MessageBubble key={m.id} message={m} />

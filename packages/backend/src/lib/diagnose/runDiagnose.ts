@@ -30,6 +30,7 @@ import { checkDomainResolvesToBox } from '@/lib/diagnose/probes/domainResolvesTo
 import { checkOidcProviderReachable } from '@/lib/diagnose/probes/oidcProviderReachable';
 import { checkNasBackupReachable } from '@/lib/diagnose/probes/nasBackupReachable';
 import { checkSsoVerify } from '@/lib/diagnose/probes/ssoVerify';
+import { checkHermesChat } from '@/lib/diagnose/probes/hermesChat';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
 import { persistDiagnoseResults, buildProbeHistory, type ProbeHistory } from '@/lib/diagnose/persistDiagnoseResults';
 import '@/lib/diagnose/probes/register';
@@ -90,6 +91,8 @@ const PROBE_GROUP: Record<string, ProbeGroup> = {
   cert_expiry: 'tls',
   // Login / SSO
   sso_verify: 'sso',
+  // Maintenance-chat assistant (Hermes)
+  hermes_chat: 'services',
   // Storage & backups
   disk: 'storage-backups',
   nas_backup_reachable: 'storage-backups',
@@ -1013,6 +1016,29 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     probes.push({
       id: 'nas_backup_reachable',
       label: 'Config backup (FritzBox NAS)',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 19) Maintenance-chat assistant (Hermes) reachability (#1761). Crucially
+  //     distinguishes an API-KEY MISMATCH (Hermes 401 — ServiceBay's stored
+  //     key drifted from the externally-deployed engine's API_SERVER_KEY)
+  //     from a genuine outage, and offers a one-click "Reconcile Hermes API
+  //     key" heal-action so the operator repairs drift without a reinstall.
+  try {
+    const hc = await checkHermesChat();
+    probes.push({
+      id: 'hermes_chat',
+      label: 'Maintenance chat (Hermes)',
+      status: hc.status,
+      detail: hc.detail,
+      hint: hc.hint,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'hermes_chat',
+      label: 'Maintenance chat (Hermes)',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

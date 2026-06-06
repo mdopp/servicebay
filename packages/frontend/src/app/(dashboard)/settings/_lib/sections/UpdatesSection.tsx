@@ -13,7 +13,7 @@ export default function UpdatesSection() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
 
-  const [updateStatus, setUpdateStatus] = useState<'idle' | 'updating' | 'restarting' | 'error' | 'success'>('idle');
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'updating' | 'restarting' | 'error' | 'success' | 'building'>('idle');
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateMessage, setUpdateMessage] = useState('');
   const [updateError, setUpdateError] = useState('');
@@ -135,6 +135,8 @@ export default function UpdatesSection() {
         const latestVer = data.latest?.version || 'Unknown';
         if (data.hasUpdate) {
           addToast('success', 'Update available', `Version ${latestVer} is available.`);
+        } else if (data.imageBuilding) {
+          addToast('info', 'New version building', `Version ${latestVer} was released but its image is still building. Try again shortly.`);
         } else {
           addToast('info', 'System up to date', `You are using the latest version (${latestVer}).`);
         }
@@ -176,6 +178,15 @@ export default function UpdatesSection() {
           setUpdateMessage('Service is restarting. This page will reload automatically...');
           setTimeout(() => { window.location.reload(); }, 5000);
         }
+      });
+
+      socket.on('update:noop', (data: { message: string }) => {
+        // The pull found no newer image (the tag raced ahead of the image
+        // push). Report it honestly instead of leaving the spinner running or
+        // claiming success — no silent no-op (feedback_dont_mask_failures).
+        setUpdateStatus('building');
+        setUpdateMessage(data.message);
+        socket.disconnect();
       });
 
       socket.on('update:error', (data: { error: string }) => {
@@ -273,6 +284,11 @@ export default function UpdatesSection() {
                   <Download size={16} />
                   <span className="text-sm font-medium">New version available: {appUpdate.latest.version}</span>
                 </div>
+              ) : appUpdate.imageBuilding && appUpdate.latest ? (
+                <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+                  <Clock size={16} />
+                  <span className="text-sm font-medium">Version {appUpdate.latest.version} released — image still building, try again shortly</span>
+                </div>
               ) : (
                 <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
                   <Clock size={16} />
@@ -312,6 +328,10 @@ export default function UpdatesSection() {
                 <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mx-auto">
                   <XCircle size={32} />
                 </div>
+              ) : updateStatus === 'building' ? (
+                <div className="w-16 h-16 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-full flex items-center justify-center mx-auto">
+                  <Clock size={32} />
+                </div>
               ) : updateStatus === 'restarting' ? (
                 <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 rounded-full flex items-center justify-center mx-auto animate-pulse">
                   <CheckCircle2 size={32} />
@@ -325,8 +345,9 @@ export default function UpdatesSection() {
               <div>
                 <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
                   {updateStatus === 'error' ? 'Update Failed' :
-                    updateStatus === 'restarting' ? 'Update Complete' :
-                      'Updating ServiceBay'}
+                    updateStatus === 'building' ? 'New Version Still Building' :
+                      updateStatus === 'restarting' ? 'Update Complete' :
+                        'Updating ServiceBay'}
                 </h3>
                 <p className="text-gray-500 dark:text-gray-400 text-sm">
                   {updateStatus === 'error' ? updateError : updateMessage}
@@ -339,7 +360,7 @@ export default function UpdatesSection() {
                 </div>
               )}
 
-              {updateStatus === 'error' && (
+              {(updateStatus === 'error' || updateStatus === 'building') && (
                 <button
                   onClick={() => setUpdateStatus('idle')}
                   className="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors font-medium text-sm"

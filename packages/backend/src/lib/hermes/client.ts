@@ -8,6 +8,7 @@
  *   - `GET  /api/sessions`              -> `{data:[{id,...}]}` (list)
  *   - `GET  /api/sessions/{id}`         -> `{session:{...}}` (summary)
  *   - `POST /api/sessions/{id}/chat`    -> body `{input}`, returns the reply
+ *   - `GET  /api/sessions/{id}/messages`-> `{data:[{role,content,...}]}` (history)
  *
  * Connection: `http://127.0.0.1:${HERMES_API_PORT}` (loopback only — the
  * Hermes API binds 127.0.0.1; other host pods reach it over loopback,
@@ -137,6 +138,40 @@ function extractReply(body: unknown): string {
   return String(b.output ?? b.reply ?? b.response ?? b.text ?? '');
 }
 
+/**
+ * A single persisted conversation turn, mapped to the shape the maintenance
+ * chat panel renders: `role` collapsed to user/assistant, and the text under
+ * `text` (the panel never sees Hermes' raw `content` envelope).
+ */
+export interface HermesMessage {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+/** Pull the text out of a Hermes message `content` (string or `{content}`). */
+function extractMessageText(content: unknown): string {
+  if (content == null) return '';
+  if (typeof content === 'string') return content;
+  if (typeof content === 'object' && 'content' in (content as Record<string, unknown>)) {
+    return String((content as Record<string, unknown>).content ?? '');
+  }
+  return String(content);
+}
+
+/**
+ * Map a raw Hermes message record to the panel shape. Any non-user role
+ * (assistant/tool/system) collapses to `assistant` — the panel only renders
+ * the two-sided operator/assistant conversation.
+ */
+function toHermesMessage(raw: unknown): HermesMessage | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const role = String(r.role ?? '') === 'user' ? 'user' : 'assistant';
+  const text = extractMessageText(r.content ?? r.text ?? r.message);
+  if (!text) return null;
+  return { role, text };
+}
+
 function extractSessionId(body: unknown): string {
   if (!body || typeof body !== 'object') return '';
   const b = body as Record<string, unknown>;
@@ -249,6 +284,37 @@ export class HermesClient {
     const body = await this.request('POST', `/api/sessions/${sessionId}/chat`, { input });
     return extractReply(body);
   }
+
+  /**
+   * Fetch the persisted conversation for a session, mapped to the panel's
+   * `{role,text}` shape (Hermes returns `{data:[{role,content,...}]}`).
+   * A 404 (session gone) returns an empty history rather than throwing, so a
+   * wiped session shows an empty conversation, not an error.
+   */
+  async getMessages(sessionId: string): Promise<HermesMessage[]> {
+    let body: unknown;
+    try {
+      body = await this.request('GET', `/api/sessions/${sessionId}/messages`);
+    } catch (e) {
+      if (e instanceof HermesError && e.status === 404) return [];
+      throw e;
+    }
+    const raw = extractMessageArray(body);
+    return raw.map(toHermesMessage).filter((m): m is HermesMessage => m !== null);
+  }
+}
+
+/** Pull the message array out of Hermes' envelope (`data`/`messages`/items). */
+function extractMessageArray(body: unknown): unknown[] {
+  if (Array.isArray(body)) return body;
+  if (body && typeof body === 'object') {
+    const b = body as Record<string, unknown>;
+    for (const key of ['data', 'messages', 'items', 'results']) {
+      const v = b[key];
+      if (Array.isArray(v)) return v;
+    }
+  }
+  return [];
 }
 
 /**

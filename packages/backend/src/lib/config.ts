@@ -191,6 +191,15 @@ export interface AppConfig {
      * Written by the in-process notifier; read on every check.
      */
     lastNotifiedVersion?: string;
+    /**
+     * Manifest digest of the `:latest` image that is currently applied (the
+     * one a successful `performUpdate` pull last advanced us to). Used to gate
+     * "update available" on the image actually being newer than what we run —
+     * a release tag is cut *before* the `:latest` image is built+pushed, so a
+     * tag-ahead-but-digest-unchanged state means "new version still building",
+     * not "available". Written after a successful pull; null until first seen.
+     */
+    appliedImageDigest?: string;
   };
   /**
    * Unified auto-update window. ServiceBay manages three independent
