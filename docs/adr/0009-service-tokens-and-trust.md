@@ -1,14 +1,14 @@
-# ADR 0001 — Tokens & trust between services
+# ADR 0009 — Tokens & trust between services
 
 - **Status:** Accepted
 - **Date:** 2026-06-05
 - **Deciders:** @mdopp
 - **Supersedes / relates to:** #322, #565, #780, #1204, #1419, #1552, #1559, #1639, #1667, #1705, #1713
+- **Related ADRs:** [0001](0001-authentication-via-authelia-sso-or-lldap.md) (the operator→service auth decision; §2 here is the credential/trust elaboration), [0002](0002-tiered-backup-nas-config-vs-bulk-drive.md), [0006](0006-authelia-apex-deny-vs-wildcard.md)
 
-> First ADR in the repo. Format: Status / Context / Decision / Consequences, in the
+> Format: Status / Context / Decision / Consequences, in the
 > spirit of [`UX_DECISIONS.md`](../UX_DECISIONS.md) — record the choices that are
 > **not derivable from the code alone**, with the incident that forged them.
-> Subsequent ADRs go in this directory as `NNNN-title.md`.
 
 ## Context
 
