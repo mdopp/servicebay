@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.103.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.102.2...servicebay-v4.103.0) (2026-06-06)
+
+
+### Features
+
+* Hermes maintenance-chat backend + MCP service-files field-swap guard ([a1d2c77](https://github.com/mdopp/servicebay/commit/a1d2c77e29077159a97885a6c4aeee51d602c0dc))
+* **hermes:** maintenance chat backend client + admin-for-families persona + session lifecycle ([47d928a](https://github.com/mdopp/servicebay/commit/47d928a797982e6c089a2e95665552d71003d753)), closes [#1754](https://github.com/mdopp/servicebay/issues/1754)
+
+
+### Bug Fixes
+
+* **mcp:** stop get_service_files/update_service_yaml field swap on round-trip ([918a97a](https://github.com/mdopp/servicebay/commit/918a97add8a17aba262dc3190e0867f792883d2b)), closes [#1752](https://github.com/mdopp/servicebay/issues/1752)
+
 ## [4.102.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.102.1...servicebay-v4.102.2) (2026-06-06)
 
 
