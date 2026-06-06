@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-post-deploy hook for the `media` stack (Audiobookshelf + Jellyfin).
+post-deploy hook for the `media` stack (Jellyfin).
 
 Convention (see lib/registry.ts:getTemplatePostDeployScript):
   - Runs on the agent host after `systemctl --user start media.service`
     succeeds.
-  - All wizard variables are exported as env vars (`os.environ['ABS_PORT']`
-    etc.). `SB_NODE` is the node name. `HOST` is the operator's browsing
-    hostname (set by the wizard from window.location).
+  - All wizard variables are exported as env vars
+    (`os.environ['JELLYFIN_PORT']` etc.). `SB_NODE` is the node name.
+    `HOST` is the operator's browsing hostname (set by the wizard from
+    window.location).
   - stdout is relayed to the install log line by line.
   - Lines starting with `__SB_CREDENTIAL__ ` followed by JSON go into the
     SAVE-THESE-NOW banner / Bitwarden export — emit one per service.
@@ -16,7 +17,8 @@ Convention (see lib/registry.ts:getTemplatePostDeployScript):
 Schema v4 swapped Navidrome for Jellyfin so Symfonium / Findroid /
 Streamyfin can pair via Quick Connect (the closest practical thing to
 SSO for music-app pairing — operator confirms a 6-digit code in the
-web UI once, app is paired). Audiobookshelf section is unchanged.
+web UI once, app is paired). #1725/#1730 retired Audiobookshelf; Jellyfin
+owns the whole media stack now (audiobooks included).
 
 What this does for Jellyfin:
   1. Wait for /System/Info/Public to come up (image-pull budget).
@@ -31,6 +33,8 @@ What this does for Jellyfin:
      audiobooks library now. Other subdirs (movies/, tv/) stay
      un-imported — operator adds them by hand if wanted. Lowercase
      folder names are the convention per #1018.
+  6. Install + configure the LDAP-Authentication plugin against LLDAP so
+     the family signs in with their Authelia/LLDAP credentials (#1718).
 
 Best-effort throughout: each step that fails just logs a clear
 breadcrumb so the operator can finish the setup manually in the
@@ -85,16 +89,9 @@ JELLYFIN_READY_TIMEOUT = 5 * 60
 JELLYFIN_READY_INTERVAL = 5
 
 # Pod-container names. Podman names a Pod's containers `<pod>-<container>`;
-# this pod is `media`, the containers are `audiobookshelf` and `jellyfin`
-# (see template.yml). Used by the DB-level OIDC reconcile (#1717) and the
-# Jellyfin LDAP plugin restart (#1718).
-ABS_CONTAINER = "media-audiobookshelf"
+# this pod is `media`, the container is `jellyfin` (see template.yml).
+# Used by the Jellyfin LDAP plugin restart (#1718).
 JELLYFIN_CONTAINER = "media-jellyfin"
-
-# Audiobookshelf stores its server settings — including the OIDC
-# client_secret — as a single JSON row in this SQLite DB inside the
-# container's /config volume. Used by the no-login DB reconcile (#1717).
-ABS_DB_PATH = "/config/absdatabase.sqlite"
 
 
 def request_json(
@@ -129,85 +126,6 @@ def request_json(
             return e.code, None
     except (urllib.error.URLError, TimeoutError, OSError):
         return 0, None
-
-
-def post_json(url: str, payload: dict[str, object], timeout: float = 10.0) -> tuple[int, dict[str, object] | None]:
-    """POST JSON via the ServiceBay internal API (X-SB-Internal-Token if set)."""
-    body = json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
-    token = os.environ.get("SB_API_TOKEN", "")
-    if token:
-        headers["X-SB-Internal-Token"] = token
-    req = urllib.request.Request(
-        url,
-        data=body,
-        headers=headers,
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = resp.read().decode("utf-8")
-            try:
-                return resp.status, json.loads(data) if data else None
-            except json.JSONDecodeError:
-                return resp.status, None
-    except urllib.error.HTTPError as e:
-        try:
-            return e.code, json.loads(e.read().decode("utf-8"))
-        except Exception:  # pylint: disable=broad-except
-            return e.code, None
-    except (urllib.error.URLError, TimeoutError, OSError):
-        return 0, None
-
-
-# ── Audiobookshelf seed (unchanged from v3) ────────────────────────────
-
-
-def seed_audiobookshelf(port: str, user: str, password: str) -> None:
-    """Talk to ServiceBay's media-init proxy endpoint so ABS gets its admin
-    seeded. Idempotent; reports alreadySetup on second run."""
-    if not password:
-        log(f"⚠️ Audiobookshelf: no admin password in env (ABS_ADMIN_PASSWORD), skipping seed.")
-        return
-
-    sb_api = env("SB_API_URL", "http://localhost:3000")
-    init_url = f"{sb_api}/api/system/media/init"
-
-    log("Waiting for Audiobookshelf to start...")
-    started = time.time()
-    last_beat = 0.0
-    deadline = 5 * 60
-    while time.time() - started < deadline:
-        status, body = post_json(init_url, {
-            "service": "audiobookshelf",
-            "host": "localhost",
-            "port": int(port),
-            "username": user,
-            "password": password,
-        }, timeout=15)
-        # The proxy returns one of:
-        #   { ok: true }              — admin just created
-        #   { alreadySetup: true }    — service already has an admin
-        #   { error: '...' }          — anything else
-        # Either of the first two is a terminal success — the old check
-        # required `body.get("ok") && body.get("alreadySetup")`, but the
-        # proxy never returns both together, so on a re-install the
-        # alreadySetup signal was missed and the post-deploy spun until
-        # its 5-min deadline.
-        if status == 200 and isinstance(body, dict):
-            if body.get("alreadySetup"):
-                log("ℹ️ Audiobookshelf already initialized — keeping existing admin. Reset manually if the password doesn't match.")
-                return
-            if body.get("ok"):
-                log(f"✅ Audiobookshelf root user '{user}' created.")
-                return
-        elapsed = time.time() - started
-        if elapsed - last_beat >= 10:
-            log(f"Still waiting for Audiobookshelf ({int(elapsed)}s elapsed)...")
-            last_beat = elapsed
-        time.sleep(5)
-
-    log(f"⚠️ Audiobookshelf did not become reachable in 5 minutes. Open http://<server-ip>:{port} and create the admin user manually.")
 
 
 # ── Jellyfin first-run + Quick Connect + Music library ───────────────
@@ -402,232 +320,6 @@ def jellyfin_add_audiobooks_library(base_url: str, token: str) -> None:
         log(f"(note) Could not auto-add Audiobooks library (HTTP {code}). Add it manually in Dashboard → Libraries (content type: Books, path /media/audiobooks).")
 
 
-def configure_abs_oidc(
-    abs_port: str,
-    abs_user: str,
-    abs_password: str,
-    public_domain: str,
-    oidc_secret: str,
-) -> bool:
-    """Configure Audiobookshelf OIDC via its /api/auth-settings API.
-    Tries 127.0.0.1 and [::1] because Node.js on FCoS may bind IPv6-only.
-    Returns True if the settings were written successfully."""
-    issuer_url = f"https://auth.{public_domain}"
-
-    # 1. Login to get a bearer token (x-return-tokens: true puts it in the body).
-    token: str | None = None
-    abs_base: str | None = None
-    for host in (f"http://127.0.0.1:{abs_port}", f"http://[::1]:{abs_port}"):
-        code, body = request_json(
-            "POST", f"{host}/login",
-            {"username": abs_user, "password": abs_password},
-            extra_headers={"x-return-tokens": "true"},
-        )
-        if code == 200 and isinstance(body, dict):
-            token = (body.get("user") or {}).get("accessToken")
-            if token:
-                abs_base = host
-                break
-
-    if not token or not abs_base:
-        log("⚠️  Could not log in to Audiobookshelf for OIDC setup — skipping auto-config.")
-        return False
-
-    # 2. Fetch endpoint URLs from Authelia's OIDC discovery document.
-    #    Two probes in order so the install path doesn't depend on
-    #    DNS or router-hairpin being ready yet:
-    #      a) http://localhost:<AUTHELIA_PORT>/.well-known/...
-    #         Authelia runs rootless+hostNetwork on this box, so its
-    #         port is reachable from the post-deploy shell even
-    #         before AdGuard rewrites are provisioned. This is the
-    #         path that works on a fresh install.
-    #      b) https://auth.<PUBLIC_DOMAIN>/.well-known/...
-    #         The public URL. Works once DNS is set up; useful when
-    #         the operator is re-running the seed long after install
-    #         and the localhost port may have moved.
-    #    Discovery values point at the *public* issuer regardless of
-    #    which probe answered — clients hit those URLs from a
-    #    browser, not from the host.
-    # Discovery candidate order matches the `oidc_provider_reachable`
-    # diagnose probe, which is known to succeed against the running
-    # Authelia (#735). Two prior issues with the old order:
-    #   - `localhost` resolved IPv6 first on some FCoS builds while
-    #     Authelia binds IPv4-only — every probe returned code=0 and
-    #     fell into the hardcoded-path branch.
-    #   - The public URL was attempted before DNS/proxy was ready, so
-    #     the second candidate also failed and the fallback message
-    #     ran on every install.
-    # Probe 127.0.0.1 first (loopback IPv4, matches the diagnose probe
-    # at oidcProviderReachable.ts:49), then ::1 for IPv6-only binds,
-    # then the public URL for re-runs against a settled install.
-    authelia_port = env("AUTHELIA_PORT", "9091")
-    discovery_candidates = [
-        f"http://127.0.0.1:{authelia_port}",
-        f"http://[::1]:{authelia_port}",
-        issuer_url,
-    ]
-    disc = None
-    last_codes: list[str] = []
-    for candidate in discovery_candidates:
-        code, body = request_json("GET", f"{candidate}/.well-known/openid-configuration")
-        if code == 200 and isinstance(body, dict):
-            disc = body
-            log(f"ℹ️  Authelia OIDC discovery via {candidate}.")
-            break
-        last_codes.append(f"{candidate} → {render_http_code(code)}")
-    if disc is not None:
-        auth_url = disc.get("authorization_endpoint", "")
-        token_url = disc.get("token_endpoint", "")
-        userinfo_url = disc.get("userinfo_endpoint", "")
-        jwks_url = disc.get("jwks_uri", "")
-    else:
-        # If we ever land here the install will still complete (the
-        # hardcoded Authelia-4.x paths match the discovery doc verbatim),
-        # but the diagnose probe at the same endpoint is known to work,
-        # so seeing this branch on a successful install means something
-        # changed about how the post-deploy reaches Authelia. Log every
-        # candidate's outcome so the next operator can compare against
-        # the diagnose probe instead of re-discovering this.
-        log(f"ℹ️  Authelia OIDC discovery unreachable on every candidate — falling back to known Authelia 4.x paths. Candidates: {'; '.join(last_codes)}.")
-        auth_url = f"{issuer_url}/api/oidc/authorization"
-        token_url = f"{issuer_url}/api/oidc/token"
-        userinfo_url = f"{issuer_url}/api/oidc/userinfo"
-        jwks_url = f"{issuer_url}/jwks.json"
-
-    # 3. Write auth settings. `authOpenIDSubfolderForRedirectURLs` set
-    # explicitly to '' — without it ABS sends `/undefined/auth/openid/
-    # callback`, which Authelia rejects as redirect_uri mismatch. See
-    # templates/media/CHANGELOG.md v3 for the full story.
-    code, resp = request_json(
-        "PATCH", f"{abs_base}/api/auth-settings",
-        {
-            "authActiveAuthMethods": ["local", "openid"],
-            "authOpenIDIssuerURL": issuer_url,
-            "authOpenIDAuthorizationURL": auth_url,
-            "authOpenIDTokenURL": token_url,
-            "authOpenIDUserInfoURL": userinfo_url,
-            "authOpenIDJwksURL": jwks_url,
-            "authOpenIDClientID": "audiobookshelf",
-            "authOpenIDClientSecret": oidc_secret,
-            "authOpenIDButtonText": "Login with Authelia",
-            "authOpenIDAutoLaunch": False,
-            "authOpenIDAutoRegister": True,
-            "authOpenIDMatchExistingBy": "email",
-            "authOpenIDTokenSigningAlgorithm": "RS256",
-            "authOpenIDSubfolderForRedirectURLs": "",
-        },
-        token=token,
-    )
-    if code == 200:
-        log(f"✅ Audiobookshelf OIDC configured against {issuer_url}.")
-        return True
-    log(f"⚠️  Could not write ABS OIDC settings (HTTP {code}): {resp}.")
-    return False
-
-
-def _abs_sqlite(sql: str) -> tuple[int, str]:
-    """Run a single SQL statement against Audiobookshelf's SQLite DB inside
-    the running container as `podman exec … sqlite3`. Returns (returncode,
-    stripped stdout).
-
-    Same host-side capability the file-share / home-assistant post-deploys
-    use. The advplyr/audiobookshelf image ships `sqlite3`. We pass the SQL
-    on argv (no shell), and never put a secret in the SQL string — the
-    re-stamp binds the new secret via `json_set(..., json(:value))` style
-    quoting done in SQL with the value carried as a separate `-cmd` bind is
-    not available in plain sqlite3, so the caller escapes the value with
-    json_quote() server-side instead (see reconcile_abs_oidc_secret_in_db).
-    """
-    cmd = [
-        "podman", "exec", ABS_CONTAINER,
-        "sqlite3", ABS_DB_PATH, sql,
-    ]
-    try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, check=False, timeout=30,
-        )
-        return result.returncode, (result.stdout or "").strip()
-    except (OSError, subprocess.SubprocessError) as exc:
-        log(f"   ⚠️ sqlite3 exec against {ABS_CONTAINER} failed: {exc}")
-        return 1, ""
-
-
-def reconcile_abs_oidc_secret_in_db(oidc_secret: str) -> bool:
-    """Re-stamp Audiobookshelf's stored OIDC client_secret to match
-    Authelia's freshly-registered one, writing straight to the SQLite DB —
-    no admin login required.
-
-    Why this exists (#1717): ABS keeps its OIDC client_secret in its
-    settings DB (survived DATA across a `wipe-configs` reinstall) while
-    Authelia regenerates its copy from CONFIG. The two drift and the token
-    exchange at /api/oidc/token fails with `invalid_client` — an endless
-    login loop. The normal repair is the admin-authenticated PATCH
-    /api/auth-settings in `configure_abs_oidc`, but on a wipe-configs
-    reinstall the freshly-generated ABS_ADMIN_PASSWORD no longer matches
-    the preserved admin row, so the admin login fails and that path never
-    runs. This DB-level reconcile is the no-token fallback — same class as
-    the LLDAP FORCE_RESET / NPM in-place rekey / Immich DB re-stamp (#1556).
-
-    ABS stores its server settings as a single JSON row in the `settings`
-    table keyed `server-settings`; the OIDC secret lives at
-    `$.authOpenIDClientSecret`. We only touch that leaf, only when a
-    `server-settings` row already exists (populated DATA) and its stored
-    secret differs from the wizard's. The new value is quoted by SQLite's
-    `json_quote()` so no manual escaping is needed and ABS user/library
-    data is never touched. Returns True iff it wrote a change.
-    """
-    # Read the currently-stored secret. json_extract returns NULL (empty
-    # stdout) when the row or the key is absent.
-    code, current = _abs_sqlite(
-        "SELECT json_extract(value, '$.authOpenIDClientSecret') "
-        "FROM settings WHERE key='server-settings';"
-    )
-    if code != 0:
-        log("   ⚠️ Could not read Audiobookshelf's stored OIDC secret from the DB — "
-            "skipping DB reconcile. SSO may need a manual secret re-paste.")
-        return False
-    # Empty result: no server-settings row yet, or no OIDC secret stored
-    # (fresh DATA). Nothing to reconcile — the API path seeds it once the
-    # admin login succeeds.
-    if not current:
-        log("   ℹ️ No stored OIDC secret in Audiobookshelf's DB yet — nothing to "
-            "reconcile (fresh data; the API path seeds it once admin login succeeds).")
-        return False
-    if current == oidc_secret:
-        log("   ✅ Audiobookshelf's stored OIDC secret already matches Authelia — no reconcile needed.")
-        return False
-
-    # Re-stamp just the nested authOpenIDClientSecret, preserving every
-    # other server-settings field. The secret is wrapped in json_quote()
-    # so SQLite does the literal quoting — no manual escaping, and the
-    # value never lands in a log line. `json_set` rewrites only the named
-    # leaf; the rest of the settings blob is untouched.
-    escaped = oidc_secret.replace("'", "''")
-    code, _ = _abs_sqlite(
-        "UPDATE settings SET value = "
-        "json_set(value, '$.authOpenIDClientSecret', "
-        f"json_extract(json_quote('{escaped}'), '$')) "
-        "WHERE key='server-settings';"
-    )
-    if code != 0:
-        log("   ⚠️ Failed to re-stamp Audiobookshelf's OIDC secret in the DB — "
-            "SSO may need a manual secret re-paste from the ABS UI.")
-        return False
-    log("   ✅ Reconciled Audiobookshelf's stored OIDC secret to match Authelia (DB re-stamp).")
-    # ABS reads server-settings into memory at startup, so the running
-    # process keeps the stale secret until restart. Bounce the container
-    # so the reconciled secret takes effect without operator action.
-    try:
-        subprocess.run(
-            ["podman", "container", "restart", ABS_CONTAINER],
-            capture_output=True, text=True, check=False, timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        log(f"   ⚠️ Could not restart {ABS_CONTAINER} after the secret re-stamp ({exc}); "
-            "restart the media stack so ABS picks up the reconciled OIDC secret.")
-    return True
-
-
 # ── Jellyfin LDAP-Authentication plugin → LLDAP (#1718) ──────────────────
 
 
@@ -785,21 +477,6 @@ def ensure_jellyfin_ldap_plugin(
 def main() -> int:
     host = env("HOST", "<server-ip>")
 
-    # ── Audiobookshelf credential banner ──────────────────────────────
-    abs_user = env("ABS_ADMIN_USER", "root")
-    abs_password = env("ABS_ADMIN_PASSWORD")
-    abs_port = env("ABS_PORT", "13378")
-    if abs_password:
-        log(f"✅ Audiobookshelf admin saved (user: {abs_user}) — open http://{host}:{abs_port}. Password retrievable from Settings → Integrations → Saved credentials.")
-        emit_credential(
-            service="Audiobookshelf",
-            url=f"http://{host}:{abs_port}",
-            username=abs_user,
-            password=abs_password,
-            importance="critical",
-            notes="Library manager. Mobile apps use this credential too.",
-        )
-
     # ── Jellyfin credential banner ────────────────────────────────────
     jf_user = env("JELLYFIN_ADMIN_USER", "admin")
     jf_password = env("JELLYFIN_ADMIN_PASSWORD")
@@ -814,9 +491,6 @@ def main() -> int:
             importance="critical",
             notes="Web UI admin. Mobile apps pair via Quick Connect (Dashboard → Quick Connect → enable on web; in-app shows 6-digit code).",
         )
-
-    # ── Audiobookshelf admin seed ──────────────────────────────────────
-    seed_audiobookshelf(abs_port, abs_user, abs_password)
 
     # ── Jellyfin first-run + Quick Connect + Music library ───────────
     # `jellyfin_run_first_setup` waits for the UserManager's async init
@@ -852,35 +526,6 @@ def main() -> int:
             env("LLDAP_LDAP_PORT", "3890"),
             env("LLDAP_BASE_DN", "dc=dopp,dc=cloud"),
             env("LLDAP_ADMIN_PASSWORD"),
-        )
-
-    # ── ABS OIDC auto-configuration ───────────────────────────────────────
-    abs_oidc_secret = env("ABS_OIDC_SECRET")
-    public_domain = env("PUBLIC_DOMAIN")
-    abs_oidc_ok = False
-    if abs_oidc_secret and public_domain:
-        abs_oidc_ok = configure_abs_oidc(abs_port, abs_user, abs_password, public_domain, abs_oidc_secret)
-        if not abs_oidc_ok:
-            # The admin-authenticated PATCH path failed — most often
-            # because ABS_ADMIN_PASSWORD drifted from the preserved admin
-            # row on a wipe-configs reinstall, so the login never returned
-            # a token. Fall back to the no-login DB re-stamp so the OIDC
-            # client_secret converges to Authelia's with no manual step
-            # (#1717). Same class as the Immich DB reconcile (#1556).
-            log("   Attempting a DB-level ABS OIDC secret reconcile (no admin login required)…")
-            abs_oidc_ok = reconcile_abs_oidc_secret_in_db(abs_oidc_secret)
-
-    if not abs_oidc_ok and abs_oidc_secret:
-        # Auto-config failed or prerequisites missing — surface secret for manual paste.
-        auth_url = f"https://auth.{public_domain}" if public_domain else "auth.<domain>"
-        log(f"🔐 Audiobookshelf OIDC: issuer={auth_url}, client_id=audiobookshelf, client_secret={abs_oidc_secret} — paste into ABS Settings → Authentication → OIDC.")
-        emit_credential(
-            service="Audiobookshelf OIDC client_secret",
-            url=auth_url,
-            username="audiobookshelf",
-            password=abs_oidc_secret,
-            importance="system",
-            notes="Paste into ABS Settings → Authentication → OIDC client_secret to enable SSO.",
         )
 
     return 0
