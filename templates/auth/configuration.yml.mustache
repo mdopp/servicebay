@@ -33,6 +33,14 @@ session:
   cookies:
     - domain: '{{PUBLIC_DOMAIN}}'
       authelia_url: 'https://auth.{{PUBLIC_DOMAIN}}'
+      # Fallback landing page for a portal-direct login (logout then login,
+      # no originating `rd` param) — otherwise the user sits on the portal
+      # after 1FA/2FA. Targets a `*.{{PUBLIC_DOMAIN}}` subdomain that is
+      # one_factor/group:family under the wildcard access_control rule, so the
+      # signed-in user is authorized. NOT the bare apex (ADR 0006: apex is
+      # default-deny → 403). App-originated logins with `rd` still honour `rd`;
+      # this is only the no-`rd` fallback (non-regressive).
+      default_redirection_url: 'https://www.{{PUBLIC_DOMAIN}}/'
 
 storage:
   encryption_key: '{{AUTHELIA_STORAGE_ENCRYPTION_KEY}}'
