@@ -22,6 +22,15 @@ interface BundleBuildInput {
   services: ServiceUnit[];
   containers: EnrichedContainer[];
   files: Record<string, WatchedFile>;
+  /**
+   * Base names (the `installedTemplates` keys) of services ServiceBay
+   * installed on this node. A running unit whose base name is in this set
+   * is treated as managed even when it isn't backed by a `.kube`/pod —
+   * #1733: a single-container `.container` Quadlet (the ollama GPU fixup
+   * from #1026) has no pod manifest, so without this it falls through to
+   * the Standalone/unmanaged bundle despite being a declared service.
+   */
+  installedTemplates?: Set<string>;
 }
 
 const EXCLUDED_UNITS = new Set([
@@ -471,9 +480,19 @@ const mergeBundlesByPod = (bundles: Map<string, ServiceBundle>): Map<string, Ser
   return merged;
 };
 
-export const buildServiceBundlesForNode = ({ nodeName, services = [], containers = [], files = {} }: BundleBuildInput): ServiceBundle[] => {
+export const buildServiceBundlesForNode = ({ nodeName, services = [], containers = [], files = {}, installedTemplates }: BundleBuildInput): ServiceBundle[] => {
   const containerMap = new Map<string, EnrichedContainer>();
   containers.forEach(container => containerMap.set(container.id, container));
+
+  // #1733: a unit is managed if the agent flagged it (.kube/.container) OR
+  // its base name is one ServiceBay installed (installedTemplates). The
+  // latter catches a single-container .container Quadlet (ollama GPU fixup)
+  // running under an older agent, or any managed service with no pod.
+  const isManagedUnit = (svc: ServiceUnit): boolean => {
+    if (svc.isManaged) return true;
+    if (!installedTemplates || installedTemplates.size === 0) return false;
+    return installedTemplates.has(svc.name.replace(/\.service$/, ''));
+  };
 
   const drafts = new Map<string, ServiceBundle>();
   const servicePodKeys = new Map<string, Set<string>>();
@@ -553,7 +572,7 @@ export const buildServiceBundlesForNode = ({ nodeName, services = [], containers
   // Group unmanaged services by pod reference
   const servicesByPod = new Map<string, ServiceUnit[]>();
   services
-    .filter(s => !s.isManaged && !s.isServiceBay && !s.isReverseProxy && !EXCLUDED_UNITS.has(s.name))
+    .filter(s => !isManagedUnit(s) && !s.isServiceBay && !s.isReverseProxy && !EXCLUDED_UNITS.has(s.name))
     .forEach(service => {
       const podRef = service.podReference || 'ungrouped';
       if (!servicesByPod.has(podRef)) {
@@ -564,11 +583,11 @@ export const buildServiceBundlesForNode = ({ nodeName, services = [], containers
 
   // Log ALL services available for grouping
   const allServiceNames = services
-    .filter(s => !s.isManaged && !s.isServiceBay && !s.isReverseProxy && !EXCLUDED_UNITS.has(s.name))
+    .filter(s => !isManagedUnit(s) && !s.isServiceBay && !s.isReverseProxy && !EXCLUDED_UNITS.has(s.name))
     .map(s => s.name);
 
   services
-    .filter(service => !service.isManaged && !service.isServiceBay && !service.isReverseProxy && !EXCLUDED_UNITS.has(service.name))
+    .filter(service => !isManagedUnit(service) && !service.isServiceBay && !service.isReverseProxy && !EXCLUDED_UNITS.has(service.name))
     .forEach(service => {
       // Skip if already processed as a dependency of another service
       if (processedRoots.has(service.name)) return;
@@ -866,7 +885,7 @@ export const buildServiceBundlesForNode = ({ nodeName, services = [], containers
   // --- Merge bundles that share the same pod reference ---
   const mergedDrafts = mergeBundlesByPod(drafts);
   const baseBundles = Array.from(mergedDrafts.values());
-  const orphanPodBundles = buildSyntheticPodBundles(nodeName, baseBundles, services, containers, files, containerMap);
+  const orphanPodBundles = buildSyntheticPodBundles(nodeName, baseBundles, services, containers, files, containerMap, isManagedUnit);
   const allBundles = [...baseBundles, ...orphanPodBundles];
 
   return allBundles.sort((a, b) => {
@@ -884,7 +903,8 @@ export const buildServiceBundlesForNode = ({ nodeName, services = [], containers
     services: ServiceUnit[],
     containers: EnrichedContainer[],
     files: Record<string, WatchedFile>,
-    containerMap: Map<string, EnrichedContainer>
+    containerMap: Map<string, EnrichedContainer>,
+    isManagedUnit: (svc: ServiceUnit) => boolean
   ): ServiceBundle[] => {
     const podsToContainers = new Map<string, {
       normalized: string;
@@ -920,7 +940,7 @@ export const buildServiceBundlesForNode = ({ nodeName, services = [], containers
 
     const podsWithManagedService = new Set<string>();
     services.forEach(service => {
-      if (!service.isManaged) return;
+      if (!isManagedUnit(service)) return;
       collectPodKeysForService(service, containerMap).forEach(key => podsWithManagedService.add(key));
     });
 

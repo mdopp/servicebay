@@ -242,10 +242,32 @@ function safeHandler(
 }
 
 export function createMcpServer(opts?: { auth?: McpAuthContext }) {
-  const baseServer = new McpServer({
-    name: 'servicebay',
-    version: '1.0.0',
-  });
+  const baseServer = new McpServer(
+    {
+      name: 'servicebay',
+      version: '1.0.0',
+    },
+    {
+      instructions: [
+        'ServiceBay manages a node (host) running self-hosted apps. The naming model is:',
+        'node → service → container. A *service* is a systemd unit (e.g. `media`). Each',
+        'service runs one or more *containers* named `<service>-<app>` (e.g. `media-jellyfin`,',
+        '`media-audiobookshelf`). An app and its service often share a name when the service',
+        'runs a single container, but a multi-app service (like `media`) does NOT — the app is',
+        'a container inside it.',
+        '',
+        "To find an app's logs, resolve the names yourself instead of asking the user:",
+        '1. `list_services` — find the owning service and its `associatedContainerIds`.',
+        '2. `list_containers` — find the `<service>-<app>` container name (e.g. `media-jellyfin`).',
+        '3. `get_container_logs(id)` — fetch that container\'s logs.',
+        'For whole-unit (systemd) logs use `get_service_logs(name)` instead of per-container logs.',
+        '',
+        'Always resolve service/container names and ids from `list_services` / `list_containers`',
+        'rather than asking the user for them. Use `diagnose`, `get_health_checks`, and',
+        '`get_service_files` when you need more depth on a service.',
+      ].join('\n'),
+    },
+  );
   // Wrap every tool registration so the safety layer applies uniformly.
   // Read-only tools pass through unchanged; mutating tools land in the
   // gates defined above. The auth context is closed over per-server so
@@ -279,13 +301,13 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   });
 
   // --- List Services ---
-  server.tool('list_services', 'List services on a node with status, ports, volumes', { node: nodeParam }, async ({ node }) => {
+  server.tool('list_services', 'List logical services (systemd units) on a node with status, ports, volumes. A service may bundle multiple containers (see `associatedContainerIds`); to target a specific app, resolve its `<service>-<app>` container via list_containers.', { node: nodeParam }, async ({ node }) => {
     const nodeName = await resolveNode(node);
     return textResult(getServices(nodeName));
   });
 
   // --- List Containers ---
-  server.tool('list_containers', 'List running containers with image, state, ports', { node: nodeParam }, async ({ node }) => {
+  server.tool('list_containers', 'List running containers with image, state, ports. Container names follow `<service>-<app>` (e.g. `media-jellyfin`); use the resolved name with get_container_logs.', { node: nodeParam }, async ({ node }) => {
     const nodeName = await resolveNode(node);
     return textResult(getContainers(nodeName));
   });
@@ -293,7 +315,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   // --- Get Service Logs ---
   server.tool(
     'get_service_logs',
-    'Fetch systemd journal logs for a service. Use `since` (Unix seconds) on subsequent calls to get only newer lines for a debug-loop pattern.',
+    'Fetch systemd journal logs for a whole service (the systemd unit). For a single app inside a multi-container service, use get_container_logs with the `<service>-<app>` name instead. Use `since` (Unix seconds) on subsequent calls to get only newer lines for a debug-loop pattern.',
     {
       name: z.string().regex(/^[a-zA-Z0-9_.-]+$/, 'invalid service name').describe('Service name'),
       node: nodeParam,
@@ -326,7 +348,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   // --- Get Container Logs ---
   server.tool(
     'get_container_logs',
-    'Fetch container stdout/stderr logs. Use `since` (Unix seconds) on subsequent calls to get only newer lines for a debug-loop pattern.',
+    'Fetch container stdout/stderr logs. `id` is the `<service>-<app>` container name (e.g. `media-jellyfin`); resolve it via list_containers. Use `since` (Unix seconds) on subsequent calls to get only newer lines for a debug-loop pattern.',
     {
       id: z.string().regex(/^[a-zA-Z0-9_.-]+$/, 'invalid container id').describe('Container ID or name'),
       node: nodeParam,

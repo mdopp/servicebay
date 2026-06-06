@@ -386,15 +386,15 @@ describe('Media template: Audiobookshelf retired for fresh installs (#1725)', ()
     expect(JSON.stringify(pod)).not.toMatch(/audiobookshelf-config|abs-audiobooks|abs-podcasts/);
   });
 
-  it('schema-version is bumped to 5 with a matching CHANGELOG section', () => {
-    expect(media.yamlContent).toMatch(/servicebay\.schema-version:\s*"5"/);
+  it('schema-version is bumped to 6 with a matching CHANGELOG section', () => {
+    expect(media.yamlContent).toMatch(/servicebay\.schema-version:\s*"6"/);
     const changelog = fs.readFileSync(path.join(TEMPLATES_DIR, 'media', 'CHANGELOG.md'), 'utf-8');
-    expect(changelog).toMatch(/##\s*v5\b/);
+    expect(changelog).toMatch(/##\s*v6\b/);
   });
 
-  it('the v4-to-v5 migration is non-destructive (leaves ABS data on disk)', () => {
+  it('the v5-to-v6 migration is non-destructive (leaves ABS data on disk)', () => {
     const mig = fs.readFileSync(
-      path.join(TEMPLATES_DIR, 'media', 'migrations', 'v4-to-v5.py'), 'utf-8',
+      path.join(TEMPLATES_DIR, 'media', 'migrations', 'v5-to-v6.py'), 'utf-8',
     );
     // The migration must NOT delete/move the ABS data dirs — it only informs.
     expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);

@@ -311,11 +311,12 @@ app.prepare().then(() => {
 
   const twinStore = DigitalTwinStore.getInstance();
 
-  // Load serverName from config into twin store
+  // Load serverName + installedTemplates from config into twin store
   getConfig().then(config => {
     if (config.serverName) {
       twinStore.setServerName(config.serverName);
     }
+    twinStore.setInstalledTemplates(Object.keys(config.installedTemplates ?? {}));
   }).catch(() => { /* ignore */ });
 
   // Logging: Broadcast new logs to 'logs:live' room
@@ -393,6 +394,16 @@ app.prepare().then(() => {
           // TS "as any" is simplistic but TwinStore handles Partial<NodeTwin> safely.
           const update: Partial<NodeTwin> = { ...message.payload as unknown as Partial<NodeTwin>, health };
           twinStore.updateNode(nodeName, update);
+
+          // #1733: keep the managed-detection set fresh so a service installed
+          // after startup (which triggers a sync) is recognized as managed on
+          // its next bundle rebuild. Non-blocking; setInstalledTemplates no-ops
+          // when the set is unchanged.
+          if ('services' in (message.payload || {})) {
+            getConfig()
+              .then(config => twinStore.setInstalledTemplates(Object.keys(config.installedTemplates ?? {})))
+              .catch(() => { /* ignore */ });
+          }
       }
   });
   

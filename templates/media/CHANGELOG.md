@@ -1,5 +1,53 @@
 # Media (Jellyfin) — template changelog
 
+## v6 (breaking) — #1730 + #1731
+
+**Finish the Audiobookshelf retirement + stop the shared-tree SELinux
+relabel crash.** Non-destructive — no Audiobookshelf data is touched.
+
+### Why
+
+#1725 retired Audiobookshelf for fresh installs but only stopped
+*shipping* the ABS container in the pod — on an existing box the
+already-running `media-audiobookshelf` container kept running,
+`books.<domain>` still routed to ABS's dead port (13378), and the
+`audiobookshelf` OIDC client was re-registered on every deploy (#1730).
+Separately, Jellyfin's `/media` mount points at the shared, multi-writer
+`file-share/data` tree and the default kube recursive SELinux relabel
+crash-looped the whole media pod when a single root-owned stray existed
+anywhere under it — e.g. left by disk-import's privileged write (#1731).
+
+### What changed
+
+- `template.yml`: added `io.podman.annotations.label/jellyfin: "disable"`
+  so Jellyfin's bind mounts (notably the shared `/media` tree) are not
+  recursively relabelled — a root-owned stray under `file-share/data`
+  can no longer fail the rootless `lsetxattr` and brick a media restart
+  (#1731). The shared tree already carries `container_file_t` from its
+  long-lived writers, so the read-only mount needs no relabel. Same
+  per-container disable pattern `file-share` itself uses. Schema bumped
+  to `6`.
+- `variables.json`: `ABS_SUBDOMAIN.proxyPort` `ABS_PORT` (13378) →
+  `JELLYFIN_PORT` (8096) — `books.<domain>` now serves Jellyfin (the
+  operator keeps the `books` URL; audiobooks are Jellyfin's
+  `/media/audiobooks` Books library). The `audiobookshelf` `oidcClient`
+  block is dropped — Jellyfin authenticates via LLDAP (#1718), not a
+  per-service OIDC secret — so the dead client is no longer re-registered
+  on redeploy. `books` inherits Jellyfin's 100 MB upload `advanced_config`
+  (cover-art import) (#1730).
+- `migrations/v5-to-v6.py`: tears down the orphaned `media-audiobookshelf`
+  container left running by #1725 (`podman rm -f`, best-effort, never
+  blocks the deploy). **Data-preserving** — the on-disk ABS data dirs are
+  left in place; only the disposable container is removed.
+
+### Required action for existing installs
+
+Nothing manual is required — the migration removes the stale ABS
+container and `books.<domain>` repoints to Jellyfin automatically on the
+next deploy. The ABS OIDC client + data dirs are left on disk; delete
+them on your own schedule (`rm -rf ${DATA_DIR}/media/audiobookshelf-*`)
+once you've confirmed your audiobooks play from Jellyfin.
+
 ## v5 (breaking) — #1725
 
 **Audiobookshelf retired for fresh installs; audiobooks served by

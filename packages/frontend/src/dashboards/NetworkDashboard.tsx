@@ -1171,6 +1171,7 @@ export default function NetworkDashboard() {
               unit: selectedNodeData.rawData as ServiceUnit,
               nodeName: selectedNodeName,
               nodeState,
+              installedTemplates: twin?.installedTemplates,
           });
       } catch {
           return null;
