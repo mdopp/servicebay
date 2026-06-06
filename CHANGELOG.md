@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.102.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.101.0...servicebay-v4.102.0) (2026-06-06)
+
+
+### Features
+
+* **diagnose:** reconcile OIDC clients as an sso_verify heal-action ([390b03e](https://github.com/mdopp/servicebay/commit/390b03e0d48584381141912a8f0ac8a99e4e5e2b)), closes [#1741](https://github.com/mdopp/servicebay/issues/1741)
+
+
+### Bug Fixes
+
+* **auth:** portable LLDAP-readiness probe + Phase 2 OIDC reconcile heal-action ([0801143](https://github.com/mdopp/servicebay/commit/08011434f9bd91e8d734900dfa2b9571650d84c6))
+* **auth:** reconcile OIDC client_secret on re-register + gate Authelia on LLDAP readiness ([59f67d6](https://github.com/mdopp/servicebay/commit/59f67d6a68bd9f4c2e9385ad241d99fc7c53bf22)), closes [#1738](https://github.com/mdopp/servicebay/issues/1738) [#1737](https://github.com/mdopp/servicebay/issues/1737)
+* **auth:** use BusyBox-portable nc probe for LLDAP readiness gate ([da71ee5](https://github.com/mdopp/servicebay/commit/da71ee5f1f36d3139ded682975adf7c87243ecf3)), closes [#1745](https://github.com/mdopp/servicebay/issues/1745)
+* **media:** remove Audiobookshelf seed/wait block from post-deploy ([c122fcc](https://github.com/mdopp/servicebay/commit/c122fccf114f0f135ef21cfa81b8b9c636235139)), closes [#1740](https://github.com/mdopp/servicebay/issues/1740)
+* OIDC secret reconcile + LLDAP readiness gate + media post-deploy ABS cleanup ([1764003](https://github.com/mdopp/servicebay/commit/17640037825551cf6cba2836e5d9575e9f06d01a))
+
 ## [4.101.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.100.0...servicebay-v4.101.0) (2026-06-06)
 
 
