@@ -566,7 +566,7 @@ First-party registries ServiceBay knows about:
 
 - **`mdopp/servicebay-templates`** — the canonical external template
   set. Operator prompt at FCoS install time defaults to enabled.
-- **`mdopp/oscar`** — the household AI assistant tier (Ollama,
+- **`mdopp/solbay`** — the household AI assistant tier (Ollama,
   Hermes, Hermes WebUI, oscar-household template, plus the OSCAR
   stack bundling them). Operator prompt at FCoS install time
   defaults to enabled; decline to keep the install lean.
@@ -581,7 +581,7 @@ are both skipped — because SKILL.md and friends commonly contain
 `{{...}}` tokens as documentation that would otherwise mistakenly
 trigger placeholder substitution. See #1156. First consumer is the
 OSCAR `oscar-household` template's skill pack at
-`templates/oscar-household/skills/` in `mdopp/oscar`.
+`templates/oscar-household/skills/` in `mdopp/solbay`.
 
 ### Custom layouts via `servicebay.json`
 
@@ -615,7 +615,7 @@ clone exposes `servicebay.json`, the sync layer re-runs
 the working tree only carries the paths the manifest names plus the
 default `templates/` + `stacks/` fallbacks.
 
-Note: `mdopp/oscar` uses the **legacy** `templates/<name>/` layout (no
+Note: `mdopp/solbay` uses the **legacy** `templates/<name>/` layout (no
 manifest), even though it has multiple subsystems at top level
 (`voice-gatekeeper/`, `database/`, `__init__.py` for the Hermes-plugin
 path). The manifest mechanism stays available for future registries

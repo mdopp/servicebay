@@ -1,4 +1,59 @@
-# Media (Audiobookshelf + Jellyfin) — template changelog
+# Media (Jellyfin) — template changelog
+
+## v5 (breaking) — #1725
+
+**Audiobookshelf retired for fresh installs; audiobooks served by
+Jellyfin.** Non-destructive — existing ABS data is left untouched on
+upgrade.
+
+### Why
+
+Audiobookshelf authenticates only via OIDC, and its OIDC `client_secret`
+lives in ABS's preserved SQLite DB — it only converges with Authelia's
+re-rendered copy if ServiceBay can log into ABS to PATCH it, making ABS
+uniquely reinstall-brittle (`invalid_client` login loop on a
+wipe-configs reinstall, see #1717). Jellyfin already holds the media
+libraries, authenticates via LDAP→LLDAP (#1718, robust, no shared OIDC
+secret), and serves audiobooks well enough with a Jellyfin-native client
+(Symfonium). One robust house login, one less service to maintain.
+
+### What changed
+
+- `template.yml`: removed the `audiobookshelf` container + its four
+  volumes (`abs-config`, `abs-metadata`, `abs-audiobooks`,
+  `abs-podcasts`). `servicebay.ports` drops `{{ABS_PORT}}`; the
+  continuous `servicebay.healthcheck` now probes Jellyfin's
+  `/System/Info/Public` (ABS's `/healthcheck` is gone). Schema bumped
+  to `5`.
+- `post-deploy.py`: registers a Jellyfin **Audiobooks** library (content
+  type Books) at `/media/audiobooks`, mirroring the existing Music
+  library registration — idempotent on redeploy (a 400
+  `LibraryAlreadyExists` is treated as success). The ABS OIDC self-heal
+  (#1717) is kept so a still-running ABS on an upgraded install keeps
+  working until the operator retires it.
+- `variables.json`: ABS variables (`ABS_PORT`, `ABS_ADMIN_*`,
+  `ABS_OIDC_SECRET`, `ABS_*_PATH`, `ABS_SUBDOMAIN`) are left declared —
+  SB-side code (portal, diagnose, the ABS DB reconcile) still references
+  them for existing installs. They are simply no longer rendered into a
+  fresh-install pod.
+- `migrations/v4-to-v5.py`: informational + **non-destructive**. Detects
+  an existing ABS data dir and explicitly leaves it untouched, printing
+  the steps to retire ABS on the operator's own schedule.
+
+### Required action for existing installs
+
+This deploy stops starting the Audiobookshelf container but does **not**
+touch its data. Nothing is required immediately. When you're ready:
+
+1. Confirm your audiobooks appear in Jellyfin's "Audiobooks" library.
+2. Re-point your listening app (Symfonium) at Jellyfin.
+3. Optionally delete the Authelia `audiobookshelf` OIDC client and the
+   `books.<domain>` proxy host (obsolete for v5 fresh installs).
+4. `rm -rf ${DATA_DIR}/media/audiobookshelf-*` once you're confident.
+
+**#1717 (ABS OIDC drift) is NOT invalidated** — it still applies to
+existing ABS installs until they migrate, so it stays open; the OIDC
+self-heal remains in `post-deploy.py`.
 
 ## Pending — #1717 / #1718 (media SSO auth reconciliation)
 

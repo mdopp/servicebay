@@ -25,10 +25,12 @@ What this does for Jellyfin:
   3. Authenticate against /Users/AuthenticateByName to get a token.
   4. POST /QuickConnect/Enable so mobile apps can pair without
      shared passwords.
-  5. Add /media/music as a "Music" virtual folder so the library scan
-     starts immediately. Other subdirs (movies/, tv/, audiobooks/)
-     stay un-imported — operator adds them by hand if wanted.
-     Lowercase folder names are the convention per #1018.
+  5. Add /media/music as a "Music" virtual folder and /media/audiobooks
+     as a "Books" virtual folder so both scans start immediately. #1725
+     retired Audiobookshelf for fresh installs, so Jellyfin owns the
+     audiobooks library now. Other subdirs (movies/, tv/) stay
+     un-imported — operator adds them by hand if wanted. Lowercase
+     folder names are the convention per #1018.
 
 Best-effort throughout: each step that fails just logs a clear
 breadcrumb so the operator can finish the setup manually in the
@@ -369,6 +371,35 @@ def jellyfin_add_music_library(base_url: str, token: str, music_path: str) -> No
     # library type and we don't want to commit to a default. Lowercase
     # folder names match the file-share convention (#1018).
     log(f"   (Add movies/tv/photos libraries later from Dashboard → Libraries → Add Media Library; mount points live under /media/ inside the container — same tree as {music_path} on the host.)")
+
+
+def jellyfin_add_audiobooks_library(base_url: str, token: str) -> None:
+    """Register a 'Books' collection pointing at /media/audiobooks inside the
+    container (the mounted host {{JELLYFIN_MEDIA_PATH}}/audiobooks). #1725:
+    Audiobookshelf is retired for fresh installs, so Jellyfin now serves the
+    audiobooks library — Symfonium et al. speak Jellyfin natively. Lowercase
+    folder name per #1018, alongside `music/`, `podcasts/`, `notes/`.
+    Idempotent: a 400 with `LibraryAlreadyExists` is treated as success, so a
+    redeploy never duplicates the library."""
+    # /media is the container-side mount of JELLYFIN_MEDIA_PATH; the wizard
+    # default is /mnt/data/stacks/file-share/data so /media/audiobooks maps
+    # to /mnt/data/stacks/file-share/data/audiobooks on the host — the same
+    # tree where the imported Hörspiele already live.
+    container_path = "/media/audiobooks"
+    qs = f"?name=Audiobooks&collectionType=books&paths={container_path}&refreshLibrary=true"
+    code, body = request_json(
+        "POST", f"{base_url}/Library/VirtualFolders{qs}",
+        None,
+        extra_headers={
+            "X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"',
+        },
+    )
+    if code in (200, 204):
+        log(f"✅ Added 'Audiobooks' library → {container_path} (scan started).")
+    elif code == 400 and isinstance(body, dict) and "exists" in str(body).lower():
+        log("ℹ️ Audiobooks library already registered — leaving as-is.")
+    else:
+        log(f"(note) Could not auto-add Audiobooks library (HTTP {code}). Add it manually in Dashboard → Libraries (content type: Books, path /media/audiobooks).")
 
 
 def configure_abs_oidc(
@@ -803,6 +834,11 @@ def main() -> int:
                 jellyfin_add_music_library(
                     jellyfin_base, jf_token, env("JELLYFIN_MEDIA_PATH", "/mnt/data/stacks/file-share/data"),
                 )
+                # #1725: Audiobookshelf retired for fresh installs — Jellyfin
+                # serves the audiobooks library (content type Books) so
+                # Symfonium/Subsonic clients keep audiobooks under one robust
+                # LLDAP-SSO'd house login.
+                jellyfin_add_audiobooks_library(jellyfin_base, jf_token)
 
         # ── Jellyfin → LLDAP SSO (#1718) ──────────────────────────────
         # Wire the LDAP-Auth plugin against LLDAP so the family signs in

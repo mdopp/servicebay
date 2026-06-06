@@ -737,6 +737,146 @@ class MediaScript(unittest.TestCase):
         self.assertNotIn("abs-pass", log_only)
         self.assertNotIn("jf-pass", log_only)
 
+    # ── #1725: Audiobookshelf retired; Jellyfin serves audiobooks ─────────
+
+    def _recording_jellyfin_urlopen(self, calls, library_status=204, library_body=None):
+        """A urlopen stub that records every (method, url) and answers the
+        Jellyfin first-run + library-add happy path. /Library/VirtualFolders
+        responses are configurable so a test can simulate the idempotent
+        400-LibraryAlreadyExists case."""
+        import urllib.error
+
+        class _Resp:
+            def __init__(self, status, body):
+                self.status = status
+                self._b = json.dumps(body or {}).encode("utf-8")
+
+            def read(self):
+                return self._b
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def _open(req, *_a, **_kw):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            method = req.get_method() if hasattr(req, "get_method") else "GET"
+            calls.append((method, url))
+            if "/System/Info/Public" in url:
+                return _Resp(200, {"StartupWizardCompleted": False})
+            if "/Startup/FirstUser" in url:
+                return _Resp(200, {"Name": "stub"})
+            if "/Users/AuthenticateByName" in url:
+                return _Resp(200, {"AccessToken": "tok"})
+            if "/Library/VirtualFolders" in url:
+                return _Resp(library_status, library_body)
+            if any(p in url for p in (
+                "/Startup/Configuration", "/Startup/User", "/Startup/RemoteAccess",
+                "/Startup/Complete", "/QuickConnect/Enable",
+                "/Packages/Installed",
+            )):
+                return _Resp(204, None)
+            raise urllib.error.URLError(f"unmocked URL: {url}")
+
+        return _open
+
+    def test_jellyfin_registers_audiobooks_library_books_type(self):
+        """#1725: a fresh install must register a Jellyfin Audiobooks library
+        at /media/audiobooks with content type Books — mirroring the Music
+        library registration."""
+        m = load_script("media")
+        import urllib.request
+        calls: list[tuple[str, str]] = []
+        env = {
+            "HOST": "h",
+            "JELLYFIN_ADMIN_PASSWORD": "jf-pass",
+            "JELLYFIN_PORT": "8096",
+        }
+        with run_with_env(env), mock.patch.object(
+            urllib.request, "urlopen", self._recording_jellyfin_urlopen(calls)
+        ):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        # The audiobooks VirtualFolders POST must carry the Books collection
+        # type and the /media/audiobooks path.
+        lib_posts = [
+            u for (meth, u) in calls
+            if meth == "POST" and "/Library/VirtualFolders" in u
+        ]
+        audiobooks_post = next(
+            (u for u in lib_posts if "collectionType=books" in u), None
+        )
+        self.assertIsNotNone(
+            audiobooks_post, f"no Books VirtualFolders POST in {lib_posts}"
+        )
+        self.assertIn("paths=/media/audiobooks", audiobooks_post)
+        self.assertIn("Added 'Audiobooks' library", out)
+        # The Music library must still be registered too (not dropped).
+        self.assertTrue(
+            any("collectionType=music" in u for u in lib_posts),
+            "Music library registration regressed",
+        )
+
+    def test_jellyfin_audiobooks_library_idempotent_on_redeploy(self):
+        """A redeploy where the library already exists (Jellyfin answers 400
+        LibraryAlreadyExists) is treated as success, not an error — the
+        registration is idempotent."""
+        m = load_script("media")
+        import urllib.request
+        calls: list[tuple[str, str]] = []
+        env = {
+            "HOST": "h",
+            "JELLYFIN_ADMIN_PASSWORD": "jf-pass",
+            "JELLYFIN_PORT": "8096",
+        }
+        stub = self._recording_jellyfin_urlopen(
+            calls, library_status=400, library_body={"Error": "LibraryAlreadyExists"}
+        )
+        with run_with_env(env), mock.patch.object(urllib.request, "urlopen", stub):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        self.assertIn("Audiobooks library already registered", out)
+        # No scary failure line for the already-exists case.
+        self.assertNotIn("Could not auto-add Audiobooks library", out)
+
+    def test_jellyfin_add_audiobooks_library_unit(self):
+        """Direct unit test of jellyfin_add_audiobooks_library: it POSTs to
+        VirtualFolders with name=Audiobooks, collectionType=books, the
+        /media/audiobooks path, and the admin token in the auth header."""
+        m = load_script("media")
+        import urllib.request
+        calls: list[tuple[str, str, str]] = []
+
+        class _Resp:
+            status = 204
+
+            def read(self):
+                return b"{}"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def _open(req, *_a, **_kw):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            auth = req.headers.get("X-emby-authorization", "")
+            calls.append((req.get_method(), url, auth))
+            return _Resp()
+
+        with mock.patch.object(urllib.request, "urlopen", _open):
+            m.jellyfin_add_audiobooks_library("http://127.0.0.1:8096", "tok-123")
+        self.assertEqual(len(calls), 1)
+        meth, url, auth = calls[0]
+        self.assertEqual(meth, "POST")
+        self.assertIn("name=Audiobooks", url)
+        self.assertIn("collectionType=books", url)
+        self.assertIn("paths=/media/audiobooks", url)
+        self.assertIn('Token="tok-123"', auth)
+
     def test_jellyfin_waits_for_default_user_before_seeding_admin(self):
         """`POST /Startup/User` returns 404 until Jellyfin's UserManager
         has initialized the default user. The script must GET

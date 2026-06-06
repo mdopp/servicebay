@@ -42,7 +42,7 @@ const DEFAULT_REGISTRY: RegistryConfig = {
  *
  * The motivation is registries whose top-level layout reflects their
  * own subsystem boundaries rather than ServiceBay's expected
- * sparse-checkout shape — e.g. `mdopp/oscar` with
+ * sparse-checkout shape — e.g. `mdopp/solbay` with
  * `servicebay-template/`, `hermes-skills/`, `voice-gatekeeper/`,
  * `database/` at the root. The manifest tells SB which of those
  * directories to scan as templates.
@@ -782,7 +782,7 @@ export async function getTemplateConfigFiles(name: string, source?: string): Pro
  *
  * Returns `[]` when the template ships no `skills/` directory —
  * which is every template today except OSCAR's `oscar-household`
- * (after migration to `mdopp/oscar`).
+ * (after migration to `mdopp/solbay`).
  *
  * Same registry-fallback semantics as `getTemplateConfigFiles`.
  * Symlinks are ignored to keep the convention to "files in the

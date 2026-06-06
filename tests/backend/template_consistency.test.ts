@@ -358,6 +358,50 @@ describe('Home Assistant base configuration.yaml ships the include wiring', () =
   });
 });
 
+// ─── 3c. Media template retires Audiobookshelf for fresh installs (#1725) ───
+describe('Media template: Audiobookshelf retired for fresh installs (#1725)', () => {
+  const media = templates.find(t => t.name === 'media')!;
+
+  // Minimal render view — only the vars the media pod references.
+  const mediaView: Record<string, string> = {};
+  for (const v of catalogVars) mediaView[v] = `stub-${v.toLowerCase()}`;
+  for (const [name, meta] of Object.entries(media.variables)) {
+    if (meta && typeof meta === 'object' && 'default' in meta && typeof meta.default === 'string') {
+      mediaView[name] = meta.default;
+    }
+  }
+  mediaView.JELLYFIN_PORT = '8096';
+  mediaView.DATA_DIR = '/mnt/data/stacks';
+  mediaView.HOST_GATEWAY_IP = '10.88.0.1';
+  mediaView.PUBLIC_DOMAIN = 'dopp.cloud';
+
+  it('a fresh-install render has a Jellyfin container but no Audiobookshelf container', () => {
+    const rendered = Mustache.render(media.yamlContent, mediaView);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pod = yaml.loadAll(rendered).find((d: any) => d?.kind === 'Pod') as any;
+    const containerNames: string[] = (pod?.spec?.containers ?? []).map((c: { name: string }) => c.name);
+    expect(containerNames).toContain('jellyfin');
+    expect(containerNames).not.toContain('audiobookshelf');
+    // No ABS volumes/ports leak into the rendered pod either.
+    expect(JSON.stringify(pod)).not.toMatch(/audiobookshelf-config|abs-audiobooks|abs-podcasts/);
+  });
+
+  it('schema-version is bumped to 5 with a matching CHANGELOG section', () => {
+    expect(media.yamlContent).toMatch(/servicebay\.schema-version:\s*"5"/);
+    const changelog = fs.readFileSync(path.join(TEMPLATES_DIR, 'media', 'CHANGELOG.md'), 'utf-8');
+    expect(changelog).toMatch(/##\s*v5\b/);
+  });
+
+  it('the v4-to-v5 migration is non-destructive (leaves ABS data on disk)', () => {
+    const mig = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'media', 'migrations', 'v4-to-v5.py'), 'utf-8',
+    );
+    // The migration must NOT delete/move the ABS data dirs — it only informs.
+    expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);
+    expect(mig).toMatch(/UNTOUCHED|preserved/i);
+  });
+});
+
 // ─── 4. Subdomain proxyPort references resolve ──────────────────────────────
 describe('Subdomain proxyPort references', () => {
   for (const t of templates) {
@@ -551,6 +595,7 @@ describe('OIDC client_id single source of truth', () => {
     'packages/backend/src/lib/registry.ts',                                 // type definition
     'packages/backend/src/lib/capabilities/authelia.test.ts',               // unit tests use fixture meta to drive the handler
     'packages/backend/src/lib/capabilities/credentials.test.ts',            // unit tests use fixture meta to drive the handler
+    'packages/backend/src/lib/capabilities/autheliaClientMerge.test.ts',    // unit tests use fixture client_id literals to drive the merge
   ]);
 
   it('no src/ file hardcodes a client_id / username literal that mirrors an OIDC declaration', () => {
