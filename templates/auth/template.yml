@@ -76,20 +76,25 @@ spec:
   #    no-LLM, bounded wait wrapper, then hand off to the image's normal
   #    entrypoint (no args → preserves authelia's default /config discovery
   #    + the entrypoint's PUID/su-exec handling).
-  #    - `nc` ships in the authelia image at /bin/nc (busybox); `nc -z` is a
-  #      pure socket probe (no LDAP auth, no data written).
-  #    - Bounded to ~120s so a genuinely-down LLDAP still surfaces a clear
-  #      failure (and systemd Restart= retries) instead of hanging forever.
+  #    - `nc` ships in the authelia image at /bin/nc (BusyBox v1.37.0). That
+  #      BusyBox build has NO `-z` flag (the old probe always errored, looped
+  #      to the cap, and fell through = a fixed ~120s delay, not a gate). The
+  #      portable probe is `nc -w 1 localhost <port> </dev/null`: `-w 1` caps
+  #      the connect attempt at 1s and `</dev/null` feeds EOF so nc returns
+  #      immediately on a successful connect (exit 0) and non-zero on refused.
+  #    - Bounded to ~120 attempts so a genuinely-down LLDAP still surfaces a
+  #      clear failure (and systemd Restart= retries) instead of hanging
+  #      forever — but a ready LLDAP breaks the loop on the first connect (~1s).
   - name: authelia
     image: docker.io/authelia/authelia:latest
     command: ["/bin/sh", "-c"]
     args:
       - |
         i=0
-        until nc -z localhost {{LLDAP_LDAP_PORT}}; do
+        until nc -w 1 localhost {{LLDAP_LDAP_PORT}} </dev/null; do
           i=$((i+1))
           if [ "$i" -ge 120 ]; then
-            echo "authelia: LLDAP LDAP socket :{{LLDAP_LDAP_PORT}} not ready after ${i}s; starting anyway (systemd will restart on fatal exit)" >&2
+            echo "authelia: LLDAP LDAP socket :{{LLDAP_LDAP_PORT}} not ready after ${i} attempts; starting anyway (systemd will restart on fatal exit)" >&2
             break
           fi
           [ "$i" -eq 1 ] && echo "authelia: waiting for LLDAP LDAP socket localhost:{{LLDAP_LDAP_PORT}} ..."
