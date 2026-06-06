@@ -26,12 +26,62 @@ function emitProgress(step: string, progress: number, message: string) {
 }
 
 const REPO = 'mdopp/servicebay';
+const IMAGE = 'ghcr.io/mdopp/servicebay:latest';
 
 interface Release {
   tag_name: string;
   html_url: string;
   published_at: string;
   body: string;
+}
+
+/**
+ * Pull the per-arch (amd64/linux) image digest out of a `podman manifest
+ * inspect` manifest-list document. The list is multi-arch; the amd64/linux
+ * entry's digest is the stable per-image identity that changes exactly when a
+ * new image is pushed to the tag. Exported for unit testing the parsing.
+ */
+export function extractImageDigest(manifest: unknown): string | null {
+  if (!manifest || typeof manifest !== 'object') return null;
+  const m = manifest as Record<string, unknown>;
+
+  // Manifest list (multi-arch): pick the linux/amd64 platform entry.
+  const manifests = m.manifests;
+  if (Array.isArray(manifests)) {
+    const amd64 = manifests.find((entry) => {
+      const platform = (entry as Record<string, unknown>)?.platform as
+        | Record<string, unknown>
+        | undefined;
+      return platform?.os === 'linux' && platform?.architecture === 'amd64';
+    }) as Record<string, unknown> | undefined;
+    const listed = amd64?.digest;
+    if (typeof listed === 'string' && listed.length > 0) return listed;
+  }
+
+  // Single-arch image manifest: the config digest is its stable identity.
+  const config = m.config as Record<string, unknown> | undefined;
+  const single = config?.digest ?? m.Digest ?? m.digest;
+  return typeof single === 'string' && single.length > 0 ? single : null;
+}
+
+/**
+ * Resolve the image digest the **registry** currently publishes for
+ * `:latest`. `podman manifest inspect` fetches only the manifest (a few KB),
+ * not the layers, so this is cheap enough to run on every update check.
+ * Returns null when the registry can't be reached / the tool errors — callers
+ * must treat null as "unknown", never as "unchanged".
+ */
+async function getRemoteImageDigest(): Promise<string | null> {
+  try {
+    const executor = getExecutor('Local');
+    const { stdout } = await executor.execArgv(['podman', 'manifest', 'inspect', IMAGE], {
+      timeoutMs: 30 * 1000,
+    });
+    return extractImageDigest(JSON.parse(stdout));
+  } catch (e) {
+    logger.warn('Updater', `getRemoteImageDigest failed: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
 }
 
 async function getCurrentVersion(): Promise<string> {
@@ -62,7 +112,27 @@ async function getLatestRelease(): Promise<Release | null> {
   }
 }
 
-export async function checkForUpdates() {
+export interface UpdateCheckResult {
+  hasUpdate: boolean;
+  current: string;
+  /**
+   * True when the release tag is ahead of the running version but the
+   * `:latest` image hasn't been (re)published yet — the release-please tag
+   * lands *before* the Release workflow builds+pushes the image, so for a few
+   * minutes the tag advertises a version no image exists for. We surface this
+   * distinctly instead of a false "update available" that pulls an unchanged
+   * image and reports a misleading success.
+   */
+  imageBuilding?: boolean;
+  latest: {
+    version: string;
+    url: string;
+    date: string;
+    notes: string;
+  } | null;
+}
+
+export async function checkForUpdates(): Promise<UpdateCheckResult> {
   const current = await getCurrentVersion();
   const latest = await getLatestRelease();
 
@@ -80,24 +150,59 @@ export async function checkForUpdates() {
   const versionMatch = latest.tag_name.match(/(\d+\.\d+\.\d+.*)/);
   const latestClean = versionMatch ? versionMatch[0] : latest.tag_name.replace(/^v/, '');
 
-  let hasUpdate = false;
+  let tagAhead = false;
   try {
-      hasUpdate = semver.gt(latestClean, currentClean);
+      tagAhead = semver.gt(latestClean, currentClean);
   } catch (err) {
       logger.warn('Updater', `Invalid version comparison: ${latestClean} vs ${currentClean}`, err);
       return { hasUpdate: false, current, latest: null };
   }
 
-  return {
-    hasUpdate,
-    current,
-    latest: {
-      version: latest.tag_name,
-      url: latest.html_url,
-      date: latest.published_at,
-      notes: latest.body
-    }
+  const latestInfo = {
+    version: latest.tag_name,
+    url: latest.html_url,
+    date: latest.published_at,
+    notes: latest.body,
   };
+
+  const config = await getConfig();
+
+  if (!tagAhead) {
+    // We're current. Record the digest we're running on (if not already) so a
+    // later tag-ahead check has a baseline to reconcile against — the digest
+    // the registry serves now is, by definition, the image this version runs.
+    if (!config.autoUpdate.appliedImageDigest) {
+      const seedDigest = await getRemoteImageDigest();
+      if (seedDigest) {
+        await updateConfig({
+          autoUpdate: { ...config.autoUpdate, appliedImageDigest: seedDigest },
+        });
+      }
+    }
+    return { hasUpdate: false, current, latest: latestInfo };
+  }
+
+  // The release tag is ahead. Reconcile against the *actual* image so we don't
+  // advertise an update that would pull an unchanged image (the tag→image
+  // window). Compare the registry's current `:latest` digest to the digest we
+  // last applied. Equal → the new image isn't published yet → "building".
+  const remoteDigest = await getRemoteImageDigest();
+  const appliedDigest = config.autoUpdate.appliedImageDigest;
+
+  // If we can't resolve the remote digest (registry unreachable / no podman),
+  // fall back to the tag check alone — never block a genuine update on a
+  // transient digest-lookup failure, and never claim "building" on unknown.
+  if (!remoteDigest || !appliedDigest) {
+    return { hasUpdate: true, current, latest: latestInfo };
+  }
+
+  if (remoteDigest === appliedDigest) {
+    // Tag advanced but the image we're running is still what the registry
+    // serves — the new image is still building. Not actionable yet.
+    return { hasUpdate: false, imageBuilding: true, current, latest: latestInfo };
+  }
+
+  return { hasUpdate: true, current, latest: latestInfo };
 }
 
 /**
@@ -164,21 +269,59 @@ export function scheduleUpdateNotifier(): void {
   logger.info('Updater', `Update-notification poll scheduled every ${NOTIFY_INTERVAL_MS / 3600000}h`);
 }
 
-export async function performUpdate(version: string) {
+export interface PerformUpdateResult {
+  success: boolean;
+  /** True when the image actually advanced and a restart was triggered. */
+  updated: boolean;
+  message: string;
+}
+
+export async function performUpdate(version: string): Promise<PerformUpdateResult> {
   try {
     emitProgress('init', 0, 'Initializing update...');
     const executor = getExecutor('Local');
-    
+
+    // Capture the digest we're running on *before* pulling, so we can tell
+    // whether the pull actually advanced us to a new image — never report a
+    // silent success no-op (memory feedback_dont_mask_failures).
+    const config = await getConfig();
+    const beforeDigest = config.autoUpdate.appliedImageDigest ?? null;
+
     // 1. Pull new image
     logger.info('updater', `Pulling new image for version ${version}...`);
     emitProgress('download', 0, 'Pulling new image...');
-    
+
     // Pulls can take time on slower links; extend timeout to avoid premature failure
     const { stdout, stderr } = await executor.exec('podman pull ghcr.io/mdopp/servicebay:latest', { timeoutMs: 5 * 60 * 1000 });
     const pullOutput = [stdout.trim(), stderr.trim()].filter(Boolean).join(' | ');
     const safeOutput = pullOutput.length > 800 ? `${pullOutput.slice(0, 800)}...` : pullOutput;
+
+    // What does the registry serve now, after the pull? If it matches the
+    // digest we were already running, nothing changed — the image isn't ready
+    // yet (the release tag raced ahead of the image push). Report it honestly
+    // and skip the pointless restart.
+    const afterDigest = await getRemoteImageDigest();
+    const imageChanged = afterDigest !== null && afterDigest !== beforeDigest;
+
+    if (afterDigest !== null && !imageChanged) {
+      const message =
+        'Already on the latest image — the new version is still building. Try again shortly.';
+      logger.info('updater', message);
+      emitProgress('download', 100, message);
+      if (global.updaterIO) global.updaterIO.emit('update:noop', { message });
+      return { success: true, updated: false, message };
+    }
+
     const downloadMessage = safeOutput ? `Image pulled successfully. podman pull output: ${safeOutput}` : 'Image pulled successfully.';
     emitProgress('download', 100, downloadMessage);
+
+    // Persist the digest we advanced to so the next availability check knows
+    // what we're actually running (closes the tag→image false-positive window).
+    if (afterDigest) {
+      await updateConfig({
+        autoUpdate: { ...config.autoUpdate, appliedImageDigest: afterDigest },
+      });
+    }
 
     // 2. Restart via systemd instead of auto-update to ensure deterministic restart
     logger.info('updater', 'Restarting service...');
@@ -186,7 +329,7 @@ export async function performUpdate(version: string) {
     await executor.exec('systemctl --user restart --no-block servicebay.service');
     emitProgress('restart', 100, 'Restart triggered. ServiceBay will restart with the new image.');
 
-    return { success: true };
+    return { success: true, updated: true, message: 'Update applied. Service is restarting with the new image.' };
   } catch (e) {
     logger.error('updater', 'Update failed:', e);
     const message = e instanceof Error ? e.message : 'Unknown error';

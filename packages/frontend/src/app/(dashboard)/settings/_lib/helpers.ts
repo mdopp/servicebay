@@ -19,6 +19,12 @@ export const DEFAULT_TEMPLATE_SCHEMA: Record<string, TemplateSettingsSchemaEntry
 export interface AppUpdateStatus {
   hasUpdate: boolean;
   current: string;
+  /**
+   * Release tag is ahead but the `:latest` image hasn't been published yet
+   * (release-please cuts the tag before the Release workflow pushes the image).
+   * Shown as "new version building" rather than an actionable update.
+   */
+  imageBuilding?: boolean;
   latest: {
     version: string;
     url: string;
