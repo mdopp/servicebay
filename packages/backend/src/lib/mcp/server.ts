@@ -511,7 +511,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   // --- Get Service Files ---
   server.tool(
     'get_service_files',
-    'Get the on-disk files for a service. Returns `kubeContent` = the systemd `.kube` Quadlet unit ([Kube]/[Install] sections), and `yamlContent` = the Kubernetes Pod-spec `.yml` (apiVersion/kind/spec). WARNING: these field names are REVERSED relative to update_service_yaml — to edit and write back the pod spec, pass this tool\'s `yamlContent` into update_service_yaml\'s `kubeContent`/`podSpecContent` param, NOT this tool\'s `kubeContent` (that is the Quadlet unit, which update_service_yaml regenerates on its own).',
+    'Get the on-disk files for a service. Returns `kubeContent` = the systemd Quadlet unit, `yamlContent` = the Kubernetes Pod-spec `.yml` (apiVersion/kind/spec), and `quadletKind` = "kube" or "container". For a `.kube` service (quadletKind="kube"): `kubeContent` is the [Kube]/[Install] unit and `yamlContent` is the pod spec; these field names are REVERSED relative to update_service_yaml — to write back the pod spec, pass this tool\'s `yamlContent` into update_service_yaml (the Quadlet unit is regenerated on its own). For a single-container `.container` service (quadletKind="container", e.g. ollama after the GPU fixup): `kubeContent` is the whole `.container` unit ([Container] section) and `yamlContent` is empty — the unit file IS the artifact, so edit `kubeContent` and pass it straight into update_service_yaml.',
     { name: z.string().describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
       const nodeName = await resolveNode(node);
@@ -876,7 +876,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   // --- Update Service YAML (edit then redeploy) ---
   server.tool(
     'update_service_yaml',
-    'Replace a service\'s Kubernetes Pod-spec `.yml` and redeploy it. Use `get_service_files` first, modify, then call this. NOTE the field-name mismatch: the content this tool wants (in `kubeContent`/`podSpecContent`) is the POD SPEC — i.e. the `yamlContent` returned by get_service_files (apiVersion/kind/spec), NOT its `kubeContent` (the `.kube` Quadlet unit). The Quadlet unit is regenerated automatically; do not pass it here. The file is written and `systemctl --user daemon-reload` + service restart is triggered.',
+    'Replace a service\'s on-disk definition and redeploy it. Use `get_service_files` first, modify, then call this. For a `.kube` service (quadletKind="kube"): the content this tool wants (in `kubeContent`/`podSpecContent`) is the POD SPEC — i.e. the `yamlContent` returned by get_service_files (apiVersion/kind/spec), NOT its `kubeContent` (the `.kube` Quadlet unit, regenerated automatically). For a single-container `.container` service (quadletKind="container", e.g. ollama): there is no pod spec — pass the edited `.container` unit body (the `kubeContent` from get_service_files, with a [Container] section) and it is written straight back. Either way the file is written and `systemctl --user daemon-reload` + restart is triggered.',
     {
       name: z.string().regex(/^[a-zA-Z0-9_.-]+$/, 'invalid service name').describe('Service name'),
       kubeContent: z.string().min(1).optional().describe('The Pod-spec `.yml` content (the `yamlContent` from get_service_files, apiVersion/kind/spec) — NOT the `.kube` Quadlet unit. Historical name; prefer `podSpecContent`. One of kubeContent / podSpecContent is required.'),
@@ -891,6 +891,25 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         const podSpec = podSpecContent ?? kubeContent;
         if (!podSpec) {
           return errorResult('Error updating service: provide the Pod-spec `.yml` content via `podSpecContent` (or `kubeContent`).');
+        }
+        // #1778: a single-container `.container` Quadlet (the ollama GPU
+        // fixup) has no separate pod spec — the unit file IS the deploy
+        // artifact, so the read/update contract differs: the caller edits
+        // the `.container` unit body (the `kubeContent` from
+        // get_service_files) and we write it straight back. A `.container`
+        // body is the only legitimate reason to pass a `[Container]`
+        // section, so only then do we look the service up (avoids a per-call
+        // agent round-trip on the common `.kube` pod-spec path); the lookup
+        // confirms the on-disk unit really is a `.container` before writing.
+        if (/^\s*\[Container\]/m.test(podSpec)) {
+          const existing = await ServiceManager.getServiceFiles(nodeName, name).catch(() => null);
+          if (existing?.quadletKind === 'container') {
+            await ServiceManager.deployContainerQuadlet(nodeName, name, podSpec);
+            return textResult(`Service "${name}" (.container Quadlet) updated and redeployed`);
+          }
+          // Not a .container service — fall through to the footgun guard,
+          // which correctly rejects a Quadlet unit passed where a pod spec
+          // is expected.
         }
         // Field-name footgun guard: get_service_files returns the `.kube`
         // Quadlet unit under `kubeContent`. If a caller round-trips that field

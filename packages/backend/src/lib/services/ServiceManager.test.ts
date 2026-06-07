@@ -22,6 +22,17 @@ vi.mock('../store/twin', () => ({
     }
 }));
 
+// getServiceFiles still calls loadSystemdUnitInfo (systemctl cat / show) via
+// the agent even when the Quadlet body is served from the twin cache. Stub the
+// agent so those exec calls don't blow up; the unit content itself comes from
+// the mocked twin files.
+const mockSendCommand = vi.fn(async () => ({ code: 1, stdout: '', stderr: '' }));
+vi.mock('../agent/manager', () => ({
+    agentManager: {
+        ensureAgent: async () => ({ sendCommand: mockSendCommand }),
+    },
+}));
+
 describe('ServiceManager (V4)', () => {
     beforeEach(() => {
         mockNodes['local'] = {
@@ -216,5 +227,80 @@ Volume=my-vol:/data:Z
         expect(svc.volumes).toHaveLength(2);
         expect(svc.volumes[0]).toEqual({ host: '/host/path', container: '/container/path' });
         expect(svc.volumes[1]).toEqual({ host: 'my-vol', container: '/data' });
+    });
+});
+
+describe('getServiceFiles — .container Quadlet resolution (#1778)', () => {
+    const OLLAMA_PATH = '/var/home/core/.config/containers/systemd/ollama.container';
+    const OLLAMA_BODY = [
+        '[Unit]',
+        'Description=Ollama',
+        '',
+        '[Container]',
+        'Image=docker.io/ollama/ollama:latest',
+        'AddDevice=nvidia.com/gpu=all',
+        'PublishPort=11434:11434',
+        '',
+        '[Install]',
+        'WantedBy=default.target',
+    ].join('\n');
+
+    beforeEach(() => {
+        mockNodes['local'] = {
+            services: [],
+            containers: [],
+            files: {},
+            volumes: [],
+            systemInfo: {},
+            lastUpdate: 0,
+        };
+        mockSendCommand.mockClear();
+    });
+
+    it('resolves a .container service (not "File not found: ollama.kube")', async () => {
+        // Regression for #1778: ollama runs as a single-container .container
+        // Quadlet (the #1026 GPU fixup). The old path constructed
+        // `${name}.kube` and 404'd; it must now serve the real .container body.
+        mockNodes['local'].files = {
+            [OLLAMA_PATH]: { path: OLLAMA_PATH, content: OLLAMA_BODY, modified: 0 },
+        } as any;
+
+        const files = await ServiceManager.getServiceFiles('local', 'ollama');
+        expect(files.quadletKind).toBe('container');
+        // kubeContent surfaces the .container unit body itself.
+        expect(files.kubeContent).toContain('[Container]');
+        expect(files.kubeContent).toContain('AddDevice=nvidia.com/gpu=all');
+        // No separate pod spec for a .container — yamlContent stays empty.
+        expect(files.yamlContent).toBe('');
+        expect(files.yamlPath).toBe('');
+        // kubePath points at the REAL .container path so writes target it.
+        expect(files.kubePath).toBe(OLLAMA_PATH);
+    });
+
+    it('still resolves a .kube service to its pod-spec yaml', async () => {
+        const kubePath = '/var/home/core/.config/containers/systemd/vaultwarden.kube';
+        const yamlPath = '/var/home/core/.config/containers/systemd/vaultwarden.yml';
+        mockNodes['local'].files = {
+            [kubePath]: { path: kubePath, content: 'Yaml=vaultwarden.yml\n', modified: 0 },
+            [yamlPath]: { path: yamlPath, content: 'apiVersion: v1\nkind: Pod\n', modified: 0 },
+        } as any;
+
+        const files = await ServiceManager.getServiceFiles('local', 'vaultwarden');
+        expect(files.quadletKind).toBe('kube');
+        expect(files.kubeContent).toContain('Yaml=vaultwarden.yml');
+        expect(files.yamlContent).toContain('kind: Pod');
+    });
+
+    it('prefers .kube when both extensions somehow exist', async () => {
+        const kubePath = '/x/dual.kube';
+        const containerPath = '/x/dual.container';
+        mockNodes['local'].files = {
+            [containerPath]: { path: containerPath, content: '[Container]\nImage=x', modified: 0 },
+            [kubePath]: { path: kubePath, content: 'Yaml=dual.yml', modified: 0 },
+        } as any;
+
+        const files = await ServiceManager.getServiceFiles('local', 'dual');
+        expect(files.quadletKind).toBe('kube');
+        expect(files.kubePath).toBe(kubePath);
     });
 });

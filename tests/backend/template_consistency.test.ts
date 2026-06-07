@@ -130,6 +130,13 @@ describe('Template ↔ source-name consistency', () => {
     // live in this repo any more, but the service name on the agent
     // is still 'hermes' — the reference is legitimate. See #1159.
     'hermes',
+    // Service identifiers used as getServiceFiles() fixtures in
+    // ServiceManager.test.ts for the .container Quadlet resolution path
+    // (#1778): 'ollama' is a real `.container`-Quadlet service (no
+    // templates/ dir — it ships as an oscar GPU-fixup unit) and 'dual'
+    // is a synthetic fixture name for the both-.kube-and-.container case.
+    'ollama',
+    'dual',
   ]);
 
   // Patterns to scan for in src/ — each captures a template-name string literal.

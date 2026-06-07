@@ -546,17 +546,50 @@ export class ServiceListing {
     // same transform without importing this whole class.
 
     /**
+     * Resolve the on-disk Quadlet unit a service is backed by.
+     *
+     * A service can be backed by either a `<name>.kube` (the common
+     * pod-Quadlet, which references a separate `.yml` pod spec) or a
+     * single-container `<name>.container` Quadlet (the ollama GPU fixup,
+     * #1026 — managed-detection for these landed in #1733 but the
+     * file-read/update path still assumed `.kube`, so `.container`
+     * services 404'd, #1778).
+     *
+     * Returns the twin file key of the unit and its kind. `.kube` takes
+     * precedence when both somehow exist. Returns null when neither is in
+     * the twin (the caller then falls back to a raw `~/<name>.kube` read).
+     */
+    private static resolveQuadletUnit(
+        twin: import('../store/twin').NodeTwin | null | undefined,
+        serviceName: string,
+    ): { path: string; kind: 'kube' | 'container' } | null {
+        if (!twin) return null;
+        const keys = Object.keys(twin.files);
+        const kubeKey = keys.find(p => p.endsWith(`${serviceName}.kube`));
+        if (kubeKey) return { path: kubeKey, kind: 'kube' };
+        const containerKey = keys.find(p => p.endsWith(`${serviceName}.container`));
+        if (containerKey) return { path: containerKey, kind: 'container' };
+        return null;
+    }
+
+    /**
      * Read kube file content from twin cache or agent.
+     *
+     * `unit` is the pre-resolved Quadlet unit (`.kube` or `.container`)
+     * from {@link resolveQuadletUnit}; when present its on-disk content is
+     * returned regardless of extension. When absent we fall back to an
+     * agent read of the constructed `<name>.kube` path (the historical
+     * behaviour for services not yet in the twin file cache).
      */
     private static async readKubeContent(
         agent: import('../agent/handler').AgentHandler,
         twin: import('../store/twin').NodeTwin | null | undefined,
         serviceName: string,
         kubePath: string,
+        unit: { path: string; kind: 'kube' | 'container' } | null,
     ): Promise<string> {
-        const fullKubePath = twin ? Object.keys(twin.files).find(p => p.endsWith(`${serviceName}.kube`)) : null;
-        if (twin && fullKubePath && twin.files[fullKubePath]?.content) {
-            return twin.files[fullKubePath].content;
+        if (twin && unit && twin.files[unit.path]?.content) {
+            return twin.files[unit.path].content;
         }
 
         if (twin && twin.services?.length) {
@@ -593,27 +626,53 @@ export class ServiceListing {
         }
     }
 
-    /** Pre-pull container images so systemd start doesn't timeout */
+    /**
+     * Read a service's on-disk files.
+     *
+     * Returns `kubeContent` = the Quadlet unit, `yamlContent` = the pod
+     * spec it references. The unit may be a `.kube` (pod Quadlet → has a
+     * separate `Yaml=<name>.yml` pod spec) or a `.container` (single-
+     * container Quadlet, the ollama GPU fixup — #1026/#1778). A
+     * `.container` IS the deploy artifact: there is no separate pod spec,
+     * so `yamlContent`/`yamlPath` stay empty and `quadletKind:"container"`
+     * tells the caller to edit the unit file itself rather than a pod spec
+     * (mirrors the `.container` managed-detection from #1733).
+     *
+     * `kubePath` is the constructed default; when the service resolves to a
+     * `.container` in the twin, `kubePath` is the real `.container` path so
+     * writes target the right file.
+     */
     static async getServiceFiles(nodeName: string, serviceName: string) {
         const agent = await agentManager.ensureAgent(nodeName);
-        const kubePath = path.join(SYSTEMD_DIR, `${serviceName}.kube`);
+        let kubePath = path.join(SYSTEMD_DIR, `${serviceName}.kube`);
         let kubeContent = '';
         let yamlContent = '';
         let yamlPath = '';
         let serviceContent = '';
         let servicePath = '';
+        let quadletKind: 'kube' | 'container' = 'kube';
 
         try {
             const { getNodeTwin } = await import('../store/repository');
             const twin = getNodeTwin(nodeName);
 
-            kubeContent = await ServiceListing.readKubeContent(agent, twin, serviceName, kubePath);
+            const unit = ServiceListing.resolveQuadletUnit(twin, serviceName);
+            if (unit) {
+                quadletKind = unit.kind;
+                kubePath = unit.path;
+            }
 
-            const yamlMatch = kubeContent.match(/Yaml=(.+)/);
-            if (yamlMatch) {
-                const yamlFileName = yamlMatch[1].trim();
-                yamlPath = yamlFileName.startsWith('/') ? yamlFileName : path.join(SYSTEMD_DIR, yamlFileName);
-                yamlContent = await ServiceListing.readYamlContent(agent, twin, yamlFileName, yamlPath);
+            kubeContent = await ServiceListing.readKubeContent(agent, twin, serviceName, kubePath, unit);
+
+            // A `.container` Quadlet has no separate pod spec — the unit file
+            // is the whole artifact, so skip the `Yaml=` lookup entirely.
+            if (quadletKind === 'kube') {
+                const yamlMatch = kubeContent.match(/Yaml=(.+)/);
+                if (yamlMatch) {
+                    const yamlFileName = yamlMatch[1].trim();
+                    yamlPath = yamlFileName.startsWith('/') ? yamlFileName : path.join(SYSTEMD_DIR, yamlFileName);
+                    yamlContent = await ServiceListing.readYamlContent(agent, twin, yamlFileName, yamlPath);
+                }
             }
 
             ({ serviceContent, servicePath } = await loadSystemdUnitInfo(agent, serviceName));
@@ -622,7 +681,7 @@ export class ServiceListing {
             throw new Error(`Service ${serviceName} not found: ${msg}`);
         }
 
-        return { kubeContent, yamlContent, yamlPath, serviceContent, kubePath, servicePath };
+        return { kubeContent, yamlContent, yamlPath, serviceContent, kubePath, servicePath, quadletKind };
     }
 
     static async listTrashedServices(nodeName: string): Promise<Array<{

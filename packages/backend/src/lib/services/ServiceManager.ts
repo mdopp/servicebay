@@ -56,6 +56,7 @@ export class ServiceManager {
     static ensurePodmanSocket = ServiceLifecycle.ensurePodmanSocket;
     static ensureUnprivilegedPorts = ServiceLifecycle.ensureUnprivilegedPorts;
     static deployKubeService = ServiceLifecycle.deployKubeService;
+    static deployContainerQuadlet = ServiceLifecycle.deployContainerQuadlet;
     static deployService = ServiceLifecycle.deployService;
     static removeService = ServiceLifecycle.removeService;
     static saveService = ServiceLifecycle.saveService;
