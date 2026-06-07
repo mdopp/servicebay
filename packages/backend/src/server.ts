@@ -39,6 +39,7 @@ import { syncRegistries } from './lib/registry';
 import { reconcileLanIp } from './lib/lanIp';
 import { lazyInitializeExpiry as initBootstrapTokenExpiry } from './lib/mcp/bootstrapToken';
 import { createMcpServer } from './lib/mcp/server';
+import { isMcpApprovePath, handleMcpApproveRequest } from './lib/mcp/approveRoute';
 import { scheduleBackup } from './lib/backup/service';
 import { scheduleExternalNasBackup } from './lib/externalBackup/producer';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -270,6 +271,25 @@ app.prepare().then(() => {
           transport.close();
           mcpServer.close();
         });
+        return;
+      }
+
+      // MCP pending-approval routes — intercepted here (not via Next.js API
+      // routes) so they share the SAME pendingApprovals module instance as the
+      // /mcp handler above. Next.js Turbopack bundles a separate copy of the
+      // in-memory store for API routes, so a proposal made via /mcp would be
+      // invisible to a Next.js confirm route → every approve 410'd (#1766 fix).
+      // The handler is cookie-session ONLY (Bearer/anon → 401); see
+      // lib/mcp/approveRoute.ts for the full security/CSRF rationale.
+      if (isMcpApprovePath(parsedUrl.pathname)) {
+        const { status, body } = await handleMcpApproveRequest({
+          method: req.method,
+          pathname: parsedUrl.pathname!,
+          resolveSession: () => getSessionFromCookieHeader(req.headers.cookie),
+          onError: (e) => logger.error('Server', 'MCP approve error', e),
+        });
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(body));
         return;
       }
 
