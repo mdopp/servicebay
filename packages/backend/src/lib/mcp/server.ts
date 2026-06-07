@@ -30,6 +30,7 @@ import { getServicebayChannel, setServicebayChannel } from '@/lib/servicebayChan
 import { guardMutation, guardExec, snapshotBeforeMutation } from './safety';
 import { recordAudit } from './audit';
 import { notifyDestructiveOp } from './notify';
+import { createPendingApproval } from './pendingApprovals';
 import { redactLogText, redactServiceFiles } from './redact';
 import type { ApiScope } from '@/lib/auth/apiScope';
 import { parseEfibootmgr, assessUsbBootReadiness } from './efibootmgr';
@@ -81,7 +82,10 @@ const MUTATING_TOOLS = new Set([
  *   read       lookups + diagnose + log readers
  *   lifecycle  start/stop/restart + run_check_now + refresh + run_backup
  *   mutate     create/update/add + config writes — additive changes
- *   destroy    delete/restore/purge — irreversible state edits
+ *   reboot     reboot_node — transient, recoverable host restart (#1765),
+ *              split off `destroy` so a token can operate+reboot without
+ *              also granting irreversible delete/wipe. `destroy` implies it.
+ *   destroy    delete/restore/purge/factory_reset — irreversible state edits
  *   exec       exec_command — split off from `destroy` (#591) so a token
  *              can grant config writes without shell access
  */
@@ -114,17 +118,23 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   delete_service: 'destroy', delete_health_check: 'destroy',
   remove_proxy_route: 'destroy', restore_backup: 'destroy',
   purge_trashed_service: 'destroy',
-  set_boot_next_usb: 'destroy', reboot_node: 'destroy',
+  // set_boot_next_usb stays `destroy`: it can arm a USB-installer boot, a
+  // reinstall path that risks data loss — higher-risk than a plain reboot.
+  set_boot_next_usb: 'destroy',
   factory_reset: 'destroy',
+  // reboot — transient, recoverable; split out of destroy (#1765)
+  reboot_node: 'reboot',
   // exec (shell — own scope so tokens can grant config writes without it)
   exec_command: 'exec',
 };
 
 /**
  * Decide whether a token with `tokenScopes` may call a tool that
- * requires `required`. Encapsulates the back-compat rule (#591) that
- * tokens issued before the split — when `exec_command` was tagged as
- * `destroy` — still get exec via their `destroy` grant.
+ * requires `required`. Encapsulates the back-compat rules:
+ *   - tokens issued before the exec split (#591) — when `exec_command`
+ *     was tagged `destroy` — still get exec via their `destroy` grant.
+ *   - `destroy` implies `reboot` (#1765): the reboot tier was carved out
+ *     of `destroy`, so a legacy `destroy` token can still reboot a node.
  *
  * Exported pure helper so the scope semantics are testable without
  * spinning up the whole MCP server.
@@ -132,6 +142,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
 export function tokenHasScope(tokenScopes: readonly ApiScope[], required: ApiScope): boolean {
   if (tokenScopes.includes(required)) return true;
   if (required === 'exec' && tokenScopes.includes('destroy')) return true;
+  if (required === 'reboot' && tokenScopes.includes('destroy')) return true;
   return false;
 }
 
@@ -166,42 +177,38 @@ const DESTRUCTIVE_TOOLS = new Set([
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type ToolResult = any;
-function safeHandler(
+
+/**
+ * `destroy`-tier tools (delete/purge/restore/factory_reset/set_boot_next_usb)
+ * are the ones a token caller may *propose* but not *execute* without a human
+ * confirm (#1766). Derived from TOOL_SCOPES so the gate predicate stays in
+ * lockstep with the scope map — adding a tool at the `destroy` tier
+ * automatically routes it through the approval gate.
+ */
+function isDestroyTierTool(toolName: string): boolean {
+  return TOOL_SCOPES[toolName] === 'destroy';
+}
+
+/**
+ * Run the snapshot → real handler → audit/notify tail for one tool call.
+ * This is the part of the safety flow that actually executes the mutation,
+ * factored out so it can run either inline OR deferred behind a human
+ * approval (#1766) without duplicating the snapshot/audit/notify logic.
+ */
+function runToolWithSideEffects(
   toolName: string,
+  args: Record<string, unknown>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   handler: (...handlerArgs: any[]) => Promise<ToolResult>,
-  auth?: McpAuthContext,
-) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return async (...handlerArgs: any[]): Promise<ToolResult> => {
-    const args = (handlerArgs[0] && typeof handlerArgs[0] === 'object') ? handlerArgs[0] : {};
+  handlerArgs: any[],
+  auth?: McpAuthContext,
+): Promise<ToolResult> {
+  return (async () => {
     const start = Date.now();
     let outcome: 'ok' | 'error' | 'blocked' = 'ok';
     let errorMessage: string | undefined;
     try {
-      // Scope check (token auth only — cookie has all scopes by design).
-      const required = TOOL_SCOPES[toolName] ?? 'read';
-      if (auth && !tokenHasScope(auth.scopes, required)) {
-        outcome = 'blocked';
-        errorMessage = `Token scope '${required}' required for ${toolName}; this token has [${auth.scopes.join(',')}]`;
-        return { content: [{ type: 'text' as const, text: errorMessage }], isError: true as const };
-      }
-      if (MUTATING_TOOLS.has(toolName)) {
-        const blocked = await guardMutation(toolName);
-        if (blocked) {
-          outcome = 'blocked';
-          errorMessage = blocked.content[0]?.text;
-          return blocked;
-        }
-      }
-      if (toolName === 'exec_command' && typeof args.command === 'string') {
-        const denied = await guardExec(args.command);
-        if (denied) {
-          outcome = 'blocked';
-          errorMessage = denied.content[0]?.text;
-          return denied;
-        }
-      }
       if (DESTRUCTIVE_TOOLS.has(toolName)) {
         // Best-effort: don't block the mutation if the snapshot fails.
         await snapshotBeforeMutation(toolName, args);
@@ -238,6 +245,72 @@ function safeHandler(
         void notifyDestructiveOp({ tool: toolName, caller: auth?.user, args, ts }).catch(() => undefined);
       }
     }
+  })();
+}
+
+function safeHandler(
+  toolName: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  handler: (...handlerArgs: any[]) => Promise<ToolResult>,
+  auth?: McpAuthContext,
+) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return async (...handlerArgs: any[]): Promise<ToolResult> => {
+    const args = (handlerArgs[0] && typeof handlerArgs[0] === 'object') ? handlerArgs[0] : {};
+    // Scope check (token auth only — cookie has all scopes by design).
+    const required = TOOL_SCOPES[toolName] ?? 'read';
+    if (auth && !tokenHasScope(auth.scopes, required)) {
+      const msg = `Token scope '${required}' required for ${toolName}; this token has [${auth.scopes.join(',')}]`;
+      void recordAudit({ ts: new Date().toISOString(), tool: toolName, caller: auth.user, outcome: 'blocked', durationMs: 0, args, errorMessage: msg });
+      return { content: [{ type: 'text' as const, text: msg }], isError: true as const };
+    }
+    if (MUTATING_TOOLS.has(toolName)) {
+      const blocked = await guardMutation(toolName);
+      if (blocked) {
+        void recordAudit({ ts: new Date().toISOString(), tool: toolName, caller: auth?.user, outcome: 'blocked', durationMs: 0, args, errorMessage: blocked.content[0]?.text });
+        return blocked;
+      }
+    }
+    if (toolName === 'exec_command' && typeof args.command === 'string') {
+      const denied = await guardExec(args.command);
+      if (denied) {
+        void recordAudit({ ts: new Date().toISOString(), tool: toolName, caller: auth?.user, outcome: 'blocked', durationMs: 0, args, errorMessage: denied.content[0]?.text });
+        return denied;
+      }
+    }
+
+    // Approval gate (#1766): a TOKEN caller (the agent) may *propose* a
+    // destroy-tier tool but not execute it — park the call for an
+    // out-of-band human confirm and hand back a pending handle instead of a
+    // result. Cookie callers (no `auth`) bypass the gate and execute
+    // inline, same as before: the human IS the operator. The gate lands
+    // here, AFTER the scope + mutation/exec guards (so the agent still
+    // learns immediately if the call would be refused) but BEFORE the
+    // snapshot/handler, which are deferred into the approval's `execute`.
+    if (auth && isDestroyTierTool(toolName)) {
+      const pending = createPendingApproval({
+        toolName,
+        args,
+        caller: auth.user,
+        execute: () => runToolWithSideEffects(toolName, args, handler, handlerArgs, auth),
+      });
+      void recordAudit({ ts: new Date().toISOString(), tool: toolName, caller: auth.user, outcome: 'blocked', durationMs: 0, args, errorMessage: `pending human approval (${pending.pendingId})` });
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            status: 'pending_approval',
+            pendingId: pending.pendingId,
+            toolName: pending.toolName,
+            args: pending.args,
+            expiresAt: new Date(pending.expiresAt).toISOString(),
+            message: `Destructive tool "${toolName}" requires human approval before it runs. A ServiceBay admin must approve pending request ${pending.pendingId} from the dashboard (Settings → MCP). This token cannot self-approve. The request expires at ${new Date(pending.expiresAt).toISOString()}.`,
+          }, null, 2),
+        }],
+      };
+    }
+
+    return runToolWithSideEffects(toolName, args, handler, handlerArgs, auth);
   };
 }
 

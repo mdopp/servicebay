@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, Key, Plus, Trash2 } from 'lucide-react';
 import { copyToClipboard } from '../clipboard';
 
-type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'destroy' | 'exec';
-const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'destroy', 'exec'];
+type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'reboot' | 'destroy' | 'exec';
+const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'reboot', 'destroy', 'exec'];
 
 interface TokenView {
   id: string;
@@ -26,6 +26,7 @@ const SCOPE_BADGE: Record<ApiScope, string> = {
   destroy: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300',
   exec: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300',
   mutate: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300',
+  reboot: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300',
   lifecycle: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',
   read: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300',
 };
@@ -153,7 +154,7 @@ function CreateTokenForm(props: CreateTokenFormProps) {
             </label>
           ))}
         </div>
-        <p className="text-[10px] text-gray-400 mt-1">read = list/get only. lifecycle = start/stop/restart. mutate = create/update/config-edit. destroy = delete/restore/purge. exec = exec_command (shell). Tokens with destroy also implicitly grant exec for back-compat (#591).</p>
+        <p className="text-[10px] text-gray-400 mt-1">read = list/get only. lifecycle = start/stop/restart. mutate = create/update/config-edit. reboot = reboot the node (transient, recoverable). destroy = delete/restore/purge/factory-reset. exec = exec_command (shell). Tokens with destroy also implicitly grant reboot and exec for back-compat.</p>
       </div>
       {props.error && <p className="text-xs text-red-600">{props.error}</p>}
       <div className="flex gap-2">

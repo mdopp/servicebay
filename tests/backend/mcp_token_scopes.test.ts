@@ -14,7 +14,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { TOOL_SCOPES, tokenHasScope } from '@/lib/mcp/server';
-import type { ApiScope } from '@/lib/auth/apiScope';
+import { ALL_SCOPES, type ApiScope } from '@/lib/auth/apiScope';
 
 describe('MCP scope mapping (#591)', () => {
   it('update_config is mutate, not destroy', () => {
@@ -29,16 +29,18 @@ describe('MCP scope mapping (#591)', () => {
     expect(TOOL_SCOPES.set_boot_next_usb).toBe('destroy');
   });
 
-  it('reboot_node is destroy (#1235)', () => {
-    expect(TOOL_SCOPES.reboot_node).toBe('destroy');
+  it('reboot_node is reboot, not destroy (#1765)', () => {
+    // A reboot is transient/recoverable — split out of `destroy` so a token
+    // can operate+reboot without also granting irreversible delete/wipe.
+    expect(TOOL_SCOPES.reboot_node).toBe('reboot');
   });
 
   it('factory_reset is destroy (#1237)', () => {
     expect(TOOL_SCOPES.factory_reset).toBe('destroy');
   });
 
-  it('every entry uses one of the five known scopes', () => {
-    const known: ReadonlySet<ApiScope> = new Set<ApiScope>(['read', 'lifecycle', 'mutate', 'destroy', 'exec']);
+  it('every entry uses one of the known scopes', () => {
+    const known: ReadonlySet<ApiScope> = new Set<ApiScope>(ALL_SCOPES);
     for (const [tool, scope] of Object.entries(TOOL_SCOPES)) {
       expect(known.has(scope), `${tool} has unknown scope ${scope}`).toBe(true);
     }
@@ -72,6 +74,19 @@ describe('tokenHasScope — least-privilege check', () => {
     expect(tokenHasScope(scopes, 'mutate')).toBe(false);
     expect(tokenHasScope(scopes, 'lifecycle')).toBe(false);
     expect(tokenHasScope(scopes, 'read')).toBe(false);
+  });
+
+  // #1765: the reboot tier was carved out of destroy, so legacy destroy
+  // tokens must still be able to reboot a node.
+  it('[destroy] token implicitly gets reboot (back-compat with pre-#1765 tokens)', () => {
+    expect(tokenHasScope(['destroy'], 'reboot')).toBe(true);
+    expect(tokenHasScope(['destroy'], TOOL_SCOPES.reboot_node)).toBe(true);
+  });
+
+  it('[reboot] alone does not imply destroy actions', () => {
+    expect(tokenHasScope(['reboot'], TOOL_SCOPES.reboot_node)).toBe(true);
+    expect(tokenHasScope(['reboot'], TOOL_SCOPES.delete_service)).toBe(false);
+    expect(tokenHasScope(['reboot'], TOOL_SCOPES.factory_reset)).toBe(false);
   });
 
   it('[exec] alone is sufficient for exec_command but not for destroy actions', () => {

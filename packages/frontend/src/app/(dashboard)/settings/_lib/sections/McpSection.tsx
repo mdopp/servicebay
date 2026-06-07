@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Bot, Check, Copy, ShieldAlert, History, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Bot, Check, Copy, ShieldAlert, History, RefreshCw, ShieldCheck } from 'lucide-react';
 import SectionHelp from '@/components/SectionHelp';
 import { copyToClipboard } from '../clipboard';
 
@@ -110,6 +110,78 @@ function McpSafetyToggles(props: SafetyTogglesProps) {
   );
 }
 
+interface PendingApproval {
+  pendingId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  caller?: string;
+  expiresAt: number;
+}
+
+function PendingApprovalRow({ entry, busy, onApprove }: { entry: PendingApproval; busy: boolean; onApprove: (id: string) => void }) {
+  // Absolute expiry time (not a Date.now()-derived countdown) so render stays
+  // pure; the 15s poll drops expired entries off the list anyway.
+  const expiresAtLabel = new Date(entry.expiresAt).toLocaleTimeString();
+  return (
+    <li className="text-xs rounded-md border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 p-2">
+      <div className="flex items-center gap-2">
+        <span className="font-mono font-semibold text-amber-700 dark:text-amber-300">{entry.toolName}</span>
+        {entry.caller && <span className="text-gray-500">from {entry.caller}</span>}
+        <span className="text-gray-400 ml-auto">expires {expiresAtLabel}</span>
+      </div>
+      <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] text-gray-600 dark:text-gray-300 font-mono">{JSON.stringify(entry.args, null, 2)}</pre>
+      <div className="mt-1.5 flex justify-end">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onApprove(entry.pendingId)}
+          className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50 flex items-center gap-1"
+        >
+          <ShieldCheck size={12} />
+          {busy ? 'Approving…' : 'Approve & run'}
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function McpPendingApprovals({ pending, busyId, error, onRefresh, onApprove }: {
+  pending: PendingApproval[] | null;
+  busyId: string | null;
+  error: string | null;
+  onRefresh: () => void;
+  onApprove: (id: string) => void;
+}) {
+  if (!pending || pending.length === 0) return null;
+  return (
+    <div className="mt-5 pt-4 border-t border-gray-100 dark:border-gray-800">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
+          <ShieldAlert size={14} className="text-amber-500 shrink-0" />
+          Pending destructive approvals
+          <span className="text-xs font-normal text-gray-500">({pending.length})</span>
+        </p>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="text-xs flex items-center gap-1 px-2 py-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
+        >
+          <RefreshCw size={12} /> Refresh
+        </button>
+      </div>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+        An MCP agent proposed these destructive tool calls. They run only after you approve them here — the agent cannot approve its own request.
+      </p>
+      {error && <p className="text-xs text-red-600 dark:text-red-400 mb-2">{error}</p>}
+      <ul className="space-y-2">
+        {pending.map(p => (
+          <PendingApprovalRow key={p.pendingId} entry={p} busy={busyId === p.pendingId} onApprove={onApprove} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function McpAuditFeed({ entries, loading, onRefresh }: { entries: AuditEntry[] | null; loading: boolean; onRefresh: () => void }) {
   return (
     <div className="mt-3 space-y-2">
@@ -147,6 +219,33 @@ export default function McpSection() {
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
+  const [pending, setPending] = useState<PendingApproval[] | null>(null);
+  const [approveBusyId, setApproveBusyId] = useState<string | null>(null);
+  const [approveError, setApproveError] = useState<string | null>(null);
+
+  const loadPending = useCallback(() => {
+    fetch('/api/system/mcp/approve')
+      .then(r => r.ok ? r.json() : { pending: [] })
+      .then((data: { pending?: PendingApproval[] }) => setPending(data.pending ?? []))
+      .catch(() => setPending([]));
+  }, []);
+
+  const approvePending = useCallback(async (id: string) => {
+    setApproveBusyId(id);
+    setApproveError(null);
+    try {
+      const res = await fetch(`/api/system/mcp/approve/${id}`, { method: 'POST' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      loadPending();
+    } catch (e) {
+      setApproveError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setApproveBusyId(null);
+    }
+  }, [loadPending]);
 
   const loadAudit = () => {
     setAuditLoading(true);
@@ -161,6 +260,14 @@ export default function McpSection() {
     // Read window.location after mount to avoid SSR/hydration mismatch.
     setMcpUrl(`${window.location.origin}/mcp`);
   }, []);
+
+  // Poll for pending destructive-tool approvals (#1766). In-memory + short TTL,
+  // so a light poll keeps the badge fresh without a socket channel.
+  useEffect(() => {
+    loadPending();
+    const t = setInterval(loadPending, 15000);
+    return () => clearInterval(t);
+  }, [loadPending]);
 
   useEffect(() => {
     let cancelled = false;
@@ -259,6 +366,18 @@ export default function McpSection() {
         saveError={saveError}
         onToggleMutations={() => persistMcp({ allowMutations: !allowMutations, ...(allowMutations ? { allowDangerousExec: false } : {}) })}
         onToggleDangerous={() => persistMcp({ allowDangerousExec: !allowDangerousExec })}
+      />
+
+      {/* Pending destructive-tool approvals (#1766). An MCP token caller can
+          propose a destroy-tier tool (delete/purge/restore/factory_reset/USB
+          boot) but cannot execute it — it parks here for a logged-in human to
+          approve. Only renders when something is pending. */}
+      <McpPendingApprovals
+        pending={pending}
+        busyId={approveBusyId}
+        error={approveError}
+        onRefresh={loadPending}
+        onApprove={approvePending}
       />
 
       {/* Recent MCP activity. Toggleable so the section stays compact for

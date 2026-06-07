@@ -22,7 +22,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bot, Send, AlertTriangle, User as UserIcon } from 'lucide-react';
+import { Bot, Send, AlertTriangle } from 'lucide-react';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface ChatMessage {
   /** Stable key for React; not sent to the server. */
@@ -51,30 +53,92 @@ function EmptyState() {
   );
 }
 
+/**
+ * Tailwind-styled element overrides for assistant Markdown (#1768). Keeps the
+ * bubble readable: tight spacing, formatted headings/lists, inline + fenced
+ * code blocks (incl. ```json) with a mono surface and horizontal scroll, and
+ * links that open in a new tab with rel="noreferrer".
+ */
+const markdownComponents: Components = {
+  p: ({ children }) => <p className="my-1 first:mt-0 last:mb-0">{children}</p>,
+  h1: ({ children }) => <h1 className="text-base font-semibold mt-2 mb-1">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-base font-semibold mt-2 mb-1">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-sm font-semibold mt-2 mb-1">{children}</h3>,
+  ul: ({ children }) => <ul className="list-disc pl-5 my-1 space-y-0.5">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-5 my-1 space-y-0.5">{children}</ol>,
+  li: ({ children }) => <li className="marker:text-gray-400">{children}</li>,
+  a: ({ href, children }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="underline underline-offset-2 hover:opacity-80"
+    >
+      {children}
+    </a>
+  ),
+  code: ({ className, children, ...props }) => {
+    // react-markdown gives inline code no language className; fenced blocks get
+    // `language-*`. Render inline code as a small chip, fenced code is handled
+    // by `pre` below (this just styles the inner <code>).
+    const isBlock = typeof className === 'string' && className.startsWith('language-');
+    if (isBlock) {
+      return (
+        <code className={`${className} font-mono text-xs`} {...props}>
+          {children}
+        </code>
+      );
+    }
+    return (
+      <code
+        className="font-mono text-[0.85em] px-1 py-0.5 rounded bg-black/5 dark:bg-white/10"
+        {...props}
+      >
+        {children}
+      </code>
+    );
+  },
+  pre: ({ children }) => (
+    <pre className="my-1.5 p-3 rounded-lg overflow-x-auto bg-gray-900/90 dark:bg-black/40 text-gray-100 text-xs">
+      {children}
+    </pre>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-2 border-gray-300 dark:border-white/20 pl-3 my-1 italic">
+      {children}
+    </blockquote>
+  ),
+};
+
+/**
+ * Assistant content rendered as Markdown (#1768). react-markdown is safe by
+ * default — it does NOT parse raw HTML (no rehype-raw here), so model output
+ * cannot inject markup; no dangerouslySetInnerHTML. remark-gfm adds tables,
+ * task lists, autolinks. Plain text passes through unchanged.
+ */
+function AssistantMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      {content}
+    </ReactMarkdown>
+  );
+}
+
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === 'user';
   return (
     <div
       data-testid={`hermes-msg-${message.role}`}
-      className={`flex gap-2.5 ${isUser ? 'flex-row-reverse' : ''}`}
+      className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}
     >
       <div
-        className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+        className={`max-w-[78%] px-4 py-2.5 rounded-2xl break-words text-sm ${
           isUser
-            ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-            : 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-300'
-        }`}
-      >
-        {isUser ? <UserIcon size={16} /> : <Bot size={16} />}
-      </div>
-      <div
-        className={`max-w-[75%] px-4 py-2.5 rounded-2xl whitespace-pre-wrap break-words text-sm ${
-          isUser
-            ? 'bg-blue-600 text-white rounded-tr-sm'
+            ? 'bg-blue-600 text-white rounded-tr-sm whitespace-pre-wrap'
             : 'bg-gray-100 dark:bg-white/[0.04] text-gray-800 dark:text-gray-100 rounded-tl-sm'
         }`}
       >
-        {message.content}
+        {isUser ? message.content : <AssistantMarkdown content={message.content} />}
       </div>
     </div>
   );

@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createMcpServer } from './server';
+import { createMcpServer, TOOL_SCOPES, tokenHasScope } from './server';
+import { ALL_SCOPES } from '@/lib/auth/apiScope';
 
 // #1732: the MCP server describes itself — a top-level `instructions` string
 // teaching the node → service → container model, and the four
@@ -89,5 +90,43 @@ describe('update_service_yaml / get_service_files field-name footgun (#1752)', (
     const text = JSON.stringify(res.content);
     expect(text).toMatch(/Quadlet|Pod[- ]spec/i);
     await client.close();
+  });
+});
+
+// #1765: reboot_node is split out of the `destroy` tier into its own
+// `reboot` tier — a reboot is transient/recoverable and must NOT require
+// granting irreversible delete/wipe via `destroy`. `destroy` keeps
+// implying `reboot` for legacy-token back-compat.
+describe('reboot scope split (#1765)', () => {
+  it('classifies reboot_node as the reboot tier, not destroy', () => {
+    expect(TOOL_SCOPES.reboot_node).toBe('reboot');
+  });
+
+  it('keeps the irreversible tools in destroy', () => {
+    expect(TOOL_SCOPES.delete_service).toBe('destroy');
+    expect(TOOL_SCOPES.factory_reset).toBe('destroy');
+    expect(TOOL_SCOPES.purge_trashed_service).toBe('destroy');
+    // set_boot_next_usb stays destroy — it can arm a USB-installer reboot.
+    expect(TOOL_SCOPES.set_boot_next_usb).toBe('destroy');
+  });
+
+  it('exposes reboot as a mintable scope', () => {
+    expect(ALL_SCOPES).toContain('reboot');
+  });
+
+  it('lets an operate token reboot but refuses delete/factory_reset', () => {
+    const operate = ['read', 'lifecycle', 'mutate', 'reboot'] as const;
+    expect(tokenHasScope(operate, TOOL_SCOPES.restart_service)).toBe(true);
+    expect(tokenHasScope(operate, TOOL_SCOPES.reboot_node)).toBe(true);
+    expect(tokenHasScope(operate, TOOL_SCOPES.delete_service)).toBe(false);
+    expect(tokenHasScope(operate, TOOL_SCOPES.factory_reset)).toBe(false);
+  });
+
+  it('lets a legacy destroy token still reboot (back-compat)', () => {
+    expect(tokenHasScope(['read', 'destroy'], 'reboot')).toBe(true);
+  });
+
+  it('does not let a reboot grant imply destroy', () => {
+    expect(tokenHasScope(['reboot'], 'destroy')).toBe(false);
   });
 });
