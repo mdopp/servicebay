@@ -39,6 +39,11 @@ import { syncRegistries } from './lib/registry';
 import { reconcileLanIp } from './lib/lanIp';
 import { lazyInitializeExpiry as initBootstrapTokenExpiry } from './lib/mcp/bootstrapToken';
 import { createMcpServer } from './lib/mcp/server';
+import {
+  listPendingApprovals,
+  approvePendingApproval,
+  ApprovalExpiredError,
+} from './lib/mcp/pendingApprovals';
 import { scheduleBackup } from './lib/backup/service';
 import { scheduleExternalNasBackup } from './lib/externalBackup/producer';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -270,6 +275,58 @@ app.prepare().then(() => {
           transport.close();
           mcpServer.close();
         });
+        return;
+      }
+
+      // MCP pending-approval routes — intercepted here (not via Next.js API routes)
+      // so they share the SAME pendingApprovals module instance as the /mcp handler
+      // above. Next.js Turbopack bundles a separate copy of the in-memory store for
+      // API routes, making proposals and confirms reference different Maps (#1766 fix).
+      //
+      // GET /api/system/mcp/approve — list pending (cookie-session only)
+      // POST /api/system/mcp/approve/:id — confirm a pending call (cookie-session only)
+      //
+      // Security: these routes accept ONLY session cookies, never Bearer tokens.
+      // The proposing token holder (the agent) has no path to self-approve.
+      if (parsedUrl.pathname === '/api/system/mcp/approve' ||
+          (parsedUrl.pathname?.startsWith('/api/system/mcp/approve/') && parsedUrl.pathname.length > '/api/system/mcp/approve/'.length)) {
+        const mcpApproveSession = await getSessionFromCookieHeader(req.headers.cookie);
+        if (!mcpApproveSession) {
+          // Bearer token or anonymous — 401; the agent must not self-approve.
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Authentication required' }));
+          return;
+        }
+
+        if (req.method === 'GET' && parsedUrl.pathname === '/api/system/mcp/approve') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ pending: listPendingApprovals() }));
+          return;
+        }
+
+        if (req.method === 'POST' && parsedUrl.pathname !== '/api/system/mcp/approve') {
+          // Extract the pendingId from the path: /api/system/mcp/approve/:id
+          const pendingId = parsedUrl.pathname!.slice('/api/system/mcp/approve/'.length);
+          try {
+            const result = await approvePendingApproval(pendingId);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, result }));
+          } catch (e) {
+            if (e instanceof ApprovalExpiredError) {
+              res.writeHead(410, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: 'This approval has expired or was already used. Ask the agent to propose the action again.' }));
+            } else {
+              logger.error('Server', 'MCP approve error', e);
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: 'internal server error' }));
+            }
+          }
+          return;
+        }
+
+        // Method not allowed
+        res.writeHead(405, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Method not allowed' }));
         return;
       }
 
