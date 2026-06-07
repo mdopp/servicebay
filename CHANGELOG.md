@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.106.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.105.0...servicebay-v4.106.0) (2026-06-07)
+
+
+### Features
+
+* **hermes:** drop chat avatar icons, render assistant Markdown ([06334ed](https://github.com/mdopp/servicebay/commit/06334ed4f01850229345d38c7571e80a3d16bd8c)), closes [#1767](https://github.com/mdopp/servicebay/issues/1767) [#1768](https://github.com/mdopp/servicebay/issues/1768)
+* maintenance-chat markdown + MCP reboot-scope split + MCP approval gate + SSO login smoke ([21641b5](https://github.com/mdopp/servicebay/commit/21641b58c5c61250254ff915bb7f9ae00211a9f2))
+* **mcp:** native per-tool approval gate for destructive tools ([e1fcf65](https://github.com/mdopp/servicebay/commit/e1fcf65858f8a4e949896f4fb3130fb376daf100)), closes [#1766](https://github.com/mdopp/servicebay/issues/1766)
+* **mcp:** split reboot_node into its own reboot scope tier ([c8126ee](https://github.com/mdopp/servicebay/commit/c8126eec42747f7215b6bea8b4328f473fde255a)), closes [#1765](https://github.com/mdopp/servicebay/issues/1765)
+
+
+### Bug Fixes
+
+* **mcp:** intercept approve routes in server.ts to fix store isolation ([5bf316b](https://github.com/mdopp/servicebay/commit/5bf316bcc98c58610b1733b2bb64ce5e4dc8a42e))
+* **mcp:** intercept approve routes in server.ts to fix store isolation ([de9cd62](https://github.com/mdopp/servicebay/commit/de9cd62823e6d4339fe568e81cb8cbf56f71756b))
+
 ## [4.105.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.104.0...servicebay-v4.105.0) (2026-06-06)
 
 
