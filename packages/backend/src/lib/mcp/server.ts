@@ -81,7 +81,10 @@ const MUTATING_TOOLS = new Set([
  *   read       lookups + diagnose + log readers
  *   lifecycle  start/stop/restart + run_check_now + refresh + run_backup
  *   mutate     create/update/add + config writes — additive changes
- *   destroy    delete/restore/purge — irreversible state edits
+ *   reboot     reboot_node — transient, recoverable host restart (#1765),
+ *              split off `destroy` so a token can operate+reboot without
+ *              also granting irreversible delete/wipe. `destroy` implies it.
+ *   destroy    delete/restore/purge/factory_reset — irreversible state edits
  *   exec       exec_command — split off from `destroy` (#591) so a token
  *              can grant config writes without shell access
  */
@@ -114,17 +117,23 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   delete_service: 'destroy', delete_health_check: 'destroy',
   remove_proxy_route: 'destroy', restore_backup: 'destroy',
   purge_trashed_service: 'destroy',
-  set_boot_next_usb: 'destroy', reboot_node: 'destroy',
+  // set_boot_next_usb stays `destroy`: it can arm a USB-installer boot, a
+  // reinstall path that risks data loss — higher-risk than a plain reboot.
+  set_boot_next_usb: 'destroy',
   factory_reset: 'destroy',
+  // reboot — transient, recoverable; split out of destroy (#1765)
+  reboot_node: 'reboot',
   // exec (shell — own scope so tokens can grant config writes without it)
   exec_command: 'exec',
 };
 
 /**
  * Decide whether a token with `tokenScopes` may call a tool that
- * requires `required`. Encapsulates the back-compat rule (#591) that
- * tokens issued before the split — when `exec_command` was tagged as
- * `destroy` — still get exec via their `destroy` grant.
+ * requires `required`. Encapsulates the back-compat rules:
+ *   - tokens issued before the exec split (#591) — when `exec_command`
+ *     was tagged `destroy` — still get exec via their `destroy` grant.
+ *   - `destroy` implies `reboot` (#1765): the reboot tier was carved out
+ *     of `destroy`, so a legacy `destroy` token can still reboot a node.
  *
  * Exported pure helper so the scope semantics are testable without
  * spinning up the whole MCP server.
@@ -132,6 +141,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
 export function tokenHasScope(tokenScopes: readonly ApiScope[], required: ApiScope): boolean {
   if (tokenScopes.includes(required)) return true;
   if (required === 'exec' && tokenScopes.includes('destroy')) return true;
+  if (required === 'reboot' && tokenScopes.includes('destroy')) return true;
   return false;
 }
 

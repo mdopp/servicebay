@@ -10,5 +10,17 @@
  * for the type, and the cycle is gone.
  */
 
-export type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'destroy' | 'exec';
-export const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'destroy', 'exec'];
+/**
+ * Risk tiers, least→most destructive:
+ *   read      lookups + diagnose + log readers
+ *   lifecycle start/stop/restart + run_check_now + refresh + run_backup
+ *   mutate    create/update/add + config writes — additive changes
+ *   reboot    reboot_node — transient & recoverable host restart (#1765);
+ *             split out of `destroy` so a token can grant operate+reboot
+ *             WITHOUT also granting irreversible delete/wipe. `destroy`
+ *             implies `reboot` (see tokenHasScope).
+ *   destroy   delete/restore/purge/factory_reset — irreversible state edits
+ *   exec      exec_command — shell access
+ */
+export type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'reboot' | 'destroy' | 'exec';
+export const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'reboot', 'destroy', 'exec'];
