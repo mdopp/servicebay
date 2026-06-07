@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.106.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.106.1...servicebay-v4.106.2) (2026-06-07)
+
+
+### Bug Fixes
+
+* **frontend:** stop leaking react-markdown node prop onto chat code elements ([e16a2a9](https://github.com/mdopp/servicebay/commit/e16a2a9d846b60e8c139013013305dd8d573e365)), closes [#1777](https://github.com/mdopp/servicebay/issues/1777)
+* maintenance-chat markdown node attr + MCP .container Quadlet support ([c5b9122](https://github.com/mdopp/servicebay/commit/c5b9122d150c372ea410a84caeaada0ddb29562d))
+* **mcp:** resolve .container Quadlets in service file-read/update path ([0661baf](https://github.com/mdopp/servicebay/commit/0661baf2f6702d036702e1d57da29efde38d761b)), closes [#1778](https://github.com/mdopp/servicebay/issues/1778)
+
 ## [4.106.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.106.0...servicebay-v4.106.1) (2026-06-07)
 
 
