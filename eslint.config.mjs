@@ -212,6 +212,10 @@ const eslintConfig = defineConfig([
           argsIgnorePattern: "^_",
         },
       ],
+      // @typescript-eslint/no-unused-vars comes from nextTs preset without
+      // varsIgnorePattern/argsIgnorePattern; unused-imports/no-unused-vars is
+      // the authoritative owner with ^_ ignores, so disable the base rule.
+      "@typescript-eslint/no-unused-vars": "off",
       // --- Dead-code detection (syntactic + constant-folded). Exact, near
       // zero false positives; complements knip (module-level unused
       // files/exports) and branch coverage (semantic / runtime-dead). These
