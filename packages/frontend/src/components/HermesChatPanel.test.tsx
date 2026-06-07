@@ -226,6 +226,22 @@ describe('HermesChatPanel', () => {
     expect(pre?.textContent).toContain('"ok": true');
   });
 
+  // #1777 — the markdown component overrides must not forward react-markdown's
+  // internal `node` (hast) prop onto DOM elements (it leaked as
+  // node="[object Object]" on every <code>, which is invalid HTML).
+  it('does not leak a `node` attribute onto any rendered element (#1777)', async () => {
+    const md = ['Use `inline code` here:', '', '```json', '{ "ok": true }', '```'].join('\n');
+    mockFetch({ get: () => jsonResponse(200, { messages: [{ role: 'assistant', text: md }] }) });
+
+    const { container } = render(<HermesChatPanel />);
+    const bubble = await screen.findByTestId('hermes-msg-assistant');
+    // Sanity: the inline code + fenced block actually rendered.
+    expect(bubble.querySelector('code')).not.toBeNull();
+    expect(bubble.querySelector('pre')).not.toBeNull();
+    // No element anywhere in the chat log carries a `node` attribute.
+    expect(container.querySelector('[node]')).toBeNull();
+  });
+
   it('renders plain-text assistant content unchanged as Markdown (#1768)', async () => {
     mockFetch({
       get: () =>

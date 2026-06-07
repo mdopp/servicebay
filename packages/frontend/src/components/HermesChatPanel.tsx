@@ -77,7 +77,7 @@ const markdownComponents: Components = {
       {children}
     </a>
   ),
-  code: ({ className, children, ...props }) => {
+  code: ({ node: _node, className, children, ...props }) => {
     // react-markdown gives inline code no language className; fenced blocks get
     // `language-*`. Render inline code as a small chip, fenced code is handled
     // by `pre` below (this just styles the inner <code>).
