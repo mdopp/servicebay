@@ -906,6 +906,35 @@ export class ServiceLifecycle {
     }
 
     /**
+     * Write back an edited single-container `.container` Quadlet and
+     * redeploy it (#1778).
+     *
+     * Unlike a `.kube` Quadlet — which is a thin wrapper that
+     * `deployKubeService` regenerates around a separate pod-spec `.yml` —
+     * a `.container` unit IS the deploy artifact (the ollama GPU fixup,
+     * #1026, swaps to `.container` so `AddDevice=nvidia.com/gpu=all`
+     * survives). So the read/update contract for `.container` is: the
+     * caller edits the `.container` unit body itself (the `kubeContent`
+     * from `getServiceFiles`) and we write it straight back, reload the
+     * daemon, and restart. There is no pod spec, no port-collision
+     * pre-flight on a `.yml` (the unit body owns its own `PublishPort=`),
+     * and no schema-version stamping.
+     */
+    static async deployContainerQuadlet(
+        nodeName: string,
+        name: string,
+        containerContent: string,
+    ) {
+        await ServiceLifecycle.writeFile(nodeName, `${name}.container`, containerContent);
+        await ServiceLifecycle.reloadDaemon(nodeName);
+        // Restart so the regenerated unit takes effect. `.container` units
+        // pull their own image on start (Image= directive), so no separate
+        // pre-pull step is needed here.
+        await ServiceLifecycle.restartService(nodeName, name);
+        ServiceLifecycle.backupQuadlets(nodeName);
+    }
+
+    /**
      * Pull every hostPort declared in a kube YAML. Tolerates malformed YAML
      * (returns empty rather than throwing) so a parse error never blocks a
      * deploy via the collision check.
