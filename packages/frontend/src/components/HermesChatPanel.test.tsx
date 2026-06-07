@@ -1,9 +1,14 @@
 /**
- * HermesChatPanel tests (#1755, part B of epic #1704; #1760 history reload).
+ * HermesChatPanel tests (#1755, part B of epic #1704; #1760 history reload;
+ * #1767 drop avatar icons; #1768 assistant Markdown rendering).
  *
  * Covers: mount-time history load (GET) + empty state, send -> calls POST
  * /api/system/hermes/chat and shows the reply, the 503 "Hermes is unavailable"
- * graceful state, and the typing indicator while a turn is in flight.
+ * graceful state, the typing indicator while a turn is in flight, that message
+ * bubbles carry no per-message avatar icon (#1767), and that assistant content
+ * renders as Markdown — headings/lists/bold/inline + fenced ```json code
+ * blocks — while plain text still renders fine and no raw HTML is injected
+ * (#1768).
  *
  * fetch is mocked with mockImplementation returning a FRESH Response per call
  * (memory feedback_vitest_fetch_response_reuse — a shared Response body can
@@ -163,5 +168,85 @@ describe('HermesChatPanel', () => {
       expect(screen.queryByTestId('hermes-typing')).toBeNull();
     });
     expect(screen.getByText('done')).toBeDefined();
+  });
+
+  // #1767 — per-message avatar icons removed; turns stay distinguishable by
+  // alignment/colour only. lucide icons render as <svg>, so assert the bubble
+  // wrapper carries no svg (the EmptyState/Composer svgs live outside the log
+  // entries, so we scope to the message testids).
+  it('renders message bubbles with no per-message avatar icon (#1767)', async () => {
+    mockFetch({
+      get: () =>
+        jsonResponse(200, {
+          messages: [
+            { role: 'user', text: 'hi there' },
+            { role: 'assistant', text: 'hello, how can I help?' },
+          ],
+        }),
+    });
+    render(<HermesChatPanel />);
+    await waitFor(() => expect(screen.getByText('hi there')).toBeDefined());
+
+    expect(screen.getByTestId('hermes-msg-user').querySelector('svg')).toBeNull();
+    expect(screen.getByTestId('hermes-msg-assistant').querySelector('svg')).toBeNull();
+  });
+
+  // #1768 — assistant content renders as Markdown.
+  it('renders assistant Markdown: heading, list, bold, inline code, and a json fenced block (#1768)', async () => {
+    const md = [
+      '# Plan',
+      '',
+      'Here is **what** to do and some `inline code`:',
+      '',
+      '- first step',
+      '- second step',
+      '',
+      '```json',
+      '{ "ok": true }',
+      '```',
+    ].join('\n');
+    mockFetch({ get: () => jsonResponse(200, { messages: [{ role: 'assistant', text: md }] }) });
+
+    render(<HermesChatPanel />);
+    const bubble = await screen.findByTestId('hermes-msg-assistant');
+
+    // Heading element, not literal "# Plan".
+    expect(bubble.querySelector('h1')?.textContent).toBe('Plan');
+    expect(bubble.querySelector('h1')?.textContent).not.toContain('#');
+    // Bold + inline code render as elements.
+    expect(bubble.querySelector('strong')?.textContent).toBe('what');
+    expect(bubble.querySelector('code')).not.toBeNull();
+    // List items.
+    const items = Array.from(bubble.querySelectorAll('li')).map((li) => li.textContent);
+    expect(items).toContain('first step');
+    expect(items).toContain('second step');
+    // Fenced json block renders inside a <pre>.
+    const pre = bubble.querySelector('pre');
+    expect(pre).not.toBeNull();
+    expect(pre?.textContent).toContain('"ok": true');
+  });
+
+  it('renders plain-text assistant content unchanged as Markdown (#1768)', async () => {
+    mockFetch({
+      get: () =>
+        jsonResponse(200, { messages: [{ role: 'assistant', text: 'just a plain sentence.' }] }),
+    });
+    render(<HermesChatPanel />);
+    await waitFor(() => expect(screen.getByText('just a plain sentence.')).toBeDefined());
+  });
+
+  it('does not inject raw HTML from assistant content (no XSS) (#1768)', async () => {
+    mockFetch({
+      get: () =>
+        jsonResponse(200, {
+          messages: [{ role: 'assistant', text: 'before <img src=x onerror=alert(1)> after' }],
+        }),
+    });
+    render(<HermesChatPanel />);
+    const bubble = await screen.findByTestId('hermes-msg-assistant');
+    // react-markdown does not parse raw HTML (no rehype-raw) -> no <img> node;
+    // the tag is rendered as escaped text instead.
+    expect(bubble.querySelector('img')).toBeNull();
+    expect(bubble.textContent).toContain('<img');
   });
 });
