@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.106.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.106.0...servicebay-v4.106.1) (2026-06-07)
+
+
+### Bug Fixes
+
+* **home-assistant:** rename HA long-lived token file to .solilos after OSCAR rename ([34fa4c4](https://github.com/mdopp/servicebay/commit/34fa4c43e0d5ffbee0f1699194263a443e7684f0)), closes [#1769](https://github.com/mdopp/servicebay/issues/1769)
+* **home-assistant:** rename long-lived token oscar→solilos with on-disk migration ([5f4d21c](https://github.com/mdopp/servicebay/commit/5f4d21c94a44bb32c2cd1c739dfb462a28c5407d))
+
 ## [4.106.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.105.0...servicebay-v4.106.0) (2026-06-07)
 
 
