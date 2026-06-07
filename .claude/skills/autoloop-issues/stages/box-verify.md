@@ -22,6 +22,17 @@ The verify gate is two-sided and you own the second side:
 1. **Flip to dev.** `sb channel dev` (or `POST /api/system/channel`). Invocation/payload: `tools/sb/internal/rest/channel.go`, `tools/sb/internal/ui/channel.go`, `packages/backend/src/lib/servicebayChannel.ts`.
 2. **Wait (bounded) for the dev image to land.** Poll the box's running image/version until it matches the newest merged SHA. **Timeout ≤15 min** (release.yml build + box pull + restart). If it never lands, treat as a verify failure (step 5, reason "dev image didn't land").
 3. **Verify.** Run `/verify` against `<SERVICEBAY_BOX>`, exercising the merged path-mandated changes (`box_verify.detail` names which paths). Sweep stray `*.bak` before reinstall-style checks (memory `feedback_hermes_config_bak_selinux`).
+   - **SSO login smoke (mandatory release gate, #1561).** Whenever the verify covers an **auth / install / OIDC** path — i.e. `box_verify.detail` touches `lib/install/`, `lib/config.ts`, anything under auth/Authelia/OIDC/LLDAP, or this is a reinstall-style verify — you **must** drive the real per-service login flow and assert it passes. Two layers, both required:
+     - **Server-side spine:** run the `sso_verify` probe (the create→login→per-domain→admin-reject→delete spine, `lib/diagnose/ssoVerify.ts`) against the box — e.g. the diagnose `run_now` action or `verifySso({ node })`. A `report.ok === false` (a real login/domain failure, not a `couldNotRun` setup warn) is a **RED verify** — it blocks the release. This is the gate the #1559 reinstall lacked: a green `:dev` verify shipped while a reinstall was red.
+     - **Browser smoke:** read `reverseProxy.publicDomain` + the installed OIDC services off the box, then run the headless per-service login spec:
+       ```bash
+       SB_PUBLIC_DOMAIN=<publicDomain> \
+       SB_USERNAME=<admin-user> SB_PASSWORD=<admin-pass> \
+       SB_SSO_SERVICES=<installed OIDC subdomains, e.g. vault,photos,books> \
+       npm run test:e2e -- sso-login
+       ```
+       It drives the actual Authelia redirect → authenticate → authenticated-landing per service (`tests/e2e/sso-login.e2e.ts`, on the #1473 harness). A failed login on **any** service is a **RED verify**. Point login probes at a subdomain (`<svc>.<domain>` / `auth.<domain>`), never the apex (memory `reference_authelia_apex_deny_vs_wildcard`).
+     - "login works per service" is now a **mandatory assertion** — `service: up` / "page renders" is not sufficient (it passed while every login was broken in #1559). A reinstall that breaks logins must verify RED, never green.
 4. **Always flip back.** `sb channel latest` — on success, failure, **and** timeout. The box must never be left on `:dev`. If the flip-back itself fails, that's a **hard exit**: alert the user, don't leave the box stranded.
 5. **On verify red:** the change is already on `main`. Identify the culprit (a cluster keeps it attributable to one theme; an unrelated dev-box batch needs a bisect), open a **revert PR**, merge it on CI-green, and re-run this verify. (Merging a revert to `main` is safe to do here — it only republishes `:dev`; the builder is build-ahead on its own branch and doesn't touch `main` until its own seal.) Write `box-verify.json` with `status:"red"` so the orchestrator holds the release PR until it's green again.
 6. **On verify green:** write `box-verify.json` with `status:"green"` and `verified_at`. The release PR is clear for the orchestrator to merge next preflight.
