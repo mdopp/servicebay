@@ -47,7 +47,7 @@
   },
   "OSCAR_HA_ADMIN_USERNAME": {
     "type": "text",
-    "description": "OSCAR-managed HA admin user. When set together with OSCAR_HA_ADMIN_PASSWORD on a fresh HA install, post-deploy walks HA's onboarding API (create user → core_config → analytics → integration) and mints a long-lived access token persisted at <config>/.oscar-long-lived-token. Downstream templates (hermes, oscar-household) read that token instead of the random pre-onboarding placeholder, so Hermes' native HA gateway can actually authenticate and #920 ('turn on the kitchen light') works without operator browser steps. Leave blank to skip auto-onboarding and use HA's first-boot wizard manually.",
+    "description": "OSCAR-managed HA admin user. When set together with OSCAR_HA_ADMIN_PASSWORD on a fresh HA install, post-deploy walks HA's onboarding API (create user → core_config → analytics → integration) and mints a long-lived access token persisted at <config>/.solilos-long-lived-token. Downstream templates (hermes, oscar-household) read that token instead of the random pre-onboarding placeholder, so Hermes' native HA gateway can actually authenticate and #920 ('turn on the kitchen light') works without operator browser steps. Leave blank to skip auto-onboarding and use HA's first-boot wizard manually.",
     "default": "oscar"
   },
   "OSCAR_HA_ADMIN_PASSWORD": {

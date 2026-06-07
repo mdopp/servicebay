@@ -428,7 +428,11 @@ def ensure_auth_oidc_config_block() -> bool:
 # generates. Idempotent: if onboarding is already done OR the token file is
 # already present, the steps are skipped.
 
-HA_LONG_LIVED_TOKEN_PATH = "/.oscar-long-lived-token"  # joined with HA config dir
+HA_LONG_LIVED_TOKEN_PATH = "/.solilos-long-lived-token"  # joined with HA config dir
+# Pre-rename name (OSCAR→Solilos). Already-onboarded boxes have a valid token at
+# this path; we migrate it on disk so the deploy doesn't have to re-mint (and so
+# downstream post-deploys that look for the new name keep working without creds).
+HA_LEGACY_LONG_LIVED_TOKEN_PATH = "/.oscar-long-lived-token"
 HA_CONTAINER_NAME = "home-assistant-homeassistant"
 HA_CLIENT_ID = "http://127.0.0.1:8123/"
 
@@ -451,7 +455,7 @@ def _onboard_admin_user(username: str, password: str) -> str | None:
     None on failure. Pre-onboarding endpoint - no auth header needed."""
     body = json.dumps({
         "client_id": HA_CLIENT_ID,
-        "name": "OSCAR Admin",
+        "name": "Solilos Admin",
         "username": username,
         "password": password,
         "language": "en",
@@ -531,7 +535,7 @@ def _mint_long_lived_token(access_token: str) -> str | None:
         "        a = json.loads(await ws.recv())\n"
         "        if a.get('type') != 'auth_ok':\n"
         "            sys.stderr.write('auth fail: ' + json.dumps(a)); sys.exit(1)\n"
-        "        await ws.send(json.dumps({'id': 1, 'type': 'auth/long_lived_access_token', 'client_name': 'oscar-hermes', 'lifespan': 3650}))\n"
+        "        await ws.send(json.dumps({'id': 1, 'type': 'auth/long_lived_access_token', 'client_name': 'solilos-hermes', 'lifespan': 3650}))\n"
         "        r = json.loads(await ws.recv())\n"
         "        if not r.get('success'):\n"
         "            sys.stderr.write('mint fail: ' + json.dumps(r)); sys.exit(1)\n"
@@ -811,6 +815,21 @@ def configure_oscar_ha_onboarding() -> None:
         log("OSCAR_HA_ADMIN_USERNAME / _PASSWORD not set — skipping auto-onboarding.")
         return
     token_file = os.path.join(_ha_config_dir(), HA_LONG_LIVED_TOKEN_PATH.lstrip("/"))
+
+    # One-time migration for the OSCAR→Solilos rename (#1769). A box onboarded
+    # before the rename has a *valid* token at the legacy path. If the new file
+    # is absent but the legacy one is present, move it across so the existing
+    # token is reused (no re-mint, works without admin creds) and downstream
+    # post-deploys that read the new name keep authenticating.
+    legacy_token_file = os.path.join(
+        _ha_config_dir(), HA_LEGACY_LONG_LIVED_TOKEN_PATH.lstrip("/")
+    )
+    if not os.path.exists(token_file) and os.path.exists(legacy_token_file):
+        try:
+            os.rename(legacy_token_file, token_file)
+            log(f"   Migrated legacy HA token {legacy_token_file} → {token_file} (OSCAR→Solilos rename).")
+        except OSError as e:
+            log(f"   ⚠️ Could not migrate legacy HA token to {token_file}: {e}")
 
     # Reconcile an existing token first (#1505). A wipe-configs reinstall can
     # leave a token file behind in HA's kept config dir whose refresh-token

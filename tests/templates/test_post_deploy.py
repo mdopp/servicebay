@@ -1421,7 +1421,7 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("Re-provisioning HA long-lived token from kept data", out)
             self.assertEqual(minted.get("access"), "short-lived-tok")
-            token_file = os.path.join(tmp, "home-assistant", "homeassistant", ".oscar-long-lived-token")
+            token_file = os.path.join(tmp, "home-assistant", "homeassistant", ".solilos-long-lived-token")
             self.assertTrue(os.path.isfile(token_file))
             with open(token_file) as fh:
                 self.assertEqual(fh.read().strip(), "long-lived-tok")
@@ -1436,7 +1436,7 @@ class HomeAssistantScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = os.path.join(tmp, "home-assistant", "homeassistant")
             os.makedirs(cfg, exist_ok=True)
-            with open(os.path.join(cfg, ".oscar-long-lived-token"), "w") as fh:
+            with open(os.path.join(cfg, ".solilos-long-lived-token"), "w") as fh:
                 fh.write("good-token\n")
             # Stamp so the OIDC install path skips the tarball download.
             oidc = os.path.join(cfg, "custom_components", "auth_oidc")
@@ -1470,6 +1470,61 @@ class HomeAssistantScript(unittest.TestCase):
                     mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
                 rc, out = capture_main(m)
             self.assertEqual(rc, 0)
+            self.assertIn("still authenticates — nothing to reconcile", out)
+
+    def test_legacy_oscar_token_migrated_to_solilos(self):
+        """#1769: a box onboarded before the OSCAR→Solilos rename has a valid
+        token only at the legacy `.oscar-long-lived-token` path. The deploy
+        renames it on disk to `.solilos-long-lived-token` and reuses it — no
+        re-mint, no login flow, even without working admin creds."""
+        import tempfile
+        import urllib.request
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            os.makedirs(cfg, exist_ok=True)
+            legacy_file = os.path.join(cfg, ".oscar-long-lived-token")
+            new_file = os.path.join(cfg, ".solilos-long-lived-token")
+            with open(legacy_file, "w") as fh:
+                fh.write("good-token\n")
+            # Stamp so the OIDC install path skips the tarball download.
+            oidc = os.path.join(cfg, "custom_components", "auth_oidc")
+            os.makedirs(oidc, exist_ok=True)
+            with open(os.path.join(oidc, ".sb_installed_version"), "w") as fh:
+                fh.write("v0.6.0\n")
+
+            def fake_urlopen(req, *_a, **_kw):
+                url = req.full_url if hasattr(req, "full_url") else str(req)
+                if "/auth/login_flow" in url:
+                    raise AssertionError("must not start a login flow after migrating a valid legacy token")
+
+                class _R:
+                    status = 200
+                    def read(self):
+                        return b"<html></html>"
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *a):
+                        return False
+                return _R()
+
+            env = {
+                "HA_OIDC_AUTH_VERSION": "v0.6.0",
+                "DATA_DIR": tmp,
+                "OSCAR_HA_ADMIN_USERNAME": "oscar",
+                "OSCAR_HA_ADMIN_PASSWORD": "pw",
+            }
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertFalse(os.path.exists(legacy_file))
+            self.assertTrue(os.path.isfile(new_file))
+            with open(new_file) as fh:
+                self.assertEqual(fh.read().strip(), "good-token")
+            self.assertIn("Migrated legacy HA token", out)
             self.assertIn("still authenticates — nothing to reconcile", out)
 
     def test_kept_data_state_reported(self):
