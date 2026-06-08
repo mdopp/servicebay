@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.108.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.108.0...servicebay-v4.108.1) (2026-06-08)
+
+
+### Bug Fixes
+
+* **dashboards:** include suppressed hub deps in network focus/ego mode ([6e24cd2](https://github.com/mdopp/servicebay/commit/6e24cd21d1a31e55d23a0eb28046e0930d6081f5)), closes [#1792](https://github.com/mdopp/servicebay/issues/1792)
+* **network-map:** focus mode includes badge-suppressed hub deps ([#1792](https://github.com/mdopp/servicebay/issues/1792)) ([dca0304](https://github.com/mdopp/servicebay/commit/dca03049192bce1542242ae49b9a2042022f7434))
+
 ## [4.108.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.107.0...servicebay-v4.108.0) (2026-06-08)
 
 
