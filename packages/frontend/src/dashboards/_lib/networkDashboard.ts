@@ -182,6 +182,69 @@ function shortestPathIds(
   return path;
 }
 
+/**
+ * Hub classification for ego mode — mirrors the backend's
+ * `ubiquitousDeps.ts` (#1785). The suppression there drops the
+ * hub-spoke edges and stamps `behindAuth`/`usesDns` flags on the
+ * source nodes instead, so the graph that reaches the frontend has no
+ * `service→auth` / `service→dns` edges. Ego adjacency built from those
+ * post-suppression edges therefore can't see the hub fan-in (#1792).
+ * We re-derive the hub relationship from the flags below.
+ *
+ * `service-<name>` ids may carry a `<node>:` remote-host prefix and a
+ * trailing `.service`; strip both to get the base name.
+ */
+const HUB_BASENAMES: Record<string, 'auth' | 'dns'> = {
+  auth: 'auth',
+  lldap: 'auth',
+  authelia: 'auth',
+  adguard: 'dns',
+};
+
+function hubTokenForNodeId(nodeId: string): 'auth' | 'dns' | null {
+  const afterPrefix = nodeId.includes(':') ? nodeId.slice(nodeId.indexOf(':') + 1) : nodeId;
+  if (!afterPrefix.startsWith('service-')) return null;
+  const base = afterPrefix.slice('service-'.length).replace(/\.service$/, '');
+  return HUB_BASENAMES[base] ?? null;
+}
+
+/** Read the suppressed-dependency tokens (#1785) a node carries via its
+ *  `behindAuth` / `usesDns` flags, normalised to the hub token. */
+function suppressedDepTokens(node: Node): Set<'auth' | 'dns'> {
+  const metadata = (node.data as { metadata?: { behindAuth?: unknown; usesDns?: unknown } } | undefined)
+    ?.metadata;
+  const tokens = new Set<'auth' | 'dns'>();
+  if (metadata?.behindAuth === true) tokens.add('auth');
+  if (metadata?.usesDns === true) tokens.add('dns');
+  return tokens;
+}
+
+/**
+ * #1792 — restore the ubiquitous hub relationships that #1785 suppressed
+ * out of the edge list, deriving them from the node flags instead. Adds the
+ * relevant ids to `keep` in place:
+ *  - focus IS a hub (auth/dns): add every service carrying the matching flag
+ *    (its fan-in), so the hub's ego isn't empty.
+ *  - focus is a normal service: add the hub node(s) it depends on via its
+ *    own flags, so a badge-only service isn't isolated.
+ */
+function addSuppressedHubNeighbours(nodes: Node[], focusId: string, keep: Set<string>): void {
+  const focusHubToken = hubTokenForNodeId(focusId);
+  if (focusHubToken) {
+    for (const n of nodes) {
+      if (suppressedDepTokens(n).has(focusHubToken)) keep.add(n.id);
+    }
+    return;
+  }
+  const focusNode = nodes.find((n) => n.id === focusId);
+  const wantedTokens = focusNode ? suppressedDepTokens(focusNode) : new Set<'auth' | 'dns'>();
+  if (wantedTokens.size === 0) return;
+  for (const n of nodes) {
+    const token = hubTokenForNodeId(n.id);
+    if (token && wantedTokens.has(token)) keep.add(n.id);
+  }
+}
+
 export function computeEgoNodeIds(
   nodes: Node[],
   edges: Edge[],
@@ -195,6 +258,8 @@ export function computeEgoNodeIds(
   const keep = new Set<string>([focusId]);
   // Direct neighbours (1 hop).
   for (const n of adjacency.get(focusId) ?? []) keep.add(n);
+
+  addSuppressedHubNeighbours(nodes, focusId, keep);
 
   // Shortest path Internet→focus (BFS) so the public chain is shown
   // even when the gateway/proxy hops are >1 away from the focus node.

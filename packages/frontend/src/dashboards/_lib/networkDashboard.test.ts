@@ -78,6 +78,97 @@ describe('computeEgoNodeIds', () => {
   });
 });
 
+// #1792 — ubiquitous-dep suppression (#1785) drops the service→auth /
+// service→dns edges before the graph reaches the frontend, stamping
+// `behindAuth`/`usesDns` flags on the source nodes instead. The ego
+// adjacency must re-derive those hub relationships from the flags so a
+// hub's focus view isn't empty and a badge-only service shows its hubs.
+describe('computeEgoNodeIds — suppressed ubiquitous hub deps (#1792)', () => {
+  // Mirrors the post-suppression graph: NO service→auth / service→dns
+  // edges exist; the dependency lives only in node metadata flags.
+  const svc = (id: string, flags?: { behindAuth?: boolean; usesDns?: boolean }): Node => ({
+    id,
+    type: 'custom',
+    position: { x: 0, y: 0 },
+    data: { type: 'service', label: id, metadata: { ...(flags ?? {}) } },
+  });
+
+  const hubNodes: Node[] = [
+    node('internet', 'internet'),
+    node('router', 'router'),
+    node('service-nginx', 'proxy'),
+    node('service-auth'),
+    node('service-adguard'),
+    svc('service-immich', { behindAuth: true }),
+    svc('service-vault', { behindAuth: true, usesDns: true }),
+    svc('service-abs', { usesDns: true }),
+    svc('service-ollama'), // no hub deps
+  ];
+
+  // Only the infrastructure spine survives suppression — no hub-spoke edges.
+  const hubEdges: Edge[] = [
+    edge('internet', 'router'),
+    edge('router', 'service-nginx'),
+    edge('service-nginx', 'service-auth'),
+    edge('service-nginx', 'service-adguard'),
+    edge('service-nginx', 'service-immich'),
+    edge('service-nginx', 'service-vault'),
+    edge('service-nginx', 'service-abs'),
+    edge('service-nginx', 'service-ollama'),
+  ];
+
+  it('focusing the auth hub pulls in every service carrying the SSO badge', () => {
+    const ego = computeEgoNodeIds(hubNodes, hubEdges, 'service-auth');
+    // The behindAuth services are now visible even though no edge points at auth.
+    expect(ego.has('service-immich')).toBe(true);
+    expect(ego.has('service-vault')).toBe(true);
+    // A DNS-only / no-dep service is NOT pulled in by the auth hub.
+    expect(ego.has('service-abs')).toBe(false);
+    expect(ego.has('service-ollama')).toBe(false);
+    expect(ego.has('service-auth')).toBe(true);
+  });
+
+  it('focusing the dns hub pulls in every service carrying the DNS badge', () => {
+    const ego = computeEgoNodeIds(hubNodes, hubEdges, 'service-adguard');
+    expect(ego.has('service-vault')).toBe(true);
+    expect(ego.has('service-abs')).toBe(true);
+    expect(ego.has('service-immich')).toBe(false); // auth-only
+    expect(ego.has('service-adguard')).toBe(true);
+  });
+
+  it('focusing a badge-only service surfaces the hub(s) it depends on', () => {
+    // immich's only declared dep is auth (suppressed) — auth must appear.
+    const immich = computeEgoNodeIds(hubNodes, hubEdges, 'service-immich');
+    expect(immich.has('service-auth')).toBe(true);
+    expect(immich.has('service-adguard')).toBe(false);
+
+    // vault carries both badges — both hubs must appear.
+    const vault = computeEgoNodeIds(hubNodes, hubEdges, 'service-vault');
+    expect(vault.has('service-auth')).toBe(true);
+    expect(vault.has('service-adguard')).toBe(true);
+  });
+
+  it('a service with no suppressed hub deps gains no extra hub neighbours', () => {
+    const ego = computeEgoNodeIds(hubNodes, hubEdges, 'service-ollama');
+    expect(ego.has('service-auth')).toBe(false);
+    expect(ego.has('service-adguard')).toBe(false);
+  });
+
+  it('handles remote-host prefixed and .service-suffixed hub ids', () => {
+    const remote = computeEgoNodeIds(
+      [
+        node('internet', 'internet'),
+        node('Local:service-lldap.service'),
+        svc('Local:service-immich.service', { behindAuth: true }),
+      ],
+      [],
+      'Local:service-lldap.service',
+    );
+    // lldap maps to the auth token; immich (behindAuth) must be pulled in.
+    expect(remote.has('Local:service-immich.service')).toBe(true);
+  });
+});
+
 describe('buildOrthogonalPath — line-hops (#1784)', () => {
   it('inserts a ∩ arc on a horizontal run at a hop point', () => {
     // Straight horizontal edge 0,50 → 200,50 with a crossing at x=100.
