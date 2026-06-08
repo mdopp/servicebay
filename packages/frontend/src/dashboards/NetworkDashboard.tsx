@@ -47,6 +47,7 @@ import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import {
+  buildOrthogonalPath,
   buildServiceEditHref,
   computeEgoNodeIds,
   DEFAULT_EDGE_COLOR,
@@ -61,51 +62,9 @@ import {
 } from './_lib/networkDashboard';
 import type { ReactFlowInstance } from '@xyflow/react';
 
-// #1782 — build an orthogonal SVG path from ELK's routing points. Straight
-// 90° segments with small rounded corners (quadratic `Q`) at each bend so the
-// "circuit-board" look reads cleanly without hard pixel corners.
-const ORTHOGONAL_CORNER_RADIUS = 8;
-
-function buildOrthogonalPath(points: { x: number; y: number }[]): {
-  path: string;
-  labelX: number;
-  labelY: number;
-} {
-  const start = points[0];
-  let path = `M ${start.x},${start.y}`;
-
-  for (let i = 1; i < points.length - 1; i++) {
-    const prev = points[i - 1];
-    const corner = points[i];
-    const next = points[i + 1];
-
-    // Stop short of the corner along the incoming segment, round through it,
-    // and resume along the outgoing segment — capped at half each segment so
-    // short legs don't overshoot.
-    const inLen = Math.hypot(corner.x - prev.x, corner.y - prev.y) || 1;
-    const outLen = Math.hypot(next.x - corner.x, next.y - corner.y) || 1;
-    const r = Math.min(ORTHOGONAL_CORNER_RADIUS, inLen / 2, outLen / 2);
-
-    const before = {
-      x: corner.x - ((corner.x - prev.x) / inLen) * r,
-      y: corner.y - ((corner.y - prev.y) / inLen) * r,
-    };
-    const after = {
-      x: corner.x + ((next.x - corner.x) / outLen) * r,
-      y: corner.y + ((next.y - corner.y) / outLen) * r,
-    };
-
-    path += ` L ${before.x},${before.y} Q ${corner.x},${corner.y} ${after.x},${after.y}`;
-  }
-
-  const end = points[points.length - 1];
-  path += ` L ${end.x},${end.y}`;
-
-  // Label at the midpoint of the polyline (by point index — good enough for
-  // the short port labels the map carries).
-  const mid = points[Math.floor(points.length / 2)];
-  return { path, labelX: mid.x, labelY: mid.y };
-}
+// #1782 orthogonal path + #1784 line-hop geometry live in
+// ./_lib/networkDashboard (buildOrthogonalPath) so the dashboard stays under
+// the file-size invariant and the path math is unit-testable.
 
 // Custom Edge Component
 const CustomEdge = ({
@@ -124,13 +83,16 @@ const CustomEdge = ({
   // by getLayoutedElements). Fall back to smoothstep when ELK didn't route
   // this edge (e.g. an edge added before the next layout pass).
   const elkPoints = (data as { points?: { x: number; y: number }[] } | undefined)?.points;
+  // #1784 — hop points where this edge's horizontal runs cross a different
+  // edge; rendered as ∩ overpasses so a crossing is distinct from a junction.
+  const hops = (data as { hops?: { x: number; y: number }[] } | undefined)?.hops ?? [];
 
   let edgePath: string;
   let labelX: number;
   let labelY: number;
 
   if (elkPoints && elkPoints.length >= 2) {
-    const built = buildOrthogonalPath(elkPoints);
+    const built = buildOrthogonalPath(elkPoints, hops);
     edgePath = built.path;
     labelX = built.labelX;
     labelY = built.labelY;

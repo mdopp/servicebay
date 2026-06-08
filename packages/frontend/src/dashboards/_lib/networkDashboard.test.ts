@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Node, Edge } from '@xyflow/react';
-import { computeEgoNodeIds } from './networkDashboard';
+import { computeEgoNodeIds, buildOrthogonalPath } from './networkDashboard';
 
 // Minimal graph mirroring the map's shape:
 //   internet → router → nginx → {hermes, auth, immich}
@@ -75,5 +75,34 @@ describe('computeEgoNodeIds', () => {
     expect(ego.has('hermes')).toBe(true);
     expect(ego.has('nginx')).toBe(true);
     expect(ego.has('ollama')).toBe(true);
+  });
+});
+
+describe('buildOrthogonalPath — line-hops (#1784)', () => {
+  it('inserts a ∩ arc on a horizontal run at a hop point', () => {
+    // Straight horizontal edge 0,50 → 200,50 with a crossing at x=100.
+    const { path } = buildOrthogonalPath(
+      [{ x: 0, y: 50 }, { x: 200, y: 50 }],
+      [{ x: 100, y: 50 }],
+    );
+    // An arc (A r r ...) appears; pen enters at x=94 and exits at x=106 (r=6).
+    expect(path).toContain('A 6 6 0 0 1');
+    expect(path).toContain('L 94,50');
+    expect(path).toContain('106,50');
+  });
+
+  it('draws no arc when there are no hops (plain orthogonal run)', () => {
+    const { path } = buildOrthogonalPath([{ x: 0, y: 50 }, { x: 200, y: 50 }]);
+    expect(path).not.toContain(' A ');
+    expect(path).toBe('M 0,50 L 200,50');
+  });
+
+  it('does not hop a vertical-only crossing on this run (wrong y)', () => {
+    // A hop point at a different y than the run must be ignored here.
+    const { path } = buildOrthogonalPath(
+      [{ x: 0, y: 50 }, { x: 200, y: 50 }],
+      [{ x: 100, y: 999 }],
+    );
+    expect(path).not.toContain(' A ');
   });
 });

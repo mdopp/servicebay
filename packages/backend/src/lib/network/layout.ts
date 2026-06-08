@@ -149,16 +149,22 @@ type Point = { x: number; y: number };
  * Read ELK's per-edge layout results back onto the React Flow edges:
  *  - #1782 orthogonal routing points (`data.points`)
  *  - #1783 CENTER-placed port-label position (`data.lpos`)
- * Both live in the root-absolute coordinate space. Edges ELK produced
- * neither for are returned untouched.
+ *  - #1784 line-hop points on crossing horizontal runs (`data.hops`)
+ * All live in the root-absolute coordinate space. Edges ELK produced
+ * none of these for are returned untouched.
  */
 function attachEdgeLayout(edges: Edge[], layoutedGraph: ElkNode): Edge[] {
   const edgePoints = collectEdgePoints(layoutedGraph);
   const edgeLabelPos = collectEdgeLabelPositions(layoutedGraph);
 
+  // #1784 — compute line-hops from the routed polylines of all edges so a
+  // crossing reads as a wire-hop (∩) rather than a junction.
+  const hopsByEdge = computeEdgeHops(edgePoints);
+
   return edges.map(edge => {
     const points = edgePoints.get(edge.id);
     const lpos = edgeLabelPos.get(edge.id);
+    const hops = hopsByEdge.get(edge.id);
     if ((!points || points.length < 2) && !lpos) return edge;
     return {
       ...edge,
@@ -166,9 +172,101 @@ function attachEdgeLayout(edges: Edge[], layoutedGraph: ElkNode): Edge[] {
         ...edge.data,
         ...(points && points.length >= 2 ? { points } : {}),
         ...(lpos ? { lpos } : {}),
+        ...(hops && hops.length > 0 ? { hops } : {}),
       },
     };
   });
+}
+
+/** A single straight segment of a routed edge, tagged with its owning edge. */
+type Segment = { edgeId: string; x1: number; y1: number; x2: number; y2: number };
+
+/**
+ * #1784 — small slack (px) so a segment that ends *exactly* on another edge's
+ * run (a shared corner / T-junction) is excluded, while a genuine crossing
+ * that overshoots by a pixel of rounding still registers.
+ */
+const HOP_MARGIN = 1.5;
+
+/** Minimum gap from a segment endpoint before a crossing counts as a hop, so
+ *  hops never land on a corner/terminal and produce a malformed arc. */
+const HOP_ENDPOINT_GUARD = 3;
+
+const isHorizontal = (s: Segment) => Math.abs(s.y1 - s.y2) <= HOP_MARGIN;
+const isVertical = (s: Segment) => Math.abs(s.x1 - s.x2) <= HOP_MARGIN;
+
+/** Break each edge's polyline into its straight segments. */
+function toSegments(edgeId: string, points: Point[]): Segment[] {
+  const out: Segment[] = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    out.push({
+      edgeId,
+      x1: points[i].x,
+      y1: points[i].y,
+      x2: points[i + 1].x,
+      y2: points[i + 1].y,
+    });
+  }
+  return out;
+}
+
+/**
+ * #1784 — find the point where a horizontal segment crosses a vertical segment
+ * of a *different* edge, or null when they don't genuinely cross.
+ *
+ * A genuine crossing requires the vertical's x to fall strictly inside the
+ * horizontal's x-range and the horizontal's y strictly inside the vertical's
+ * y-range, each by more than `HOP_ENDPOINT_GUARD`. That guard rejects shared
+ * endpoints and T-junctions (where one segment merely *touches* the other's
+ * line) — only true overpasses get a hop.
+ */
+export function segmentCrossing(h: Segment, v: Segment): Point | null {
+  if (h.edgeId === v.edgeId) return null;
+  const hx1 = Math.min(h.x1, h.x2);
+  const hx2 = Math.max(h.x1, h.x2);
+  const vy1 = Math.min(v.y1, v.y2);
+  const vy2 = Math.max(v.y1, v.y2);
+  const x = (v.x1 + v.x2) / 2; // vertical's x
+  const y = (h.y1 + h.y2) / 2; // horizontal's y
+
+  const xInside = x > hx1 + HOP_ENDPOINT_GUARD && x < hx2 - HOP_ENDPOINT_GUARD;
+  const yInside = y > vy1 + HOP_ENDPOINT_GUARD && y < vy2 - HOP_ENDPOINT_GUARD;
+  if (!xInside || !yInside) return null;
+  return { x, y };
+}
+
+/**
+ * #1784 — for every edge, the ordered list of hop points where one of its
+ * horizontal runs crosses a vertical run of a different edge. Hops are placed
+ * on the *horizontal* segment (it gets the ∩ bump); the vertical edge passes
+ * straight. Sorted left→right so the frontend inserts them in path order.
+ */
+export function computeEdgeHops(edgePoints: Map<string, Point[]>): Map<string, Point[]> {
+  const segments: Segment[] = [];
+  for (const [edgeId, points] of edgePoints) {
+    if (points.length >= 2) segments.push(...toSegments(edgeId, points));
+  }
+  const horizontals = segments.filter(isHorizontal);
+  const verticals = segments.filter(isVertical);
+
+  const result = new Map<string, Point[]>();
+  for (const h of horizontals) {
+    const hops: Point[] = [];
+    for (const v of verticals) {
+      const cross = segmentCrossing(h, v);
+      if (cross) hops.push(cross);
+    }
+    if (hops.length === 0) continue;
+    hops.sort((a, b) => a.x - b.x);
+    const existing = result.get(h.edgeId) ?? [];
+    result.set(h.edgeId, [...existing, ...hops]);
+  }
+  // Keep each edge's combined hop list sorted left→right across all its runs.
+  for (const [edgeId, hops] of result) {
+    hops.sort((a, b) => a.x - b.x);
+    result.set(edgeId, hops);
+  }
+  return result;
 }
 
 /**
