@@ -59,6 +59,52 @@ import {
   type LegacyPortMapping,
 } from './_lib/networkDashboard';
 
+// #1782 — build an orthogonal SVG path from ELK's routing points. Straight
+// 90° segments with small rounded corners (quadratic `Q`) at each bend so the
+// "circuit-board" look reads cleanly without hard pixel corners.
+const ORTHOGONAL_CORNER_RADIUS = 8;
+
+function buildOrthogonalPath(points: { x: number; y: number }[]): {
+  path: string;
+  labelX: number;
+  labelY: number;
+} {
+  const start = points[0];
+  let path = `M ${start.x},${start.y}`;
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1];
+    const corner = points[i];
+    const next = points[i + 1];
+
+    // Stop short of the corner along the incoming segment, round through it,
+    // and resume along the outgoing segment — capped at half each segment so
+    // short legs don't overshoot.
+    const inLen = Math.hypot(corner.x - prev.x, corner.y - prev.y) || 1;
+    const outLen = Math.hypot(next.x - corner.x, next.y - corner.y) || 1;
+    const r = Math.min(ORTHOGONAL_CORNER_RADIUS, inLen / 2, outLen / 2);
+
+    const before = {
+      x: corner.x - ((corner.x - prev.x) / inLen) * r,
+      y: corner.y - ((corner.y - prev.y) / inLen) * r,
+    };
+    const after = {
+      x: corner.x + ((next.x - corner.x) / outLen) * r,
+      y: corner.y + ((next.y - corner.y) / outLen) * r,
+    };
+
+    path += ` L ${before.x},${before.y} Q ${corner.x},${corner.y} ${after.x},${after.y}`;
+  }
+
+  const end = points[points.length - 1];
+  path += ` L ${end.x},${end.y}`;
+
+  // Label at the midpoint of the polyline (by point index — good enough for
+  // the short port labels the map carries).
+  const mid = points[Math.floor(points.length / 2)];
+  return { path, labelX: mid.x, labelY: mid.y };
+}
+
 // Custom Edge Component
 const CustomEdge = ({
   sourceX,
@@ -70,15 +116,32 @@ const CustomEdge = ({
   style = {},
   markerEnd,
   label,
+  data,
 }: EdgeProps) => {
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
-    sourceX,
-    sourceY,
-    sourcePosition,
-    targetX,
-    targetY,
-    targetPosition,
-  });
+  // #1782 — prefer ELK's orthogonal routing points (attached as data.points
+  // by getLayoutedElements). Fall back to smoothstep when ELK didn't route
+  // this edge (e.g. an edge added before the next layout pass).
+  const elkPoints = (data as { points?: { x: number; y: number }[] } | undefined)?.points;
+
+  let edgePath: string;
+  let labelX: number;
+  let labelY: number;
+
+  if (elkPoints && elkPoints.length >= 2) {
+    const built = buildOrthogonalPath(elkPoints);
+    edgePath = built.path;
+    labelX = built.labelX;
+    labelY = built.labelY;
+  } else {
+    [edgePath, labelX, labelY] = getSmoothStepPath({
+      sourceX,
+      sourceY,
+      sourcePosition,
+      targetX,
+      targetY,
+      targetPosition,
+    });
+  }
 
   if (!label) {
       return <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />;
@@ -1131,7 +1194,10 @@ export default function NetworkDashboard() {
             source: e.source,
             target: e.target,
             label: decoratedLabel,
-            type: 'smoothstep',
+            // #1782 — `custom` edge renders ELK's orthogonal points (attached
+            // by getLayoutedElements) as a 90° polyline; falls back to
+            // smoothstep until the layout pass routes it.
+            type: 'custom',
             markerEnd: {
                 type: MarkerType.ArrowClosed,
             },
