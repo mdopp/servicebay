@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.109.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.109.0...servicebay-v4.109.1) (2026-06-08)
+
+
+### Bug Fixes
+
+* **registry:** self-heal a permission-broken registry tree ([#1796](https://github.com/mdopp/servicebay/issues/1796)) ([41bf36f](https://github.com/mdopp/servicebay/commit/41bf36fbfa897ee009e22c9021e3d52563f5f1ab))
+* **registry:** self-heal a permission-broken registry tree ([#1796](https://github.com/mdopp/servicebay/issues/1796)) ([cfcfc8a](https://github.com/mdopp/servicebay/commit/cfcfc8a0b4e66d2e0f6d5262104b257cbeacf4a9))
+
 ## [4.109.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.108.1...servicebay-v4.109.0) (2026-06-08)
 
 
