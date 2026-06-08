@@ -155,14 +155,14 @@ describe('Sidebar', () => {
         expect(navTexts).not.toContain('Users & Groups');
     });
 
-    it('hides the Maintenance Chat link when hermes is not installed (#1755)', () => {
-        twinRef.current = { installedTemplates: ['auth', 'media'] };
+    it('hides the Maintenance Chat link when solilos-chat is not installed (#1755/#1781)', () => {
+        twinRef.current = { installedTemplates: ['auth', 'media', 'hermes'] };
         render(<Sidebar />);
         expect(screen.queryByText('Maintenance Chat')).toBeNull();
     });
 
-    it('shows the Maintenance Chat link when hermes is installed (#1755)', () => {
-        twinRef.current = { installedTemplates: ['auth', 'hermes'] };
+    it('shows the Maintenance Chat link when solilos-chat is installed (#1755/#1781)', () => {
+        twinRef.current = { installedTemplates: ['auth', 'hermes', 'solilos-chat'] };
         render(<Sidebar />);
         expect(screen.getByText('Maintenance Chat')).toBeDefined();
     });

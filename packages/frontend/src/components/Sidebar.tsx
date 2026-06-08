@@ -24,10 +24,10 @@ export default function Sidebar() {
   const node = searchParams?.get('node');
   const router = useRouter();
   const { data: twin } = useDigitalTwin();
-  // #1755 — the maintenance chat link only appears once Hermes is installed
-  // (the assistant has nothing to talk to otherwise). Gated on the live
-  // digital-twin installedTemplates, like the rest of the service-aware UI.
-  const hermesInstalled = Boolean(twin?.installedTemplates?.includes('hermes'));
+  // #1755 / #1781 — the maintenance chat link only appears once solilos-chat
+  // is installed (the chat surface we embed). Gated on the live digital-twin
+  // installedTemplates, like the rest of the service-aware UI.
+  const chatInstalled = Boolean(twin?.installedTemplates?.includes('solilos-chat'));
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showCollapsedNodeLabel, setShowCollapsedNodeLabel] = useState(false);
   const [lldapUrl, setLldapUrl] = useState<string | null>(null);
@@ -180,7 +180,7 @@ export default function Sidebar() {
                     </button>
                 );
             })}
-            {hermesInstalled && (
+            {chatInstalled && (
                 <button
                     onClick={() => router.push(`/chat${node ? `?node=${node}` : ''}`)}
                     className={`w-full text-left px-3.5 py-3 rounded-xl flex items-center transition-all border ${
