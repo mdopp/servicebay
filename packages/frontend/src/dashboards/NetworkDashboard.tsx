@@ -149,6 +149,13 @@ const CustomEdge = ({
       return <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />;
   }
 
+  // #1783 — prefer ELK's CENTER-placed label position (data.lpos), which
+  // reserves overlap-free space during layout. Fall back to the polyline
+  // midpoint when ELK didn't place a label (e.g. edge added before layout).
+  const lpos = (data as { lpos?: { x: number; y: number } } | undefined)?.lpos;
+  const chipX = lpos?.x ?? labelX;
+  const chipY = lpos?.y ?? labelY;
+
   return (
     <>
       <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />
@@ -156,7 +163,7 @@ const CustomEdge = ({
         <div
           style={{
             position: 'absolute',
-            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            transform: `translate(-50%, -50%) translate(${chipX}px,${chipY}px)`,
             pointerEvents: 'all',
           }}
           className="nodrag nopan bg-white dark:bg-gray-800 px-2 py-1 rounded border border-gray-200 dark:border-gray-700 shadow-sm text-[10px] font-mono text-gray-600 dark:text-gray-400 text-center z-10"

@@ -26,7 +26,44 @@ const layoutOptions = {
   'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
   'elk.spacing.edgeEdge': '20',
   'elk.spacing.edgeNode': '30',
+  // #1783 — place a per-edge port label (e.g. `:2283`) at the centre of each
+  // edge and reserve space for it so chips never overlap the routed lines.
+  'elk.edgeLabels.placement': 'CENTER',
+  'elk.spacing.edgeLabel': '8',
 };
+
+// #1783 — approximate the pixel box a monospace port chip occupies so ELK
+// reserves overlap-free space for it. ~6.4px/char at the 10px font the chip
+// renders in, plus padding for the rounded badge.
+function portLabelDimensions(text: string): { width: number; height: number } {
+  return { width: text.length * 6.4 + 10, height: 15 };
+}
+
+// #1783 — resolve the chip text ELK should reserve space for. Prefer the
+// React Flow `label` the frontend already decorated; otherwise synthesise
+// `:${port}` from edge data so an unlabelled-but-ported edge still reserves
+// room. Returns undefined when there is nothing to show.
+function edgeLabelText(edge: Edge): string | undefined {
+  if (typeof edge.label === 'string' && edge.label.length > 0) return edge.label;
+  const port = (edge.data as { port?: unknown } | undefined)?.port;
+  if (typeof port === 'number' && Number.isFinite(port) && port > 0) return `:${port}`;
+  return undefined;
+}
+
+// #1783 — map a React Flow edge to an ELK edge, attaching a CENTER-placed
+// port-label box (sized so ELK reserves overlap-free space) when there is
+// chip text to show.
+function toElkEdge(edge: Edge): ElkExtendedEdge {
+  const labelText = edgeLabelText(edge);
+  return {
+    id: edge.id,
+    sources: [edge.source],
+    targets: [edge.target],
+    ...(labelText
+      ? { labels: [{ text: labelText, ...portLabelDimensions(labelText) }] }
+      : {}),
+  };
+}
 
 export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
   // We need to restructure the flat list of nodes into a hierarchy for ELK
@@ -68,13 +105,7 @@ export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
     // space — the same space React Flow node positions live in. We still
     // collect any nested edges (sections relative to a parent) and offset
     // them by the parent's absolute origin so compound graphs keep working.
-    const edgePoints = collectEdgePoints(layoutedGraph);
-
-    const layoutedEdges: Edge[] = edges.map(edge => {
-      const points = edgePoints.get(edge.id);
-      if (!points || points.length < 2) return edge;
-      return { ...edge, data: { ...edge.data, points } };
-    });
+    const layoutedEdges = attachEdgeLayout(edges, layoutedGraph);
 
     // Post-processing: Handle Self-Loops
     // Default: Target Left, Source Right
@@ -115,6 +146,32 @@ export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
 type Point = { x: number; y: number };
 
 /**
+ * Read ELK's per-edge layout results back onto the React Flow edges:
+ *  - #1782 orthogonal routing points (`data.points`)
+ *  - #1783 CENTER-placed port-label position (`data.lpos`)
+ * Both live in the root-absolute coordinate space. Edges ELK produced
+ * neither for are returned untouched.
+ */
+function attachEdgeLayout(edges: Edge[], layoutedGraph: ElkNode): Edge[] {
+  const edgePoints = collectEdgePoints(layoutedGraph);
+  const edgeLabelPos = collectEdgeLabelPositions(layoutedGraph);
+
+  return edges.map(edge => {
+    const points = edgePoints.get(edge.id);
+    const lpos = edgeLabelPos.get(edge.id);
+    if ((!points || points.length < 2) && !lpos) return edge;
+    return {
+      ...edge,
+      data: {
+        ...edge.data,
+        ...(points && points.length >= 2 ? { points } : {}),
+        ...(lpos ? { lpos } : {}),
+      },
+    };
+  });
+}
+
+/**
  * #1782 — walk the laid-out ELK tree and return, per edge id, the ordered
  * list of absolute points (startPoint → bendPoints → endPoint) of its first
  * routing section.
@@ -152,6 +209,35 @@ function collectEdgePoints(graph: ElkNode): Map<string, Point[]> {
   };
 
   // Root has no positional offset of its own.
+  walk(graph, 0, 0);
+  return result;
+}
+
+/**
+ * #1783 — walk the laid-out ELK tree and return, per edge id, the absolute
+ * CENTER of its first edge label. ELK reports a label's x/y as the top-left
+ * of the label box in the coordinate system of the edge's declaring node, so
+ * we add half the box size to get the centre and apply the same parent-origin
+ * offsetting as collectEdgePoints for nested (compound) edges.
+ */
+function collectEdgeLabelPositions(graph: ElkNode): Map<string, Point> {
+  const result = new Map<string, Point>();
+
+  const walk = (node: ElkNode, offsetX: number, offsetY: number) => {
+    node.edges?.forEach(edge => {
+      const label = edge.labels?.[0];
+      if (!label || label.x === undefined || label.y === undefined) return;
+      result.set(edge.id, {
+        x: label.x + (label.width ?? 0) / 2 + offsetX,
+        y: label.y + (label.height ?? 0) / 2 + offsetY,
+      });
+    });
+
+    node.children?.forEach(child => {
+      walk(child, offsetX + (child.x ?? 0), offsetY + (child.y ?? 0));
+    });
+  };
+
   walk(graph, 0, 0);
   return result;
 }
@@ -207,11 +293,7 @@ function buildHierarchy(nodes: Node[], edges: Edge[]): ElkNode {
     // For simplicity, we can often put them at the root, but for compound graphs, 
     // edges between children of the same parent should ideally be in that parent.
     // However, putting them at root usually works for basic layout.
-    const elkEdges: ElkExtendedEdge[] = edges.map(edge => ({
-        id: edge.id,
-        sources: [edge.source],
-        targets: [edge.target]
-    }));
+    const elkEdges: ElkExtendedEdge[] = edges.map(toElkEdge);
 
     return {
         id: 'root',

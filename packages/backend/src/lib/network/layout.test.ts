@@ -42,6 +42,8 @@ describe('getLayoutedElements — ELK orthogonal routing (#1782)', () => {
               endPoint: { x: 300, y: 25 },
             },
           ],
+          // #1783 — ELK reports the CENTER-placed label box (top-left x/y).
+          labels: [{ text: ':2283', x: 180, y: 18, width: 42, height: 15 }],
         },
       ],
     });
@@ -50,7 +52,7 @@ describe('getLayoutedElements — ELK orthogonal routing (#1782)', () => {
       { id: 'a', position: { x: 0, y: 0 }, data: { type: 'router' } },
       { id: 'b', position: { x: 0, y: 0 }, data: { type: 'service' } },
     ];
-    const edges: Edge[] = [{ id: 'e1', source: 'a', target: 'b' }];
+    const edges: Edge[] = [{ id: 'e1', source: 'a', target: 'b', label: ':2283' }];
 
     const result = await getLayoutedElements(nodes, edges);
     const points = (result.edges[0].data as { points?: { x: number; y: number }[] }).points;
@@ -59,6 +61,39 @@ describe('getLayoutedElements — ELK orthogonal routing (#1782)', () => {
       { x: 200, y: 25 },
       { x: 300, y: 25 },
     ]);
+    // #1783 — label position read back as the box CENTER (top-left + half size).
+    const lpos = (result.edges[0].data as { lpos?: { x: number; y: number } }).lpos;
+    expect(lpos).toEqual({ x: 180 + 42 / 2, y: 18 + 15 / 2 });
+  });
+
+  it('attaches no lpos when ELK placed no label box (#1783)', async () => {
+    layoutMock.mockResolvedValueOnce({
+      id: 'root',
+      children: [
+        { id: 'a', x: 0, y: 0, width: 100, height: 50, children: [] },
+        { id: 'b', x: 300, y: 0, width: 100, height: 50, children: [] },
+      ],
+      edges: [
+        {
+          id: 'e1',
+          sources: ['a'],
+          targets: ['b'],
+          sections: [
+            { id: 's1', startPoint: { x: 100, y: 25 }, endPoint: { x: 300, y: 25 } },
+          ],
+        },
+      ],
+    });
+
+    const nodes: Node[] = [
+      { id: 'a', position: { x: 0, y: 0 }, data: { type: 'router' } },
+      { id: 'b', position: { x: 0, y: 0 }, data: { type: 'service' } },
+    ];
+    // No label and no port → no chip text → no lpos.
+    const edges: Edge[] = [{ id: 'e1', source: 'a', target: 'b' }];
+
+    const result = await getLayoutedElements(nodes, edges);
+    expect((result.edges[0].data as { lpos?: unknown }).lpos).toBeUndefined();
   });
 
   it('offsets points for an edge nested inside a compound parent', async () => {
