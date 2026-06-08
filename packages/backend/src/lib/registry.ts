@@ -329,6 +329,21 @@ async function isGitAvailable(): Promise<boolean> {
     return gitAvailability;
 }
 
+/** Clone a registry into `regPath` (sparse first, full-clone fallback). Shared
+ *  by the initial clone and the #1796 self-heal re-clone. */
+async function cloneRegistry(reg: RegistryConfig, regPath: string): Promise<void> {
+    logger.info('registry', `Cloning registry ${reg.name}...`);
+    try {
+        // Default sparse patterns include `servicebay.json` so a manifest-using
+        // registry exposes it on the first clone; `widenSparseForManifest` then
+        // pulls any custom paths declared inside.
+        await cloneSparse(reg.url, regPath, ['templates', 'stacks', 'servicebay.json']);
+    } catch {
+        // Fallback to full clone if sparse checkout not supported
+        await execFileAsync('git', ['clone', '--depth', '1', reg.url, regPath], { env: GIT_ENV });
+    }
+}
+
 export async function syncRegistries() {
     const config = await getConfig();
     const registries = getRegistries(config);
@@ -362,25 +377,35 @@ export async function syncRegistries() {
         // the canonical `mdopp/servicebay` clone. Per-registry try/catch
         // keeps subsequent registries syncing.
         try {
-            try {
-                await fs.access(path.join(regPath, '.git'));
+            const hasGit = await fs
+                .access(path.join(regPath, '.git'))
+                .then(() => true)
+                .catch(() => false);
+            if (!hasGit) {
+                await cloneRegistry(reg, regPath);
+            } else {
                 // Exists — fetch latest and reset (shallow clones can't reliably git pull)
                 logger.info('registry', `Updating registry ${reg.name}...`);
                 const branch = reg.branch || 'main';
-                await execAsync(`git fetch --depth 1 origin ${branch}`, { cwd: regPath, env: GIT_ENV });
-                await execAsync(`git reset --hard origin/${branch}`, { cwd: regPath, env: GIT_ENV });
-            } catch {
-                // Doesn't exist, clone
-                logger.info('registry', `Cloning registry ${reg.name}...`);
                 try {
-                    // Default sparse patterns include `servicebay.json` so a
-                    // manifest-using registry exposes it on the first clone;
-                    // `widenSparseForManifest` below then pulls any custom
-                    // paths declared inside.
-                    await cloneSparse(reg.url, regPath, ['templates', 'stacks', 'servicebay.json']);
-                } catch {
-                    // Fallback to full clone if sparse checkout not supported
-                    await execFileAsync('git', ['clone', '--depth', '1', reg.url, regPath], { env: GIT_ENV });
+                    await execAsync(`git fetch --depth 1 origin ${branch}`, { cwd: regPath, env: GIT_ENV });
+                    await execAsync(`git reset --hard origin/${branch}`, { cwd: regPath, env: GIT_ENV });
+                } catch (updateErr) {
+                    // #1796: a `git reset --hard` that can't unlink the working
+                    // tree — e.g. root-owned files written into the bind mount by
+                    // another container (SB itself runs non-root) — would leave
+                    // the registry permanently stale, silently serving old
+                    // templates/skills. Self-heal: rename the broken tree aside
+                    // (that needs only write on the SB-owned PARENT dir, NOT
+                    // ownership of the tree) and re-clone fresh as the SB uid.
+                    // If even the parent is root-owned the rename throws and the
+                    // per-registry catch below leaves it stale (a privileged
+                    // chown of REGISTRIES_DIR is then the only recourse) — never
+                    // worse than today's behaviour.
+                    const msg = updateErr instanceof Error ? updateErr.message : String(updateErr);
+                    logger.warn('registry', `Registry ${reg.name} update failed (${msg}); re-cloning fresh (#1796 self-heal).`);
+                    await fs.rename(regPath, `${regPath}.broken-${Date.now()}`);
+                    await cloneRegistry(reg, regPath);
                 }
             }
             // Manifest pass: if the registry ships `servicebay.json`, pull
