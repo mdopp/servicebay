@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.109.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.108.1...servicebay-v4.109.0) (2026-06-08)
+
+
+### Features
+
+* **maintenance-chat:** embed solilos-chat, retire HermesChatPanel ([#1781](https://github.com/mdopp/servicebay/issues/1781)) ([40de2d6](https://github.com/mdopp/servicebay/commit/40de2d6f52448d2cb0350a44002355b183eaab22))
+* **maintenance-chat:** embed solilos-chat, retire HermesChatPanel ([#1781](https://github.com/mdopp/servicebay/issues/1781)) ([284157f](https://github.com/mdopp/servicebay/commit/284157f7e36f34c67b47c284aaee50dabae9cf3d))
+
 ## [4.108.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.108.0...servicebay-v4.108.1) (2026-06-08)
 
 
