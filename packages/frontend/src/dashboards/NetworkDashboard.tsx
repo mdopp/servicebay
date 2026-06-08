@@ -42,7 +42,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { getLayoutedElements } from '@servicebay/api-client';
-import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus, Terminal as TerminalIcon, RefreshCw, Eraser, ArrowRight } from 'lucide-react';
+import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus, Terminal as TerminalIcon, RefreshCw, Eraser, ArrowRight, Lock } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
@@ -195,7 +195,13 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
   const renderAsExpandedGroup = isExpandable && !isCollapsed;
 
   const summary = data.summary || {};
-  
+
+  // Ubiquitous-dependency badges (#1785). The backend suppresses the
+  // auth/lldap (SSO/forward-auth) and adguard (DNS) hub-spoke edges and
+  // stamps these flags on the source node instead, so the map stays planar.
+  const behindAuth = data.metadata?.behindAuth === true;
+  const usesDns = data.metadata?.usesDns === true;
+
   const getTypeColors = (): Record<string, string> => ({
     container: 'border-blue-400 dark:border-blue-600 bg-blue-100 dark:bg-blue-900/40',
     service: 'border-purple-400 dark:border-purple-600 bg-purple-100 dark:bg-purple-900/40',
@@ -515,7 +521,27 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                     )}
                     
                     {data.label}
-                    
+
+                    {/* Ubiquitous-dependency badges (#1785) */}
+                    {behindAuth && (
+                        <span
+                            data-testid="badge-behind-auth"
+                            className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                            title="Hinter Authelia/LLDAP (SSO)"
+                        >
+                            <Lock size={10} /> SSO
+                        </span>
+                    )}
+                    {usesDns && (
+                        <span
+                            data-testid="badge-uses-dns"
+                            className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800"
+                            title="DNS über AdGuard"
+                        >
+                            <Globe size={10} /> DNS
+                        </span>
+                    )}
+
                     {/* Host IP moved to Header */}
                     {globalIp && (
                          <div className="text-[10px] font-mono font-bold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 ml-1" title="Host IP">
@@ -748,6 +774,47 @@ function getMiniMapStrokeColor(type: string): string {
   }
 }
 
+// Legend body extracted from NetworkLegend so the panel wrapper stays under
+// the max-lines-per-function budget after the #1785 badge rows landed.
+function LegendBody() {
+    return (
+        <div className="px-3 pb-2 space-y-1.5 border-t border-gray-100 dark:border-gray-800 pt-2">
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-500" /><span>Service / Pod</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-500" /><span>Container</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-500" /><span>Gateway</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-500" /><span>External Link</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-gray-400" /><span>Group / Node</span></div>
+            <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5">
+                <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500" /><span>Active / Running</span></div>
+                <div className="flex items-center gap-2 mt-1"><div className="w-2.5 h-2.5 rounded-full bg-red-500" /><span>Stopped / Error</span></div>
+            </div>
+            <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5 space-y-1">
+                <div className="flex items-center gap-2">
+                    <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#0ea5e9" strokeWidth="2" /></svg>
+                    <span>Observed TCP flow</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#d97706" strokeWidth="2" strokeDasharray="4 4" /></svg>
+                    <span>Declared dependency</span>
+                </div>
+            </div>
+            {/* Ubiquitous-dependency badges (#1785). Hub-spoke edges to
+                auth/LLDAP and AdGuard DNS are collapsed into these node
+                badges to keep the map planar. */}
+            <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5 space-y-1">
+                <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"><Lock size={9} /> SSO</span>
+                    <span>Hinter Authelia/LLDAP</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800"><Globe size={9} /> DNS</span>
+                    <span>DNS über AdGuard</span>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function NetworkLegend() {
     const [isOpen, setIsOpen] = useState(false);
     return (
@@ -761,29 +828,7 @@ function NetworkLegend() {
                     Legend
                     <ChevronDown size={12} className={`ml-auto transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                 </button>
-                {isOpen && (
-                    <div className="px-3 pb-2 space-y-1.5 border-t border-gray-100 dark:border-gray-800 pt-2">
-                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-500" /><span>Service / Pod</span></div>
-                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-500" /><span>Container</span></div>
-                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-500" /><span>Gateway</span></div>
-                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-500" /><span>External Link</span></div>
-                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-gray-400" /><span>Group / Node</span></div>
-                        <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5">
-                            <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500" /><span>Active / Running</span></div>
-                            <div className="flex items-center gap-2 mt-1"><div className="w-2.5 h-2.5 rounded-full bg-red-500" /><span>Stopped / Error</span></div>
-                        </div>
-                        <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5 space-y-1">
-                            <div className="flex items-center gap-2">
-                                <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#0ea5e9" strokeWidth="2" /></svg>
-                                <span>Observed TCP flow</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#d97706" strokeWidth="2" strokeDasharray="4 4" /></svg>
-                                <span>Declared dependency</span>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                {isOpen && <LegendBody />}
             </div>
         </Panel>
     );
