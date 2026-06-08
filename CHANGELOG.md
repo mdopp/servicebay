@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.107.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.106.2...servicebay-v4.107.0) (2026-06-08)
+
+
+### Features
+
+* **network-map:** orthogonal ELK routing + ubiquitous-dep badges + focus/ego mode ([2d3032a](https://github.com/mdopp/servicebay/commit/2d3032a6648b36233d4f531da714d27f5510e067))
+* **network:** badge ubiquitous auth/dns deps instead of hub-spoke edges ([2f07884](https://github.com/mdopp/servicebay/commit/2f07884152dfb9c38916d0405ebb65a2ad1fb2bd)), closes [#1785](https://github.com/mdopp/servicebay/issues/1785)
+* **network:** focus/ego mode reduces the map to a node's neighbourhood ([8d0dbb9](https://github.com/mdopp/servicebay/commit/8d0dbb9b72c11d14263cff7e894fc08c3a3a465b)), closes [#1786](https://github.com/mdopp/servicebay/issues/1786)
+* **network:** render ELK orthogonal edge routing in the network map ([404ef78](https://github.com/mdopp/servicebay/commit/404ef78b6012c3cd6e85732e2eb2c09434be9212)), closes [#1782](https://github.com/mdopp/servicebay/issues/1782)
+
 ## [4.106.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.106.1...servicebay-v4.106.2) (2026-06-07)
 
 
