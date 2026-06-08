@@ -42,12 +42,13 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { getLayoutedElements } from '@servicebay/api-client';
-import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus, Terminal as TerminalIcon, RefreshCw, Eraser, ArrowRight, Lock } from 'lucide-react';
+import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus, Terminal as TerminalIcon, RefreshCw, Eraser, ArrowRight, ArrowLeft, Lock } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import {
   buildServiceEditHref,
+  computeEgoNodeIds,
   DEFAULT_EDGE_COLOR,
   DOWN_EDGE_COLOR,
   DOWN_EDGE_DASHES,
@@ -58,6 +59,7 @@ import {
   type HealthData,
   type LegacyPortMapping,
 } from './_lib/networkDashboard';
+import type { ReactFlowInstance } from '@xyflow/react';
 
 // #1782 — build an orthogonal SVG path from ELK's routing points. Straight
 // 90° segments with small rounded corners (quadratic `Q`) at each bend so the
@@ -839,6 +841,11 @@ export default function NetworkDashboard() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  // Focus / ego mode (#1786): the id of the node whose neighbourhood the
+  // map is reduced to. `null` ⇒ full map. Clicking a node enters focus;
+  // clicking the canvas, the Back control, or Esc exits it.
+  const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
+  const reactFlowInstance = useRef<ReactFlowInstance<Node<GraphNodeData>, Edge> | null>(null);
   const [selectedNodeData, setSelectedNodeData] = useState<GraphNodeData | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -1023,7 +1030,7 @@ export default function NetworkDashboard() {
       setNodes((nds) => applyFilter(nds, searchQuery));
   }, [searchQuery, applyFilter, setNodes]);
 
-  const processAndLayout = useCallback(async (nodes: Node<GraphNodeData>[], edges: Edge[], collapsed: Set<string>, search: string) => {
+  const processAndLayout = useCallback(async (nodes: Node<GraphNodeData>[], edges: Edge[], collapsed: Set<string>, search: string, focus: string | null = null) => {
     // 1. Prepare Nodes (Aggregation & toggles)
      
     const processedNodes = nodes.map(node => {
@@ -1129,10 +1136,34 @@ export default function NetworkDashboard() {
         });
     });
     
+    // 3b. Focus / ego mode (#1786). Reduce the visible graph to the
+    // focus node's neighbourhood + the Internet→focus path before
+    // layout, so ELK lays out only the relevant subgraph (crossing-free)
+    // and `fitView` zooms to it. Child nodes of a kept group are kept
+    // too so expanded groups don't lose their members.
+    let layoutNodes = visibleNodes;
+    let layoutEdges = visibleEdges;
+    if (focus) {
+        const ego = computeEgoNodeIds(visibleNodes, visibleEdges, focus);
+        if (ego.size > 0) {
+            const keep = (n: Node<GraphNodeData>) => ego.has(n.id) || (n.parentId ? ego.has(n.parentId) : false);
+            layoutNodes = visibleNodes.filter(keep);
+            const keptIds = new Set(layoutNodes.map(n => n.id));
+            layoutEdges = visibleEdges.filter(e => keptIds.has(e.source) && keptIds.has(e.target));
+        }
+    }
+
     // 4. Layout
-    const layouted = await getLayoutedElements(visibleNodes, visibleEdges);
+    const layouted = await getLayoutedElements(layoutNodes, layoutEdges);
     setNodes(applyFilter(layouted.nodes as Node<GraphNodeData>[], search));
     setEdges(layouted.edges);
+
+    // After a focus re-layout, zoom the viewport to the reduced subgraph.
+    if (focus) {
+        requestAnimationFrame(() => {
+            reactFlowInstance.current?.fitView({ padding: 0.2, duration: 400 });
+        });
+    }
   }, [setNodes, setEdges, applyFilter]);
 
   // #1071 phase 1: data layer (graph fetch + twin-driven auto-refresh
@@ -1350,7 +1381,7 @@ export default function NetworkDashboard() {
 
       const runLayout = async () => {
           try {
-                await processAndLayout(graphData.nodes, graphData.edges, currentCollapsed, searchQuery);
+                await processAndLayout(graphData.nodes, graphData.edges, currentCollapsed, searchQuery, focusNodeId);
                 if (!cancelled) {
                      resolveReloadToast('success', 'Latest network topology is ready');
                 }
@@ -1366,7 +1397,7 @@ export default function NetworkDashboard() {
       return () => {
           cancelled = true;
       };
-  }, [graphData, processAndLayout, collapsedGroups, searchQuery, resolveReloadToast]);
+  }, [graphData, processAndLayout, collapsedGroups, searchQuery, focusNodeId, resolveReloadToast]);
 
   useEffect(() => {
     // Setup SSE for progress updates
@@ -1401,10 +1432,19 @@ export default function NetworkDashboard() {
             setSelectedEdge(null);
         }, []);
 
+        // Exit focus/ego mode (#1786): restore the full map. Used by the
+        // Back control, a canvas (pane) click, and Esc.
+        const exitFocus = useCallback(() => {
+            setFocusNodeId(null);
+        }, []);
+
         useEscapeKey(closeContainerActions, containerActionsOpen, true);
         useEscapeKey(closeContainerDrawer, Boolean(containerDrawerMode), true);
         useEscapeKey(closeNodeDetails, Boolean(selectedNodeData), true);
         useEscapeKey(closeEdgeDetails, Boolean(selectedEdge), true);
+        // Esc exits focus only when no overlay panel is open above it
+        // (the panels' own Esc handlers take precedence via topMostOnly).
+        useEscapeKey(exitFocus, Boolean(focusNodeId) && !selectedNodeData && !selectedEdge && !containerDrawerMode, true);
 
   const handleEditLink = () => {
       if (!selectedNodeData || !selectedNodeData.rawData) return;
@@ -1570,15 +1610,36 @@ export default function NetworkDashboard() {
                 animated: true,
                 style: { stroke: DEFAULT_EDGE_COLOR, strokeWidth: 2 },
             }}
+            onInit={(instance) => { reactFlowInstance.current = instance; }}
             onNodeClick={(_, node) => {
+                // Click = focus the node's neighbourhood (#1786) AND open
+                // its details. Clicking a neighbour re-focuses on it.
                 setSelectedNodeData(node.data);
                 setSelectedEdge(null);
+                setFocusNodeId(node.id);
             }}
             onEdgeClick={(_, edge) => {
                 setSelectedEdge(edge.id);
                 setSelectedNodeData(null);
             }}
+            onPaneClick={() => {
+                // Clicking empty canvas exits focus mode back to the full map.
+                if (focusNodeId) setFocusNodeId(null);
+            }}
         >
+            {focusNodeId && (
+                <Panel position="top-left">
+                    <button
+                        onClick={exitFocus}
+                        data-testid="focus-back"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                        title="Back to full map (Esc)"
+                    >
+                        <ArrowLeft size={14} />
+                        Full map
+                    </button>
+                </Panel>
+            )}
             <NetworkLegend />
             <Background color="#999" gap={16} size={1} className="opacity-10" />
             <Controls 

@@ -9,7 +9,7 @@
  * render-cycle risk without per-stage validation.
  */
 import type { CSSProperties } from 'react';
-import type { Position } from '@xyflow/react';
+import type { Position, Node, Edge } from '@xyflow/react';
 import type { PortMapping } from '@servicebay/api-client';
 
 /**
@@ -116,6 +116,94 @@ export function buildServiceEditHref(node: GraphNodeData): string {
   }
 
   return base;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Focus / ego mode (#1786). Clicking a node reduces the map to that
+// node's immediate neighbourhood — itself + its direct (1-hop)
+// neighbours + the Internet→node path — and dims/hides everything
+// else. The reduced subgraph re-layouts crossing-free and is the
+// actual lever for reading a hub's relationships (auth/hermes/nginx
+// are an unreadable knot in the full view).
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Compute the set of node ids that make up the ego-neighbourhood of
+ * `focusId`: the focus node, its direct (1-hop) neighbours, and the
+ * shortest Internet→focus path so the public-facing chain stays
+ * visible. Edges are treated as undirected (the map's source/target
+ * orientation is layout-direction, not reachability).
+ *
+ * Returns the keep-set; an empty set means "no focus" (caller shows
+ * the full map).
+ */
+function buildUndirectedAdjacency(nodes: Node[], edges: Edge[]): Map<string, Set<string>> {
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const adjacency = new Map<string, Set<string>>();
+  const link = (a: string, b: string) => {
+    if (!adjacency.has(a)) adjacency.set(a, new Set());
+    adjacency.get(a)!.add(b);
+  };
+  for (const e of edges) {
+    if (!nodeIds.has(e.source) || !nodeIds.has(e.target)) continue;
+    link(e.source, e.target);
+    link(e.target, e.source);
+  }
+  return adjacency;
+}
+
+/** BFS shortest path between two ids over the adjacency, returned as the
+ *  set of ids on the path (empty if unreachable). */
+function shortestPathIds(
+  adjacency: Map<string, Set<string>>,
+  from: string,
+  to: string,
+): Set<string> {
+  const prev = new Map<string, string>();
+  const seen = new Set<string>([from]);
+  const queue: string[] = [from];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (cur === to) break;
+    for (const next of adjacency.get(cur) ?? []) {
+      if (seen.has(next)) continue;
+      seen.add(next);
+      prev.set(next, cur);
+      queue.push(next);
+    }
+  }
+  const path = new Set<string>();
+  if (!seen.has(to)) return path;
+  let step: string | undefined = to;
+  while (step) {
+    path.add(step);
+    step = prev.get(step);
+  }
+  return path;
+}
+
+export function computeEgoNodeIds(
+  nodes: Node[],
+  edges: Edge[],
+  focusId: string | null | undefined,
+): Set<string> {
+  if (!focusId) return new Set();
+  if (!nodes.some((n) => n.id === focusId)) return new Set();
+
+  const adjacency = buildUndirectedAdjacency(nodes, edges);
+
+  const keep = new Set<string>([focusId]);
+  // Direct neighbours (1 hop).
+  for (const n of adjacency.get(focusId) ?? []) keep.add(n);
+
+  // Shortest path Internet→focus (BFS) so the public chain is shown
+  // even when the gateway/proxy hops are >1 away from the focus node.
+  const internet = nodes.find((n) => (n.data as { type?: string } | undefined)?.type === 'internet');
+  if (internet && internet.id !== focusId) {
+    for (const id of shortestPathIds(adjacency, internet.id, focusId)) keep.add(id);
+  }
+
+  return keep;
 }
 
 // ────────────────────────────────────────────────────────────────────
