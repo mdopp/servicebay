@@ -144,9 +144,16 @@ export const handlers = [
       { id: 'service-immich', type: 'service', label: 'immich', status: 'up', rawData: { name: 'immich', active: true }, metadata: { behindAuth: true, usesDns: true, ubiquitousDeps: ['auth', 'dns'] } },
       { id: 'service-vault', type: 'service', label: 'vaultwarden', status: 'up', rawData: { name: 'vaultwarden', active: true }, metadata: { behindAuth: true, usesDns: true, ubiquitousDeps: ['auth', 'dns'] } },
       { id: 'service-media', type: 'service', label: 'media', status: 'up', rawData: { name: 'media', active: true }, metadata: { behindAuth: true, ubiquitousDeps: ['auth'] } },
+      { id: 'service-ollama', type: 'service', label: 'ollama', status: 'up', rawData: { name: 'ollama', active: true }, metadata: { usesDns: true, ubiquitousDeps: ['dns'] } },
+      { id: 'service-ha', type: 'service', label: 'home-assistant', status: 'up', rawData: { name: 'home-assistant', active: true }, metadata: { behindAuth: true, ubiquitousDeps: ['auth'] } },
     ],
     edges: [
       { id: 'gw-auth', source: 'gateway', target: 'service-auth', protocol: 'https', port: 443, state: 'active' },
+      { id: 'gw-immich', source: 'gateway', target: 'service-immich', protocol: 'tcp', port: 2283, state: 'active', kind: 'observed' },
+      { id: 'gw-ollama', source: 'gateway', target: 'service-ollama', protocol: 'tcp', port: 11434, state: 'active', kind: 'observed' },
+      { id: 'gw-ha', source: 'gateway', target: 'service-ha', protocol: 'tcp', port: 8123, state: 'active', kind: 'observed' },
+      // A declared dependency (#813) keeps its decorated label alongside the port.
+      { id: 'dep-vault-auth', source: 'service-vault', target: 'service-auth', protocol: 'https', port: 443, kind: 'declared' },
       // Real cross-service flow survives (immich → media), hub-spokes are gone.
       { id: 'flow-immich-media', source: 'service-immich', target: 'service-media', protocol: 'tcp', port: 8096, state: 'active', kind: 'observed' },
     ],

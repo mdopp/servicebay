@@ -251,3 +251,99 @@ export function labelForEdgeKind(
   }
   return baseLabel;
 }
+
+// ---------------------------------------------------------------------------
+// Orthogonal edge path geometry (#1782 routing, #1784 line-hops)
+// ---------------------------------------------------------------------------
+
+type XY = { x: number; y: number };
+
+/** #1782 — small rounded corners (quadratic `Q`) at each bend so the
+ *  "circuit-board" orthogonal routes read cleanly without hard pixel corners. */
+const ORTHOGONAL_CORNER_RADIUS = 8;
+
+/** #1784 — wire-hop radius: at a crossing the horizontal run lifts into a small
+ *  semicircular ∩ arc so it reads as an overpass, not a junction. */
+const HOP_RADIUS = 6;
+
+/** Tolerance (px) for treating a segment as horizontal / a hop as on-run. */
+const RUN_EPS = 1.5;
+
+/**
+ * #1784 — emit a horizontal run from `fromX` to `toX` (shared `y`), inserting a
+ * ∩ bump at each hop point inside the run. Hops are filtered to this run's
+ * x-span + y and ordered along the direction of travel, so a right→left run
+ * still hops in path order. Each bump is one arc (`A r r 0 0 sweep`) lifting
+ * "up" (−y); sweep is chosen so both travel directions stay a ∩.
+ */
+function appendHorizontalRunWithHops(fromX: number, toX: number, y: number, hops: XY[]): string {
+  const forward = toX >= fromX;
+  const lo = Math.min(fromX, toX);
+  const hi = Math.max(fromX, toX);
+  const onRun = hops
+    .filter(h => Math.abs(h.y - y) <= RUN_EPS && h.x > lo + HOP_RADIUS && h.x < hi - HOP_RADIUS)
+    .sort((a, b) => (forward ? a.x - b.x : b.x - a.x));
+
+  let path = '';
+  for (const h of onRun) {
+    const enter = forward ? h.x - HOP_RADIUS : h.x + HOP_RADIUS;
+    const exit = forward ? h.x + HOP_RADIUS : h.x - HOP_RADIUS;
+    const sweep = forward ? 1 : 0;
+    path += ` L ${enter},${y} A ${HOP_RADIUS} ${HOP_RADIUS} 0 0 ${sweep} ${exit},${y}`;
+  }
+  path += ` L ${toX},${y}`;
+  return path;
+}
+
+/**
+ * #1782/#1784 — build an orthogonal SVG path from ELK's routing `points`,
+ * rounding each bend and inserting ∩ line-hops (`hops`) on horizontal runs.
+ * Returns the path plus the polyline midpoint for the port label.
+ */
+export function buildOrthogonalPath(
+  points: XY[],
+  hops: XY[] = [],
+): { path: string; labelX: number; labelY: number } {
+  const start = points[0];
+  let path = `M ${start.x},${start.y}`;
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1];
+    const corner = points[i];
+    const next = points[i + 1];
+
+    // Stop short of the corner, round through it, resume along the outgoing
+    // segment — capped at half each leg so short legs don't overshoot.
+    const inLen = Math.hypot(corner.x - prev.x, corner.y - prev.y) || 1;
+    const outLen = Math.hypot(next.x - corner.x, next.y - corner.y) || 1;
+    const r = Math.min(ORTHOGONAL_CORNER_RADIUS, inLen / 2, outLen / 2);
+
+    const before = {
+      x: corner.x - ((corner.x - prev.x) / inLen) * r,
+      y: corner.y - ((corner.y - prev.y) / inLen) * r,
+    };
+    const after = {
+      x: corner.x + ((next.x - corner.x) / outLen) * r,
+      y: corner.y + ((next.y - corner.y) / outLen) * r,
+    };
+
+    // #1784 — a horizontal incoming leg may carry hops up to the corner round.
+    if (hops.length > 0 && Math.abs(prev.y - corner.y) <= RUN_EPS) {
+      path += appendHorizontalRunWithHops(prev.x, before.x, corner.y, hops);
+    } else {
+      path += ` L ${before.x},${before.y}`;
+    }
+    path += ` Q ${corner.x},${corner.y} ${after.x},${after.y}`;
+  }
+
+  const end = points[points.length - 1];
+  const lastBend = points[points.length - 2];
+  if (hops.length > 0 && points.length >= 2 && Math.abs(lastBend.y - end.y) <= RUN_EPS) {
+    path += appendHorizontalRunWithHops(lastBend.x, end.x, end.y, hops);
+  } else {
+    path += ` L ${end.x},${end.y}`;
+  }
+
+  const mid = points[Math.floor(points.length / 2)];
+  return { path, labelX: mid.x, labelY: mid.y };
+}

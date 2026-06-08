@@ -19,7 +19,7 @@ vi.mock('../logger', () => ({
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 
-import { getLayoutedElements } from './layout';
+import { getLayoutedElements, segmentCrossing, computeEdgeHops } from './layout';
 
 describe('getLayoutedElements — ELK orthogonal routing (#1782)', () => {
   it('attaches absolute orthogonal points for a root edge', async () => {
@@ -42,6 +42,8 @@ describe('getLayoutedElements — ELK orthogonal routing (#1782)', () => {
               endPoint: { x: 300, y: 25 },
             },
           ],
+          // #1783 — ELK reports the CENTER-placed label box (top-left x/y).
+          labels: [{ text: ':2283', x: 180, y: 18, width: 42, height: 15 }],
         },
       ],
     });
@@ -50,7 +52,7 @@ describe('getLayoutedElements — ELK orthogonal routing (#1782)', () => {
       { id: 'a', position: { x: 0, y: 0 }, data: { type: 'router' } },
       { id: 'b', position: { x: 0, y: 0 }, data: { type: 'service' } },
     ];
-    const edges: Edge[] = [{ id: 'e1', source: 'a', target: 'b' }];
+    const edges: Edge[] = [{ id: 'e1', source: 'a', target: 'b', label: ':2283' }];
 
     const result = await getLayoutedElements(nodes, edges);
     const points = (result.edges[0].data as { points?: { x: number; y: number }[] }).points;
@@ -59,6 +61,39 @@ describe('getLayoutedElements — ELK orthogonal routing (#1782)', () => {
       { x: 200, y: 25 },
       { x: 300, y: 25 },
     ]);
+    // #1783 — label position read back as the box CENTER (top-left + half size).
+    const lpos = (result.edges[0].data as { lpos?: { x: number; y: number } }).lpos;
+    expect(lpos).toEqual({ x: 180 + 42 / 2, y: 18 + 15 / 2 });
+  });
+
+  it('attaches no lpos when ELK placed no label box (#1783)', async () => {
+    layoutMock.mockResolvedValueOnce({
+      id: 'root',
+      children: [
+        { id: 'a', x: 0, y: 0, width: 100, height: 50, children: [] },
+        { id: 'b', x: 300, y: 0, width: 100, height: 50, children: [] },
+      ],
+      edges: [
+        {
+          id: 'e1',
+          sources: ['a'],
+          targets: ['b'],
+          sections: [
+            { id: 's1', startPoint: { x: 100, y: 25 }, endPoint: { x: 300, y: 25 } },
+          ],
+        },
+      ],
+    });
+
+    const nodes: Node[] = [
+      { id: 'a', position: { x: 0, y: 0 }, data: { type: 'router' } },
+      { id: 'b', position: { x: 0, y: 0 }, data: { type: 'service' } },
+    ];
+    // No label and no port → no chip text → no lpos.
+    const edges: Edge[] = [{ id: 'e1', source: 'a', target: 'b' }];
+
+    const result = await getLayoutedElements(nodes, edges);
+    expect((result.edges[0].data as { lpos?: unknown }).lpos).toBeUndefined();
   });
 
   it('offsets points for an edge nested inside a compound parent', async () => {
@@ -125,5 +160,76 @@ describe('getLayoutedElements — ELK orthogonal routing (#1782)', () => {
     const result = await getLayoutedElements(nodes, edges);
     expect((result.edges[0].data as { points?: unknown }).points).toBeUndefined();
     expect((result.edges[0].data as { kind?: string }).kind).toBe('observed');
+  });
+});
+
+describe('segmentCrossing — H×V intersection (#1784)', () => {
+  const h = { edgeId: 'h', x1: 0, y1: 50, x2: 200, y2: 50 };
+
+  it('reports the crossing point of a different edge passing through', () => {
+    const v = { edgeId: 'v', x1: 100, y1: 0, x2: 100, y2: 120 };
+    expect(segmentCrossing(h, v)).toEqual({ x: 100, y: 50 });
+  });
+
+  it('returns null for segments of the SAME edge', () => {
+    const v = { edgeId: 'h', x1: 100, y1: 0, x2: 100, y2: 120 };
+    expect(segmentCrossing(h, v)).toBeNull();
+  });
+
+  it('returns null when the vertical is outside the horizontal x-range', () => {
+    const v = { edgeId: 'v', x1: 300, y1: 0, x2: 300, y2: 120 };
+    expect(segmentCrossing(h, v)).toBeNull();
+  });
+
+  it('returns null when the horizontal is outside the vertical y-range', () => {
+    const v = { edgeId: 'v', x1: 100, y1: 0, x2: 100, y2: 10 };
+    expect(segmentCrossing(h, v)).toBeNull();
+  });
+
+  it('treats a T-junction at the horizontal endpoint as no crossing (margin)', () => {
+    // Vertical's x sits right on the horizontal's left endpoint → touch, not cross.
+    const v = { edgeId: 'v', x1: 1, y1: 0, x2: 1, y2: 120 };
+    expect(segmentCrossing(h, v)).toBeNull();
+  });
+
+  it('treats a T-junction at the vertical endpoint as no crossing (margin)', () => {
+    // Horizontal's y sits right on the vertical's top endpoint → touch, not cross.
+    const v = { edgeId: 'v', x1: 100, y1: 49, x2: 100, y2: 200 };
+    expect(segmentCrossing(h, v)).toBeNull();
+  });
+});
+
+describe('computeEdgeHops — per-edge hop list (#1784)', () => {
+  it('places the hop on the horizontal edge only, not the vertical one', () => {
+    const points = new Map<string, { x: number; y: number }[]>([
+      // Horizontal run at y=50 from x=0..200.
+      ['eh', [{ x: 0, y: 50 }, { x: 200, y: 50 }]],
+      // Vertical run at x=100 from y=0..120 (different edge) → crosses eh.
+      ['ev', [{ x: 100, y: 0 }, { x: 100, y: 120 }]],
+    ]);
+    const hops = computeEdgeHops(points);
+    expect(hops.get('eh')).toEqual([{ x: 100, y: 50 }]);
+    expect(hops.get('ev')).toBeUndefined();
+  });
+
+  it('sorts multiple hops on one run left→right', () => {
+    const points = new Map<string, { x: number; y: number }[]>([
+      ['eh', [{ x: 0, y: 50 }, { x: 300, y: 50 }]],
+      ['ev2', [{ x: 200, y: 0 }, { x: 200, y: 120 }]],
+      ['ev1', [{ x: 80, y: 0 }, { x: 80, y: 120 }]],
+    ]);
+    const hops = computeEdgeHops(points);
+    expect(hops.get('eh')).toEqual([
+      { x: 80, y: 50 },
+      { x: 200, y: 50 },
+    ]);
+  });
+
+  it('produces no hops for parallel non-crossing runs', () => {
+    const points = new Map<string, { x: number; y: number }[]>([
+      ['e1', [{ x: 0, y: 50 }, { x: 200, y: 50 }]],
+      ['e2', [{ x: 0, y: 90 }, { x: 200, y: 90 }]],
+    ]);
+    expect(computeEdgeHops(points).size).toBe(0);
   });
 });
