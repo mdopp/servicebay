@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.108.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.107.0...servicebay-v4.108.0) (2026-06-08)
+
+
+### Features
+
+* **network-map:** per-edge port labels + line-hops over crossings ([32d91aa](https://github.com/mdopp/servicebay/commit/32d91aa3e1f228d577b99a2d3a30bae7ba8e9f02))
+* **network:** ELK-placed :Port labels per edge on the network map ([167f41e](https://github.com/mdopp/servicebay/commit/167f41e07e279fe03eb7a15f6fc189d9ba75e7ea)), closes [#1783](https://github.com/mdopp/servicebay/issues/1783)
+* **network:** line-hops over crossing edges in the network map ([eebc0cd](https://github.com/mdopp/servicebay/commit/eebc0cd1d2756cad81b34a9c127dbfd513d15711)), closes [#1784](https://github.com/mdopp/servicebay/issues/1784)
+
 ## [4.107.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.106.2...servicebay-v4.107.0) (2026-06-08)
 
 
