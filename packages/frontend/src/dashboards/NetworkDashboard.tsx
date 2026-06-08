@@ -42,12 +42,13 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { getLayoutedElements } from '@servicebay/api-client';
-import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus, Terminal as TerminalIcon, RefreshCw, Eraser, ArrowRight } from 'lucide-react';
+import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus, Terminal as TerminalIcon, RefreshCw, Eraser, ArrowRight, ArrowLeft, Lock } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import {
   buildServiceEditHref,
+  computeEgoNodeIds,
   DEFAULT_EDGE_COLOR,
   DOWN_EDGE_COLOR,
   DOWN_EDGE_DASHES,
@@ -58,6 +59,53 @@ import {
   type HealthData,
   type LegacyPortMapping,
 } from './_lib/networkDashboard';
+import type { ReactFlowInstance } from '@xyflow/react';
+
+// #1782 — build an orthogonal SVG path from ELK's routing points. Straight
+// 90° segments with small rounded corners (quadratic `Q`) at each bend so the
+// "circuit-board" look reads cleanly without hard pixel corners.
+const ORTHOGONAL_CORNER_RADIUS = 8;
+
+function buildOrthogonalPath(points: { x: number; y: number }[]): {
+  path: string;
+  labelX: number;
+  labelY: number;
+} {
+  const start = points[0];
+  let path = `M ${start.x},${start.y}`;
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1];
+    const corner = points[i];
+    const next = points[i + 1];
+
+    // Stop short of the corner along the incoming segment, round through it,
+    // and resume along the outgoing segment — capped at half each segment so
+    // short legs don't overshoot.
+    const inLen = Math.hypot(corner.x - prev.x, corner.y - prev.y) || 1;
+    const outLen = Math.hypot(next.x - corner.x, next.y - corner.y) || 1;
+    const r = Math.min(ORTHOGONAL_CORNER_RADIUS, inLen / 2, outLen / 2);
+
+    const before = {
+      x: corner.x - ((corner.x - prev.x) / inLen) * r,
+      y: corner.y - ((corner.y - prev.y) / inLen) * r,
+    };
+    const after = {
+      x: corner.x + ((next.x - corner.x) / outLen) * r,
+      y: corner.y + ((next.y - corner.y) / outLen) * r,
+    };
+
+    path += ` L ${before.x},${before.y} Q ${corner.x},${corner.y} ${after.x},${after.y}`;
+  }
+
+  const end = points[points.length - 1];
+  path += ` L ${end.x},${end.y}`;
+
+  // Label at the midpoint of the polyline (by point index — good enough for
+  // the short port labels the map carries).
+  const mid = points[Math.floor(points.length / 2)];
+  return { path, labelX: mid.x, labelY: mid.y };
+}
 
 // Custom Edge Component
 const CustomEdge = ({
@@ -70,15 +118,32 @@ const CustomEdge = ({
   style = {},
   markerEnd,
   label,
+  data,
 }: EdgeProps) => {
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
-    sourceX,
-    sourceY,
-    sourcePosition,
-    targetX,
-    targetY,
-    targetPosition,
-  });
+  // #1782 — prefer ELK's orthogonal routing points (attached as data.points
+  // by getLayoutedElements). Fall back to smoothstep when ELK didn't route
+  // this edge (e.g. an edge added before the next layout pass).
+  const elkPoints = (data as { points?: { x: number; y: number }[] } | undefined)?.points;
+
+  let edgePath: string;
+  let labelX: number;
+  let labelY: number;
+
+  if (elkPoints && elkPoints.length >= 2) {
+    const built = buildOrthogonalPath(elkPoints);
+    edgePath = built.path;
+    labelX = built.labelX;
+    labelY = built.labelY;
+  } else {
+    [edgePath, labelX, labelY] = getSmoothStepPath({
+      sourceX,
+      sourceY,
+      sourcePosition,
+      targetX,
+      targetY,
+      targetPosition,
+    });
+  }
 
   if (!label) {
       return <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />;
@@ -132,7 +197,13 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
   const renderAsExpandedGroup = isExpandable && !isCollapsed;
 
   const summary = data.summary || {};
-  
+
+  // Ubiquitous-dependency badges (#1785). The backend suppresses the
+  // auth/lldap (SSO/forward-auth) and adguard (DNS) hub-spoke edges and
+  // stamps these flags on the source node instead, so the map stays planar.
+  const behindAuth = data.metadata?.behindAuth === true;
+  const usesDns = data.metadata?.usesDns === true;
+
   const getTypeColors = (): Record<string, string> => ({
     container: 'border-blue-400 dark:border-blue-600 bg-blue-100 dark:bg-blue-900/40',
     service: 'border-purple-400 dark:border-purple-600 bg-purple-100 dark:bg-purple-900/40',
@@ -452,7 +523,27 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                     )}
                     
                     {data.label}
-                    
+
+                    {/* Ubiquitous-dependency badges (#1785) */}
+                    {behindAuth && (
+                        <span
+                            data-testid="badge-behind-auth"
+                            className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                            title="Hinter Authelia/LLDAP (SSO)"
+                        >
+                            <Lock size={10} /> SSO
+                        </span>
+                    )}
+                    {usesDns && (
+                        <span
+                            data-testid="badge-uses-dns"
+                            className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800"
+                            title="DNS über AdGuard"
+                        >
+                            <Globe size={10} /> DNS
+                        </span>
+                    )}
+
                     {/* Host IP moved to Header */}
                     {globalIp && (
                          <div className="text-[10px] font-mono font-bold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 ml-1" title="Host IP">
@@ -685,6 +776,47 @@ function getMiniMapStrokeColor(type: string): string {
   }
 }
 
+// Legend body extracted from NetworkLegend so the panel wrapper stays under
+// the max-lines-per-function budget after the #1785 badge rows landed.
+function LegendBody() {
+    return (
+        <div className="px-3 pb-2 space-y-1.5 border-t border-gray-100 dark:border-gray-800 pt-2">
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-500" /><span>Service / Pod</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-500" /><span>Container</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-500" /><span>Gateway</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-500" /><span>External Link</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-gray-400" /><span>Group / Node</span></div>
+            <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5">
+                <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500" /><span>Active / Running</span></div>
+                <div className="flex items-center gap-2 mt-1"><div className="w-2.5 h-2.5 rounded-full bg-red-500" /><span>Stopped / Error</span></div>
+            </div>
+            <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5 space-y-1">
+                <div className="flex items-center gap-2">
+                    <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#0ea5e9" strokeWidth="2" /></svg>
+                    <span>Observed TCP flow</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#d97706" strokeWidth="2" strokeDasharray="4 4" /></svg>
+                    <span>Declared dependency</span>
+                </div>
+            </div>
+            {/* Ubiquitous-dependency badges (#1785). Hub-spoke edges to
+                auth/LLDAP and AdGuard DNS are collapsed into these node
+                badges to keep the map planar. */}
+            <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5 space-y-1">
+                <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"><Lock size={9} /> SSO</span>
+                    <span>Hinter Authelia/LLDAP</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800"><Globe size={9} /> DNS</span>
+                    <span>DNS über AdGuard</span>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function NetworkLegend() {
     const [isOpen, setIsOpen] = useState(false);
     return (
@@ -698,29 +830,7 @@ function NetworkLegend() {
                     Legend
                     <ChevronDown size={12} className={`ml-auto transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                 </button>
-                {isOpen && (
-                    <div className="px-3 pb-2 space-y-1.5 border-t border-gray-100 dark:border-gray-800 pt-2">
-                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-500" /><span>Service / Pod</span></div>
-                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-500" /><span>Container</span></div>
-                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-500" /><span>Gateway</span></div>
-                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-500" /><span>External Link</span></div>
-                        <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-gray-400" /><span>Group / Node</span></div>
-                        <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5">
-                            <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500" /><span>Active / Running</span></div>
-                            <div className="flex items-center gap-2 mt-1"><div className="w-2.5 h-2.5 rounded-full bg-red-500" /><span>Stopped / Error</span></div>
-                        </div>
-                        <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5 space-y-1">
-                            <div className="flex items-center gap-2">
-                                <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#0ea5e9" strokeWidth="2" /></svg>
-                                <span>Observed TCP flow</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#d97706" strokeWidth="2" strokeDasharray="4 4" /></svg>
-                                <span>Declared dependency</span>
-                            </div>
-                        </div>
-                    </div>
-                )}
+                {isOpen && <LegendBody />}
             </div>
         </Panel>
     );
@@ -731,6 +841,11 @@ export default function NetworkDashboard() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  // Focus / ego mode (#1786): the id of the node whose neighbourhood the
+  // map is reduced to. `null` ⇒ full map. Clicking a node enters focus;
+  // clicking the canvas, the Back control, or Esc exits it.
+  const [focusNodeId, setFocusNodeId] = useState<string | null>(null);
+  const reactFlowInstance = useRef<ReactFlowInstance<Node<GraphNodeData>, Edge> | null>(null);
   const [selectedNodeData, setSelectedNodeData] = useState<GraphNodeData | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -915,7 +1030,7 @@ export default function NetworkDashboard() {
       setNodes((nds) => applyFilter(nds, searchQuery));
   }, [searchQuery, applyFilter, setNodes]);
 
-  const processAndLayout = useCallback(async (nodes: Node<GraphNodeData>[], edges: Edge[], collapsed: Set<string>, search: string) => {
+  const processAndLayout = useCallback(async (nodes: Node<GraphNodeData>[], edges: Edge[], collapsed: Set<string>, search: string, focus: string | null = null) => {
     // 1. Prepare Nodes (Aggregation & toggles)
      
     const processedNodes = nodes.map(node => {
@@ -1021,10 +1136,34 @@ export default function NetworkDashboard() {
         });
     });
     
+    // 3b. Focus / ego mode (#1786). Reduce the visible graph to the
+    // focus node's neighbourhood + the Internet→focus path before
+    // layout, so ELK lays out only the relevant subgraph (crossing-free)
+    // and `fitView` zooms to it. Child nodes of a kept group are kept
+    // too so expanded groups don't lose their members.
+    let layoutNodes = visibleNodes;
+    let layoutEdges = visibleEdges;
+    if (focus) {
+        const ego = computeEgoNodeIds(visibleNodes, visibleEdges, focus);
+        if (ego.size > 0) {
+            const keep = (n: Node<GraphNodeData>) => ego.has(n.id) || (n.parentId ? ego.has(n.parentId) : false);
+            layoutNodes = visibleNodes.filter(keep);
+            const keptIds = new Set(layoutNodes.map(n => n.id));
+            layoutEdges = visibleEdges.filter(e => keptIds.has(e.source) && keptIds.has(e.target));
+        }
+    }
+
     // 4. Layout
-    const layouted = await getLayoutedElements(visibleNodes, visibleEdges);
+    const layouted = await getLayoutedElements(layoutNodes, layoutEdges);
     setNodes(applyFilter(layouted.nodes as Node<GraphNodeData>[], search));
     setEdges(layouted.edges);
+
+    // After a focus re-layout, zoom the viewport to the reduced subgraph.
+    if (focus) {
+        requestAnimationFrame(() => {
+            reactFlowInstance.current?.fitView({ padding: 0.2, duration: 400 });
+        });
+    }
   }, [setNodes, setEdges, applyFilter]);
 
   // #1071 phase 1: data layer (graph fetch + twin-driven auto-refresh
@@ -1131,7 +1270,10 @@ export default function NetworkDashboard() {
             source: e.source,
             target: e.target,
             label: decoratedLabel,
-            type: 'smoothstep',
+            // #1782 — `custom` edge renders ELK's orthogonal points (attached
+            // by getLayoutedElements) as a 90° polyline; falls back to
+            // smoothstep until the layout pass routes it.
+            type: 'custom',
             markerEnd: {
                 type: MarkerType.ArrowClosed,
             },
@@ -1239,7 +1381,7 @@ export default function NetworkDashboard() {
 
       const runLayout = async () => {
           try {
-                await processAndLayout(graphData.nodes, graphData.edges, currentCollapsed, searchQuery);
+                await processAndLayout(graphData.nodes, graphData.edges, currentCollapsed, searchQuery, focusNodeId);
                 if (!cancelled) {
                      resolveReloadToast('success', 'Latest network topology is ready');
                 }
@@ -1255,7 +1397,7 @@ export default function NetworkDashboard() {
       return () => {
           cancelled = true;
       };
-  }, [graphData, processAndLayout, collapsedGroups, searchQuery, resolveReloadToast]);
+  }, [graphData, processAndLayout, collapsedGroups, searchQuery, focusNodeId, resolveReloadToast]);
 
   useEffect(() => {
     // Setup SSE for progress updates
@@ -1290,10 +1432,19 @@ export default function NetworkDashboard() {
             setSelectedEdge(null);
         }, []);
 
+        // Exit focus/ego mode (#1786): restore the full map. Used by the
+        // Back control, a canvas (pane) click, and Esc.
+        const exitFocus = useCallback(() => {
+            setFocusNodeId(null);
+        }, []);
+
         useEscapeKey(closeContainerActions, containerActionsOpen, true);
         useEscapeKey(closeContainerDrawer, Boolean(containerDrawerMode), true);
         useEscapeKey(closeNodeDetails, Boolean(selectedNodeData), true);
         useEscapeKey(closeEdgeDetails, Boolean(selectedEdge), true);
+        // Esc exits focus only when no overlay panel is open above it
+        // (the panels' own Esc handlers take precedence via topMostOnly).
+        useEscapeKey(exitFocus, Boolean(focusNodeId) && !selectedNodeData && !selectedEdge && !containerDrawerMode, true);
 
   const handleEditLink = () => {
       if (!selectedNodeData || !selectedNodeData.rawData) return;
@@ -1459,15 +1610,36 @@ export default function NetworkDashboard() {
                 animated: true,
                 style: { stroke: DEFAULT_EDGE_COLOR, strokeWidth: 2 },
             }}
+            onInit={(instance) => { reactFlowInstance.current = instance; }}
             onNodeClick={(_, node) => {
+                // Click = focus the node's neighbourhood (#1786) AND open
+                // its details. Clicking a neighbour re-focuses on it.
                 setSelectedNodeData(node.data);
                 setSelectedEdge(null);
+                setFocusNodeId(node.id);
             }}
             onEdgeClick={(_, edge) => {
                 setSelectedEdge(edge.id);
                 setSelectedNodeData(null);
             }}
+            onPaneClick={() => {
+                // Clicking empty canvas exits focus mode back to the full map.
+                if (focusNodeId) setFocusNodeId(null);
+            }}
         >
+            {focusNodeId && (
+                <Panel position="top-left">
+                    <button
+                        onClick={exitFocus}
+                        data-testid="focus-back"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                        title="Back to full map (Esc)"
+                    >
+                        <ArrowLeft size={14} />
+                        Full map
+                    </button>
+                </Panel>
+            )}
             <NetworkLegend />
             <Background color="#999" gap={16} size={1} className="opacity-10" />
             <Controls 

@@ -14,9 +14,18 @@ const layoutOptions = {
   'elk.layered.spacing.nodeNodeBetweenLayers': '350', // Horizontal spacing between layers
   'elk.hierarchyHandling': 'INCLUDE_CHILDREN', // Crucial for nesting
   'elk.padding': '[top=50,left=50,bottom=50,right=50]', // Padding for groups
-  // Optimization for cleaner lines
+  // #1782 — orthogonal edge routing ("circuit-board" look). The
+  // computed bend points are read back from edge.sections and rendered
+  // verbatim by the frontend custom edge instead of smoothstep.
+  'elk.edgeRouting': 'ORTHOGONAL',
+  // Crossing minimization tuning — BRANDES_KOEPF straightens trunks and
+  // higher thoroughness reduces crossings so the orthogonal routes stay
+  // readable. Extra edge/edge + edge/node spacing keeps parallel runs apart.
   'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-  'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX', // Better centering of parents relative to children
+  'elk.layered.thoroughness': '20',
+  'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+  'elk.spacing.edgeEdge': '20',
+  'elk.spacing.edgeNode': '30',
 };
 
 export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
@@ -52,6 +61,21 @@ export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
 
     flatten(layoutedGraph);
 
+    // #1782 — collect ELK's orthogonal routing points per edge so the
+    // frontend custom edge can draw a 90° polyline instead of smoothstep.
+    // All edges are declared at the root graph (see buildHierarchy), so the
+    // section coordinates ELK returns are in the root's absolute coordinate
+    // space — the same space React Flow node positions live in. We still
+    // collect any nested edges (sections relative to a parent) and offset
+    // them by the parent's absolute origin so compound graphs keep working.
+    const edgePoints = collectEdgePoints(layoutedGraph);
+
+    const layoutedEdges: Edge[] = edges.map(edge => {
+      const points = edgePoints.get(edge.id);
+      if (!points || points.length < 2) return edge;
+      return { ...edge, data: { ...edge.data, points } };
+    });
+
     // Post-processing: Handle Self-Loops
     // Default: Target Left, Source Right
     // Exception: If a node has a self-loop, move Target to Bottom to allow a clean loop (Right -> Bottom)
@@ -81,12 +105,56 @@ export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
         }
     });
 
-    return { nodes: layoutedNodes, edges };
+    return { nodes: layoutedNodes, edges: layoutedEdges };
   } catch (error) {
     logger.error('layout', 'ELK Layout Error:', error);
     return { nodes, edges };
   }
 };
+
+type Point = { x: number; y: number };
+
+/**
+ * #1782 — walk the laid-out ELK tree and return, per edge id, the ordered
+ * list of absolute points (startPoint → bendPoints → endPoint) of its first
+ * routing section.
+ *
+ * ELK reports an edge's section coordinates relative to the coordinate system
+ * of the node the edge is *declared* in. We declare every edge at the root, so
+ * its sections are already root-absolute. We still accumulate the absolute
+ * origin (`offsetX/offsetY`) of each container as we descend so that any edge
+ * declared inside a compound node would be offset correctly — keeping nested
+ * (compound) graphs robust rather than mis-placing intra-group routes.
+ */
+function collectEdgePoints(graph: ElkNode): Map<string, Point[]> {
+  const result = new Map<string, Point[]>();
+
+  const walk = (node: ElkNode, offsetX: number, offsetY: number) => {
+    node.edges?.forEach(edge => {
+      const section = edge.sections?.[0];
+      if (!section) return;
+      const raw = [
+        section.startPoint,
+        ...(section.bendPoints ?? []),
+        section.endPoint,
+      ];
+      result.set(
+        edge.id,
+        raw.map(p => ({ x: p.x + offsetX, y: p.y + offsetY })),
+      );
+    });
+
+    node.children?.forEach(child => {
+      // Children positions are relative to this node; a child's absolute
+      // origin is this node's absolute origin plus the child's local x/y.
+      walk(child, offsetX + (child.x ?? 0), offsetY + (child.y ?? 0));
+    });
+  };
+
+  // Root has no positional offset of its own.
+  walk(graph, 0, 0);
+  return result;
+}
 
 function buildHierarchy(nodes: Node[], edges: Edge[]): ElkNode {
     const nodeMap = new Map<string, ElkNode>();

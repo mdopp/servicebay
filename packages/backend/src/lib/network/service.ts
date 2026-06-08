@@ -16,6 +16,7 @@ import {
     parseTargetHostPort,
 } from './externalLinks';
 import { buildGlobalInfrastructure } from './topologyAssembler';
+import { suppressUbiquitousDeps } from './ubiquitousDeps';
 import {
     resolvePortNumber,
     type FritzPortMapping,
@@ -289,7 +290,18 @@ export class NetworkService {
     
     allNodes.sort((a, b) => getDepth(a) - getDepth(b));
 
-    return { nodes: allNodes, edges: validEdges };
+    // 5. Ubiquitous-dependency suppression (#1785)
+    // auth (Authelia/LLDAP) and adguard (DNS) are semantic hubs: nearly
+    // every service has a declared/observed edge to them. We drop those
+    // hub-spoke edges and stamp `behindAuth` / `usesDns` / `ubiquitousDeps`
+    // on the source nodes so the FE renders a 🔒 badge instead — the hub
+    // NODES themselves and every other real edge are preserved.
+    const { edges: deUbiquitousEdges, suppressed } = suppressUbiquitousDeps(allNodes, validEdges);
+    if (suppressed > 0) {
+      logger.info('NetworkService', `Suppressed ${suppressed} ubiquitous hub-spoke edge(s) (auth/dns) into node badges`);
+    }
+
+    return { nodes: allNodes, edges: deUbiquitousEdges };
   }
 
   // Helper: Get Global Infrastructure (Internet, Router)

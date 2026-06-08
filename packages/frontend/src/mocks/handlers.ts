@@ -118,9 +118,39 @@ export const handlers = [
   // GET /api/health/checks
   http.get('/api/health/checks', () => HttpResponse.json([])),
 
-  // GET /api/network/graph — empty topology
+  // GET /api/install/current — active install descriptor (none in mock)
+  http.get('/api/install/current', () => HttpResponse.json({ current: null })),
+
+  // GET /api/system/core-health — core-stack health (all green in mock)
+  http.get('/api/system/core-health', () => HttpResponse.json({
+    healthy: true, checks: [],
+  })),
+
+  // GET /api/stream — SSE event stream stub (empty body, 200)
+  http.get('/api/stream', () => new HttpResponse('', {
+    status: 200, headers: { 'Content-Type': 'text/event-stream' },
+  })),
+
+  // GET /api/network/graph — representative topology demonstrating the
+  // ubiquitous-dependency badge suppression (#1785). The auth (SSO/LLDAP)
+  // and adguard (DNS) hub NODES are present, but the per-service hub-spoke
+  // edges are gone — each protected service instead carries
+  // behindAuth/usesDns/ubiquitousDeps metadata that renders as a badge.
   http.get('/api/network/graph', () => HttpResponse.json({
-    nodes: [], edges: [], metadata: { stats: {} },
+    nodes: [
+      { id: 'gateway', type: 'gateway', label: 'FritzBox', status: 'up', metadata: { stats: { externalIP: '92.252.126.27', internalIP: '192.168.178.1' } } },
+      { id: 'service-auth', type: 'service', label: 'auth', subLabel: 'Authelia / LLDAP', status: 'up', rawData: { name: 'auth', active: true } },
+      { id: 'service-adguard', type: 'service', label: 'adguard', subLabel: 'DNS', status: 'up', rawData: { name: 'adguard', active: true } },
+      { id: 'service-immich', type: 'service', label: 'immich', status: 'up', rawData: { name: 'immich', active: true }, metadata: { behindAuth: true, usesDns: true, ubiquitousDeps: ['auth', 'dns'] } },
+      { id: 'service-vault', type: 'service', label: 'vaultwarden', status: 'up', rawData: { name: 'vaultwarden', active: true }, metadata: { behindAuth: true, usesDns: true, ubiquitousDeps: ['auth', 'dns'] } },
+      { id: 'service-media', type: 'service', label: 'media', status: 'up', rawData: { name: 'media', active: true }, metadata: { behindAuth: true, ubiquitousDeps: ['auth'] } },
+    ],
+    edges: [
+      { id: 'gw-auth', source: 'gateway', target: 'service-auth', protocol: 'https', port: 443, state: 'active' },
+      // Real cross-service flow survives (immich → media), hub-spokes are gone.
+      { id: 'flow-immich-media', source: 'service-immich', target: 'service-media', protocol: 'tcp', port: 8096, state: 'active', kind: 'observed' },
+    ],
+    metadata: { stats: {} },
   })),
 
   // GET /api/system/storage?node=...
