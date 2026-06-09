@@ -40,7 +40,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@servicebay/api-client": "*",
-    "@tailwindcss/typography": "^0.5.19",
+    "@tailwindcss/typography": "^0.5.20",
     "@xyflow/react": "^12.11.0",
     "basic-ftp": "^6.0.1",
     "bcryptjs": "^3.0.3",
@@ -84,7 +84,7 @@
     "eslint-plugin-unused-imports": "^4.4.1",
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
-    "knip": "^6.15.0",
+    "knip": "^6.16.1",
     "lint-staged": "^17.0.7",
     "msw": "^2.14.6",
     "postcss": "^8.5.10",
