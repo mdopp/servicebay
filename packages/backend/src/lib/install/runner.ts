@@ -31,6 +31,7 @@ import {
   getTemplatePostDeployScript,
   getTemplateMigrationScripts,
   getTemplateYaml,
+  syncRegistries,
 } from '@/lib/registry';
 import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
 import { parseTemplateManifest } from '@/lib/template/contract';
@@ -831,6 +832,24 @@ async function runJob(jobId: string): Promise<void> {
     await log(jobId, '⚠️ No services selected to install — aborting.');
     await patchJob(jobId, { phase: 'done', endedAt: new Date().toISOString(), credentialsManifest: [] });
     return;
+  }
+
+  // #1806 — pull external registries BEFORE resolving any template YAML /
+  // post-deploy script. `syncRegistries()` previously ran only at server
+  // startup (server.ts), so an install fired after a registry commit landed
+  // — without an SB container restart — resolved `getTemplateYaml()` /
+  // `getTemplatePostDeployScript()` from the STALE on-disk clone and silently
+  // ran the old script (caught twice in solbay box-verifies for #314/#315,
+  // worked around by a manual `podman exec servicebay git pull`). Syncing at
+  // the start of every deploy makes the install always run the committed
+  // artifacts. Best-effort: syncRegistries isolates per-registry errors and
+  // no-ops when no external registries are configured, so a transient fetch
+  // failure must not block the install — it falls back to the existing clone.
+  try {
+    await syncRegistries();
+    await log(jobId, 'Refreshed external registries to latest committed templates/scripts.');
+  } catch (e) {
+    await log(jobId, `⚠️ Registry refresh failed (${e instanceof Error ? e.message : String(e)}); installing from the existing on-disk clone.`);
   }
 
   // Topo-sort by install-time dependencies. We also tag each item
