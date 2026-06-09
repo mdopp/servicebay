@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.109.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.109.1...servicebay-v4.109.2) (2026-06-09)
+
+
+### Bug Fixes
+
+* **install:** pull registries at install start, not only on boot ([#1806](https://github.com/mdopp/servicebay/issues/1806)) ([#1807](https://github.com/mdopp/servicebay/issues/1807)) ([5d5ef8a](https://github.com/mdopp/servicebay/commit/5d5ef8a32a70810d7186d921ebadcc08dcdefc11))
+
 ## [4.109.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.109.0...servicebay-v4.109.1) (2026-06-08)
 
 
