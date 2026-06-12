@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.110.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.109.2...servicebay-v4.110.0) (2026-06-12)
+
+
+### Features
+
+* **voice:** run whisper STT on the GPU via a companion container Quadlet ([ba8b3b9](https://github.com/mdopp/servicebay/commit/ba8b3b9569c64337c3b375ad6aff5d6de07b383c)), closes [#1809](https://github.com/mdopp/servicebay/issues/1809)
+
+
+### Bug Fixes
+
+* **voice:** add the v1-to-v2 migration stub the deploy chain requires ([e55a451](https://github.com/mdopp/servicebay/commit/e55a451fbe96606ec0ec70b45103ee658959d600)), closes [#1809](https://github.com/mdopp/servicebay/issues/1809)
+* **voice:** create the whisper volume dir and self-heal the stale pod ([5f7cbe6](https://github.com/mdopp/servicebay/commit/5f7cbe6f7b778049d4938ff0fb76568a7d7a6447)), closes [#1809](https://github.com/mdopp/servicebay/issues/1809)
+
 ## [4.109.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.109.1...servicebay-v4.109.2) (2026-06-09)
 
 
