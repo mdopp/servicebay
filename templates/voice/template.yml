@@ -6,7 +6,7 @@ metadata:
     app: voice
   annotations:
     servicebay.label: "Smart Home Voice Assist"
-    servicebay.schema-version: "1"
+    servicebay.schema-version: "2"
     # No `servicebay.tier` — voice is optional plumbing, not platform
     # infrastructure (DNS / proxy / SSO are tier=infrastructure and
     # auto-included by the wizard; voice should be opt-in). The pod
@@ -16,9 +16,10 @@ metadata:
     servicebay.ports: "10300/tcp,10200/tcp,10400/tcp"
     # Continuous health probe (#628). Wyoming protocol is binary-over-TCP,
     # no HTTP; a successful TCP connect to Whisper's port proves the
-    # primary speech-to-text container is up. The Piper + openWakeWord
-    # siblings share the pod lifecycle (Quadlet kube unit), so if
-    # Whisper is up the rest are too.
+    # primary speech-to-text service is up. Whisper runs as the companion
+    # `voice-whisper.container` Quadlet (written by post-deploy.py, #1809)
+    # — probing ITS port from the pod's healthcheck is deliberate: voice
+    # is not healthy without STT, wherever it runs.
     servicebay.healthcheck: |
       kind: tcp
       host: localhost
@@ -33,21 +34,14 @@ spec:
   # after the split from #348.
   hostNetwork: true
   containers:
-  # 1. Faster Whisper — speech-to-text via Wyoming protocol
-  - name: faster-whisper
-    image: docker.io/rhasspy/wyoming-whisper:latest
-    args:
-    - --model
-    - "{{WHISPER_MODEL}}"
-    - --language
-    - "{{WHISPER_LANGUAGE}}"
-    - --data-dir
-    - /data
-    - --uri
-    - tcp://0.0.0.0:10300
-    volumeMounts:
-    - mountPath: /data
-      name: whisper-data
+  # 1. Faster Whisper (speech-to-text) does NOT live in this pod (#1809):
+  #    it needs the GPU on CUDA-capable boxes, `podman kube play` silently
+  #    drops CDI device requests (#1026), and `privileged: true` exposes
+  #    /dev but not the host driver libraries (box-verified: "CUDA driver
+  #    version is insufficient"). post-deploy.py writes a companion
+  #    `voice-whisper.container` Quadlet instead — GPU image with
+  #    AddDevice=nvidia.com/gpu=all when CDI is registered, the CPU image
+  #    otherwise. Same Wyoming endpoint either way: tcp://localhost:10300.
 
   # 2. Piper — text-to-speech via Wyoming protocol
   - name: piper
@@ -71,10 +65,6 @@ spec:
     - tcp://0.0.0.0:10400
 
   volumes:
-  - name: whisper-data
-    hostPath:
-      path: {{DATA_DIR}}/voice/whisper
-      type: DirectoryOrCreate
   - name: piper-data
     hostPath:
       path: {{DATA_DIR}}/voice/piper
