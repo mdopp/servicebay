@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.111.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.110.0...servicebay-v4.111.0) (2026-06-12)
+
+
+### Features
+
+* **voice:** Sol speaks Kokoro-Martin on GPU boxes ([c864896](https://github.com/mdopp/servicebay/commit/c864896775c90becdc84b65e70caf67c26b4147a)), closes [#1815](https://github.com/mdopp/servicebay/issues/1815)
+
+
+### Bug Fixes
+
+* **voice:** install_whisper_unit still called the refactored-away helper ([7717928](https://github.com/mdopp/servicebay/commit/77179289f51dd62a3682e71a058c6e35c1bb4850)), closes [#1815](https://github.com/mdopp/servicebay/issues/1815)
+
 ## [4.110.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.109.2...servicebay-v4.110.0) (2026-06-12)
 
 
