@@ -133,10 +133,10 @@ def render_whisper_unit(data_dir: str, model: str, language: str, gpu: bool) -> 
     )
 
 
-def whisper_service_active() -> bool:
+def service_active(unit: str) -> bool:
     try:
         out = subprocess.run(
-            ["systemctl", "--user", "is-active", f"{WHISPER_UNIT}.service"],
+            ["systemctl", "--user", "is-active", f"{unit}.service"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -144,6 +144,44 @@ def whisper_service_active() -> bool:
     except (FileNotFoundError, subprocess.SubprocessError, OSError):
         return False
     return out.stdout.strip() == "active"
+
+
+def install_unit(unit: str, content: str) -> bool:
+    """Write + activate one companion Quadlet, idempotently (rewrite only on
+    content drift; restart when drifted or inactive)."""
+    systemd_dir = os.path.expanduser("~/.config/containers/systemd")
+    unit_path = os.path.join(systemd_dir, f"{unit}.container")
+    existing = ""
+    if os.path.exists(unit_path):
+        try:
+            with open(unit_path) as f:
+                existing = f.read()
+        except OSError:
+            existing = ""
+    if existing == content and service_active(unit):
+        log(f"   {unit}: current and active — no-op.")
+        return True
+    try:
+        os.makedirs(systemd_dir, exist_ok=True)
+        with open(unit_path, "w") as f:
+            f.write(content)
+        os.chmod(unit_path, 0o644)
+    except OSError as e:
+        log(f"   ⚠️ {unit}: could not write {unit_path}: {e}")
+        return False
+    subprocess.run(
+        ["systemctl", "--user", "daemon-reload"], check=False, capture_output=True
+    )
+    started = subprocess.run(
+        ["systemctl", "--user", "restart", f"{unit}.service"],
+        capture_output=True,
+        text=True,
+    )
+    if started.returncode != 0:
+        log(f"   ⚠️ {unit}: systemctl restart failed: {started.stderr[:300]}")
+        return False
+    log(f"   {unit}: installed + started.")
+    return True
 
 
 def stale_pod_whisper_running() -> bool:
@@ -238,6 +276,82 @@ def install_whisper_unit(data_dir: str) -> bool:
     return True
 
 
+# ── Sol's voice: Kokoro-Martin TTS + wyoming bridge (GPU boxes, #1815) ──────
+
+TTS_UNIT = "voice-tts"
+TTS_BRIDGE_UNIT = "voice-tts-bridge"
+TTS_IMAGE = "ghcr.io/mdopp/solilos-tts:latest"
+TTS_BRIDGE_IMAGE = "ghcr.io/roryeckel/wyoming_openai:latest"
+
+
+def render_tts_unit() -> str:
+    return (
+        "[Unit]\n"
+        "Description=Voice TTS Kokoro-Martin (OpenAI API, GPU via CDI #1815)\n"
+        "Wants=network-online.target\n"
+        "After=network-online.target\n"
+        "\n"
+        "[Container]\n"
+        f"Image={TTS_IMAGE}\n"
+        f"ContainerName={TTS_UNIT}\n"
+        "Network=host\n"
+        "# The 82M ONNX model on the CUDA provider: box-measured 0.29-0.36s\n"
+        "# for a 7.4s sentence, 0.03s warm for a short one, ~1.2 GiB VRAM.\n"
+        "Environment=KOKORO_ONNX_PROVIDER=cuda\n"
+        "Environment=KOKORO_ONNX_VOICE=martin\n"
+        "Environment=KOKORO_ONNX_LANG=de\n"
+        "AddDevice=nvidia.com/gpu=all\n"
+        "SecurityLabelDisable=true\n"
+        "AutoUpdate=registry\n"
+        "\n"
+        "[Service]\n"
+        "Restart=on-failure\n"
+        "RestartSec=5\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=default.target\n"
+    )
+
+
+def render_tts_bridge_unit() -> str:
+    """wyoming bridge so HA's pipeline sees the OpenAI TTS as a streaming
+    `tts.openai_streaming` entity (box-verified entity name)."""
+    return (
+        "[Unit]\n"
+        "Description=Voice TTS wyoming bridge (Kokoro-Martin -> HA, #1815)\n"
+        "Wants=network-online.target\n"
+        f"After=network-online.target {TTS_UNIT}.service\n"
+        "\n"
+        "[Container]\n"
+        f"Image={TTS_BRIDGE_IMAGE}\n"
+        f"ContainerName={TTS_BRIDGE_UNIT}\n"
+        "Network=host\n"
+        "Exec=python3 -m wyoming_openai --uri tcp://0.0.0.0:10203"
+        " --languages de --tts-openai-url http://127.0.0.1:8881/v1"
+        " --tts-models kokoro --tts-streaming-models kokoro"
+        " --tts-backend KOKORO_FASTAPI\n"
+        "AutoUpdate=registry\n"
+        "\n"
+        "[Service]\n"
+        "Restart=on-failure\n"
+        "RestartSec=5\n"
+        "\n"
+        "[Install]\n"
+        "WantedBy=default.target\n"
+    )
+
+
+def install_tts_units() -> bool:
+    """GPU boxes get Sol's Martin voice: the OpenAI TTS service on :8881 and
+    the wyoming bridge on :10203. CPU-only boxes keep piper — the pipeline
+    wiring (solbay post-deploy) prefers the bridge entity when present."""
+    if not cdi_available():
+        log("   tts: no CDI GPU — keeping piper as the only TTS.")
+        return False
+    ok = install_unit(TTS_UNIT, render_tts_unit())
+    return install_unit(TTS_BRIDGE_UNIT, render_tts_bridge_unit()) and ok
+
+
 # ── legacy data migration (#348) ─────────────────────────────────────────────
 
 
@@ -284,6 +398,9 @@ def main() -> int:
 
     # Whisper companion unit (#1809) — GPU when CDI is registered.
     install_whisper_unit(data_dir)
+
+    # Sol voice companion units (#1815) — GPU boxes only.
+    install_tts_units()
 
     log("✅ Voice pipeline endpoints — paste these into Home Assistant → Settings → Voice Assistants:")
     log("   • Speech-to-text (Wyoming): tcp://localhost:10300")
