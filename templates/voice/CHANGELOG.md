@@ -20,3 +20,14 @@
 
 - Initial split out of the home-assistant pod (#348): faster-whisper,
   piper and openWakeWord as one kube pod on the standard Wyoming ports.
+
+## v2.1 (#1815)
+
+- GPU boxes additionally get Sol's German voice: `voice-tts.container`
+  (`ghcr.io/mdopp/solilos-tts`, Kokoro-Martin ONNX on the CUDA provider,
+  OpenAI API on :8881) and `voice-tts-bridge.container`
+  (`wyoming_openai` streaming bridge on :10203 → HA entity
+  `tts.openai_streaming`). CPU-only boxes keep piper unchanged; the
+  Assist-pipeline TTS selection (solbay post-deploy) prefers the bridge
+  entity when present. No schema change — purely additive companion
+  units.
