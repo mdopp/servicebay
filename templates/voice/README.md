@@ -2,11 +2,11 @@
 
 Wyoming-protocol voice services — runs as a standalone pod so Home Assistant (or any other Wyoming consumer) can talk to a shared local voice pipeline.
 
-Three containers:
+Three services:
 
-1. **Faster Whisper** — speech-to-text, CTranslate2-accelerated. Bound on `tcp://0.0.0.0:10300`.
-2. **Piper** — text-to-speech. Bound on `tcp://0.0.0.0:10200`.
-3. **openWakeWord** — wake-word detection ("Hey Jarvis", "Ok Nabu"). Bound on `tcp://0.0.0.0:10400`.
+1. **Faster Whisper** — speech-to-text, CTranslate2-accelerated. Bound on `tcp://0.0.0.0:10300`. Runs as the companion `voice-whisper.container` Quadlet written by `post-deploy.py` (#1809): on a box with a registered NVIDIA CDI GPU it uses `lscr.io/linuxserver/faster-whisper:gpu` with `AddDevice=nvidia.com/gpu=all` + `SecurityLabelDisable=true` (a default `base-int8` model choice auto-upgrades to `medium-int8` there — box-measured 0.38 s finalize for 5.5 s of speech at 1.1 GiB VRAM, vs 0.76–2.86 s on CPU base); without CDI it runs the plain CPU image. It lives outside the pod because `podman kube play` silently drops CDI device requests (#1026) and `privileged` exposes /dev without the host driver libraries.
+2. **Piper** — text-to-speech. Bound on `tcp://0.0.0.0:10200` (in the pod).
+3. **openWakeWord** — wake-word detection ("Hey Jarvis", "Ok Nabu"). Bound on `tcp://0.0.0.0:10400` (in the pod).
 
 ## Why a separate template
 
@@ -21,7 +21,7 @@ See #348 for the design rationale.
 
 ## Variables
 
-- **WHISPER_MODEL**: Faster Whisper model size (default: `base-int8`). int8 variants are noticeably faster with minimal quality loss; the bigger non-int8 models are higher quality but RAM-heavy.
+- **WHISPER_MODEL**: Faster Whisper model size (default: `base-int8`). int8 variants are noticeably faster with minimal quality loss; the bigger non-int8 models are higher quality but RAM-heavy. On a CDI GPU box, leaving the default auto-upgrades the unit to `medium-int8`; an explicit non-default choice is kept as-is on both paths.
 - **WHISPER_LANGUAGE**: Language code for speech recognition (default: `de`).
 - **PIPER_VOICE**: Text-to-speech voice (default: `de_DE-thorsten-high`). Format is `<locale>-<voice-name>-<quality>`.
 
