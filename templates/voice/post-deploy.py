@@ -234,46 +234,8 @@ def install_whisper_unit(data_dir: str) -> bool:
             capture_output=True,
         )
 
-    systemd_dir = os.path.expanduser("~/.config/containers/systemd")
-    unit_path = os.path.join(systemd_dir, f"{WHISPER_UNIT}.container")
-
-    existing = ""
-    if os.path.exists(unit_path):
-        try:
-            with open(unit_path) as f:
-                existing = f.read()
-        except OSError:
-            existing = ""
-
-    if existing == unit and whisper_service_active():
-        log(f"   whisper: {WHISPER_UNIT}.container current and active — no-op.")
-        return True
-
-    try:
-        os.makedirs(systemd_dir, exist_ok=True)
-        with open(unit_path, "w") as f:
-            f.write(unit)
-        os.chmod(unit_path, 0o644)
-    except OSError as e:
-        log(f"   ⚠️ whisper: could not write {unit_path}: {e}")
-        return False
-
-    subprocess.run(
-        ["systemctl", "--user", "daemon-reload"], check=False, capture_output=True
-    )
-    started = subprocess.run(
-        ["systemctl", "--user", "restart", f"{WHISPER_UNIT}.service"],
-        capture_output=True,
-        text=True,
-    )
-    if started.returncode != 0:
-        log(f"   ⚠️ whisper: systemctl restart failed: {started.stderr[:300]}")
-        return False
-    log(
-        f"   whisper: {WHISPER_UNIT}.container installed — "
-        f"{'GPU (CDI)' if gpu else 'CPU'} path, model {model}."
-    )
-    return True
+    log(f"   whisper: {'GPU (CDI)' if gpu else 'CPU'} path, model {model}.")
+    return install_unit(WHISPER_UNIT, unit)
 
 
 # ── Sol's voice: Kokoro-Martin TTS + wyoming bridge (GPU boxes, #1815) ──────
