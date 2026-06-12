@@ -146,6 +146,23 @@ def whisper_service_active() -> bool:
     return out.stdout.strip() == "active"
 
 
+def stale_pod_whisper_running() -> bool:
+    """True when the pre-v2 pod still carries its whisper container — the
+    install runner does not restart a kube service on a spec-changing
+    re-render (#1813), so the stale container would hold :10300 and
+    crash-loop the companion unit."""
+    try:
+        out = subprocess.run(
+            ["podman", "ps", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, OSError):
+        return False
+    return "voice-faster-whisper" in out.stdout.split()
+
+
 def install_whisper_unit(data_dir: str) -> bool:
     """Write + activate the companion whisper Quadlet. Returns True when
     the service is (re)started or already active with current content."""
@@ -155,6 +172,29 @@ def install_whisper_unit(data_dir: str) -> bool:
         model = GPU_DEFAULT_MODEL
     language = env("WHISPER_LANGUAGE", "de")
     unit = render_whisper_unit(data_dir, model, language, gpu)
+
+    # Quadlet Volume= does NOT create the host path (kube DirectoryOrCreate
+    # does) — without this the unit fails with `statfs …: no such file or
+    # directory` (box-observed on first rollout).
+    volume_dir = os.path.join(
+        data_dir, "voice", "whisper-gpu" if gpu else "whisper"
+    )
+    try:
+        os.makedirs(volume_dir, exist_ok=True)
+    except OSError as e:
+        log(f"   ⚠️ whisper: could not create {volume_dir}: {e}")
+        return False
+
+    # Self-heal #1813: a spec-changing re-render leaves the old pod (with
+    # its in-pod whisper on :10300) running — restart the kube service so
+    # the companion unit can bind.
+    if stale_pod_whisper_running():
+        log("   whisper: stale in-pod whisper still running — restarting voice.service (#1813).")
+        subprocess.run(
+            ["systemctl", "--user", "restart", "voice.service"],
+            check=False,
+            capture_output=True,
+        )
 
     systemd_dir = os.path.expanduser("~/.config/containers/systemd")
     unit_path = os.path.join(systemd_dir, f"{WHISPER_UNIT}.container")
