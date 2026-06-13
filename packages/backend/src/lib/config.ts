@@ -584,8 +584,19 @@ export interface AccessRequest {
   firstName?: string;
   /** Family name — feeds LLDAP `lastName` when the admin approves. */
   lastName?: string;
-  status: 'pending' | 'resolved';
-  /** ISO timestamp of when the admin marked it resolved. */
+  /**
+   * Lifecycle state.
+   *   pending  — awaiting an admin decision.
+   *   approved — admin provisioned/accepted the request (one-click
+   *              Approve or "Mark resolved").
+   *   denied   — admin dismissed the request; nothing was provisioned.
+   *
+   * Legacy entries written before #1824 carry the old `'resolved'`
+   * value, which always meant the approve path. Read those as
+   * `'approved'`; never write `'resolved'` going forward.
+   */
+  status: 'pending' | 'approved' | 'denied' | 'resolved';
+  /** ISO timestamp of when the admin resolved (approved/denied) it. */
   resolvedAt?: string;
   /**
    * Provenance/category for requests filed programmatically via SB-MCP

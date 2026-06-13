@@ -1404,20 +1404,26 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     },
   );
 
+  // Legacy entries written before #1824 carry the old `'resolved'`
+  // status, which always meant the approve path — surface them as
+  // `'approved'` so callers only ever see pending|approved|denied.
+  const normalizeStatus = (s: AccessRequest['status']): 'pending' | 'approved' | 'denied' =>
+    s === 'resolved' ? 'approved' : s;
+
   server.tool(
     'list_access_requests',
-    'List access/approval requests on the admin\'s central list. Defaults to pending only; pass status="all" to include resolved.',
+    'List access/approval requests on the admin\'s central list. Defaults to pending only; pass status="approved", "denied", or "all".',
     {
-      status: z.enum(['pending', 'resolved', 'all']).optional().default('pending').describe('Filter by status. Default: pending.'),
+      status: z.enum(['pending', 'approved', 'denied', 'all']).optional().default('pending').describe('Filter by status. Default: pending.'),
     },
     async ({ status }) => {
       const config = await getConfig();
       const all = config.accessRequests ?? [];
-      const filtered = status === 'all' ? all : all.filter(r => r.status === status);
+      const filtered = status === 'all' ? all : all.filter(r => normalizeStatus(r.status) === status);
       return textResult({
         requests: filtered.map(r => ({
           id: r.id,
-          status: r.status,
+          status: normalizeStatus(r.status),
           subject: r.name,
           kind: r.kind,
           payload: r.payload,
@@ -1432,7 +1438,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
 
   server.tool(
     'get_access_request_status',
-    'Poll the status of one access request by id (as returned by file_access_request). Returns "pending", "resolved", or "not-found".',
+    'Poll the status of one access request by id (as returned by file_access_request). Returns "pending" (awaiting an admin decision), "approved" (admin provisioned the user — proceed), "denied" (admin dismissed it — provision nothing and drop any captured data), or "not-found".',
     {
       id: z.string().min(1).describe('Request id returned by file_access_request.'),
     },
@@ -1442,7 +1448,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
       if (!req) return textResult({ id, status: 'not-found' as const });
       return textResult({
         id: req.id,
-        status: req.status,
+        status: normalizeStatus(req.status),
         subject: req.name,
         kind: req.kind,
         requestedAt: req.requestedAt,

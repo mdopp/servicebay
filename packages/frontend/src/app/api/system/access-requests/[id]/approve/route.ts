@@ -71,7 +71,7 @@ export const POST = withApiHandlerParams<undefined, undefined, Params>(
 
     requests[idx] = {
       ...req,
-      status: 'resolved',
+      status: 'approved',
       resolvedAt: new Date().toISOString(),
     };
     await saveConfig({ ...config, accessRequests: requests });

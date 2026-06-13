@@ -154,7 +154,7 @@ describe('GET /api/system/access-requests', () => {
 });
 
 describe('PATCH /api/system/access-requests/[id]', () => {
-  it('marks a request resolved', async () => {
+  it('marks a request denied (#1824)', async () => {
     state.config.accessRequests = [
       { id: 'r1', requestedAt: '2026-01-01', name: 'A', email: 'a@b.c', status: 'pending' },
     ];
@@ -163,7 +163,7 @@ describe('PATCH /api/system/access-requests/[id]', () => {
       { params: Promise.resolve({ id: 'r1' }) },
     );
     expect(res.status).toBe(200);
-    expect(state.config.accessRequests[0].status).toBe('resolved');
+    expect(state.config.accessRequests[0].status).toBe('denied');
     expect(state.config.accessRequests[0].resolvedAt).toBeDefined();
   });
 
