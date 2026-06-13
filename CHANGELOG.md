@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.112.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.111.0...servicebay-v4.112.0) (2026-06-13)
+
+
+### Features
+
+* **mcp:** access-request tools and install kube restart on spec change ([0470444](https://github.com/mdopp/servicebay/commit/0470444ae7318b12e2f035f5e3ac0c8cd8b7364e))
+* **mcp:** expose access-request file/list/poll tools for admin approval ([b623a05](https://github.com/mdopp/servicebay/commit/b623a05f7782e5dea806e00976e09970bca6c0b8)), closes [#1818](https://github.com/mdopp/servicebay/issues/1818)
+
+
+### Bug Fixes
+
+* **install:** restart kube service when the pod spec changed on re-deploy ([5f37142](https://github.com/mdopp/servicebay/commit/5f37142d0d383e316c052c8500aa8a9c32cf3f21)), closes [#1813](https://github.com/mdopp/servicebay/issues/1813)
+
 ## [4.111.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.110.0...servicebay-v4.111.0) (2026-06-12)
 
 
