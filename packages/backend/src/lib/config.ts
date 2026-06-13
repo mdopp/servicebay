@@ -587,6 +587,25 @@ export interface AccessRequest {
   status: 'pending' | 'resolved';
   /** ISO timestamp of when the admin marked it resolved. */
   resolvedAt?: string;
+  /**
+   * Provenance/category for requests filed programmatically via SB-MCP
+   * (#1818) rather than the anonymous portal form — e.g. `resident` for
+   * a Solilos conversational onboarding. Absent for portal submissions
+   * (which are implicitly portal-account requests).
+   */
+  kind?: string;
+  /**
+   * Free-form structured context attached by the MCP caller (#1818) —
+   * e.g. "voice profile enrolled". Surfaced to the admin alongside the
+   * request so they can decide. Capped on the MCP tool side.
+   */
+  payload?: string;
+  /**
+   * Who/what filed the request when it came in over SB-MCP (#1818) —
+   * the calling agent/token identity, for the admin's audit trail.
+   * Absent for anonymous portal submissions.
+   */
+  requestedBy?: string;
 }
 
 export function getOidcCallbackUrl(config: { reverseProxy?: { publicDomain?: string } }): string {
