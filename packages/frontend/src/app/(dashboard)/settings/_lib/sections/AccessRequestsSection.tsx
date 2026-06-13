@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, ExternalLink, Loader2, Mail, Send, Trash2, UserCheck, UserPlus } from 'lucide-react';
+import { Bot, Check, ExternalLink, Globe, Loader2, Mail, Send, Trash2, UserCheck, UserPlus } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 
 interface AccessRequest {
@@ -15,6 +15,10 @@ interface AccessRequest {
   lastName?: string;
   status: 'pending' | 'resolved';
   resolvedAt?: string;
+  /** Category for MCP-filed requests (e.g. "resident"); absent for portal submissions. */
+  kind?: string;
+  /** Agent/token identity that filed the request over SB-MCP; absent for portal submissions. */
+  requestedBy?: string;
 }
 
 /**
@@ -214,6 +218,32 @@ export default function AccessRequestsSection() {
   );
 }
 
+/**
+ * Source-of-origin badge: "Via agent" (with the filer id in the tooltip)
+ * for MCP-filed requests (#1818/#1821), "Via portal" for anonymous portal
+ * submissions. Lets the admin tell programmatic requests apart at a glance.
+ */
+function ProvenanceBadge({ requestedBy }: { requestedBy?: string }) {
+  if (requestedBy) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium rounded bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300"
+        title={`Filed via agent: ${requestedBy}`}
+      >
+        <Bot size={11} /> Via agent
+      </span>
+    );
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400"
+      title="Submitted from the family portal"
+    >
+      <Globe size={11} /> Via portal
+    </span>
+  );
+}
+
 function RequestRow({
   r,
   onApprove,
@@ -244,12 +274,21 @@ function RequestRow({
                 {r.username}
               </span>
             )}
-            <a href={`mailto:${r.email}`} className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300 hover:underline text-xs">
-              <Mail size={12} /> {r.email}
-            </a>
+            {r.kind && (
+              <span className="inline-flex items-center px-1.5 py-0.5 text-[11px] font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded capitalize">
+                {r.kind}
+              </span>
+            )}
+            <ProvenanceBadge requestedBy={r.requestedBy} />
+            {r.email && (
+              <a href={`mailto:${r.email}`} className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300 hover:underline text-xs">
+                <Mail size={12} /> {r.email}
+              </a>
+            )}
           </div>
           <div className="text-[11px] text-gray-500 dark:text-gray-400">
             Submitted {new Date(r.requestedAt).toLocaleString()}
+            {r.requestedBy && ` · by ${r.requestedBy}`}
             {r.resolvedAt && ` · resolved ${new Date(r.resolvedAt).toLocaleString()}`}
           </div>
           {r.message && (

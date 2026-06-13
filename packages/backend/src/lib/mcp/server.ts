@@ -1376,8 +1376,9 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
       payload: z.string().trim().max(1000).optional().describe('Structured context for the admin (e.g. "voice profile enrolled").'),
       requested_by: z.string().trim().max(120).optional().describe('Who/what is filing the request — the calling agent or token identity, for the audit trail.'),
       email: z.email().max(200).optional().describe('Contact email for the subject, if known. Feeds the LLDAP user when the admin approves.'),
+      username: z.string().trim().regex(/^[a-z0-9._-]{1,60}$/, 'Username must be lowercase letters, digits, ., _ or -, max 60 chars').optional().describe('Desired LLDAP login (uid). Supplying it lets the admin one-click Approve to auto-provision the user; omit to leave provisioning manual.'),
     },
-    async ({ subject, kind, payload, requested_by, email }) => {
+    async ({ subject, kind, payload, requested_by, email, username }) => {
       const config = await getConfig();
       const existing = config.accessRequests ?? [];
       const pending = existing.filter(r => r.status === 'pending');
@@ -1396,6 +1397,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         ...(kind ? { kind } : {}),
         ...(payload ? { payload } : {}),
         ...(requested_by ? { requestedBy: requested_by } : {}),
+        ...(username ? { username } : {}),
       };
       await updateConfig({ accessRequests: [...existing, newRequest] });
       return textResult({ ok: true, id: newRequest.id, status: newRequest.status });
