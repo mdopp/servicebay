@@ -19,7 +19,7 @@ import { agentManager } from '@/lib/agent/manager';
 import { HealthStore } from '@/lib/health/store';
 import { CheckRunner } from '@/lib/health/runner';
 import type { CheckConfig, CheckType } from '@/lib/health/types';
-import { getConfig, updateConfig, type AppConfig, type ProxyHostEntry } from '@/lib/config';
+import { getConfig, updateConfig, type AppConfig, type ProxyHostEntry, type AccessRequest } from '@/lib/config';
 import {
   getBackupHistory,
   runBackup as runBackupService,
@@ -68,6 +68,7 @@ const MUTATING_TOOLS = new Set([
   'deploy_service', 'delete_service', 'rename_service', 'update_service_yaml',
   'restore_trashed_service', 'purge_trashed_service',
   'add_proxy_route', 'remove_proxy_route',
+  'file_access_request',
   'create_health_check', 'delete_health_check', 'run_check_now',
   'run_backup', 'restore_backup',
   'update_config', 'exec_command', 'refresh_agent',
@@ -103,6 +104,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   list_trashed_services: 'read',
   get_unmanaged_bundles: 'read',
   get_channel: 'read',
+  list_access_requests: 'read', get_access_request_status: 'read',
   // lifecycle
   start_service: 'lifecycle', stop_service: 'lifecycle', restart_service: 'lifecycle',
   run_check_now: 'lifecycle', refresh_agent: 'lifecycle',
@@ -112,6 +114,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   deploy_service: 'mutate', update_service_yaml: 'mutate', rename_service: 'mutate',
   add_proxy_route: 'mutate', create_health_check: 'mutate',
   restore_trashed_service: 'mutate',
+  file_access_request: 'mutate',
   // mutate (config writes, allow-listed to safe keys — see update_config tool)
   update_config: 'mutate',
   // destroy
@@ -1351,6 +1354,98 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         if (err instanceof StackResetError) return errorResult(err.message);
         return errorResult(err instanceof Error ? err.message : String(err));
       }
+    },
+  );
+
+  // --- Access requests / approval workflow (#1818) ---
+  // Programmatic surface over the same `config.accessRequests` list the
+  // family portal feeds and the admin Settings page resolves. Lets an
+  // agent (e.g. Solilos resident-onboarding, mdopp/solbay #355) file a
+  // pending approval the admin acts on in the existing flow, then poll
+  // its status to react on approval.
+  //
+  // Anti-spam cap mirrors the public POST route's MAX_PENDING (50).
+  const MAX_PENDING_ACCESS_REQUESTS = 50;
+
+  server.tool(
+    'file_access_request',
+    'File a pending access/approval request to the admin\'s central access-request list (the same list the family portal feeds and Settings resolves). Returns the request id; poll it with get_access_request_status. Use for programmatic approvals (e.g. registering a new resident) — the admin approves or denies in the existing flow.',
+    {
+      subject: z.string().trim().min(1).max(120).describe('Human-readable label for who/what is being requested (e.g. the candidate resident\'s name).'),
+      kind: z.string().trim().min(1).max(40).optional().describe('Category/provenance of the request (e.g. "resident"). Free-form; helps the admin triage.'),
+      payload: z.string().trim().max(1000).optional().describe('Structured context for the admin (e.g. "voice profile enrolled").'),
+      requested_by: z.string().trim().max(120).optional().describe('Who/what is filing the request — the calling agent or token identity, for the audit trail.'),
+      email: z.email().max(200).optional().describe('Contact email for the subject, if known. Feeds the LLDAP user when the admin approves.'),
+    },
+    async ({ subject, kind, payload, requested_by, email }) => {
+      const config = await getConfig();
+      const existing = config.accessRequests ?? [];
+      const pending = existing.filter(r => r.status === 'pending');
+      if (pending.length >= MAX_PENDING_ACCESS_REQUESTS) {
+        return errorResult(
+          `Too many pending access requests (${pending.length}/${MAX_PENDING_ACCESS_REQUESTS}). The admin needs to resolve existing ones first.`,
+        );
+      }
+      const newRequest: AccessRequest = {
+        id: randomUUID(),
+        requestedAt: new Date().toISOString(),
+        name: subject,
+        email: email ?? '',
+        message: payload,
+        status: 'pending',
+        ...(kind ? { kind } : {}),
+        ...(payload ? { payload } : {}),
+        ...(requested_by ? { requestedBy: requested_by } : {}),
+      };
+      await updateConfig({ accessRequests: [...existing, newRequest] });
+      return textResult({ ok: true, id: newRequest.id, status: newRequest.status });
+    },
+  );
+
+  server.tool(
+    'list_access_requests',
+    'List access/approval requests on the admin\'s central list. Defaults to pending only; pass status="all" to include resolved.',
+    {
+      status: z.enum(['pending', 'resolved', 'all']).optional().default('pending').describe('Filter by status. Default: pending.'),
+    },
+    async ({ status }) => {
+      const config = await getConfig();
+      const all = config.accessRequests ?? [];
+      const filtered = status === 'all' ? all : all.filter(r => r.status === status);
+      return textResult({
+        requests: filtered.map(r => ({
+          id: r.id,
+          status: r.status,
+          subject: r.name,
+          kind: r.kind,
+          payload: r.payload,
+          requestedBy: r.requestedBy,
+          email: r.email || undefined,
+          requestedAt: r.requestedAt,
+          resolvedAt: r.resolvedAt,
+        })),
+      });
+    },
+  );
+
+  server.tool(
+    'get_access_request_status',
+    'Poll the status of one access request by id (as returned by file_access_request). Returns "pending", "resolved", or "not-found".',
+    {
+      id: z.string().min(1).describe('Request id returned by file_access_request.'),
+    },
+    async ({ id }) => {
+      const config = await getConfig();
+      const req = (config.accessRequests ?? []).find(r => r.id === id);
+      if (!req) return textResult({ id, status: 'not-found' as const });
+      return textResult({
+        id: req.id,
+        status: req.status,
+        subject: req.name,
+        kind: req.kind,
+        requestedAt: req.requestedAt,
+        resolvedAt: req.resolvedAt,
+      });
     },
   );
 
