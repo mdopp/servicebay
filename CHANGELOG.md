@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.114.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.113.0...servicebay-v4.114.0) (2026-06-13)
+
+
+### Features
+
+* **mcp:** distinguish approved vs denied access requests ([8383077](https://github.com/mdopp/servicebay/commit/83830777068e9aa9887a6f4771aa8811d457d505))
+* **mcp:** distinguish approved vs denied access requests ([2efb669](https://github.com/mdopp/servicebay/commit/2efb669f599e56926671f900e28bf9c58cc35a3f)), closes [#1824](https://github.com/mdopp/servicebay/issues/1824)
+
 ## [4.113.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.112.0...servicebay-v4.113.0) (2026-06-13)
 
 
