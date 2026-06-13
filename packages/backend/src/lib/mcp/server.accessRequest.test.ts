@@ -70,6 +70,30 @@ describe('access-request MCP tools (#1818)', () => {
     await client.close();
   });
 
+  it('stores the optional username so the admin gets the auto-approve path', async () => {
+    const { client } = await connectClient();
+    const filed = parse(await client.callTool({
+      name: 'file_access_request',
+      arguments: { subject: 'Ada Lovelace', kind: 'resident', requested_by: 'solilos-agent', username: 'ada.lovelace' },
+    }));
+    expect(filed.ok).toBe(true);
+    const stored = store.accessRequests![0];
+    // canAutoApprove in the admin UI is Boolean(r.username) — it must be set.
+    expect(stored.username).toBe('ada.lovelace');
+    await client.close();
+  });
+
+  it('rejects an invalid username (uppercase/spaces) instead of storing it', async () => {
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'file_access_request',
+      arguments: { subject: 'Bad Login', username: 'Ada Lovelace' },
+    });
+    expect(res.isError).toBe(true);
+    expect(store.accessRequests ?? []).toHaveLength(0);
+    await client.close();
+  });
+
   it('reflects approval (admin resolves) on the next poll', async () => {
     const { client } = await connectClient();
     const filed = parse(await client.callTool({
