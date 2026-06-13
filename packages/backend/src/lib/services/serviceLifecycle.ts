@@ -236,6 +236,48 @@ export class ServiceLifecycle {
         if (res.code !== 0) throw new Error(res.stderr);
     }
 
+    /**
+     * Whether `<serviceName>.service` is currently active (running). Used by
+     * the deploy path to choose start-vs-restart: `systemctl start` on an
+     * already-active unit is a no-op, so a re-deploy that changed the pod
+     * spec would leave the old topology running (#1813). Best-effort —
+     * any error is treated as "not active" so the deploy falls back to a
+     * plain start.
+     */
+    static async isServiceActive(nodeName: string, serviceName: string): Promise<boolean> {
+        try {
+            const agent = await agentManager.ensureAgent(nodeName);
+            const res = await agent.sendCommand('exec', {
+                command: `systemctl --user is-active ${serviceName}.service`,
+            });
+            return (res?.stdout ?? '').trim() === 'active';
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Read a quadlet/pod file currently on the node, or `null` if it isn't
+     * there yet (first install). Best-effort: any read error → `null`, so
+     * the caller treats it as "no prior content" and the deploy proceeds.
+     */
+    static async readExistingQuadletFile(nodeName: string, filename: string): Promise<string | null> {
+        try {
+            const agent = await agentManager.ensureAgent(nodeName);
+            const res = await agent.sendCommand('read_file', {
+                path: `~/${SYSTEMD_DIR}/${filename}`,
+            });
+            if (typeof res === 'string') return res;
+            if (res && typeof res === 'object' && 'content' in res) {
+                const c = (res as { content?: unknown }).content;
+                return typeof c === 'string' ? c : null;
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    }
+
     static async writeFile(nodeName: string, filename: string, content: string) {
         const agent = await agentManager.ensureAgent(nodeName);
         const targetPath = `~/.config/containers/systemd/${filename}`;
@@ -778,6 +820,18 @@ export class ServiceLifecycle {
             }
         }
 
+        // #1813 — `systemctl start` is a no-op on an already-active unit, so a
+        // re-deploy that changed the pod spec (e.g. a removed container) would
+        // write the new render to disk but keep the OLD topology running until
+        // a manual restart. Capture the on-disk content BEFORE overwriting so
+        // we can tell whether this deploy actually changed the spec and force a
+        // restart in that case. A variable-only refresh that produces identical
+        // files still skips the restart (best-effort: a read failure → treat as
+        // changed, so we err toward applying the new render).
+        const prevYaml = await ServiceLifecycle.readExistingQuadletFile(nodeName, yamlName);
+        const prevKube = await ServiceLifecycle.readExistingQuadletFile(nodeName, `${name}.kube`);
+        const specChanged = prevYaml !== yamlContent || prevKube !== kubeContent;
+
         await ServiceLifecycle.writeFile(nodeName, yamlName, yamlContent);
         await ServiceLifecycle.writeFile(nodeName, `${name}.kube`, kubeContent);
         await ServiceLifecycle.ensurePodmanSocket(nodeName);
@@ -811,9 +865,20 @@ export class ServiceLifecycle {
         // Run pre-start hooks (e.g. initialize databases with known credentials)
         await ServiceLifecycle.runPreStartHooks(nodeName, name, yamlContent);
 
-        // Attempt start, but don't fail deployment if start fails (user can check logs)
+        // Attempt start, but don't fail deployment if start fails (user can check logs).
+        // #1813 — if the rendered spec changed AND the unit is already active,
+        // `start` alone won't re-read the new pod spec (it's a no-op on a live
+        // unit), so restart to actually apply the changed topology. First
+        // install (inactive) or an unchanged re-render falls through to a plain
+        // start.
         try {
-             await ServiceLifecycle.startService(nodeName, name);
+             const alreadyActive = specChanged && (await ServiceLifecycle.isServiceActive(nodeName, name));
+             if (alreadyActive) {
+                 onProgress?.(`Pod spec changed — restarting ${name} to apply the new topology...`);
+                 await ServiceLifecycle.restartService(nodeName, name);
+             } else {
+                 await ServiceLifecycle.startService(nodeName, name);
+             }
         } catch(e) {
              logger.warn('ServiceManager', `Service ${name} deployed but start failed:`, e);
         }
