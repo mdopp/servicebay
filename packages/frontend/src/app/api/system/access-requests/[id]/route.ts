@@ -8,8 +8,11 @@ export const dynamic = 'force-dynamic';
  * Per-request actions for the family portal access-request flow
  * (#242 follow-up).
  *
- *   PATCH  — mark a pending request resolved (admin clicked "create
- *            user" or "ignore").
+ *   PATCH  — deny/dismiss a pending request (admin clicked "ignore").
+ *            Marks it `denied` so a programmatic requester polling via
+ *            SB-MCP (#1824) can clean up — nothing is provisioned. The
+ *            approve path lives in the sibling `approve/route.ts`, which
+ *            sets `approved` after provisioning the LLDAP user.
  *   DELETE — drop the request entirely. Used for spam cleanup.
  *
  * Both endpoints require a session — proxy.ts only allows
@@ -31,7 +34,7 @@ export const PATCH = withApiHandlerParams<undefined, undefined, Params>(
     }
     requests[idx] = {
       ...requests[idx],
-      status: 'resolved',
+      status: 'denied',
       resolvedAt: new Date().toISOString(),
     };
     await saveConfig({ ...config, accessRequests: requests });

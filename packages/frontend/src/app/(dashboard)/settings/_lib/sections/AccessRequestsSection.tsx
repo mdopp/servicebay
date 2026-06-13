@@ -13,7 +13,9 @@ interface AccessRequest {
   username?: string;
   firstName?: string;
   lastName?: string;
-  status: 'pending' | 'resolved';
+  // `approved`/`denied` since #1824; `resolved` is the legacy value
+  // (always meant approved) still present on older entries.
+  status: 'pending' | 'approved' | 'denied' | 'resolved';
   resolvedAt?: string;
   /** Category for MCP-filed requests (e.g. "resident"); absent for portal submissions. */
   kind?: string;
@@ -125,7 +127,7 @@ export default function AccessRequestsSection() {
   };
 
   const pending = requests.filter(r => r.status === 'pending');
-  const resolved = requests.filter(r => r.status === 'resolved').sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''));
+  const resolved = requests.filter(r => r.status !== 'pending').sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''));
 
   if (busy === 'load') {
     return (
@@ -316,7 +318,7 @@ function RequestRow({
               <Check size={16} />
             </button>
           )}
-          {r.status === 'resolved' && canResendWelcome && (
+          {r.status !== 'pending' && r.status !== 'denied' && canResendWelcome && (
             <button
               onClick={onResendWelcome}
               disabled={busy}

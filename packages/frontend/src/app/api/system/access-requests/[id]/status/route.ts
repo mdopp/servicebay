@@ -57,6 +57,13 @@ export const GET = withApiHandlerParams<undefined, undefined, Params>(
         requestedAt: req.requestedAt,
       });
     }
+    // A denied request provisions nothing — fall back silently to the
+    // default Request-access CTA rather than the "account ready" block.
+    if (req.status === 'denied') {
+      return NextResponse.json({ status: 'not-found' } as const);
+    }
+    // `approved` (and legacy `resolved`, which always meant the approve
+    // path before #1824) → the "set your password" CTA.
     const urls = await getWelcomeEmailUrls();
     return NextResponse.json({
       status: 'resolved' as const,
