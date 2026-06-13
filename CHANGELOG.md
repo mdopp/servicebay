@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.113.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.112.0...servicebay-v4.113.0) (2026-06-13)
+
+
+### Features
+
+* **mcp:** add username to file_access_request and show kind/requestedBy in admin UI ([aa1278f](https://github.com/mdopp/servicebay/commit/aa1278fc393919739a717d7e1911595401cef7f6)), closes [#1821](https://github.com/mdopp/servicebay/issues/1821)
+* **mcp:** add username to file_access_request and surface kind/requestedBy in admin UI ([776ff5c](https://github.com/mdopp/servicebay/commit/776ff5cd49ce72e178fc1f6caeb6d8772b0f5897))
+
 ## [4.112.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.111.0...servicebay-v4.112.0) (2026-06-13)
 
 
