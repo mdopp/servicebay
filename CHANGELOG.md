@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.115.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.114.0...servicebay-v4.115.0) (2026-06-14)
+
+
+### Features
+
+* **claude-dev:** authenticate SSH against LLDAP so you log in as your real user ([e48319f](https://github.com/mdopp/servicebay/commit/e48319f1a2be7f194cfb91808540a8db5de52507)), closes [#1827](https://github.com/mdopp/servicebay/issues/1827)
+* **claude-dev:** LLDAP SSH login + fix dev-box mislabel as 'ServiceBay System' ([73621b4](https://github.com/mdopp/servicebay/commit/73621b4d64b5e7775a8fde6f02d28c00b6f088bd))
+
+
+### Bug Fixes
+
+* **twin:** stop mislabeling servicebay-claude-dev as the ServiceBay System unit ([e30177d](https://github.com/mdopp/servicebay/commit/e30177d155a7d98f6701d7e5989f74aa4db03a99))
+
 ## [4.114.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.113.0...servicebay-v4.114.0) (2026-06-13)
 
 
