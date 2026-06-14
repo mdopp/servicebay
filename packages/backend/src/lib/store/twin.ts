@@ -477,7 +477,17 @@ export class DigitalTwinStore {
 
     private static readonly KNOWN_PROXY_KEYWORDS = ['nginx', 'nginx', 'haproxy', 'traefik', 'caddy', 'envoy'];
     private static readonly PROXY_EXCLUDE_KEYWORDS = ['mpris-proxy'];
-    private static readonly SERVICEBAY_KEYWORDS = ['servicebay', 'service-bay', 'service_bay'];
+    // Match a ServiceBay keyword only when it stands alone as a token, NOT
+    // when it's the prefix of a larger compound like `servicebay-claude-dev`.
+    // That image (`ghcr.io/mdopp/servicebay-claude-dev`) is the dockerised
+    // Claude Code dev box — a separate feature service — which merely shares
+    // the `servicebay` prefix with the management image (`.../servicebay`).
+    // A loose `includes('servicebay')` mis-flagged it as the system unit, so
+    // the dashboard rendered it as "ServiceBay System" / "System".
+    // The negative lookahead rejects a trailing word char or hyphen, so
+    // `servicebay:latest` / `servicebay.service` still match but
+    // `servicebay-claude-dev` does not.
+    private static readonly SERVICEBAY_KEYWORD_RE = /(?:servicebay|service-bay|service_bay)(?![\w-])/;
 
     private isReverseProxyService(service: ServiceUnit, containers: EnrichedContainer[]): boolean {
           const nameCandidates = this.buildServiceNameCandidates(service);
@@ -574,8 +584,7 @@ export class DigitalTwinStore {
 
     private matchesServiceBayKeyword(value?: string): boolean {
           if (!value) return false;
-          const normalized = value.toLowerCase();
-          return DigitalTwinStore.SERVICEBAY_KEYWORDS.some(keyword => normalized.includes(keyword));
+          return DigitalTwinStore.SERVICEBAY_KEYWORD_RE.test(value.toLowerCase());
       }
 
     private hasServiceBayKeyword(candidates: Set<string>): boolean {
