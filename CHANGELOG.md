@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.116.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.116.0...servicebay-v4.116.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* **claude-dev:** share /workspace across dev + LDAP users (writable checkouts) ([e2e002f](https://github.com/mdopp/servicebay/commit/e2e002f8359966ce232ced6c70e615d6ea6a5096))
+* **claude-dev:** share /workspace across dev + LDAP users so checkouts are writable ([1930e31](https://github.com/mdopp/servicebay/commit/1930e31fa5dfcd728b4bb685cd70c1094dea8f74))
+
 ## [4.116.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.115.1...servicebay-v4.116.0) (2026-06-14)
 
 
