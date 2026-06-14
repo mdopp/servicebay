@@ -83,6 +83,11 @@ RUN set -eux; \
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# `start-claude` — manual launcher for one Claude per directory, each with
+# Remote Control on and its own tmux window (survives SSH disconnects).
+COPY start-claude.sh /usr/local/bin/start-claude
+RUN chmod +x /usr/local/bin/start-claude
+
 # Interactive login shells (an SSH session, the web terminal, the mobile
 # app) attach to the long-lived `claude` tmux session the entrypoint
 # starts on boot, so every connection lands in the SAME live session and

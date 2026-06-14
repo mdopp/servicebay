@@ -10,6 +10,7 @@ on:
     paths:
       - 'templates/claude-dev/Dockerfile'
       - 'templates/claude-dev/docker-entrypoint.sh'
+      - 'templates/claude-dev/start-claude.sh'
       - '.github/workflows/claude-dev-image.yml'
   workflow_dispatch:
 
