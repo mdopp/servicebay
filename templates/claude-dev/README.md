@@ -23,6 +23,13 @@ Built from [`Dockerfile`](./Dockerfile) (published as
 checkouts, Claude Code session history (`~/.claude`), `gh` auth and the
 SSH host keys all survive a container restart.
 
+It's also a **shared working area**: `dev` and every provisioned LDAP user
+(see below) belong to the `devshare` group, and `/workspace` is `dev:devshare`
+mode `2775` (setgid) with login shells defaulting to `umask 002`. So checkouts
+cloned by one user are writable by the others — you log in as `mdopp` and work
+on the same `/workspace/servicebay` clone regardless of who cloned it. Per-user
+homes under `/workspace/home/<user>` stay private (mode `700`).
+
 ## Variables
 
 | Variable | Purpose |
