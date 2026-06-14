@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.116.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.115.1...servicebay-v4.116.0) (2026-06-14)
+
+
+### Features
+
+* **claude-dev:** add `start-claude` to launch one Claude per directory ([89ddd2c](https://github.com/mdopp/servicebay/commit/89ddd2cda9bc51d1ddde9b8406a755be74a62ba5))
+* **claude-dev:** add start-claude — one Claude per directory with Remote Control ([e50ddbf](https://github.com/mdopp/servicebay/commit/e50ddbf086747722760bf8b990caa9eb6fd803e6))
+
 ## [4.115.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.115.0...servicebay-v4.115.1) (2026-06-14)
 
 
