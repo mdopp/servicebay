@@ -388,8 +388,17 @@ export async function syncRegistries() {
                 logger.info('registry', `Updating registry ${reg.name}...`);
                 const branch = reg.branch || 'main';
                 try {
+                    // #1836: `git fetch --depth 1 origin <branch>` with a bare
+                    // branch name only moves FETCH_HEAD — it does NOT update the
+                    // remote-tracking ref `refs/remotes/origin/<branch>` on a
+                    // shallow/sparse clone, which was pinned at clone time. So
+                    // `git reset --hard origin/<branch>` reset to the *stale*
+                    // clone-time SHA, leaving the checkout behind remote HEAD
+                    // (box stranded at d556247 while HEAD was 1fa1717). Reset to
+                    // FETCH_HEAD — exactly what we just fetched — so a single
+                    // refresh always reaches remote HEAD.
                     await execAsync(`git fetch --depth 1 origin ${branch}`, { cwd: regPath, env: GIT_ENV });
-                    await execAsync(`git reset --hard origin/${branch}`, { cwd: regPath, env: GIT_ENV });
+                    await execAsync('git reset --hard FETCH_HEAD', { cwd: regPath, env: GIT_ENV });
                 } catch (updateErr) {
                     // #1796: a `git reset --hard` that can't unlink the working
                     // tree — e.g. root-owned files written into the bind mount by
