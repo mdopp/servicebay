@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.115.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.115.0...servicebay-v4.115.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* **claude-dev:** make LDAP login work with LLDAP 0.6.x (auth-only + local provisioning) ([2c99f51](https://github.com/mdopp/servicebay/commit/2c99f5149883189fca8d63976776a6412070aaf1))
+* **claude-dev:** make LDAP login work with LLDAP 0.6.x (auth-only model) ([84913d2](https://github.com/mdopp/servicebay/commit/84913d2c3aecc87e28fc531f1de05831299c6a18))
+
 ## [4.115.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.114.0...servicebay-v4.115.0) (2026-06-14)
 
 
