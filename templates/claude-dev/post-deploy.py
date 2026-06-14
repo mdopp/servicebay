@@ -36,7 +36,7 @@ def main() -> int:
     ssh_password = env("CLAUDE_DEV_SSH_PASSWORD")
     has_key = bool(env("CLAUDE_DEV_SSH_AUTHORIZED_KEY"))
     ldap_enabled = bool(env("LLDAP_ADMIN_PASSWORD"))
-    ldap_group = env("CLAUDE_DEV_LDAP_GROUP", "lldap_admin")
+    ldap_group = env("CLAUDE_DEV_LDAP_GROUP", "admins")
 
     log(f"✅ Claude Dev container is up — SSH in on port {ssh_port}.")
     if ldap_enabled:

@@ -34,7 +34,7 @@
   },
   "CLAUDE_DEV_LDAP_GROUP": {
     "type": "text",
-    "description": "Only LLDAP users in this group may SSH in. Defaults to the built-in LLDAP admin group so the box operator can log in immediately. Create a dedicated LLDAP group and point this at it to grant dev-box access without making someone a full LLDAP admin.",
-    "default": "lldap_admin"
+    "description": "Only LLDAP users in this group may SSH in. Defaults to `admins`, the group your operator account belongs to. The entrypoint provisions a local login account for each member of this group; point it at a dedicated group to grant dev-box access without making someone a full admin.",
+    "default": "admins"
   }
 }

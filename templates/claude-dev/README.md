@@ -31,25 +31,34 @@ SSH host keys all survive a container restart.
 | `CLAUDE_DEV_SSH_PASSWORD` | Auto-generated password for the local `dev` break-glass user; surfaced as a credential after install. |
 | `CLAUDE_DEV_SSH_AUTHORIZED_KEY` | Optional SSH public key for the `dev` user; enables key-based login (recommended when the box is reachable from outside the LAN). |
 | `LLDAP_ADMIN_PASSWORD` | LLDAP bind password. **Not asked for** — reused automatically from the value the `auth` stack generated. Empty ⇒ LDAP login off, `dev` only. |
-| `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in (default `lldap_admin`). |
+| `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in (default `admins`). |
 | `LLDAP_HOST` / `LLDAP_LDAP_PORT` / `LLDAP_BASE_DN` | LLDAP coordinates; default to the `auth` stack's defaults (`localhost` / `3890` / `dc=dopp,dc=cloud`). |
 
 ## Logging in as your own LDAP user
 
 When the `auth` stack is installed, the container authenticates SSH logins
-against the box's **LLDAP** via `nss-pam-ldapd`, so you sign in as your real
-LDAP user (e.g. `mdopp`) with your LLDAP password — no shared `dev` account:
+against the box's **LLDAP**, so you sign in as your real LDAP user (e.g.
+`mdopp`) with your LLDAP password — no shared `dev` account:
 
 ```sh
 ssh -p 2222 mdopp@<server-ip>      # password = your LLDAP password
 ```
 
-- Only members of the `CLAUDE_DEV_LDAP_GROUP` (default `lldap_admin`) may log
-  in — enforced by sshd `AllowGroups` + an nslcd `pam_authz_search` filter.
-- Each LDAP user gets a persistent home at `/workspace/home/<user>` (created
-  on first login), so their `~/.claude` history and `gh` auth survive
-  restarts independently.
-- LLDAP doesn't store `homeDirectory`/`loginShell`; nslcd synthesizes them.
+How it works — LLDAP 0.6.x is an *auth* directory, not a POSIX/NSS source (it
+serves no `uidNumber`/`gidNumber`, and groups carry DN `member`s rather than
+`memberUid`). So the container uses LDAP for **authentication only**:
+
+- `pam_ldap` (via `nslcd`) verifies the password by **binding to LLDAP as the
+  user's DN** — no POSIX attributes required.
+- On start, the entrypoint reads the members of `CLAUDE_DEV_LDAP_GROUP`
+  (default `admins`) and **provisions a matching local account** for each, so
+  the OS can resolve them. The password is never stored locally — every login
+  is checked against LLDAP. New group members appear after a container
+  restart.
+- Login is gated twice: an nslcd `pam_authz_search` `memberof` filter **and**
+  sshd `AllowGroups` (the local `ldapusers` group).
+- Each user gets a persistent home at `/workspace/home/<user>`, so their
+  `~/.claude` history and `gh` auth survive restarts independently.
 - The local **`dev`** account stays as a break-glass path (its password/key
   still work), so a directory outage or LDAP misconfig can't lock you out.
 - LDAP is **opt-in**: with `LLDAP_ADMIN_PASSWORD` blank (auth not installed)

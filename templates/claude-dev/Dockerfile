@@ -49,20 +49,26 @@ RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 RUN useradd --create-home --home-dir /workspace --shell /bin/bash dev
 
 # LDAP auth wiring (nss-pam-ldapd), baked deterministically at build time.
-# NSS resolves LLDAP users; PAM verifies their password by binding to LLDAP.
-# The entrypoint writes /etc/nslcd.conf from the LLDAP_* env and starts nslcd
-# only when LLDAP_ADMIN_PASSWORD is set, so a box without the auth stack (or
-# with the vars blank) still boots with just the local `dev` break-glass user.
-#   - nsswitch: resolve from local `files` FIRST (root + dev stay fast and
-#     independent of LDAP), then fall back to `ldap`.
-#   - pam_ldap in the common-* stacks (via pam-auth-update), plus pam_mkhomedir
-#     so each LDAP user's home under /workspace/home/<uid> is created on first
-#     login from /etc/skel.
+#
+# LLDAP (0.6.x) is an auth directory, not a POSIX/NSS source: it serves no
+# uidNumber/gidNumber/homeDirectory and groups carry DN `member`s, not
+# `memberUid`/`gidNumber`. So NSS can't resolve LLDAP users the normal way.
+# Instead we use LDAP for AUTHENTICATION only: PAM (pam_ldap) verifies a
+# password by binding to LLDAP as the user's DN, and the entrypoint
+# auto-provisions a matching LOCAL account per group member so NSS (files)
+# can resolve them. nslcd is the daemon pam_ldap talks to; it's configured
+# and started by the entrypoint only when LLDAP_ADMIN_PASSWORD is set, so a
+# box without the auth stack still boots with just the `dev` break-glass user.
+#   - nsswitch stays `files`-only — local accounts (root, dev, provisioned
+#     LDAP users) resolve fast and independently of the directory.
+#   - pam_ldap in the common-* stacks (via pam-auth-update) does the
+#     bind-as-user auth + group authz; pam_mkhomedir seeds each user's home
+#     under /workspace/home/<uid> on first login from /etc/skel.
 RUN set -eux; \
     printf '%s\n' \
-      'passwd:         files ldap' \
-      'group:          files ldap' \
-      'shadow:         files ldap' \
+      'passwd:         files' \
+      'group:          files' \
+      'shadow:         files' \
       'hosts:          files dns' \
       'networks:       files' \
       'protocols:      db files' \
