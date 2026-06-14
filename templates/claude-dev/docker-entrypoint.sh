@@ -11,12 +11,19 @@ SSH_PORT="${CLAUDE_DEV_SSH_PORT:-2222}"
 DEV_HOME=/workspace
 HOSTKEY_DIR="$DEV_HOME/.ssh/host_keys"
 
-# /workspace is a fresh, root-owned bind mount on first install. Make it
-# the dev user's home and lay down the .ssh scaffolding. The chown is
-# non-recursive on purpose — the operator's own checkouts inside are
-# created as `dev` already, and a recursive chown over a large repo
-# tree on every restart would be wasteful.
-chown dev:dev "$DEV_HOME"
+# /workspace is a fresh, root-owned bind mount on first install. It's a
+# SHARED working area: the `dev` break-glass user plus every provisioned LDAP
+# user (e.g. mdopp) collaborate on the same checkouts here. Own it
+# `dev:devshare` with the setgid bit (2775) so new clones inherit the shared
+# group and group members can write each other's files (paired with umask 002,
+# set via /etc/profile.d). Per-user homes under /workspace/home stay private
+# (mode 700). Non-recursive on purpose — existing checkouts persist on the
+# volume; a recursive chown over a large repo tree on every restart would be
+# wasteful, and setgid + umask cover anything created from now on.
+groupadd -f devshare
+usermod -aG devshare dev 2>/dev/null || true
+chown dev:devshare "$DEV_HOME"
+chmod 2775 "$DEV_HOME"
 install -d -o dev -g dev -m 700 "$DEV_HOME/.ssh"
 install -d -o dev -g dev -m 700 "$HOSTKEY_DIR"
 
@@ -101,9 +108,13 @@ EOF
     for u in $members; do
       case "$u" in admin|root|dev|''|*[!a-z0-9_-]*) continue;; esac
       if ! id "$u" >/dev/null 2>&1; then
+        # `ldapusers` gates SSH; `devshare` lets them write the shared
+        # /workspace checkouts alongside `dev` and each other.
         useradd --no-create-home --home-dir "$DEV_HOME/home/$u" \
-                --shell /bin/bash -G ldapusers "$u" \
+                --shell /bin/bash -G ldapusers,devshare "$u" \
           && provisioned=$((provisioned + 1))
+      else
+        usermod -aG devshare "$u" 2>/dev/null || true
       fi
     done
     echo "claude-dev: LDAP login enabled — members of group '${CLAUDE_DEV_LDAP_GROUP}' sign in with their LLDAP password (bind ${ldap_uri}; ${provisioned} new local account(s) provisioned)."

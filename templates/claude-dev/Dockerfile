@@ -46,7 +46,13 @@ RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 # and gh auth all survive container restarts. --create-home seeds the
 # skeleton; the runtime bind mount then takes over and the entrypoint
 # re-scaffolds it.
-RUN useradd --create-home --home-dir /workspace --shell /bin/bash dev
+# `devshare` is the shared-workspace group: `dev` plus every provisioned LDAP
+# user belong to it so they can collaborate on the same /workspace checkouts.
+# umask 002 (login shells) makes new files group-writable; paired with the
+# setgid bit the entrypoint puts on /workspace, new clones stay shared.
+RUN groupadd devshare \
+ && useradd --create-home --home-dir /workspace --shell /bin/bash -G devshare dev \
+ && printf '%s\n' 'umask 002' > /etc/profile.d/claude-dev-umask.sh
 
 # LDAP auth wiring (nss-pam-ldapd), baked deterministically at build time.
 #
