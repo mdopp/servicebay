@@ -43,6 +43,8 @@ vi.mock('./config', async (importOriginal) => ({
   }),
 }));
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { syncRegistries } from './registry';
 
 describe('syncRegistries #1796 self-heal', () => {
@@ -57,5 +59,21 @@ describe('syncRegistries #1796 self-heal', () => {
     const renameArgs = fsMock.rename.mock.calls[0] as [string, string];
     expect(renameArgs[0]).not.toMatch(/\.broken-/); // the live tree…
     expect(renameArgs[1]).toMatch(/\.broken-\d+$/); // …moved aside, so the re-clone has a clean path
+  });
+});
+
+describe('syncRegistries #1836 refresh reaches remote HEAD', () => {
+  // A shallow `git fetch --depth 1 origin <branch>` (bare branch name) only
+  // advances FETCH_HEAD — it does NOT update the remote-tracking ref
+  // `origin/<branch>`, which stays pinned at the clone-time SHA. Resetting to
+  // `origin/<branch>` therefore stranded the checkout at the stale revision
+  // (box at d556247 while remote HEAD was 1fa1717). The update path must reset
+  // to FETCH_HEAD so a single refresh always reaches the freshly-fetched HEAD.
+  // (The fetch+reset commands run in a real subprocess that the unit-test mock
+  // can't observe, so this asserts the resolved command on the source.)
+  it('hard-resets to FETCH_HEAD, not to the stale origin/<branch> ref', () => {
+    const src = readFileSync(join(__dirname, 'registry.ts'), 'utf8');
+    expect(src).toContain('git reset --hard FETCH_HEAD');
+    expect(src).not.toMatch(/git reset --hard origin\/\$\{branch\}/);
   });
 });
