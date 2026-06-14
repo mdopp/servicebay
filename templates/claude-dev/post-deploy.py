@@ -35,10 +35,20 @@ def main() -> int:
     ssh_port = env("CLAUDE_DEV_SSH_PORT", "2222")
     ssh_password = env("CLAUDE_DEV_SSH_PASSWORD")
     has_key = bool(env("CLAUDE_DEV_SSH_AUTHORIZED_KEY"))
+    ldap_enabled = bool(env("LLDAP_ADMIN_PASSWORD"))
+    ldap_group = env("CLAUDE_DEV_LDAP_GROUP", "lldap_admin")
 
-    auth_hint = "SSH key" if has_key else "the password below"
-    log(f"✅ Claude Dev container is up — SSH in on port {ssh_port} as user 'dev' ({auth_hint}).")
-    log(f"   Attach:  ssh -p {ssh_port} dev@{host}")
+    log(f"✅ Claude Dev container is up — SSH in on port {ssh_port}.")
+    if ldap_enabled:
+        log(f"   Primary login: your LLDAP account (e.g. mdopp), if you're in group '{ldap_group}':")
+        log(f"     ssh -p {ssh_port} <your-ldap-user>@{host}     # password = your LLDAP password")
+        log(f"   Break-glass:   local 'dev' account still works ({'SSH key' if has_key else 'password below'}):")
+        log(f"     ssh -p {ssh_port} dev@{host}")
+        log("   Each LDAP user gets a persistent home under /workspace/home/<user>.")
+    else:
+        auth_hint = "SSH key" if has_key else "the password below"
+        log(f"   Log in as user 'dev' ({auth_hint}):  ssh -p {ssh_port} dev@{host}")
+        log("   (LDAP login appears once the `auth` stack is installed and claude-dev is reinstalled.)")
     log("   First session — clone a repo into the persistent volume and start Claude Code:")
     log("     git clone https://github.com/<you>/<repo> /workspace/<repo>")
     log("     cd /workspace/<repo> && claude")

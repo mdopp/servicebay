@@ -12,5 +12,29 @@
     "type": "text",
     "description": "Optional SSH public key (one line, e.g. `ssh-ed25519 AAAA... you@phone`). When set, key-based login is enabled for the `dev` user — recommended over the password for a box reachable from outside the LAN. Leave blank to use the password only.",
     "default": ""
+  },
+  "LLDAP_HOST": {
+    "type": "text",
+    "description": "LLDAP host the SSH login binds against. Always localhost — the `auth` stack runs hostNetwork, so LLDAP's LDAP port is reachable on the loopback of this hostNetwork container.",
+    "default": "localhost"
+  },
+  "LLDAP_LDAP_PORT": {
+    "type": "text",
+    "description": "LLDAP LDAP-protocol port. Must match the `auth` stack's LLDAP_LDAP_PORT.",
+    "default": "3890"
+  },
+  "LLDAP_BASE_DN": {
+    "type": "text",
+    "description": "LDAP base DN, e.g. dc=dopp,dc=cloud. Must match the `auth` stack's LLDAP_BASE_DN. Users resolve under ou=people, groups under ou=groups.",
+    "default": "dc=dopp,dc=cloud"
+  },
+  "LLDAP_ADMIN_PASSWORD": {
+    "type": "secret",
+    "description": "LLDAP admin bind password. Not asked for here — reused automatically from the value the `auth` stack generated (savedSecrets is keyed by variable name). When empty (auth never installed) LDAP login is skipped and only the local `dev` account works."
+  },
+  "CLAUDE_DEV_LDAP_GROUP": {
+    "type": "text",
+    "description": "Only LLDAP users in this group may SSH in. Defaults to the built-in LLDAP admin group so the box operator can log in immediately. Create a dedicated LLDAP group and point this at it to grant dev-box access without making someone a full LLDAP admin.",
+    "default": "lldap_admin"
   }
 }

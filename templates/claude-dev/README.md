@@ -28,8 +28,32 @@ SSH host keys all survive a container restart.
 | Variable | Purpose |
 |---|---|
 | `CLAUDE_DEV_SSH_PORT` | Host port sshd listens on (default `2222`). |
-| `CLAUDE_DEV_SSH_PASSWORD` | Auto-generated password for the `dev` user; surfaced as a credential after install. |
-| `CLAUDE_DEV_SSH_AUTHORIZED_KEY` | Optional SSH public key; enables key-based login (recommended when the box is reachable from outside the LAN). |
+| `CLAUDE_DEV_SSH_PASSWORD` | Auto-generated password for the local `dev` break-glass user; surfaced as a credential after install. |
+| `CLAUDE_DEV_SSH_AUTHORIZED_KEY` | Optional SSH public key for the `dev` user; enables key-based login (recommended when the box is reachable from outside the LAN). |
+| `LLDAP_ADMIN_PASSWORD` | LLDAP bind password. **Not asked for** — reused automatically from the value the `auth` stack generated. Empty ⇒ LDAP login off, `dev` only. |
+| `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in (default `lldap_admin`). |
+| `LLDAP_HOST` / `LLDAP_LDAP_PORT` / `LLDAP_BASE_DN` | LLDAP coordinates; default to the `auth` stack's defaults (`localhost` / `3890` / `dc=dopp,dc=cloud`). |
+
+## Logging in as your own LDAP user
+
+When the `auth` stack is installed, the container authenticates SSH logins
+against the box's **LLDAP** via `nss-pam-ldapd`, so you sign in as your real
+LDAP user (e.g. `mdopp`) with your LLDAP password — no shared `dev` account:
+
+```sh
+ssh -p 2222 mdopp@<server-ip>      # password = your LLDAP password
+```
+
+- Only members of the `CLAUDE_DEV_LDAP_GROUP` (default `lldap_admin`) may log
+  in — enforced by sshd `AllowGroups` + an nslcd `pam_authz_search` filter.
+- Each LDAP user gets a persistent home at `/workspace/home/<user>` (created
+  on first login), so their `~/.claude` history and `gh` auth survive
+  restarts independently.
+- LLDAP doesn't store `homeDirectory`/`loginShell`; nslcd synthesizes them.
+- The local **`dev`** account stays as a break-glass path (its password/key
+  still work), so a directory outage or LDAP misconfig can't lock you out.
+- LDAP is **opt-in**: with `LLDAP_ADMIN_PASSWORD` blank (auth not installed)
+  the container skips all LDAP wiring and behaves exactly as before.
 
 ## Reaching it from a phone
 
@@ -77,4 +101,6 @@ attached, so automation isn't trapped in tmux.
 - Running the full ServiceBay test suite *inside* this container
   (podman-in-podman / CI parity) — a later phase can add the e2e harness.
 - Auto-cloning a repo on container start — the operator clones manually.
-- Multi-user / multi-session concurrency.
+- Heavy multi-user concurrency. LDAP login gives each operator their own
+  identity + home, but the box is still sized for one person at a time
+  (a single shared `/workspace` checkout area, no per-user resource limits).
