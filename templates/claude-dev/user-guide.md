@@ -79,14 +79,27 @@ your SSH key if you supplied `CLAUDE_DEV_SSH_AUTHORIZED_KEY`).
 
 ## Connect over SSH (terminal / mobile app)
 
-The same `dev@<host>:<port>` works from any terminal or the Claude Code
-mobile app. `sshd` binds the port directly on the host, so on the LAN you
-connect straight to it; from outside, add a FritzBox port-forward for that
-port first.
+When the **Authelia/LLDAP** stack is installed, you sign in with your **own
+LLDAP account** (e.g. `mdopp`) and your LLDAP password — the box authenticates
+against the directory, so there's no shared account to hand around:
+
+```sh
+ssh -p <port> <your-ldap-user>@<host>
+```
+
+Only members of the configured LLDAP group (default `lldap_admin`) may log in.
+Each LDAP user gets their own persistent home at `/workspace/home/<user>`.
+
+A local **`dev`** account stays available as a break-glass fallback (its
+password is on the post-install credentials banner, or use your SSH key), so a
+directory hiccup can't lock you out:
 
 ```sh
 ssh -p <port> dev@<host>
 ```
+
+`sshd` binds the port directly on the host, so on the LAN you connect straight
+to it; from outside, add a FritzBox port-forward for that port first.
 
 Every interactive login auto-attaches to the persistent `claude` tmux
 session, so a closed phone or a network blip never kills your work. Detach

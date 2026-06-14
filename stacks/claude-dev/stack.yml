@@ -8,6 +8,8 @@ metadata:
 spec:
   # Single-template stack: a long-lived dev container so a coding
   # session against this repo can be driven from the Claude Code mobile
-  # app without keeping a laptop awake. No depends-on-stacks — the dev
-  # box is self-contained and needs neither the reverse proxy nor SSO.
+  # app without keeping a laptop awake. It needs no reverse proxy (no
+  # subdomain), but the template declares a `servicebay.dependencies: auth`
+  # so SSH logins can authenticate against the box's LLDAP — the operator
+  # signs in as their real LDAP user instead of the shared `dev` account.
   templates: [claude-dev]

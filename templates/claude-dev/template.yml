@@ -8,6 +8,11 @@ metadata:
     servicebay.label: "Claude Dev (Claude Code CLI + toolchain)"
     servicebay.schema-version: "1"
     servicebay.ports: "{{CLAUDE_DEV_SSH_PORT}}/tcp"
+    # LLDAP (the `auth` stack) provides the directory the SSH login binds
+    # against, and installing auth first means claude-dev inherits the
+    # already-saved LLDAP_ADMIN_PASSWORD (savedSecrets is keyed by var name).
+    # The dependency also topo-orders the deploy so LLDAP is healthy first.
+    servicebay.dependencies: "auth"
     # Continuous health probe (#628). A raw TCP connect to the SSH port
     # proves sshd accepted the listener — a dev box has no
     # unauthenticated HTTP surface to probe.
@@ -39,6 +44,20 @@ spec:
         value: "{{CLAUDE_DEV_SSH_PASSWORD}}"
       - name: CLAUDE_DEV_SSH_AUTHORIZED_KEY
         value: "{{CLAUDE_DEV_SSH_AUTHORIZED_KEY}}"
+      # LLDAP bind for SSH logins as a real LDAP user (e.g. mdopp). These
+      # mirror the `auth` template's variable names so LLDAP_ADMIN_PASSWORD is
+      # reused from savedSecrets (the value auth generated) rather than asked
+      # for again. Blank LLDAP_ADMIN_PASSWORD ⇒ LDAP off, local `dev` only.
+      - name: LLDAP_HOST
+        value: "{{LLDAP_HOST}}"
+      - name: LLDAP_LDAP_PORT
+        value: "{{LLDAP_LDAP_PORT}}"
+      - name: LLDAP_BASE_DN
+        value: "{{LLDAP_BASE_DN}}"
+      - name: LLDAP_ADMIN_PASSWORD
+        value: "{{LLDAP_ADMIN_PASSWORD}}"
+      - name: CLAUDE_DEV_LDAP_GROUP
+        value: "{{CLAUDE_DEV_LDAP_GROUP}}"
     ports:
       - containerPort: {{CLAUDE_DEV_SSH_PORT}}
     volumeMounts:

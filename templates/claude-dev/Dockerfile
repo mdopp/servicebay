@@ -17,12 +17,17 @@ FROM node:20-bookworm-slim
 #   - procps/iproute2        : ps/ss for debugging from inside a session
 #   - tmux                   : persistent session that survives disconnects
 #   - curl/ca-certificates/gnupg : fetch the GitHub CLI apt key
+#   - nslcd/libnss-ldapd/libpam-ldapd : authenticate SSH logins against the
+#       box's LLDAP so the operator signs in as their real LDAP user (e.g.
+#       `mdopp`) instead of the shared local `dev` account. ldap-utils ships
+#       `ldapsearch` for on-box debugging of the bind.
 # The GitHub CLI (`gh`) is not in Debian's repos, so add its apt source.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       openssh-server openssh-client git bash \
       make gcc g++ python3 \
       podman procps iproute2 tmux \
       curl ca-certificates gnupg \
+      nslcd libnss-ldapd libpam-ldapd ldap-utils \
   && install -m 0755 -d /etc/apt/keyrings \
   && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -42,6 +47,32 @@ RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 # skeleton; the runtime bind mount then takes over and the entrypoint
 # re-scaffolds it.
 RUN useradd --create-home --home-dir /workspace --shell /bin/bash dev
+
+# LDAP auth wiring (nss-pam-ldapd), baked deterministically at build time.
+# NSS resolves LLDAP users; PAM verifies their password by binding to LLDAP.
+# The entrypoint writes /etc/nslcd.conf from the LLDAP_* env and starts nslcd
+# only when LLDAP_ADMIN_PASSWORD is set, so a box without the auth stack (or
+# with the vars blank) still boots with just the local `dev` break-glass user.
+#   - nsswitch: resolve from local `files` FIRST (root + dev stay fast and
+#     independent of LDAP), then fall back to `ldap`.
+#   - pam_ldap in the common-* stacks (via pam-auth-update), plus pam_mkhomedir
+#     so each LDAP user's home under /workspace/home/<uid> is created on first
+#     login from /etc/skel.
+RUN set -eux; \
+    printf '%s\n' \
+      'passwd:         files ldap' \
+      'group:          files ldap' \
+      'shadow:         files ldap' \
+      'hosts:          files dns' \
+      'networks:       files' \
+      'protocols:      db files' \
+      'services:       db files' \
+      'ethers:         db files' \
+      'rpc:            db files' \
+      > /etc/nsswitch.conf; \
+    DEBIAN_FRONTEND=noninteractive pam-auth-update --package --enable ldap; \
+    grep -q pam_mkhomedir /etc/pam.d/common-session \
+      || echo 'session optional pam_mkhomedir.so skel=/etc/skel umask=0077' >> /etc/pam.d/common-session
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
