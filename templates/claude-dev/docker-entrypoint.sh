@@ -42,41 +42,41 @@ if [ "$password_auth" = no ] && [ -z "${CLAUDE_DEV_SSH_AUTHORIZED_KEY:-}" ] && [
   echo "claude-dev: WARNING — no SSH password, authorized key, or LDAP set; nobody can log in." >&2
 fi
 
-# LDAP login (nss-pam-ldapd). When the LLDAP bind password is present, wire
-# nslcd against the box's LLDAP so the operator signs in as their real LDAP
-# user (e.g. `mdopp`) with their LLDAP credentials, instead of the shared
-# `dev` account. The `dev` user is kept as a break-glass path so a misconfig
-# here can never lock everyone out. Opt-in: with the var blank, this whole
-# block is skipped and the box behaves exactly as before.
+# LDAP login. When the LLDAP bind password is present, let the operator sign
+# in as their real LLDAP user (e.g. `mdopp`) with their LLDAP password instead
+# of the shared `dev` account. LLDAP 0.6.x is an auth directory with no POSIX
+# attributes, so we use it for AUTHENTICATION only: pam_ldap verifies the
+# password by binding to LLDAP as the user's DN (via nslcd), and we provision
+# a matching LOCAL account per group member so NSS (files) can resolve them.
+# `dev` stays as a break-glass path so a misconfig here can't lock everyone
+# out. Opt-in: with the var blank the whole block is skipped.
 ldap_enabled=no
 if [ -n "${LLDAP_ADMIN_PASSWORD:-}" ]; then
   LLDAP_HOST="${LLDAP_HOST:-localhost}"
   LLDAP_LDAP_PORT="${LLDAP_LDAP_PORT:-3890}"
   LLDAP_BASE_DN="${LLDAP_BASE_DN:-dc=dopp,dc=cloud}"
-  CLAUDE_DEV_LDAP_GROUP="${CLAUDE_DEV_LDAP_GROUP:-lldap_admin}"
+  CLAUDE_DEV_LDAP_GROUP="${CLAUDE_DEV_LDAP_GROUP:-admins}"
+  ldap_uri="ldap://${LLDAP_HOST}:${LLDAP_LDAP_PORT}"
+  admin_dn="uid=admin,ou=people,${LLDAP_BASE_DN}"
+  group_dn="cn=${CLAUDE_DEV_LDAP_GROUP},ou=groups,${LLDAP_BASE_DN}"
 
-  # Per-user homes live under the persistent /workspace volume so each LDAP
-  # user's git checkouts, ~/.claude history and gh auth survive a restart.
-  install -d -o root -g root -m 0755 "$DEV_HOME/home"
-
-  # LLDAP serves uid/uidNumber/gidNumber/memberOf but NOT homeDirectory or
-  # loginShell — synthesize them via nslcd maps. pam_authz_search gates login
-  # on membership of the configured LLDAP group. The file holds the bind
-  # password, so keep it root-readable only.
+  # nslcd config — AUTH-ONLY. `$username` is expanded by nslcd at runtime, so
+  # it must stay literal (escaped from this heredoc). pam_authz_search gates
+  # login on group membership; LLDAP supports the memberof search filter.
+  # pam_authc_search is disabled — LLDAP restricts a user reading other
+  # entries, so the default post-bind self-search can wrongly deny auth.
   umask 077
   cat > /etc/nslcd.conf <<EOF
 uid nslcd
 gid nslcd
-uri ldap://${LLDAP_HOST}:${LLDAP_LDAP_PORT}
+uri ${ldap_uri}
 base ${LLDAP_BASE_DN}
-base passwd ou=people,${LLDAP_BASE_DN}
-base group ou=groups,${LLDAP_BASE_DN}
-binddn uid=admin,ou=people,${LLDAP_BASE_DN}
+binddn ${admin_dn}
 bindpw ${LLDAP_ADMIN_PASSWORD}
-scope sub
-map passwd homeDirectory "${DEV_HOME}/home/\$uid"
-map passwd loginShell    "/bin/bash"
-pam_authz_search (&(uid=\$username)(memberof=cn=${CLAUDE_DEV_LDAP_GROUP},ou=groups,${LLDAP_BASE_DN}))
+base passwd ou=people,${LLDAP_BASE_DN}
+filter passwd (objectClass=person)
+pam_authc_search NONE
+pam_authz_search (&(uid=\$username)(memberof=${group_dn}))
 EOF
   chown root:nslcd /etc/nslcd.conf
   chmod 640 /etc/nslcd.conf
@@ -86,7 +86,27 @@ EOF
   install -d -o nslcd -g nslcd -m 755 /run/nslcd
   if /usr/sbin/nslcd; then
     ldap_enabled=yes
-    echo "claude-dev: LDAP login enabled — sign in as an LLDAP user in group '${CLAUDE_DEV_LDAP_GROUP}' (bind ldap://${LLDAP_HOST}:${LLDAP_LDAP_PORT})."
+    # Provision a local account for each member of the allowed group so NSS
+    # (files) resolves them; their password is never stored locally — PAM
+    # checks it against LLDAP on each login. Idempotent: re-runs every start
+    # to pick up new members, skips users that already exist. Homes live on
+    # the persistent /workspace volume.
+    install -d -o root -g root -m 0755 "$DEV_HOME/home"
+    groupadd -f ldapusers
+    members="$(ldapsearch -x -LLL -o ldif-wrap=no \
+                 -H "$ldap_uri" -D "$admin_dn" -w "$LLDAP_ADMIN_PASSWORD" \
+                 -b "$group_dn" '(objectClass=*)' member 2>/dev/null \
+               | sed -n 's/^member: uid=\([^,]*\),.*/\1/p' | sort -u)"
+    provisioned=0
+    for u in $members; do
+      case "$u" in admin|root|dev|''|*[!a-z0-9_-]*) continue;; esac
+      if ! id "$u" >/dev/null 2>&1; then
+        useradd --no-create-home --home-dir "$DEV_HOME/home/$u" \
+                --shell /bin/bash -G ldapusers "$u" \
+          && provisioned=$((provisioned + 1))
+      fi
+    done
+    echo "claude-dev: LDAP login enabled — members of group '${CLAUDE_DEV_LDAP_GROUP}' sign in with their LLDAP password (bind ${ldap_uri}; ${provisioned} new local account(s) provisioned)."
   else
     echo "claude-dev: WARNING — nslcd failed to start; LDAP login disabled, local 'dev' account still works." >&2
   fi
@@ -123,14 +143,14 @@ sshd_opts=(
 if [ "$ldap_enabled" = yes ]; then
   # PAM drives LLDAP password verification (pam_ldap). Password auth must be
   # on for LDAP users to authenticate even when the `dev` password is unset.
-  # AllowGroups restricts logins to the local `dev` break-glass group plus the
-  # configured LLDAP group — without it, every resolvable LDAP user could log
-  # in regardless of group, since pam_authz_search alone wouldn't bound NSS.
+  # AllowGroups restricts logins to the local `dev` break-glass account and the
+  # `ldapusers` group every provisioned LDAP account is a member of — a second
+  # belt on top of pam_authz_search's group gate.
   sshd_opts+=(
     -o "UsePAM=yes"
     -o "PasswordAuthentication=yes"
     -o "KbdInteractiveAuthentication=yes"
-    -o "AllowGroups=dev ${CLAUDE_DEV_LDAP_GROUP}"
+    -o "AllowGroups=dev ldapusers"
   )
   echo "claude-dev: starting sshd on port ${SSH_PORT} (LDAP + local 'dev')."
 else

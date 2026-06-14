@@ -87,8 +87,10 @@ against the directory, so there's no shared account to hand around:
 ssh -p <port> <your-ldap-user>@<host>
 ```
 
-Only members of the configured LLDAP group (default `lldap_admin`) may log in.
-Each LDAP user gets their own persistent home at `/workspace/home/<user>`.
+Only members of the configured LLDAP group (default `admins`) may log in —
+the container provisions a local login account for each member, but every
+login's password is checked against LLDAP. Each user gets their own
+persistent home at `/workspace/home/<user>`.
 
 A local **`dev`** account stays available as a break-glass fallback (its
 password is on the post-install credentials banner, or use your SSH key), so a
