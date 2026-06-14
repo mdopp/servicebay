@@ -88,6 +88,25 @@ claude
 The clone only has to be done once — `/workspace` persists, so later
 sessions just `cd /workspace/servicebay && claude`.
 
+## Running several Claudes at once (`start-claude`)
+
+`start-claude` launches one Claude per directory — each with **Remote Control
+enabled** and **named after the directory** (so it's labelled in the mobile
+app / web), in its own window of the shared `claude` tmux session. Because they
+run in tmux, they keep going when you disconnect.
+
+```sh
+# from /workspace (where your clones live)
+start-claude --allow-dangerously-skip-permissions servicebay solbay
+```
+
+- Leading `--flags` are passed through to `claude`; the bare names are
+  directories (relative to the current dir, or absolute).
+- Re-running skips a directory that already has a live window — safe to call
+  again to add more.
+- Switch between them with `Ctrl-b w` (window list) or `Ctrl-b <n>`.
+- It's launched **manually** by design — logging in does not auto-start Claude.
+
 ## Persistent session (tmux)
 
 The container boots a detached `tmux` session named **`claude`** as the
