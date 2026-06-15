@@ -3,17 +3,15 @@ kind: Stack
 metadata:
   name: home
   annotations:
-    servicebay.label: "Home (Home Assistant + Voice)"
+    servicebay.label: "Home (Home Assistant)"
     servicebay.tier: "feature"
     servicebay.depends-on-stacks: "basic"
   selfHeal:
     home-assistant: env_override
-    voice: env_override
 spec:
-  # Smart-home + voice pipeline. Voice was extracted from
-  # home-assistant in #348 but the two are coupled — HA's
-  # voice-assistant integration only makes sense alongside the
-  # Wyoming services (faster-whisper / piper / openwakeword). Bundling
-  # them means the operator never ends up with HA but no voice (broken
-  # voice assistant) or voice but no HA (orphan Wyoming endpoints).
-  templates: [home-assistant, voice]
+  # Smart-home stack. The app-specific voice pipeline was retired from
+  # ServiceBay in #1876 — Solaris (mdopp/solarisbay) now owns the full
+  # voice pipeline. ServiceBay keeps only the generic platform plumbing
+  # (GPU/CDI passthrough, hostNetwork carveout, companion-quadlet
+  # machinery), which is not voice-specific.
+  templates: [home-assistant]

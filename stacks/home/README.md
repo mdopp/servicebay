@@ -1,19 +1,18 @@
 # Home stack
 
-Smart-home automation + local voice pipeline.
+Smart-home automation.
 
 ## Included Services
 
 - [x] home-assistant — HA core + Z-Wave + Matter bridges
-- [x] voice — Wyoming pipeline: faster-whisper (STT) + piper (TTS) + openWakeWord (wake detection)
 
-## Why a single stack
+## Voice
 
-Voice was extracted from home-assistant in #348 to keep the HA
-container slim, but the two are inseparable in practice — HA's
-voice-assistant integration points at `localhost:10300/10200/10400`
-on the same node. Bundling avoids the broken middle-state where
-the operator has one but not the other.
+The app-specific voice pipeline was retired from ServiceBay in #1876.
+Solaris (mdopp/solarisbay) now owns the full voice pipeline; ServiceBay
+keeps only the generic platform plumbing (GPU/CDI passthrough,
+hostNetwork carveout, companion-quadlet machinery), which is not
+voice-specific.
 
 ## Dependencies
 

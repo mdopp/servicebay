@@ -292,9 +292,9 @@ acknowledgement checkbox for every breaking section.
 
 ```markdown
 ## v2 (breaking)
-- Voice extracted into the `voice` template. Required action:
-  install the `voice` template from the registry if you want
-  whisper/piper back.
+- Renamed the `DB_PATH` variable to `DATABASE_URL`. Required action:
+  re-enter the connection string in the install wizard before
+  re-deploying.
 
 ## v1
 Initial release.
@@ -386,16 +386,17 @@ trawling install logs.
 #### Cross-template data moves
 
 If the migration moves data *out of this template* and into another
-(the voice extraction in #348 was this shape), put the move logic
-in the **destination** template's `post-deploy.py`, not in this
+(a container split into a sibling template), put the move logic in
+the **destination** template's `post-deploy.py`, not in this
 template's migration. That way:
 - The move runs exactly once, when the destination is first
   installed — regardless of whether the operator installs it
   immediately after this template's upgrade or weeks later.
-- The source template's migration script stays a simple "voice has
-  been extracted; install `voice` for it" notice.
+- The source template's migration script stays a simple
+  "<feature> now lives in `<dest>`; install it for that" notice.
 
-`templates/voice/post-deploy.py` is the canonical example.
+The destination `post-deploy.py`'s idempotent `shutil.move(legacy →
+new)` (probe-before-mutate) is the canonical pattern for this.
 
 ## Health checks
 
