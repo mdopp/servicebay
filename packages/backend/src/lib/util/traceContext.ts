@@ -10,7 +10,7 @@
  * via webpack tracing, since `logger` is imported from client
  * dashboards. The trace ID surfaces through:
  *   - the MCP audit log (recordAudit auto-attaches it)
- *   - the agent's SSH command line (`: # SB_TRACE=…`)
+ *   - the agent's SSH command line (trailing `# SB_TRACE=…`)
  *   - the X-Trace-Id response header (UI error toasts paste it)
  *
  * `AsyncLocalStorage` is a no-op when no `runWithTrace` frame is

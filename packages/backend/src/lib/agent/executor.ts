@@ -33,12 +33,14 @@ export class AgentExecutor implements Executor {
 
   async exec(command: string, options: { timeoutMs?: number } = {}): Promise<{ stdout: string; stderr: string }> {
     await this.ensureConnected();
-    // Prefix with a trace-ID shell comment when the call originates
-    // from a tracked HTTP request (#594). `: # …` is a shell noop, so
-    // the agent runs the same command — but `ps -ef` on the host and
-    // the agent's exec log carry the trace ID for end-to-end grep.
+    // Append a trace-ID shell comment when the call originates from a
+    // tracked HTTP request (#594). A *trailing* `# SB_TRACE=…` is ignored
+    // by the shell — the command runs unchanged — but `ps -ef` on the host
+    // and the agent's exec log carry the trace ID for end-to-end grep.
+    // (#1877: a *leading* `: # SB_TRACE=…; <cmd>` started a comment that
+    // swallowed the rest of the line, so <cmd> never ran under any trace.)
     const traceId = currentTraceId();
-    const taggedCommand = traceId ? `: # SB_TRACE=${traceId}; ${command}` : command;
+    const taggedCommand = traceId ? `${command}  # SB_TRACE=${traceId}` : command;
     const truncatedCmd = taggedCommand.length > 100 ? taggedCommand.substring(0, 100) + '...' : taggedCommand;
     logger.info(`Executor:${this.agent.nodeName}`, `Executing: ${truncatedCmd}`);
 
