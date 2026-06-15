@@ -360,6 +360,38 @@ def stop_pod_piper() -> None:
     log("   piper: stopped on GPU box — GPU TTS (voice-tts-bridge :10203) is active (#1833).")
 
 
+# ── custom wake-word models slot (#1832) ─────────────────────────────────────
+
+
+def setup_custom_models_dir() -> None:
+    """Prepare the optional openWakeWord custom-models directory (#1832).
+
+    Platform mechanism only — ships no model file. When the operator sets
+    OPENWAKEWORD_CUSTOM_MODELS_DIR, template.yml mounts that host path into
+    the openwakeword container at /custom_models and passes
+    `--custom-model-dir /custom_models` (the wyoming-openwakeword flag that
+    makes it scan a directory for custom .tflite wake-word models). Here we
+    just make sure the host path exists (so the bind mount + container start
+    don't fail on a missing dir) and tell the operator where to drop models.
+
+    Empty/unset → no-op: the box uses the built-in wake words only and the
+    container gets neither the mount nor the arg, so CPU-only boxes are
+    unaffected.
+    """
+    custom_dir = env("OPENWAKEWORD_CUSTOM_MODELS_DIR")
+    if not custom_dir:
+        return
+    try:
+        os.makedirs(custom_dir, exist_ok=True)
+    except OSError as e:
+        log(f"   ⚠️ openwakeword: could not create custom models dir {custom_dir}: {e}")
+        return
+    log(
+        f"   openwakeword: custom models dir mounted at {custom_dir} — drop "
+        ".tflite/.onnx files here for wake-word selection in HA."
+    )
+
+
 # ── legacy data migration (#348) ─────────────────────────────────────────────
 
 
@@ -403,6 +435,9 @@ def main() -> int:
         log("Migrating voice data from the legacy in-HA-pod paths (#348)...")
         migrate_dir(legacy_whisper, new_whisper, "Faster Whisper models")
         migrate_dir(legacy_piper, new_piper, "Piper voices")
+
+    # Optional custom wake-word models slot (#1832) — no-op when unset.
+    setup_custom_models_dir()
 
     # Whisper companion unit (#1809) — GPU when CDI is registered.
     install_whisper_unit(data_dir)

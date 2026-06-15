@@ -43,3 +43,16 @@
   unchanged: piper stays their sole TTS on :10200. No schema change — the
   piper container remains in `template.yml` for the CPU path; this is a
   runtime teardown, not a pod-structure change.
+
+## v2.3 (#1832)
+
+- New optional `OPENWAKEWORD_CUSTOM_MODELS_DIR` variable (empty by
+  default). When set, `template.yml` mounts that host directory into the
+  openWakeWord container at `/custom_models` and passes
+  `--custom-model-dir /custom_models`, so wyoming-openwakeword scans it for
+  custom `.tflite` wake-word models that then appear as selectable wake
+  words in Home Assistant. `post-deploy.py` creates the directory on deploy
+  and logs where to drop model files. Platform slot only — no model file is
+  shipped. Empty/unset renders with neither the mount nor the arg, so
+  CPU/stock-model-only boxes are unaffected. No schema change — purely
+  additive, no data migration.
