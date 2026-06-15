@@ -61,13 +61,28 @@ export function jailPath(input: string): JailResult {
 
 /**
  * True if a resolved real path (e.g. the output of `realpath -m` on the
- * box) is the jail root itself or a descendant of it. An empty string
- * (realpath produced nothing) is treated as inside — the lexical
- * jailPath() gate already vetted the requested path, and a missing
- * realpath result shouldn't block a legitimate read.
+ * box) is inside the jail. An empty string (realpath produced nothing)
+ * is treated as inside — the lexical jailPath() gate already vetted the
+ * requested path, and a missing realpath result shouldn't block a
+ * legitimate read.
+ *
+ * The comparison is against the *resolved* jail root, not the literal
+ * `JAIL_ROOT` string. On Fedora CoreOS `/mnt/data` is itself a symlink
+ * to `/var/mnt/data`, so `realpath -m` on a legitimate target yields
+ * `/var/mnt/data/…`, which is NOT under the literal `/mnt/data`. The
+ * caller resolves the jail root once (also via `realpath -m`, on the
+ * box) and passes it as `resolvedRoot`; we then compare resolved-target
+ * against resolved-root. When `resolvedRoot` is empty we fall back to
+ * the literal `JAIL_ROOT` (e.g. a node where the root isn't a symlink,
+ * or resolution failed — the lexical gate already passed).
+ *
+ * The boundary check is path-segment aware: a descendant must be the
+ * root itself or the root followed by a `/`, so a sibling like
+ * `/var/mnt/data-evil` does NOT pass.
  */
-export function realPathInJail(realPath: string): boolean {
+export function realPathInJail(realPath: string, resolvedRoot?: string): boolean {
   const p = realPath.trim();
   if (!p) return true;
-  return p === JAIL_ROOT || p.startsWith(`${JAIL_ROOT}/`);
+  const root = (resolvedRoot ?? '').trim() || JAIL_ROOT;
+  return p === root || p.startsWith(`${root}/`);
 }

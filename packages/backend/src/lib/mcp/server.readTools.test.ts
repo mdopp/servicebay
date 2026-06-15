@@ -119,7 +119,13 @@ describe('read_file (#1872)', () => {
 
   it('rejects a symlink that resolves out of the jail (server-side realpath)', async () => {
     execSafe.mockImplementation(async (argv: string[]) => {
-      if (argv[0] === 'realpath') return { stdout: '/etc/shadow', stderr: '', code: 0 };
+      if (argv[0] === 'realpath') {
+        // The jail-root resolve must still land on the root (FCoS resolves
+        // /mnt/data -> itself here); only the symlinked target escapes.
+        const target = argv[argv.length - 1];
+        if (target === JAIL_ROOT) return { stdout: JAIL_ROOT, stderr: '', code: 0 };
+        return { stdout: '/etc/shadow', stderr: '', code: 0 };
+      }
       return { stdout: 'regular 42', stderr: '', code: 0 };
     });
     const { client } = await connectClient();

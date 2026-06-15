@@ -74,8 +74,16 @@ async function assertRealpathInJail(
   jailedPath: string,
   reqPath: string,
 ): Promise<string | null> {
-  const real = await exec.execSafe(['realpath', '-m', '--', jailedPath]);
-  if (realPathInJail(real.stdout ?? '')) return null;
+  // Resolve BOTH the target and the jail root on the box. On Fedora CoreOS
+  // JAIL_ROOT (/mnt/data) is itself a symlink to /var/mnt/data, so the
+  // target resolves to /var/mnt/data/… and must be compared against the
+  // *resolved* root, not the literal string (else every legit path is
+  // wrongly rejected — #1872 2nd box-verify RED).
+  const [real, rootReal] = await Promise.all([
+    exec.execSafe(['realpath', '-m', '--', jailedPath]),
+    exec.execSafe(['realpath', '-m', '--', JAIL_ROOT]),
+  ]);
+  if (realPathInJail(real.stdout ?? '', rootReal.stdout ?? '')) return null;
   return `Path escapes the allowed root ${JAIL_ROOT}: "${reqPath}" resolves (via symlink) to "${(real.stdout ?? '').trim()}".`;
 }
 
