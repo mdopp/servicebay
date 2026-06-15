@@ -29,6 +29,7 @@ import { checkDomainUnreachable } from '@/lib/diagnose/probes/domainUnreachable'
 import { checkDomainResolvesToBox } from '@/lib/diagnose/probes/domainResolvesToBox';
 import { checkOidcProviderReachable } from '@/lib/diagnose/probes/oidcProviderReachable';
 import { checkNasBackupReachable } from '@/lib/diagnose/probes/nasBackupReachable';
+import { checkHaAutomationIntegrity } from '@/lib/diagnose/probes/haAutomationIntegrity';
 import { checkSsoVerify } from '@/lib/diagnose/probes/ssoVerify';
 import { checkHermesChat } from '@/lib/diagnose/probes/hermesChat';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
@@ -1016,6 +1017,29 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     probes.push({
       id: 'nas_backup_reachable',
       label: 'Config backup (FritzBox NAS)',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 18b) Home Assistant automation/script/scene integrity (#1864). Surfaces
+  //      the data-loss fingerprint — the entity registry references N>0
+  //      automations but their config file parses to 0 entries — as a warn,
+  //      and warns when HA owns automations but no EFFECTIVE backup target
+  //      (gateway-or-externalBackup) resolves to recover from.
+  try {
+    const hai = await checkHaAutomationIntegrity(nodeName);
+    probes.push({
+      id: 'ha_automation_integrity',
+      label: 'Home Assistant automations integrity',
+      status: hai.status,
+      detail: hai.detail,
+      hint: hai.hint,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'ha_automation_integrity',
+      label: 'Home Assistant automations integrity',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

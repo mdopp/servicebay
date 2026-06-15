@@ -1230,6 +1230,130 @@ export class ServiceLifecycle {
             const block = `${inc.key} !include ${inc.file}`;
             await ServiceLifecycle.appendYamlKeyIfMissing(agent, cfgFile, inc.key, block, `${inc.key} !include`);
         }
+
+        // Integrity guard (#1864): refuse-and-shout when the entity registry
+        // says HA owns N>0 automation/script/scene entities but the include
+        // target file parses to 0 entries. That mismatch is the fingerprint of
+        // the data-loss incident — a restore (or a bad write) left an empty
+        // `automations.yaml` while the registry still references the
+        // automations, so HA would silently start with every automation gone.
+        // The guard does NOT mutate or delete anything: its job is to ABORT
+        // the hook (and therefore the deploy) loudly rather than let HA come
+        // up on top of a hollowed-out config that overwrites the only copy.
+        await ServiceLifecycle.assertHaConfigIntegrity(agent, includeDir, includes);
+    }
+
+    /**
+     * Count entity-registry entries for a given `platform` (e.g. `automation`,
+     * `script`, `scene`). The registry lives at `<config>/.storage/
+     * core.entity_registry` and is JSON of the shape
+     * `{ data: { entities: [{ platform: 'automation', ... }, ...] } }`.
+     * Missing/unreadable/unparseable registry → 0 (we only ever *raise* an
+     * alarm on a positive registry count, so an absent registry is silent).
+     */
+    private static countRegistryPlatformEntries(
+        registryJson: string,
+        platform: string,
+    ): number {
+        try {
+            const parsed = JSON.parse(registryJson) as {
+                data?: { entities?: Array<{ platform?: string }> };
+            };
+            const entities = parsed?.data?.entities;
+            if (!Array.isArray(entities)) return 0;
+            return entities.filter((e) => e?.platform === platform).length;
+        } catch {
+            return 0;
+        }
+    }
+
+    /**
+     * Parse a HA include target file (`automations.yaml` / `scripts.yaml` /
+     * `scenes.yaml`) and return the number of defined entries. Automations and
+     * scenes are YAML lists (`[]` → 0); scripts are a YAML mapping (`{}` → 0).
+     * A blank/missing file is 0. Unparseable content returns `null` so the
+     * caller can avoid raising a false mismatch on a file it can't read.
+     */
+    private static parseHaEntryCount(content: string): number | null {
+        const trimmed = content.trim();
+        if (trimmed === '') return 0;
+        let doc: unknown;
+        try {
+            doc = yaml.load(content);
+        } catch {
+            return null;
+        }
+        if (doc === null || doc === undefined) return 0;
+        if (Array.isArray(doc)) return doc.length;
+        if (typeof doc === 'object') return Object.keys(doc as object).length;
+        // A scalar (shouldn't happen for these files) — treat as unparseable.
+        return null;
+    }
+
+    /**
+     * #1864 integrity guard. Reads the HA entity registry and each include
+     * target file from the host (via the agent) and THROWS — aborting the
+     * pre-start hook and the deploy — when the registry lists N>0 entities of
+     * a platform but the corresponding config file parses to 0 entries. It
+     * never writes, deletes, or repairs anything; the only side effect is a
+     * loud log + a structured Error so the operator notices BEFORE HA starts
+     * on top of an emptied config.
+     */
+    private static async assertHaConfigIntegrity(
+        agent: import('../agent/handler').AgentHandler,
+        includeDir: string,
+        includes: { key: string; file: string; seed: string; platform?: string }[],
+    ): Promise<void> {
+        const registryPath = `${includeDir}/.storage/core.entity_registry`;
+        const regRes = await agent.sendCommand('exec', {
+            command: `cat ${registryPath} 2>/dev/null || echo MISSING`,
+        });
+        const registryJson = regRes.stdout ?? '';
+        // No registry yet (fresh install / first boot) → nothing to compare.
+        if (registryJson.trim() === '' || registryJson.trim() === 'MISSING') return;
+
+        // platform name per include file (drop the trailing `:` from the key).
+        const platformFor: Record<string, string> = {
+            'automations.yaml': 'automation',
+            'scripts.yaml': 'script',
+            'scenes.yaml': 'scene',
+        };
+
+        const mismatches: string[] = [];
+        for (const inc of includes) {
+            const platform = platformFor[inc.file];
+            if (!platform) continue;
+            const registered = ServiceLifecycle.countRegistryPlatformEntries(registryJson, platform);
+            if (registered === 0) continue;
+
+            const fileRes = await agent.sendCommand('exec', {
+                command: `cat ${includeDir}/${inc.file} 2>/dev/null || echo MISSING`,
+            });
+            const raw = fileRes.stdout ?? '';
+            // A genuinely missing file (the include target should always exist
+            // after the seed loop above, but a race or manual delete is the
+            // same hazard) is treated as 0 entries.
+            const content = raw.trim() === 'MISSING' ? '' : raw;
+            const parsed = ServiceLifecycle.parseHaEntryCount(content);
+            // null = unparseable; don't raise a false alarm on a file we can't
+            // read (HA itself would error on it, which is its own signal).
+            if (parsed === null) continue;
+            if (parsed === 0) {
+                mismatches.push(
+                    `${inc.file}: registry lists ${registered} ${platform} entit${registered === 1 ? 'y' : 'ies'} but the file parses to 0 entries`,
+                );
+            }
+        }
+
+        if (mismatches.length > 0) {
+            const summary = mismatches.join('; ');
+            const message =
+                `HA config integrity check FAILED — refusing to start Home Assistant on top of an emptied config. ${summary}. ` +
+                `This is the fingerprint of the automations/scripts/scenes data-loss incident: the entity registry still references these entities but their config file is empty, so starting HA would let it overwrite the only remaining copy. ` +
+                `ServiceBay has NOT modified or deleted anything. Restore ${includeDir} from a backup (or confirm the data really was removed) before redeploying.`;
+            logger.error('ServiceManager', message);
+            throw new Error(message);
+        }
     }
 
     private static async runPreStartHooks(nodeName: string, name: string, yamlContent: string) {

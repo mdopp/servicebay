@@ -53,6 +53,13 @@ function makeHaAgent(initialFiles: Record<string, string>) {
                 return { code: 0 };
             }
 
+            // cat <path> 2>/dev/null || echo MISSING  (integrity-guard reads)
+            m = cmd.match(/^cat (\S+) 2>\/dev\/null \|\| echo MISSING$/);
+            if (m) {
+                const body = files[m[1]];
+                return { code: 0, stdout: body !== undefined ? body : 'MISSING' };
+            }
+
             return { code: 0, stdout: '' };
         }),
     };
@@ -114,5 +121,68 @@ describe('runHomeAssistantHook (#1687 config-survival self-heal)', () => {
         // Only the existence probe ran; no append/seed.
         expect(agent.calls).toEqual([`test -f ${CFG} && echo yes`]);
         expect(agent.files[CFG]).toBeUndefined();
+    });
+
+    const REGISTRY = `${DIR}/.storage/core.entity_registry`;
+    const fullCfg = [
+        'default_config:',
+        'automation: !include automations.yaml',
+        'script: !include scripts.yaml',
+        'scene: !include scenes.yaml',
+        'http:',
+        '  use_x_forwarded_for: true',
+        '',
+    ].join('\n');
+
+    it('#1864: ABORTS loudly when the registry lists automations but automations.yaml is empty', async () => {
+        const agent = makeHaAgent({
+            [CFG]: fullCfg,
+            // Registry remembers 2 automations…
+            [REGISTRY]: JSON.stringify({
+                data: {
+                    entities: [
+                        { platform: 'automation', entity_id: 'automation.morning' },
+                        { platform: 'automation', entity_id: 'automation.night' },
+                        { platform: 'sun', entity_id: 'sun.sun' },
+                    ],
+                },
+            }),
+            // …but the file was emptied (the incident).
+            [`${DIR}/automations.yaml`]: '[]',
+            [`${DIR}/scripts.yaml`]: '{}',
+            [`${DIR}/scenes.yaml`]: '[]',
+        });
+
+        await expect(ServiceLifecycle.runHomeAssistantHook(agent as never, CFG)).rejects.toThrow(
+            /integrity check FAILED/i,
+        );
+        // The guard must NOT mutate the emptied file.
+        expect(agent.files[`${DIR}/automations.yaml`]).toBe('[]');
+    });
+
+    it('#1864: passes silently when registry counts match the populated config files', async () => {
+        const agent = makeHaAgent({
+            [CFG]: fullCfg,
+            [REGISTRY]: JSON.stringify({
+                data: { entities: [{ platform: 'automation', entity_id: 'automation.morning' }] },
+            }),
+            [`${DIR}/automations.yaml`]: '- id: morning\n  alias: Morning\n',
+            [`${DIR}/scripts.yaml`]: '{}',
+            [`${DIR}/scenes.yaml`]: '[]',
+        });
+
+        await expect(
+            ServiceLifecycle.runHomeAssistantHook(agent as never, CFG),
+        ).resolves.toBeUndefined();
+    });
+
+    it('#1864: does not raise when there is no entity registry yet', async () => {
+        const agent = makeHaAgent({
+            [CFG]: fullCfg,
+            [`${DIR}/automations.yaml`]: '[]',
+        });
+        await expect(
+            ServiceLifecycle.runHomeAssistantHook(agent as never, CFG),
+        ).resolves.toBeUndefined();
     });
 });
