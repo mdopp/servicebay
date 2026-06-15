@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.117.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.117.0...servicebay-v4.117.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **home-assistant:** write .solaris HA token path + migrate from .solilos ([a743738](https://github.com/mdopp/servicebay/commit/a743738add1f0e9104653bc4080bf1852651b292))
+* **home-assistant:** write .solaris HA token path + migrate from .solilos ([5597cf2](https://github.com/mdopp/servicebay/commit/5597cf22118a6e5a9541ef43996da84f89923a00)), closes [#1847](https://github.com/mdopp/servicebay/issues/1847)
+
 ## [4.117.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.116.2...servicebay-v4.117.0) (2026-06-15)
 
 
