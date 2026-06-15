@@ -97,6 +97,13 @@ describe('read_file (#1872)', () => {
     const res = await client.callTool({ name: 'read_file', arguments: { path: 'stacks/auth/config.yml' } });
     expect(res.isError).toBeFalsy();
     expect(readFile).toHaveBeenCalledWith(`${JAIL_ROOT}/stacks/auth/config.yml`);
+    // The symlink-escape guard runs `realpath` via safe_exec — `realpath` MUST
+    // be on the agent SAFE_EXEC_ALLOWLIST or this crashes on the box (#1872
+    // box-verify RED). Assert the call shape so a regression that drops the
+    // realpath safe_exec (or routes it through a non-allowlisted path) is caught.
+    expect(execSafe).toHaveBeenCalledWith(
+      expect.arrayContaining(['realpath', '-m', '--', `${JAIL_ROOT}/stacks/auth/config.yml`]),
+    );
     expect(snapshotBeforeMutation).not.toHaveBeenCalled();
     await client.close();
   });
@@ -159,14 +166,26 @@ describe('disk_usage (#1872)', () => {
 });
 
 describe('container_exec (#1872)', () => {
-  it('passes an argv array (no shell string) and never snapshots', async () => {
+  it('runs `podman exec` via safe_exec and returns the real stdout', async () => {
+    // Regression guard for the box-verify RED: container_exec used execArgv,
+    // whose legacy-exec trace wrapper (`: # SB_TRACE=…; <cmd>`) commented the
+    // command out and always returned empty stdout. It must use execSafe
+    // (safe_exec, `podman` allowlisted) and surface the container's output.
+    execSafe.mockImplementation(async (argv: string[]) => {
+      if (argv[0] === 'podman') return { stdout: 'NAME=fedora\nID=fedora', stderr: '', code: 0 };
+      return { stdout: '', stderr: '', code: 0 };
+    });
     const { client } = await connectClient();
     const res = await client.callTool({
       name: 'container_exec',
       arguments: { container: 'media-jellyfin', args: ['cat', '/etc/os-release'] },
     });
     expect(res.isError).toBeFalsy();
-    expect(execArgv).toHaveBeenCalledWith(['podman', 'exec', 'media-jellyfin', 'cat', '/etc/os-release']);
+    expect(execSafe).toHaveBeenCalledWith(['podman', 'exec', 'media-jellyfin', 'cat', '/etc/os-release']);
+    // NOT the broken legacy-exec path.
+    expect(execArgv).not.toHaveBeenCalled();
+    const text = (res.content as { text: string }[])[0].text;
+    expect(text).toMatch(/NAME=fedora/);
     expect(snapshotBeforeMutation).not.toHaveBeenCalled();
     await client.close();
   });
@@ -178,6 +197,7 @@ describe('container_exec (#1872)', () => {
       arguments: { container: 'bad; rm -rf /', args: ['ls'] },
     });
     expect(res.isError).toBe(true);
+    expect(execSafe).not.toHaveBeenCalled();
     expect(execArgv).not.toHaveBeenCalled();
     await client.close();
   });

@@ -1532,14 +1532,19 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
       const nodeName = await resolveNode(node);
       try {
         const exec = new AgentExecutor(nodeName);
-        // argv form end-to-end: `podman exec <name> <args…>` with every token
-        // shell-quoted, so a metacharacter in args can never start a new host
-        // command. The container name is already regex-validated by the schema.
+        // argv form end-to-end via safe_exec: the agent runs `podman exec
+        // <name> <args…>` without a host shell, so a metacharacter in args can
+        // never start a new host command (the container name is also
+        // regex-validated by the schema). NOT execArgv — that routes through
+        // the legacy `exec` path, whose trace wrapper (`: # SB_TRACE=…; <cmd>`)
+        // comments the real command out and returns empty stdout (#1872).
+        // `podman` is on the agent SAFE_EXEC_ALLOWLIST.
         const argv = ['podman', 'exec', container, ...args];
-        const res = await exec.execArgv(argv);
+        const res = await exec.execSafe(argv);
         return textResult({
           container,
           command: argv.map(shellQuote).join(' '),
+          exitCode: res.code,
           stdout: redactLogText(res.stdout ?? ''),
           stderr: redactLogText(res.stderr ?? ''),
         });

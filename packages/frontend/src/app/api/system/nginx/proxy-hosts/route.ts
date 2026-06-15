@@ -388,22 +388,83 @@ async function reconcileProxyHostUpstream(
 }
 
 /**
- * #991 — Reconcile an existing NPM proxy host's `advanced_config` with
- * what the template's `variables.json` currently declares. The legacy
- * "exists → return as-is" path leaves a stale config in place when a
- * template is updated post-install (e.g. file-share added Authelia
- * forward-auth in v3 → existing host has no `Remote-User` rewrite →
- * filebrowser logs "username is empty"). This narrow update keeps
- * manual operator customisations untouched: we only PUT when the
- * existing config does NOT already contain `auth_request` AND the new
- * config does. Anything else (manual edits, hosts that legitimately
- * shouldn't carry forward-auth) is left alone.
+ * Pure decision for `patchProxyHostAdvancedConfig`: given the live
+ * config and the template-rendered config, decide whether (and what) to
+ * PUT back to NPM. Exported so the SB-owned-vs-manual-edit policy can be
+ * unit-tested without mocking NPM's HTTP API.
+ *
+ * The distinction this encodes:
+ *
+ * - A rendered config that contains `auth_request /authelia` is a
+ *   **ServiceBay-OWNED** host — the whole `advanced_config` is template
+ *   territory (forward-auth snippet + any appended extras the template
+ *   ships via the `__authelia_forward_auth__\n<extras>` sentinel form,
+ *   e.g. `proxy_buffering off` / `proxy_read_timeout 600s`). When the
+ *   rendered value differs from live we land the rendered value verbatim
+ *   — whether forward-auth is being ADDED for the first time (legacy
+ *   #991) OR the extras changed on a host that already had forward-auth
+ *   (#1862: the chat SSE directives were silently dropped because the
+ *   old guard only fired when forward-auth was *missing*). The rendered
+ *   config already carries the LAN explainer / proxy-error page wiring
+ *   the POST loop injected, so adopting it wholesale is correct.
+ *
+ * - A rendered config WITHOUT forward-auth is NOT treated as owning the
+ *   live config. We only ever **append** the LAN-only 403 explainer when
+ *   the live host predates it (#1415) — genuine manual operator edits on
+ *   such hosts are preserved (we never clobber).
+ *
+ * Returns `{ write, reason }` to PUT, or `{ skip }` to leave live alone.
+ */
+export function decideAdvancedConfigReconcile(
+    existingAdvancedConfig: string,
+    newAdvancedConfig: string,
+): { write: string; reason: string } | { skip: true } {
+    if (!newAdvancedConfig) return { skip: true };
+    if (existingAdvancedConfig === newAdvancedConfig) return { skip: true };
+    const hasForwardAuth = (s: string) => /auth_request\s+\/authelia/.test(s);
+    // #1415 — backfill the LAN-only 403 explainer onto an existing host
+    // whose config predates it (the marker is the idempotency key).
+    const hasLanExplainer = (s: string) => s.includes('servicebay-lan-only-explainer');
+    // #1862 — the rendered config carrying forward-auth marks this host as
+    // ServiceBay-owned, so land it on ANY diff (not just when forward-auth
+    // is newly added). This covers the appended-extras case where the host
+    // already had forward-auth but the template's extra nginx directives
+    // changed and were previously dropped.
+    const ownedByTemplate = hasForwardAuth(newAdvancedConfig);
+    const addsExplainer = hasLanExplainer(newAdvancedConfig) && !hasLanExplainer(existingAdvancedConfig);
+    // Nothing to land → leave the existing config (and any manual edits) alone.
+    if (!ownedByTemplate && !addsExplainer) return { skip: true };
+    // SB-owned host: adopt the template's full rendered config (forward-auth
+    // snippet + appended extras + the explainer/error-page wiring the POST
+    // loop already folded into `newAdvancedConfig`). When the host is NOT
+    // SB-owned and only the explainer is missing, append it to the EXISTING
+    // config so manual operator edits are preserved.
+    if (ownedByTemplate) {
+        const addedForwardAuth = !hasForwardAuth(existingAdvancedConfig);
+        return {
+            write: newAdvancedConfig,
+            reason: addedForwardAuth
+                ? 'added Authelia forward-auth missing on the existing host'
+                : 'reconciled template-owned advanced_config (forward-auth + appended extras) on the existing host',
+        };
+    }
+    return { write: withLanDeniedPage(existingAdvancedConfig), reason: 'added LAN-only 403 explainer missing on the existing host' };
+}
+
+/**
+ * #991 / #1862 — Reconcile an existing NPM proxy host's `advanced_config`
+ * with what the template's `variables.json` currently declares. The
+ * legacy "exists → return as-is" path leaves a stale config in place when
+ * a template is updated post-install (e.g. file-share added Authelia
+ * forward-auth, or the chat host's SSE directives changed). The
+ * SB-owned-vs-manual-edit policy lives in `decideAdvancedConfigReconcile`
+ * above (and is unit-tested there).
  *
  * Failures are logged but non-fatal — install proceeds with the stale
  * config in place, the diagnose probe surfaces the drift, operator can
  * retry from Settings → Self-Diagnose → Reprovision.
  */
-async function patchProxyHostAdvancedConfig(
+export async function patchProxyHostAdvancedConfig(
     baseUrl: string,
     token: string,
     hostId: number,
@@ -411,24 +472,9 @@ async function patchProxyHostAdvancedConfig(
     newAdvancedConfig: string,
     domain: string,
 ): Promise<{ updated: boolean }> {
-    if (!newAdvancedConfig) return { updated: false };
-    if (existingAdvancedConfig === newAdvancedConfig) return { updated: false };
-    const hasForwardAuth = (s: string) => /auth_request\s+\/authelia/.test(s);
-    // #1415 — also backfill the LAN-only 403 explainer onto an existing host
-    // whose config predates it (the marker is the idempotency key).
-    const hasLanExplainer = (s: string) => s.includes('servicebay-lan-only-explainer');
-    const addsForwardAuth = hasForwardAuth(newAdvancedConfig) && !hasForwardAuth(existingAdvancedConfig);
-    const addsExplainer = hasLanExplainer(newAdvancedConfig) && !hasLanExplainer(existingAdvancedConfig);
-    // Nothing new to land → leave the existing config (and any manual edits) alone.
-    if (!addsForwardAuth && !addsExplainer) return { updated: false };
-    // When forward-auth is being added we adopt the template's full config
-    // (the legacy #991 behaviour); `newAdvancedConfig` already carries the
-    // explainer for LAN hosts (injected in the POST loop). When ONLY the
-    // explainer is missing, append it to the EXISTING config so manual
-    // operator edits are preserved.
-    const configToWrite = addsForwardAuth
-        ? newAdvancedConfig
-        : withLanDeniedPage(existingAdvancedConfig);
+    const decision = decideAdvancedConfigReconcile(existingAdvancedConfig, newAdvancedConfig);
+    if ('skip' in decision) return { updated: false };
+    const configToWrite = decision.write;
     try {
         const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts/${hostId}`, {
             method: 'PUT',
@@ -437,14 +483,13 @@ async function patchProxyHostAdvancedConfig(
             signal: AbortSignal.timeout(10_000),
         });
         if (!res.ok) {
-            logger.warn('ProxyHosts', `Failed to backfill advanced_config for ${domain} (NPM PUT returned ${res.status})`);
+            logger.warn('ProxyHosts', `Failed to reconcile advanced_config for ${domain} (NPM PUT returned ${res.status})`);
             return { updated: false };
         }
-        const added = [addsForwardAuth ? 'Authelia forward-auth' : null, addsExplainer ? 'LAN-only 403 explainer' : null].filter(Boolean).join(' + ');
-        logger.info('ProxyHosts', `Backfilled advanced_config for ${domain} (added ${added} missing on the existing host)`);
+        logger.info('ProxyHosts', `Reconciled advanced_config for ${domain} (${decision.reason})`);
         return { updated: true };
     } catch (e) {
-        logger.warn('ProxyHosts', `Failed to backfill advanced_config for ${domain}: ${e instanceof Error ? e.message : String(e)}`);
+        logger.warn('ProxyHosts', `Failed to reconcile advanced_config for ${domain}: ${e instanceof Error ? e.message : String(e)}`);
         return { updated: false };
     }
 }
@@ -611,10 +656,12 @@ async function patchProxyHostConfFile(
 async function createProxyHost(baseUrl: string, token: string, host: ProxyHostRequest, accessListId: number = 0) {
     const existing = await findProxyHostByDomain(baseUrl, token, host.domain);
     if (existing) {
-        // #991 — Reconcile advanced_config when the template now ships
-        // forward-auth but the live host predates that change. Narrow
-        // policy in patchProxyHostAdvancedConfig leaves manual edits
-        // alone.
+        // #991 / #1862 — Reconcile advanced_config for a ServiceBay-owned
+        // host (one whose rendered config carries forward-auth) when the
+        // template's rendered value differs from live — whether forward-auth
+        // is newly added or its appended extras (SSE/timeout directives)
+        // changed. decideAdvancedConfigReconcile leaves genuine manual edits
+        // on non-SB-owned hosts alone.
         await patchProxyHostAdvancedConfig(
             baseUrl,
             token,

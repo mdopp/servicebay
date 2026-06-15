@@ -83,6 +83,9 @@ SAFE_EXEC_ALLOWLIST = frozenset({
     'df',            # disk-usage probe
     'du',            # "show largest dirs" diagnose action
     'find',          # cert-archive + dangling-file enumeration
+    'realpath',      # MCP read_file/list_dir symlink-escape guard (#1872) —
+                     # `realpath -m` resolves a jailed path on the box so the
+                     # path-jail can confirm it stays inside JAIL_ROOT.
     'echo',          # health-check + agent-ok ping
     'hostname',      # initial-sync identity probe
     'uptime',        # diagnose's crash-loop boot-grace gate

@@ -305,6 +305,14 @@ class TestDnsResolvers(unittest.TestCase):
         for binary in ('lsblk', 'mount', 'umount', 'rsync', 'chown'):
             self.assertIn(binary, agent.SAFE_EXEC_ALLOWLIST)
 
+    def test_mcp_read_tool_binaries_on_safe_exec_allowlist(self):
+        # #1872 typed read tools drive the box via safe_exec: read_file/list_dir
+        # confirm the symlink-escape guard with `realpath -m`, and container_exec
+        # runs `podman exec`. Both binaries MUST be allowlisted or the tools
+        # crash on the box ("not in SAFE_EXEC_ALLOWLIST" — the box-verify RED).
+        for binary in ('realpath', 'podman'):
+            self.assertIn(binary, agent.SAFE_EXEC_ALLOWLIST)
+
     def test_safe_exec_allowlist_stays_minimal(self):
         # Guard against speculative additions: the allow-list is binary-only,
         # so every entry is a real consumer. `bash`/`sh` must never be on it
