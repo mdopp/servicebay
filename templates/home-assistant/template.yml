@@ -7,11 +7,9 @@ metadata:
   annotations:
     servicebay.label: "Smart Home (Home Assistant)"
     servicebay.schema-version: "6"
-    # Home Assistant is reached at home.<domain> via nginx, authenticates
-    # via Authelia, and talks to Wyoming-protocol STT/TTS on the voice
-    # pod (port 10300). Declaring `voice` makes the network map render
-    # the dependency even before any TCP flow is sampled.
-    servicebay.dependencies: "nginx,auth,voice"
+    # Home Assistant is reached at home.<domain> via nginx and
+    # authenticates via Authelia.
+    servicebay.dependencies: "nginx,auth"
     servicebay.config-mount: "/config"
     servicebay.ports: "8123/tcp,8091/tcp,3001/tcp"
     # Continuous health probe (#628). `/manifest.json` is the PWA
@@ -87,11 +85,6 @@ spec:
       readOnly: true
     securityContext:
       privileged: true
-
-  # Voice services (Faster Whisper, Piper, openWakeWord) live in the
-  # separate `voice` template since #348. They listen on the same
-  # localhost ports (10300/10200/10400) so HA's voice-pipeline config
-  # keeps pointing at `localhost:10300` etc. without changes.
 
   volumes:
   # Persistence

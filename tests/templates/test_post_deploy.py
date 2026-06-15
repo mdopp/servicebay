@@ -1968,58 +1968,5 @@ class ImmichScript(unittest.TestCase):
         self.assertIn("Immich OIDC configured", out)
 
 
-class VoiceScript(unittest.TestCase):
-    """openWakeWord custom-models slot (#1832). The whisper/tts/piper paths
-    shell out to systemctl/podman, so the tests target the pure-ish
-    setup_custom_models_dir() directly rather than main()."""
-
-    def _capture(self, fn) -> str:
-        buf = io.StringIO()
-        old_stdout = sys.stdout
-        sys.stdout = buf
-        try:
-            fn()
-        finally:
-            sys.stdout = old_stdout
-        return buf.getvalue()
-
-    def test_creates_dir_and_logs_slot_when_set(self):
-        import tempfile
-
-        m = load_script("voice")
-        with tempfile.TemporaryDirectory() as tmp:
-            target = os.path.join(tmp, "custom-models")
-            env = {"OPENWAKEWORD_CUSTOM_MODELS_DIR": target}
-            with run_with_env(env):
-                out = self._capture(m.setup_custom_models_dir)
-            self.assertTrue(os.path.isdir(target))
-        self.assertIn("custom models dir mounted at", out)
-        self.assertIn(target, out)
-
-    def test_idempotent_when_dir_already_exists(self):
-        import tempfile
-
-        m = load_script("voice")
-        with tempfile.TemporaryDirectory() as tmp:
-            # tmp itself already exists — re-running must not error.
-            env = {"OPENWAKEWORD_CUSTOM_MODELS_DIR": tmp}
-            with run_with_env(env):
-                out = self._capture(m.setup_custom_models_dir)
-            self.assertTrue(os.path.isdir(tmp))
-        self.assertIn("custom models dir mounted at", out)
-
-    def test_noop_when_unset(self):
-        m = load_script("voice")
-        with run_with_env({}):
-            out = self._capture(m.setup_custom_models_dir)
-        self.assertEqual(out, "")
-
-    def test_noop_when_empty(self):
-        m = load_script("voice")
-        with run_with_env({"OPENWAKEWORD_CUSTOM_MODELS_DIR": ""}):
-            out = self._capture(m.setup_custom_models_dir)
-        self.assertEqual(out, "")
-
-
 if __name__ == "__main__":
     unittest.main()

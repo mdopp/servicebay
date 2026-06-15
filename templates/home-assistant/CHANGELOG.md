@@ -122,31 +122,21 @@ otherwise `home.<domain>` will start returning 400 again.
 
 ## v2 (breaking)
 
-**Voice extracted into the `voice` template.**
+**Voice removed from the Home Assistant pod.**
 
 `Faster Whisper`, `Piper`, and `openWakeWord` used to live as
-containers inside this pod. They now ship in a separate template
-(`templates/voice/`) so other Wyoming consumers (Rhasspy, custom
-agents, GPU-Whisper deployments) can share the same local voice
-pipeline.
+containers inside this pod. ServiceBay no longer ships a voice
+stack — the voice pipeline is owned externally (Solaris, see #1876).
+HA itself keeps running unchanged.
 
-Required action: deploy the `voice` template alongside this one. The
-voice template's `post-deploy.py` migrates the legacy data paths
-automatically:
+Required action: none for HA. The legacy voice model directories
+(`${DATA_DIR}/home-assistant/{whisper,piper}`) are left in place;
+they are unused by HA and can be removed by the operator. Home
+Assistant's voice-pipeline config can still point at any Wyoming
+endpoint you run yourself (`localhost:10300/10200/10400` if it lives
+on the same host).
 
-  - `${DATA_DIR}/home-assistant/whisper` → `${DATA_DIR}/voice/whisper`
-  - `${DATA_DIR}/home-assistant/piper` → `${DATA_DIR}/voice/piper`
-
-No re-download of Whisper models or Piper voices. The Wyoming
-endpoints stay on the same loopback ports (10300 / 10200 / 10400),
-so Home Assistant's existing voice-pipeline configuration keeps
-working without changes.
-
-If you skip the `voice` deploy, HA continues to run — only the voice
-features go silent until you install voice or wire HA at a different
-Wyoming endpoint.
-
-Migration tracked in #348.
+Removal tracked in #1876 (originally extracted in #348).
 
 ## v1
 

@@ -57,7 +57,7 @@ Other fields: `interval` (default 30s, ≥ 1s), `timeout` (default 5s),
 immediately).
 
 Examples in this repo: `templates/auth/template.yml` (HTTP),
-`templates/voice/template.yml` (TCP).
+`templates/claude-dev/template.yml` (TCP).
 
 `servicebay.dependencies` is the single source of truth for hard install-time
 dependencies. The wizard reads it to auto-check missing deps, block unchecking
@@ -71,7 +71,7 @@ SSO at install time. No annotation = no install-time deps.
 new templates. Bump it whenever the pod structure or variable shape
 changes in a way the operator needs to know about:
 
-- Containers extracted into a separate template (the voice/HA split in #348)
+- Containers extracted into a separate template
 - Variables renamed
 - Data paths moved on disk
 - A new required mount that won't be auto-created
@@ -112,18 +112,19 @@ Extra env vars beyond what `post-deploy.py` gets:
 
 ### Cross-template data moves
 
-If data is moving *into* a different template (the voice extraction
-case), put the move in the **destination** template's
-`post-deploy.py`, not in the source template's migration. That way
-the move runs exactly once when the destination is first installed,
-regardless of install ordering. The source template's migration
-script then just informs the operator.
+If data is moving *into* a different template (a container split out
+into a sibling template), put the move in the **destination**
+template's `post-deploy.py`, not in the source template's migration.
+That way the move runs exactly once when the destination is first
+installed, regardless of install ordering. The source template's
+migration script then just informs the operator.
 
-Worked examples in this repo:
-- `templates/home-assistant/migrations/v1-to-v2.py` — informational
-  notice (voice was extracted; install the `voice` template).
-- `templates/voice/post-deploy.py` — actual idempotent
-  `shutil.move(legacy → new)` for the voice data.
+Pattern:
+- The source template's `migrations/v{N-1}-to-v{N}.py` stays an
+  informational notice (the feature moved; install `<dest>` for it).
+  `templates/home-assistant/migrations/v1-to-v2.py` is one such notice.
+- The destination template's `post-deploy.py` does the actual
+  idempotent `shutil.move(legacy → new)` (probe-before-mutate).
 
 ## Audit log
 

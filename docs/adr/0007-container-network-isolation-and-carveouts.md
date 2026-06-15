@@ -26,8 +26,8 @@ radicale's LDAP bind.
    `auth.{{PUBLIC_DOMAIN}}` → `{{HOST_GATEWAY_IP}}` (default `169.254.1.2`) so
    the issuer name stays canonical.
 2. **These stay on `hostNetwork` deliberately — do not re-litigate per #817:**
-   - **nginx, adguard, home-assistant, voice** — genuinely need host networking
-     (ingress :80/:443, DNS :53, mDNS/SSDP, Wyoming LAN).
+   - **nginx, adguard, home-assistant** — genuinely need host networking
+     (ingress :80/:443, DNS :53, mDNS/SSDP).
    - **ollama + hermes** — ollama ships no auth and is loopback-bound by design;
      a plain `hostPort` would newly LAN-expose it, and isolated hermes can only
      reach ollama via the host. Revisit only once a host-firewall / private-
