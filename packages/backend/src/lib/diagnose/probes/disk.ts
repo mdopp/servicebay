@@ -14,17 +14,30 @@ import { registerProbeAction, type ProbeActionResult } from '../actions';
 
 const PROBE_ID = 'disk';
 
-async function showLargestDirs({ node }: { node: string }): Promise<ProbeActionResult> {
+/**
+ * The single source of the "what's eating /mnt/data" measurement, shared
+ * by the `show_largest_dirs` probe action and the `disk_usage` MCP tool
+ * (#1872) so there is exactly ONE `du` invocation in the codebase.
+ *
+ * -x keeps du within /mnt/data's filesystem (don't traverse podman
+ * bind-mounts to host overlays). 2>/dev/null swallows the
+ * permission-denied lines from rootless container subdirs that du can't
+ * read; the survivors are still the meaningful candidates.
+ *
+ * Returns the raw `du -shx … | sort -hr | head -N` block (size<TAB>path
+ * per line), trimmed; empty string when nothing is found.
+ */
+export async function largestDirsUnderDataDir(node: string, top = 10): Promise<string> {
   const agent = await agentManager.ensureAgent(node);
-  // -x keeps du within /mnt/data's filesystem (don't traverse podman
-  // bind-mounts to host overlays). 2>/dev/null swallows the
-  // permission-denied lines from rootless container subdirs that du
-  // can't read; the survivors are still the meaningful candidates.
+  const n = Math.max(1, Math.min(50, Math.floor(top)));
   const res = await agent.sendCommand('exec', {
-    command: 'du -shx /mnt/data/* 2>/dev/null | sort -hr | head -10',
+    command: `du -shx /mnt/data/* 2>/dev/null | sort -hr | head -${n}`,
   }, { timeoutMs: 30_000 }) as { code?: number; stdout?: string; stderr?: string };
+  return (res.stdout ?? '').trim();
+}
 
-  const out = (res.stdout ?? '').trim();
+async function showLargestDirs({ node }: { node: string }): Promise<ProbeActionResult> {
+  const out = await largestDirsUnderDataDir(node, 10);
   if (!out) {
     return {
       ok: true,

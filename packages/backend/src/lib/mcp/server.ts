@@ -35,6 +35,10 @@ import { redactLogText, redactServiceFiles } from './redact';
 import type { ApiScope } from '@/lib/auth/apiScope';
 import { parseEfibootmgr, assessUsbBootReadiness } from './efibootmgr';
 import { performStackReset, StackResetError } from '@/lib/install/performStackReset';
+import { jailPath, realPathInJail, JAIL_ROOT } from './pathJail';
+import { largestDirsUnderDataDir } from '@/lib/diagnose/probes/disk';
+import { AgentExecutor } from '@/lib/agent/executor';
+import { shellQuote } from '@/lib/util/shellQuote';
 
 interface McpAuthContext {
   user: string;
@@ -60,6 +64,48 @@ function errorResult(msg: string) {
 }
 
 /**
+ * Confirm a jailed path's REAL path (after symlink resolution on the box)
+ * is still inside JAIL_ROOT. Returns an error message string if it
+ * escapes, else null. Shared by read_file + list_dir (#1872) so the
+ * symlink-escape guard lives in one place.
+ */
+async function assertRealpathInJail(
+  exec: AgentExecutor,
+  jailedPath: string,
+  reqPath: string,
+): Promise<string | null> {
+  const real = await exec.execSafe(['realpath', '-m', '--', jailedPath]);
+  if (realPathInJail(real.stdout ?? '')) return null;
+  return `Path escapes the allowed root ${JAIL_ROOT}: "${reqPath}" resolves (via symlink) to "${(real.stdout ?? '').trim()}".`;
+}
+
+/**
+ * Stat a jailed file and confirm it is a regular file within `limit`
+ * bytes (rejects device nodes, dirs, and oversized blobs before we slurp
+ * them through the agent). Returns an error message string, else null.
+ */
+async function assertReadableRegularFile(
+  exec: AgentExecutor,
+  jailedPath: string,
+  reqPath: string,
+  limit: number,
+): Promise<string | null> {
+  const stat = await exec.execSafe(['stat', '-Lc', '%F %s', '--', jailedPath]);
+  if (stat.code !== 0) {
+    return `Cannot stat "${reqPath}": ${(stat.stderr ?? '').trim() || `exit ${stat.code}`}`;
+  }
+  const [kind, sizeStr] = (stat.stdout ?? '').trim().split(/\s+/);
+  if (kind !== 'regular' && kind !== 'regular_empty_file') {
+    return `Refusing to read "${reqPath}": not a regular file (${kind}).`;
+  }
+  const size = Number(sizeStr);
+  if (Number.isFinite(size) && size > limit) {
+    return `File "${reqPath}" is ${size} bytes, over the ${limit}-byte cap. Raise maxBytes or use exec_command.`;
+  }
+  return null;
+}
+
+/**
  * Tools that mutate state. Calls are gated on `config.mcp.allowMutations`
  * (true | absent ⇒ allowed; false ⇒ blocked).
  */
@@ -71,7 +117,7 @@ const MUTATING_TOOLS = new Set([
   'file_access_request',
   'create_health_check', 'delete_health_check', 'run_check_now',
   'run_backup', 'restore_backup',
-  'update_config', 'exec_command', 'refresh_agent',
+  'update_config', 'exec_command', 'container_exec', 'refresh_agent',
   'set_boot_next_usb', 'reboot_node', 'factory_reset',
   'set_channel',
 ]);
@@ -105,6 +151,8 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   get_unmanaged_bundles: 'read',
   get_channel: 'read',
   list_access_requests: 'read', get_access_request_status: 'read',
+  // read-oriented file/disk tools (#1872) — jailed reads, no mutation
+  read_file: 'read', list_dir: 'read', disk_usage: 'read',
   // lifecycle
   start_service: 'lifecycle', stop_service: 'lifecycle', restart_service: 'lifecycle',
   run_check_now: 'lifecycle', refresh_agent: 'lifecycle',
@@ -129,6 +177,12 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   reboot_node: 'reboot',
   // exec (shell — own scope so tokens can grant config writes without it)
   exec_command: 'exec',
+  // container_exec (#1872): runs a command inside a named container via an
+  // argv array (no host shell). It executes code, so it requires the `exec`
+  // scope like exec_command — but it's a scoped container exec, not the host
+  // escape hatch, and is read-oriented per the issue, so it is deliberately
+  // NOT in DESTRUCTIVE_TOOLS (no pre-mutation host snapshot).
+  container_exec: 'exec',
 };
 
 /**
@@ -1353,6 +1407,144 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
       } catch (err: unknown) {
         if (err instanceof StackResetError) return errorResult(err.message);
         return errorResult(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // --- Read-oriented file / disk / container tools (#1872) ---
+  // These replace ad-hoc `exec_command` calls (cat/ls/find/du/podman exec)
+  // with typed, path-jailed handlers. All four are NON-destructive: none is
+  // in DESTRUCTIVE_TOOLS, so calling them never fires snapshotBeforeMutation
+  // (no servicebay-full-*-auto.tar.gz). read_file/list_dir are jailed to
+  // JAIL_ROOT (/mnt/data) lexically AND confirmed server-side with realpath
+  // (catches a symlink that points out of the jail). disk_usage reuses the
+  // disk probe's single du source. container_exec takes an argv array, so the
+  // host shell never parses the payload.
+
+  server.tool(
+    'read_file',
+    `Read a UTF-8 text file on a node, jailed to ${JAIL_ROOT} (service data dirs live here). Use this instead of \`exec_command cat …\`. The path is resolved and rejected if it escapes the jail (\`..\`, an absolute path outside it, or a symlink pointing out). Returns the file content (size-capped). For binary or huge files use exec_command deliberately.`,
+    {
+      path: z.string().min(1).describe(`File path; relative paths are anchored at ${JAIL_ROOT}. Must resolve inside ${JAIL_ROOT}.`),
+      maxBytes: z.number().int().min(1).max(5_000_000).optional().describe('Max bytes to read (default 1 MiB). Larger files are rejected — narrow with exec_command if you truly need them.'),
+      node: nodeParam,
+    },
+    async ({ path: reqPath, maxBytes, node }) => {
+      const jailed = jailPath(reqPath);
+      if (!jailed.ok) return errorResult(jailed.error);
+      const limit = maxBytes ?? 1_048_576;
+      const nodeName = await resolveNode(node);
+      try {
+        const exec = new AgentExecutor(nodeName);
+        // Symlink-escape guard, then regular-file/size guard. Lexical
+        // jailPath() can't see a symlink that points out of the jail;
+        // `realpath -m` resolves it on the box. argv form — no shell parsing.
+        const escape = await assertRealpathInJail(exec, jailed.path, reqPath);
+        if (escape) return errorResult(escape);
+        const bad = await assertReadableRegularFile(exec, jailed.path, reqPath, limit);
+        if (bad) return errorResult(bad);
+        const content = await exec.readFile(jailed.path);
+        return textResult({ path: jailed.path, bytes: content.length, content: redactLogText(content) });
+      } catch (err) {
+        return errorResult(`Error reading file: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  );
+
+  server.tool(
+    'list_dir',
+    `List the entries of a directory on a node, jailed to ${JAIL_ROOT}. Use this instead of \`exec_command ls/find/wc -l\`. Each entry has name, type (file|dir|symlink|other), size (bytes) and mtime (Unix seconds). The path is rejected if it escapes the jail.`,
+    {
+      path: z.string().min(1).optional().describe(`Directory path; relative paths are anchored at ${JAIL_ROOT}. Defaults to ${JAIL_ROOT}.`),
+      node: nodeParam,
+    },
+    async ({ path: reqPath, node }) => {
+      const jailed = jailPath(reqPath ?? JAIL_ROOT);
+      if (!jailed.ok) return errorResult(jailed.error);
+      const nodeName = await resolveNode(node);
+      try {
+        const exec = new AgentExecutor(nodeName);
+        const escape = await assertRealpathInJail(exec, jailed.path, reqPath ?? JAIL_ROOT);
+        if (escape) return errorResult(escape);
+        // `find -maxdepth 1` lists the dir's immediate children, one per line
+        // with tab-separated type/size/mtime/name fields.
+        const res = await exec.execSafe([
+          'find', jailed.path, '-maxdepth', '1', '-mindepth', '1',
+          '-printf', '%y\t%s\t%T@\t%f\n',
+        ]);
+        if (res.code !== 0) {
+          return errorResult(`Cannot list "${jailed.path}": ${(res.stderr ?? '').trim() || `exit ${res.code}`}`);
+        }
+        const typeMap: Record<string, string> = { f: 'file', d: 'dir', l: 'symlink' };
+        const entries = (res.stdout ?? '')
+          .split('\n')
+          .filter(Boolean)
+          .map(line => {
+            const [y, size, mtime, ...rest] = line.split('\t');
+            return {
+              name: rest.join('\t'),
+              type: typeMap[y] ?? 'other',
+              size: Number(size),
+              mtime: Math.floor(Number(mtime)),
+            };
+          });
+        return textResult({ path: jailed.path, count: entries.length, entries });
+      } catch (err) {
+        return errorResult(`Error listing directory: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  );
+
+  server.tool(
+    'disk_usage',
+    `Show the largest directories under ${JAIL_ROOT} (top-N by size). Use this instead of \`exec_command du\`. Reuses the same measurement as the disk diagnose probe's "show largest directories" action — there is one du implementation. Returns the raw \`du\` breakdown (size + path per line) and a parsed list.`,
+    {
+      top: z.number().int().min(1).max(50).optional().describe('How many directories to return (default 10).'),
+      node: nodeParam,
+    },
+    async ({ top, node }) => {
+      const nodeName = await resolveNode(node);
+      try {
+        const breakdown = await largestDirsUnderDataDir(nodeName, top ?? 10);
+        const entries = breakdown
+          .split('\n')
+          .filter(Boolean)
+          .map(line => {
+            const [size, ...rest] = line.split('\t');
+            return { size: size?.trim() ?? '', path: rest.join('\t').trim() };
+          });
+        return textResult({ root: JAIL_ROOT, breakdown, entries });
+      } catch (err) {
+        return errorResult(`Error measuring disk usage: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  );
+
+  server.tool(
+    'container_exec',
+    'Run a command inside a named container via `podman exec`, passing an argv array (no host shell string). Use this instead of an ad-hoc `exec_command podman exec …`. The container name is validated; args are passed as a list so the host shell never parses them. Non-destructive by default — scoped to one container, not the host.',
+    {
+      container: z.string().regex(/^[a-zA-Z0-9_.-]+$/, 'invalid container name').describe('Container name or id (e.g. media-jellyfin).'),
+      args: z.array(z.string()).min(1).describe('Command + arguments as an argv array, e.g. ["cat", "/etc/os-release"]. Passed verbatim — no shell interpolation.'),
+      node: nodeParam,
+    },
+    async ({ container, args, node }) => {
+      const nodeName = await resolveNode(node);
+      try {
+        const exec = new AgentExecutor(nodeName);
+        // argv form end-to-end: `podman exec <name> <args…>` with every token
+        // shell-quoted, so a metacharacter in args can never start a new host
+        // command. The container name is already regex-validated by the schema.
+        const argv = ['podman', 'exec', container, ...args];
+        const res = await exec.execArgv(argv);
+        return textResult({
+          container,
+          command: argv.map(shellQuote).join(' '),
+          stdout: redactLogText(res.stdout ?? ''),
+          stderr: redactLogText(res.stderr ?? ''),
+        });
+      } catch (err) {
+        return errorResult(`Error running container command: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
   );
