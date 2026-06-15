@@ -102,7 +102,9 @@ export default function BackupsSettingsPage() {
       const res = await fetch('/api/system/external-backup/restore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ service }),
+        // Restore the SPECIFIC snapshot the operator picked (#1865), not just
+        // the latest — recovering from before a silently-corrupted run.
+        body: JSON.stringify({ service, tarName }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Restore failed');

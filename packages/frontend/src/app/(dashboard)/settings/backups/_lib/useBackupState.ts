@@ -100,7 +100,8 @@ export function useBackupState() {
   const [nasOverview, setNasOverview] = useState<{
     configured: boolean;
     connection: { ok: true } | { ok: false; error: string } | null;
-    backups: { service: string; tarName: string; size: number }[];
+    // `stamp` is the dated-snapshot timestamp (null for a bare legacy slot, #1865).
+    backups: { service: string; tarName: string; size: number; stamp?: string | null }[];
   } | null>(null);
   const [nasLoading, setNasLoading] = useState(true);
   const [nasRestoring, setNasRestoring] = useState<string | null>(null);

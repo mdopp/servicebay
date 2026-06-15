@@ -33,8 +33,10 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 const { mockNas } = vi.hoisted(() => ({
-  mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn() },
+  mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn(), nasRemove: vi.fn() },
 }));
+/** Match a dated slot tar `<service>-YYYYMMDD-HHMM.tar` (#1865). */
+const datedTarRe = (service: string) => new RegExp(`/${service}-\\d{8}-\\d{4}\\.tar$`);
 vi.mock('./nasClient', () => mockNas);
 // configUpload + the producer's box path read config; keep DATA_DIR unset so the
 // CLI's explicit serviceDataDir is the only source (the local fs backend).
@@ -82,6 +84,9 @@ async function listFilesRel(dir: string): Promise<string[]> {
 beforeEach(() => {
   vi.clearAllMocks();
   mockNas.nasUpload.mockResolvedValue(undefined);
+  // #1865 retention prune lists then removes; no prior snapshots here → no-op.
+  mockNas.nasList.mockResolvedValue([]);
+  mockNas.nasRemove.mockResolvedValue(undefined);
 });
 afterEach(async () => {
   await Promise.all(tmpDirs.map(d => fs.rm(d, { recursive: true, force: true })));
@@ -257,19 +262,19 @@ describe('GOLDEN: runConfigUpload writes the canonical on-NAS atom (real produce
       silentIO(),
     );
 
-    // Result contract.
-    expect(result.tarName).toBe('authelia.tar');
-    expect(result.metaName).toBe('authelia.tar.meta.json');
+    // Result contract — a dated slot, not a single overwritten authelia.tar (#1865).
+    expect(result.tarName).toMatch(/^authelia-\d{8}-\d{4}\.tar$/);
+    expect(result.metaName).toBe(`${result.tarName}.meta.json`);
     expect(result.meta.service).toBe('authelia');
     expect(result.meta.schemaVersion).toBe(1);
 
     // Canonical NAS layout: both files under sb-backup/.
     const uploadPaths = mockNas.nasUpload.mock.calls.map(c => String(c[0]));
-    expect(uploadPaths).toContain('sb-backup/authelia.tar');
-    expect(uploadPaths).toContain('sb-backup/authelia.tar.meta.json');
+    expect(uploadPaths).toContain(`sb-backup/${result.tarName}`);
+    expect(uploadPaths).toContain(`sb-backup/${result.metaName}`);
 
     // The tar carries the stripped whitelist file only — same as a box backup.
-    const tarBuf = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('/authelia.tar'))![1] as Buffer;
+    const tarBuf = mockNas.nasUpload.mock.calls.find(c => datedTarRe('authelia').test(String(c[0])))![1] as Buffer;
     const extracted = await extractTar(tarBuf);
     expect(await listFilesRel(extracted)).toEqual(['users_database.yml']);
     const body = await fs.readFile(path.join(extracted, 'users_database.yml'), 'utf8');
@@ -323,9 +328,9 @@ describe('GOLDEN: importHaOsBackupToNas → manifest-filtered home-assistant.tar
   it('stages only the HA manifest includes — never the DB or logs', async () => {
     const backup = await buildSupervisorBackup();
     const res = await importHaOsBackupToNas(backup);
-    expect(res.tarName).toBe('home-assistant.tar');
+    expect(res.tarName).toMatch(/^home-assistant-\d{8}-\d{4}\.tar$/); // dated slot (#1865)
 
-    const tarBuf = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('/home-assistant.tar'))![1] as Buffer;
+    const tarBuf = mockNas.nasUpload.mock.calls.find(c => datedTarRe('home-assistant').test(String(c[0])))![1] as Buffer;
     const extracted = await extractTar(tarBuf);
     const files = await listFilesRel(extracted);
     expect(files).toEqual([
@@ -342,10 +347,10 @@ describe('GOLDEN: importHaOsBackupToNas → manifest-filtered home-assistant.tar
     expect(files).not.toContain('home-assistant_v2.db');
     expect(files).not.toContain('home-assistant.log');
 
-    // Canonical sidecar written alongside.
+    // Canonical sidecar written alongside the dated slot.
     const uploadPaths = mockNas.nasUpload.mock.calls.map(c => String(c[0]));
-    expect(uploadPaths).toContain('sb-backup/home-assistant.tar');
-    expect(uploadPaths).toContain('sb-backup/home-assistant.tar.meta.json');
+    expect(uploadPaths).toContain(`sb-backup/${res.tarName}`);
+    expect(uploadPaths).toContain(`sb-backup/${res.tarName}.meta.json`);
   });
 });
 

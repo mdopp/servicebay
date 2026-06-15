@@ -8,9 +8,11 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 const { mockNas } = vi.hoisted(() => ({
-  mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn() },
+  mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn(), nasRemove: vi.fn() },
 }));
 vi.mock('./nasClient', () => mockNas);
+// writeServiceBackupToNas reads externalBackup.retention from config (#1865).
+vi.mock('../config', () => ({ getConfig: vi.fn(async () => ({})) }));
 
 import { extractHaConfigDir, importHaOsBackupToNas } from './haOsImport';
 
@@ -59,6 +61,9 @@ async function buildFakeHaBackup(): Promise<string> {
 beforeEach(() => {
   vi.clearAllMocks();
   mockNas.nasUpload.mockResolvedValue(undefined);
+  // #1865 — the producer prunes after writing (lists then removes); empty NAS.
+  mockNas.nasList.mockResolvedValue([]);
+  mockNas.nasRemove.mockResolvedValue(undefined);
 });
 afterEach(async () => {
   await Promise.all(tmpDirs.map(d => fs.rm(d, { recursive: true, force: true })));
@@ -110,9 +115,9 @@ describe('importHaOsBackupToNas', () => {
   it('stages a manifest-filtered home-assistant.tar (config + zwave_js, no DB) to the NAS', async () => {
     const backup = await buildFakeHaBackup();
     const res = await importHaOsBackupToNas(backup);
-    expect(res.tarName).toBe('home-assistant.tar');
+    expect(res.tarName).toMatch(/^home-assistant-\d{8}-\d{4}\.tar$/); // dated slot (#1865)
 
-    const tarCall = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('/home-assistant.tar'))!;
+    const tarCall = mockNas.nasUpload.mock.calls.find(c => /\/home-assistant-\d{8}-\d{4}\.tar$/.test(String(c[0])))!;
     expect(tarCall).toBeTruthy();
 
     // Extract the staged tar and check the manifest filter was applied.

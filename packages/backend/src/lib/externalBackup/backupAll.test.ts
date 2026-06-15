@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 const { mockNas, mockCfg } = vi.hoisted(() => ({
-  mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn() },
+  mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn(), nasRemove: vi.fn() },
   mockCfg: { getConfig: vi.fn() },
 }));
 vi.mock('./nasClient', () => mockNas);
@@ -73,6 +73,9 @@ async function write(rel: string, content: string) {
 beforeEach(async () => {
   vi.clearAllMocks();
   mockNas.nasUpload.mockResolvedValue(undefined);
+  // #1865 — each write prunes (lists then removes); no prior snapshots here.
+  mockNas.nasList.mockResolvedValue([]);
+  mockNas.nasRemove.mockResolvedValue(undefined);
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'backupall-'));
 });
 afterEach(async () => {
@@ -93,10 +96,11 @@ describe('backupInstalledServicesToNas', () => {
 
     // Only adguard ran; home-assistant/authelia/etc. are not installed → not attempted.
     expect(results.map(r => r.service)).toEqual(['adguard']);
-    expect(results[0]).toMatchObject({ service: 'adguard', ok: true, tarName: 'adguard.tar' });
+    expect(results[0]).toMatchObject({ service: 'adguard', ok: true });
+    expect(results[0].tarName).toMatch(/^adguard-\d{8}-\d{4}\.tar$/); // dated slot (#1865)
     // The tar + meta were uploaded to the NAS.
     const uploaded = mockNas.nasUpload.mock.calls.map(c => String(c[0]));
-    expect(uploaded).toContain('sb-backup/adguard.tar');
+    expect(uploaded.some(p => /sb-backup\/adguard-\d{8}-\d{4}\.tar$/.test(p))).toBe(true);
   });
 
   it('captures a per-service failure without aborting the run', async () => {
@@ -136,6 +140,6 @@ describe('backupInstalledServicesToNas', () => {
     expect(services).toContain('home-assistant-zwave');
     expect(results.find(r => r.service === 'home-assistant-zwave')).toMatchObject({ ok: true });
     const uploaded = mockNas.nasUpload.mock.calls.map(c => String(c[0]));
-    expect(uploaded).toContain('sb-backup/home-assistant-zwave.tar');
+    expect(uploaded.some(p => /sb-backup\/home-assistant-zwave-\d{8}-\d{4}\.tar$/.test(p))).toBe(true);
   });
 });

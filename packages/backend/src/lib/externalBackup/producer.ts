@@ -24,7 +24,7 @@ import { getConfig } from '../config';
 import { logger } from '../logger';
 import { agentManager } from '../agent/manager';
 import { getExecutor, type Executor } from '../executor';
-import { nasUpload, nasDownload, nasList } from './nasClient';
+import { nasUpload, nasDownload, nasList, nasRemove } from './nasClient';
 import {
   getServiceManifest,
   getBackupGate,
@@ -44,6 +44,46 @@ const DEFAULT_STACKS_DIR = '/mnt/data/stacks';
 
 /** Sidecar schema version — bump when the meta shape changes. */
 const META_SCHEMA_VERSION = 1;
+
+/**
+ * How many dated snapshots to keep per service when none is configured (#1865).
+ * The producer writes a new dated slot per run and prunes the oldest beyond this
+ * — bounded so the NAS can't fill, but deep enough that a silently-corrupted run
+ * (the HA empty-automations incident) still has a healthy prior copy to recover.
+ */
+export const DEFAULT_BACKUP_RETENTION = 7;
+
+/**
+ * Match a dated snapshot slot `<service>-YYYYMMDD-HHMM.tar` (#1865) and a bare
+ * legacy single-slot `<service>.tar` (pre-#1865 backups, kept restorable so no
+ * existing backup goes invisible). A service name may itself contain hyphens
+ * (`home-assistant`), so the date stamp is anchored to the END of the name.
+ */
+const DATED_TAR_RE = /^(.+)-(\d{8}-\d{4})\.tar$/;
+const BARE_TAR_RE = /^(.+)\.tar$/;
+
+/** Format `Date` → the `YYYYMMDD-HHMM` UTC stamp used in a dated slot name. */
+function backupStamp(when: Date): string {
+  const p = (n: number, w = 2) => String(n).padStart(w, '0');
+  return (
+    `${when.getUTCFullYear()}${p(when.getUTCMonth() + 1)}${p(when.getUTCDate())}` +
+    `-${p(when.getUTCHours())}${p(when.getUTCMinutes())}`
+  );
+}
+
+/**
+ * Parse a NAS tar filename into its service + (optional) dated stamp. A dated
+ * slot resolves both; a bare legacy `<service>.tar` resolves the service with a
+ * null stamp (so it sorts as the oldest / a valid undated snapshot). A non-tar
+ * name returns null.
+ */
+function parseSlotName(name: string): { service: string; stamp: string | null } | null {
+  const dated = DATED_TAR_RE.exec(name);
+  if (dated) return { service: dated[1], stamp: dated[2] };
+  const bare = BARE_TAR_RE.exec(name);
+  if (bare) return { service: bare[1], stamp: null };
+  return null;
+}
 
 export interface ServiceBackupMeta {
   service: string;
@@ -68,6 +108,9 @@ export interface ServiceBackupListEntry {
   service: string;
   tarName: string;
   size: number;
+  /** The `YYYYMMDD-HHMM` UTC stamp parsed from a dated slot, or null for a bare
+   *  legacy `<service>.tar` (pre-#1865). Lets the UI label / order snapshots. */
+  stamp: string | null;
 }
 
 async function pathExists(target: string): Promise<boolean> {
@@ -560,20 +603,63 @@ export function scheduleExternalNasBackup(): void {
     });
 }
 
+/** Resolve the per-service retention (keep N most-recent) from config (#1865). */
+async function getBackupRetention(): Promise<number> {
+  const configured = (await getConfig()).externalBackup?.retention;
+  return typeof configured === 'number' && configured > 0 ? Math.floor(configured) : DEFAULT_BACKUP_RETENTION;
+}
+
 /**
- * Write an already-built `<service>.tar` buffer to the NAS in the canonical
- * restore layout (`sb-backup/<service>.tar` + `.meta.json`). Shared by the
- * dir-based producer (`backupServiceToNas`) and the upload route (#1351) so the
- * on-NAS format has a single source of truth.
+ * Prune dated snapshots for ONE service down to the `keep` most-recent (#1865),
+ * removing each pruned tar's `.meta.json` sidecar too. A bare legacy
+ * `<service>.tar` (pre-#1865) sorts oldest, so once `keep` dated slots exist it
+ * is the first to be pruned — the rotated history supersedes the single slot.
+ * Best-effort: a prune failure is logged, never thrown (it must not fail a
+ * successful backup). Returns the names pruned.
+ */
+async function pruneServiceBackups(service: string, keep: number): Promise<string[]> {
+  try {
+    const all = await listServiceBackups();
+    const mine = all
+      .filter(b => b.service === service)
+      // Newest first: a real dated stamp beats a bare (null) slot; ties (only
+      // possible across bare vs the impossible duplicate stamp) keep bare last.
+      .sort((a, b) => (b.stamp ?? '').localeCompare(a.stamp ?? ''));
+    const stale = mine.slice(keep);
+    const pruned: string[] = [];
+    for (const entry of stale) {
+      await nasRemove(path.posix.join(NAS_BACKUP_DIR, entry.tarName));
+      await nasRemove(path.posix.join(NAS_BACKUP_DIR, `${entry.tarName}.meta.json`));
+      pruned.push(entry.tarName);
+    }
+    if (pruned.length > 0) {
+      logger.info('ExternalBackup', `Pruned ${pruned.length} old ${service} backup(s): ${pruned.join(', ')}`);
+    }
+    return pruned;
+  } catch (e) {
+    logger.warn('ExternalBackup', `Retention prune for "${service}" failed: ${e instanceof Error ? e.message : String(e)}`);
+    return [];
+  }
+}
+
+/**
+ * Write an already-built `<service>.tar` buffer to the NAS as a NEW dated slot
+ * (`sb-backup/<service>-YYYYMMDD-HHMM.tar` + `.meta.json`) rather than
+ * overwriting one slot, then prune to the retention policy (#1865). Keeping
+ * dated/rotated copies is what lets a restore recover from a silently-corrupted
+ * run (the HA empty-automations incident) instead of only the latest state.
+ * Shared by the dir-based producer (`backupServiceToNas`) and the upload route
+ * (#1351) so the on-NAS format has a single source of truth.
  */
 async function writeServiceBackupToNas(service: string, tar: Buffer): Promise<ServiceBackupResult> {
+  const now = new Date();
   const meta: ServiceBackupMeta = {
     service,
     schemaVersion: META_SCHEMA_VERSION,
-    createdAt: new Date().toISOString(),
+    createdAt: now.toISOString(),
     nodeId: os.hostname(),
   };
-  const tarName = `${service}.tar`;
+  const tarName = `${service}-${backupStamp(now)}.tar`;
   const metaName = `${tarName}.meta.json`;
 
   await nasUpload(path.posix.join(NAS_BACKUP_DIR, tarName), tar);
@@ -583,6 +669,7 @@ async function writeServiceBackupToNas(service: string, tar: Buffer): Promise<Se
   );
 
   logger.info('ExternalBackup', `Wrote ${tarName} to NAS (${tar.length} bytes)`);
+  await pruneServiceBackups(service, await getBackupRetention());
   return { service, tarName, metaName, size: tar.length, meta };
 }
 
@@ -606,13 +693,39 @@ export async function stageUploadedServiceTar(service: string, tar: Buffer): Pro
   return writeServiceBackupToNas(service, tar);
 }
 
-/** List the service backups currently on the NAS. */
+/**
+ * List the service backups currently on the NAS — one entry per dated snapshot
+ * (#1865), newest first within each service, services A→Z. A bare legacy
+ * `<service>.tar` (pre-#1865) is surfaced as a valid undated snapshot
+ * (`stamp: null`) so no existing backup goes invisible. Sidecar `.meta.json`
+ * files are not snapshots and are filtered out.
+ */
 export async function listServiceBackups(): Promise<ServiceBackupListEntry[]> {
   const files = await nasList(NAS_BACKUP_DIR);
   return files
-    .filter(f => f.name.endsWith('.tar'))
-    .map(f => ({ service: f.name.replace(/\.tar$/, ''), tarName: f.name, size: f.size }))
-    .sort((a, b) => a.service.localeCompare(b.service));
+    .filter(f => f.name.endsWith('.tar')) // drops `.tar.meta.json` sidecars
+    .map(f => {
+      const parsed = parseSlotName(f.name);
+      return parsed ? { service: parsed.service, tarName: f.name, size: f.size, stamp: parsed.stamp } : null;
+    })
+    .filter((e): e is ServiceBackupListEntry => e !== null)
+    .sort((a, b) =>
+      a.service !== b.service
+        ? a.service.localeCompare(b.service)
+        : (b.stamp ?? '').localeCompare(a.stamp ?? ''), // newest snapshot first
+    );
+}
+
+/**
+ * Resolve the most-recent snapshot tarName for a service from the NAS listing
+ * (#1865) — the "restore latest" default. Returns null when the service has no
+ * backup on the NAS. A dated slot always wins over a bare legacy `<service>.tar`
+ * (which sorts oldest); with only the bare slot present it resolves to that, so
+ * existing single-slot backups stay restorable.
+ */
+export async function latestServiceBackupName(service: string): Promise<string | null> {
+  const mine = (await listServiceBackups()).filter(b => b.service === service);
+  return mine.length > 0 ? mine[0].tarName : null; // listing is already newest-first
 }
 
 /**
