@@ -12,6 +12,7 @@ const { mockNas, mockGetConfig, mockSendCommand, mockExecutor, mockGetExecutor }
     nasUpload: vi.fn(),
     nasDownload: vi.fn(),
     nasList: vi.fn(),
+    nasRemove: vi.fn(),
   },
   mockGetConfig: vi.fn(),
   mockSendCommand: vi.fn(),
@@ -44,8 +45,13 @@ import {
   getNextExternalBackupDelayMs,
   scheduleExternalNasBackup,
   NAS_BACKUP_DIR,
+  DEFAULT_BACKUP_RETENTION,
+  latestServiceBackupName,
 } from './producer';
 import { getServiceManifest, type ServiceBackupManifest } from './serviceManifest';
+
+/** Match a dated slot tar `<service>-YYYYMMDD-HHMM.tar` (#1865). */
+const datedTarRe = (service: string) => new RegExp(`/${service}-\\d{8}-\\d{4}\\.tar$`);
 
 let tmpDirs: string[] = [];
 
@@ -65,6 +71,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetConfig.mockResolvedValue({ templateSettings: {} });
   mockNas.nasUpload.mockResolvedValue(undefined);
+  // #1865 — writeServiceBackupToNas prunes after each write (lists then removes);
+  // default to an empty NAS so the per-write tests see no prior snapshots.
+  mockNas.nasList.mockResolvedValue([]);
+  mockNas.nasRemove.mockResolvedValue(undefined);
   mockGetExecutor.mockReturnValue(mockExecutor);
 });
 
@@ -386,7 +396,7 @@ describe('backupServiceToNas via the host agent (#1597)', () => {
     expect(mockGetExecutor).toHaveBeenCalledWith('Local');
     expect(result.size).toBeGreaterThan(0);
     // The tar bytes that came back through the agent contain the config, not the excluded querylog.
-    const tarCall = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('/adguard.tar'))!;
+    const tarCall = mockNas.nasUpload.mock.calls.find(c => datedTarRe('adguard').test(String(c[0])))!;
     const out = await mkTmp();
     const tarFile = path.join(out, 'a.tar');
     await fs.writeFile(tarFile, tarCall[1] as Buffer);
@@ -403,7 +413,7 @@ describe('backupServiceToNas via the host agent (#1597)', () => {
     wireExecutorToHostDir();
 
     const result = await backupServiceToNas('authelia');
-    const tarCall = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('/authelia.tar'))!;
+    const tarCall = mockNas.nasUpload.mock.calls.find(c => datedTarRe('authelia').test(String(c[0])))!;
     const out = await mkTmp();
     const tarFile = path.join(out, 'a.tar');
     await fs.writeFile(tarFile, tarCall[1] as Buffer);
@@ -422,16 +432,17 @@ describe('backupServiceToNas', () => {
 
     const result = await backupServiceToNas('adguard', { serviceDataDir: src });
 
-    expect(result.tarName).toBe('adguard.tar');
-    expect(result.metaName).toBe('adguard.tar.meta.json');
+    // #1865 — a dated slot per run, not a single overwritten adguard.tar.
+    expect(result.tarName).toMatch(/^adguard-\d{8}-\d{4}\.tar$/);
+    expect(result.metaName).toBe(`${result.tarName}.meta.json`);
     expect(result.size).toBeGreaterThan(0);
     expect(result.meta.schemaVersion).toBe(1);
     expect(result.meta.service).toBe('adguard');
     expect(result.meta.nodeId).toBe(os.hostname());
 
     const uploadPaths = mockNas.nasUpload.mock.calls.map(c => c[0]);
-    expect(uploadPaths).toContain(`${NAS_BACKUP_DIR}/adguard.tar`);
-    expect(uploadPaths).toContain(`${NAS_BACKUP_DIR}/adguard.tar.meta.json`);
+    expect(uploadPaths).toContain(`${NAS_BACKUP_DIR}/${result.tarName}`);
+    expect(uploadPaths).toContain(`${NAS_BACKUP_DIR}/${result.metaName}`);
 
     const metaCall = mockNas.nasUpload.mock.calls.find(c => c[0].endsWith('.meta.json'))!;
     const metaJson = JSON.parse((metaCall[1] as Buffer).toString('utf8'));
@@ -448,18 +459,41 @@ describe('backupServiceToNas', () => {
 });
 
 describe('read-back', () => {
-  it('lists only .tar entries and derives the service name', async () => {
+  it('lists dated snapshots grouped per service (newest first), drops sidecars, keeps bare legacy slots (#1865)', async () => {
     mockNas.nasList.mockResolvedValue([
-      { name: 'hermes.tar', size: 100 },
-      { name: 'hermes.tar.meta.json', size: 20 },
-      { name: 'adguard.tar', size: 50 },
+      { name: 'home-assistant-20260615-0531.tar', size: 100 },
+      { name: 'home-assistant-20260615-0531.tar.meta.json', size: 20 }, // sidecar — not a snapshot
+      { name: 'home-assistant-20260614-0530.tar', size: 90 },
+      { name: 'adguard.tar', size: 50 }, // bare legacy single-slot — still listable
     ]);
     const list = await listServiceBackups();
     expect(list).toEqual([
-      { service: 'adguard', tarName: 'adguard.tar', size: 50 },
-      { service: 'hermes', tarName: 'hermes.tar', size: 100 },
+      // adguard (A→Z) first; its bare slot has a null stamp.
+      { service: 'adguard', tarName: 'adguard.tar', size: 50, stamp: null },
+      // home-assistant newest snapshot first.
+      { service: 'home-assistant', tarName: 'home-assistant-20260615-0531.tar', size: 100, stamp: '20260615-0531' },
+      { service: 'home-assistant', tarName: 'home-assistant-20260614-0530.tar', size: 90, stamp: '20260614-0530' },
     ]);
     expect(mockNas.nasList).toHaveBeenCalledWith(NAS_BACKUP_DIR);
+  });
+
+  it('latestServiceBackupName resolves the most-recent dated slot, preferring it over a bare legacy slot (#1865)', async () => {
+    mockNas.nasList.mockResolvedValue([
+      { name: 'home-assistant.tar', size: 10 }, // bare legacy — oldest
+      { name: 'home-assistant-20260614-0530.tar', size: 90 },
+      { name: 'home-assistant-20260615-0531.tar', size: 100 },
+    ]);
+    expect(await latestServiceBackupName('home-assistant')).toBe('home-assistant-20260615-0531.tar');
+  });
+
+  it('latestServiceBackupName falls back to a bare legacy slot when it is the only snapshot (#1865)', async () => {
+    mockNas.nasList.mockResolvedValue([{ name: 'adguard.tar', size: 50 }]);
+    expect(await latestServiceBackupName('adguard')).toBe('adguard.tar');
+  });
+
+  it('latestServiceBackupName returns null when the service has no backup', async () => {
+    mockNas.nasList.mockResolvedValue([{ name: 'adguard.tar', size: 50 }]);
+    expect(await latestServiceBackupName('home-assistant')).toBeNull();
   });
 
   it('fetches a tar plus its parsed meta sidecar', async () => {
@@ -492,6 +526,100 @@ describe('read-back', () => {
   });
 });
 
+describe('dated rotation + retention pruning (#1865)', () => {
+  // Back the NAS mock with an in-memory store so multiple backup runs accumulate
+  // dated slots and pruning actually removes the oldest, end-to-end.
+  let store: Map<string, Buffer>;
+  beforeEach(() => {
+    store = new Map();
+    mockNas.nasUpload.mockImplementation(async (p: string, data: Buffer) => { store.set(p, Buffer.from(data)); });
+    mockNas.nasList.mockImplementation(async (dir = '') => {
+      const prefix = dir ? `${dir}/` : '';
+      return [...store.entries()].filter(([k]) => k.startsWith(prefix)).map(([k, v]) => ({ name: k.slice(prefix.length), size: v.length }));
+    });
+    mockNas.nasRemove.mockImplementation(async (p: string) => { store.delete(p); });
+  });
+
+  /** The dated tar slots (no sidecars) currently in the store, for a service. */
+  function slots(service: string): string[] {
+    return [...store.keys()]
+      .map(k => k.slice(`${NAS_BACKUP_DIR}/`.length))
+      .filter(n => new RegExp(`^${service}-\\d{8}-\\d{4}\\.tar$`).test(n))
+      .sort();
+  }
+
+  it('each backup run writes a NEW dated file rather than overwriting one slot', async () => {
+    const tar = Buffer.alloc(1024, 1);
+    // Three runs at distinct minutes — distinct dated slots, none overwritten.
+    vi.useFakeTimers();
+    try {
+      for (const t of ['2026-06-13T05:31:00Z', '2026-06-14T05:31:00Z', '2026-06-15T05:31:00Z']) {
+        vi.setSystemTime(new Date(t));
+        await stageUploadedServiceTar('adguard', tar);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(slots('adguard')).toEqual([
+      'adguard-20260613-0531.tar',
+      'adguard-20260614-0531.tar',
+      'adguard-20260615-0531.tar',
+    ]);
+  });
+
+  it('prunes the oldest snapshots beyond the configured retention (keep N), removing sidecars too', async () => {
+    mockGetConfig.mockResolvedValue({ templateSettings: {}, externalBackup: { enabled: true, retention: 2 } });
+    const tar = Buffer.alloc(1024, 2);
+    vi.useFakeTimers();
+    try {
+      for (const t of ['2026-06-12T05:31:00Z', '2026-06-13T05:31:00Z', '2026-06-14T05:31:00Z', '2026-06-15T05:31:00Z']) {
+        vi.setSystemTime(new Date(t));
+        await stageUploadedServiceTar('adguard', tar);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+    // Only the 2 most-recent remain; older ones AND their sidecars are gone.
+    expect(slots('adguard')).toEqual(['adguard-20260614-0531.tar', 'adguard-20260615-0531.tar']);
+    expect(store.has(`${NAS_BACKUP_DIR}/adguard-20260612-0531.tar`)).toBe(false);
+    expect(store.has(`${NAS_BACKUP_DIR}/adguard-20260612-0531.tar.meta.json`)).toBe(false);
+  });
+
+  it('a bare legacy <service>.tar is pruned first (sorts oldest) once retention is reached', async () => {
+    mockGetConfig.mockResolvedValue({ templateSettings: {}, externalBackup: { enabled: true, retention: 1 } });
+    // Seed a pre-#1865 single slot, then one dated run with retention 1.
+    store.set(`${NAS_BACKUP_DIR}/adguard.tar`, Buffer.alloc(512, 9));
+    store.set(`${NAS_BACKUP_DIR}/adguard.tar.meta.json`, Buffer.from('{}'));
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-15T05:31:00Z'));
+      await stageUploadedServiceTar('adguard', Buffer.alloc(1024, 3));
+    } finally {
+      vi.useRealTimers();
+    }
+    // The bare legacy slot is gone; only the new dated snapshot survives.
+    expect(store.has(`${NAS_BACKUP_DIR}/adguard.tar`)).toBe(false);
+    expect(slots('adguard')).toEqual(['adguard-20260615-0531.tar']);
+  });
+
+  it('defaults retention to DEFAULT_BACKUP_RETENTION when unset', async () => {
+    expect(DEFAULT_BACKUP_RETENTION).toBe(7);
+    const tar = Buffer.alloc(1024, 4);
+    vi.useFakeTimers();
+    try {
+      // 9 runs, no retention configured → keep 7, prune 2 oldest.
+      for (let d = 1; d <= 9; d++) {
+        vi.setSystemTime(new Date(`2026-06-${String(d).padStart(2, '0')}T05:31:00Z`));
+        await stageUploadedServiceTar('adguard', tar);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(slots('adguard')).toHaveLength(DEFAULT_BACKUP_RETENTION);
+    expect(slots('adguard')[0]).toBe('adguard-20260603-0531.tar'); // oldest kept = day 3
+  });
+});
+
 describe('manifest integration', () => {
   it('the real adguard manifest excludes querylog while keeping the config', async () => {
     const src = await mkTmp();
@@ -509,11 +637,12 @@ describe('stageUploadedServiceTar', () => {
     const res = await stageUploadedServiceTar('adguard', tar);
 
     const paths = mockNas.nasUpload.mock.calls.map(c => c[0]);
-    expect(paths).toContain(`${NAS_BACKUP_DIR}/adguard.tar`);
-    expect(paths).toContain(`${NAS_BACKUP_DIR}/adguard.tar.meta.json`);
-    expect(res.tarName).toBe('adguard.tar');
+    // #1865 — dated slot, not a single overwritten adguard.tar.
+    expect(res.tarName).toMatch(/^adguard-\d{8}-\d{4}\.tar$/);
+    expect(paths).toContain(`${NAS_BACKUP_DIR}/${res.tarName}`);
+    expect(paths).toContain(`${NAS_BACKUP_DIR}/${res.tarName}.meta.json`);
 
-    const tarCall = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('/adguard.tar'))!;
+    const tarCall = mockNas.nasUpload.mock.calls.find(c => datedTarRe('adguard').test(String(c[0])))!;
     expect(tarCall[1]).toEqual(tar); // bytes passed through unchanged
     const metaCall = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('.meta.json'))!;
     expect(JSON.parse(String(metaCall[1])).service).toBe('adguard');

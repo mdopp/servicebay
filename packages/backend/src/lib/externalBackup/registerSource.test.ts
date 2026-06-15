@@ -35,7 +35,7 @@ beforeEach(() => {
   // Default: no destination resolves (not configured). Configured tests below
   // set a non-null resolved target.
   mockResolveTarget.mockResolvedValue(null);
-  mockListBackups.mockResolvedValue([{ service: 'home-assistant', tarName: 'home-assistant.tar', size: 2_340_000 }]);
+  mockListBackups.mockResolvedValue([{ service: 'home-assistant', tarName: 'home-assistant-20260615-0531.tar', size: 2_340_000, stamp: '20260615-0531' }]);
 });
 
 const FTP_TARGET = { transport: 'ftp', host: '192.168.178.1', user: 'fritz9746', password: 'pw', secure: false };
@@ -96,7 +96,7 @@ describe('getNasBackupOverview', () => {
     const o = await getNasBackupOverview();
     expect(o.configured).toBe(true);
     expect(o.connection).toEqual({ ok: true });
-    expect(o.backups).toEqual([{ service: 'home-assistant', tarName: 'home-assistant.tar', size: 2_340_000 }]);
+    expect(o.backups).toEqual([{ service: 'home-assistant', tarName: 'home-assistant-20260615-0531.tar', size: 2_340_000, stamp: '20260615-0531' }]);
   });
 
   it('surfaces a connection failure with no backups', async () => {

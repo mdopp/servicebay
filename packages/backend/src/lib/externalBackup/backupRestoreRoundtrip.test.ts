@@ -11,7 +11,7 @@ import path from 'path';
 // Only the NAS transport is mocked (an in-memory store); everything between is
 // the production code path.
 const { mockNas, mockCfg } = vi.hoisted(() => ({
-  mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn() },
+  mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn(), nasRemove: vi.fn() },
   mockCfg: { getConfig: vi.fn() },
 }));
 vi.mock('./nasClient', () => mockNas);
@@ -23,6 +23,13 @@ import { restoreServiceBackup } from './restore';
 let nas: Map<string, Buffer>;
 let tmpRoot: string;
 
+/** A dated slot tar for `service` currently on the in-memory NAS, if any. */
+function datedSlot(service: string): string | undefined {
+  return [...nas.keys()]
+    .map(k => k.slice(`${NAS_BACKUP_DIR}/`.length))
+    .find(name => new RegExp(`^${service}-\\d{8}-\\d{4}\\.tar$`).test(name));
+}
+
 beforeEach(async () => {
   vi.clearAllMocks();
   nas = new Map();
@@ -32,6 +39,15 @@ beforeEach(async () => {
     if (!b) throw new Error(`NAS 404: ${p}`);
     return b;
   });
+  // Back the listing + removal off the same in-memory store so the dated-slot
+  // round-trip resolves the latest snapshot and pruning works end-to-end (#1865).
+  mockNas.nasList.mockImplementation(async (dir = '') => {
+    const prefix = dir ? `${dir}/` : '';
+    return [...nas.entries()]
+      .filter(([k]) => k.startsWith(prefix))
+      .map(([k, v]) => ({ name: k.slice(prefix.length), size: v.length }));
+  });
+  mockNas.nasRemove.mockImplementation(async (p: string) => { nas.delete(`${NAS_BACKUP_DIR}/${p.split('/').pop()}`); });
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'roundtrip-'));
   mockCfg.getConfig.mockResolvedValue({ templateSettings: { DATA_DIR: tmpRoot } });
 });
@@ -59,7 +75,8 @@ describe('backup → restore round-trip (#1218 / #1190)', () => {
     });
 
     await backupServiceToNas('home-assistant', { serviceDataDir: src });
-    expect(nas.has(`${NAS_BACKUP_DIR}/home-assistant.tar`)).toBe(true);
+    // #1865: a dated slot, not a single overwritten home-assistant.tar.
+    expect(datedSlot('home-assistant')).toBeDefined();
 
     const { dataDir } = await restoreServiceBackup('home-assistant', { local: true });
 

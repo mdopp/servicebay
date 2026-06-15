@@ -55,6 +55,11 @@ beforeEach(async () => {
   vi.clearAllMocks();
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'restore-test-'));
   mockCfg.getConfig.mockResolvedValue({ templateSettings: { DATA_DIR: tmpRoot } });
+  // #1865 — restore now resolves the latest snapshot from the listing. Default
+  // to advertising the bare legacy slot (a valid undated snapshot) so the
+  // existing backward-compat restore tests resolve it; tests asserting dated
+  // snapshot selection override this.
+  mockNas.nasList.mockResolvedValue([{ name: 'home-assistant.tar', size: 1024 }]);
   // HA config lives one level down under home-assistant/homeassistant/ (the
   // container's /config) — the manifest dataSubdir (#1597). Restore extracts
   // the producer's bare-rooted tar into exactly this dir.
@@ -100,6 +105,55 @@ describe('restoreServiceBackup', () => {
 
   it('rejects a service with no backup manifest', async () => {
     await expect(restoreServiceBackup('not-a-service')).rejects.toThrow(/No backup manifest/);
+  });
+
+  it('defaults to the MOST-RECENT dated snapshot when no tarName is given (#1865)', async () => {
+    // Two dated snapshots on the NAS — the newer carries the good config, the
+    // older the (later-corrupted) state. Default restore picks the newest.
+    mockNas.nasList.mockResolvedValue([
+      { name: 'home-assistant-20260614-0530.tar', size: 50 },
+      { name: 'home-assistant-20260615-0531.tar', size: 60 },
+    ]);
+    mockNas.nasDownload.mockImplementation(async (p: string) => {
+      if (p === `${NAS_BACKUP_DIR}/home-assistant-20260615-0531.tar`) {
+        return buildServiceTar({ 'configuration.yaml': 'latest:' });
+      }
+      throw new Error(`unexpected download ${p}`);
+    });
+    const res = await restoreServiceBackup('home-assistant', { local: true });
+    expect(res.files).toBe(1);
+    expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('latest:');
+  });
+
+  it('restores a SPECIFIC older snapshot when tarName is given — the recover-from-before-corruption path (#1865)', async () => {
+    mockNas.nasList.mockResolvedValue([
+      { name: 'home-assistant-20260614-0530.tar', size: 50 }, // the good pre-corruption copy
+      { name: 'home-assistant-20260615-0531.tar', size: 60 }, // the corrupted latest
+    ]);
+    mockNas.nasDownload.mockImplementation(async (p: string) => {
+      if (p === `${NAS_BACKUP_DIR}/home-assistant-20260614-0530.tar`) {
+        return buildServiceTar({ 'automations.yaml': '- alias: front door\n' });
+      }
+      throw new Error(`unexpected download ${p}`);
+    });
+    const res = await restoreServiceBackup('home-assistant', { local: true, tarName: 'home-assistant-20260614-0530.tar' });
+    expect(res.files).toBe(1);
+    expect(await fs.readFile(path.join(dataDir, 'automations.yaml'), 'utf8')).toBe('- alias: front door\n');
+  });
+
+  it('rejects a tarName that does not belong to the service (no cross-service restore) (#1865)', async () => {
+    mockNas.nasList.mockResolvedValue([
+      { name: 'home-assistant-20260615-0531.tar', size: 60 },
+      { name: 'adguard-20260615-0531.tar', size: 30 },
+    ]);
+    await expect(
+      restoreServiceBackup('home-assistant', { local: true, tarName: 'adguard-20260615-0531.tar' }),
+    ).rejects.toThrow(/No backup snapshot/);
+  });
+
+  it('errors clearly when the service has no snapshot on the NAS (#1865)', async () => {
+    mockNas.nasList.mockResolvedValue([{ name: 'adguard.tar', size: 30 }]);
+    await expect(restoreServiceBackup('home-assistant', { local: true })).rejects.toThrow(/No config backup found/);
   });
 });
 
@@ -253,9 +307,11 @@ describe('wipeServiceForReinstall (#1585)', () => {
 });
 
 describe('NPM credential reconcile after restore (#1529)', () => {
-  /** Serve an nginx.tar (restored into tmpRoot/nginx-proxy-manager). */
+  /** Serve an nginx.tar (restored into tmpRoot/nginx-proxy-manager). The bare
+   *  slot is a valid undated snapshot the latest-resolver finds (#1865). */
   async function serveNginxTar() {
     const tar = await buildServiceTar({ 'data/database.sqlite': 'RESTORED-DB' });
+    mockNas.nasList.mockResolvedValue([{ name: 'nginx.tar', size: tar.length }]);
     mockNas.nasDownload.mockImplementation(async (p: string) => {
       if (p === `${NAS_BACKUP_DIR}/nginx.tar`) return tar;
       throw new Error('not found');

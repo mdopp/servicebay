@@ -18,7 +18,13 @@
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { fetchServiceBackup, listServiceBackups, resolveServiceDataDir, type ServiceBackupMeta } from './producer';
+import {
+  fetchServiceBackup,
+  latestServiceBackupName,
+  listServiceBackups,
+  resolveServiceDataDir,
+  type ServiceBackupMeta,
+} from './producer';
 import { getServiceManifest, getConfigPaths } from './serviceManifest';
 import { safeTarExtract, extractServiceConfigToNode } from '../systemBackup';
 import { getExecutor, type Executor } from '../executor';
@@ -209,13 +215,19 @@ export async function isFreshDataDir(dir: string): Promise<boolean> {
 }
 
 /**
- * Restore `<service>.tar` from the NAS into the service's data dir.
- * Refuses a non-empty data dir unless `force` is set. Returns the data dir,
- * the number of files restored, and the backup's meta sidecar (if present).
+ * Restore a service's config backup from the NAS into its data dir. By default
+ * restores the MOST-RECENT dated snapshot (#1865); pass `tarName` to restore a
+ * specific snapshot instead (the "restore a chosen one" path — recover from
+ * BEFORE a silently-corrupted run, not just the latest state). A bare legacy
+ * `<service>.tar` (pre-#1865) is a valid snapshot and resolves as latest when
+ * it's the only one — existing single-slot backups stay restorable.
+ *
+ * Refuses a non-empty data dir unless `force` is set. Returns the data dir, the
+ * number of files restored, and the backup's meta sidecar (if present).
  */
 export async function restoreServiceBackup(
   service: string,
-  opts: { force?: boolean; node?: string | null; local?: boolean } = {},
+  opts: { force?: boolean; node?: string | null; local?: boolean; tarName?: string } = {},
 ): Promise<RestoreResult> {
   if (!getServiceManifest(service)) {
     throw new Error(`No backup manifest for service "${service}"`);
@@ -231,7 +243,24 @@ export async function restoreServiceBackup(
     );
   }
 
-  const { tar, meta } = await fetchServiceBackup(`${service}.tar`);
+  // A specific snapshot when asked; otherwise default to the most-recent one.
+  // A requested tarName must belong to this service (and exist), so a caller
+  // can't restore one service's snapshot into another's data dir.
+  let tarName = opts.tarName;
+  if (tarName) {
+    const known = (await listServiceBackups()).find(b => b.service === service && b.tarName === tarName);
+    if (!known) {
+      throw new Error(`No backup snapshot "${tarName}" on the NAS for service "${service}"`);
+    }
+  } else {
+    const latest = await latestServiceBackupName(service);
+    if (!latest) {
+      throw new Error(`No config backup found on the NAS for service "${service}"`);
+    }
+    tarName = latest;
+  }
+
+  const { tar, meta } = await fetchServiceBackup(tarName);
   await backend.extractTar(tar, dataDir);
 
   const files = await backend.countFiles(dataDir);

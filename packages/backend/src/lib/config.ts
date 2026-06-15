@@ -337,6 +337,9 @@ export interface AppConfig {
     enabled: boolean;
     /** Daily run time in 24h `HH:MM` UTC. */
     time?: string;
+    /** How many dated snapshots to keep per service before pruning the oldest
+     *  (#1865). Bounded so the NAS can't fill; defaults to 7 when unset. */
+    retention?: number;
     target?: ExternalBackupTarget;
   };
   /**
