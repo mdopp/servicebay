@@ -131,16 +131,49 @@ function buildSSHArgv(target: { host: string; port?: number; user?: string; iden
     return argv;
 }
 
+// Write a mount.cifs `credentials=` file (username/password/domain lines) into
+// a private 0700 temp dir, with the file itself at 0600. Returns its absolute
+// path. Using a credentials file — rather than `password=<pw>` inline in the
+// comma-joined `-o` options — means a password containing commas, newlines or
+// `=` is passed verbatim and cannot inject extra mount options.
+async function writeCifsCredentialsFile(
+    username: string,
+    password?: string,
+    domain?: string,
+): Promise<string> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'servicebay-cifs-'));
+    const file = path.join(dir, 'credentials');
+    const lines = [`username=${username}`];
+    if (password) lines.push(`password=${password}`);
+    if (domain) lines.push(`domain=${domain}`);
+    // mode 0600 from creation; the enclosing mkdtemp dir is already 0700.
+    await fs.writeFile(file, `${lines.join('\n')}\n`, { mode: 0o600 });
+    return file;
+}
+
+async function removeCifsCredentialsFile(file: string): Promise<void> {
+    try {
+        await fs.rm(path.dirname(file), { recursive: true, force: true });
+    } catch (e) {
+        logger.warn('Backup', `Failed to remove CIFS credentials file: ${e}`);
+    }
+}
+
 async function mountTarget(target: BackupTarget, mountPath: string): Promise<void> {
     await fs.mkdir(mountPath, { recursive: true });
 
     if (target.type === 'smb') {
         const share = `//${target.host}/${target.share}`;
         const opts: string[] = [];
+        // Credentials never go inline in the comma-joined `-o` options: a comma
+        // (or newline) in a password would terminate the value and let an
+        // attacker inject arbitrary mount options (e.g. uid=0). Instead we hand
+        // mount.cifs a 0600 `credentials=` file — the standard mechanism — so
+        // the password is passed verbatim and can't break out of the option list.
+        let credentialsFile: string | undefined;
         if (target.username) {
-            opts.push(`username=${target.username}`);
-            if (target.password) opts.push(`password=${target.password}`);
-            if (target.domain) opts.push(`domain=${target.domain}`);
+            credentialsFile = await writeCifsCredentialsFile(target.username, target.password, target.domain);
+            opts.push(`credentials=${credentialsFile}`);
         } else {
             opts.push('guest');
         }
@@ -148,7 +181,14 @@ async function mountTarget(target: BackupTarget, mountPath: string): Promise<voi
         opts.push(`gid=${process.getgid?.() ?? 1000}`);
         opts.push('file_mode=0664', 'dir_mode=0775');
 
-        await execFileAsync('sudo', ['mount', '-t', 'cifs', share, mountPath, '-o', opts.join(',')]);
+        try {
+            await execFileAsync('sudo', ['mount', '-t', 'cifs', share, mountPath, '-o', opts.join(',')]);
+        } finally {
+            // The credentials file is only needed for the duration of the mount
+            // call; mount.cifs reads it synchronously, so remove it immediately
+            // (along with its private temp dir) regardless of success/failure.
+            if (credentialsFile) await removeCifsCredentialsFile(credentialsFile);
+        }
     } else if (target.type === 'nfs') {
         const nfsPath = `${target.host}:${target.export}`;
         await execFileAsync('sudo', ['mount', '-t', 'nfs', nfsPath, mountPath]);

@@ -145,9 +145,17 @@ export function _resetForTests() {
 
 /**
  * Extract a stable client identifier from request headers.
- * Honors X-Forwarded-For (first hop) when present — ServiceBay sits behind
- * NPM in production. Falls back to a literal "unknown" so absence still
- * collapses to a single bucket rather than bypassing the limiter.
+ *
+ * ServiceBay sits behind NPM (nginx) in production. We must derive the bucket
+ * key from a value the *proxy* controls, not one the client can set — NPM
+ * overwrites `X-Real-IP` with nginx's authoritative `$remote_addr`, and the
+ * LAST `X-Forwarded-For` hop is the one nginx appended. We never take the
+ * left-most XFF entry: a client can prepend an arbitrary value there and, by
+ * rotating it per request, would otherwise rotate its rate-limit bucket and
+ * dodge the login brute-force limit. Mirrors the trusted-last-hop convention
+ * in mcp/bootstrapToken.ts's clientIpForLanGate. Falls back to a literal
+ * "unknown" so absence still collapses to a single bucket rather than
+ * bypassing the limiter.
  */
 export function clientKeyFromHeaders(headers: Headers | Record<string, string | string[] | undefined>): string {
   const get = (name: string): string | undefined => {
@@ -156,12 +164,15 @@ export function clientKeyFromHeaders(headers: Headers | Record<string, string | 
     if (Array.isArray(v)) return v[0];
     return v;
   };
+  const real = get('x-real-ip');
+  if (real) {
+    const trimmed = real.trim();
+    if (trimmed) return trimmed;
+  }
   const xff = get('x-forwarded-for');
   if (xff) {
-    const first = xff.split(',')[0]?.trim();
-    if (first) return first;
+    const hops = xff.split(',').map(s => s.trim()).filter(Boolean);
+    if (hops.length) return hops[hops.length - 1];
   }
-  const real = get('x-real-ip');
-  if (real) return real.trim();
   return 'unknown';
 }

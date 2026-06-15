@@ -2,16 +2,26 @@ import * as pty from 'node-pty';
 import * as net from 'net';
 import * as fs from 'fs';
 import * as path from 'path';
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'util';
 import { SSH_DIR } from './dirs';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export async function verifySSHConnection(host: string, port: number, user: string, identityFile: string): Promise<boolean> {
   try {
-    const cmd = `ssh -i "${identityFile}" -p ${port} -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 ${user}@${host} exit`;
-    await execAsync(cmd);
+    // Use execFile with an args array (no shell) so host/user/identityFile/port
+    // cannot inject shell commands. Mirrors backup/service.ts:buildSSHArgv.
+    const args = [
+      '-i', identityFile,
+      '-p', String(port),
+      '-o', 'BatchMode=yes',
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'ConnectTimeout=5',
+      `${user}@${host}`,
+      'exit',
+    ];
+    await execFileAsync('ssh', args);
     return true;
   } catch {
     return false;
@@ -51,8 +61,9 @@ export async function setupSSHKey(host: string, port: number, user: string, pass
     if (!fs.existsSync(sshDir)) fs.mkdirSync(sshDir, { recursive: true, mode: 0o700 });
     
     try {
-        // Generate key if missing (non-interactive)
-        await execAsync(`ssh-keygen -t rsa -b 4096 -f "${privKeyPath}" -N ""`);
+        // Generate key if missing (non-interactive). execFile + args array (no
+        // shell) so the on-disk key path can't be interpolated into a command.
+        await execFileAsync('ssh-keygen', ['-t', 'rsa', '-b', '4096', '-f', privKeyPath, '-N', '']);
         logs.push('SSH key generated.');
     } catch (e) {
         logs.push(`Failed to generate SSH key: ${e}`);

@@ -23,8 +23,14 @@ import { getConfig, updateConfig } from '@/lib/config';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
 import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
+import { shellQuote } from '@/lib/util/shellQuote';
 
 const LOG = 'reverseProxy:npmRekey';
+
+/** Container names podman accepts — letters, digits, and `_.-`. We reject
+ *  anything else so a name parsed from `podman ps` stdout can never carry
+ *  shell metacharacters into the rekey exec command. */
+const CONTAINER_NAME_RE = /^[a-zA-Z0-9_.-]+$/;
 
 /** Resolve NPM's admin API base URL from the running nginx service, or
  *  null when NPM isn't deployed/active. */
@@ -136,10 +142,19 @@ export async function rekeyNpmAdmin(node: string): Promise<RekeyResult> {
   if (!container) {
     return { ok: false, message: 'Could not find the running NPM container to re-key.' };
   }
+  // Defence-in-depth: the container name comes from `podman ps` stdout and is
+  // interpolated into a shell command below. Reject anything that isn't a
+  // plain podman name so no metacharacter can break out of the command.
+  if (!CONTAINER_NAME_RE.test(container)) {
+    return { ok: false, message: 'Refusing to re-key: the detected NPM container name is not a valid podman name.' };
+  }
   const newPassword = generateRandomSecret(32);
   const b64 = Buffer.from(NPM_REKEY_JS).toString('base64');
+  // The pipe (base64 -d → podman exec) requires shell form, so every
+  // interpolated value is shell-quoted. NEWPW is also quoted so the generated
+  // password is never re-split by the shell.
   const rewrite = await agent.sendCommand('exec', {
-    command: `echo ${b64} | base64 -d | podman exec -i -e NEWPW=${newPassword} ${container} node -`,
+    command: `echo ${b64} | base64 -d | podman exec -i -e NEWPW=${shellQuote(newPassword)} ${shellQuote(container)} node -`,
   }, { timeoutMs: 30_000 });
   const out = ((rewrite as { stdout?: string }).stdout || '').trim();
   const m = out.match(/email=(.*);updated=(\d+)/);
