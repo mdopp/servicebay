@@ -1355,6 +1355,66 @@ class HomeAssistantScript(unittest.TestCase):
             with mock.patch.object(m, "ZWAVE_BY_ID_DIR", by_id):
                 self.assertIsNone(m._detect_single_usb_serial_device())
 
+    def test_fresh_install_persists_solaris_token(self):
+        """#1847 / solbay#408: on a fresh install (onboarding user step not
+        done) the script onboards the admin, mints a long-lived token, and
+        persists it at the new `.solaris-long-lived-token` path that downstream
+        adopt_ha_long_lived_token() reads — otherwise HASS_TOKEN comes up empty."""
+        import tempfile
+        import urllib.request
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            def fake_urlopen(req, *_a, **_kw):
+                url = req.full_url if hasattr(req, "full_url") else str(req)
+                if "github.com" in url:
+                    raise AssertionError(f"unexpected download: {url}")
+
+                class _R:
+                    def __init__(self, status, body):
+                        self.status = status
+                        self._b = json.dumps(body).encode("utf-8") if body is not None else b"<html></html>"
+                    def read(self):
+                        return self._b
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *a):
+                        return False
+
+                if "/api/onboarding/users" in url:
+                    return _R(200, {"auth_code": "fresh-auth-code"})
+                if "/api/onboarding" in url:
+                    return _R(200, [{"step": "user", "done": False}])
+                if "/auth/token" in url:
+                    return _R(200, {"access_token": "fresh-access-tok"})
+                return _R(200, None)
+
+            def fake_mint(access_token):
+                return "fresh-long-lived"
+
+            env = {
+                "HA_OIDC_AUTH_VERSION": "v0.6.0",
+                "DATA_DIR": tmp,
+                "OSCAR_HA_ADMIN_USERNAME": "oscar",
+                "OSCAR_HA_ADMIN_PASSWORD": "pw",
+            }
+            ha_cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            oidc = os.path.join(ha_cfg, "custom_components", "auth_oidc")
+            os.makedirs(oidc, exist_ok=True)
+            with open(os.path.join(oidc, ".sb_installed_version"), "w") as fh:
+                fh.write("v0.6.0\n")
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch.object(m, "_mint_long_lived_token", fake_mint), \
+                    mock.patch.object(m, "_complete_remaining_onboarding_steps", lambda *_a, **_k: None), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            token_file = os.path.join(ha_cfg, ".solaris-long-lived-token")
+            self.assertTrue(os.path.isfile(token_file))
+            with open(token_file) as fh:
+                self.assertEqual(fh.read().strip(), "fresh-long-lived")
+
     def test_token_remint_via_login_when_user_already_onboarded(self):
         """#1505: after a wipe-configs reinstall HA's user already exists
         but ServiceBay lost the long-lived token. The script must log in as
@@ -1421,7 +1481,7 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("Re-provisioning HA long-lived token from kept data", out)
             self.assertEqual(minted.get("access"), "short-lived-tok")
-            token_file = os.path.join(tmp, "home-assistant", "homeassistant", ".solilos-long-lived-token")
+            token_file = os.path.join(tmp, "home-assistant", "homeassistant", ".solaris-long-lived-token")
             self.assertTrue(os.path.isfile(token_file))
             with open(token_file) as fh:
                 self.assertEqual(fh.read().strip(), "long-lived-tok")
@@ -1436,7 +1496,7 @@ class HomeAssistantScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = os.path.join(tmp, "home-assistant", "homeassistant")
             os.makedirs(cfg, exist_ok=True)
-            with open(os.path.join(cfg, ".solilos-long-lived-token"), "w") as fh:
+            with open(os.path.join(cfg, ".solaris-long-lived-token"), "w") as fh:
                 fh.write("good-token\n")
             # Stamp so the OIDC install path skips the tarball download.
             oidc = os.path.join(cfg, "custom_components", "auth_oidc")
@@ -1472,11 +1532,12 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("still authenticates — nothing to reconcile", out)
 
-    def test_legacy_oscar_token_migrated_to_solilos(self):
-        """#1769: a box onboarded before the OSCAR→Solilos rename has a valid
-        token only at the legacy `.oscar-long-lived-token` path. The deploy
-        renames it on disk to `.solilos-long-lived-token` and reuses it — no
-        re-mint, no login flow, even without working admin creds."""
+    def test_legacy_oscar_token_migrated_to_solaris(self):
+        """#1769 + solbay#408: a box onboarded before the OSCAR→Solilos→Solaris
+        renames has a valid token only at the oldest legacy
+        `.oscar-long-lived-token` path. The deploy renames it on disk to
+        `.solaris-long-lived-token` and reuses it — no re-mint, no login flow,
+        even without working admin creds (two-hop chain in one move)."""
         import tempfile
         import urllib.request
         m = load_script("home-assistant")
@@ -1485,7 +1546,62 @@ class HomeAssistantScript(unittest.TestCase):
             cfg = os.path.join(tmp, "home-assistant", "homeassistant")
             os.makedirs(cfg, exist_ok=True)
             legacy_file = os.path.join(cfg, ".oscar-long-lived-token")
-            new_file = os.path.join(cfg, ".solilos-long-lived-token")
+            new_file = os.path.join(cfg, ".solaris-long-lived-token")
+            with open(legacy_file, "w") as fh:
+                fh.write("good-token\n")
+            # Stamp so the OIDC install path skips the tarball download.
+            oidc = os.path.join(cfg, "custom_components", "auth_oidc")
+            os.makedirs(oidc, exist_ok=True)
+            with open(os.path.join(oidc, ".sb_installed_version"), "w") as fh:
+                fh.write("v0.6.0\n")
+
+            def fake_urlopen(req, *_a, **_kw):
+                url = req.full_url if hasattr(req, "full_url") else str(req)
+                if "/auth/login_flow" in url:
+                    raise AssertionError("must not start a login flow after migrating a valid legacy token")
+
+                class _R:
+                    status = 200
+                    def read(self):
+                        return b"<html></html>"
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *a):
+                        return False
+                return _R()
+
+            env = {
+                "HA_OIDC_AUTH_VERSION": "v0.6.0",
+                "DATA_DIR": tmp,
+                "OSCAR_HA_ADMIN_USERNAME": "oscar",
+                "OSCAR_HA_ADMIN_PASSWORD": "pw",
+            }
+            with run_with_env(env), \
+                    mock.patch.object(urllib.request, "urlopen", fake_urlopen), \
+                    mock.patch.object(m, "HA_READY_INTERVAL", 0.001):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertFalse(os.path.exists(legacy_file))
+            self.assertTrue(os.path.isfile(new_file))
+            with open(new_file) as fh:
+                self.assertEqual(fh.read().strip(), "good-token")
+            self.assertIn("Migrated legacy HA token", out)
+            self.assertIn("still authenticates — nothing to reconcile", out)
+
+    def test_legacy_solilos_token_migrated_to_solaris(self):
+        """solbay#408: a box onboarded after OSCAR→Solilos but before
+        Solilos→Solaris has a valid token at `.solilos-long-lived-token`. The
+        deploy renames it on disk to `.solaris-long-lived-token` and reuses it —
+        no re-mint, no login flow, even without working admin creds."""
+        import tempfile
+        import urllib.request
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            os.makedirs(cfg, exist_ok=True)
+            legacy_file = os.path.join(cfg, ".solilos-long-lived-token")
+            new_file = os.path.join(cfg, ".solaris-long-lived-token")
             with open(legacy_file, "w") as fh:
                 fh.write("good-token\n")
             # Stamp so the OIDC install path skips the tarball download.

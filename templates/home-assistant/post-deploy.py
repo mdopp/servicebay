@@ -428,11 +428,16 @@ def ensure_auth_oidc_config_block() -> bool:
 # generates. Idempotent: if onboarding is already done OR the token file is
 # already present, the steps are skipped.
 
-HA_LONG_LIVED_TOKEN_PATH = "/.solilos-long-lived-token"  # joined with HA config dir
-# Pre-rename name (OSCAR→Solilos). Already-onboarded boxes have a valid token at
-# this path; we migrate it on disk so the deploy doesn't have to re-mint (and so
-# downstream post-deploys that look for the new name keep working without creds).
-HA_LEGACY_LONG_LIVED_TOKEN_PATH = "/.oscar-long-lived-token"
+HA_LONG_LIVED_TOKEN_PATH = "/.solaris-long-lived-token"  # joined with HA config dir
+# Pre-rename names, newest-first. Already-onboarded boxes have a valid token at
+# one of these legacy paths; we migrate it on disk so the deploy doesn't have to
+# re-mint (and so downstream post-deploys that look for the new name keep working
+# without creds). Two-hop chain: .oscar (OSCAR→Solilos #1769) → .solilos
+# (Solilos→Solaris solbay#408) → .solaris.
+HA_LEGACY_LONG_LIVED_TOKEN_PATHS = [
+    "/.solilos-long-lived-token",
+    "/.oscar-long-lived-token",
+]
 HA_CONTAINER_NAME = "home-assistant-homeassistant"
 HA_CLIENT_ID = "http://127.0.0.1:8123/"
 
@@ -816,20 +821,22 @@ def configure_oscar_ha_onboarding() -> None:
         return
     token_file = os.path.join(_ha_config_dir(), HA_LONG_LIVED_TOKEN_PATH.lstrip("/"))
 
-    # One-time migration for the OSCAR→Solilos rename (#1769). A box onboarded
-    # before the rename has a *valid* token at the legacy path. If the new file
-    # is absent but the legacy one is present, move it across so the existing
-    # token is reused (no re-mint, works without admin creds) and downstream
-    # post-deploys that read the new name keep authenticating.
-    legacy_token_file = os.path.join(
-        _ha_config_dir(), HA_LEGACY_LONG_LIVED_TOKEN_PATH.lstrip("/")
-    )
-    if not os.path.exists(token_file) and os.path.exists(legacy_token_file):
-        try:
-            os.rename(legacy_token_file, token_file)
-            log(f"   Migrated legacy HA token {legacy_token_file} → {token_file} (OSCAR→Solilos rename).")
-        except OSError as e:
-            log(f"   ⚠️ Could not migrate legacy HA token to {token_file}: {e}")
+    # One-time migration for the rename chain (OSCAR→Solilos #1769,
+    # Solilos→Solaris solbay#408). A box onboarded before a rename has a *valid*
+    # token at one of the legacy paths. If the new file is absent but a legacy
+    # one is present, move it across so the existing token is reused (no re-mint,
+    # works without admin creds) and downstream post-deploys that read the new
+    # name keep authenticating. Newest-first so a two-hop box picks .solilos.
+    if not os.path.exists(token_file):
+        for legacy_path in HA_LEGACY_LONG_LIVED_TOKEN_PATHS:
+            legacy_token_file = os.path.join(_ha_config_dir(), legacy_path.lstrip("/"))
+            if os.path.exists(legacy_token_file):
+                try:
+                    os.rename(legacy_token_file, token_file)
+                    log(f"   Migrated legacy HA token {legacy_token_file} → {token_file} (rename chain).")
+                except OSError as e:
+                    log(f"   ⚠️ Could not migrate legacy HA token to {token_file}: {e}")
+                break
 
     # Reconcile an existing token first (#1505). A wipe-configs reinstall can
     # leave a token file behind in HA's kept config dir whose refresh-token
