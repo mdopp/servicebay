@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.118.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.118.0...servicebay-v4.118.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **auth:** derive rate-limit key from trusted last XFF hop ([dd7f1ba](https://github.com/mdopp/servicebay/commit/dd7f1bade2650771b4461f3e034a29c97c73ce68)), closes [#1852](https://github.com/mdopp/servicebay/issues/1852)
+* **backup:** pass CIFS password via 0600 credentials file, not inline -o ([47d5db7](https://github.com/mdopp/servicebay/commit/47d5db7e02d6a3545befac802af3cb6eb2691315)), closes [#1855](https://github.com/mdopp/servicebay/issues/1855)
+* **reverseProxy:** validate + shell-quote NPM rekey container exec ([8b92f16](https://github.com/mdopp/servicebay/commit/8b92f164832f71a1e8e0004b98a2e25f3ba67e77)), closes [#1854](https://github.com/mdopp/servicebay/issues/1854)
+* **security:** harden XFF rate-limit key, SSH exec, NPM rekey, CIFS mount ([31b6560](https://github.com/mdopp/servicebay/commit/31b656040352a94f44243ddaf3cbb429ae513259))
+* **ssh:** run verifySSHConnection via execFile, no shell ([4a210b4](https://github.com/mdopp/servicebay/commit/4a210b4b6c2a40c1f2f36739dba78e0ce9df590b)), closes [#1853](https://github.com/mdopp/servicebay/issues/1853)
+
 ## [4.118.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.117.1...servicebay-v4.118.0) (2026-06-15)
 
 
