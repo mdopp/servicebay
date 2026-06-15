@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.119.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.119.0...servicebay-v4.119.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **externalBackup:** rotate NAS backups into dated slots with retention pruning ([9ff3388](https://github.com/mdopp/servicebay/commit/9ff3388215270857a35e54ce52ea66adb8d0ca4d)), closes [#1865](https://github.com/mdopp/servicebay/issues/1865)
+* **ha,externalBackup:** guard HA on emptied config + rotate NAS backups into dated slots ([26598b4](https://github.com/mdopp/servicebay/commit/26598b4b58bb413fca38f1630e20e115228fb509))
+* **services:** guard HA against starting on an emptied automations config ([ec7feec](https://github.com/mdopp/servicebay/commit/ec7feec55afb1ca4ef9f36393f0dcad414afd4f3)), closes [#1864](https://github.com/mdopp/servicebay/issues/1864)
+
 ## [4.119.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.118.1...servicebay-v4.119.0) (2026-06-15)
 
 
