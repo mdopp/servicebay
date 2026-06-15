@@ -63,9 +63,30 @@ spec:
     args:
     - --uri
     - tcp://0.0.0.0:10400
+    # Optional custom wake-word models (#1832). When the operator sets
+    # OPENWAKEWORD_CUSTOM_MODELS_DIR, the host path is mounted at
+    # /custom_models and wyoming-openwakeword scans it for .tflite models,
+    # which then show up as selectable wake words in Home Assistant. Empty
+    # by default → this section renders to nothing, so CPU/stock-model-only
+    # boxes are unaffected (same conditional pattern as HA's ZWAVE_DEVICE).
+    {{#OPENWAKEWORD_CUSTOM_MODELS_DIR}}
+    - --custom-model-dir
+    - /custom_models
+    {{/OPENWAKEWORD_CUSTOM_MODELS_DIR}}
+    {{#OPENWAKEWORD_CUSTOM_MODELS_DIR}}
+    volumeMounts:
+    - mountPath: /custom_models
+      name: openwakeword-custom-models
+    {{/OPENWAKEWORD_CUSTOM_MODELS_DIR}}
 
   volumes:
   - name: piper-data
     hostPath:
       path: {{DATA_DIR}}/voice/piper
       type: DirectoryOrCreate
+  {{#OPENWAKEWORD_CUSTOM_MODELS_DIR}}
+  - name: openwakeword-custom-models
+    hostPath:
+      path: {{OPENWAKEWORD_CUSTOM_MODELS_DIR}}
+      type: DirectoryOrCreate
+  {{/OPENWAKEWORD_CUSTOM_MODELS_DIR}}

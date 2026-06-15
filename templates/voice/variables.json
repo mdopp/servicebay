@@ -53,5 +53,10 @@
       "ru_RU-denis-medium"
     ],
     "default": "de_DE-thorsten-high"
+  },
+  "OPENWAKEWORD_CUSTOM_MODELS_DIR": {
+    "type": "string",
+    "description": "Optional host directory of custom wake-word models for openWakeWord. Leave empty to use the built-in wake words only (default — CPU/stock boxes are unaffected). When set, the directory is mounted into the openWakeWord container and scanned for .tflite models, which then appear as selectable wake words in Home Assistant. The directory is created on deploy if it doesn't exist; drop your model files there afterwards.",
+    "default": ""
   }
 }
