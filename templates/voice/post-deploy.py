@@ -314,6 +314,52 @@ def install_tts_units() -> bool:
     return install_unit(TTS_BRIDGE_UNIT, render_tts_bridge_unit()) and ok
 
 
+# ── piper teardown on GPU boxes (#1833) ──────────────────────────────────────
+
+PIPER_CONTAINER = "voice-piper"
+
+
+def stop_pod_piper() -> None:
+    """Stop the in-pod piper TTS container on GPU boxes (#1833).
+
+    On a CDI GPU box the active Assist-pipeline TTS is `tts.openai_streaming`
+    — the `voice-tts-bridge` (:10203) fronting Kokoro-Martin (#1815). The pod's
+    `piper` container (:10200) is then dead weight (~200 MB idle RAM) with no
+    live pipeline edge (owner-confirmed #1833). The container stays in
+    `template.yml` because CPU-only boxes still use it as their sole TTS; we
+    only stop it at runtime where the GPU TTS stack has taken over.
+
+    Best-effort + idempotent: `podman kube play` names the container
+    `voice-piper`; if it isn't running there's nothing to do, and a failure
+    only logs (it never aborts the rest of the post-deploy). The stop lasts
+    until the `voice` kube unit is restarted, at which point this post-deploy
+    re-runs and re-stops it.
+    """
+    try:
+        out = subprocess.run(
+            ["podman", "ps", "--format", "{{.Names}}"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError, OSError) as e:
+        log(f"   ⚠️ piper: could not list containers to stop it: {e}")
+        return
+    if PIPER_CONTAINER not in out.stdout.split():
+        log("   piper: not running on this GPU box — nothing to stop (#1833).")
+        return
+    stopped = subprocess.run(
+        ["podman", "stop", PIPER_CONTAINER],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if stopped.returncode != 0:
+        log(f"   ⚠️ piper: could not stop {PIPER_CONTAINER}: {stopped.stderr[:300]}")
+        return
+    log("   piper: stopped on GPU box — GPU TTS (voice-tts-bridge :10203) is active (#1833).")
+
+
 # ── legacy data migration (#348) ─────────────────────────────────────────────
 
 
@@ -362,11 +408,20 @@ def main() -> int:
     install_whisper_unit(data_dir)
 
     # Sol voice companion units (#1815) — GPU boxes only.
-    install_tts_units()
+    gpu_tts = install_tts_units()
+
+    # On GPU boxes the bridge (:10203 → tts.openai_streaming) is the live TTS,
+    # so the in-pod piper (:10200) is dead weight — stop it (#1833). CPU-only
+    # boxes keep piper as their sole TTS (gpu_tts is False there → untouched).
+    if gpu_tts:
+        stop_pod_piper()
 
     log("✅ Voice pipeline endpoints — paste these into Home Assistant → Settings → Voice Assistants:")
     log("   • Speech-to-text (Wyoming): tcp://localhost:10300")
-    log("   • Text-to-speech   (Wyoming): tcp://localhost:10200")
+    if gpu_tts:
+        log("   • Text-to-speech   (Wyoming): tcp://localhost:10203  (GPU bridge — piper :10200 is stopped, #1833)")
+    else:
+        log("   • Text-to-speech   (Wyoming): tcp://localhost:10200")
     log("   • Wake word        (Wyoming): tcp://localhost:10400")
 
     return 0

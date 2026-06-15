@@ -31,3 +31,15 @@
   Assist-pipeline TTS selection (solbay post-deploy) prefers the bridge
   entity when present. No schema change — purely additive companion
   units.
+
+## v2.2 (#1833)
+
+- GPU boxes now stop the in-pod `piper` TTS container (:10200) after the GPU
+  TTS stack comes up. On a CDI box the live Assist-pipeline TTS is
+  `tts.openai_streaming` — the `voice-tts-bridge` (:10203) added in v2.1 — so
+  piper is dead weight (~200 MB idle RAM) with no live pipeline edge
+  (owner-confirmed #1833). `post-deploy.py` stops it best-effort and
+  idempotently when `install_tts_units()` succeeds. CPU-only boxes are
+  unchanged: piper stays their sole TTS on :10200. No schema change — the
+  piper container remains in `template.yml` for the CPU path; this is a
+  runtime teardown, not a pod-structure change.
