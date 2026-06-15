@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.119.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.118.1...servicebay-v4.119.0) (2026-06-15)
+
+
+### Features
+
+* **dashboards:** surface per-service image-update badge + overview ([d2b21e2](https://github.com/mdopp/servicebay/commit/d2b21e2f3b23fded4b56feb22c1ffbfb50312e7c)), closes [#1860](https://github.com/mdopp/servicebay/issues/1860)
+* **stacks:** add per-service image-update digest-check API ([821a42d](https://github.com/mdopp/servicebay/commit/821a42da395aea63947d1f992efd41a12296eefe)), closes [#1859](https://github.com/mdopp/servicebay/issues/1859)
+* **stacks:** surface per-service image-update availability (API + dashboard) ([5e69b36](https://github.com/mdopp/servicebay/commit/5e69b36c29530e2ca38db59949d48130deb8291e))
+
 ## [4.118.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.118.0...servicebay-v4.118.1) (2026-06-15)
 
 
