@@ -60,7 +60,7 @@ describe('verifySSHConnection', () => {
   });
 
   it('returns false when ssh exits non-zero', async () => {
-    nextError = Object.assign(new Error('exit 255'), { code: 255 });
+    nextError = Object.assign(new Error('exit 255'), { code: 'EEXIT' });
     const { verifySSHConnection } = await import('../../packages/backend/src/lib/ssh');
     const ok = await verifySSHConnection('host.example', 22, 'core', '/keys/id_rsa');
     expect(ok).toBe(false);
