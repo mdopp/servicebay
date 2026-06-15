@@ -115,6 +115,16 @@ export function buildProxyHosts(variables: StackVariable[]): {
     domain: string;
     forwardPort: number;
     service: string;
+    /** The template that DECLARED this subdomain variable
+     *  (`subdomain.templateName`), or `undefined` when the assembler
+     *  didn't inject it. Distinct from `service`, which falls back to
+     *  the variable-name stem when `templateName` is absent — that
+     *  fallback makes `service` unreliable for ownership matching (a
+     *  `CHAT_SUBDOMAIN` declared by template `solaris` derives
+     *  `service: 'chat'`). Ownership handlers (nginx/adguard) must
+     *  match on `templateName` to bind a host to the template whose
+     *  install/uninstall event fired. (#1862) */
+    templateName?: string;
     /** 'public' and 'internal' trigger auto-cert; 'lan' skips. */
     exposure: 'public' | 'internal' | 'lan';
     proxyConfig?: VariableMeta['proxyConfig'];
@@ -133,6 +143,15 @@ export function buildProxyHosts(variables: StackVariable[]): {
     (acc, v) => { acc[v.name] = v.value; return acc; },
     {},
   );
+  // Derive the `service` name for a host. Prefers the declaring
+  // template (`templateName`, injected by the manifest assembler) and
+  // falls back to the variable-name stem. Note: `service` is NOT a
+  // reliable ownership key — that fallback mis-attributes a host whose
+  // variable name differs from its template (solaris/`CHAT_SUBDOMAIN`).
+  // Ownership handlers match on `templateName` directly. (#1862)
+  const deriveService = (sv: StackVariable): string =>
+    sv.meta?.templateName || sv.name.replace(/_SUBDOMAIN$/, '').toLowerCase();
+
   const subdomainVars = variables.filter(v => v.meta?.type === 'subdomain' && v.value);
   const hosts = subdomainVars.flatMap(sv => {
     // Conservative default: missing/unknown → 'lan'. Templates declare
@@ -148,12 +167,11 @@ export function buildProxyHosts(variables: StackVariable[]): {
     let port = sv.meta?.proxyPort || '';
     const portVar = variables.find(v => v.name === port);
     if (portVar) port = portVar.value;
-    const service = sv.meta?.templateName
-      || sv.name.replace(/_SUBDOMAIN$/, '').toLowerCase();
     return [{
       domain: `${sv.value}.${hostDomain}`,
       forwardPort: parseInt(port, 10),
-      service,
+      service: deriveService(sv),
+      templateName: sv.meta?.templateName,
       exposure,
       proxyConfig: renderProxyConfig(sv.meta?.proxyConfig, view),
       // Loopback-bound services (Syncthing GUI etc.) bind to the host's

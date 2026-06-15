@@ -35,6 +35,42 @@ function subdomainVar(template: string, varName: string, sub: string): StackVari
   };
 }
 
+/** A subdomain var whose declaring template (`templateName`) differs
+ *  from the stem of its variable name — e.g. template `solaris` declares
+ *  `CHAT_SUBDOMAIN`, so the derived `service` is `'chat'` (≠ template).
+ *  Ownership must follow `templateName`, not the derived name. (#1862) */
+function subdomainVarNamed(
+  template: string,
+  varName: string,
+  sub: string,
+): StackVariable {
+  return {
+    name: varName,
+    value: sub,
+    meta: {
+      type: 'subdomain',
+      templateName: template,
+      proxyPort: '8787',
+      exposure: 'public',
+    } as StackVariable['meta'],
+  };
+}
+
+/** Same as above but WITHOUT a `templateName` — simulates the older
+ *  assembler path / hand-built variables where ownership must fall back
+ *  to the derived `service` (variable-name stem). */
+function subdomainVarNoTemplate(varName: string, sub: string): StackVariable {
+  return {
+    name: varName,
+    value: sub,
+    meta: {
+      type: 'subdomain',
+      proxyPort: '2283',
+      exposure: 'public',
+    } as StackVariable['meta'],
+  };
+}
+
 const PUB_DOMAIN: StackVariable = { name: 'PUBLIC_DOMAIN', value: 'dopp.cloud' };
 
 beforeEach(() => {
@@ -79,6 +115,50 @@ describe('nginx.handleInstalled', () => {
     expect(body.publicDomain).toBe('dopp.cloud');
     expect(body.hosts).toHaveLength(1);
     expect(body.hosts[0].domain).toBe('photos.dopp.cloud');
+    expect(body.hosts[0].service).toBe('immich');
+  });
+
+  it('owns a host whose subdomain-var name differs from its declaring template (#1862)', async () => {
+    // Template `solaris` declares `CHAT_SUBDOMAIN`. Ownership must follow
+    // the DECLARING template (`templateName`), not the variable-name
+    // stem — `handleInstalled` must NOT exit early, so the proxy-host PUT
+    // (which carries solaris's SSE advanced_config) actually runs.
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ created: ['chat.dopp.cloud'] }), { status: 200 }));
+    const r = await handleInstalled({
+      kind: 'feature.installed', template: 'solaris', manifest: MANIFEST,
+      variables: [PUB_DOMAIN, subdomainVarNamed('solaris', 'CHAT_SUBDOMAIN', 'chat')],
+    });
+    expect(r.ok).toBe(true);
+    // The PUT must run — handleInstalled does NOT exit early.
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]!.body));
+    expect(body.hosts).toHaveLength(1);
+    expect(body.hosts[0].domain).toBe('chat.dopp.cloud');
+    expect(body.hosts[0].templateName).toBe('solaris');
+  });
+
+  it('does NOT own a host declared by another template (templateName takes precedence)', async () => {
+    // solaris-declared chat host must not fire on a different template's
+    // install event, even one named after the subdomain stem ('chat').
+    const r = await handleInstalled({
+      kind: 'feature.installed', template: 'chat', manifest: MANIFEST,
+      variables: [PUB_DOMAIN, subdomainVarNamed('solaris', 'CHAT_SUBDOMAIN', 'chat')],
+    });
+    expect(r.ok).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the derived service when templateName is absent (no regression)', async () => {
+    // No `templateName` on the var → ownership falls back to the derived
+    // `service` (variable-name stem). `IMMICH_SUBDOMAIN` → 'immich'.
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ created: ['photos.dopp.cloud'] }), { status: 200 }));
+    const r = await handleInstalled({
+      kind: 'feature.installed', template: 'immich', manifest: MANIFEST,
+      variables: [PUB_DOMAIN, subdomainVarNoTemplate('IMMICH_SUBDOMAIN', 'photos')],
+    });
+    expect(r.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]!.body));
     expect(body.hosts[0].service).toBe('immich');
   });
 
@@ -128,6 +208,19 @@ describe('nginx.handleUninstalled', () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
     const [url, init] = fetchSpy.mock.calls[0];
     expect(String(url)).toMatch(/\/api\/system\/nginx\/proxy-hosts\?domain=photos\.dopp\.cloud/);
+    expect(init?.method).toBe('DELETE');
+  });
+
+  it('DELETEs a host whose declaring template differs from its derived service name (#1862)', async () => {
+    fetchSpy.mockResolvedValueOnce(new Response('{"removed":true}', { status: 200 }));
+    const r = await handleUninstalled({
+      kind: 'feature.uninstalled', template: 'solaris',
+      lastKnownVariables: [PUB_DOMAIN, subdomainVarNamed('solaris', 'CHAT_SUBDOMAIN', 'chat')],
+    });
+    expect(r.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(String(url)).toMatch(/\?domain=chat\.dopp\.cloud/);
     expect(init?.method).toBe('DELETE');
   });
 
