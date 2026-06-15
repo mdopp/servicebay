@@ -6,11 +6,13 @@ import { useSearchParams } from 'next/navigation';
 import { logger } from '@servicebay/api-client';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // V4 Hook
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { useImageUpdates } from '@/hooks/useImageUpdates';
 import DashboardHydrationGate, { type HydrationPhase } from '@/components/DashboardHydrationGate';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
 import TemplateUpgradesPendingBanner from '@/components/TemplateUpgradesPendingBanner';
+import ImageUpdatesPendingBanner from '@/components/ImageUpdatesPendingBanner';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import FileViewerOverlay from '@/components/FileViewerOverlay';
 import RegistryDashboard from '@/dashboards/RegistryDashboard';
@@ -40,6 +42,7 @@ const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: fa
 export default function ServicesDashboard() {
     const { data: twin, isConnected, lastUpdate, isNodeSynced } = useDigitalTwin();
     const { addToast, updateToast } = useToast();
+    const { available: imageUpdates, availableServices: imageUpdateServices } = useImageUpdates();
 
     const [filteredServices, setFilteredServices] = useState<ServiceViewModel[]>([]);
     const [filteredBundles, setFilteredBundles] = useState<ServiceBundle[]>([]);
@@ -666,6 +669,7 @@ export default function ServicesDashboard() {
                                     service={entry.service}
                                     attachNodeContext={attachNodeContext}
                                     httpsDomains={httpsDomains}
+                                    imageUpdateAvailable={imageUpdateServices.has(entry.service.name.replace(/\.service$/, ''))}
                                     onMonitor={openMonitorDrawer}
                                     onEdit={openEditDrawer}
                                     onActions={openActions}
@@ -906,6 +910,7 @@ export default function ServicesDashboard() {
             />
 
       <TemplateUpgradesPendingBanner />
+      <ImageUpdatesPendingBanner updates={imageUpdates} />
       <PageHeader
         title="Services"
         showBack={false} 

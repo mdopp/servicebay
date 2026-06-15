@@ -115,6 +115,9 @@ export const handlers = [
   // GET /api/system/templates/upgrades-pending
   http.get('/api/system/templates/upgrades-pending', () => HttpResponse.json([])),
 
+  // GET /api/system/stacks/image-updates — per-service image digest check
+  http.get('/api/system/stacks/image-updates', () => HttpResponse.json({ services: [] })),
+
   // GET /api/health/checks
   http.get('/api/health/checks', () => HttpResponse.json([])),
 

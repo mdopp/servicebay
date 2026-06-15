@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useMemo } from 'react';
-import { AlertCircle, RotateCcw } from 'lucide-react';
+import { AlertCircle, Download, RotateCcw } from 'lucide-react';
 import type { EnrichedContainer, ServicePort, ServiceViewModel } from '@servicebay/api-client';
 import { ServiceActionBar } from '@/components/ServiceActionBar';
 import { AttachedContainerList } from '@/components/AttachedContainerList';
@@ -23,6 +23,11 @@ export interface ServiceCardProps {
    *  scheme for the per-domain badge links so LAN-only services don't
    *  produce a TLS error on click. */
   httpsDomains: Set<string>;
+  /** True when the registry serves a newer image digest than the one this
+   *  service is running (from `/api/system/stacks/image-updates`, #1860).
+   *  Renders an "Update available" badge. Independent of the schema-version
+   *  "template upgrade" surface. */
+  imageUpdateAvailable?: boolean;
   // Service-row actions (ServiceActionBar + failed-state nudge).
   onMonitor: (service: ServiceViewModel) => void;
   onEdit: (service: ServiceViewModel) => void;
@@ -40,6 +45,7 @@ export default function ServiceCard({
   service,
   attachNodeContext,
   httpsDomains,
+  imageUpdateAvailable,
   onMonitor,
   onEdit,
   onActions,
@@ -122,6 +128,14 @@ export default function ServiceCard({
               {service.externalIP && service.type !== 'gateway' && (
                 <span className="text-[10px] font-mono font-bold text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-1.5 py-0.5 rounded">
                   IP: {service.externalIP}
+                </span>
+              )}
+              {imageUpdateAvailable && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded"
+                  title="A newer image is available in the registry. Re-deploy this service to pull it."
+                >
+                  <Download size={10} /> Update available
                 </span>
               )}
             </div>
