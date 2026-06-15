@@ -55,14 +55,31 @@ describe('rate limiter', () => {
 });
 
 describe('clientKeyFromHeaders', () => {
-  it('uses the first hop of x-forwarded-for', () => {
+  it('uses the LAST (nginx-appended, trusted) hop of x-forwarded-for, not the first', () => {
     const h = new Headers({ 'x-forwarded-for': '203.0.113.1, 10.0.0.1' });
-    expect(clientKeyFromHeaders(h)).toBe('203.0.113.1');
+    expect(clientKeyFromHeaders(h)).toBe('10.0.0.1');
   });
 
-  it('falls back to x-real-ip', () => {
+  it('prefers x-real-ip (set authoritatively by NPM) over x-forwarded-for', () => {
+    const h = new Headers({ 'x-real-ip': '198.51.100.7', 'x-forwarded-for': '203.0.113.1, 10.0.0.1' });
+    expect(clientKeyFromHeaders(h)).toBe('198.51.100.7');
+  });
+
+  it('falls back to x-real-ip when no XFF is present', () => {
     const h = new Headers({ 'x-real-ip': '198.51.100.7' });
     expect(clientKeyFromHeaders(h)).toBe('198.51.100.7');
+  });
+
+  it('a spoofed left-most XFF does not rotate the rate-limit bucket key', () => {
+    // An attacker behind the proxy rotates the client-controllable first hop
+    // per request to dodge the brute-force limit; the trusted last hop (the
+    // one nginx appends) is constant, so every request collapses to one key.
+    const trustedHop = '10.0.0.1';
+    const k1 = clientKeyFromHeaders(new Headers({ 'x-forwarded-for': `1.1.1.1, ${trustedHop}` }));
+    const k2 = clientKeyFromHeaders(new Headers({ 'x-forwarded-for': `2.2.2.2, ${trustedHop}` }));
+    const k3 = clientKeyFromHeaders(new Headers({ 'x-forwarded-for': `evil, ${trustedHop}` }));
+    expect(k1).toBe(trustedHop);
+    expect(new Set([k1, k2, k3]).size).toBe(1);
   });
 
   it('returns "unknown" when no client header is present', () => {
