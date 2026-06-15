@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.117.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.116.2...servicebay-v4.117.0) (2026-06-15)
+
+
+### Features
+
+* **approvals:** generic approval-request API + UI (replaces oscar pending-skills) ([36d5e23](https://github.com/mdopp/servicebay/commit/36d5e23d2852fff751719924c263dd7eaaa4d23f))
+* **approvals:** generic approval-request backend ([da6cf95](https://github.com/mdopp/servicebay/commit/da6cf95b637e404672d3b496a706fec4453adda2)), closes [#1843](https://github.com/mdopp/servicebay/issues/1843)
+* **settings:** generic Approvals UI replacing PendingSkillsSection ([ddea2ee](https://github.com/mdopp/servicebay/commit/ddea2eec78d6f655fd307965a8459605ffe514b2)), closes [#1844](https://github.com/mdopp/servicebay/issues/1844)
+
 ## [4.116.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.116.1...servicebay-v4.116.2) (2026-06-15)
 
 
