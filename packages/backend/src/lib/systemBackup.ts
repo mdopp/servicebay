@@ -10,6 +10,7 @@ import os from 'os';
 // the test suite noticing. The prefix is the marker Node's resolver
 // treats as "built-in, do not redirect."
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { Client, SFTPWrapper } from 'ssh2';
 import { DATA_DIR, SERVICEBAY_BACKUP_DIR, getLocalSystemdDir } from './dirs';
@@ -27,11 +28,45 @@ const REMOTE_SYSTEMD_DIR = '$HOME/.config/containers/systemd';
 const METADATA_FILE = 'metadata.json';
 const METADATA_VERSION = 2;
 
+/**
+ * How a system backup came to exist:
+ *   - `auto`   — a pre-mutation snapshot taken automatically by the MCP
+ *                safety layer before a destructive tool runs.
+ *   - `manual` — a user-triggered snapshot (Settings → Backups POST route).
+ *
+ * Persisted purely in the filename suffix (`-auto.tar.gz` / `-manual.tar.gz`)
+ * so listing stays a pure readdir with no sidecar/DB.
+ *
+ * `legacy` is a read-only classification for the ~8k pre-existing snapshots
+ * named `servicebay-full-<ISO>.tar.gz` with NO suffix — they predate the
+ * suffix scheme. They are treated as MANUAL for safety (never auto-pruned),
+ * but surfaced with their own kind so the UI/operator can tell them apart.
+ */
+export type SystemBackupKind = 'auto' | 'manual' | 'legacy';
+
+/** How many `auto` (pre-mutation) snapshots to keep. Older auto ones are
+ *  pruned after each new auto snapshot. Manual and legacy are never pruned. */
+export const AUTO_BACKUP_RETENTION = 20;
+
 export interface SystemBackupEntry {
     fileName: string;
     path: string;
     createdAt: string;
     size: number;
+    /** Origin of the snapshot — derived from the filename suffix. */
+    kind: SystemBackupKind;
+}
+
+/**
+ * Classify a backup filename by its suffix. Newly-written snapshots carry an
+ * explicit `-auto`/`-manual` suffix; anything without one is a pre-suffix
+ * legacy file and is treated as NON-prunable.
+ */
+function classifyBackupKind(fileName: string): SystemBackupKind {
+    const base = fileName.slice(0, -'.tar.gz'.length);
+    if (base.endsWith('-auto')) return 'auto';
+    if (base.endsWith('-manual')) return 'manual';
+    return 'legacy';
 }
 
 export type BackupLogStatus = 'info' | 'success' | 'error' | 'skip';
@@ -794,7 +829,8 @@ export async function listSystemBackups(): Promise<SystemBackupEntry[]> {
             fileName,
             path: archivePath,
             createdAt: stats.mtime.toISOString(),
-            size: stats.size
+            size: stats.size,
+            kind: classifyBackupKind(fileName)
         });
     }
 
@@ -810,7 +846,8 @@ export async function getBackupFileMeta(fileName: string): Promise<SystemBackupE
         fileName: safeName,
         path: archivePath,
         createdAt: stats.mtime.toISOString(),
-        size: stats.size
+        size: stats.size,
+        kind: classifyBackupKind(safeName)
     };
 }
 
@@ -819,7 +856,101 @@ export async function deleteSystemBackup(fileName: string): Promise<void> {
     await fs.unlink(entry.path);
 }
 
-export async function createSystemBackup(progress?: ProgressCallback): Promise<SystemBackupResult> {
+/**
+ * Hash the ServiceBay config files (config.json/nodes.json/checks.json) as
+ * they currently sit in DATA_DIR. Used to dedup auto snapshots: most
+ * `exec_command` calls don't change config, so a pre-mutation snapshot whose
+ * config matches the latest auto snapshot is skippable (#1868). Missing files
+ * contribute nothing — two configs with the same present files + bytes hash
+ * identically.
+ */
+async function hashCurrentConfig(): Promise<string> {
+    const hash = createHash('sha256');
+    for (const fileName of CONFIG_FILES) {
+        const filePath = path.join(DATA_DIR, fileName);
+        try {
+            const buf = await fs.readFile(filePath);
+            hash.update(fileName);
+            hash.update('\0');
+            hash.update(buf);
+            hash.update('\0');
+        } catch {
+            // Missing file — skip; its absence is part of the fingerprint.
+        }
+    }
+    return hash.digest('hex');
+}
+
+/**
+ * Hash the config files stored inside an already-written backup archive
+ * (its `config/` dir), using the same scheme as `hashCurrentConfig`, so the
+ * two are directly comparable. Returns null if the archive can't be read.
+ */
+async function hashSnapshotConfig(archivePath: string): Promise<string | null> {
+    const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'servicebay-dedup-'));
+    try {
+        await safeTarExtract(archivePath, stagingDir);
+        const configDir = path.join(stagingDir, 'config');
+        const hash = createHash('sha256');
+        for (const fileName of CONFIG_FILES) {
+            const filePath = path.join(configDir, fileName);
+            try {
+                const buf = await fs.readFile(filePath);
+                hash.update(fileName);
+                hash.update('\0');
+                hash.update(buf);
+                hash.update('\0');
+            } catch {
+                // Missing file — same treatment as hashCurrentConfig.
+            }
+        }
+        return hash.digest('hex');
+    } catch {
+        return null;
+    } finally {
+        await fs.rm(stagingDir, { recursive: true, force: true });
+    }
+}
+
+/**
+ * Dedup guard for the pre-mutation (auto) path (#1868): true when the current
+ * ServiceBay config is byte-identical to the most recent AUTO snapshot, so a
+ * fresh auto snapshot would be a redundant copy. Mirrors history.ts's
+ * latest-snapshot content compare. Manual/legacy snapshots are ignored here —
+ * dedup only ever compares against the latest auto snapshot.
+ */
+export async function autoSnapshotWouldDuplicate(): Promise<boolean> {
+    const backups = await listSystemBackups();
+    const latestAuto = backups.find(b => b.kind === 'auto'); // list is newest-first
+    if (!latestAuto) return false;
+    const [current, previous] = await Promise.all([
+        hashCurrentConfig(),
+        hashSnapshotConfig(latestAuto.path),
+    ]);
+    return previous !== null && current === previous;
+}
+
+/**
+ * Prune AUTO snapshots beyond AUTO_BACKUP_RETENTION, newest-first. NEVER
+ * touches manual or legacy (unsuffixed) snapshots — a buried legacy file
+ * could be a real manual snapshot, and the ~8k legacy pile is cleaned
+ * out-of-band with operator confirmation. Best-effort: unlink failures log
+ * and don't abort the just-written backup.
+ */
+async function pruneAutoSnapshots(): Promise<void> {
+    const backups = await listSystemBackups();
+    const autos = backups.filter(b => b.kind === 'auto'); // already newest-first
+    const stale = autos.slice(AUTO_BACKUP_RETENTION);
+    for (const entry of stale) {
+        try {
+            await fs.unlink(entry.path);
+        } catch (e) {
+            logger.warn('SystemBackup', `Failed to prune auto snapshot ${entry.fileName}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+}
+
+export async function createSystemBackup(kind: 'auto' | 'manual' = 'manual', progress?: ProgressCallback): Promise<SystemBackupResult> {
     await ensureBackupDir();
     const logs: BackupLogEntry[] = [];
     const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'servicebay-backup-'));
@@ -900,13 +1031,22 @@ export async function createSystemBackup(progress?: ProgressCallback): Promise<S
         await fs.writeFile(path.join(stagingDir, METADATA_FILE), JSON.stringify(metadata, null, 2));
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const fileName = `${BACKUP_PREFIX}-${timestamp}.tar.gz`;
+        // Persist the kind in the filename suffix so listing stays a pure
+        // readdir (no sidecar/DB) — see classifyBackupKind / SystemBackupKind.
+        const fileName = `${BACKUP_PREFIX}-${timestamp}-${kind}.tar.gz`;
         const archivePath = path.join(SERVICEBAY_BACKUP_DIR, fileName);
         pushLog(logs, progress, { scope: 'archive', status: 'info', message: 'Creating compressed archive' });
         await runTar(['-czf', archivePath, '-C', stagingDir, '.']);
         pushLog(logs, progress, { scope: 'archive', status: 'success', message: 'Backup archive ready', target: archivePath });
 
         const entry = await getBackupFileMeta(fileName);
+
+        // Retention: after writing a new AUTO snapshot, prune older auto ones
+        // beyond AUTO_BACKUP_RETENTION. Never prunes manual/legacy (#1868).
+        if (kind === 'auto') {
+            await pruneAutoSnapshots();
+        }
+
         return { entry, log: logs };
     } finally {
         await fs.rm(stagingDir, { recursive: true, force: true });

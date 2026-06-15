@@ -145,14 +145,21 @@ export async function snapshotBeforeMutation(toolName: string, args?: Record<str
   try {
     // Lazy import: keeps the safety module free of the (heavy) backup
     // deps when only the gating helpers are imported.
-    const { createSystemBackup } = await import('@/lib/systemBackup');
+    const { createSystemBackup, autoSnapshotWouldDuplicate } = await import('@/lib/systemBackup');
     const summary = args ? Object.keys(args).slice(0, 4).join(',') : '';
     const label = `pre-mutation:${toolName}${summary ? `(${summary})` : ''}`;
+    // Dedup (#1868): most exec_command calls don't touch config, so skip the
+    // snapshot when the config is byte-identical to the latest auto snapshot.
+    // Mirrors history.ts's latest-snapshot content compare. This keeps the
+    // pre-mutation snapshot pile bounded instead of growing one-per-tool-call.
+    if (await autoSnapshotWouldDuplicate()) {
+      logger.info('mcp:safety', `Snapshot before ${label} skipped (config unchanged vs latest auto snapshot)`);
+      return;
+    }
     logger.info('mcp:safety', `Snapshot before ${label}`);
-    // createSystemBackup ignores extra metadata at the moment; we keep the
-    // label in the log line and rely on the timestamp + adjacency in the
-    // backup list for matching when the user needs to revert.
-    await createSystemBackup();
+    // The snapshot is tagged `auto` (filename suffix `-auto.tar.gz`); these are
+    // the only prune-eligible snapshots (keep newest AUTO_BACKUP_RETENTION).
+    await createSystemBackup('auto');
   } catch (e) {
     logger.warn('mcp:safety', `Pre-mutation snapshot failed (continuing): ${e instanceof Error ? e.message : String(e)}`);
   }
