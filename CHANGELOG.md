@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.120.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.119.2...servicebay-v4.120.0) (2026-06-15)
+
+
+### Features
+
+* **dashboards:** show diagnose status breakdown on Home Overview card ([df74a1d](https://github.com/mdopp/servicebay/commit/df74a1d2ae645b86a7d5e0dbe265df9f56607ccd)), closes [#1873](https://github.com/mdopp/servicebay/issues/1873)
+* **mcp:** add typed non-destructive read tools (read_file/list_dir/disk_usage/container_exec) ([9a5daf7](https://github.com/mdopp/servicebay/commit/9a5daf73d3620c1f592a16a570d48fc73dfb6499)), closes [#1872](https://github.com/mdopp/servicebay/issues/1872)
+* typed non-destructive MCP read tools + Home Diagnose status card ([394fc46](https://github.com/mdopp/servicebay/commit/394fc4680492fb65a620ebccc4f0f9635b208eab))
+
+
+### Bug Fixes
+
+* **install:** reconcile NPM proxy advanced_config on redeploy + fix [#1872](https://github.com/mdopp/servicebay/issues/1872) MCP read tools ([912f803](https://github.com/mdopp/servicebay/commit/912f803f86ea5bacd15e3dcfbf4dcbb1ef213526))
+* **mcp:** canonicalize JAIL_ROOT symlink for read_file/list_dir on FCoS ([5c7d572](https://github.com/mdopp/servicebay/commit/5c7d57250db21e69dbc8b2d8ec728e950d0a5a25))
+* **mcp:** canonicalize JAIL_ROOT symlink so read_file/list_dir accept FCoS paths ([480558c](https://github.com/mdopp/servicebay/commit/480558c5134bc77a53b70fb8b7972777aa7b7d4c)), closes [#1872](https://github.com/mdopp/servicebay/issues/1872)
+* **mcp:** fix [#1872](https://github.com/mdopp/servicebay/issues/1872) box-verify reds in MCP read tools ([220ce68](https://github.com/mdopp/servicebay/commit/220ce68d81f17f32fbba163a5b1414db3e6a7aee))
+* **nginx:** reconcile template-owned proxy host advanced_config on redeploy ([34be631](https://github.com/mdopp/servicebay/commit/34be631c6d0cbebadba21ac64dde8987ed893785)), closes [#1862](https://github.com/mdopp/servicebay/issues/1862)
+
 ## [4.119.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.119.1...servicebay-v4.119.2) (2026-06-15)
 
 
