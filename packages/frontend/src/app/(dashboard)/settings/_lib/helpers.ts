@@ -43,6 +43,9 @@ export interface SystemBackupEntrySummary {
   fileName: string;
   createdAt: string;
   size: number;
+  /** Origin of the snapshot: 'auto' (pre-mutation), 'manual' (user-triggered),
+   *  or 'legacy' (pre-suffix file). Absent on older API responses. */
+  kind?: 'auto' | 'manual' | 'legacy';
 }
 
 export type BackupStreamEvent =

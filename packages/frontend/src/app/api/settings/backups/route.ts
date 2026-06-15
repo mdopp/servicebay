@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 // scoped `sb_` token; the handler gate still covers the web UI's cookie.
 export const GET = withApiHandler({ tokenScope: 'read' }, async () => {
   const backups = await listSystemBackups();
-  const payload = backups.map(({ fileName, createdAt, size }) => ({ fileName, createdAt, size }));
+  const payload = backups.map(({ fileName, createdAt, size, kind }) => ({ fileName, createdAt, size, kind }));
   return NextResponse.json(payload);
 });
 
@@ -30,7 +30,7 @@ export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async () => {
       };
       (async () => {
         try {
-          const result = await createSystemBackup(entry => push({ type: 'log', entry }));
+          const result = await createSystemBackup('manual', entry => push({ type: 'log', entry }));
           push({
             type: 'done',
             backup: {
