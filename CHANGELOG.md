@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.116.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.116.1...servicebay-v4.116.2) (2026-06-15)
+
+
+### Bug Fixes
+
+* **registry:** reset registry refresh to FETCH_HEAD so install reaches remote HEAD ([983b6ed](https://github.com/mdopp/servicebay/commit/983b6edd8c43f4e07390810ee9b1f211df41fbe4))
+* **registry:** reset registry refresh to FETCH_HEAD so install reaches remote HEAD ([21ea5b4](https://github.com/mdopp/servicebay/commit/21ea5b4145ed274768f17f7c2cadd8c9f51bba58)), closes [#1836](https://github.com/mdopp/servicebay/issues/1836)
+* **voice:** stop dead piper TTS container on GPU boxes ([f619b8f](https://github.com/mdopp/servicebay/commit/f619b8f3d862b7743bb126e4135d062eda6108d4))
+* **voice:** stop dead piper TTS container on GPU boxes ([1270e27](https://github.com/mdopp/servicebay/commit/1270e27a0b0fd9c1bbc4bf2da8387e6c2fb6e5ff)), closes [#1833](https://github.com/mdopp/servicebay/issues/1833)
+
 ## [4.116.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.116.0...servicebay-v4.116.1) (2026-06-14)
 
 
