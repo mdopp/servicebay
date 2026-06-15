@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.118.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.117.1...servicebay-v4.118.0) (2026-06-15)
+
+
+### Features
+
+* **voice:** optional openWakeWord custom-models slot ([123c9f3](https://github.com/mdopp/servicebay/commit/123c9f3aed49b60a3cdd8ee31ee43f794c1babbb))
+* **voice:** optional openWakeWord custom-models slot ([3bff5b5](https://github.com/mdopp/servicebay/commit/3bff5b52f61399359d1623e30fca7e04692c6b46)), closes [#1832](https://github.com/mdopp/servicebay/issues/1832)
+
 ## [4.117.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.117.0...servicebay-v4.117.1) (2026-06-15)
 
 
