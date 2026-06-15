@@ -110,6 +110,7 @@
           "tests/e2e/**/*.e2e.ts"
         ],
         "ignoreDependencies": [
+          "better-sqlite3",
           "lucide-react",
           "react-markdown",
           "socket.io-client"

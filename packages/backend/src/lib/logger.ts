@@ -19,6 +19,49 @@ const COLORS = {
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
+/**
+ * How many days of log rows to keep in logs.db. Older rows are pruned on
+ * startup and at most once per day thereafter (#1869). Mirrors the 7-day
+ * health-retention window. SQLite does NOT shrink the file on DELETE alone,
+ * so a prune is always followed by a WAL checkpoint + VACUUM.
+ */
+export const LOG_RETENTION_DAYS = 7;
+
+/** Minimum gap between lazy periodic prunes (24h) so VACUUM never runs per-insert. */
+const PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Format a Date as the logger's on-disk timestamp form (`YYYY-MM-DD HH:MM:SS.mmm`,
+ * i.e. ISO with the `T` separator → space and the trailing `Z` removed). The
+ * format is lexicographically ordered, so a string compare against the `timestamp`
+ * column is a valid time comparison.
+ */
+function toLogTimestamp(d: Date): string {
+  return d.toISOString().replace('T', ' ').replace('Z', '');
+}
+
+/**
+ * Delete log rows older than `retentionDays` and reclaim disk space.
+ *
+ * SQLite leaves freed pages in the file after a DELETE, so the 6.4 GB pile
+ * only actually shrinks once we checkpoint the WAL and VACUUM. We only VACUUM
+ * when rows were actually deleted (VACUUM rewrites the whole DB and is
+ * expensive — it must not run on every insert / no-op prune).
+ *
+ * Returns the number of rows deleted.
+ */
+export function pruneLogsDb(db: Database, retentionDays = LOG_RETENTION_DAYS, now: Date = new Date()): number {
+  const cutoff = toLogTimestamp(new Date(now.getTime() - retentionDays * PRUNE_INTERVAL_MS));
+  const info = db.prepare('DELETE FROM logs WHERE timestamp < ?').run(cutoff);
+  const deleted = Number(info.changes);
+  if (deleted > 0) {
+    // Reclaim space: flush + truncate the WAL, then rewrite the DB file.
+    db.pragma('wal_checkpoint(TRUNCATE)');
+    db.exec('VACUUM');
+  }
+  return deleted;
+}
+
 interface LogEntry {
   id?: number;
   timestamp: string;
@@ -51,6 +94,8 @@ class Logger {
   private currentLogLevel: LogLevel = 'info';
   private logLevelPriority: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
   private onLogCallbacks: Set<(entry: LogEntry) => void> = new Set();
+  /** Epoch ms of the last retention prune; gates the lazy periodic prune (#1869). */
+  private lastPruneAt = 0;
 
   constructor() {
     if (isServer) {
@@ -100,6 +145,11 @@ class Logger {
                     this.db!.exec('ALTER TABLE logs ADD COLUMN trace_id TEXT');
                 } catch { /* column already present */ }
                 this.db!.exec('CREATE INDEX IF NOT EXISTS idx_logs_trace ON logs(trace_id, timestamp)');
+
+                // Startup retention prune (#1869): drop rows older than the
+                // retention window + VACUUM. Cuts down the existing multi-GB
+                // logs.db pile on first deploy.
+                this.maybePrune(true);
             } catch (e) {
                 console.error('Failed to initialize SQLite logger:', e);
             }
@@ -171,11 +221,35 @@ class Logger {
 
               // Emit event
               this.onLogCallbacks.forEach(cb => cb(entry));
+
+              // Lazy periodic retention (#1869): at most once per day so the
+              // expensive VACUUM never runs per-insert. The timestamp gate
+              // short-circuits before touching the DB.
+              this.maybePrune();
           } catch (e) {
               console.error('Failed to write log to DB:', e);
           }
       }
       return entry;
+  }
+
+  /**
+   * Run the retention prune at most once per PRUNE_INTERVAL_MS (#1869),
+   * or unconditionally when `force` (the startup prune). The cheap
+   * timestamp check guards the hot insert path so VACUUM is never paid
+   * per-insert; the actual VACUUM inside pruneLogsDb only runs when rows
+   * were deleted.
+   */
+  private maybePrune(force = false): void {
+      if (!this.db) return;
+      const now = Date.now();
+      if (!force && now - this.lastPruneAt < PRUNE_INTERVAL_MS) return;
+      this.lastPruneAt = now;
+      try {
+          pruneLogsDb(this.db);
+      } catch (e) {
+          console.error('Failed to prune logs.db:', e);
+      }
   }
 
   private format(level: LogLevel, tag: string, message: string, args: unknown[]): LogEntry {
