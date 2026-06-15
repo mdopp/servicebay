@@ -22,14 +22,17 @@ vi.mock('@/lib/config', () => ({
   getConfig: vi.fn(async () => state.config),
   updateConfig: vi.fn(async () => {}),
 }));
-vi.mock('@/lib/agent/manager', () => ({ agentManager: { ensureAgent: vi.fn() } }));
+const sendCommand = vi.fn();
+vi.mock('@/lib/agent/manager', () => ({
+  agentManager: { ensureAgent: vi.fn(async () => ({ sendCommand })) },
+}));
 
 vi.stubGlobal('fetch', vi.fn(async () => {
   if (state.fetchThrows) throw new Error('refused');
   return { ok: state.fetchStatus < 400, status: state.fetchStatus, json: async () => state.fetchBody } as unknown as Response;
 }));
 
-import { npmAdminCredStatus } from './npmAdminRekey';
+import { npmAdminCredStatus, rekeyNpmAdmin } from './npmAdminRekey';
 
 const ACTIVE_NGINX = [{ name: 'nginx-web', active: true, ports: [{ host: '81', container: '81' }] }];
 
@@ -39,6 +42,7 @@ beforeEach(() => {
   state.fetchStatus = 200;
   state.fetchThrows = false;
   state.fetchBody = {};
+  sendCommand.mockReset();
 });
 
 describe('npmAdminCredStatus', () => {
@@ -77,5 +81,31 @@ describe('npmAdminCredStatus', () => {
   it("returns 'unknown' when NPM is unreachable (skip, don't re-key blindly)", async () => {
     state.fetchThrows = true;
     expect(await npmAdminCredStatus('Local')).toBe('unknown');
+  });
+});
+
+describe('rekeyNpmAdmin — container-name injection guard', () => {
+  it('rejects a metacharacter-laden container name instead of executing it', async () => {
+    // First exec is the `podman ps` lookup; return a malicious name.
+    sendCommand.mockResolvedValueOnce({ stdout: 'npm$(touch /pwn) jc21/proxy-manager', code: 0 });
+    const res = await rekeyNpmAdmin('Local');
+    expect(res.ok).toBe(false);
+    expect(res.message).toMatch(/not a valid podman name/i);
+    // Only the lookup ran — the rewrite exec must never fire.
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the rewrite with the container name and password shell-quoted for a normal name', async () => {
+    sendCommand
+      .mockResolvedValueOnce({ stdout: 'npm-app jc21/proxy-manager', code: 0 }) // lookup
+      .mockResolvedValueOnce({ stdout: 'email=a@b.c;updated=1', code: 0 }); // rewrite
+    state.fetchStatus = 200; // token check accepts the new password
+    const res = await rekeyNpmAdmin('Local');
+    expect(res.ok).toBe(true);
+    const rewriteCmd = sendCommand.mock.calls[1][1].command as string;
+    // Container name appears as a discrete, plainly-quoted token (safe chars
+    // need no quotes via shellQuote) and the env value is present.
+    expect(rewriteCmd).toContain('npm-app node -');
+    expect(rewriteCmd).toContain('-e NEWPW=');
   });
 });
