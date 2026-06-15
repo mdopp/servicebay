@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.119.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.119.1...servicebay-v4.119.2) (2026-06-15)
+
+
+### Bug Fixes
+
+* **backups,logger:** bound MCP auto-snapshot growth + logs.db retention ([93b0ec0](https://github.com/mdopp/servicebay/commit/93b0ec097d4d5e3fe6da761ed3044d8680ebc1d3))
+* **logger:** add time-based retention + VACUUM to logs.db ([8497540](https://github.com/mdopp/servicebay/commit/8497540788c52cdddc1132057ffd28cddccf9153)), closes [#1869](https://github.com/mdopp/servicebay/issues/1869)
+* **systembackup:** dedup + kind label + auto-retention for MCP pre-mutation snapshots ([9ae0285](https://github.com/mdopp/servicebay/commit/9ae02851ea1602eb6415521def26e4c3c14d9912)), closes [#1868](https://github.com/mdopp/servicebay/issues/1868)
+
 ## [4.119.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.119.0...servicebay-v4.119.1) (2026-06-15)
 
 
