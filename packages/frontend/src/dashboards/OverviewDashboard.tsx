@@ -1,10 +1,116 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { Box, Network, Activity, Terminal, Settings, ArrowRight, AlertCircle, CheckCircle2, Wrench } from 'lucide-react';
 import { useDigitalTwinContext } from '@/providers/DigitalTwinProvider';
 import InstallProgressCard from '@/components/InstallProgressCard';
 import { useCoreHealth } from '@/hooks/useCoreHealth';
+
+/**
+ * Latest persisted diagnose breakdown for the Home card (#1873).
+ *
+ * Reads GET /api/health/checks — the SAME endpoint HealthDashboard already
+ * polls — which returns the enriched check rows including the synthetic
+ * `diagnose:*` probe rows persisted by the daily self-diagnose run
+ * (getDiagnoseChecksEnriched). This is a pure read of the LAST persisted
+ * results: it does NOT trigger a diagnose run (no POST /api/system/diagnose).
+ * A fresh box with no persisted results returns zero diagnose rows → the
+ * card renders "Not run yet" / neutral.
+ */
+export interface DiagnoseBreakdown {
+  healthy: number;
+  warning: number;
+  failure: number;
+  unknown: number;
+  total: number;
+  loaded: boolean;
+}
+
+interface EnrichedCheckRow {
+  id: string;
+  status?: string;
+  diagnose?: { status?: string };
+}
+
+/** Map a diagnose row to one of the four buckets. The four-way status lives
+ *  on `diagnose.status` (ok/warn/fail/info); the row-level `status` only
+ *  carries the folded binary ok/fail, so we prefer the diagnose field and
+ *  fall back to it when absent. Per #1873: ok→healthy, warn→warning,
+ *  fail→failure, info/none/unknown→unknown. */
+function bucketForDiagnoseRow(row: EnrichedCheckRow): keyof Omit<DiagnoseBreakdown, 'total' | 'loaded'> {
+  const status = row.diagnose?.status ?? row.status;
+  if (status === 'ok') return 'healthy';
+  if (status === 'warn') return 'warning';
+  if (status === 'fail') return 'failure';
+  return 'unknown';
+}
+
+export function summarizeDiagnoseRows(rows: EnrichedCheckRow[]): Omit<DiagnoseBreakdown, 'loaded'> {
+  const breakdown = { healthy: 0, warning: 0, failure: 0, unknown: 0, total: 0 };
+  for (const row of rows) {
+    if (!row.id?.startsWith('diagnose:')) continue;
+    breakdown[bucketForDiagnoseRow(row)] += 1;
+    breakdown.total += 1;
+  }
+  return breakdown;
+}
+
+function useDiagnoseOverview(): DiagnoseBreakdown {
+  const [breakdown, setBreakdown] = useState<DiagnoseBreakdown>({
+    healthy: 0,
+    warning: 0,
+    failure: 0,
+    unknown: 0,
+    total: 0,
+    loaded: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/health/checks');
+        if (!res.ok) return;
+        const rows = (await res.json()) as EnrichedCheckRow[];
+        if (cancelled) return;
+        setBreakdown({ ...summarizeDiagnoseRows(rows), loaded: true });
+      } catch (error) {
+        // Background read — keep the card neutral on failure rather than
+        // surfacing a transient fetch blip as a diagnose state.
+        console.error('[OverviewDashboard] Failed to read diagnose results', error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return breakdown;
+}
+
+/** Card metric/description/tone from the persisted diagnose breakdown.
+ *  Tone mirrors the other OverviewCards (worst status wins):
+ *  any failure → bad, else any warning → warn, else a run with no issues →
+ *  good, else (never run) → neutral. */
+export function diagnoseCardView(b: DiagnoseBreakdown): {
+  metric: string;
+  description: string;
+  tone: 'good' | 'warn' | 'bad' | 'neutral';
+} {
+  if (!b.loaded) return { metric: '…', description: 'Reading diagnose status…', tone: 'neutral' };
+  if (b.total === 0) {
+    return { metric: 'Not run yet', description: 'Run probes, view system logs, inspect raw containers', tone: 'neutral' };
+  }
+  const metric = `${b.healthy} healthy · ${b.warning} warning · ${b.failure} failure`;
+  if (b.failure > 0) {
+    return { metric, description: `${b.failure} probe${b.failure === 1 ? '' : 's'} failing`, tone: 'bad' };
+  }
+  if (b.warning > 0) {
+    return { metric, description: `${b.warning} probe${b.warning === 1 ? '' : 's'} warning`, tone: 'warn' };
+  }
+  return { metric, description: 'All probes healthy', tone: 'good' };
+}
 
 /**
  * Home / Overview dashboard (#803).
@@ -48,6 +154,10 @@ export default function OverviewDashboard() {
   // contradicted the banner's "Core stack unhealthy". Reading core-health
   // directly keeps the headline and the banner in agreement.
   const { unhealthy: coreUnhealthy } = useCoreHealth();
+
+  // Latest persisted diagnose breakdown (#1873) — read-only, no run kicked off.
+  const diagnose = useDiagnoseOverview();
+  const diagnoseView = diagnoseCardView(diagnose);
 
   const healthHeadline = (() => {
     if (!hasFirstSnapshot) return { tone: 'neutral' as const, text: 'Reading status…' };
@@ -135,10 +245,10 @@ export default function OverviewDashboard() {
           <OverviewCard
             href="/health"
             title="Diagnostics"
-            metric="Self-test"
-            description="Run probes, view system logs, inspect raw containers"
+            metric={diagnoseView.metric}
+            description={diagnoseView.description}
             icon={Activity}
-            tone="neutral"
+            tone={diagnoseView.tone}
           />
           <OverviewCard
             href="/terminal"
