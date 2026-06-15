@@ -36,14 +36,40 @@ import type {
 
 const HANDLER_NAME = 'nginx.proxy-host';
 
+type BuiltHost = ReturnType<typeof buildProxyHosts>['hosts'][number];
+
+/**
+ * Does `host` belong to the template whose install/uninstall event fired?
+ *
+ * A host is owned by the template that DECLARED its subdomain variable
+ * (`subdomain.templateName`, injected for every var by the manifest
+ * assembler). We match on that — NOT on the host's `service` field —
+ * because `service` falls back to the variable-name stem when
+ * `templateName` is absent, which silently mis-attributes a host whose
+ * variable name differs from its template: e.g. template `solaris`
+ * declares `CHAT_SUBDOMAIN`, so `service` derives `'chat'` and the old
+ * `service === event.template` guard dropped the host, skipping its
+ * proxy-host PUT (the #1862 SSE-extras-never-land bug).
+ *
+ * Fallback: when `templateName` is genuinely absent (older assembler
+ * paths / hand-built variables), fall back to the derived `service`
+ * string so hosts where the variable name already matches the template
+ * (immich's `IMMICH_SUBDOMAIN`, media's `AUDIOBOOKSHELF_SUBDOMAIN`) keep
+ * matching exactly as before — no regression.
+ */
+function hostOwnedBy(host: BuiltHost, template: string): boolean {
+  return host.templateName != null
+    ? host.templateName === template
+    : host.service === template;
+}
+
 export async function handleInstalled(event: FeatureInstalledEvent): Promise<HandlerResult> {
   const { domain, hosts } = buildProxyHosts(event.variables);
-  // Filter to the hosts this specific template owns. `buildProxyHosts`
-  // walks the full variable list; the `service` field carries the
-  // owning template name (from `subdomain.templateName` or derived from
-  // the variable name). We only want this template's hosts to fire on
-  // its own install event.
-  const ownHosts = hosts.filter(h => h.service === event.template);
+  // Filter to the hosts this specific template owns — matched by the
+  // template that DECLARED each subdomain variable (`templateName`), so a
+  // host whose variable name differs from its template (solaris/`chat`)
+  // still fires on its own install event. (#1862)
+  const ownHosts = hosts.filter(h => hostOwnedBy(h, event.template));
   if (!domain || ownHosts.length === 0) return { ok: true };
 
   try {
@@ -80,7 +106,7 @@ export async function handleUninstalled(event: FeatureUninstalledEvent): Promise
   // template's on-disk metadata may differ from what was actually
   // installed. Variables are the snapshot the handler trusts.
   const { hosts } = buildProxyHosts(event.lastKnownVariables);
-  const ownHosts = hosts.filter(h => h.service === event.template);
+  const ownHosts = hosts.filter(h => hostOwnedBy(h, event.template));
   if (ownHosts.length === 0) return { ok: true };
 
   const failures: string[] = [];

@@ -1543,9 +1543,9 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         // argv form end-to-end via safe_exec: the agent runs `podman exec
         // <name> <args…>` without a host shell, so a metacharacter in args can
         // never start a new host command (the container name is also
-        // regex-validated by the schema). NOT execArgv — that routes through
-        // the legacy `exec` path, whose trace wrapper (`: # SB_TRACE=…; <cmd>`)
-        // comments the real command out and returns empty stdout (#1872).
+        // regex-validated by the schema). Kept on execSafe (not execArgv) so
+        // the argv is never shell-parsed end-to-end (the legacy `exec` trace
+        // wrapper that swallowed the command was fixed in #1877).
         // `podman` is on the agent SAFE_EXEC_ALLOWLIST.
         const argv = ['podman', 'exec', container, ...args];
         const res = await exec.execSafe(argv);
