@@ -44,6 +44,8 @@ import {
   fetchServiceBackup,
   getNextExternalBackupDelayMs,
   scheduleExternalNasBackup,
+  getNasBackupSchedule,
+  deleteServiceBackup,
   NAS_BACKUP_DIR,
   DEFAULT_BACKUP_RETENTION,
   latestServiceBackupName,
@@ -468,11 +470,11 @@ describe('read-back', () => {
     ]);
     const list = await listServiceBackups();
     expect(list).toEqual([
-      // adguard (A→Z) first; its bare slot has a null stamp.
-      { service: 'adguard', tarName: 'adguard.tar', size: 50, stamp: null },
-      // home-assistant newest snapshot first.
-      { service: 'home-assistant', tarName: 'home-assistant-20260615-0531.tar', size: 100, stamp: '20260615-0531' },
-      { service: 'home-assistant', tarName: 'home-assistant-20260614-0530.tar', size: 90, stamp: '20260614-0530' },
+      // adguard (A→Z) first; its bare slot has a null stamp + null createdAt.
+      { service: 'adguard', tarName: 'adguard.tar', size: 50, stamp: null, createdAt: null },
+      // home-assistant newest snapshot first; createdAt derived from the stamp (#1890).
+      { service: 'home-assistant', tarName: 'home-assistant-20260615-0531.tar', size: 100, stamp: '20260615-0531', createdAt: '2026-06-15T05:31:00.000Z' },
+      { service: 'home-assistant', tarName: 'home-assistant-20260614-0530.tar', size: 90, stamp: '20260614-0530', createdAt: '2026-06-14T05:30:00.000Z' },
     ]);
     expect(mockNas.nasList).toHaveBeenCalledWith(NAS_BACKUP_DIR);
   });
@@ -721,5 +723,64 @@ describe('scheduleExternalNasBackup', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(setTimeoutSpy).toHaveBeenCalled();
     setTimeoutSpy.mockRestore();
+  });
+});
+
+describe('getNasBackupSchedule (#1890)', () => {
+  it('surfaces the configured time + derived next run when enabled', async () => {
+    mockGetConfig.mockResolvedValue({ externalBackup: { enabled: true, time: '03:30' } });
+    const s = await getNasBackupSchedule(new Date('2026-06-01T01:00:00Z'));
+    // next run = 2h30m after 01:00 = 03:30 same day
+    expect(s).toEqual({ enabled: true, time: '03:30', nextRunAt: '2026-06-01T03:30:00.000Z' });
+  });
+
+  it('rolls the next run to tomorrow when the time already passed today', async () => {
+    mockGetConfig.mockResolvedValue({ externalBackup: { enabled: true, time: '03:30' } });
+    const s = await getNasBackupSchedule(new Date('2026-06-01T04:00:00Z'));
+    expect(s.nextRunAt).toBe('2026-06-02T03:30:00.000Z');
+  });
+
+  it('reports disabled with no next run when externalBackup.enabled is false', async () => {
+    mockGetConfig.mockResolvedValue({ externalBackup: { enabled: false, time: '04:00' } });
+    const s = await getNasBackupSchedule(new Date('2026-06-01T01:00:00Z'));
+    expect(s).toEqual({ enabled: false, time: '04:00', nextRunAt: null });
+  });
+
+  it('defaults to enabled at 03:30 when externalBackup is unset', async () => {
+    mockGetConfig.mockResolvedValue({});
+    const s = await getNasBackupSchedule(new Date('2026-06-01T00:00:00Z'));
+    expect(s).toEqual({ enabled: true, time: '03:30', nextRunAt: '2026-06-01T03:30:00.000Z' });
+  });
+});
+
+describe('deleteServiceBackup (#1890)', () => {
+  it('removes both the tar and its .meta.json sidecar', async () => {
+    mockNas.nasRemove.mockResolvedValue(undefined);
+    const r = await deleteServiceBackup('home-assistant-20260615-0531.tar');
+    expect(r).toEqual({ tarName: 'home-assistant-20260615-0531.tar', metaRemoved: true });
+    expect(mockNas.nasRemove).toHaveBeenNthCalledWith(1, `${NAS_BACKUP_DIR}/home-assistant-20260615-0531.tar`);
+    expect(mockNas.nasRemove).toHaveBeenNthCalledWith(2, `${NAS_BACKUP_DIR}/home-assistant-20260615-0531.tar.meta.json`);
+  });
+
+  it('still succeeds (metaRemoved:false) when the sidecar is absent — a bare legacy slot', async () => {
+    mockNas.nasRemove
+      .mockResolvedValueOnce(undefined) // tar
+      .mockRejectedValueOnce(new Error('550 not found')); // missing sidecar
+    const r = await deleteServiceBackup('adguard.tar');
+    expect(r).toEqual({ tarName: 'adguard.tar', metaRemoved: false });
+    expect(mockNas.nasRemove).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['empty', ''],
+    ['path separator', 'sub/home-assistant.tar'],
+    ['parent traversal', '../home-assistant.tar'],
+    ['absolute path', '/etc/passwd.tar'],
+    ['backslash', 'a\\b.tar'],
+    ['NUL byte', 'evil\0.tar'],
+    ['not a tar', 'home-assistant.txt'],
+  ])('rejects a %s tarName without touching the NAS', async (_label, name) => {
+    await expect(deleteServiceBackup(name)).rejects.toThrow();
+    expect(mockNas.nasRemove).not.toHaveBeenCalled();
   });
 });

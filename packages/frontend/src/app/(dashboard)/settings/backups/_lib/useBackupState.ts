@@ -101,11 +101,19 @@ export function useBackupState() {
     configured: boolean;
     connection: { ok: true } | { ok: false; error: string } | null;
     // `stamp` is the dated-snapshot timestamp (null for a bare legacy slot, #1865).
-    backups: { service: string; tarName: string; size: number; stamp?: string | null }[];
+    // `createdAt` is the ISO creation time (null for an undated legacy slot, #1890).
+    backups: { service: string; tarName: string; size: number; stamp?: string | null; createdAt?: string | null }[];
+    // The nightly NAS-backup schedule (#1890) — when the automatic push runs.
+    schedule?: { enabled: boolean; time: string; nextRunAt: string | null };
   } | null>(null);
   const [nasLoading, setNasLoading] = useState(true);
   const [nasRestoring, setNasRestoring] = useState<string | null>(null);
   const [nasRestoreTarget, setNasRestoreTarget] = useState<{ service: string; tarName: string } | null>(null);
+  // NAS "back up now" (#1890) — reuses the existing backup-now route.
+  const [nasBackingUp, setNasBackingUp] = useState(false);
+  // NAS per-row Delete (#1890) — confirm target + in-flight tarName.
+  const [nasDeleteTarget, setNasDeleteTarget] = useState<{ service: string; tarName: string } | null>(null);
+  const [nasDeleting, setNasDeleting] = useState(false);
 
   const fetchBackups = useCallback(async () => {
     setBackupsLoading(true);
@@ -183,7 +191,7 @@ export function useBackupState() {
       const res = await fetch('/api/system/external-backup/list');
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Unable to read NAS backups');
-      setNasOverview({ configured: data.configured, connection: data.connection, backups: data.backups ?? [] });
+      setNasOverview({ configured: data.configured, connection: data.connection, backups: data.backups ?? [], schedule: data.schedule });
     } catch (error) {
       console.error(error);
       setNasOverview({ configured: false, connection: null, backups: [] });
@@ -222,6 +230,9 @@ export function useBackupState() {
     nasLoading,
     nasRestoring, setNasRestoring,
     nasRestoreTarget, setNasRestoreTarget,
+    nasBackingUp, setNasBackingUp,
+    nasDeleteTarget, setNasDeleteTarget,
+    nasDeleting, setNasDeleting,
     fetchBackups,
     fetchBackupSync,
     fetchNasOverview,

@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockGetConfig, mockUpdateConfig, mockTestNas, mockListBackups, mockResolveTarget } = vi.hoisted(() => ({
+const { mockGetConfig, mockUpdateConfig, mockTestNas, mockListBackups, mockResolveTarget, mockSchedule } = vi.hoisted(() => ({
   mockGetConfig: vi.fn(),
   mockUpdateConfig: vi.fn(),
   mockTestNas: vi.fn(),
   mockListBackups: vi.fn(),
   mockResolveTarget: vi.fn(),
+  mockSchedule: vi.fn(),
 }));
 
 vi.mock('../config', () => ({
@@ -16,7 +17,10 @@ vi.mock('./nasClient', () => ({
   testNasConnection: () => mockTestNas(),
   resolveBackupTarget: () => mockResolveTarget(),
 }));
-vi.mock('./producer', () => ({ listServiceBackups: () => mockListBackups() }));
+vi.mock('./producer', () => ({
+  listServiceBackups: () => mockListBackups(),
+  getNasBackupSchedule: () => mockSchedule(),
+}));
 
 import {
   registerNasSource,
@@ -35,8 +39,11 @@ beforeEach(() => {
   // Default: no destination resolves (not configured). Configured tests below
   // set a non-null resolved target.
   mockResolveTarget.mockResolvedValue(null);
-  mockListBackups.mockResolvedValue([{ service: 'home-assistant', tarName: 'home-assistant-20260615-0531.tar', size: 2_340_000, stamp: '20260615-0531' }]);
+  mockListBackups.mockResolvedValue([{ service: 'home-assistant', tarName: 'home-assistant-20260615-0531.tar', size: 2_340_000, stamp: '20260615-0531', createdAt: '2026-06-15T05:31:00.000Z' }]);
+  mockSchedule.mockResolvedValue(SCHEDULE);
 });
+
+const SCHEDULE = { enabled: true, time: '03:30', nextRunAt: '2026-06-17T03:30:00.000Z' };
 
 const FTP_TARGET = { transport: 'ftp', host: '192.168.178.1', user: 'fritz9746', password: 'pw', secure: false };
 
@@ -84,19 +91,20 @@ describe('registerNasSource', () => {
 });
 
 describe('getNasBackupOverview', () => {
-  it('reports not-configured when no FritzBox gateway is set', async () => {
+  it('reports not-configured when no FritzBox gateway is set, still surfacing the schedule (#1890)', async () => {
     const o = await getNasBackupOverview();
-    expect(o).toEqual({ configured: false, connection: null, backups: [] });
+    expect(o).toEqual({ configured: false, connection: null, backups: [], schedule: SCHEDULE });
     expect(mockTestNas).not.toHaveBeenCalled();
   });
 
-  it('lists NAS backups when configured and connected', async () => {
+  it('lists NAS backups when configured and connected, with createdAt + schedule (#1890)', async () => {
     mockGetConfig.mockResolvedValue({ gateway: { type: 'fritzbox', ...REG } });
     mockResolveTarget.mockResolvedValue(FTP_TARGET);
     const o = await getNasBackupOverview();
     expect(o.configured).toBe(true);
     expect(o.connection).toEqual({ ok: true });
-    expect(o.backups).toEqual([{ service: 'home-assistant', tarName: 'home-assistant-20260615-0531.tar', size: 2_340_000, stamp: '20260615-0531' }]);
+    expect(o.backups).toEqual([{ service: 'home-assistant', tarName: 'home-assistant-20260615-0531.tar', size: 2_340_000, stamp: '20260615-0531', createdAt: '2026-06-15T05:31:00.000Z' }]);
+    expect(o.schedule).toEqual(SCHEDULE);
   });
 
   it('surfaces a connection failure with no backups', async () => {

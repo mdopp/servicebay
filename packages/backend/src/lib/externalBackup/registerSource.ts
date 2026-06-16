@@ -18,7 +18,12 @@
 import { getConfig, updateConfig, type GatewayConfig, type ExternalBackupTarget } from '../config';
 import { logger } from '../logger';
 import { testNasConnection, resolveBackupTarget } from './nasClient';
-import { listServiceBackups, type ServiceBackupListEntry } from './producer';
+import {
+  listServiceBackups,
+  getNasBackupSchedule,
+  type ServiceBackupListEntry,
+  type NasBackupSchedule,
+} from './producer';
 
 /**
  * Settings → Backups destination view (#1525/#1527). Never echoes a stored
@@ -168,6 +173,10 @@ export interface NasBackupOverview {
   /** Service backups staged under `sb-backup/` on the NAS (empty on any error
    *  or when not configured). */
   backups: ServiceBackupListEntry[];
+  /** The nightly NAS-backup schedule (#1890) — when the automatic push runs.
+   *  Always present, independent of whether a destination is reachable, so both
+   *  the System Snapshot and Snapshot-on-NAS sections can show the real "when". */
+  schedule: NasBackupSchedule;
 }
 
 /**
@@ -177,23 +186,26 @@ export interface NasBackupOverview {
  * connection error and offers a retry/verify.
  */
 export async function getNasBackupOverview(): Promise<NasBackupOverview> {
+  // The schedule is surfaced regardless of destination reachability — both
+  // Backups sections show the real "when" (#1890).
+  const schedule = await getNasBackupSchedule();
   // "Configured" now follows the resolved destination (#1527), not just the
   // gateway: a separate FTP/SSH target counts even with no FritzBox gateway.
   const configured = (await resolveBackupTarget()) !== null;
   if (!configured) {
-    return { configured: false, connection: null, backups: [] };
+    return { configured: false, connection: null, backups: [], schedule };
   }
   const connection = await testNasConnection();
   if (!connection.ok) {
-    return { configured: true, connection, backups: [] };
+    return { configured: true, connection, backups: [], schedule };
   }
   try {
     const backups = await listServiceBackups();
-    return { configured: true, connection, backups };
+    return { configured: true, connection, backups, schedule };
   } catch (e) {
     // The probe connected but the listing failed (e.g. sb-backup/ absent on a
     // brand-new NAS) — treat as "connected, nothing staged yet".
     logger.warn('ExternalBackup', `NAS connected but listing failed: ${e instanceof Error ? e.message : String(e)}`);
-    return { configured: true, connection, backups: [] };
+    return { configured: true, connection, backups: [], schedule };
   }
 }

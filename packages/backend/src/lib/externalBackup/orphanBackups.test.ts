@@ -8,7 +8,7 @@ vi.mock('./producer', async (orig) => ({
 
 import { selectOrphanBackups, listOrphanServiceBackups } from './orphanBackups';
 
-const entry = (service: string) => ({ service, tarName: `${service}-20260615-0531.tar`, size: 1, stamp: '20260615-0531' });
+const entry = (service: string) => ({ service, tarName: `${service}-20260615-0531.tar`, size: 1, stamp: '20260615-0531', createdAt: '2026-06-15T05:31:00.000Z' });
 
 describe('selectOrphanBackups (#1218 entry 2)', () => {
   it('returns backups for services that are not installed', () => {
