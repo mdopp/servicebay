@@ -23,6 +23,13 @@ import { classifyRecord } from './classify';
 import { listBlockDevices, mountReadOnly, unmount, type BlockDevice } from './mounter';
 import { hashRecords, hashSourceFile, scanMount } from './hostScan';
 import { applyPlan, type ApplyResult, type ImmichConfig } from './plan';
+import {
+  createSession,
+  getSession,
+  markApplied,
+  sessionHashes,
+  __clearSessions as clearSessionStore,
+} from './sessionStore';
 import type { SafeExec } from './hostExec';
 import type { Category, ImportPlan, ImportRecord } from './types';
 
@@ -88,18 +95,6 @@ export interface ApplyOptions {
   immich?: ImmichConfig;
 }
 
-/** One stored, reviewed-but-not-applied scan. The apply gate keys off this. */
-interface ScanSession {
-  device: string;
-  plan: ImportPlan;
-  hashes: Map<string, string>;
-  catalogPath: string;
-}
-
-// In-process review-gate store. A plan can only be applied via the same backend
-// process that scanned it — a forged/replayed sessionId can't conjure a plan.
-const SESSIONS = new Map<string, ScanSession>();
-
 /**
  * Enumerate removable partitions that carry a filesystem — the only things the
  * card offers as an import source (a whole-disk node or a bare partition with no
@@ -119,7 +114,9 @@ function describeDevice(d: BlockDevice): string {
 
 /**
  * Mount the device READ-ONLY, host-walk it, run the deterministic pipeline, and
- * return the review payload + a session token. Writes NOTHING to the host: the
+ * return the review payload + a session token. The reviewed plan is persisted
+ * to the durable session store (#1896) so it survives a backend restart and a
+ * reopened card can re-attach by id. Writes NOTHING to the imported host: the
  * source is `-o ro` and the catalog is opened read-only-in-effect (we only read
  * it for delta dedup here; nothing is upserted until apply). The mount is always
  * unmounted before returning, even on error.
@@ -152,7 +149,7 @@ export async function scanDevice(opts: ScanOptions): Promise<ScanResult> {
     }
 
     const sessionId = randomUUID();
-    SESSIONS.set(sessionId, { device, plan, hashes, catalogPath });
+    await createSession({ id: sessionId, device, plan, hashes, catalogPath });
 
     return {
       sessionId,
@@ -171,15 +168,18 @@ export async function scanDevice(opts: ScanOptions): Promise<ScanResult> {
 /**
  * Apply a previously-scanned plan. REQUIRES a valid `sessionId` from
  * {@link scanDevice} — this is the review gate: there is no path to apply a plan
- * that wasn't scanned + reviewed in this process. Resumable (catalog-backed); the
+ * that wasn't scanned + reviewed. The session is read from the durable store
+ * (#1896), so it survives a backend restart between scan and apply — a forged/
+ * replayed id still can't conjure a plan. Resumable (catalog-backed); the
  * session is consumed (one apply per review) on success.
  */
 export async function applyImportPlan(opts: ApplyOptions): Promise<ApplyResult> {
   const { exec, sessionId, shareGid, immich } = opts;
-  const session = SESSIONS.get(sessionId);
-  if (!session) {
+  const stored = await getSession(sessionId);
+  if (!stored || stored.phase === 'applied') {
     throw new Error('disk-import: no reviewed plan for this session — scan + review before applying');
   }
+  const session = { ...stored, hashes: sessionHashes(stored) };
 
   // Re-mount read-only for the apply pass (the scan unmounted it).
   const mountpoint = await mountReadOnly(exec, session.device);
@@ -212,7 +212,7 @@ export async function applyImportPlan(opts: ApplyOptions): Promise<ApplyResult> 
       hashOf,
       immich,
     });
-    SESSIONS.delete(sessionId); // one apply per reviewed plan
+    await markApplied(sessionId); // one apply per reviewed plan
     return result;
   } finally {
     catalog.close();
@@ -220,9 +220,9 @@ export async function applyImportPlan(opts: ApplyOptions): Promise<ApplyResult> 
   }
 }
 
-/** Test seam: drop all in-memory sessions. */
-export function __clearSessions(): void {
-  SESSIONS.clear();
+/** Test seam: drop all persisted sessions. */
+export async function __clearSessions(): Promise<void> {
+  await clearSessionStore();
 }
 
 /** Records whose size is shared with another record — the only dedup candidates. */

@@ -1,4 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import os from 'os';
+import path from 'path';
+
+// Mock DATA_DIR to a process-scoped tmpdir so the durable session store
+// (#1896) writes to a real fs path without colliding with the dev box.
+vi.mock('@/lib/dirs', () => ({
+  DATA_DIR: path.join(os.tmpdir(), `sb-diskimport-svc-${process.pid}`),
+}));
+
 import {
   listImportDevices,
   scanDevice,
@@ -26,7 +35,9 @@ function mockExec(
   return { exec, calls };
 }
 
-beforeEach(() => __clearSessions());
+beforeEach(async () => {
+  await __clearSessions();
+});
 
 describe('listImportDevices', () => {
   it('keeps only removable partitions that carry a filesystem', async () => {
@@ -107,7 +118,7 @@ describe('applyImportPlan — the review gate', () => {
 
     // No immich config wired → photos throw on apply; use a residue-only disk to
     // prove the copy path runs. Re-scan a docs-only listing.
-    __clearSessions();
+    await __clearSessions();
     const docOut = '/mnt/docs/report.pdf\t10\t1700000000\0';
     const { exec: exec2, calls: calls2 } = mockExec({
       find: ok(docOut),
