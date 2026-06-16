@@ -72,6 +72,22 @@ function backupStamp(when: Date): string {
 }
 
 /**
+ * Derive an ISO timestamp from a `YYYYMMDD-HHMM` UTC dated-slot stamp (#1890),
+ * so the UI can show a "Created" column without fetching every `.meta.json`
+ * sidecar. A null stamp (a bare legacy `<service>.tar`) has no embedded date →
+ * null (the UI renders "—"). The sidecar's `createdAt` is the authoritative
+ * source, but it's written from the same `Date` the stamp is, so the stamp is a
+ * faithful, network-free derivation.
+ */
+function createdAtFromStamp(stamp: string | null): string | null {
+  if (!stamp) return null;
+  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})$/.exec(stamp);
+  if (!m) return null;
+  const [, y, mo, d, h, mi] = m;
+  return `${y}-${mo}-${d}T${h}:${mi}:00.000Z`;
+}
+
+/**
  * Parse a NAS tar filename into its service + (optional) dated stamp. A dated
  * slot resolves both; a bare legacy `<service>.tar` resolves the service with a
  * null stamp (so it sorts as the oldest / a valid undated snapshot). A non-tar
@@ -111,6 +127,11 @@ export interface ServiceBackupListEntry {
   /** The `YYYYMMDD-HHMM` UTC stamp parsed from a dated slot, or null for a bare
    *  legacy `<service>.tar` (pre-#1865). Lets the UI label / order snapshots. */
   stamp: string | null;
+  /** ISO timestamp the snapshot was created (#1890). Read from the `.meta.json`
+   *  sidecar's `createdAt` when present; otherwise derived from the dated `stamp`
+   *  (`YYYYMMDD-HHMM` UTC). Null for a bare legacy slot with no sidecar, which the
+   *  UI renders as "—". */
+  createdAt: string | null;
 }
 
 async function pathExists(target: string): Promise<boolean> {
@@ -603,6 +624,31 @@ export function scheduleExternalNasBackup(): void {
     });
 }
 
+/** The nightly NAS-backup schedule, for surfacing the "when" on Settings →
+ *  Backups (#1890). `nextRunAt` is null when disabled. */
+export interface NasBackupSchedule {
+  enabled: boolean;
+  /** Daily run time, 24h `HH:MM` UTC. */
+  time: string;
+  /** ISO timestamp of the next scheduled run, or null when disabled. */
+  nextRunAt: string | null;
+}
+
+/**
+ * Resolve the nightly NAS-backup schedule from config (#1890) so the UI can show
+ * the real configured time + next run instead of a vague "nightly". Derives the
+ * next run from `getNextExternalBackupDelayMs` — the same source the scheduler
+ * uses — so the surfaced time matches what actually fires.
+ */
+export async function getNasBackupSchedule(now: Date = new Date()): Promise<NasBackupSchedule> {
+  const cfg = (await getConfig()).externalBackup;
+  const enabled = cfg?.enabled !== false; // enabled unless explicitly disabled
+  const time = cfg?.time || DEFAULT_EXTERNAL_BACKUP_TIME;
+  if (!enabled) return { enabled: false, time, nextRunAt: null };
+  const nextRunAt = new Date(now.getTime() + getNextExternalBackupDelayMs(time, now)).toISOString();
+  return { enabled: true, time, nextRunAt };
+}
+
 /** Resolve the per-service retention (keep N most-recent) from config (#1865). */
 async function getBackupRetention(): Promise<number> {
   const configured = (await getConfig()).externalBackup?.retention;
@@ -674,6 +720,45 @@ async function writeServiceBackupToNas(service: string, tar: Buffer): Promise<Se
 }
 
 /**
+ * Delete one NAS snapshot — the tar AND its `.meta.json` sidecar (#1890),
+ * mirroring `pruneServiceBackups`' cleanup. `tarName` is operator-supplied (a
+ * NAS path), so it's validated: it must be a bare basename (no directory
+ * separators / `..` traversal / NUL), end in `.tar`, and not be a sidecar
+ * itself. The sidecar remove is best-effort — a legacy bare slot may have none,
+ * and a missing sidecar must not fail the tar delete.
+ */
+export async function deleteServiceBackup(tarName: string): Promise<{ tarName: string; metaRemoved: boolean }> {
+  if (typeof tarName !== 'string' || !tarName) {
+    throw new Error('tarName is required');
+  }
+  // Reject any path component, traversal, or NUL — `tarName` names a file inside
+  // sb-backup/, never a path. basename!==input catches `../`, `a/b`, leading `/`.
+  if (
+    tarName.includes('/') ||
+    tarName.includes('\\') ||
+    tarName.includes('\0') ||
+    path.posix.basename(tarName) !== tarName
+  ) {
+    throw new Error(`Invalid backup name: "${tarName}"`);
+  }
+  if (!tarName.endsWith('.tar')) {
+    throw new Error(`Not a service backup tar: "${tarName}"`);
+  }
+
+  await nasRemove(path.posix.join(NAS_BACKUP_DIR, tarName));
+  let metaRemoved = false;
+  try {
+    await nasRemove(path.posix.join(NAS_BACKUP_DIR, `${tarName}.meta.json`));
+    metaRemoved = true;
+  } catch (e) {
+    // A bare legacy slot has no sidecar — don't fail the delete over it.
+    logger.info('ExternalBackup', `No meta sidecar removed for ${tarName}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  logger.info('ExternalBackup', `Deleted NAS backup ${tarName}${metaRemoved ? ' (+ sidecar)' : ''}`);
+  return { tarName, metaRemoved };
+}
+
+/**
  * Stage an uploaded, already-container-shaped `<service>.tar` onto the NAS in
  * the restore layout (#1351). Lets the TUI / extractors seed a fresh install's
  * NAS from the operator's machine. The service must have a backup manifest (so
@@ -706,7 +791,15 @@ export async function listServiceBackups(): Promise<ServiceBackupListEntry[]> {
     .filter(f => f.name.endsWith('.tar')) // drops `.tar.meta.json` sidecars
     .map(f => {
       const parsed = parseSlotName(f.name);
-      return parsed ? { service: parsed.service, tarName: f.name, size: f.size, stamp: parsed.stamp } : null;
+      return parsed
+        ? {
+            service: parsed.service,
+            tarName: f.name,
+            size: f.size,
+            stamp: parsed.stamp,
+            createdAt: createdAtFromStamp(parsed.stamp),
+          }
+        : null;
     })
     .filter((e): e is ServiceBackupListEntry => e !== null)
     .sort((a, b) =>

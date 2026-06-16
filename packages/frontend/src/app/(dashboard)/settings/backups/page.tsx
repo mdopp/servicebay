@@ -85,6 +85,9 @@ export default function BackupsSettingsPage() {
     nasLoading,
     nasRestoring, setNasRestoring,
     nasRestoreTarget, setNasRestoreTarget,
+    nasBackingUp, setNasBackingUp,
+    nasDeleteTarget, setNasDeleteTarget,
+    nasDeleting, setNasDeleting,
     fetchBackups,
     fetchBackupSync,
     fetchNasOverview,
@@ -116,6 +119,56 @@ export default function BackupsSettingsPage() {
       setNasRestoreTarget(null);
     }
   }, [nasRestoreTarget, nasRestoring, addToast, setNasRestoring, setNasRestoreTarget]);
+
+  // "Back up to NAS now" (#1890) — reuses the EXISTING backup-now route (no new
+  // endpoint); same progress/result feedback as the System-Snapshot create.
+  const handleNasBackupNow = useCallback(async () => {
+    if (nasBackingUp) return;
+    setNasBackingUp(true);
+    try {
+      const res = await fetch('/api/system/external-backup/backup-now', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Backup failed');
+      const failed = (data.results ?? []).filter((r: { ok: boolean }) => !r.ok).length;
+      if (data.backedUp === 0 && data.total > 0) {
+        const firstError = (data.results ?? []).find((r: { error?: string }) => r.error)?.error;
+        throw new Error(firstError || 'No services were backed up');
+      }
+      addToast(
+        failed > 0 ? 'info' : 'success',
+        'Backed up to NAS',
+        `${data.backedUp}/${data.total} service${data.total === 1 ? '' : 's'} pushed to the NAS${failed > 0 ? ` (${failed} failed)` : ''}.`,
+      );
+      await fetchNasOverview();
+    } catch (error) {
+      addToast('error', 'NAS backup failed', error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setNasBackingUp(false);
+    }
+  }, [nasBackingUp, addToast, setNasBackingUp, fetchNasOverview]);
+
+  // Delete one NAS snapshot — the tar + its .meta.json sidecar (#1890).
+  const confirmDeleteNasBackup = useCallback(async () => {
+    if (!nasDeleteTarget || nasDeleting) return;
+    const { tarName } = nasDeleteTarget;
+    setNasDeleting(true);
+    try {
+      const res = await fetch('/api/system/external-backup/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service: nasDeleteTarget.service, tarName }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Delete failed');
+      addToast('success', 'NAS backup deleted', `${tarName} has been removed from the NAS.`);
+      await fetchNasOverview();
+    } catch (error) {
+      addToast('error', 'Failed to delete NAS backup', error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setNasDeleting(false);
+      setNasDeleteTarget(null);
+    }
+  }, [nasDeleteTarget, nasDeleting, addToast, setNasDeleting, setNasDeleteTarget, fetchNasOverview]);
 
   // ─── Backup Sync handlers ─────────────────────────────────────────
   const buildBackupTarget = () => {
@@ -661,6 +714,16 @@ export default function BackupsSettingsPage() {
     return parts.length > 0 ? parts.join(', ') : 'Nothing selected';
   };
 
+  // The nightly NAS-backup schedule (#1890), surfaced on both sections so the
+  // operator sees the real time + next run instead of a vague "nightly".
+  const schedule = nasOverview?.schedule;
+  const scheduleLine = !schedule
+    ? null
+    : !schedule.enabled
+      ? 'Nightly NAS backup is disabled.'
+      : `Runs nightly at ${schedule.time} UTC` +
+        (schedule.nextRunAt ? ` · next run ${new Date(schedule.nextRunAt).toLocaleString()}` : '');
+
   return (
     <>
       {/* Primary CTA: one-click restore from latest snapshot. The selective
@@ -711,7 +774,12 @@ export default function BackupsSettingsPage() {
             </div>
             <div>
               <h3 className="font-bold text-gray-900 dark:text-white">System Snapshot</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Your setup and per-service config (settings, not bulk data). Download it on demand, and it&apos;s pushed to the NAS nightly and auto-restored on reinstall.</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Your setup and per-service config (settings, not bulk data). Download it on demand; it&apos;s pushed to the NAS on a schedule and auto-restored on reinstall.</p>
+              {scheduleLine && (
+                <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
+                  <Clock size={12} /> {scheduleLine}
+                </p>
+              )}
               {backupStatus !== 'idle' && (
                 <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300">
                   {backupStatus === 'running' && (
@@ -868,15 +936,31 @@ export default function BackupsSettingsPage() {
             <div>
               <h3 className="font-bold text-gray-900 dark:text-white">Snapshot on NAS</h3>
               <p className="text-xs text-gray-500 dark:text-gray-400">Where the System Snapshot is pushed off-box so a fresh install can auto-restore it — the FritzBox USB NAS by default, or a separate FTP/SSH destination you set below.</p>
+              {scheduleLine && (
+                <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
+                  <Clock size={12} /> {scheduleLine}
+                </p>
+              )}
             </div>
           </div>
-          <button
-            onClick={() => void fetchNasOverview()}
-            disabled={nasLoading}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm rounded-lg border border-gray-300 dark:border-gray-700 shadow-sm hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
-          >
-            {nasLoading ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />} Verify connection
-          </button>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <button
+              onClick={handleNasBackupNow}
+              disabled={nasBackingUp || !nasOverview?.configured}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg shadow-sm hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title={!nasOverview?.configured ? 'Configure a NAS destination below first' : undefined}
+            >
+              {nasBackingUp ? <Loader2 className="animate-spin" size={16} /> : <UploadCloud size={16} />}
+              {nasBackingUp ? 'Backing up…' : 'Back up now'}
+            </button>
+            <button
+              onClick={() => void fetchNasOverview()}
+              disabled={nasLoading}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm rounded-lg border border-gray-300 dark:border-gray-700 shadow-sm hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
+            >
+              {nasLoading ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />} Verify connection
+            </button>
+          </div>
         </div>
         <div className="p-6 space-y-6">
           {/* Destination config (#1525/#1527): FritzBox NAS creds defaulting to
@@ -911,24 +995,41 @@ export default function BackupsSettingsPage() {
                       <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
                         <th className="py-2 font-medium">Service</th>
                         <th className="py-2 font-medium">File</th>
+                        <th className="py-2 font-medium">Created</th>
                         <th className="py-2 font-medium">Size</th>
                         <th className="py-2 font-medium text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                      {nasOverview.backups.map(b => (
+                      {/* Newest-first: `createdAt`/`stamp` desc, undated legacy
+                          slots (null) sort last. The list is already grouped
+                          per-service newest-first; this flattens to a global
+                          newest-first order for the table (#1890). */}
+                      {[...nasOverview.backups]
+                        .sort((a, b) => (b.createdAt ?? b.stamp ?? '').localeCompare(a.createdAt ?? a.stamp ?? ''))
+                        .map(b => (
                         <tr key={b.tarName}>
                           <td className="py-3 text-gray-700 dark:text-gray-200">{b.service}</td>
                           <td className="py-3 font-mono text-xs text-blue-600 dark:text-blue-300 break-all">{b.tarName}</td>
+                          <td className="py-3 text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                            {b.createdAt ? new Date(b.createdAt).toLocaleString() : '—'}
+                          </td>
                           <td className="py-3 text-gray-700 dark:text-gray-300">{formatBytes(b.size)}</td>
                           <td className="py-3">
-                            <div className="flex justify-end">
+                            <div className="flex justify-end gap-2">
                               <button
                                 onClick={() => setNasRestoreTarget({ service: b.service, tarName: b.tarName })}
                                 disabled={nasRestoring !== null}
                                 className="text-xs px-3 py-1.5 rounded-md border border-amber-300 text-amber-700 dark:text-amber-300 dark:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors flex items-center gap-1 disabled:opacity-60"
                               >
                                 {nasRestoring === b.service ? <Loader2 className="animate-spin" size={14} /> : <RotateCcw size={14} />} Restore
+                              </button>
+                              <button
+                                onClick={() => setNasDeleteTarget({ service: b.service, tarName: b.tarName })}
+                                disabled={nasDeleting}
+                                className="text-xs px-3 py-1.5 rounded-md border border-red-200 text-red-600 dark:text-red-400 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-1 disabled:opacity-60"
+                              >
+                                <Trash2 size={14} /> Delete
                               </button>
                             </div>
                           </td>
@@ -1202,6 +1303,17 @@ export default function BackupsSettingsPage() {
         isDestructive
         onConfirm={confirmDeleteBackup}
         onCancel={() => !deletingBackup && setDeleteTarget(null)}
+      />
+
+      <ConfirmModal
+        isOpen={!!nasDeleteTarget}
+        title="Delete NAS backup"
+        message={`Delete ${nasDeleteTarget?.tarName ?? 'this backup'} from the FritzBox NAS permanently? This removes the snapshot and its metadata sidecar and cannot be undone.`}
+        confirmText={nasDeleting ? 'Deleting…' : 'Delete backup'}
+        confirmDisabled={nasDeleting}
+        isDestructive
+        onConfirm={confirmDeleteNasBackup}
+        onCancel={() => !nasDeleting && setNasDeleteTarget(null)}
       />
 
       <ConfirmModal
