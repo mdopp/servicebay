@@ -19,6 +19,21 @@ vi.mock('../config', () => mockCfg);
 const stageDirs: string[] = [];
 vi.mock('../executor', () => ({
   getExecutor: () => ({
+    // Bulk plain-copy (#1894): one shell pipe `tar -C src --null -T list -cf - |
+    // tar -C dest -xf -` instead of a cp per file. Emulate it against the local fs.
+    async exec(command: string) {
+      const m = /tar -C (\S+) --null -T (\S+) -cf - \| tar -C (\S+) -xf -/.exec(command);
+      if (!m) throw new Error(`unexpected exec: ${command}`);
+      const unq = (s: string) => s.replace(/^'(.*)'$/, '$1').replace(/'\\''/g, "'");
+      const [, srcRoot, listFile, destRoot] = m.map(unq);
+      const rels = (await fs.readFile(listFile, 'utf8')).split('\0').filter(Boolean);
+      for (const rel of rels) {
+        const dest = path.join(destRoot, rel);
+        await fs.mkdir(path.dirname(dest), { recursive: true });
+        await fs.copyFile(path.join(srcRoot, rel), dest);
+      }
+      return { stdout: '', stderr: '' };
+    },
     async execArgv(argv: string[]) {
       const [cmd, ...args] = argv;
       if (cmd === 'find') {

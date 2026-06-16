@@ -182,6 +182,13 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     exclude: [
       'home-assistant_v2.db', 'home-assistant_v2.db-wal', 'home-assistant_v2.db-shm',
       'history', 'logs', 'home-assistant.log', 'tts', 'image', 'www', 'deps',
+      // HACS ships a re-downloadable frontend asset cache (`hacs_frontend` ≈ 2,200
+      // tiny locale/static files that HACS re-fetches on demand). It has no config
+      // or restore value, and per-file staging it OOM'd the box mid-backup (#1894).
+      // The HACS *data store* (`.storage/hacs*`) — what HACS actually manages — is
+      // still backed up; only the disposable static cache is dropped.
+      'custom_components/hacs/hacs_frontend',
+      'custom_components/hacs_frontend',
     ],
     // Large on-RAID artifacts kept through a wipe-config: the recorder history
     // DB (can be many GB) and the Z-Wave mesh DB. The zwave_js *keys* are CONFIG

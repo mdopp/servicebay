@@ -49,8 +49,10 @@ import {
   NAS_BACKUP_DIR,
   DEFAULT_BACKUP_RETENTION,
   latestServiceBackupName,
+  agentFileBackend,
 } from './producer';
 import { getServiceManifest, type ServiceBackupManifest } from './serviceManifest';
+import { logger } from '../logger';
 
 /** Match a dated slot tar `<service>-YYYYMMDD-HHMM.tar` (#1865). */
 const datedTarRe = (service: string) => new RegExp(`/${service}-\\d{8}-\\d{4}\\.tar$`);
@@ -281,6 +283,36 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
     const out = await runBackupCollector(npm, 'Local');
     expect(out).toBe(npm);
   });
+
+  it('degrades gracefully (live file) and logs the real reason when sqlite3 is missing from the image (#1894)', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    // The snapshot script probes for sqlite3 and emits the `no-sqlite3` sentinel
+    // (exit 0) when it's absent — NOT a misleading "(unknown)".
+    mockSendCommand
+      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
+      .mockResolvedValueOnce({ stdout: 'no-sqlite3', stderr: '', code: 0 });
+    const out = await runBackupCollector(npm, 'Local');
+    // Degrades to copying the live DB under its canonical name (manifest unchanged).
+    expect(out).toBe(npm);
+    expect(out.include).toContain('data/database.sqlite');
+    const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
+    expect(msg).toMatch(/sqlite3 not present/i);
+    expect(msg).not.toMatch(/unknown/);
+    warn.mockRestore();
+  });
+
+  it('surfaces the container stderr (not "(unknown)") when the snapshot errors (#1894)', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    mockSendCommand
+      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
+      .mockResolvedValueOnce({ stdout: '', stderr: 'sh: 1: sqlite3: Permission denied', code: 1 });
+    const out = await runBackupCollector(npm, 'Local');
+    expect(out).toBe(npm);
+    const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
+    expect(msg).toContain('Permission denied'); // the REAL stderr is logged
+    expect(msg).not.toMatch(/\(unknown\)/);
+    warn.mockRestore();
+  });
 });
 
 describe('buildServiceBackupTar', () => {
@@ -333,8 +365,26 @@ describe('backupServiceToNas via the host agent (#1597)', () => {
   // serviceDataDir override) must route every fs op through the host agent.
   // Here the mocked executor runs the same ops against a REAL local temp dir,
   // exercising the actual agentFileBackend round-trip (incl. tar | base64).
-  function wireExecutorToHostDir(): { stagingDir: string } {
-    const ref = { stagingDir: '' };
+  function wireExecutorToHostDir(): { stagingDir: string; execShellCalls: number } {
+    const ref = { stagingDir: '', execShellCalls: 0 };
+    // The bulk copy (#1894) runs as ONE shell pipe per service via executor.exec:
+    //   tar -C <src> --null -T <listfile> -cf - | tar -C <dest> -xf -
+    // Emulate it against the real local temp dirs and count the calls so a test
+    // can assert "one bulk exec, not a round-trip per file".
+    mockExecutor.exec.mockImplementation(async (command: string) => {
+      const m = /tar -C (\S+) --null -T (\S+) -cf - \| tar -C (\S+) -xf -/.exec(command);
+      if (!m) throw new Error(`unexpected exec: ${command}`);
+      ref.execShellCalls += 1;
+      const unq = (s: string) => s.replace(/^'(.*)'$/, '$1').replace(/'\\''/g, "'");
+      const [, srcRoot, listFile, destRoot] = m.map(unq);
+      const rels = (await fs.readFile(listFile, 'utf8')).split('\0').filter(Boolean);
+      for (const rel of rels) {
+        const dest = path.join(destRoot, rel);
+        await fs.mkdir(path.dirname(dest), { recursive: true });
+        await fs.copyFile(path.join(srcRoot, rel), dest);
+      }
+      return { stdout: '', stderr: '' };
+    });
     mockExecutor.execArgv.mockImplementation(async (argv: string[]) => {
       const [cmd, ...args] = argv;
       if (cmd === 'find') {
@@ -405,6 +455,30 @@ describe('backupServiceToNas via the host agent (#1597)', () => {
     await execFileAsync('tar', ['-xf', tarFile, '-C', out]);
     expect(await fs.readFile(path.join(out, 'conf/AdGuardHome.yaml'), 'utf8')).toBe('bind_host: 0.0.0.0');
     await expect(fs.access(path.join(out, 'data/querylog.json'))).rejects.toThrow();
+  });
+
+  it('copies a large file tree in ONE host-side bulk exec, not a round-trip per file (#1894)', async () => {
+    const hostStacks = await mkTmp();
+    // A custom_components dir with many plain files — what OOM'd the box when each
+    // was a separate agent cp/mkdir round-trip.
+    for (let i = 0; i < 50; i++) {
+      await writeFile(hostStacks, `demo/custom_components/pkg/file${i}.py`, `x${i}`);
+    }
+    mockGetConfig.mockResolvedValue({ templateSettings: { DATA_DIR: hostStacks } });
+    // A throwaway manifest service that maps to the demo/ dir.
+    const ref = wireExecutorToHostDir();
+
+    const tar = await buildServiceBackupTar(
+      path.join(hostStacks, 'demo'),
+      { service: 'demo', include: ['custom_components'], exclude: [] },
+      // Build the tar directly against the wired agent backend (one bulk exec).
+      agentFileBackend(mockExecutor as unknown as Parameters<typeof agentFileBackend>[0]),
+    );
+    expect(tar.length).toBeGreaterThan(0);
+    // The 50 plain files were copied by a SINGLE bulk shell exec — no per-file cp.
+    expect(ref.execShellCalls).toBe(1);
+    const cpCalls = mockExecutor.execArgv.mock.calls.filter((c: unknown[]) => (c[0] as string[])[0] === 'cp');
+    expect(cpCalls).toHaveLength(0);
   });
 
   it('applies strip rules host-side via the agent (password hashes never leave the box)', async () => {
@@ -630,6 +704,26 @@ describe('manifest integration', () => {
     await writeFile(src, 'data/querylog.json', '[]');
     const staged = await stageServiceBackup(src, getServiceManifest('adguard')!, staging);
     expect(staged).toEqual(['conf/AdGuardHome.yaml']);
+  });
+
+  it('the real HA manifest drops the re-downloadable HACS frontend cache but keeps the rest of custom_components (#1894)', async () => {
+    const src = await mkTmp();
+    const staging = await mkTmp();
+    // A real HACS integration's code (keep) …
+    await writeFile(src, 'custom_components/hacs/__init__.py', 'CODE');
+    await writeFile(src, 'custom_components/meross_lan/manifest.json', '{"domain":"meross_lan"}');
+    // … and the ~2.2k-file re-downloadable static frontend cache (drop).
+    await writeFile(src, 'custom_components/hacs/hacs_frontend/static/locale-data/x.json', '{}');
+    await writeFile(src, 'custom_components/hacs/hacs_frontend/main.js', 'JUNK');
+    await writeFile(src, 'custom_components/hacs_frontend/entrypoint.js', 'JUNK');
+
+    const staged = await stageServiceBackup(src, getServiceManifest('home-assistant')!, staging);
+
+    // The HACS code + other integrations are staged …
+    expect(staged).toContain('custom_components/hacs/__init__.py');
+    expect(staged).toContain('custom_components/meross_lan/manifest.json');
+    // … but no hacs_frontend cache file is — neither the nested nor the sibling one.
+    expect(staged.some(p => p.includes('hacs_frontend'))).toBe(false);
   });
 });
 
