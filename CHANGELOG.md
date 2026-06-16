@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.120.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.120.1...servicebay-v4.120.2) (2026-06-16)
+
+
+### Bug Fixes
+
+* **approvals:** confine declared move to the service jail and restart to self ([04cb314](https://github.com/mdopp/servicebay/commit/04cb3145549bf87542782e098c7250c179a65798)), closes [#1884](https://github.com/mdopp/servicebay/issues/1884)
+* defer logs.db VACUUM off boot path + confine approvals move/restart ([6f91461](https://github.com/mdopp/servicebay/commit/6f91461df8c45b3aa875382fae3222c37f0ef6de))
+* **logger:** defer logs.db VACUUM off the synchronous boot path ([076bf15](https://github.com/mdopp/servicebay/commit/076bf1517ddb12a8368d5a422d2fcd06a06c85cc)), closes [#1883](https://github.com/mdopp/servicebay/issues/1883)
+
 ## [4.120.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.120.0...servicebay-v4.120.1) (2026-06-15)
 
 
