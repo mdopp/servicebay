@@ -24,6 +24,7 @@ import { getConfig } from '../config';
 import { logger } from '../logger';
 import { agentManager } from '../agent/manager';
 import { getExecutor, type Executor } from '../executor';
+import { shellQuote } from '../util/shellQuote';
 import { nasUpload, nasDownload, nasList, nasRemove } from './nasClient';
 import {
   getServiceManifest,
@@ -167,6 +168,16 @@ export interface BackupFileBackend {
   readText(target: string): Promise<string>;
   /** Copy a file byte-for-byte (binary-safe — sqlite, certs, …). */
   copyFile(src: string, dest: string): Promise<void>;
+  /**
+   * Copy MANY files (given as relative paths under `srcRoot`) into `destRoot`,
+   * preserving their relative subdirs, in as few operations as possible. The
+   * host-agent backend does this in a SINGLE exec (one `tar -C srcRoot … | tar
+   * -x -C destRoot`) instead of a `mkdirp`+`copyFile` round-trip per file — a HA
+   * config with HACS is thousands of files, and per-file agent round-trips OOM'd
+   * the box (#1894). `relFiles` are plain copies only; strip/transform/renamed
+   * files are still staged individually (they're few and need a content rewrite).
+   */
+  bulkCopyFiles(srcRoot: string, relFiles: string[], destRoot: string): Promise<void>;
   writeText(dest: string, content: string): Promise<void>;
   mkdirp(dir: string): Promise<void>;
   /** Make a fresh staging dir on this backend's side, return its path. */
@@ -188,6 +199,15 @@ const localFileBackend: BackupFileBackend = {
   },
   readText: target => fs.readFile(target, 'utf8'),
   copyFile: (src, dest) => fs.copyFile(src, dest),
+  async bulkCopyFiles(srcRoot, relFiles, destRoot) {
+    // Local fs: a plain per-file copy is already cheap (no agent round-trips),
+    // so there's nothing to batch — just mkdirp + copy each.
+    for (const rel of relFiles) {
+      const dest = path.join(destRoot, rel);
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      await fs.copyFile(path.join(srcRoot, rel), dest);
+    }
+  },
   writeText: (dest, content) => fs.writeFile(dest, content),
   mkdirp: async dir => {
     await fs.mkdir(dir, { recursive: true });
@@ -206,6 +226,35 @@ const localFileBackend: BackupFileBackend = {
     await fs.rm(target, { recursive: true, force: true });
   },
 };
+
+/**
+ * Bulk-copy `relFiles` (relative to `srcRoot`) into `destRoot` host-side in ONE
+ * exec (#1894): write the paths NUL-separated to a temp list, then
+ * `tar -C srcRoot --null -T list -cf - | tar -C destRoot -xf -`. The pipe streams
+ * through the host filesystem — no `cp`/`mkdir` round-trip per file, so a HACS HA
+ * config (thousands of files) no longer floods the agent channel and OOMs the
+ * box. NUL separation means a path with spaces/newlines/quotes is taken verbatim
+ * (no tar `-T` unquoting). Both tar invocations + the pipe need a shell, so this
+ * uses `exec` (not execArgv); every interpolated path is shellQuote'd.
+ */
+async function agentBulkCopyFiles(
+  executor: Executor,
+  srcRoot: string,
+  relFiles: string[],
+  destRoot: string,
+): Promise<void> {
+  if (relFiles.length === 0) return;
+  const listFile = `${destRoot}.copylist`;
+  await executor.writeFile(listFile, relFiles.join('\0'));
+  try {
+    const cmd =
+      `tar -C ${shellQuote(srcRoot)} --null -T ${shellQuote(listFile)} -cf - | ` +
+      `tar -C ${shellQuote(destRoot)} -xf -`;
+    await executor.exec(cmd, { timeoutMs: 120_000 });
+  } finally {
+    await executor.execArgv(['rm', '-f', listFile]);
+  }
+}
 
 /**
  * Host-agent backend (#1597) — reads/stages on the HOST via the node agent, so
@@ -241,6 +290,8 @@ export function agentFileBackend(executor: Executor): BackupFileBackend {
     async copyFile(src, dest) {
       await executor.execArgv(['cp', '-p', src, dest]);
     },
+    bulkCopyFiles: (srcRoot, relFiles, destRoot) =>
+      agentBulkCopyFiles(executor, srcRoot, relFiles, destRoot),
     writeText: (dest, content) => executor.writeFile(dest, content),
     async mkdirp(dir) {
       await executor.execArgv(['mkdir', '-p', dir]);
@@ -348,6 +399,12 @@ export async function stageServiceBackup(
   for (const include of manifest.include) {
     includes.push(...(await resolveIncludeGlob(backend, serviceDataDir, include)));
   }
+  // Plain (byte-for-byte) copies are batched into one bulk operation per backend
+  // (#1894) — the agent backend does them in a single host-side tar pipe instead
+  // of a round-trip per file. Files that need a content rewrite (strip/transform)
+  // or a rename are staged individually: they're few, and each needs a per-file
+  // read/write or a distinct dest path that a bulk copy can't express.
+  const plainCopies: string[] = [];
   for (const include of includes) {
     if (isExcluded(include, manifest.exclude)) continue;
     const absInclude = path.join(serviceDataDir, include);
@@ -359,24 +416,34 @@ export async function stageServiceBackup(
       // A collector may stage a snapshot file under a canonical name (e.g.
       // database.sqlite.sb-backup → database.sqlite) so restore lands it right.
       const tarRel = manifest.renames?.[rel] ?? rel;
-      const dest = path.join(stagingDir, tarRel);
-      await backend.mkdirp(path.dirname(dest));
       const needsRewrite =
         manifest.strip?.some(r => r.file === rel) ||
         manifest.transform?.some(r => r.file === rel);
+      const renamed = tarRel !== rel;
       if (needsRewrite) {
         // Only read-as-text the files a strip/transform rule targets; everything
         // else is copied byte-for-byte so binary config (e.g. SQLite-ish blobs)
         // stays intact. Strip (key removal) then transform (value rewrite).
+        const dest = path.join(stagingDir, tarRel);
+        await backend.mkdirp(path.dirname(dest));
         const content = await backend.readText(path.join(serviceDataDir, rel));
         const stripped = applyStripRules(manifest, rel, content);
         await backend.writeText(dest, applyTransformRules(manifest, rel, stripped));
-      } else {
+      } else if (renamed) {
+        // A renamed plain copy can't ride the bulk tar (its tarball path differs
+        // from its source path) — stage it on its own.
+        const dest = path.join(stagingDir, tarRel);
+        await backend.mkdirp(path.dirname(dest));
         await backend.copyFile(path.join(serviceDataDir, rel), dest);
+      } else {
+        plainCopies.push(rel);
       }
       staged.push(tarRel);
     }
   }
+  // One bulk copy for every byte-for-byte file (the OOM-causing bulk, e.g.
+  // custom_components) — relative paths preserved under the staging dir.
+  await backend.bulkCopyFiles(serviceDataDir, plainCopies, stagingDir);
   return staged.sort();
 }
 
@@ -428,6 +495,12 @@ const NPM_SQLITE_SNAPSHOT_SH = [
   'set -e',
   "DB=/data/database.sqlite",
   'if [ ! -f "$DB" ]; then echo "nodb"; exit 0; fi',
+  // Not every NPM image ships sqlite3 (#1894 — the current jc21 image does not).
+  // Probe for it FIRST and report a precise, greppable reason so the producer can
+  // degrade honestly (copy the live file) instead of logging a misleading
+  // "(unknown)". The real `sh: sqlite3: not found` stderr never made it back
+  // before, so this gap was undiagnosable from the logs.
+  'if ! command -v sqlite3 >/dev/null 2>&1; then echo "no-sqlite3"; exit 0; fi',
   // Fold the WAL back into the main DB so the snapshot has no dependence on the
   // -wal/-shm sidecars. Best-effort: ignore a non-zero (busy) checkpoint.
   'sqlite3 "$DB" "PRAGMA wal_checkpoint(TRUNCATE);" || true',
@@ -466,8 +539,20 @@ export async function runBackupCollector(
       command: `echo ${b64} | base64 -d | podman exec -i ${container} sh -`,
     }, { timeoutMs: 30_000 });
     const out = ((res as { stdout?: string }).stdout || '').trim();
-    if ((res as { code?: number }).code !== 0 || (out !== 'ok' && out !== 'nodb')) {
-      logger.warn('ExternalBackup', `NPM sqlite snapshot failed (${out || 'unknown'}) — backing up database.sqlite as-is`);
+    const errOut = ((res as { stderr?: string }).stderr || '').trim();
+    const code = (res as { code?: number }).code;
+    // sqlite3 isn't in this NPM image — degrade honestly to copying the live DB
+    // (consistent enough since #1679 flips WAL and the live file is read whole),
+    // and say SO in the log rather than a misleading "(unknown)" (#1894).
+    if (out === 'no-sqlite3') {
+      logger.warn('ExternalBackup', 'NPM sqlite snapshot skipped: sqlite3 not present in the NPM container — backing up database.sqlite as-is');
+      return manifest;
+    }
+    if (code !== 0 || (out !== 'ok' && out !== 'nodb')) {
+      // Surface the REAL failure: prefer the container's stderr (the swallowed
+      // `sh: sqlite3: not found` etc.), then any stdout, before "(unknown)".
+      const reason = errOut || out || 'unknown';
+      logger.warn('ExternalBackup', `NPM sqlite snapshot failed (${reason}) — backing up database.sqlite as-is`);
       return manifest;
     }
     // Stage the snapshot in place of the live DB, under the original rel path.
