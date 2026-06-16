@@ -41,25 +41,38 @@ function toLogTimestamp(d: Date): string {
 }
 
 /**
- * Delete log rows older than `retentionDays` and reclaim disk space.
+ * Reclaim disk space freed by a prune.
  *
- * SQLite leaves freed pages in the file after a DELETE, so the 6.4 GB pile
- * only actually shrinks once we checkpoint the WAL and VACUUM. We only VACUUM
- * when rows were actually deleted (VACUUM rewrites the whole DB and is
- * expensive — it must not run on every insert / no-op prune).
+ * SQLite leaves freed pages in the file after a DELETE, so the file only
+ * actually shrinks once we checkpoint the WAL and VACUUM. VACUUM rewrites the
+ * whole DB and, on a multi-GB logs.db, is *very* expensive — on the box it
+ * blocked the synchronous boot path for ~31 min (#1883), leaving :5888 dark.
+ *
+ * `better-sqlite3` is fully synchronous, so this MUST NOT run on the
+ * module-eval / startup path. Callers run it out-of-band (deferred via
+ * `setImmediate`) after the server is listening; see `Logger.maybePrune`.
+ */
+export function vacuumLogsDb(db: Database): void {
+  // Flush + truncate the WAL, then rewrite the DB file.
+  db.pragma('wal_checkpoint(TRUNCATE)');
+  db.exec('VACUUM');
+}
+
+/**
+ * Delete log rows older than `retentionDays`.
+ *
+ * The DELETE itself is cheap. Space reclamation (the expensive VACUUM that
+ * rewrites the file) is deliberately NOT done here — it's split into
+ * `vacuumLogsDb` so it can run out-of-band off the boot path (#1883). We only
+ * VACUUM when rows were actually deleted, so this returns the deleted count to
+ * let the caller decide whether a reclaim is worth scheduling.
  *
  * Returns the number of rows deleted.
  */
 export function pruneLogsDb(db: Database, retentionDays = LOG_RETENTION_DAYS, now: Date = new Date()): number {
   const cutoff = toLogTimestamp(new Date(now.getTime() - retentionDays * PRUNE_INTERVAL_MS));
   const info = db.prepare('DELETE FROM logs WHERE timestamp < ?').run(cutoff);
-  const deleted = Number(info.changes);
-  if (deleted > 0) {
-    // Reclaim space: flush + truncate the WAL, then rewrite the DB file.
-    db.pragma('wal_checkpoint(TRUNCATE)');
-    db.exec('VACUUM');
-  }
-  return deleted;
+  return Number(info.changes);
 }
 
 interface LogEntry {
@@ -96,6 +109,8 @@ class Logger {
   private onLogCallbacks: Set<(entry: LogEntry) => void> = new Set();
   /** Epoch ms of the last retention prune; gates the lazy periodic prune (#1869). */
   private lastPruneAt = 0;
+  /** True while a deferred space-reclamation VACUUM is queued/in-flight (#1883). */
+  private vacuumScheduled = false;
 
   constructor() {
     if (isServer) {
@@ -147,8 +162,10 @@ class Logger {
                 this.db!.exec('CREATE INDEX IF NOT EXISTS idx_logs_trace ON logs(trace_id, timestamp)');
 
                 // Startup retention prune (#1869): drop rows older than the
-                // retention window + VACUUM. Cuts down the existing multi-GB
-                // logs.db pile on first deploy.
+                // retention window. The DELETE is cheap and runs synchronously
+                // here; the expensive space-reclaiming VACUUM is deferred
+                // out-of-band via setImmediate so a multi-GB logs.db doesn't
+                // freeze the boot path / leave :5888 dark for ~31 min (#1883).
                 this.maybePrune(true);
             } catch (e) {
                 console.error('Failed to initialize SQLite logger:', e);
@@ -236,20 +253,52 @@ class Logger {
   /**
    * Run the retention prune at most once per PRUNE_INTERVAL_MS (#1869),
    * or unconditionally when `force` (the startup prune). The cheap
-   * timestamp check guards the hot insert path so VACUUM is never paid
-   * per-insert; the actual VACUUM inside pruneLogsDb only runs when rows
-   * were deleted.
+   * timestamp check guards the hot insert path so the prune is never paid
+   * per-insert.
+   *
+   * The DELETE runs synchronously (it's cheap). Space reclamation — the
+   * expensive full VACUUM that rewrites the whole file — is scheduled
+   * OUT-OF-BAND via `setImmediate` so it never blocks the synchronous boot
+   * path / event loop (#1883): a multi-GB logs.db VACUUM froze the process
+   * for ~31 min on the box, leaving :5888 dark. The deferred reclaim is
+   * fully non-fatal — a failed (or skipped) VACUUM must never crash the
+   * service; it just leaves the freed pages to be reclaimed next cycle.
    */
   private maybePrune(force = false): void {
       if (!this.db) return;
       const now = Date.now();
       if (!force && now - this.lastPruneAt < PRUNE_INTERVAL_MS) return;
       this.lastPruneAt = now;
+      let deleted = 0;
       try {
-          pruneLogsDb(this.db);
+          deleted = pruneLogsDb(this.db);
       } catch (e) {
           console.error('Failed to prune logs.db:', e);
+          return;
       }
+      if (deleted > 0) this.scheduleVacuum();
+  }
+
+  /**
+   * Schedule the space-reclamation VACUUM off the synchronous boot path
+   * (#1883). `setImmediate` lets the event loop keep serving requests —
+   * critically the first boot, where the constructor's startup prune would
+   * otherwise rewrite a multi-GB file inline and leave :5888 dark for the
+   * whole VACUUM. Coalesces concurrent requests (at most one in flight) and
+   * is fully non-fatal: any failure is logged and swallowed.
+   */
+  private scheduleVacuum(): void {
+      if (!this.db || this.vacuumScheduled) return;
+      this.vacuumScheduled = true;
+      setImmediate(() => {
+          this.vacuumScheduled = false;
+          if (!this.db) return;
+          try {
+              vacuumLogsDb(this.db);
+          } catch (e) {
+              console.error('Failed to reclaim logs.db space (VACUUM):', e);
+          }
+      });
   }
 
   private format(level: LogLevel, tag: string, message: string, args: unknown[]): LogEntry {
