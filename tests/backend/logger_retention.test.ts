@@ -8,12 +8,12 @@
  * and timestamp format). This is the actual code the Logger constructor
  * (startup prune) and insertLog (lazy periodic prune) call.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type BetterSqlite3 from 'better-sqlite3';
-import { pruneLogsDb, LOG_RETENTION_DAYS } from '@/lib/logger';
+import { pruneLogsDb, vacuumLogsDb, LOG_RETENTION_DAYS } from '@/lib/logger';
 
 // Value import via require to mirror production (logger.ts / rateLimit.ts)
 // and keep knip from flagging better-sqlite3 as an unlisted root dependency
@@ -104,11 +104,11 @@ describe('pruneLogsDb (#1869)', () => {
   const freelist = (d: InstanceType<typeof Database>) =>
     d.pragma('freelist_count', { simple: true }) as number;
 
-  it('VACUUM runs after a prune so freed pages are reclaimed', () => {
-    // Build a fat DB of old rows, checkpoint so the data lands in the main
-    // file. After DELETE the pages sit on the freelist (file does not shrink
-    // on DELETE alone — the bug); only the VACUUM in pruneLogsDb rewrites the
-    // DB and drops the page count back down.
+  it('pruneLogsDb does NOT VACUUM — freed pages stay on the freelist until reclaim (#1883)', () => {
+    // The DELETE is cheap; the expensive VACUUM is split out so it can run
+    // off the boot path. After pruneLogsDb the pages must sit on the freelist
+    // (NOT reclaimed synchronously) — this is what proves the boot path no
+    // longer pays a blocking full VACUUM inline.
     seed(db, daysAgo(20), 20000);
     db.pragma('wal_checkpoint(TRUNCATE)');
     const before = pageCount(db);
@@ -117,21 +117,35 @@ describe('pruneLogsDb (#1869)', () => {
     const deleted = pruneLogsDb(db, LOG_RETENTION_DAYS, NOW);
     expect(deleted).toBe(20000);
 
-    // VACUUM reclaimed the freed pages: page count collapsed and the
-    // freelist is empty.
+    // No VACUUM happened: the file did NOT shrink and the freed pages are
+    // parked on the freelist.
+    expect(pageCount(db)).toBe(before);
+    expect(freelist(db)).toBeGreaterThan(0);
+  });
+
+  it('vacuumLogsDb reclaims the freed pages out-of-band (#1883)', () => {
+    seed(db, daysAgo(20), 20000);
+    db.pragma('wal_checkpoint(TRUNCATE)');
+    const before = pageCount(db);
+
+    pruneLogsDb(db, LOG_RETENTION_DAYS, NOW);
+    // Now run the deferred reclaim explicitly (production runs this via
+    // setImmediate, off the synchronous boot path).
+    vacuumLogsDb(db);
+
+    // VACUUM rewrote the DB: page count collapsed and the freelist is empty.
     expect(pageCount(db)).toBeLessThan(before / 10);
     expect(freelist(db)).toBe(0);
   });
 
-  it('does not VACUUM when nothing is old (no-op prune leaves the DB untouched)', () => {
+  it('does not delete when nothing is old (no-op prune leaves the DB untouched)', () => {
     seed(db, NOW, 5000);
     db.pragma('wal_checkpoint(TRUNCATE)');
     const before = pageCount(db);
 
     const deleted = pruneLogsDb(db, LOG_RETENTION_DAYS, NOW);
 
-    // No rows deleted -> VACUUM skipped (it is expensive) -> page count and
-    // row count unchanged.
+    // No rows deleted -> page count and row count unchanged.
     expect(deleted).toBe(0);
     expect(pageCount(db)).toBe(before);
     expect(rowCount(db)).toBe(5000);
@@ -149,5 +163,90 @@ describe('pruneLogsDb (#1869)', () => {
     // At the end only the last ~7 days of inserts survive (<= 8 batches).
     expect(rowCount(db)).toBeLessThanOrEqual(8 * 100);
     expect(rowCount(db)).toBeGreaterThan(0);
+  });
+});
+
+describe('Logger startup boot path does not block on VACUUM (#1883)', () => {
+  let cwdDir: string;
+  let realCwd: () => string;
+
+  const pageCount = (d: InstanceType<typeof Database>) =>
+    d.pragma('page_count', { simple: true }) as number;
+  const freelist = (d: InstanceType<typeof Database>) =>
+    d.pragma('freelist_count', { simple: true }) as number;
+
+  beforeEach(() => {
+    // The Logger singleton binds to process.cwd()/data/logs.db at construction.
+    // Stub cwd so a freshly-imported module builds against our pre-seeded DB.
+    cwdDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-logboot-'));
+    fs.mkdirSync(path.join(cwdDir, 'data'), { recursive: true });
+    realCwd = process.cwd;
+    process.cwd = () => cwdDir;
+  });
+
+  afterEach(() => {
+    process.cwd = realCwd;
+    vi.useRealTimers();
+    vi.resetModules();
+    fs.rmSync(cwdDir, { recursive: true, force: true });
+  });
+
+  it('constructor runs the DELETE but defers the full VACUUM off the synchronous boot path', async () => {
+    // Pre-seed a "multi-GB pile" analogue: a fat logs.db of old rows so a
+    // startup VACUUM would be the expensive, event-loop-freezing one.
+    const seedDb = new Database(path.join(cwdDir, 'data', 'logs.db'));
+    seedDb.pragma('journal_mode = WAL');
+    seedDb.exec(TABLE);
+    const old = ts(new Date(Date.now() - 20 * 24 * 60 * 60 * 1000));
+    const insert = seedDb.prepare('INSERT INTO logs (timestamp, level, tag, message) VALUES (?, ?, ?, ?)');
+    const tx = seedDb.transaction(() => {
+      for (let i = 0; i < 20000; i++) insert.run(old, 'info', 'boot', `m-${i}`);
+    });
+    tx();
+    seedDb.pragma('wal_checkpoint(TRUNCATE)');
+    const beforePages = pageCount(seedDb);
+    expect(beforePages).toBeGreaterThan(100);
+    seedDb.close();
+
+    // Fake timers so the deferred setImmediate VACUUM does NOT run until we
+    // explicitly flush it — this is exactly what proves it isn't synchronous.
+    vi.useFakeTimers();
+    vi.resetModules();
+    await import('@/lib/logger');
+
+    // Right after construction the boot DELETE has run (old rows gone) but the
+    // VACUUM has NOT — freed pages still sit on the freelist, file unshrunk.
+    const post = new Database(path.join(cwdDir, 'data', 'logs.db'));
+    expect(rowCount(post)).toBe(0); // 7-day DELETE removed the 20k old rows
+    // No synchronous VACUUM: the file did NOT collapse and the freed pages
+    // are parked on the freelist (a VACUUM would zero the freelist + shrink).
+    expect(pageCount(post)).toBeGreaterThan(beforePages / 2);
+    expect(freelist(post)).toBeGreaterThan(0); // reclaim is still pending
+    post.close();
+
+    // The deferred reclaim is scheduled out-of-band; flush it.
+    await vi.runAllTimersAsync();
+
+    const reclaimed = new Database(path.join(cwdDir, 'data', 'logs.db'));
+    expect(pageCount(reclaimed)).toBeLessThan(beforePages / 10); // VACUUM ran off-band
+    expect(freelist(reclaimed)).toBe(0);
+    reclaimed.close();
+  });
+
+  it('a failed deferred reclaim is non-fatal (does not crash the service)', async () => {
+    const seedDb = new Database(path.join(cwdDir, 'data', 'logs.db'));
+    seedDb.pragma('journal_mode = WAL');
+    seedDb.exec(TABLE);
+    seed(seedDb, new Date(Date.now() - 20 * 24 * 60 * 60 * 1000), 50);
+    seedDb.close();
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.useFakeTimers();
+    vi.resetModules();
+    // Constructing must not throw even though the deferred VACUUM will later
+    // run; flushing timers must not throw either.
+    await import('@/lib/logger');
+    await expect(vi.runAllTimersAsync()).resolves.not.toThrow();
+    errSpy.mockRestore();
   });
 });
