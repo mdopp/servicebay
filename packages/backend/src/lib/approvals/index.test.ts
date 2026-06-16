@@ -81,45 +81,49 @@ describe('approvals store', () => {
   });
 });
 
+// Declared move endpoints are confined to the requesting service's jail
+// (`/mnt/data/stacks/<service>`); paths below stay inside svc's jail.
+const SVC_JAIL = '/mnt/data/stacks/svc';
+
 describe('approve', () => {
-  it('runs the declared move action and marks approved', async () => {
-    fakeFs['/src/draft'] = 'content';
+  it('runs the declared move action (inside the service jail) and marks approved', async () => {
+    fakeFs[`${SVC_JAIL}/draft`] = 'content';
     const r = await submitApproval({
       service: 'svc',
       title: 'promote',
-      on_approve: { move: { src: '/src/draft', dst: '/dst/draft' } },
+      on_approve: { move: { src: `${SVC_JAIL}/draft`, dst: `${SVC_JAIL}/published/draft` } },
     });
     const res = await approveApproval(r.id);
     expect(res.request.status).toBe('approved');
-    expect(executor.rename).toHaveBeenCalledWith('/src/draft', '/dst/draft');
-    expect('/dst/draft' in fakeFs).toBe(true);
+    expect(executor.rename).toHaveBeenCalledWith(`${SVC_JAIL}/draft`, `${SVC_JAIL}/published/draft`);
+    expect(`${SVC_JAIL}/published/draft` in fakeFs).toBe(true);
     expect((await getApproval(r.id))?.status).toBe('approved');
   });
 
-  it('restarts the declared service after the move', async () => {
-    fakeFs['/src/x'] = 'c';
+  it('restarts the requesting service after the move', async () => {
+    fakeFs[`${SVC_JAIL}/x`] = 'c';
     const r = await submitApproval({
       service: 'svc',
       title: 't',
-      on_approve: { move: { src: '/src/x', dst: '/dst/x' }, restart: 'my-service' },
+      on_approve: { move: { src: `${SVC_JAIL}/x`, dst: `${SVC_JAIL}/x2` }, restart: 'svc' },
     });
     const res = await approveApproval(r.id);
-    expect(restartService).toHaveBeenCalledWith('box1', 'my-service');
+    expect(restartService).toHaveBeenCalledWith('box1', 'svc');
     expect(res.restarted).toBe(true);
   });
 
   it('surfaces a restart failure as a soft warning without rolling back the move', async () => {
-    fakeFs['/src/y'] = 'c';
+    fakeFs[`${SVC_JAIL}/y`] = 'c';
     restartService.mockRejectedValueOnce(new Error('boom'));
     const r = await submitApproval({
       service: 'svc',
       title: 't',
-      on_approve: { move: { src: '/src/y', dst: '/dst/y' }, restart: 'svc2' },
+      on_approve: { move: { src: `${SVC_JAIL}/y`, dst: `${SVC_JAIL}/y2` }, restart: 'svc' },
     });
     const res = await approveApproval(r.id);
     expect(res.restarted).toBe(false);
     expect(res.restartError).toBe('boom');
-    expect('/dst/y' in fakeFs).toBe(true);
+    expect(`${SVC_JAIL}/y2` in fakeFs).toBe(true);
     expect(res.request.status).toBe('approved');
   });
 
@@ -127,19 +131,19 @@ describe('approve', () => {
     const r = await submitApproval({
       service: 'svc',
       title: 't',
-      on_approve: { move: { src: '/nope', dst: '/dst' } },
+      on_approve: { move: { src: `${SVC_JAIL}/nope`, dst: `${SVC_JAIL}/dst` } },
     });
     await expect(approveApproval(r.id)).rejects.toThrow(/not found/);
     expect((await getApproval(r.id))?.status).toBe('pending');
   });
 
   it('throws when the destination already exists', async () => {
-    fakeFs['/src/z'] = 'c';
-    fakeFs['/dst/z'] = 'old';
+    fakeFs[`${SVC_JAIL}/z`] = 'c';
+    fakeFs[`${SVC_JAIL}/z2`] = 'old';
     const r = await submitApproval({
       service: 'svc',
       title: 't',
-      on_approve: { move: { src: '/src/z', dst: '/dst/z' } },
+      on_approve: { move: { src: `${SVC_JAIL}/z`, dst: `${SVC_JAIL}/z2` } },
     });
     await expect(approveApproval(r.id)).rejects.toThrow(/already exists/);
   });
@@ -157,21 +161,117 @@ describe('approve', () => {
 
 describe('reject', () => {
   it('runs the on_reject action and marks rejected', async () => {
-    fakeFs['/src/d'] = 'c';
+    fakeFs[`${SVC_JAIL}/d`] = 'c';
     const r = await submitApproval({
       service: 'svc',
       title: 't',
-      on_reject: { move: { src: '/src/d', dst: '/trash/d' } },
+      on_reject: { move: { src: `${SVC_JAIL}/d`, dst: `${SVC_JAIL}/trash/d` } },
     });
     const res = await rejectApproval(r.id);
     expect(res.request.status).toBe('rejected');
-    expect('/trash/d' in fakeFs).toBe(true);
+    expect(`${SVC_JAIL}/trash/d` in fakeFs).toBe(true);
   });
 
-  it('rejects with no declared action (pure review gate)', async () => {
+  it('rejects with no declared action (pure review gate) — unaffected by the jail', async () => {
     const r = await submitApproval({ service: 'svc', title: 't' });
     const res = await rejectApproval(r.id);
     expect(res.request.status).toBe('rejected');
     expect(executor.rename).not.toHaveBeenCalled();
+    expect(restartService).not.toHaveBeenCalled();
+  });
+});
+
+describe('move-jail authorization (#1884)', () => {
+  // A jail escape must be refused BEFORE any node side effect — the
+  // executor must never see a src/dst outside /mnt/data/stacks/<service>.
+  async function expectMoveRejected(move: { src: string; dst: string }, pattern: RegExp) {
+    const r = await submitApproval({ service: 'svc', title: 't', on_approve: { move } });
+    await expect(approveApproval(r.id)).rejects.toThrow(pattern);
+    expect(executor.rename).not.toHaveBeenCalled();
+    expect(executor.mkdir).not.toHaveBeenCalled();
+    // The request stays pending — nothing happened.
+    expect((await getApproval(r.id))?.status).toBe('pending');
+  }
+
+  it('rejects a non-absolute src', async () => {
+    await expectMoveRejected({ src: 'draft', dst: `${SVC_JAIL}/published` }, /absolute path/);
+  });
+
+  it('rejects a non-absolute dst', async () => {
+    await expectMoveRejected({ src: `${SVC_JAIL}/draft`, dst: 'published' }, /absolute path/);
+  });
+
+  it('rejects a ../ traversal escape on src', async () => {
+    await expectMoveRejected(
+      { src: `${SVC_JAIL}/../../../etc/passwd`, dst: `${SVC_JAIL}/x` },
+      /escapes the service's data jail/,
+    );
+  });
+
+  it('rejects a dst that resolves into another service jail', async () => {
+    await expectMoveRejected(
+      { src: `${SVC_JAIL}/secret`, dst: '/mnt/data/stacks/nginx-web/data/secret' },
+      /escapes the service's data jail/,
+    );
+  });
+
+  it('rejects a sibling-prefix dst (svc-evil) that is not under the jail', async () => {
+    await expectMoveRejected(
+      { src: `${SVC_JAIL}/x`, dst: '/mnt/data/stacks/svc-evil/x' },
+      /escapes the service's data jail/,
+    );
+  });
+
+  it('rejects an absolute system path outside /mnt/data/stacks entirely', async () => {
+    await expectMoveRejected(
+      { src: `${SVC_JAIL}/x`, dst: '/etc/cron.d/evil' },
+      /escapes the service's data jail/,
+    );
+  });
+});
+
+describe('restart-target authorization (#1884)', () => {
+  it('rejects restarting a load-bearing service (authelia) that is not the requester', async () => {
+    const r = await submitApproval({
+      service: 'svc',
+      title: 't',
+      on_approve: { restart: 'authelia' },
+    });
+    await expect(approveApproval(r.id)).rejects.toThrow(/only restart its own service/);
+    expect(restartService).not.toHaveBeenCalled();
+    expect((await getApproval(r.id))?.status).toBe('pending');
+  });
+
+  it('rejects restarting basic/servicebay (arbitrary target)', async () => {
+    for (const target of ['basic', 'servicebay']) {
+      const r = await submitApproval({
+        service: 'svc',
+        title: 't',
+        on_approve: { restart: target },
+      });
+      await expect(approveApproval(r.id)).rejects.toThrow(/only restart its own service/);
+    }
+    expect(restartService).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid (path-shaped) restart target', async () => {
+    const r = await submitApproval({
+      service: 'svc',
+      title: 't',
+      on_approve: { restart: '../../authelia' },
+    });
+    await expect(approveApproval(r.id)).rejects.toThrow(/not a valid service name/);
+    expect(restartService).not.toHaveBeenCalled();
+  });
+
+  it('allows restarting the requesting service itself', async () => {
+    const r = await submitApproval({
+      service: 'svc',
+      title: 't',
+      on_approve: { restart: 'svc' },
+    });
+    const res = await approveApproval(r.id);
+    expect(restartService).toHaveBeenCalledWith('box1', 'svc');
+    expect(res.restarted).toBe(true);
   });
 });

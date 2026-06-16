@@ -25,6 +25,75 @@ import { logger } from '@/lib/logger';
 const TAG = 'approvals';
 const STORE_PATH = path.join(DATA_DIR, 'approvals.json');
 
+/**
+ * Canonical per-service data root on the *target node* (the box). A
+ * service's declared move actions are confined to its own subtree under
+ * this root — `/mnt/data/stacks/<service>` — so an approved request can
+ * never read from or write into another service's data, a system path,
+ * or anywhere off the box's data volume.
+ */
+const STACKS_ROOT = '/mnt/data/stacks';
+
+/** A service name must be a single, safe path segment (no separators, no
+ *  traversal). Mirrors the MCP/`npmAdminRekey` container-name guard. */
+const SERVICE_NAME_RE = /^[a-zA-Z0-9_.-]+$/;
+
+/** Absolute jail root for `service`'s declared move actions on the box. */
+function serviceJailRoot(service: string): string {
+  return path.posix.join(STACKS_ROOT, service);
+}
+
+/**
+ * Confine a declared move endpoint to the requesting service's jail
+ * (`/mnt/data/stacks/<service>`). Rejects a non-absolute path, a `..`
+ * escape, an embedded NUL, and anything that resolves outside the jail
+ * (a sibling service, a system dir, the volume root). This is the
+ * *authorization* gate — the executor calls themselves are already
+ * args-array/shell-quote-safe, so the risk is path scope, not injection.
+ *
+ * Mirrors the lexical canonicalize-and-boundary approach of
+ * `mcp/pathJail.ts`, but anchored to the per-service root rather than the
+ * whole data volume, and we require the input to be absolute (a move
+ * action names a concrete path on the node, never a relative one).
+ */
+function jailMovePath(label: 'src' | 'dst', input: string, jailRoot: string): string {
+  if (typeof input !== 'string' || input.length === 0) {
+    throw new Error(`move.${label} is required.`);
+  }
+  if (input.includes('\0')) {
+    throw new Error(`move.${label} contains a NUL byte.`);
+  }
+  if (!input.startsWith('/')) {
+    throw new Error(`move.${label} must be an absolute path: "${input}".`);
+  }
+  // Collapse `.`/`..` segments lexically, then require the result to stay
+  // inside the service's jail (the root itself or a descendant).
+  const resolved = path.posix.resolve(input);
+  if (resolved !== jailRoot && !resolved.startsWith(`${jailRoot}/`)) {
+    throw new Error(
+      `move.${label} escapes the service's data jail ${jailRoot}: "${input}" resolves to "${resolved}".`,
+    );
+  }
+  return resolved;
+}
+
+/**
+ * Confine a declared restart target to the requesting service itself. A
+ * request may only bounce its *own* service — never an arbitrary,
+ * load-bearing one (basic/authelia/servicebay/…), where a restart can
+ * wipe SSO/OIDC clients or take the node's gateway down.
+ */
+function assertRestartTarget(target: string, service: string): void {
+  if (typeof target !== 'string' || !SERVICE_NAME_RE.test(target)) {
+    throw new Error(`restart target is not a valid service name: "${target}".`);
+  }
+  if (target !== service) {
+    throw new Error(
+      `restart target "${target}" is not the requesting service "${service}"; a request may only restart its own service.`,
+    );
+  }
+}
+
 /** A declared side effect. Both fields optional so a request can move a
  *  file, restart a service, both, or neither (a pure review gate). */
 export interface ApprovalAction {
@@ -130,9 +199,14 @@ export async function submitApproval(input: SubmitApprovalInput): Promise<Approv
  * a soft warning rather than rolling back the move (the move is the
  * load-bearing part; the restart is a best-effort nudge).
  */
-async function runAction(action: ApprovalAction, node: string): Promise<{ restarted?: boolean; restartError?: string }> {
+async function runAction(action: ApprovalAction, node: string, service: string): Promise<{ restarted?: boolean; restartError?: string }> {
   if (action.move) {
-    const { src, dst } = action.move;
+    // AUTHORIZE both endpoints into the requesting service's jail BEFORE
+    // touching the node — a non-absolute / ../-escape / out-of-jail path
+    // throws here and nothing is moved.
+    const jailRoot = serviceJailRoot(service);
+    const src = jailMovePath('src', action.move.src, jailRoot);
+    const dst = jailMovePath('dst', action.move.dst, jailRoot);
     const executor = getExecutor(node);
     if (!(await executor.exists(src))) {
       throw new Error(`Source path not found: ${src}`);
@@ -144,6 +218,8 @@ async function runAction(action: ApprovalAction, node: string): Promise<{ restar
     await executor.rename(src, dst);
   }
   if (action.restart) {
+    // AUTHORIZE the restart target — must be the requesting service itself.
+    assertRestartTarget(action.restart, service);
     try {
       await ServiceManager.restartService(node, action.restart);
       return { restarted: true };
@@ -165,7 +241,7 @@ async function resolve(id: string, status: 'approved' | 'rejected', action: Appr
   if (request.status !== 'pending') {
     throw new Error(`Approval request ${id} is already ${request.status}`);
   }
-  const result = await runAction(action, request.node);
+  const result = await runAction(action, request.node, request.service);
   request.status = status;
   await writeStore(all);
   logger.info(TAG, `${status} approval ${id} (service ${request.service})`);
