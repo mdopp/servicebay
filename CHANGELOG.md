@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.121.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.120.2...servicebay-v4.121.0) (2026-06-16)
+
+
+### Features
+
+* **backups:** surface NAS schedule + add NAS back-up-now, Created column, and delete ([e48e327](https://github.com/mdopp/servicebay/commit/e48e327992f78abe6611f35146b531f2eafba37b)), closes [#1890](https://github.com/mdopp/servicebay/issues/1890)
+* **backups:** surface NAS schedule, back-up-now, Created column, and delete ([054a117](https://github.com/mdopp/servicebay/commit/054a11703bea51b9ca5a7798d7547691e19b99e1))
+
 ## [4.120.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.120.1...servicebay-v4.120.2) (2026-06-16)
 
 
