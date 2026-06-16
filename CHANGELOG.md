@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.121.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.121.0...servicebay-v4.121.1) (2026-06-16)
+
+
+### Bug Fixes
+
+* **externalBackup:** stop nightly NAS backup OOM + honest NPM sqlite fallback ([4ca1d2d](https://github.com/mdopp/servicebay/commit/4ca1d2d8126d5d9faa9a9155438ad2a61d20dbc3))
+* **externalBackup:** stop nightly NAS backup OOM + honest NPM sqlite fallback ([ecda5e3](https://github.com/mdopp/servicebay/commit/ecda5e3164fd91d9bd9f989c40d451ce0397331b)), closes [#1894](https://github.com/mdopp/servicebay/issues/1894)
+
 ## [4.121.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.120.2...servicebay-v4.121.0) (2026-06-16)
 
 
