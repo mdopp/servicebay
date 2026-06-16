@@ -32,16 +32,33 @@ function assertMountpoint(mountpoint: string): void {
  */
 export async function scanMount(exec: SafeExec, mountpoint: string): Promise<ScannedFile[]> {
   assertMountpoint(mountpoint);
-  // `%p\t%s\t%T@\0` — path, size, mtime (float epoch seconds), then a NUL. The
-  // tab can't appear in `%s`/`%T@`, and the path is the first field, so a tab in
-  // a filename is harmless (we split on the LAST two tabs).
+  // The scan walk runs UNPRIVILEGED on purpose (read-only enumeration never
+  // escalates — see hostExec.ts). On a real ext4 disk that means two things:
+  //
+  //  1. `lost+found` is root-owned 0700 and useless to us — prune it from the
+  //     walk so `find` never even tries to descend it (`-path .../lost+found
+  //     -prune`).
+  //  2. Any OTHER root-0700 subdir we hit still makes `find` print a
+  //     "Permission denied" line on stderr and exit 1, EVEN THOUGH it already
+  //     streamed every readable entry to stdout. Treating that exit 1 as fatal
+  //     threw away a perfectly good listing ("Scan disk fails", #1893). So we
+  //     tolerate exit 1 WHEN stdout parses into at least one record (a partial
+  //     find), and only error on a genuinely failed walk (no usable stdout).
   const { stdout, code, stderr } = await exec([
-    'find', mountpoint, '-type', 'f', '-printf', '%p\t%s\t%T@\\0',
+    'find', mountpoint,
+    // Prune the ext4 `lost+found` (root 0700) before any `-type f` test so we
+    // neither descend it nor emit a permission-denied line for it.
+    '-name', 'lost+found', '-prune', '-o',
+    '-type', 'f', '-printf', '%p\t%s\t%T@\\0',
   ]);
-  if (code !== 0) {
+  const files = parseFindOutput(stdout);
+  // `find` exits 1 on a permission-denied descent but still lists what it could
+  // read. A partial walk (exit 1 WITH parsed records) is a success; only a walk
+  // that produced no usable output is fatal.
+  if (code !== 0 && files.length === 0) {
     throw new Error(`disk-import: scan walk failed (code ${code}): ${stderr}`);
   }
-  return parseFindOutput(stdout);
+  return files;
 }
 
 /** Parse the NUL-separated `find -printf '%p\t%s\t%T@\0'` stream. */

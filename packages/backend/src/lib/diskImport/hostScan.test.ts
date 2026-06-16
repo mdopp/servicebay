@@ -60,6 +60,31 @@ describe('scanMount', () => {
     const { exec } = mockExec({ find: { stdout: '', stderr: 'boom', code: 1 } });
     await expect(scanMount(exec, '/run/servicebay/disk-import/sda1')).rejects.toThrow(/scan walk failed/);
   });
+
+  it('prunes lost+found from the walk', async () => {
+    const { exec, calls } = mockExec({ find: ok('') });
+    await scanMount(exec, '/run/servicebay/disk-import/sda1');
+    const argv = calls[0];
+    expect(argv).toContain('lost+found');
+    expect(argv).toContain('-prune');
+    // -prune comes before the -type f test (it's the first arm of the -o).
+    expect(argv.indexOf('-prune')).toBeLessThan(argv.lastIndexOf('-type'));
+  });
+
+  it('tolerates find exit 1 (permission-denied descent) when stdout still parsed', async () => {
+    // A real ext4 disk with a root-0700 subdir: find prints what it could read
+    // to stdout AND a "Permission denied" line on stderr, then exits 1. We keep
+    // the readable listing instead of failing the whole scan (#1893).
+    const { exec } = mockExec({
+      find: {
+        stdout: '/mnt/x/a.jpg\t10\t1700000000\0',
+        stderr: "find: '/mnt/x/private': Permission denied",
+        code: 1,
+      },
+    });
+    const files = await scanMount(exec, '/run/servicebay/disk-import/sda1');
+    expect(files).toEqual([{ path: '/mnt/x/a.jpg', size: 10, mtimeMs: 1700000000000 }]);
+  });
 });
 
 describe('hashSourceFile', () => {
