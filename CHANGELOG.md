@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.120.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.120.0...servicebay-v4.120.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **agent:** stop trace wrapper from commenting out the command ([62f8d3d](https://github.com/mdopp/servicebay/commit/62f8d3d341c0bf86ac11841ced51a294c8a112b4)), closes [#1877](https://github.com/mdopp/servicebay/issues/1877)
+* nginx proxy-host template ownership + executor trace wrapper no-op ([4aac98b](https://github.com/mdopp/servicebay/commit/4aac98b389fe74493bc2e5895a21997ea54b46f3))
+* **nginx:** own a proxy host by its declaring template, not derived service ([d1142c1](https://github.com/mdopp/servicebay/commit/d1142c1bdca9bac3ef1b7062e7824bcad2cd8e8a)), closes [#1862](https://github.com/mdopp/servicebay/issues/1862)
+
 ## [4.120.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.119.2...servicebay-v4.120.0) (2026-06-15)
 
 
