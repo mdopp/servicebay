@@ -121,9 +121,9 @@ function assertShareGid(gid: number): void {
  * can simply be re-run.
  */
 export async function applyPlan(plan: ImportPlan, opts: ApplyOptions): Promise<ApplyResult> {
-  const { exec, mountpoint, catalog, shareGid, hashOf, immich, dryRun = false, now = Date.now, onProgress } = opts;
+  const { exec, catalog, shareGid, hashOf, immich, dryRun = false, now = Date.now, onProgress } = opts;
   assertShareGid(shareGid);
-  const ctx: ItemCtx = { exec, mountpoint, catalog, shareGid, hashOf, immich, dryRun, now };
+  const ctx: ItemCtx = { exec, catalog, shareGid, hashOf, immich, dryRun, now };
 
   const results: ApplyResultItem[] = [];
   // Items that need a host copy (`copied`/`superseded`) are queued and flushed in
@@ -159,7 +159,6 @@ export async function applyPlan(plan: ImportPlan, opts: ApplyOptions): Promise<A
 
 interface ItemCtx {
   exec: SafeExec;
-  mountpoint: string;
   catalog: ImportCatalog;
   shareGid: number;
   hashOf: HashResolver;
@@ -220,7 +219,10 @@ async function classifyItem(
 
   // Validate the destination stays under file-share/data/ BEFORE any host I/O.
   const dest = resolveShareTarget(target);
-  const src = `${ctx.mountpoint}/${stripLeadingSlash(item.record.sourcePath)}`;
+  // `sourcePath` is already absolute incl. the mountpoint (scanMount's `find %p`),
+  // and is the verbatim key fed to the host hasher + stored in the catalog — use
+  // it directly so rsync reads the real file (no `<mount>/<mount>/…` doubling).
+  const src = item.record.sourcePath;
 
   let outcome: 'copied' | 'superseded' = 'copied';
   if (item.action === 'conflict') {
@@ -310,7 +312,8 @@ async function uploadPhoto(record: ImportRecord, ctx: ItemCtx): Promise<void> {
     throw new Error('disk-import: photo in plan but no immich config provided');
   }
   const { serverUrl, apiKey, image = DEFAULT_IMMICH_IMAGE } = ctx.immich;
-  const src = `${ctx.mountpoint}/${stripLeadingSlash(record.sourcePath)}`;
+  // Already-absolute source path (see classifyItem) — no mountpoint re-prefixing.
+  const src = record.sourcePath;
   // Mount the source file read-only into the CLI container; pass the API key
   // via env (-e), never on the argv (so it can't leak into a process listing).
   await runOk(
