@@ -166,6 +166,27 @@ describe('resolveTargetPath (moved from plan.ts)', () => {
       resolveTargetPath('Code/src/main.ts', 'documents', { owner: 'mdopp', mode: 'parallel', anchor: 'Code' }),
     ).toBe('mdopp/documents/src/main.ts');
   });
+
+  // #1929 — the owner is request-supplied (edited routing tree); a malicious
+  // owner must never be threaded into the target's first path segment. The
+  // apply-time jail (resolveShareTarget) would catch the poisoned target too,
+  // but resolveTargetPath rejects it at the boundary (defence in depth) so an
+  // escaping target is never even formed.
+  it('rejects a traversal owner before building a target', () => {
+    for (const evil of ['..', '../etc', '../../etc/cron.d', '.']) {
+      expect(() =>
+        resolveTargetPath('Backup/IMG.jpg', 'photos', { owner: evil, mode: 'merge', anchor: '' }),
+      ).toThrow(/invalid owner segment/);
+    }
+  });
+
+  it('rejects an owner carrying a path separator, backslash, or NUL', () => {
+    for (const evil of ['a/b', 'a\\b', 'mdopp/../cdopp', 'x\0y', '']) {
+      expect(() =>
+        resolveTargetPath('Backup/IMG.jpg', 'photos', { owner: evil, mode: 'merge', anchor: '' }),
+      ).toThrow(/invalid owner segment/);
+    }
+  });
 });
 
 describe('buildFolderTree (#1915)', () => {

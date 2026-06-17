@@ -15,10 +15,37 @@ assert on rendered state — instead of parking path-mandated frontend units on
 
 ## Why it's deterministic
 
-`@playwright/test` is pinned to `1.60.0`, which maps to the **chromium-1223**
-browser build already present at `~/.cache/ms-playwright/chromium-1223`. The
-binary resolves from that cache via the pinned dependency — **not** from a
-transient `~/.npm/_npx/<hash>` dir that can be garbage-collected.
+`@playwright/test` is pinned (see `package.json`), which maps to the chromium
+build present under `~/.cache/ms-playwright/`. The binary resolves from that
+cache via the pinned dependency — **not** from a transient `~/.npm/_npx/<hash>`
+dir that can be garbage-collected.
+
+## Env limitation — Chromium can't launch in the current dev/verify sandbox (#1930)
+
+The chromium binary is present in the cache, but it **cannot launch** in the
+autoloop dev/verify sandbox: the system shared libraries it links against are
+missing.
+
+```
+chrome-headless-shell: error while loading shared libraries:
+libnspr4.so: cannot open shared object file: No such file or directory
+```
+
+(also `libatk-1.0.so.0`, `libdbus-1.so.3`, `libX11.so.6`). Installing them needs
+`apt`/root on the sandbox host, which is **outside repo scope** — the repo can't
+mutate the agent sandbox or the box. So memory
+`project_browser_verify_harness_1473`'s assumption that "headless chromium works
+in this env" is **currently false**. Full browser-verify enablement remains
+tracked by **epic #1473**.
+
+**Fallback (use until #1473 lands a browser-capable env):** assert the data the
+page binds to via an **API-level smoke test** instead of a rendered DOM. The
+disk-import routing-tree page (#1915) is covered this way by
+`packages/frontend/src/app/api/system/disk-import/status/route.test.ts`, which
+asserts the `status` endpoint returns the routing-tree shape the UI depends on
+(`phase`, `categories`, per-folder `tree`, `boxUsers`, `defaultOwner`). It runs
+under plain vitest (no browser) so Box-Verify has a non-browser signal that the
+routing tree is wired.
 
 ## Invocation
 
