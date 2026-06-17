@@ -102,7 +102,6 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
           // Check special items first
           const special = specialItems.find(i => i.id === paramSelected);
           if (special) {
-              // eslint-disable-next-line react-hooks/set-state-in-effect
               setSelected(special);
               return;
           }
@@ -123,7 +122,6 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
 
   useEffect(() => {
     if (selected && selected.type !== 'special') {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLoading(true);
       fetchReadme(selected.name, selected.type, selected.source).then((content) => {
         setReadme(content || '# No README found');

@@ -196,6 +196,16 @@ const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   {
+    // eslint-config-next ships `settings.react.version: "detect"`, which makes
+    // eslint-plugin-react@7.37.x auto-detect the React version via a code path
+    // that calls the rule-context `getFilename()` method ESLint 10 removed
+    // (TypeError: contextOrFilename.getFilename is not a function). No
+    // eslint-plugin-react release supports ESLint 10's API yet, so we pin the
+    // version explicitly — this short-circuits detectReactVersion() before it
+    // can touch the removed API. Keep in sync with the `react` dependency.
+    settings: { react: { version: "19.2" } },
+  },
+  {
     files: ["**/*.{ts,tsx,js,jsx}"],
     plugins: {
       "unused-imports": unusedImports,
@@ -238,6 +248,32 @@ const eslintConfig = defineConfig([
       // — any new violation fails CI both via the rule and via
       // scripts/check-invariants.ts.
       "sb/no-fe-backend-import": "error",
+      // --- React-hooks rule contract (pin to the pre-ESLint-10 baseline).
+      // The ESLint 10 migration required bumping eslint-plugin-react-hooks
+      // 7.0.1 -> 7.1.1 (7.0.1 peers ESLint <=9 only). 7.1.1 expanded its
+      // `recommended` preset — which eslint-config-next spreads in — from
+      // {rules-of-hooks, exhaustive-deps} to the full React-Compiler rule
+      // suite (static-components, use-memo, immutability, refs,
+      // set-state-in-effect, purity, …), all at "error". Those 14 rules were
+      // never part of this repo's lint gate; enabling them is a separate,
+      // behaviour-touching adoption effort (tracked in #1910), not part of a
+      // tooling migration. Turn them off here to keep the migration
+      // lint-neutral — rules-of-hooks (error) + exhaustive-deps (warn) stay as
+      // before via the preset.
+      "react-hooks/static-components": "off",
+      "react-hooks/use-memo": "off",
+      "react-hooks/preserve-manual-memoization": "off",
+      "react-hooks/incompatible-library": "off",
+      "react-hooks/immutability": "off",
+      "react-hooks/globals": "off",
+      "react-hooks/refs": "off",
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/error-boundaries": "off",
+      "react-hooks/purity": "off",
+      "react-hooks/set-state-in-render": "off",
+      "react-hooks/unsupported-syntax": "off",
+      "react-hooks/config": "off",
+      "react-hooks/gating": "off",
       // Maintainability thresholds (#724). Several core modules
       // currently exceed these — flagging them as warn (not error) so
       // CI doesn't break on legacy files while the rule still surfaces
