@@ -6,6 +6,7 @@ import { ImportCatalog, type CatalogEntry } from './catalog';
 
 const entry = (over: Partial<CatalogEntry> = {}): CatalogEntry => ({
   sha256: 'a'.repeat(64),
+  area: 'shared',
   target: 'photos/IMG_0001.jpg',
   sourcePath: '/disk/IMG_0001.jpg',
   size: 1234,
@@ -48,6 +49,31 @@ describe('ImportCatalog — in-memory round-trips', () => {
     cat.upsert(entry());
     expect(cat.getByTarget('photos/IMG_0001.jpg')?.sha256).toBe(entry().sha256);
     expect(cat.getByTarget('photos/missing.jpg')).toBeUndefined();
+    cat.close();
+  });
+
+  it('defaults a missing area to shared', () => {
+    const cat = new ImportCatalog(':memory:');
+    // Upsert without an explicit area → stored under DEFAULT_AREA ('shared').
+    cat.upsert({ ...entry(), area: undefined });
+    expect(cat.has(entry().sha256, entry().target)).toBe(true);
+    expect(cat.get(entry().sha256, entry().target)?.area).toBe('shared');
+    cat.close();
+  });
+
+  it('scopes dedup by area: same (sha, target) in two areas are distinct rows', () => {
+    const cat = new ImportCatalog(':memory:');
+    // Same bytes + same target path, one shared and one in a user area.
+    cat.upsert(entry({ area: 'shared' }));
+    cat.upsert(entry({ area: 'cdopp' }));
+    expect(cat.count()).toBe(2);
+    // A private area dedups within itself; shared is a separate slot.
+    expect(cat.has(entry().sha256, entry().target, 'shared')).toBe(true);
+    expect(cat.has(entry().sha256, entry().target, 'cdopp')).toBe(true);
+    expect(cat.has(entry().sha256, entry().target, 'mdopp')).toBe(false);
+    // getByTarget is area-scoped too.
+    expect(cat.getByTarget(entry().target, 'cdopp')?.area).toBe('cdopp');
+    expect(cat.getByTarget(entry().target, 'mdopp')).toBeUndefined();
     cat.close();
   });
 });
