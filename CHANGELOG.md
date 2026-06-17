@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.123.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.122.1...servicebay-v4.123.0) (2026-06-17)
+
+
+### Features
+
+* **diskImport:** owner+mode-aware apply target-path resolution ([c475f91](https://github.com/mdopp/servicebay/commit/c475f91c7250419f6baa63847093778453551122)), closes [#1913](https://github.com/mdopp/servicebay/issues/1913)
+* **diskImport:** routing-tree data model, inheritance, owner axis, dedup scope ([7c22d91](https://github.com/mdopp/servicebay/commit/7c22d914b8bfd9ec2e29266048a1e146375d5f17)), closes [#1912](https://github.com/mdopp/servicebay/issues/1912)
+* **diskImport:** routing-tree engine + owner/mode-aware apply target paths ([712c3c8](https://github.com/mdopp/servicebay/commit/712c3c8f1e126c4905fc13cdb201f009bf9ca925))
+
 ## [4.122.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.122.0...servicebay-v4.122.1) (2026-06-17)
 
 
