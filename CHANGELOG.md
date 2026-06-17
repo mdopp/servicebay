@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.122.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.121.1...servicebay-v4.122.0) (2026-06-17)
+
+
+### Features
+
+* **diskimport:** async durable disk-import with live progress + lost+found fix ([7c795e0](https://github.com/mdopp/servicebay/commit/7c795e01dde38ebb54ecfe0741962f941b77ac81))
+* **diskimport:** async scan/apply jobs with live progress (no 504) ([8f99373](https://github.com/mdopp/servicebay/commit/8f993738ac1e4fd9274636e259b6e5cae6be1696)), closes [#1897](https://github.com/mdopp/servicebay/issues/1897)
+* **diskimport:** durable file-based scan-session store (survive restart) ([e6a9959](https://github.com/mdopp/servicebay/commit/e6a995941fff5db1e78251fc13ff038790a5d6e7)), closes [#1896](https://github.com/mdopp/servicebay/issues/1896)
+
+
+### Bug Fixes
+
+* **diskimport:** tolerate find exit 1 on root-0700 dirs + prune lost+found ([bd74ee4](https://github.com/mdopp/servicebay/commit/bd74ee4cbdb673c59b44bb3cd34b0afc49afab4d)), closes [#1893](https://github.com/mdopp/servicebay/issues/1893)
+* **diskimport:** use shared DATA_DIR from dirs.ts for catalog path ([785a95d](https://github.com/mdopp/servicebay/commit/785a95d9bac9f1a051c9df53c2454207c36eaee6))
+* **diskimport:** use shared DATA_DIR from dirs.ts for catalog path ([7d4bc9b](https://github.com/mdopp/servicebay/commit/7d4bc9b21b314eae7b2df11b13062a0de415592f))
+
+
+### Performance Improvements
+
+* **diskimport:** batch host-side hashing + copy/chown (kill per-file round-trips) ([a66ab92](https://github.com/mdopp/servicebay/commit/a66ab923c4d9704abd90b6f50888980865249cfb)), closes [#1898](https://github.com/mdopp/servicebay/issues/1898)
+
 ## [4.121.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.121.0...servicebay-v4.121.1) (2026-06-16)
 
 
