@@ -201,6 +201,33 @@ function categoryFolder(category: Category): string {
 }
 
 /**
+ * SECURITY (#1929): the `owner` is request-supplied — it comes from the edited
+ * routing tree the operator POSTs (`RoutingRules`/`defaultOwner`), and a box-user
+ * id (`Owner = 'shared' | BoxUserId`, `BoxUserId = string`) is otherwise
+ * unconstrained. It becomes the FIRST path segment of the target
+ * (`<owner>/<category>/…`), so a malicious `owner` of `..`, `../../etc`, an
+ * absolute prefix, or anything carrying a separator / NUL would build a poisoned
+ * target that climbs out of `file-share/data/`. The apply-time jail
+ * (`resolveShareTarget`/`joinUnderRoot` in hostExec.ts) already rejects such a
+ * target, but we clamp the owner HERE — the same single-clean-segment barrier
+ * #1919 added for local-template names — so a poisoned owner fails fast at the
+ * boundary with a clear error and can never be threaded into a path at all
+ * (defence in depth; the importer never even forms an escaping target).
+ */
+function assertOwnerSegment(owner: string): void {
+  if (
+    owner === '' ||
+    owner === '.' ||
+    owner === '..' ||
+    owner.includes('/') ||
+    owner.includes('\\') ||
+    owner.includes('\0')
+  ) {
+    throw new Error(`disk-import: invalid owner segment: ${JSON.stringify(owner)}`);
+  }
+}
+
+/**
  * Resolve the relative target path (under `file-share/data/`) for a file given
  * its resolved routing rule and category. Returns `null` for the `junk` category
  * (nothing is written). Owner prefixes the path (shared omits the segment); the
@@ -236,7 +263,15 @@ export function resolveTargetPath(
     tailSegs = fileSegs.slice(-1);
   }
 
-  const ownerPrefix = rule.owner === 'shared' ? [] : [rule.owner];
+  let ownerPrefix: string[];
+  if (rule.owner === 'shared') {
+    ownerPrefix = [];
+  } else {
+    // The owner is request-supplied — clamp it to a single clean segment before
+    // it becomes the target's first path component (#1929 path-traversal guard).
+    assertOwnerSegment(rule.owner);
+    ownerPrefix = [rule.owner];
+  }
   return [...ownerPrefix, folder, ...tailSegs].join('/');
 }
 
