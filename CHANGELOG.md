@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.125.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.125.2...servicebay-v4.125.3) (2026-06-17)
+
+
+### Bug Fixes
+
+* **disk-import,file-share:** split session store + reap zombies; persist Samba passdb ([0742b13](https://github.com/mdopp/servicebay/commit/0742b13a105dd2f540087c2e16bcca17d3529433))
+* **disk-import:** split compact status from bulk records + reap zombie sessions ([a209da1](https://github.com/mdopp/servicebay/commit/a209da1925c70ddc038db6538e6595373263bb32)), closes [#1945](https://github.com/mdopp/servicebay/issues/1945) [#1943](https://github.com/mdopp/servicebay/issues/1943)
+* **file-share:** persist Samba passdb so SMB users + passwords survive a restart ([9e70a39](https://github.com/mdopp/servicebay/commit/9e70a396900828ebfd028617ba777603ff34332c)), closes [#1946](https://github.com/mdopp/servicebay/issues/1946)
+
 ## [4.125.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.125.1...servicebay-v4.125.2) (2026-06-17)
 
 
