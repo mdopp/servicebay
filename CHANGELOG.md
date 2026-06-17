@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.125.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.124.0...servicebay-v4.125.0) (2026-06-17)
+
+
+### Features
+
+* **eslint+registry:** React-Compiler rule adoption + persistent local template source ([bab7d97](https://github.com/mdopp/servicebay/commit/bab7d9755d81853f36fc5df1e8fb0387d687600a))
+* **eslint:** adopt 13 low-touch React-Compiler react-hooks rules ([86d5da8](https://github.com/mdopp/servicebay/commit/86d5da871f5fd9defae4239f89e175e588800d44)), closes [#1921](https://github.com/mdopp/servicebay/issues/1921)
+* **eslint:** enable react-hooks/set-state-in-effect, resolve 39 violations ([113fb56](https://github.com/mdopp/servicebay/commit/113fb56a01268e91b9252c39cf7cbb3fec39a294)), closes [#1922](https://github.com/mdopp/servicebay/issues/1922)
+* **registry:** persistent local (non-git) template/stack source ([1000b47](https://github.com/mdopp/servicebay/commit/1000b479f70522d597f3ef4e38198713be30e166)), closes [#1919](https://github.com/mdopp/servicebay/issues/1919)
+
 ## [4.124.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.123.0...servicebay-v4.124.0) (2026-06-17)
 
 
