@@ -211,3 +211,64 @@ describe('buildPlan — determinism', () => {
     expect(a.items.map(i => i.target)).toEqual(['music/a.flac', 'documents/m.pdf', 'photos/z.jpg']);
   });
 });
+
+describe('buildPlan — routing tree (#1915)', () => {
+  // The routing option resolves owner-aware targets + the folder's forced
+  // disposition, mirroring what the service threads through from the review tree.
+  function routingFor(rules: Record<string, import('./types').Rule>, defaultOwner = 'shared') {
+    return {
+      relPathOf: (r: ImportRecord) => r.sourcePath.replace(/^\/disk\//, ''),
+      explicit: new Map(Object.entries(rules)),
+      rootDefault: defaultOwner === 'shared' ? {} : { owner: defaultOwner },
+    };
+  }
+
+  it('an owner rule prefixes the target with the owner segment', () => {
+    const files: ScannedFile[] = [{ path: '/disk/mdopp/IMG.jpg', size: 1, mtimeMs: 0 }];
+    const result = buildPlan(buildInventory(files), hasherFrom({ '/disk/mdopp/IMG.jpg': sha('a') }), {
+      routing: routingFor({ mdopp: { owner: 'mdopp' } }),
+    });
+    expect(result.items[0].target).toBe('mdopp/photos/IMG.jpg');
+  });
+
+  it('shared (no owner) keeps the bare category target', () => {
+    const files: ScannedFile[] = [{ path: '/disk/IMG.jpg', size: 1, mtimeMs: 0 }];
+    const result = buildPlan(buildInventory(files), hasherFrom({ '/disk/IMG.jpg': sha('a') }), {
+      routing: routingFor({}),
+    });
+    expect(result.items[0].target).toBe('photos/IMG.jpg');
+  });
+
+  it('a `skip` disposition routes the folder to junk (not imported)', () => {
+    const files: ScannedFile[] = [{ path: '/disk/junkdir/x.pdf', size: 1, mtimeMs: 0 }];
+    const result = buildPlan(buildInventory(files), hasherFrom({ '/disk/junkdir/x.pdf': sha('a') }), {
+      routing: routingFor({ junkdir: { disposition: 'skip' } }),
+    });
+    expect(result.items[0].action).toBe('skip-junk');
+    expect(result.items[0].target).toBeNull();
+  });
+
+  it('a forced disposition overrides the content classifier', () => {
+    // A .pdf forced to movies_jellyfin lands in movies/ (disposition wins).
+    const files: ScannedFile[] = [{ path: '/disk/Filme/clip.pdf', size: 1, mtimeMs: 0 }];
+    const result = buildPlan(buildInventory(files), hasherFrom({ '/disk/Filme/clip.pdf': sha('a') }), {
+      routing: routingFor({ Filme: { disposition: 'movies_jellyfin' } }),
+    });
+    expect(result.items[0].category).toBe('movies');
+    expect(result.items[0].target).toBe('movies/clip.pdf');
+  });
+
+  it('two owners with the same bytes+target are NOT duplicates (private areas dedup separately)', () => {
+    const files: ScannedFile[] = [
+      { path: '/disk/mdopp/IMG.jpg', size: 10, mtimeMs: 0 },
+      { path: '/disk/cdopp/IMG.jpg', size: 10, mtimeMs: 0 },
+    ];
+    const hashes = { '/disk/mdopp/IMG.jpg': sha('a'), '/disk/cdopp/IMG.jpg': sha('a') };
+    const result = buildPlan(buildInventory(files), hasherFrom(hashes), {
+      routing: routingFor({ mdopp: { owner: 'mdopp' }, cdopp: { owner: 'cdopp' } }),
+    });
+    // Different owner areas → both copy (neither is a dupe of the other).
+    expect(result.items.every(i => i.action === 'copy')).toBe(true);
+    expect(result.items.map(i => i.target).sort()).toEqual(['cdopp/photos/IMG.jpg', 'mdopp/photos/IMG.jpg']);
+  });
+});

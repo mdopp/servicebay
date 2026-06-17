@@ -29,6 +29,14 @@ import {
   type ImmichAdminConfig,
 } from './immichLibraries';
 import {
+  autoAssignOwners,
+  buildFolderTree,
+  dirOfRel,
+  topLevelSegment,
+  type FolderNode,
+} from './routing';
+import type { RoutingResolution } from './dedup';
+import {
   createScanJob,
   finalizeScan,
   getSession,
@@ -42,7 +50,7 @@ import {
   __clearSessions as clearSessionStore,
 } from './sessionStore';
 import type { SafeExec } from './hostExec';
-import type { Category, ImportPlan, ImportRecord } from './types';
+import type { Category, ImportPlan, ImportRecord, Owner, Rule } from './types';
 
 /** A removable partition the card can offer as an import source. */
 export interface ImportDevice extends BlockDevice {
@@ -77,6 +85,12 @@ export interface ImportAction {
   defaultOutcome: string;
 }
 
+/**
+ * Encodes a node's edited routing for transport (#1915). A serialized `Rule`
+ * (every axis optional); the card sends back only the axes the user set per dir.
+ */
+export type RoutingRules = Record<string, Rule>;
+
 /** The review payload the card shows between scan and confirm. */
 export interface ScanResult {
   /** Opaque token that authorises a later apply of THIS reviewed plan. */
@@ -87,6 +101,17 @@ export interface ScanResult {
   categories: CategorySummary[];
   /** Unavoidable decisions for review — advisory, non-blocking. */
   actions: ImportAction[];
+  /**
+   * The per-folder routing tree the review UI renders (#1915): every directory
+   * that holds files, its tally + categories, its explicit rule and its resolved
+   * effective rule (inherited where not explicit). The card lets the user edit
+   * disposition + owner per node and sends the edited rule map back to apply.
+   */
+  tree: FolderNode[];
+  /** Box users that drive the Owner picker (sourced from the directory). */
+  boxUsers: string[];
+  /** The disk-default owner seeding the root (`shared` unless the user picks). */
+  defaultOwner: Owner;
 }
 
 export interface ScanOptions {
@@ -94,6 +119,8 @@ export interface ScanOptions {
   device: string;
   /** Catalog DB path (resume + cross-disk delta dedup). */
   catalogPath: string;
+  /** Box-user list (drives the Owner picker + exact-match auto-assign). */
+  boxUsers?: readonly string[];
 }
 
 export interface ApplyOptions {
@@ -110,6 +137,57 @@ export interface ApplyOptions {
    * without Immich; photos still land in `data/<owner>/photos` regardless.
    */
   immich?: ImmichAdminConfig;
+  /**
+   * The user's edited routing tree (#1915): per-dir explicit rules + the
+   * disk-default owner. When present the plan is RE-RESOLVED against these edits
+   * before the copy so owner/disposition changes actually move the targets;
+   * omit to apply the plan exactly as reviewed.
+   */
+  routing?: { rules: RoutingRules; defaultOwner?: Owner };
+}
+
+/**
+ * Build the {@link RoutingResolution} the engine threads through `buildPlan`
+ * from an explicit rule map + default owner. `relPathOf` strips the scan
+ * mountpoint so a record's absolute `sourcePath` becomes the routing-tree
+ * relative coordinate (the same space the explicit-dir keys live in).
+ */
+function buildRouting(
+  mountpoint: string,
+  rules: RoutingRules,
+  defaultOwner: Owner = 'shared',
+): RoutingResolution {
+  const explicit = new Map<string, Rule>(Object.entries(rules));
+  return {
+    relPathOf: record => relPathFor(mountpoint, record.sourcePath),
+    explicit,
+    rootDefault: defaultOwner === 'shared' ? {} : { owner: defaultOwner },
+  };
+}
+
+/**
+ * #1915: seed the explicit-rule map from the box-user list — every top-level
+ * source dir named EXACTLY like a box user is pre-assigned that owner (overridable
+ * in the review). Returns the map keyed by relative top-level dir.
+ */
+function seedAutoOwners(
+  records: readonly ImportRecord[],
+  mountpoint: string,
+  boxUsers: readonly string[],
+): Map<string, Rule> {
+  const topLevelDirs = [
+    ...new Set(records.map(r => topLevelSegment(relPathFor(mountpoint, r.sourcePath)))),
+  ].filter(d => d !== '');
+  return autoAssignOwners(topLevelDirs, boxUsers);
+}
+
+/** A record's source path RELATIVE to the scan mountpoint (the tree coordinate). */
+function relPathFor(mountpoint: string, sourcePath: string): string {
+  const base = mountpoint.replace(/\/+$/, '');
+  if (sourcePath === base) return '';
+  return sourcePath.startsWith(base + '/')
+    ? sourcePath.slice(base.length + 1)
+    : sourcePath.replace(/^\/+/, '');
 }
 
 /**
@@ -201,31 +279,62 @@ async function runScan(sessionId: string, opts: ScanOptions): Promise<ScanResult
     };
 
     await setProgress(sessionId, { step: 'plan' });
+
+    // #1915: seed the routing tree from the box-user list — a top-level source
+    // dir named EXACTLY like a box user is pre-assigned that owner (overridable
+    // in the review). The disk-default owner is `shared` until the user picks one.
+    const boxUsers = opts.boxUsers ?? [];
+    const explicit = seedAutoOwners(records, mountpoint, boxUsers);
+    const routing = buildRouting(mountpoint, Object.fromEntries(explicit), 'shared');
+
     const catalog = new ImportCatalog(catalogPath);
     let plan: ImportPlan;
     try {
       // #1914: tag video-dominant folders so their videos route to `movies/`
       // (Jellyfin) while camera-roll clips stay `photos`/Immich.
       const hints = buildSubtreeHints(records);
-      plan = buildPlan(records, hashOf, { catalog, hints });
+      plan = buildPlan(records, hashOf, { catalog, hints, routing });
     } finally {
       catalog.close();
     }
 
-    await finalizeScan(sessionId, { plan, hashes });
+    await finalizeScan(sessionId, {
+      plan,
+      hashes,
+      mountpoint,
+      boxUsers: [...boxUsers],
+      autoRules: Object.fromEntries(explicit),
+    });
 
-    return {
-      sessionId,
-      device,
-      totalFiles: plan.items.length,
-      totalBytes: plan.items.reduce((sum, i) => sum + i.record.size, 0),
-      categories: summarizeCategories(plan),
-      actions: buildActions(plan, records),
-    };
+    return buildScanResult({ sessionId, device, plan, records, mountpoint, explicit, boxUsers });
   } finally {
     // Always release the read-only mount; a failed scan must not leave it held.
     await unmount(exec, mountpoint).catch(() => {});
   }
+}
+
+/** Assemble the review {@link ScanResult} the card shows from a finished scan. */
+function buildScanResult(args: {
+  sessionId: string;
+  device: string;
+  plan: ImportPlan;
+  records: readonly ImportRecord[];
+  mountpoint: string;
+  explicit: ReadonlyMap<string, Rule>;
+  boxUsers: readonly string[];
+}): ScanResult {
+  const { sessionId, device, plan, records, mountpoint, explicit, boxUsers } = args;
+  return {
+    sessionId,
+    device,
+    totalFiles: plan.items.length,
+    totalBytes: plan.items.reduce((sum, i) => sum + i.record.size, 0),
+    categories: summarizeCategories(plan),
+    actions: buildActions(plan, [...records]),
+    tree: buildReviewTree(records, plan, mountpoint, explicit, 'shared'),
+    boxUsers: [...boxUsers],
+    defaultOwner: 'shared',
+  };
 }
 
 /**
@@ -267,7 +376,7 @@ async function runApply(
   opts: ApplyOptions,
   ctx: { gateChecked?: boolean } = {},
 ): Promise<ApplyResult> {
-  const { exec, sessionId, shareGid, immich } = opts;
+  const { exec, sessionId, shareGid, immich, routing: edited } = opts;
   const stored = await getSession(sessionId);
   // `startApply` already verified + flipped the gate to `applying`; the inline
   // path checks `reviewed` here. Either way an unreviewed/forged/consumed id is
@@ -294,7 +403,9 @@ async function runApply(
       return h;
     };
 
-    const result = await applyPlan(session.plan, {
+    const planToApply = resolvePlanToApply(session.plan, hashOf, session.mountpoint, edited, catalog);
+
+    const result = await applyPlan(planToApply, {
       exec,
       mountpoint,
       catalog,
@@ -324,6 +435,46 @@ async function runApply(
     catalog.close();
     await unmount(exec, mountpoint).catch(() => {});
   }
+}
+
+/**
+ * Choose the plan to apply (#1915): if the user edited the routing tree in
+ * review, RE-RESOLVE against those edits (owner/disposition changes move the
+ * targets) before the copy; otherwise apply the reviewed plan exactly as-is. The
+ * records are the verbatim ones the scan classified and the mountpoint is stable
+ * per device, so the stored scan mountpoint is the relative-path basis.
+ */
+function resolvePlanToApply(
+  plan: ImportPlan,
+  hashOf: HashResolver,
+  mountpoint: string | undefined,
+  edited: { rules: RoutingRules; defaultOwner?: Owner } | undefined,
+  catalog: ImportCatalog,
+): ImportPlan {
+  return edited && mountpoint
+    ? replanWithEdits(plan, hashOf, mountpoint, edited, catalog)
+    : plan;
+}
+
+/**
+ * Re-resolve the import plan against the user's edited routing tree (#1915).
+ * Runs the SAME deterministic engine the scan ran, but with the edited explicit
+ * rule map + disk-default owner, so owner/disposition edits move the targets and
+ * re-scope the dedup areas. The records are recovered from the reviewed plan
+ * (the scan's verbatim classification inputs); hints are re-derived. The catalog
+ * is reused (resumability/delta-dedup parity with the reviewed plan).
+ */
+function replanWithEdits(
+  plan: ImportPlan,
+  hashOf: HashResolver,
+  mountpoint: string,
+  edited: { rules: RoutingRules; defaultOwner?: Owner },
+  catalog: ImportCatalog,
+): ImportPlan {
+  const records = plan.items.map(i => i.record);
+  const hints = buildSubtreeHints(records);
+  const routing = buildRouting(mountpoint, edited.rules, edited.defaultOwner ?? 'shared');
+  return buildPlan(records, hashOf, { catalog, hints, routing });
 }
 
 /**
@@ -358,13 +509,22 @@ export async function getImportJob(sessionId: string): Promise<ImportJobStatus |
     applied: s.applied,
   };
   if (s.plan) {
+    const records = s.plan.items.map(i => i.record);
+    // Rebuild the review tree (#1915) from the persisted auto-assigned rules +
+    // box-user list so a re-attaching/reloaded card gets the same per-folder
+    // tree it had pre-reload. `mountpoint`/`autoRules` are absent on pre-#1915
+    // sessions — degrade to an empty tree (the per-category view still renders).
+    const explicit = new Map<string, Rule>(Object.entries(s.autoRules ?? {}));
     status.review = {
       sessionId: s.id,
       device: s.device,
       totalFiles: s.plan.items.length,
       totalBytes: s.plan.items.reduce((sum, i) => sum + i.record.size, 0),
       categories: summarizeCategories(s.plan),
-      actions: buildActions(s.plan, s.plan.items.map(i => i.record)),
+      actions: buildActions(s.plan, records),
+      tree: s.mountpoint ? buildReviewTree(records, s.plan, s.mountpoint, explicit, 'shared') : [],
+      boxUsers: s.boxUsers ?? [],
+      defaultOwner: 'shared',
     };
   }
   return status;
@@ -435,6 +595,32 @@ function sizeCollisionCandidates(records: ImportRecord[]): ImportRecord[] {
   const counts = new Map<number, number>();
   for (const r of records) counts.set(r.size, (counts.get(r.size) ?? 0) + 1);
   return records.filter(r => (counts.get(r.size) ?? 0) > 1);
+}
+
+/**
+ * Build the per-folder review tree (#1915) from the planned items. Each file
+ * contributes its relative dir + classified category + size; `buildFolderTree`
+ * tallies these into one node per directory, attaching the explicit + resolved
+ * rule so the card can render inherited-vs-explicit dispositions/owners and the
+ * `data/<owner>/<category>/…` target preview.
+ */
+function buildReviewTree(
+  records: readonly ImportRecord[],
+  plan: ImportPlan,
+  mountpoint: string,
+  explicit: ReadonlyMap<string, Rule>,
+  defaultOwner: Owner,
+): FolderNode[] {
+  // The plan classified every record; map each to its dir + category for the tally.
+  const catByPath = new Map<string, Category>();
+  for (const item of plan.items) catByPath.set(item.record.sourcePath, item.category);
+  const files = records.map(r => ({
+    dir: dirOfRel(relPathFor(mountpoint, r.sourcePath)),
+    category: catByPath.get(r.sourcePath) ?? 'documents',
+    size: r.size,
+  }));
+  const rootDefault = defaultOwner === 'shared' ? {} : { owner: defaultOwner };
+  return buildFolderTree(files, explicit, rootDefault);
 }
 
 function summarizeCategories(plan: ImportPlan): CategorySummary[] {

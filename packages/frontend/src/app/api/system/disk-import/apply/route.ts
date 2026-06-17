@@ -8,12 +8,41 @@ import { makeExec, resolveNode, SHARE_GID, immichServerUrl } from '../wiring';
 
 export const dynamic = 'force-dynamic';
 
+/** One node's edited routing rule (#1915) — every axis optional (inherits). */
+const RuleSchema = z.object({
+  disposition: z
+    .enum([
+      'auto',
+      'photos_immich',
+      'movies_jellyfin',
+      'music',
+      'audiobooks',
+      'podcasts',
+      'documents_merge',
+      'code_parallel',
+      'archive_1to1',
+      'skip',
+    ])
+    .optional(),
+  mode: z.enum(['merge', 'parallel']).optional(),
+  /** `shared` or a box-user id. */
+  owner: z.string().min(1).optional(),
+});
+
 const Body = z.object({
   /** The token from a prior `scan` — REQUIRED. The review gate. */
   sessionId: z.string().min(1),
   /** Explicit confirmation of the reviewed plan — required before any write. */
   confirmed: z.literal(true),
   node: z.string().optional(),
+  /**
+   * The user's edited routing tree (#1915): a per-relative-dir map of explicit
+   * rules. Present only when the user changed something in the review; the apply
+   * re-resolves the plan against it so owner/disposition edits move the targets.
+   */
+  rules: z.record(z.string(), RuleSchema).optional(),
+  /** The disk-default owner seeding the tree root (`shared` or a box user). */
+  defaultOwner: z.string().min(1).optional(),
 });
 
 /**
@@ -41,6 +70,9 @@ export const POST = withApiHandler<z.infer<typeof Body>>(
         sessionId: body.sessionId,
         shareGid: SHARE_GID,
         immich: immich ?? undefined,
+        // #1915: thread the user's review edits through so the plan is re-resolved
+        // against them before the copy. Omitted (no `rules`) → apply as reviewed.
+        routing: body.rules ? { rules: body.rules, defaultOwner: body.defaultOwner } : undefined,
       });
       return NextResponse.json({ ok: true, jobId });
     } catch (e) {

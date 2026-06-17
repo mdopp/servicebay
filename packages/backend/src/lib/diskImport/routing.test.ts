@@ -7,6 +7,9 @@ import {
   dedupsFor,
   parentDir,
   topLevelSegment,
+  buildFolderTree,
+  resolveTargetPath,
+  dirOfRel,
 } from './routing';
 import { DISPOSITIONS, type Disposition, type Rule } from './types';
 
@@ -142,5 +145,60 @@ describe('destinationArea + dedupsFor', () => {
     expect(dedupsFor('archive_1to1')).toBe(false);
     expect(dedupsFor('skip')).toBe(false);
     expect(dedupsFor('photos_immich')).toBe(false);
+  });
+});
+
+describe('dirOfRel', () => {
+  it('returns the directory of a relative path; root for a top-level file', () => {
+    expect(dirOfRel('a/b/c.jpg')).toBe('a/b');
+    expect(dirOfRel('c.jpg')).toBe('');
+    expect(dirOfRel('a/b/')).toBe('a');
+  });
+});
+
+describe('resolveTargetPath (moved from plan.ts)', () => {
+  it('shared owner omits the owner segment, merge flattens to basename', () => {
+    expect(resolveTargetPath('Backup/IMG.jpg', 'photos', { owner: 'shared', mode: 'merge', anchor: '' }))
+      .toBe('photos/IMG.jpg');
+  });
+  it('user owner prefixes; parallel preserves the subtree below the anchor', () => {
+    expect(
+      resolveTargetPath('Code/src/main.ts', 'documents', { owner: 'mdopp', mode: 'parallel', anchor: 'Code' }),
+    ).toBe('mdopp/documents/src/main.ts');
+  });
+});
+
+describe('buildFolderTree (#1915)', () => {
+  const files = [
+    { dir: '', category: 'documents' as const, size: 1 },
+    { dir: 'mdopp', category: 'photos' as const, size: 2 },
+    { dir: 'mdopp/Filme', category: 'movies' as const, size: 3 },
+  ];
+
+  it('emits one connected node per dir incl. the root, with tallies + categories', () => {
+    const tree = buildFolderTree(files, new Map());
+    expect(tree.map(n => n.dir)).toEqual(['', 'mdopp', 'mdopp/Filme']);
+    const mdopp = tree.find(n => n.dir === 'mdopp')!;
+    expect(mdopp.files).toBe(1);
+    expect(mdopp.bytes).toBe(2);
+    expect(mdopp.categories).toEqual(['photos']);
+  });
+
+  it('attaches explicit + resolved rules; resolved inherits down-tree', () => {
+    const explicit = new Map<string, Rule>([['mdopp', { owner: 'mdopp' }]]);
+    const tree = buildFolderTree(files, explicit);
+    const mdopp = tree.find(n => n.dir === 'mdopp')!;
+    const child = tree.find(n => n.dir === 'mdopp/Filme')!;
+    expect(mdopp.explicit).toEqual({ owner: 'mdopp' });
+    expect(mdopp.resolved.owner).toBe('mdopp');
+    // The child inherits the owner (no explicit rule of its own).
+    expect(child.explicit).toEqual({});
+    expect(child.resolved.owner).toBe('mdopp');
+  });
+
+  it('seeds the root from the disk-default owner', () => {
+    const tree = buildFolderTree(files, new Map(), { owner: 'cdopp' });
+    expect(tree.find(n => n.dir === '')!.resolved.owner).toBe('cdopp');
+    expect(tree.find(n => n.dir === 'mdopp/Filme')!.resolved.owner).toBe('cdopp');
   });
 });

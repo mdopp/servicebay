@@ -13,10 +13,20 @@
 // as Diagnose-style `actions[]` — advisory follow-ups that DON'T block the apply
 // (the plan has a safe default for each).
 
-import { useCallback, useEffect, useState } from 'react';
-import { Loader2, HardDrive, AlertCircle, CheckCircle2, RefreshCw, Download } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Loader2, HardDrive, AlertCircle, CheckCircle2, RefreshCw, Download, Folder } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { useImportJob, type JobProgress, type JobStatus } from '../useImportJob';
+import {
+  DISPOSITION_OPTIONS,
+  effectiveRule,
+  isInherited,
+  targetPreview,
+  type Disposition,
+  type FolderNode,
+  type Owner,
+  type Rule,
+} from '../routingTree';
 
 interface DeviceView {
   path: string;
@@ -47,9 +57,63 @@ export interface ScanReview {
   totalBytes: number;
   categories: CategorySummary[];
   actions: ImportActionItem[];
+  /** The per-folder routing tree (#1915). */
+  tree?: FolderNode[];
+  /** Box users driving the Owner picker (#1915). */
+  boxUsers?: string[];
+  /** The disk-default owner seeding the root (#1915). */
+  defaultOwner?: Owner;
 }
 
 type Phase = 'pick' | 'scanning' | 'review' | 'applying' | 'done';
+
+/** POST a JSON body to a disk-import route, returning `{ jobId?, error? }`. */
+async function postJob(
+  url: string,
+  body: Record<string, unknown>,
+): Promise<{ jobId?: string; error?: string }> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => ({}))) as { jobId?: string; error?: string };
+  if (!res.ok) return { error: data.error || `HTTP ${res.status}` };
+  return data;
+}
+
+/**
+ * Set (or clear, when `value === undefined`) one axis of a folder's explicit rule
+ * (#1915). Clearing the last axis drops the dir from the map so it reverts to pure
+ * inheritance. Returns a new map (immutable update).
+ */
+function applyRuleEdit(
+  prev: Record<string, Rule>,
+  dir: string,
+  axis: keyof Rule,
+  value: Rule[keyof Rule] | undefined,
+): Record<string, Rule> {
+  const next = { ...prev };
+  const node: Rule = { ...next[dir] };
+  if (value === undefined) delete node[axis];
+  else (node[axis] as Rule[keyof Rule]) = value;
+  if (Object.keys(node).length === 0) delete next[dir];
+  else next[dir] = node;
+  return next;
+}
+
+/**
+ * Seed the review-edit map from a landed review (#1915): each node's own explicit
+ * rule (e.g. an exact-match auto-assigned owner) becomes the initial edit, plus
+ * the disk-default owner. Auto-assignments show pre-selected AND stay overridable.
+ */
+function seedRules(r: ScanReview): { rules: Record<string, Rule>; defaultOwner: Owner } {
+  const rules: Record<string, Rule> = {};
+  for (const node of r.tree ?? []) {
+    if (node.explicit && Object.keys(node.explicit).length > 0) rules[node.dir] = { ...node.explicit };
+  }
+  return { rules, defaultOwner: r.defaultOwner ?? 'shared' };
+}
 
 export function formatBytes(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -115,18 +179,225 @@ function ReviewActions({ actions }: { actions: ImportActionItem[] }) {
   );
 }
 
+/** Owner picker — `shared` + every box user. Reflects inherited vs explicit. */
+function OwnerPicker({
+  value,
+  inherited,
+  boxUsers,
+  onChange,
+}: {
+  value: Owner;
+  inherited: boolean;
+  boxUsers: string[];
+  onChange: (owner: Owner | undefined) => void;
+}) {
+  return (
+    <select
+      aria-label="Owner"
+      className={`text-[11px] rounded border px-1 py-0.5 bg-white dark:bg-gray-900 ${
+        inherited
+          ? 'border-dashed border-gray-300 dark:border-gray-600 text-gray-500 italic'
+          : 'border-gray-400 dark:border-gray-500 text-gray-900 dark:text-gray-100'
+      }`}
+      value={inherited ? '__inherit__' : value}
+      onChange={e => onChange(e.target.value === '__inherit__' ? undefined : e.target.value)}
+    >
+      <option value="__inherit__">Inherited ({value})</option>
+      <option value="shared">Shared</option>
+      {boxUsers.map(u => (
+        <option key={u} value={u}>
+          {u}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** Disposition picker — the full v1 set. Reflects inherited vs explicit. */
+function DispositionPicker({
+  value,
+  inherited,
+  onChange,
+}: {
+  value: Disposition;
+  inherited: boolean;
+  onChange: (disposition: Disposition | undefined) => void;
+}) {
+  const label = (d: Disposition) => DISPOSITION_OPTIONS.find(o => o.value === d)?.label ?? d;
+  return (
+    <select
+      aria-label="Disposition"
+      className={`text-[11px] rounded border px-1 py-0.5 bg-white dark:bg-gray-900 ${
+        inherited
+          ? 'border-dashed border-gray-300 dark:border-gray-600 text-gray-500 italic'
+          : 'border-gray-400 dark:border-gray-500 text-gray-900 dark:text-gray-100'
+      }`}
+      value={inherited ? '__inherit__' : value}
+      onChange={e =>
+        onChange(e.target.value === '__inherit__' ? undefined : (e.target.value as Disposition))
+      }
+    >
+      <option value="__inherit__">Inherited ({label(value)})</option>
+      {DISPOSITION_OPTIONS.map(o => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** Display label for a relative dir (`(disk root)` for the empty root). */
+function dirLabel(dir: string): string {
+  if (dir === '') return '(disk root)';
+  const segs = dir.split('/');
+  return segs[segs.length - 1];
+}
+
+/** One folder row in the routing tree: pickers + resolved-target preview (#1915). */
+function TreeRow({
+  node,
+  explicit,
+  defaultOwner,
+  boxUsers,
+  onChange,
+}: {
+  node: FolderNode;
+  explicit: Map<string, Rule>;
+  defaultOwner: Owner;
+  boxUsers: string[];
+  onChange: (dir: string, axis: keyof Rule, value: Rule[keyof Rule] | undefined) => void;
+}) {
+  const depth = node.dir === '' ? 0 : node.dir.split('/').length;
+  const resolved = effectiveRule(node.dir, explicit, defaultOwner);
+  return (
+    <div
+      data-testid={`tree-node-${node.dir || 'root'}`}
+      className="flex flex-wrap items-center gap-2 rounded px-1 py-1 text-xs hover:bg-gray-50 dark:hover:bg-gray-800/50"
+      style={{ paddingLeft: `${depth * 14 + 4}px` }}
+    >
+      <span className="inline-flex items-center gap-1 min-w-0 text-gray-800 dark:text-gray-200">
+        <Folder size={12} className="shrink-0 text-gray-400" />
+        <span className="truncate font-medium">{dirLabel(node.dir)}</span>
+        {node.files > 0 && <span className="text-gray-400">({node.files})</span>}
+      </span>
+      <DispositionPicker
+        value={resolved.disposition}
+        inherited={isInherited(node.dir, 'disposition', explicit)}
+        onChange={v => onChange(node.dir, 'disposition', v)}
+      />
+      <OwnerPicker
+        value={resolved.owner}
+        inherited={isInherited(node.dir, 'owner', explicit)}
+        boxUsers={boxUsers}
+        onChange={v => onChange(node.dir, 'owner', v)}
+      />
+      <span
+        className="text-[11px] text-gray-500 dark:text-gray-400 font-mono"
+        data-testid={`tree-target-${node.dir || 'root'}`}
+      >
+        → {targetPreview(resolved, node.categories)}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The per-folder routing tree (#1915): one row per directory, indented by depth,
+ * with a disposition + owner picker, a resolved `data/<owner>/<category>/…`
+ * target preview, and inherited-vs-explicit styling (inherited values render
+ * dashed/italic; explicit picks render solid). Editing a node updates the
+ * `rules` map (cleared back to inherit when the user re-picks "Inherited").
+ */
+export function DiskImportTree({
+  nodes,
+  rules,
+  defaultOwner,
+  boxUsers,
+  onChange,
+}: {
+  nodes: FolderNode[];
+  rules: Record<string, Rule>;
+  defaultOwner: Owner;
+  boxUsers: string[];
+  onChange: (dir: string, axis: keyof Rule, value: Rule[keyof Rule] | undefined) => void;
+}) {
+  const explicit = useMemo(() => new Map<string, Rule>(Object.entries(rules)), [rules]);
+  if (nodes.length === 0) return null;
+  return (
+    <div className="space-y-1" data-testid="disk-import-tree">
+      <h5 className="text-xs font-semibold text-gray-700 dark:text-gray-300">Per-folder routing</h5>
+      <p className="text-[11px] text-gray-400">
+        Each folder inherits from its parent. Override a folder to change where it (and its subfolders)
+        lands.
+      </p>
+      <div className="space-y-0.5">
+        {nodes.map(node => (
+          <TreeRow
+            key={node.dir || '__root__'}
+            node={node}
+            explicit={explicit}
+            defaultOwner={defaultOwner}
+            boxUsers={boxUsers}
+            onChange={onChange}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** "Whose disk is this?" — the disk-default owner seeding the tree root (#1915). */
+function DefaultOwnerPicker({
+  value,
+  boxUsers,
+  onChange,
+}: {
+  value: Owner;
+  boxUsers: string[];
+  onChange: (owner: Owner) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300">
+      Whose disk is this?
+      <select
+        aria-label="Disk default owner"
+        className="text-[11px] rounded border border-gray-400 dark:border-gray-500 px-1 py-0.5 bg-white dark:bg-gray-900"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+      >
+        <option value="shared">Shared (everyone)</option>
+        {boxUsers.map(u => (
+          <option key={u} value={u}>
+            {u}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 /** Presentational review: per-category sizing + the non-blocking actions[]. */
 export function DiskImportReview({
   review,
+  rules,
+  defaultOwner,
+  onRuleChange,
+  onDefaultOwnerChange,
   onConfirm,
   onCancel,
   busy,
 }: {
   review: ScanReview;
+  rules: Record<string, Rule>;
+  defaultOwner: Owner;
+  onRuleChange: (dir: string, axis: keyof Rule, value: Rule[keyof Rule] | undefined) => void;
+  onDefaultOwnerChange: (owner: Owner) => void;
   onConfirm: () => void;
   onCancel: () => void;
   busy: boolean;
 }) {
+  const boxUsers = review.boxUsers ?? [];
   return (
     <div className="space-y-4" data-testid="disk-import-review">
       <div>
@@ -137,25 +408,54 @@ export function DiskImportReview({
         </p>
       </div>
 
+      {(review.tree?.length ?? 0) > 0 && (
+        <DefaultOwnerPicker value={defaultOwner} boxUsers={boxUsers} onChange={onDefaultOwnerChange} />
+      )}
+
+      {review.tree && review.tree.length > 0 && (
+        <DiskImportTree
+          nodes={review.tree}
+          rules={rules}
+          defaultOwner={defaultOwner}
+          boxUsers={boxUsers}
+          onChange={onRuleChange}
+        />
+      )}
+
       <CategoryTable categories={review.categories} />
       <ReviewActions actions={review.actions} />
 
-      <div className="flex flex-wrap gap-2 pt-1">
-        <button
-          onClick={onConfirm}
-          disabled={busy}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg disabled:opacity-50"
-        >
-          {busy && <Loader2 size={14} className="animate-spin" />} Confirm &amp; import
-        </button>
-        <button
-          onClick={onCancel}
-          disabled={busy}
-          className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm font-medium rounded-lg disabled:opacity-50"
-        >
-          Cancel
-        </button>
-      </div>
+      <ConfirmBar onConfirm={onConfirm} onCancel={onCancel} busy={busy} />
+    </div>
+  );
+}
+
+/** The explicit confirm/cancel gate at the foot of the review (#1697). */
+function ConfirmBar({
+  onConfirm,
+  onCancel,
+  busy,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2 pt-1">
+      <button
+        onClick={onConfirm}
+        disabled={busy}
+        className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg disabled:opacity-50"
+      >
+        {busy && <Loader2 size={14} className="animate-spin" />} Confirm &amp; import
+      </button>
+      <button
+        onClick={onCancel}
+        disabled={busy}
+        className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm font-medium rounded-lg disabled:opacity-50"
+      >
+        Cancel
+      </button>
     </div>
   );
 }
@@ -320,18 +620,16 @@ export function JobProgressView({ status }: { status: JobStatus | null }) {
   );
 }
 
-export default function DiskImportSection() {
-  const { addToast } = useToast();
+/**
+ * The USB device list + selection (#1697). Polls `list-devices`, auto-selects a
+ * lone device, and exposes a manual refresh. State is only set inside the async
+ * callbacks (never synchronously in render) so it's effect-safe.
+ */
+function useDeviceList() {
   const [devices, setDevices] = useState<DeviceView[]>([]);
   const [selected, setSelected] = useState<string>('');
-  const [phase, setPhase] = useState<Phase>('pick');
-  const [review, setReview] = useState<ScanReview | null>(null);
-  const [applied, setApplied] = useState<number | null>(null);
   const [loadingDevices, setLoadingDevices] = useState(true);
 
-  // Fetch the device list. Only sets state from inside the (async) promise
-  // callbacks — never synchronously — so it's safe to call from an effect
-  // without the "cascading renders" lint.
   const fetchDevices = useCallback(() => {
     fetch('/api/system/disk-import/list-devices')
       .then(r => (r.ok ? r.json() : null))
@@ -352,87 +650,203 @@ export default function DiskImportSection() {
 
   useEffect(fetchDevices, [fetchDevices]);
 
-  // Background-job polling + re-attach (#1897) lives in useImportJob; the card
-  // just wires the terminal transitions into its phase/review/applied UI state.
-  const job = useImportJob({
+  return { devices, selected, setSelected, loadingDevices, refreshDevices };
+}
+
+/** Setters the import-job bindings drive on a terminal scan/apply transition. */
+interface ImportJobSetters {
+  setReview: (r: ScanReview | null) => void;
+  setApplied: (n: number) => void;
+  setPhase: (p: Phase) => void;
+  seedFromReview: (r: ScanReview | null) => void;
+  addToast: ReturnType<typeof useToast>['addToast'];
+}
+
+/**
+ * Wire useImportJob's terminal transitions (#1897) into the card's phase/review/
+ * applied state. Kept out of the host so the host stays a thin state container.
+ */
+function useImportJobBindings(s: ImportJobSetters) {
+  return useImportJob({
     onReviewed: review => {
-      setReview(review as ScanReview | null);
-      setPhase('review');
+      s.setReview(review as ScanReview | null);
+      s.seedFromReview(review as ScanReview | null);
+      s.setPhase('review');
     },
     onApplied: count => {
-      setApplied(count);
-      setPhase('done');
-      addToast('success', 'Import finished');
+      s.setApplied(count);
+      s.setPhase('done');
+      s.addToast('success', 'Import finished');
     },
     onError: (kind, message, review) => {
       const wasApply = kind === 'applying';
-      addToast('error', wasApply ? 'Import failed' : 'Scan failed', message);
-      setReview(review as ScanReview | null);
-      setPhase(wasApply && review ? 'review' : 'pick');
+      s.addToast('error', wasApply ? 'Import failed' : 'Scan failed', message);
+      s.setReview(review as ScanReview | null);
+      if (wasApply && review) s.seedFromReview(review as ScanReview | null);
+      s.setPhase(wasApply && review ? 'review' : 'pick');
     },
-    onGone: () => setPhase('pick'),
+    onGone: () => s.setPhase('pick'),
   });
+}
 
-  const runScan = async () => {
-    if (!selected) {
-      addToast('error', 'Pick a USB device first');
-      return;
-    }
-    setPhase('scanning');
+type Track = ReturnType<typeof useImportJob>['track'];
+type Toast = ReturnType<typeof useToast>['addToast'];
+
+/**
+ * Kick off a background scan/apply job (#1897): POST the route, start polling on
+ * the returned id, or toast + fall back to `failPhase` on any error.
+ */
+function makeStartJob(track: Track, addToast: Toast, setPhase: (p: Phase) => void) {
+  return async (
+    url: string,
+    payload: Record<string, unknown>,
+    label: string,
+    runningPhase: 'scanning' | 'applying',
+    failPhase: Phase,
+  ): Promise<void> => {
     try {
-      const res = await fetch('/api/system/disk-import/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device: selected }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.jobId) {
-        addToast('error', 'Scan failed', data.error || `HTTP ${res.status}`);
-        setPhase('pick');
+      const data = await postJob(url, payload);
+      if (!data.jobId) {
+        addToast('error', label, data.error || 'no job id');
+        setPhase(failPhase);
         return;
       }
-      job.track(data.jobId, 'scanning'); // start polling
+      track(data.jobId, runningPhase);
     } catch {
-      addToast('error', 'Scan failed');
-      setPhase('pick');
+      addToast('error', label);
+      setPhase(failPhase);
     }
+  };
+}
+
+/**
+ * The scan / apply / reset action handlers (#1697). Kept out of the host so the
+ * component is a thin state + render container. Each kicks off a background job
+ * (#1897) and threads the review edits (#1915) into the apply call.
+ */
+function useImportActions(c: {
+  job: ReturnType<typeof useImportJob>;
+  selected: string;
+  review: ScanReview | null;
+  rules: Record<string, Rule>;
+  defaultOwner: Owner;
+  addToast: Toast;
+  setPhase: (p: Phase) => void;
+  setReview: (r: ScanReview | null) => void;
+  setApplied: (n: number | null) => void;
+  setSelected: (s: string) => void;
+  setRules: (r: Record<string, Rule>) => void;
+  setDefaultOwner: (o: Owner) => void;
+  refreshDevices: () => void;
+}) {
+  const { job, addToast, setPhase } = c;
+  const startJob = makeStartJob(job.track, addToast, setPhase);
+
+  const runScan = async () => {
+    if (!c.selected) return void addToast('error', 'Pick a USB device first');
+    setPhase('scanning');
+    await startJob('/api/system/disk-import/scan', { device: c.selected }, 'Scan failed', 'scanning', 'pick');
   };
 
   const applyPlan = async () => {
-    if (!review) return;
+    if (!c.review) return;
     setPhase('applying');
-    try {
-      const res = await fetch('/api/system/disk-import/apply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: review.sessionId, confirmed: true }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.jobId) {
-        addToast('error', 'Import failed', data.error || `HTTP ${res.status}`);
-        setPhase('review');
-        return;
-      }
-      job.track(data.jobId, 'applying'); // start polling
-    } catch {
-      addToast('error', 'Import failed');
-      setPhase('review');
-    }
+    // Only send the routing tree when the user actually has edits (or a non-shared
+    // default owner) — an unedited plan applies exactly as reviewed.
+    const hasEdits = Object.keys(c.rules).length > 0 || c.defaultOwner !== 'shared';
+    const payload = { sessionId: c.review.sessionId, confirmed: true, ...(hasEdits ? { rules: c.rules, defaultOwner: c.defaultOwner } : {}) };
+    await startJob('/api/system/disk-import/apply', payload, 'Import failed', 'applying', 'review');
   };
 
   const reset = () => {
-    setReview(null);
-    setApplied(null);
-    setSelected('');
+    c.setReview(null);
+    c.setApplied(null);
+    c.setSelected('');
+    c.setRules({});
+    c.setDefaultOwner('shared');
     job.clear();
     setPhase('pick');
-    refreshDevices();
+    c.refreshDevices();
   };
 
+  return { runScan, applyPlan, reset };
+}
+
+export default function DiskImportSection() {
+  const { addToast } = useToast();
+  const { devices, selected, setSelected, loadingDevices, refreshDevices } = useDeviceList();
+  const [phase, setPhase] = useState<Phase>('pick');
+  const [review, setReview] = useState<ScanReview | null>(null);
+  const [applied, setApplied] = useState<number | null>(null);
+  // The user's review-tree edits (#1915): per-dir explicit rules + the disk
+  // default owner. Seeded from the scan's auto-assigned tree on review; threaded
+  // to the apply call so owner/disposition edits move the resolved targets.
+  const [rules, setRules] = useState<Record<string, Rule>>({});
+  const [defaultOwner, setDefaultOwner] = useState<Owner>('shared');
+
+  // Seed the edit state from a freshly-landed review (auto-assigned owners show
+  // pre-selected AND remain overridable) via the module-level `seedRules` helper.
+  const seedFromReview = useCallback((r: ScanReview | null) => {
+    if (!r) return;
+    const seeded = seedRules(r);
+    setRules(seeded.rules);
+    setDefaultOwner(seeded.defaultOwner);
+  }, []);
+
+  const job = useImportJobBindings({ setReview, setApplied, setPhase, seedFromReview, addToast });
+
+  // Set (or clear, when value === undefined) one axis of a folder's explicit
+  // rule via the module-level `applyRuleEdit` reducer. Functional update — never
+  // reads stale `rules`.
+  const onRuleChange = useCallback(
+    (dir: string, axis: keyof Rule, value: Rule[keyof Rule] | undefined) => {
+      setRules(prev => applyRuleEdit(prev, dir, axis, value));
+    },
+    [],
+  );
+
+  const { runScan, applyPlan, reset } = useImportActions({
+    job, selected, review, rules, defaultOwner, addToast, setPhase,
+    setReview, setApplied, setSelected, setRules, setDefaultOwner, refreshDevices,
+  });
+
+  const reviewProps = review && {
+    review, rules, defaultOwner, onRuleChange,
+    onDefaultOwnerChange: setDefaultOwner, onConfirm: applyPlan, onCancel: reset, busy: false,
+  };
+
+  return (
+    <DiskImportBody
+      phase={phase}
+      jobActive={job.active}
+      jobStatus={job.status}
+      review={reviewProps}
+      pick={{ devices, selected, loading: loadingDevices, scanning: false, onSelect: setSelected, onRefresh: refreshDevices, onScan: runScan }}
+      done={{ applied: applied ?? 0, onReset: reset }}
+    />
+  );
+}
+
+/** Phase-driven render of the import card body (kept out of the stateful host). */
+function DiskImportBody({
+  phase,
+  jobActive,
+  jobStatus,
+  review,
+  pick,
+  done,
+}: {
+  phase: Phase;
+  jobActive: boolean;
+  jobStatus: JobStatus | null;
+  review: React.ComponentProps<typeof DiskImportReview> | null | false;
+  pick: React.ComponentProps<typeof DevicePicker>;
+  done: React.ComponentProps<typeof ImportDone>;
+}) {
   if (phase === 'review' && review) {
     return (
       <Card>
-        <DiskImportReview review={review} onConfirm={applyPlan} onCancel={reset} busy={false} />
+        <DiskImportReview {...review} />
       </Card>
     );
   }
@@ -441,10 +855,10 @@ export default function DiskImportSection() {
   // (#1897), not a bare spinner. Covers a fresh run, the gap before the first
   // poll lands, AND a cold re-attach after a reload/restart (a still-running job
   // is `active` from localStorage before the card's own phase has caught up).
-  if (phase === 'scanning' || phase === 'applying' || job.active) {
+  if (phase === 'scanning' || phase === 'applying' || jobActive) {
     return (
       <Card>
-        <JobProgressView status={job.status} />
+        <JobProgressView status={jobStatus} />
       </Card>
     );
   }
@@ -452,7 +866,7 @@ export default function DiskImportSection() {
   if (phase === 'done') {
     return (
       <Card>
-        <ImportDone applied={applied ?? 0} onReset={reset} />
+        <ImportDone {...done} />
       </Card>
     );
   }
@@ -464,17 +878,7 @@ export default function DiskImportSection() {
           Plug in a USB disk and we&apos;ll sort your photos, music and documents into the right place. You
           review the plan before anything is copied.
         </p>
-        <DevicePicker
-          devices={devices}
-          selected={selected}
-          loading={loadingDevices}
-          // Reaching here means phase==='pick' (scanning renders the progress
-          // frame above); a scan in flight never shows the picker.
-          scanning={false}
-          onSelect={setSelected}
-          onRefresh={refreshDevices}
-          onScan={runScan}
-        />
+        <DevicePicker {...pick} />
       </div>
     </Card>
   );

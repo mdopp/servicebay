@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { startScan } from '@/lib/diskImport/service';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
-import { catalogPath, makeExec, resolveNode } from '../wiring';
+import { catalogPath, listBoxUsers, makeExec, resolveNode } from '../wiring';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,10 +27,15 @@ export const POST = withApiHandler<z.infer<typeof Body>>(
   async ({ body }) => {
     try {
       const node = resolveNode(body.node);
+      // #1915: hand the engine the box-user list so a top-level source dir named
+      // exactly like a user is pre-assigned that owner (shown + overridable in the
+      // review tree), and so the review's Owner picker is driven by real users.
+      const boxUsers = await listBoxUsers();
       const { jobId } = await startScan({
         exec: makeExec(node),
         device: body.device,
         catalogPath: catalogPath(),
+        boxUsers,
       });
       return NextResponse.json({ ok: true, jobId });
     } catch (e) {

@@ -10,6 +10,7 @@
 import { AgentExecutor } from '@/lib/agent/executor';
 import { getNodeIds } from '@/lib/store/repository';
 import { DATA_DIR } from '@/lib/dirs';
+import { listLldapUsers } from '@/lib/lldap/client';
 import type { SafeExec } from '@/lib/diskImport/hostExec';
 
 /** Numeric gid that owns file-share data (rootless-podman subgid). */
@@ -29,6 +30,19 @@ export function resolveNode(node?: string): string {
 export function makeExec(node: string): SafeExec {
   const executor = new AgentExecutor(node);
   return (argv, options) => executor.execSafe(argv, options ?? {});
+}
+
+/**
+ * The box-user list that drives the disk-import review Owner picker + exact-match
+ * owner auto-assign (#1915). Sourced from the authoritative directory (LLDAP);
+ * returns the user ids (the lower-case directory convention the engine matches a
+ * top-level source-dir name against). Best-effort: an unreachable/​unconfigured
+ * LLDAP yields an empty list (the picker then only offers `shared`).
+ */
+export async function listBoxUsers(): Promise<string[]> {
+  const result = await listLldapUsers().catch(() => null);
+  if (!result || !result.ok) return [];
+  return result.users.map(u => u.id);
 }
 
 /**

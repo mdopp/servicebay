@@ -32,6 +32,12 @@ export interface ScanReviewLike {
   totalBytes: number;
   categories: unknown[];
   actions: unknown[];
+  /** The per-folder routing tree (#1915). Absent on pre-#1915 payloads. */
+  tree?: unknown[];
+  /** Box users driving the Owner picker (#1915). */
+  boxUsers?: string[];
+  /** The disk-default owner seeding the root (#1915). */
+  defaultOwner?: string;
 }
 
 /** The status-route payload the card polls. */
