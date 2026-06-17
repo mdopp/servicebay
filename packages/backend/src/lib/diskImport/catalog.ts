@@ -69,6 +69,11 @@ export class ImportCatalog {
     const Database = require('better-sqlite3');
     this.db = new Database(dbPath) as BetterSqliteDatabase;
     this.db.pragma('journal_mode = WAL');
+    // Bring a pre-existing (possibly pre-#1912) catalog up to the current shape
+    // BEFORE creating the table or any `area`-referencing index — a fresh DB is a
+    // no-op here. CREATE TABLE IF NOT EXISTS never touches an existing table, so
+    // migration is the only path that fixes an old one.
+    this.selfHealSchema();
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS import_catalog (
         sha256          TEXT NOT NULL,
@@ -82,6 +87,105 @@ export class ImportCatalog {
       CREATE INDEX IF NOT EXISTS idx_catalog_sha         ON import_catalog(sha256);
       CREATE INDEX IF NOT EXISTS idx_catalog_area_target ON import_catalog(area, target);
     `);
+  }
+
+  /**
+   * Forward-only, idempotent self-migration for a catalog created before #1912
+   * (issue #1940). The catalog is a PERSISTENT SQLite on the box: #1912 added
+   * `area TEXT NOT NULL DEFAULT 'shared'` to the dedup key AND moved the PRIMARY
+   * KEY from `(sha256, target)` to `(sha256, area, target)`. A pre-#1912 catalog
+   * has neither, so the area-scoped dedup queries throw `no such column: area`
+   * and the upsert's `ON CONFLICT(sha256, area, target)` finds no matching key.
+   *
+   * SQLite's `ALTER TABLE ADD COLUMN` can backfill the column but cannot change a
+   * PRIMARY KEY, so a stale-PK catalog needs the full table-rebuild ("12-step")
+   * pattern. We therefore: (1) skip entirely if the table is absent (fresh DB —
+   * CREATE TABLE in the ctor makes the current shape); (2) rebuild if the live
+   * PRIMARY KEY differs from the current one, copying every row and backfilling
+   * the default `area` for legacy rows; (3) otherwise ADD COLUMN any columns the
+   * engine queries that a same-PK-but-older table is missing. The rebuilt/altered
+   * table is byte-identical to a freshly created one (same column types/defaults,
+   * same PK), so a migrated and a fresh catalog converge.
+   */
+  private selfHealSchema(): void {
+    const tableExists =
+      this.db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='import_catalog'`)
+        .get() !== undefined;
+    if (!tableExists) return; // Fresh DB — the ctor's CREATE TABLE makes the current shape.
+
+    const cols = this.db.prepare('PRAGMA table_info(import_catalog)').all() as {
+      name: string;
+      pk: number;
+    }[];
+    const existing = new Set(cols.map(c => c.name));
+    // The live PRIMARY KEY, in declared order.
+    const livePk = cols
+      .filter(c => c.pk > 0)
+      .sort((a, b) => a.pk - b.pk)
+      .map(c => c.name)
+      .join(',');
+    const wantPk = 'sha256,area,target';
+
+    if (livePk !== wantPk) {
+      // PRIMARY KEY changed (pre-#1912). ADD COLUMN can't change a PK, so rebuild.
+      this.rebuildWithCurrentSchema(existing.has('area'));
+      return; // Rebuilt table already has every current column.
+    }
+
+    // Same PK but possibly missing a later-added column. (column → DDL fragment)
+    // for every column added after the #1912 shape; defaults are constants so
+    // SQLite can backfill existing rows. Keep byte-identical to CREATE TABLE.
+    const addedColumns: ReadonlyArray<readonly [string, string]> = [
+      ['area', `TEXT NOT NULL DEFAULT 'shared'`], // #1912 — owner-derived dedup area
+    ];
+    for (const [name, ddl] of addedColumns) {
+      if (existing.has(name)) continue;
+      // Hardcoded column DDL (not user input); SQLite db.exec, not a shell call.
+      this.db.exec('ALTER TABLE import_catalog ADD COLUMN ' + name + ' ' + ddl);
+    }
+  }
+
+  /**
+   * SQLite "12-step" table rebuild used when the live PRIMARY KEY differs from the
+   * current `(sha256, area, target)` (a pre-#1912 catalog keyed on `(sha256,
+   * target)`). Copies every row into a freshly created current-shape table inside
+   * a transaction, backfilling `area` to the pre-#1912 default `'shared'` for
+   * legacy rows that lack the column, then swaps the table in. `INSERT OR IGNORE`
+   * collapses any rows that would collide under the new wider key.
+   */
+  private rebuildWithCurrentSchema(hasArea: boolean): void {
+    // The area source for the copy: the legacy column when present, else the
+    // pre-#1912 default. Both branches are hardcoded SQL (not user input); this
+    // is a SQLite db.exec, not a shell executor.
+    const areaExpr = hasArea ? 'area' : `'shared'`;
+    const copySql =
+      'INSERT OR IGNORE INTO import_catalog__new ' +
+      '(sha256, area, target, source_path, size, imported_at_ms) ' +
+      'SELECT sha256, ' +
+      areaExpr +
+      ', target, source_path, size, imported_at_ms FROM import_catalog;';
+    this.db.exec('BEGIN');
+    try {
+      this.db.exec(`
+        CREATE TABLE import_catalog__new (
+          sha256          TEXT NOT NULL,
+          area            TEXT NOT NULL DEFAULT 'shared',
+          target          TEXT NOT NULL,
+          source_path     TEXT NOT NULL,
+          size            INTEGER NOT NULL,
+          imported_at_ms  INTEGER NOT NULL,
+          PRIMARY KEY (sha256, area, target)
+        );
+      `);
+      this.db.exec(copySql);
+      this.db.exec('DROP TABLE import_catalog;');
+      this.db.exec('ALTER TABLE import_catalog__new RENAME TO import_catalog;');
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
   }
 
   /** True if this exact content has already been written to this area+target. */

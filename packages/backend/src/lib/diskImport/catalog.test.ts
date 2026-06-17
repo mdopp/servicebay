@@ -78,6 +78,66 @@ describe('ImportCatalog — in-memory round-trips', () => {
   });
 });
 
+describe('ImportCatalog — self-heals a pre-#1912 schema (no `area` column)', () => {
+  let tmpDir: string;
+  afterEach(async () => {
+    if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('adds the missing `area` column on open and dedup then works', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'diskimport-cat-old-'));
+    const dbPath = path.join(tmpDir, 'catalog.db');
+
+    // Build the ORIGINAL (#1693) catalog shape — no `area`, PK (sha256, target) —
+    // and seed a row, exactly like a box created before #1912.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Database = require('better-sqlite3');
+    const raw = new Database(dbPath);
+    raw.exec(`
+      CREATE TABLE import_catalog (
+        sha256          TEXT NOT NULL,
+        target          TEXT NOT NULL,
+        source_path     TEXT NOT NULL,
+        size            INTEGER NOT NULL,
+        imported_at_ms  INTEGER NOT NULL,
+        PRIMARY KEY (sha256, target)
+      );
+    `);
+    raw
+      .prepare(
+        'INSERT INTO import_catalog (sha256, target, source_path, size, imported_at_ms) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run('a'.repeat(64), 'photos/IMG_0001.jpg', '/disk/IMG_0001.jpg', 1234, 1000);
+    // Sanity: the old table really has no `area` column.
+    const before = (raw.prepare('PRAGMA table_info(import_catalog)').all() as { name: string }[]).map(
+      c => c.name,
+    );
+    expect(before).not.toContain('area');
+    raw.close();
+
+    // Opening through ImportCatalog must self-heal — no `no such column: area`.
+    const cat = new ImportCatalog(dbPath);
+
+    // The legacy row is preserved and backfilled to the default area.
+    expect(cat.count()).toBe(1);
+    expect(cat.get('a'.repeat(64), 'photos/IMG_0001.jpg')?.area).toBe('shared');
+    // Area-scoped dedup queries (which reference the new column) work.
+    expect(cat.has('a'.repeat(64), 'photos/IMG_0001.jpg', 'shared')).toBe(true);
+    expect(cat.getByTarget('photos/IMG_0001.jpg', 'shared')?.area).toBe('shared');
+
+    // A fresh area-bearing insert/lookup round-trips post-migration.
+    cat.upsert(entry({ area: 'cdopp', target: 'photos/IMG_0002.jpg' }));
+    expect(cat.has(entry().sha256, 'photos/IMG_0002.jpg', 'cdopp')).toBe(true);
+    expect(cat.has(entry().sha256, 'photos/IMG_0002.jpg', 'mdopp')).toBe(false);
+    cat.close();
+
+    // Reopening an already-migrated catalog is a no-op (idempotent).
+    const reopened = new ImportCatalog(dbPath);
+    expect(reopened.count()).toBe(2);
+    reopened.close();
+  });
+});
+
 describe('ImportCatalog — persist + reload from a file path', () => {
   let tmpDir: string;
   afterEach(async () => {
