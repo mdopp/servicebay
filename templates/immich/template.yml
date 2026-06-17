@@ -21,22 +21,31 @@ metadata:
       interval: 30s
       timeout: 5s
       startup_timeout: 5m
-    # Disable SELinux relabelling on immich-server's bind mounts. The
-    # `photo-areas` hostPath points at /mnt/data/stacks/file-share/data —
-    # a SHARED, multi-writer tree already consumed by samba, syncthing,
-    # filebrowser, and disk-import. The default `kube play` recursive
-    # relabel walks that whole tree calling `lsetxattr` on every entry.
-    # Files written by other consumers (e.g. `sudo`-owned disk-import
-    # entries) can't be relabelled by the rootless `core` user →
-    # "operation not permitted" → exit 125 crash-loop on every start
-    # (observed on box verify of #1918, audiobooks/book01.m4b blocked it).
+    # Disable SELinux relabelling at the POD level. The `photo-areas`
+    # hostPath points at /mnt/data/stacks/file-share/data — a SHARED,
+    # multi-writer tree already consumed by samba, syncthing, filebrowser,
+    # and disk-import. The default `kube play` recursive relabel walks
+    # that whole tree calling `lsetxattr` on every entry BEFORE any
+    # container starts. Files written by other consumers as root (e.g.
+    # sudo-owned disk-import entries) can't be relabelled by the rootless
+    # `core` user → "operation not permitted" → exit 125 crash-loop on
+    # every start (audiobooks/book01.m4b, confirmed on box verify).
+    #
+    # The per-container annotation (io.podman.annotations.label/<name>)
+    # only disables SELinux for that container's process namespace. The
+    # VOLUME relabelling in `kube play` happens at pod-create time, driven
+    # by the pod's overall security context — it fires even if only one
+    # container mounts the volume and that container has the annotation.
+    # Immich is a multi-container pod (server + machine-learning + redis +
+    # database): the per-container approach used in the initial fix
+    # (PR #1923) left the volume relabelling active. The pod-level form
+    # (no container-name suffix) suppresses it entirely.
+    #
     # The shared tree already carries `container_file_t` from its other
-    # long-lived consumers, so Immich's read-only mount needs no relabel.
-    # Same per-container disable pattern as media/jellyfin (#1731) and
-    # file-share/samba/syncthing/filebrowser. (cf.
-    # feedback_hermes_config_bak_selinux: a root-owned stray in a shared
-    # tree is a relabel footgun.)
-    io.podman.annotations.label/immich-server: "disable"
+    # long-lived consumers, so Immich's read-only photo-areas mount needs
+    # no relabel. (cf. feedback_hermes_config_bak_selinux: a root-owned
+    # stray in a shared tree is a relabel footgun.)
+    io.podman.annotations.label: "disable"
 spec:
   # #817: Immich runs in its own network namespace (no hostNetwork).
   #   - Only `immich-server` is published to the host, via `hostPort`
