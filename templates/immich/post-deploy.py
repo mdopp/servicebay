@@ -158,27 +158,30 @@ def _psql(db_password: str, sql: str, set_vars: dict[str, str] | None = None) ->
     """Run a single SQL statement inside the immich-database container
     as the postgres superuser. Returns (returncode, stripped stdout).
 
-    Uses `podman exec` (the same host-side capability file-share /
+    Uses `podman exec -i` (the same host-side capability file-share /
     home-assistant post-deploys use) and passes the password via
     PGPASSWORD in the container env so it never lands on the host process
-    table. `-tAc` gives one bare value per row, no headers/alignment.
+    table. `-tA` gives one bare value per row, no headers/alignment.
+    SQL is fed via stdin so that psql variable substitution (`:'name'`)
+    works — psql only interpolates variables in stdin/file mode, not in
+    `-c` command-line arguments.
 
     `set_vars` binds psql variables (`-v name=value`); reference them in
     `sql` as `:'name'` so psql does the literal quoting. This keeps an
     arbitrary secret value out of the SQL string entirely — no manual
     escaping, injection-safe whatever bytes the secret contains."""
     cmd = [
-        "podman", "exec",
+        "podman", "exec", "-i",
         "-e", f"PGPASSWORD={db_password}",
         DB_CONTAINER,
-        "psql", "-U", "postgres", "-d", "immich",
+        "psql", "-U", "postgres", "-d", "immich", "-tA",
     ]
     for name, value in (set_vars or {}).items():
         cmd.extend(["-v", f"{name}={value}"])
-    cmd.extend(["-tAc", sql])
     try:
         result = subprocess.run(
             cmd,
+            input=sql,
             capture_output=True,
             text=True,
             check=False,
@@ -307,13 +310,15 @@ def rekey_admin_password_in_db(admin_email: str, new_password: str, db_password:
     report a masked success (feedback_dont_mask_failures)."""
     # Confirm the admin row exists before touching it — a fresh DATA dir has no
     # row yet (admin-sign-up creates it via the API), and we must not invent one.
+    # Immich's schema names the table `user` (singular, a reserved word); we must
+    # double-quote it in SQL so postgres doesn't parse it as a keyword.
     code, found = _psql(
         db_password,
-        "SELECT 1 FROM users WHERE email = :'email' LIMIT 1;",
+        'SELECT 1 FROM "user" WHERE email = :\'email\' LIMIT 1;',
         set_vars={"email": admin_email},
     )
     if code != 0:
-        log("   ⚠️ Could not query the Immich users table — skipping admin password rekey.")
+        log("   ⚠️ Could not query the Immich user table — skipping admin password rekey.")
         return False
     if not found:
         log(f"   ℹ️ No Immich admin row for {admin_email} yet — nothing to rekey "
@@ -327,9 +332,10 @@ def rekey_admin_password_in_db(admin_email: str, new_password: str, db_password:
     # The hash rides in via a psql variable (:'hash') so psql quotes it — no
     # manual escaping. `$2b$...` contains only bcrypt-alphabet chars, but the
     # bound-variable form is injection-safe regardless.
+    # Table is `"user"` (double-quoted reserved word) per Immich's schema.
     code, _ = _psql(
         db_password,
-        "UPDATE users SET password = :'hash' WHERE email = :'email';",
+        'UPDATE "user" SET password = :\'hash\' WHERE email = :\'email\';',
         set_vars={"hash": new_hash, "email": admin_email},
     )
     if code != 0:
