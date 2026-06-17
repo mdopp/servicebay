@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useReducer, useRef } from 'react';
+import { useEffect, useMemo, useReducer, useState } from 'react';
 import { Check, Loader2 } from 'lucide-react';
 
 /**
@@ -69,10 +69,10 @@ export default function DashboardHydrationGate({ phase, subMessage }: DashboardH
   // tick is captured in an effect so swapping phases resets the slow
   // hint without touching state mid-render.
   const [tick, bumpTick] = useReducer((t: number) => t + 1, 0);
-  const phaseStartTickRef = useRef(0);
+  const [phaseStartTick, setPhaseStartTick] = useState(0);
 
   useEffect(() => {
-    phaseStartTickRef.current = tick;
+    setPhaseStartTick(tick);
     // Intentional: capture the tick we were on when this phase took
     // effect. Re-running this on `tick` changes would defeat the
     // reset — we only want it on `phase` swap.
@@ -84,7 +84,7 @@ export default function DashboardHydrationGate({ phase, subMessage }: DashboardH
     return () => clearInterval(id);
   }, []);
 
-  const elapsedMs = (tick - phaseStartTickRef.current) * TICK_INTERVAL_MS;
+  const elapsedMs = (tick - phaseStartTick) * TICK_INTERVAL_MS;
   const elapsedSec = Math.floor(elapsedMs / 1000);
   const showSlowHint = elapsedMs >= SLOW_HINT_AFTER_MS;
   const showTroubleshoot = elapsedMs >= TROUBLESHOOT_AFTER_MS;

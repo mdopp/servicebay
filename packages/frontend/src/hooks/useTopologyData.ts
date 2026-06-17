@@ -53,8 +53,10 @@ export function useTopologyData(options: UseTopologyDataOptions = {}): UseTopolo
   // the hook tolerant of unstable callers.
   const onLoadStartRef = useRef(options.onLoadStart);
   const onLoadErrorRef = useRef(options.onLoadError);
-  onLoadStartRef.current = options.onLoadStart;
-  onLoadErrorRef.current = options.onLoadError;
+  useEffect(() => {
+    onLoadStartRef.current = options.onLoadStart;
+    onLoadErrorRef.current = options.onLoadError;
+  });
 
   const fetchGraph = useCallback(async () => {
     onLoadStartRef.current?.();

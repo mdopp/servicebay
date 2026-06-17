@@ -257,13 +257,6 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
   const { socket, isConnected } = useSocket();
   const { addToast } = useToast();
 
-  // Load available log dates and tags
-  useEffect(() => {
-    loadLogDates();
-    loadTags();
-    loadSystemLogLevel();
-  }, []);
-
   const loadSystemLogLevel = async () => {
       try {
           const res = await fetch('/api/settings/logLevel');
@@ -304,6 +297,13 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
         console.error('[LogViewer] Failed to load log dates:', err);
     }
   };
+
+  // Load available log dates and tags
+  useEffect(() => {
+    loadLogDates();
+    loadTags();
+    loadSystemLogLevel();
+  }, []);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);

@@ -86,6 +86,9 @@ export default function PublicDomainSection() {
   // Track the polling timer so we can stop it cleanly when the phase
   // moves off `preflight` (operator cancelled, migration started, etc.).
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Holds the latest fetchPreflight so the self-scheduling setTimeout can
+  // recurse without referencing the callback before it is declared.
+  const fetchPreflightRef = useRef<(domain: string) => void>(() => undefined);
 
   useEffect(() => {
     fetch('/api/system/mode')
@@ -135,9 +138,13 @@ export default function PublicDomainSection() {
     // Schedule next tick. The phase check inside the closure guards
     // against firing after the operator backs out.
     pollRef.current = setTimeout(() => {
-      void fetchPreflight(domain);
+      fetchPreflightRef.current(domain);
     }, PREFLIGHT_POLL_MS);
   }, [addToast, stopPolling]);
+
+  useEffect(() => {
+    fetchPreflightRef.current = fetchPreflight;
+  }, [fetchPreflight]);
 
   const startPreflight = useCallback(() => {
     const trimmed = pendingDomain.trim();

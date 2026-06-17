@@ -428,6 +428,7 @@ export default function HealthDashboard() {
           checks={checks}
           containers={containers}
           searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
           statusFilter={statusFilter}
           setStatusFilter={setStatusFilter}
           handleRun={handleRun}

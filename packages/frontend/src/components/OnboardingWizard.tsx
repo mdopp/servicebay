@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     checkOnboardingStatus,
@@ -124,6 +124,10 @@ export default function OnboardingWizard() {
   const [committedStepCount, setCommittedStepCount] = useState<number | null>(null);
 
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
+  // Monotonic "now", refreshed on a 30 s tick while an install is in
+  // progress, so the stalled-job banner's elapsed calculation stays pure
+  // (no Date.now() during render) and still re-evaluates over time.
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [loading, setLoading] = useState(false);
   const [showSkipConfirm, setShowSkipConfirm] = useState(false);
   // ServiceBay version, surfaced in the wizard header. ServiceBay uses
@@ -513,6 +517,15 @@ export default function OnboardingWizard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Tick `nowMs` while an install is in progress so the stalled-job banner
+  // re-evaluates without reading Date.now() during render.
+  useEffect(() => {
+    if (!status?.installInProgress) return;
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, [status?.installInProgress]);
+
   // Persist non-secret state on every change so refresh / closed-tab resumes from the same step.
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -603,6 +616,13 @@ export default function OnboardingWizard() {
       .finally(() => setDiagnoseRunning(false));
   }, [stackInstallStep, diagnoseRanOnce]);
 
+  // Holds the latest handleSelectStack so loadStacks' auto-select branch
+  // can call it without referencing the callback before it is declared
+  // (it's defined far below). Assigned in an effect to avoid a render write.
+  const handleSelectStackRef = useRef<(stacks: Template[]) => Promise<StackItem[]>>(
+    async () => [],
+  );
+
   // Load stacks when entering the stacks step
   const loadStacks = useCallback(async () => {
     setStacksLoading(true);
@@ -648,7 +668,7 @@ export default function OnboardingWizard() {
         prev.size > 0 ? prev : new Set([...stacks.map(s => s.name), ...installed]),
       );
       if (stacks.length === 1 && selectedStacks.length === 0) {
-        await handleSelectStack([stacks[0]]);
+        await handleSelectStackRef.current([stacks[0]]);
       }
     } catch {
       // Stacks not available yet, that's OK
@@ -1039,6 +1059,12 @@ export default function OnboardingWizard() {
     }
   };
 
+  // Keep the ref pointed at the latest handleSelectStack so loadStacks'
+  // auto-select branch always invokes the current closure.
+  useEffect(() => {
+    handleSelectStackRef.current = handleSelectStack;
+  });
+
   const handleStackFetchVars = async (itemsOverride?: StackItem[]) => {
     navigateToSubStep('flow');
     setStacksLoading(true);
@@ -1307,7 +1333,7 @@ export default function OnboardingWizard() {
               const STALL_THRESHOLD_MS = 5 * 60_000;
               const updatedAt = status.installInProgress.updatedAt;
               const inactiveMs = updatedAt
-                ? Date.now() - new Date(updatedAt).getTime()
+                ? nowMs - new Date(updatedAt).getTime()
                 : 0;
               const stalled = inactiveMs >= STALL_THRESHOLD_MS;
               if (!stalled) return null;

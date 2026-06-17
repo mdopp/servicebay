@@ -248,32 +248,30 @@ const eslintConfig = defineConfig([
       // — any new violation fails CI both via the rule and via
       // scripts/check-invariants.ts.
       "sb/no-fe-backend-import": "error",
-      // --- React-hooks rule contract (pin to the pre-ESLint-10 baseline).
-      // The ESLint 10 migration required bumping eslint-plugin-react-hooks
-      // 7.0.1 -> 7.1.1 (7.0.1 peers ESLint <=9 only). 7.1.1 expanded its
-      // `recommended` preset — which eslint-config-next spreads in — from
-      // {rules-of-hooks, exhaustive-deps} to the full React-Compiler rule
-      // suite (static-components, use-memo, immutability, refs,
-      // set-state-in-effect, purity, …), all at "error". Those 14 rules were
-      // never part of this repo's lint gate; enabling them is a separate,
-      // behaviour-touching adoption effort (tracked in #1910), not part of a
-      // tooling migration. Turn them off here to keep the migration
-      // lint-neutral — rules-of-hooks (error) + exhaustive-deps (warn) stay as
-      // before via the preset.
-      "react-hooks/static-components": "off",
-      "react-hooks/use-memo": "off",
-      "react-hooks/preserve-manual-memoization": "off",
-      "react-hooks/incompatible-library": "off",
-      "react-hooks/immutability": "off",
-      "react-hooks/globals": "off",
-      "react-hooks/refs": "off",
+      // --- React-Compiler rule adoption (#1910 / #1921).
+      // The ESLint 10 migration bumped eslint-plugin-react-hooks
+      // 7.0.1 -> 7.1.1, whose expanded `recommended` preset (spread in by
+      // eslint-config-next) added the React-Compiler rule suite. These 13
+      // low-touch rules are adopted at "error" (#1921) — most are already
+      // "error" in the preset, but incompatible-library and
+      // unsupported-syntax ship as "warn" there, so pin every rule
+      // explicitly to keep the gate deterministic.
+      "react-hooks/static-components": "error",
+      "react-hooks/use-memo": "error",
+      "react-hooks/preserve-manual-memoization": "error",
+      "react-hooks/incompatible-library": "error",
+      "react-hooks/immutability": "error",
+      "react-hooks/globals": "error",
+      "react-hooks/refs": "error",
+      "react-hooks/error-boundaries": "error",
+      "react-hooks/purity": "error",
+      "react-hooks/set-state-in-render": "error",
+      "react-hooks/unsupported-syntax": "error",
+      "react-hooks/config": "error",
+      "react-hooks/gating": "error",
+      // `set-state-in-effect` is adopted separately (#1922); keep it OFF
+      // until that lands so the gate stays clean.
       "react-hooks/set-state-in-effect": "off",
-      "react-hooks/error-boundaries": "off",
-      "react-hooks/purity": "off",
-      "react-hooks/set-state-in-render": "off",
-      "react-hooks/unsupported-syntax": "off",
-      "react-hooks/config": "off",
-      "react-hooks/gating": "off",
       // Maintainability thresholds (#724). Several core modules
       // currently exceed these — flagging them as warn (not error) so
       // CI doesn't break on legacy files while the rule still surfaces

@@ -57,6 +57,7 @@ interface HealthChecksProps {
   checks: Check[];
   containers: { Id: string; Names: string[]; Image: string }[];
   searchQuery: string;
+  setSearchQuery: (query: string) => void;
   statusFilter: StatusFilter;
   setStatusFilter: (filter: StatusFilter) => void;
   handleRun: (id: string) => void;
@@ -71,6 +72,7 @@ export default function HealthChecks({
   checks,
   containers,
   searchQuery,
+  setSearchQuery,
   statusFilter,
   setStatusFilter,
   handleRun,
@@ -191,7 +193,7 @@ export default function HealthChecks({
                 <>
                     <Search className="w-12 h-12 mx-auto mb-3 opacity-20" />
                     <p>No checks match your filters.</p>
-                    <button onClick={() => {searchQuery = ''; setStatusFilter('all');}} className="mt-2 text-blue-600 dark:text-blue-400 hover:underline text-sm">
+                    <button onClick={() => {setSearchQuery(''); setStatusFilter('all');}} className="mt-2 text-blue-600 dark:text-blue-400 hover:underline text-sm">
                         Clear filters
                     </button>
                 </>

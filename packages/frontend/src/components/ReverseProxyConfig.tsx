@@ -13,10 +13,6 @@ export default function ReverseProxyConfig() {
     const [adminPort, setAdminPort] = useState<number>(8081);
     const { addToast } = useToast();
 
-    useEffect(() => {
-        checkStatus();
-    }, []);
-
     const checkStatus = async () => {
         setLoading(true);
         try {
@@ -32,6 +28,10 @@ export default function ReverseProxyConfig() {
             setLoading(false);
         }
     };
+
+    useEffect(() => {
+        checkStatus();
+    }, []);
 
     const handleInstall = async () => {
         setInstalling(true);
