@@ -32,8 +32,11 @@ function sudoFor(calls: string[][], opts: ({ sudo?: boolean } | undefined)[], bi
   return i === -1 ? undefined : opts[i]?.sudo;
 }
 
+// sourcePath is what scanMount's `find %p` emits: an ABSOLUTE path that already
+// includes the mountpoint. Fixtures must reflect that so apply asserts the src is
+// used verbatim (no `<mount>/<mount>/…` doubling, #1906).
 function record(over: Partial<ImportRecord> = {}): ImportRecord {
-  return { sourcePath: '/song.mp3', size: 100, mtimeMs: 0, ext: 'mp3', name: 'song.mp3', ...over };
+  return { sourcePath: `${MOUNT}/song.mp3`, size: 100, mtimeMs: 0, ext: 'mp3', name: 'song.mp3', ...over };
 }
 
 function item(over: Partial<ImportPlanItem> = {}): ImportPlanItem {
@@ -59,6 +62,10 @@ describe('applyPlan — copy + chown', () => {
     const dest = resolveShareTarget('music/song.mp3');
     const rsync = calls.find(c => c[0] === 'rsync')!;
     expect(rsync).toEqual(['rsync', '-a', `${MOUNT}/song.mp3`, dest]);
+    // The rsync src is the record's absolute sourcePath verbatim — NOT the
+    // mountpoint re-prefixed onto it (that doubled `<mount>/<mount>/…`, #1906).
+    expect(rsync[2]).toBe('/run/servicebay/disk-import/sda1/song.mp3');
+    expect(rsync[2].startsWith(`${MOUNT}/${MOUNT}`)).toBe(false);
     // Source is under the read-only mount; dest is under the share root.
     expect(rsync[2].startsWith(MOUNT + '/')).toBe(true);
     expect(rsync[3].startsWith('/mnt/data/stacks/file-share/data/')).toBe(true);
@@ -96,7 +103,7 @@ describe('applyPlan — batched mkdir/chown (#1898)', () => {
     const catalog = new ImportCatalog(':memory:');
     const n = 8;
     const items = Array.from({ length: n }, (_, i) =>
-      item({ record: record({ sourcePath: `/f${i}.mp3`, name: `f${i}.mp3` }), target: `music/f${i}.mp3` }),
+      item({ record: record({ sourcePath: `${MOUNT}/f${i}.mp3`, name: `f${i}.mp3` }), target: `music/f${i}.mp3` }),
     );
     const res = await applyPlan(planOf(...items), baseOpts(exec, catalog, hashConst('a'.repeat(64))));
 
@@ -126,7 +133,7 @@ describe('applyPlan — conflict routes to _superseded', () => {
   it('moves the existing target into _superseded/<date>/ before copying the newer file', async () => {
     const { exec, calls, opts } = mockExec();
     const catalog = new ImportCatalog(':memory:');
-    const conflict = item({ action: 'conflict', target: 'documents/report.pdf', record: record({ sourcePath: '/report.pdf', name: 'report.pdf', ext: 'pdf' }), category: 'documents' });
+    const conflict = item({ action: 'conflict', target: 'documents/report.pdf', record: record({ sourcePath: `${MOUNT}/report.pdf`, name: 'report.pdf', ext: 'pdf' }), category: 'documents' });
 
     const res = await applyPlan(planOf(conflict), baseOpts(exec, catalog, hashConst('b'.repeat(64))));
 
@@ -146,7 +153,7 @@ describe('applyPlan — photos go to Immich, not file-share', () => {
   it('runs the immich CLI and never rsyncs photos into the share', async () => {
     const { exec, calls, opts } = mockExec();
     const catalog = new ImportCatalog(':memory:');
-    const photo = item({ category: 'photos', target: 'photos/IMG_1.jpg', record: record({ sourcePath: '/IMG_1.jpg', name: 'img_1.jpg', ext: 'jpg' }) });
+    const photo = item({ category: 'photos', target: 'photos/IMG_1.jpg', record: record({ sourcePath: `${MOUNT}/IMG_1.jpg`, name: 'img_1.jpg', ext: 'jpg' }) });
 
     const res = await applyPlan(planOf(photo), {
       ...baseOpts(exec, catalog, hashConst('c'.repeat(64))),
@@ -155,6 +162,8 @@ describe('applyPlan — photos go to Immich, not file-share', () => {
 
     const podman = calls.find(c => c[0] === 'podman')!;
     expect(podman).toContain('upload');
+    // The bind-mount source is the absolute sourcePath verbatim — not doubled (#1906).
+    expect(podman).toContain(`${MOUNT}/IMG_1.jpg:/import/IMG_1.jpg:ro`);
     // Immich upload runs through ROOTLESS podman as `core` — must NOT escalate.
     expect(sudoFor(calls, opts, 'podman')).not.toBe(true);
     expect(podman.join(' ')).toContain('IMMICH_INSTANCE_URL=http://immich:2283');
@@ -172,8 +181,8 @@ describe('applyPlan — resumability', () => {
     const catalog = new ImportCatalog(':memory:');
     const hashOf = hashConst('d'.repeat(64));
     const plan = planOf(
-      item({ record: record({ sourcePath: '/a.mp3', name: 'a.mp3' }), target: 'music/a.mp3' }),
-      item({ record: record({ sourcePath: '/b.mp3', name: 'b.mp3' }), target: 'music/b.mp3' }),
+      item({ record: record({ sourcePath: `${MOUNT}/a.mp3`, name: 'a.mp3' }), target: 'music/a.mp3' }),
+      item({ record: record({ sourcePath: `${MOUNT}/b.mp3`, name: 'b.mp3' }), target: 'music/b.mp3' }),
     );
 
     // First pass: rsync of b.mp3 "fails" (interruption) after a.mp3 is done.
@@ -196,8 +205,8 @@ describe('applyPlan — resumability', () => {
 
     const rsyncs = exec2.calls.filter(c => c[0] === 'rsync').map(c => c[2]);
     expect(rsyncs).toEqual([`${MOUNT}/b.mp3`]); // a.mp3 NOT re-copied
-    expect(res.items.find(i => i.sourcePath === '/a.mp3')?.outcome).toBe('skipped-cataloged');
-    expect(res.items.find(i => i.sourcePath === '/b.mp3')?.outcome).toBe('copied');
+    expect(res.items.find(i => i.sourcePath === `${MOUNT}/a.mp3`)?.outcome).toBe('skipped-cataloged');
+    expect(res.items.find(i => i.sourcePath === `${MOUNT}/b.mp3`)?.outcome).toBe('copied');
     expect(catalog.has('d'.repeat(64), 'music/b.mp3')).toBe(true);
     catalog.close();
   });
@@ -220,7 +229,7 @@ describe('applyPlan — dry run + skips', () => {
     const res = await applyPlan(
       planOf(
         item({ action: 'skip-junk', target: null }),
-        item({ action: 'skip-dupe', record: record({ sourcePath: '/dup.mp3', name: 'dup.mp3' }), target: 'music/dup.mp3' }),
+        item({ action: 'skip-dupe', record: record({ sourcePath: `${MOUNT}/dup.mp3`, name: 'dup.mp3' }), target: 'music/dup.mp3' }),
       ),
       baseOpts(exec, catalog, hashConst('f'.repeat(64))),
     );
@@ -234,7 +243,7 @@ describe('applyPlan — path traversal is refused', () => {
   it('a malicious category/filename target cannot escape the share root', async () => {
     const { exec, calls } = mockExec();
     const catalog = new ImportCatalog(':memory:');
-    const evil = item({ target: '../../../../etc/cron.d/payload', record: record({ sourcePath: '/x', name: 'x' }) });
+    const evil = item({ target: '../../../../etc/cron.d/payload', record: record({ sourcePath: `${MOUNT}/x`, name: 'x' }) });
     await expect(applyPlan(planOf(evil), baseOpts(exec, catalog, hashConst('0'.repeat(64))))).rejects.toThrow(/traversal/);
     // Nothing was written to the host.
     expect(calls.some(c => c[0] === 'rsync' || c[0] === 'mv' || c[0] === 'chown')).toBe(false);
