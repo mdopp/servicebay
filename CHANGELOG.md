@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.124.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.123.0...servicebay-v4.124.0) (2026-06-17)
+
+
+### Features
+
+* **disk-import:** per-folder routing review UI ([#1915](https://github.com/mdopp/servicebay/issues/1915)) ([5c2fabd](https://github.com/mdopp/servicebay/commit/5c2fabdbf4e3fdaab9160e59a8ee034c4159080d))
+* **disk-import:** taxonomy movies split + Immich External-Library wiring ([bec8197](https://github.com/mdopp/servicebay/commit/bec8197d664ddf8ae4c7175b971fea09fd076c73))
+* **disk-import:** taxonomy movies split + Immich External-Library wiring ([35c206f](https://github.com/mdopp/servicebay/commit/35c206fcf769ef3180b0d4c17b2bd849add455f8)), closes [#1914](https://github.com/mdopp/servicebay/issues/1914) [#1904](https://github.com/mdopp/servicebay/issues/1904)
+
+
+### Bug Fixes
+
+* **disk-import:** drop CLI's obsolete Immich upload path (typecheck) ([54a1da2](https://github.com/mdopp/servicebay/commit/54a1da2264fc32e4720328ae50acda6b7773a5a0))
+* **immich:** disable SELinux relabel on photo-areas hostPath mount ([efd92a8](https://github.com/mdopp/servicebay/commit/efd92a860dd23ee0b7ebc495790ef3c9c67f6692))
+* **immich:** disable SELinux relabel on photo-areas hostPath mount ([861e263](https://github.com/mdopp/servicebay/commit/861e26384063761d9c04ce5bcbaafb413bcf8949))
+* **immich:** pod-level SELinux disable for photo-areas volume relabelling ([cdd227d](https://github.com/mdopp/servicebay/commit/cdd227d404434c2ec8fd23db2bb1c1d0732aac0c))
+* **immich:** use Directory not DirectoryOrCreate for photo-areas hostPath ([2db9737](https://github.com/mdopp/servicebay/commit/2db9737beb7e33b012a0d976a1a26d4f961aee29))
+* **immich:** use Directory not DirectoryOrCreate for photo-areas hostPath ([4990b04](https://github.com/mdopp/servicebay/commit/4990b0480c96d97b10df0baf3778908050d3d3b9))
+* **immich:** use pod-level SELinux disable for photo-areas volume relabelling ([0d0d307](https://github.com/mdopp/servicebay/commit/0d0d3074a1f9bcb585a2188e09b9635f7548642b))
+
 ## [4.123.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.122.1...servicebay-v4.123.0) (2026-06-17)
 
 
