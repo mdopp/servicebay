@@ -37,6 +37,17 @@ Required action: redeploy `file-share`. Existing mounts on
 need their Samba password set once via the Settings panel before
 they can mount.
 
+**Passdb persistence (#1946, no schema bump).** The Samba passdb
+(`/var/lib/samba/private/`, holding the smbpasswd NT-hash db) now
+persists on the `samba-private` host volume, so SMB users and their
+UI-set passwords survive a box reboot and a `file-share` redeploy with
+no manual re-provisioning. This is an additive `DirectoryOrCreate`
+mount — existing installs pick it up on their next redeploy (the dir
+starts empty and the post-deploy LLDAP→Samba sync + password-set
+populate it). The auto-sync now also re-creates the ephemeral POSIX
+accounts for every directory user on each deploy, so the persisted
+passwords are usable straight after a restart.
+
 ## v3 (breaking)
 
 **Syncthing GUI behind Authelia.**

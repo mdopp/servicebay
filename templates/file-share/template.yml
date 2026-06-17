@@ -117,6 +117,14 @@ spec:
   # UI, deliberately not derived from the LLDAP password (Argon2/bcrypt →
   # NT-hash is not a reversible operation).
   #
+  # The passdb is persisted on the `samba-private` volume (mounted at
+  # /var/lib/samba/private below) so both the user entries and their
+  # UI-set passwords survive a reboot/redeploy (#1946). The ephemeral
+  # POSIX accounts that smbpasswd needs are re-created on each deploy by
+  # the LLDAP→Samba auto-sync, which now reconciles a POSIX account for
+  # every directory user — not just newly-added ones — against the
+  # persisted passdb (sambaSync.ts).
+  #
   # SHARE_USER + SHARE_PASSWORD remain as a legacy fallback so existing
   # installs keep working until the operator migrates family members
   # onto LLDAP-backed Samba accounts. The share config no longer pins
@@ -133,6 +141,26 @@ spec:
     volumeMounts:
       - mountPath: /data
         name: shared-data
+      # Persist Samba's passdb so SMB users + passwords survive a reboot /
+      # redeploy (#1946). The image's `passdb backend = smbpasswd` keeps the
+      # NT-hash db at /var/lib/samba/private/smbpasswd (verified: smbd -b →
+      # SMB_PASSWD_FILE=/var/lib/samba/private/smbpasswd, PRIVATE_DIR=
+      # /var/lib/samba/private). Without this mount that dir lives in the
+      # ephemeral container fs → every pod recreate wiped both the user
+      # entries AND their UI-set passwords. We persist the whole private/
+      # dir (kept SEPARATE from /etc/samba, which the entrypoint regenerates
+      # from env on every start — persisting that would clobber the rendered
+      # smb.conf). The POSIX accounts smbpasswd needs are still ephemeral;
+      # the LLDAP→Samba auto-sync recreates them on deploy (sambaSync.ts),
+      # and the persisted passdb supplies the passwords those accounts use.
+      #
+      # The dir stays core-owned: samba runs as container root, which under
+      # rootless podman is the host `core` user. It is NOT under the shared
+      # data/ tree that media/jellyfin :Z-relabels, so a non-core file here
+      # can't re-trigger the file-share relabel crash-loop
+      # (feedback_fileshare_relabel_crashloop).
+      - mountPath: /var/lib/samba/private
+        name: samba-private
 
   # 3. FileBrowser — Family-facing web file manager over the shared volume.
   # Binds on 0.0.0.0 — NPM lives in its own pod netns and can't reach the
@@ -209,6 +237,16 @@ spec:
   - name: filebrowser-db
     hostPath:
       path: {{DATA_DIR}}/file-share/filebrowser-db
+      type: DirectoryOrCreate
+  # samba-private holds Samba's passdb (smbpasswd NT-hash db + secrets.tdb).
+  # DirectoryOrCreate auto-provisions it on first deploy, so this is an
+  # additive mount — existing installs pick it up on redeploy with no schema
+  # bump / migration needed (the dir simply starts empty and the next
+  # LLDAP→Samba sync + password-set populate it; from then on it survives a
+  # reboot/redeploy). See the samba container's volumeMounts note (#1946).
+  - name: samba-private
+    hostPath:
+      path: {{DATA_DIR}}/file-share/samba-private
       type: DirectoryOrCreate
   - name: filebrowser-config
     hostPath:
