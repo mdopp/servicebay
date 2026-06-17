@@ -607,52 +607,59 @@ const STEP_LABEL: Record<JobProgress['step'], string> = {
   done: 'Finishing up…',
 };
 
-/** Live phase + counts while a scan or apply runs in the background (#1897). */
-export function JobProgressView({ status }: { status: JobStatus | null }) {
+/** Live phase + counts while a scan or apply runs in the background (#1897). A
+ *  "Start over" escape (#1943) dismisses a stuck session and begins a fresh scan. */
+export function JobProgressView({
+  status,
+  onStartOver,
+}: {
+  status: JobStatus | null;
+  onStartOver?: () => void;
+}) {
   const p = status?.progress;
-  const isApply = status?.phase === 'applying';
   return (
     <div className="space-y-3" data-testid="disk-import-progress">
       <p className="text-sm text-gray-800 dark:text-gray-200 flex items-center gap-2">
         <Loader2 size={16} className="animate-spin text-blue-600" />
         {p ? STEP_LABEL[p.step] : 'Starting…'}
       </p>
-      {p && (
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
-          {!isApply && (
-            <>
-              <div className="flex justify-between">
-                <dt>Scanned</dt>
-                <dd className="text-gray-800 dark:text-gray-200">{p.scanned}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt>Hashed</dt>
-                <dd className="text-gray-800 dark:text-gray-200">
-                  {p.total > 0 ? `${p.hashed} / ${p.total}` : p.hashed}
-                </dd>
-              </div>
-            </>
-          )}
-          {isApply && (
-            <>
-              <div className="flex justify-between">
-                <dt>Copied</dt>
-                <dd className="text-gray-800 dark:text-gray-200">
-                  {p.total > 0 ? `${p.copied} / ${p.total}` : p.copied}
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt>Bytes</dt>
-                <dd className="text-gray-800 dark:text-gray-200">{formatBytes(p.bytes)}</dd>
-              </div>
-            </>
-          )}
-        </dl>
-      )}
+      {p && <ProgressCounters p={p} isApply={status?.phase === 'applying'} />}
       <p className="text-[11px] text-gray-400">
         This keeps running even if you close the page — reopen this card to check back.
       </p>
+      {onStartOver && <StartOverButton onClick={onStartOver} />}
     </div>
+  );
+}
+
+/** The scan (scanned/hashed) or apply (copied/bytes) counter grid (#1897). */
+function ProgressCounters({ p, isApply }: { p: JobProgress; isApply: boolean }) {
+  const ratio = (n: number) => (p.total > 0 ? `${n} / ${p.total}` : n);
+  const cells: Array<[string, React.ReactNode]> = isApply
+    ? [['Copied', ratio(p.copied)], ['Bytes', formatBytes(p.bytes)]]
+    : [['Scanned', p.scanned], ['Hashed', ratio(p.hashed)]];
+  return (
+    <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+      {cells.map(([label, value]) => (
+        <div key={label} className="flex justify-between">
+          <dt>{label}</dt>
+          <dd className="text-gray-800 dark:text-gray-200">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** Escape hatch (#1943): dismiss a stuck/zombie scan and return to the picker. */
+function StartOverButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      data-testid="disk-import-start-over"
+      className="text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 inline-flex items-center gap-1"
+    >
+      <RefreshCw size={12} /> Stuck? Cancel and start over
+    </button>
   );
 }
 
@@ -805,7 +812,29 @@ function useImportActions(c: {
     c.refreshDevices();
   };
 
-  return { runScan, applyPlan, reset };
+  // #1943: dismiss a stuck/zombie session and return to the picker so the user
+  // can start fresh. Best-effort abort POST, then the local reset frees the card.
+  const startOver = async () => {
+    await postAbort(job.jobId);
+    reset();
+  };
+
+  return { runScan, applyPlan, reset, startOver };
+}
+
+/** Best-effort POST of the disk-import abort route (#1943). Swallows errors —
+ *  the local card reset frees the UI regardless of the network result. */
+async function postAbort(jobId: string | null): Promise<void> {
+  if (!jobId) return;
+  try {
+    await fetch('/api/system/disk-import/abort', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: jobId }),
+    });
+  } catch {
+    /* abort is best-effort */
+  }
 }
 
 export default function DiskImportSection() {
@@ -841,7 +870,7 @@ export default function DiskImportSection() {
     [],
   );
 
-  const { runScan, applyPlan, reset } = useImportActions({
+  const { runScan, applyPlan, reset, startOver } = useImportActions({
     job, selected, review, rules, defaultOwner, addToast, setPhase,
     setReview, setApplied, setSelected, setRules, setDefaultOwner, refreshDevices,
   });
@@ -870,6 +899,7 @@ export default function DiskImportSection() {
       review={reviewProps}
       pick={{ devices, selected, loading: loadingDevices, scanning: false, onSelect: setSelected, onRefresh: refreshDevices, onScan: runScan }}
       done={{ applied: applied ?? 0, onReset: reset }}
+      onStartOver={() => void startOver()}
     />
   );
 }
@@ -882,6 +912,7 @@ function DiskImportBody({
   review,
   pick,
   done,
+  onStartOver,
 }: {
   phase: Phase;
   jobActive: boolean;
@@ -889,6 +920,8 @@ function DiskImportBody({
   review: React.ComponentProps<typeof DiskImportReview> | null | false;
   pick: React.ComponentProps<typeof DevicePicker>;
   done: React.ComponentProps<typeof ImportDone>;
+  /** Dismiss a stuck session + return to the picker (#1943). */
+  onStartOver: () => void;
 }) {
   if (phase === 'review' && review) {
     return (
@@ -905,7 +938,7 @@ function DiskImportBody({
   if (phase === 'scanning' || phase === 'applying' || jobActive) {
     return (
       <Card>
-        <JobProgressView status={jobStatus} />
+        <JobProgressView status={jobStatus} onStartOver={onStartOver} />
       </Card>
     );
   }

@@ -50,8 +50,11 @@ import {
   setProgress,
   sessionHashes,
   appendLog,
+  getSessionStatus,
+  abortSession,
   type ScanSession,
   type DedupState,
+  type ReviewSummary,
   __clearSessions as clearSessionStore,
 } from './sessionStore';
 import type { SafeExec } from './hostExec';
@@ -315,6 +318,9 @@ async function runScan(sessionId: string, opts: ScanOptions): Promise<ScanResult
       // "checking duplicates…" while the background pass runs.
       dedup: candidates.length === 0 ? 'done' : 'pending',
       dedupTotal: candidates.length,
+      // #1945: persist the COMPACT review summary (counts + capped tree) on the
+      // status doc so the status poll never loads the 145MB record set.
+      summary: buildReviewSummary({ plan: planNoDedup, records, mountpoint, explicit }),
     });
 
     if (candidates.length > 0) {
@@ -372,7 +378,16 @@ async function runBackgroundDedup(args: {
     const hashOf: HashResolver = record => hashes.get(record.sourcePath) ?? uniqueToken(record);
     const allHashed = candidates.every(c => hashes.has(c.sourcePath));
     const plan = buildPlanWithCatalog([...records], hashOf, catalogPath, { hints, routing });
-    await finalizeDedup(sessionId, { plan, hashes, state: allHashed ? 'done' : 'partial' });
+    // #1945: refresh the compact summary — the dedup pass changed skip-dupe
+    // counts (and so the per-category rollup). The explicit/auto rules are
+    // reconstructed from the routing resolution so the tree matches the scan's.
+    const explicit = new Map<string, Rule>(routing.explicit);
+    await finalizeDedup(sessionId, {
+      plan,
+      hashes,
+      state: allHashed ? 'done' : 'partial',
+      summary: buildReviewSummary({ plan, records: [...records], mountpoint, explicit }),
+    });
   } catch (e) {
     // The review is already rendered; a dedup-pass failure must not error the
     // session. Mark dedup `partial` (import un-deduped; apply re-dedups) + log.
@@ -409,6 +424,31 @@ function uniqueToken(record: ImportRecord): string {
 }
 const metadataHashOf: HashResolver = uniqueToken;
 
+/**
+ * Build the COMPACT review summary (#1945) persisted on the status doc: the
+ * counts + per-category rollup + capped routing tree + actions the card renders,
+ * WITHOUT the bulk record set. Derived once at finalize/finalize-dedup time so
+ * the status poll never re-derives it from (or even loads) the 145MB plan. The
+ * store applies the {@link ReviewSummary} tree cap; this produces the full tree.
+ */
+function buildReviewSummary(args: {
+  plan: ImportPlan;
+  records: readonly ImportRecord[];
+  mountpoint: string;
+  explicit: ReadonlyMap<string, Rule>;
+}): ReviewSummary {
+  const { plan, records, mountpoint, explicit } = args;
+  return {
+    totalFiles: plan.items.length,
+    totalBytes: plan.items.reduce((sum, i) => sum + i.record.size, 0),
+    categories: summarizeCategories(plan),
+    actions: buildActions(plan, [...records]),
+    tree: buildReviewTree(records, plan, mountpoint, explicit, 'shared'),
+    boxUsers: [],
+    defaultOwner: 'shared',
+  };
+}
+
 /** Assemble the review {@link ScanResult} the card shows from a finished scan. */
 function buildScanResult(args: {
   sessionId: string;
@@ -420,14 +460,15 @@ function buildScanResult(args: {
   boxUsers: readonly string[];
 }): ScanResult {
   const { sessionId, device, plan, records, mountpoint, explicit, boxUsers } = args;
+  const summary = buildReviewSummary({ plan, records, mountpoint, explicit });
   return {
     sessionId,
     device,
-    totalFiles: plan.items.length,
-    totalBytes: plan.items.reduce((sum, i) => sum + i.record.size, 0),
-    categories: summarizeCategories(plan),
-    actions: buildActions(plan, [...records]),
-    tree: buildReviewTree(records, plan, mountpoint, explicit, 'shared'),
+    totalFiles: summary.totalFiles,
+    totalBytes: summary.totalBytes,
+    categories: summary.categories as CategorySummary[],
+    actions: summary.actions as ImportAction[],
+    tree: summary.tree as FolderNode[],
     boxUsers: [...boxUsers],
     defaultOwner: 'shared',
   };
@@ -606,8 +647,17 @@ export interface ImportJobStatus {
 }
 
 export async function getImportJob(sessionId: string): Promise<ImportJobStatus | null> {
-  const s = await getSession(sessionId);
+  // #1945: the status poll reads ONLY the compact status doc — never the 145MB
+  // plan/hashes sidecar. The review payload is served from the persisted
+  // `summary` (counts + capped tree, derived once at finalize). A reopened card
+  // at any scale loads this in KBs–low MBs, so it never falls back to 'Starting…'.
+  // Reaps a dead-worker session to `error` on read (#1943).
+  const s = await getSessionStatus(sessionId);
   if (!s) return null;
+  // `reviewed` is the only phase that carries a summary; pre-#1945 sessions on
+  // disk reached `reviewed` without one — fall back to rebuilding from the plan
+  // (loads the sidecar) just for those, so an in-flight upgrade isn't dark.
+  const hasReview = s.phase === 'reviewed' || s.phase === 'applying' || s.phase === 'applied';
   const status: ImportJobStatus = {
     sessionId: s.id,
     device: s.device,
@@ -616,31 +666,56 @@ export async function getImportJob(sessionId: string): Promise<ImportJobStatus |
     error: s.error,
     applied: s.applied,
     // A reopened card re-attaches whether dedup is still pending/running or done
-    // (#1937). Pre-#1937 sessions have no `dedup` → treat as already done.
-    dedup: s.plan ? s.dedup ?? 'done' : undefined,
+    // (#1937). Only meaningful once the scan has produced a plan/summary.
+    dedup: hasReview ? s.dedup ?? 'done' : undefined,
     dedupHashed: s.dedupHashed ?? 0,
     dedupTotal: s.dedupTotal ?? 0,
   };
-  if (s.plan) {
-    const records = s.plan.items.map(i => i.record);
-    // Rebuild the review tree (#1915) from the persisted auto-assigned rules +
-    // box-user list so a re-attaching/reloaded card gets the same per-folder
-    // tree it had pre-reload. `mountpoint`/`autoRules` are absent on pre-#1915
-    // sessions — degrade to an empty tree (the per-category view still renders).
-    const explicit = new Map<string, Rule>(Object.entries(s.autoRules ?? {}));
-    status.review = {
-      sessionId: s.id,
-      device: s.device,
-      totalFiles: s.plan.items.length,
-      totalBytes: s.plan.items.reduce((sum, i) => sum + i.record.size, 0),
-      categories: summarizeCategories(s.plan),
-      actions: buildActions(s.plan, records),
-      tree: s.mountpoint ? buildReviewTree(records, s.plan, s.mountpoint, explicit, 'shared') : [],
-      boxUsers: s.boxUsers ?? [],
-      defaultOwner: 'shared',
-    };
+  if (s.summary) {
+    status.review = summaryToReview(s);
+  } else if (hasReview) {
+    // Pre-#1945 session with no persisted summary — rebuild from the plan once.
+    status.review = (await rebuildReviewFromPlan(sessionId)) ?? undefined;
   }
   return status;
+}
+
+/** Project the persisted compact {@link ReviewSummary} (#1945) into the card's
+ *  {@link ScanResult}. No plan load — this is the hot path. */
+function summaryToReview(s: ScanSession): ScanResult {
+  const summary = s.summary!;
+  return {
+    sessionId: s.id,
+    device: s.device,
+    totalFiles: summary.totalFiles,
+    totalBytes: summary.totalBytes,
+    categories: summary.categories as CategorySummary[],
+    actions: summary.actions as ImportAction[],
+    tree: summary.tree as FolderNode[],
+    boxUsers: s.boxUsers ?? summary.boxUsers ?? [],
+    defaultOwner: (summary.defaultOwner as Owner) ?? 'shared',
+  };
+}
+
+/** Backward-compat fallback (#1945): a `reviewed` session persisted before the
+ *  store split has no `summary` — rebuild the review from the plan (loads the
+ *  sidecar). Only hit for sessions on disk across the upgrade. */
+async function rebuildReviewFromPlan(sessionId: string): Promise<ScanResult | null> {
+  const s = await getSession(sessionId);
+  if (!s?.plan) return null;
+  const records = s.plan.items.map(i => i.record);
+  const explicit = new Map<string, Rule>(Object.entries(s.autoRules ?? {}));
+  return {
+    sessionId: s.id,
+    device: s.device,
+    totalFiles: s.plan.items.length,
+    totalBytes: s.plan.items.reduce((sum, i) => sum + i.record.size, 0),
+    categories: summarizeCategories(s.plan),
+    actions: buildActions(s.plan, records),
+    tree: s.mountpoint ? buildReviewTree(records, s.plan, s.mountpoint, explicit, 'shared') : [],
+    boxUsers: s.boxUsers ?? [],
+    defaultOwner: 'shared',
+  };
 }
 
 /**
@@ -663,6 +738,18 @@ async function triggerImmichScan(
       `Immich library scan skipped: ${e instanceof Error ? e.message : String(e)}`,
     );
   }
+}
+
+/**
+ * Abort/dismiss a disk-import session (#1943) — the card's "Start over". Flips a
+ * stuck/unwanted session terminal so it stops re-attaching and the user can begin
+ * a fresh scan. Idempotent + no-op-safe on an unknown id. Returns the session's
+ * resulting phase (or null when the id is unknown).
+ */
+export async function abortImportJob(sessionId: string): Promise<{ phase: ScanSession['phase'] } | null> {
+  const s = await abortSession(sessionId);
+  if (!s) return null;
+  return { phase: s.phase };
 }
 
 /** Test seam: drop all persisted sessions. */
