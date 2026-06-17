@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.125.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.125.0...servicebay-v4.125.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* **disk-import:** prune node_modules/junk subtrees at the walk so they're never hashed ([#1932](https://github.com/mdopp/servicebay/issues/1932)) ([6bd96a1](https://github.com/mdopp/servicebay/commit/6bd96a1b2b085acf5f185af9d413e69234187d4c))
+* **disk-import:** prune node_modules/junk subtrees at the walk so they're never hashed ([#1932](https://github.com/mdopp/servicebay/issues/1932)) ([ccf1a91](https://github.com/mdopp/servicebay/commit/ccf1a91a73fa23ad17ef7dea1693bf8b08fd9f40))
+* **diskImport:** clamp request-supplied owner to a single path segment (CodeQL audit) ([c6b81b8](https://github.com/mdopp/servicebay/commit/c6b81b852ce7291cd040c6a7bcc2a9b88074e765)), closes [#1929](https://github.com/mdopp/servicebay/issues/1929)
+* **immich,diskImport:** admin-password auto-rekey + routing owner clamp + routing-tree smoke test ([aad2c1d](https://github.com/mdopp/servicebay/commit/aad2c1d59494b76d73542e4d3008285fda441fa1))
+* **immich:** auto-rekey preserved-pgdata admin password so External-Library provisioning works ([a08c691](https://github.com/mdopp/servicebay/commit/a08c691596720720044c33d5b4809d8f0a802eaa)), closes [#1928](https://github.com/mdopp/servicebay/issues/1928)
+* **immich:** set -w /usr/src/app/server so bcrypt resolves in the rekey exec ([#1928](https://github.com/mdopp/servicebay/issues/1928)) ([a9d97a5](https://github.com/mdopp/servicebay/commit/a9d97a5d51c80bdf4280900c55b8c7dbb69689d0))
+* **immich:** set -w /usr/src/app/server so bcrypt resolves in the rekey exec ([#1928](https://github.com/mdopp/servicebay/issues/1928)) ([32bdcfa](https://github.com/mdopp/servicebay/commit/32bdcfaeb2941ba22287bb65d5b718bd2cb259f3))
+* **immich:** use stdin mode for psql + quote "user" table name ([#1928](https://github.com/mdopp/servicebay/issues/1928) refix) ([4340ebb](https://github.com/mdopp/servicebay/commit/4340ebb4c09a3a0a591c1c52a27589c4b8e17e31))
+* **immich:** use stdin mode for psql + quote the \"user\" table name ([64653f8](https://github.com/mdopp/servicebay/commit/64653f8da625df33c2c10303f41388cfebcac5f8))
+
 ## [4.125.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.124.0...servicebay-v4.125.0) (2026-06-17)
 
 
