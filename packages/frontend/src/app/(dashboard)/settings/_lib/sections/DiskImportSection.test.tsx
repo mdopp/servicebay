@@ -362,4 +362,28 @@ describe('DiskImportSection (async flow)', () => {
     expect(window.localStorage.getItem('sb.diskImport.activeJob')).toBeNull();
     window.localStorage.clear();
   });
+
+  it('"Start over" on a stuck scan aborts the session and returns to the picker (#1943)', async () => {
+    // The scan starts but never advances past `scanning` — the zombie case.
+    vi.stubGlobal('fetch', mockAsyncFetch({
+      statuses: [
+        { ok: true, sessionId: 'sess-1', device: '/dev/sda1', phase: 'scanning', progress: { step: 'mount', scanned: 0, hashed: 0, copied: 0, bytes: 0, total: 0 } },
+      ],
+    }));
+    renderSection();
+
+    fireEvent.click(await screen.findByText('Scan disk'));
+    await waitFor(() => expect(screen.getByTestId('disk-import-progress')).toBeDefined());
+
+    // The escape hatch is offered; clicking it POSTs the abort + returns to pick.
+    fireEvent.click(screen.getByTestId('disk-import-start-over'));
+    await waitFor(() => expect(screen.getByText('Scan disk')).toBeDefined());
+
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const abortCall = fetchMock.mock.calls.find(c => String(c[0]).includes('disk-import/abort'));
+    expect(abortCall).toBeDefined();
+    expect(JSON.parse((abortCall![1] as RequestInit).body as string)).toEqual({ id: 'sess-1' });
+    expect(window.localStorage.getItem('sb.diskImport.activeJob')).toBeNull();
+    window.localStorage.clear();
+  });
 });

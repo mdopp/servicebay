@@ -13,7 +13,7 @@ vi.mock('@/lib/lldap/client', () => ({
   listLldapUsers: () => mockListLldapUsers(),
 }));
 
-import { ensureSambaPosixUser, setSambaPassword, parsePdbeditList } from './sambaSync';
+import { ensureSambaPosixUser, setSambaPassword, parsePdbeditList, syncSambaWithLldap } from './sambaSync';
 
 /**
  * Dispatch sendCommand by the `command` string. Each entry is a substring
@@ -136,5 +136,43 @@ describe('parsePdbeditList', () => {
   it('extracts usernames and drops malformed lines', () => {
     const out = 'alice:1001:Alice\nbob:1002:Bob\n\n  \nbad name:1:x';
     expect(parsePdbeditList(out)).toEqual(['alice', 'bob']);
+  });
+});
+
+describe('syncSambaWithLldap — persisted-passdb POSIX reconcile (#1946)', () => {
+  it('re-creates the ephemeral POSIX account for a user already in the persisted passdb', async () => {
+    // After a reboot the smbpasswd entry survives (passdb persisted) but the
+    // /etc/passwd account is gone → getent reports absent, so the sync must
+    // still `useradd` even though the user is NOT in `toAdd`.
+    mockListLldapUsers.mockResolvedValue({ ok: true, users: [{ id: 'alice' }] });
+    wireExec([
+      { match: 'pdbedit -L', code: 0, stdout: 'alice:1001:Alice\n' }, // already in passdb
+      { match: 'getent passwd alice', code: 2, stdout: '' },           // POSIX account wiped
+      { match: 'stat -c %g /data', code: 0, stdout: '1000\n' },
+      { match: 'useradd', code: 0 },
+    ]);
+    const res = await syncSambaWithLldap('Local');
+    expect(res.ok).toBe(true);
+    const commands = mockSendCommand.mock.calls.map(c => c[1].command);
+    // POSIX account re-created for the existing passdb user...
+    expect(commands.some(c => c.includes('useradd') && c.includes('alice'))).toBe(true);
+    // ...without re-running smbpasswd (no password overwrite for existing users).
+    expect(commands.some(c => c.includes('smbpasswd'))).toBe(false);
+    if (res.ok) {
+      expect(res.added).toEqual([]);
+      expect(res.users.find(u => u.id === 'alice')?.presentInSamba).toBe(true);
+    }
+  });
+
+  it('does not useradd when the POSIX account already exists (idempotent reconcile)', async () => {
+    mockListLldapUsers.mockResolvedValue({ ok: true, users: [{ id: 'bob' }] });
+    wireExec([
+      { match: 'pdbedit -L', code: 0, stdout: 'bob:1002:Bob\n' },
+      { match: 'getent passwd bob', code: 0, stdout: 'bob:x:1002:1000::/home/bob:/usr/sbin/nologin' },
+    ]);
+    const res = await syncSambaWithLldap('Local');
+    expect(res.ok).toBe(true);
+    const commands = mockSendCommand.mock.calls.map(c => c[1].command);
+    expect(commands.some(c => c.includes('useradd'))).toBe(false);
   });
 });

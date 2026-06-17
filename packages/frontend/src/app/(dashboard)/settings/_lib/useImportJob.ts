@@ -122,6 +122,9 @@ export interface UseImportJob {
   status: JobStatus | null;
   /** True while a background job is being polled. */
   active: boolean;
+  /** The id of the job being polled, or null when idle (#1943 — the card needs
+   *  it to abort a stuck session). */
+  jobId: string | null;
   /** Begin polling a freshly-handed-off job id (from scan/apply). */
   track: (jobId: string, kind: JobKind) => void;
   /** Stop polling + clear the persisted id (e.g. on reset). */
@@ -221,5 +224,5 @@ export function useImportJob(handlers: ImportJobHandlers): UseImportJob {
     });
   }, []);
 
-  return { status, active: jobId !== null, track, clear: stop };
+  return { status, active: jobId !== null, jobId, track, clear: stop };
 }

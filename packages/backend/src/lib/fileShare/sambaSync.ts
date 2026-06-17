@@ -177,7 +177,21 @@ async function listSambaUsers(node: string): Promise<string[] | null> {
  *     password (the operator can replace it via Settings → Integrations
  *     → File Share).
  *   - Users in Samba missing from LLDAP: removed via `pdbedit -x`.
- *   - Users present in both: left alone (no password overwrite).
+ *   - Users present in both: password left alone (no overwrite), but the
+ *     POSIX (Unix) account is re-ensured (see below).
+ *
+ * Re-ensuring the POSIX account on every sync is what makes a persisted
+ * passdb (#1946) actually usable after a reboot/redeploy. The passdb file
+ * (`/var/lib/samba/private/smbpasswd`) now lives on the `samba-private`
+ * volume, so the NT-hash (password) entries survive a pod recreate. The
+ * POSIX accounts those entries map to via `getpwnam`, however, live in the
+ * container's ephemeral `/etc/passwd` and are wiped on every restart — so
+ * a passdb user whose POSIX account is gone can't authenticate (`smbpasswd`
+ * / login fail to resolve the uid). This sync (invoked from the template
+ * post-deploy on every deploy) therefore reconciles a POSIX account for
+ * EVERY directory user, not just the newly-added ones, against the
+ * persisted passdb. Idempotent: `ensureSambaPosixUser` is a no-op when the
+ * account already exists.
  *
  * Returns the merged view of who's where so the UI can render a
  * per-user "Set password" affordance.
@@ -199,6 +213,17 @@ export async function syncSambaWithLldap(node: string = 'Local'): Promise<SambaS
 
   const toAdd = lldapUsers.filter(u => !sambaSet.has(u.id));
   const toRemove = sambaUsers.filter(s => !lldapSet.has(s));
+
+  // Re-ensure the ephemeral POSIX account for users already in the persisted
+  // passdb (#1946) — their /etc/passwd entry is gone after a restart even
+  // though the smbpasswd NT-hash survived. Best-effort + idempotent: a
+  // failure here doesn't change the user's presentInSamba state (the passdb
+  // entry already exists), it just means that one user can't authenticate
+  // until the next successful reconcile.
+  const alreadyInSamba = lldapUsers.filter(u => sambaSet.has(u.id));
+  for (const u of alreadyInSamba) {
+    await ensureSambaPosixUser(node, u.id);
+  }
 
   const added: string[] = [];
   for (const u of toAdd) {

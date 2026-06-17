@@ -31,10 +31,14 @@ import {
   markError,
   markCrashedOnStartup,
   getSession,
+  getSessionStatus,
+  abortSession,
   markApplied,
   sessionHashes,
   appendLog,
   readLog,
+  STALE_AFTER_MS,
+  MAX_TREE_NODES,
   __clearSessions,
 } from './sessionStore';
 import type { ImportPlan } from './types';
@@ -198,6 +202,113 @@ describe('async job lifecycle (#1897)', () => {
   });
 });
 
+describe('store split — compact status doc vs bulk sidecar (#1945)', () => {
+  it('writes the plan/hashes to a SIDECAR; the status doc carries no records', async () => {
+    const plan = mkPlan('/mnt/docs/a.pdf');
+    const hashes = new Map([['/mnt/docs/a.pdf', 'a'.repeat(64)]]);
+    await createSession({ id: 'split-1', device: '/dev/sda1', plan, hashes, catalogPath: ':memory:' });
+
+    // The bulk sidecar exists and holds the records.
+    const sidecarRaw = await fs.readFile(path.join(SESSIONS_DIR, 'split-1.plan.json'), 'utf-8');
+    expect(JSON.parse(sidecarRaw).plan.items[0].record.sourcePath).toBe('/mnt/docs/a.pdf');
+
+    // The compact status doc on disk does NOT inline the plan or hashes.
+    const statusRaw = JSON.parse(await fs.readFile(path.join(SESSIONS_DIR, 'split-1.json'), 'utf-8'));
+    expect(statusRaw.plan).toBeUndefined();
+    expect(statusRaw.hashes).toBeUndefined();
+  });
+
+  it('getSessionStatus reads ONLY the compact doc (no plan/hashes); getSession rehydrates them', async () => {
+    const plan = mkPlan('/mnt/docs/a.pdf');
+    const hashes = new Map([['/mnt/docs/a.pdf', 'a'.repeat(64)]]);
+    await createSession({
+      id: 'split-2',
+      device: '/dev/sda1',
+      plan,
+      hashes,
+      catalogPath: ':memory:',
+      summary: {
+        totalFiles: 1,
+        totalBytes: 10,
+        categories: [],
+        actions: [],
+        tree: [],
+        boxUsers: [],
+        defaultOwner: 'shared',
+      },
+    });
+
+    const compact = await getSessionStatus('split-2');
+    expect(compact!.phase).toBe('reviewed');
+    expect(compact!.plan).toBeUndefined(); // never loads the sidecar
+    expect(compact!.summary!.totalFiles).toBe(1);
+
+    const full = await getSession('split-2');
+    expect(full!.plan!.items[0].record.sourcePath).toBe('/mnt/docs/a.pdf'); // rehydrated
+    expect(sessionHashes(full!).get('/mnt/docs/a.pdf')).toBe('a'.repeat(64));
+  });
+
+  it('caps the persisted routing tree to MAX_TREE_NODES (#1945)', async () => {
+    const tree = Array.from({ length: MAX_TREE_NODES + 50 }, (_, i) => ({ dir: `d${i}` }));
+    await createScanJob({ id: 'cap-1', device: '/dev/sda1', catalogPath: ':memory:' });
+    await finalizeScan('cap-1', {
+      plan: mkPlan(),
+      hashes: new Map(),
+      summary: { totalFiles: 1, totalBytes: 0, categories: [], actions: [], tree, boxUsers: [], defaultOwner: 'shared' },
+    });
+    const s = await getSessionStatus('cap-1');
+    expect(s!.summary!.tree.length).toBe(MAX_TREE_NODES);
+    expect(s!.summary!.treeTruncated).toBe(true);
+  });
+});
+
+describe('liveness / zombie reaping (#1943)', () => {
+  it('setProgress refreshes the heartbeat', async () => {
+    await createScanJob({ id: 'hb-1', device: '/dev/sda1', catalogPath: ':memory:' });
+    const before = (await getSessionStatus('hb-1'))!.heartbeat!;
+    await new Promise(r => setTimeout(r, 5));
+    await setProgress('hb-1', { step: 'walk', scanned: 10 });
+    const after = (await getSessionStatus('hb-1'))!.heartbeat!;
+    expect(Date.parse(after)).toBeGreaterThan(Date.parse(before));
+  });
+
+  it('reaps a non-terminal session with a stale heartbeat to error on read', async () => {
+    await createScanJob({ id: 'zombie-1', device: '/dev/sda1', catalogPath: ':memory:' });
+    // Backdate the heartbeat past the stale window (simulate a dead worker).
+    const stale = new Date(Date.now() - STALE_AFTER_MS - 60_000).toISOString();
+    await updateSession('zombie-1', { heartbeat: stale });
+    // It was `scanning`; now a status read flips it to error.
+    const s = await getSessionStatus('zombie-1');
+    expect(s!.phase).toBe('error');
+    expect(s!.error).toMatch(/interrupted/i);
+  });
+
+  it('does NOT reap a fresh in-flight session', async () => {
+    await createScanJob({ id: 'alive-1', device: '/dev/sda1', catalogPath: ':memory:' });
+    const s = await getSessionStatus('alive-1');
+    expect(s!.phase).toBe('scanning');
+  });
+
+  it('abortSession flips a stuck session terminal; idempotent on a terminal one', async () => {
+    await createScanJob({ id: 'abort-1', device: '/dev/sda1', catalogPath: ':memory:' });
+    const aborted = await abortSession('abort-1');
+    expect(aborted!.phase).toBe('error');
+    expect(aborted!.error).toMatch(/start a new scan/i);
+    // Idempotent: a second abort leaves it terminal, doesn't re-message.
+    const again = await abortSession('abort-1');
+    expect(again!.phase).toBe('error');
+    expect(await abortSession('ghost')).toBeNull();
+  });
+
+  it('markCrashedOnStartup also reaps an already-stale same-process zombie', async () => {
+    await createScanJob({ id: 'crash-stale', device: '/dev/sda1', catalogPath: ':memory:' });
+    // A scanning job is flipped regardless; verify a non-terminal stale one too.
+    const n = await markCrashedOnStartup();
+    expect(n).toBeGreaterThanOrEqual(1);
+    expect((await getSessionStatus('crash-stale'))!.phase).toBe('error');
+  });
+});
+
 describe('prune to KEEP_RECENT', () => {
   it('keeps only the most-recent sessions, dropping older state + log files', async () => {
     // KEEP_RECENT_SESSIONS is 20; create 23 so 3 of the oldest get pruned on
@@ -224,12 +335,18 @@ describe('prune to KEEP_RECENT', () => {
 
     // prune runs at the START of each createSession (before the new write),
     // exactly like jobStore — so after the last create the count is keep + the
-    // just-written one (21), and the oldest beyond keep are gone.
-    const remaining = (await fs.readdir(SESSIONS_DIR)).filter(f => f.endsWith('.json'));
+    // just-written one (21), and the oldest beyond keep are gone. Count only the
+    // compact status docs (#1945 split: each session also has a `.plan.json`
+    // sidecar, which must NOT be miscounted as a status doc).
+    const remaining = (await fs.readdir(SESSIONS_DIR)).filter(
+      f => f.endsWith('.json') && !f.endsWith('.plan.json'),
+    );
     expect(remaining.length).toBeLessThanOrEqual(21);
-    // The oldest are pruned; the newest survive (and so are their log files).
+    // The oldest are pruned; the newest survive (and so are their log + sidecar files).
     expect(await getSession('prune-00')).toBeNull();
     expect(await getSession('prune-22')).not.toBeNull();
     await expect(fs.stat(path.join(SESSIONS_DIR, 'prune-00.log'))).rejects.toThrow();
+    // The bulk plan sidecar is pruned alongside the status doc (#1945).
+    await expect(fs.stat(path.join(SESSIONS_DIR, 'prune-00.plan.json'))).rejects.toThrow();
   });
 });
