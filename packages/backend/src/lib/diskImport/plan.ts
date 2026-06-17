@@ -22,6 +22,7 @@
 // over an arbitrary path. The source mount is read-only (mounter.ts), so rsync
 // only ever reads from it.
 
+import { CATEGORIES } from './categories';
 import { ImportCatalog, type CatalogEntry } from './catalog';
 import {
   resolveShareTarget,
@@ -29,7 +30,13 @@ import {
   type SafeExec,
 } from './hostExec';
 import type { HashResolver } from './dedup';
-import type { ImportPlan, ImportPlanItem, ImportRecord } from './types';
+import type {
+  Category,
+  ImportPlan,
+  ImportPlanItem,
+  ImportRecord,
+  ResolvedRule,
+} from './types';
 
 /** How a single planned item was handled in this apply pass. */
 export type ApplyOutcome =
@@ -102,6 +109,77 @@ const DEFAULT_IMMICH_IMAGE = 'ghcr.io/immich-app/immich-cli';
  * only written once a file is fully copied AND chowned.
  */
 const COPY_BATCH_SIZE = 256;
+
+// --- target-path resolution (issue #1913, parent epic #1901) ---------------
+//
+// Derive a file's TARGET path (relative to `file-share/data/`) from its resolved
+// routing rule (#1912's `effectiveRule`: disposition + mode + owner). Only the
+// target changes here — the apply SOURCE stays the verbatim absolute
+// `record.sourcePath` (#1906), conflict-parking / chown / resume are untouched.
+//
+//   owner 'shared'  → `<category>/…`            (no owner segment)
+//   owner user 'u'  → `<u>/<category>/…`
+//   mode  'merge'   → flatten: every file lands directly in the category folder
+//                     (basename only — sources collapse together, dedup applies)
+//   mode  'parallel'→ preserve the source subtree BELOW the rule's anchor under
+//                     the category folder (structure is load-bearing: code/1:1)
+//
+// `relPath` is the file's path RELATIVE to the imported disk root (the routing
+// tree's coordinate space, e.g. `Backup-2023/src/main.ts`); the caller strips
+// the mountpoint to obtain it — this helper never re-prefixes a mountpoint.
+
+/** Normalised relative path: forward slashes, no leading/trailing slash, no `.`/empty segs. */
+function relSegments(relPath: string): string[] {
+  return relPath
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(s => s !== '' && s !== '.');
+}
+
+/** The category folder name without the trailing slash CATEGORIES stores (e.g. `documents`). */
+function categoryFolder(category: Category): string {
+  return CATEGORIES[category].folder.replace(/\/+$/, '');
+}
+
+/**
+ * Resolve the relative target path (under `file-share/data/`) for a file given
+ * its resolved routing rule and category. Returns `null` for the `junk` category
+ * (nothing is written). Owner prefixes the path (shared omits the segment); the
+ * mode decides whether the source subtree below the rule's anchor is preserved
+ * (`parallel`) or flattened to the basename (`merge`).
+ *
+ * @param relPath the file's path RELATIVE to the imported disk root
+ * @param category the classified category
+ * @param rule the file's `effectiveRule` (#1912: owner + mode + anchor)
+ */
+export function resolveTargetPath(
+  relPath: string,
+  category: Category,
+  rule: Pick<ResolvedRule, 'owner' | 'mode' | 'anchor'>,
+): string | null {
+  const folder = categoryFolder(category);
+  if (folder === '') return null; // junk — no destination folder.
+
+  const fileSegs = relSegments(relPath);
+  if (fileSegs.length === 0) return null; // nothing addressable.
+
+  let tailSegs: string[];
+  if (rule.mode === 'parallel') {
+    // Preserve the source subtree BELOW the anchor (the dir that supplied the
+    // rule). Drop the anchor prefix so the kept structure starts at the anchor.
+    const anchorSegs = relSegments(rule.anchor);
+    tailSegs = fileSegs.slice(anchorSegs.length);
+    // A file sitting exactly at the anchor (no deeper subtree) still keeps its
+    // own basename so it isn't dropped.
+    if (tailSegs.length === 0) tailSegs = fileSegs.slice(-1);
+  } else {
+    // merge: flatten — everything lands directly in the category folder.
+    tailSegs = fileSegs.slice(-1);
+  }
+
+  const ownerPrefix = rule.owner === 'shared' ? [] : [rule.owner];
+  return [...ownerPrefix, folder, ...tailSegs].join('/');
+}
 
 /** Map epoch-ms to a stable `YYYY-MM-DD` bucket for the _superseded tree. */
 function dateBucket(ms: number): string {

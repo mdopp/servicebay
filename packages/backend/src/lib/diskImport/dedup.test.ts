@@ -149,6 +149,54 @@ describe('buildPlan — catalog delta (cross-run)', () => {
   });
 });
 
+describe('buildPlan — destination-area dedup scope (#1912)', () => {
+  // Two sources with the SAME base name + identical bytes. In one area they
+  // collapse (shared merges); in distinct areas they both copy (private dedups
+  // within itself only).
+  const files: ScannedFile[] = [
+    { path: '/diskA/song.mp3', size: 5000, mtimeMs: 0 },
+    { path: '/diskB/song.mp3', size: 5000, mtimeMs: 0 },
+  ];
+  const hashes = { '/diskA/song.mp3': sha('a'), '/diskB/song.mp3': sha('a') };
+
+  it('shared area (default): identical bytes at the same target collapse to skip-dupe', () => {
+    const result = buildPlan(buildInventory(files), hasherFrom(hashes));
+    expect(actionOf(result.items, '/diskA/song.mp3')).toBe('copy');
+    expect(actionOf(result.items, '/diskB/song.mp3')).toBe('skip-dupe');
+  });
+
+  it('distinct private areas: same target in different areas both copy (no cross-area merge)', () => {
+    const areaOf = (r: ImportRecord) =>
+      r.sourcePath.startsWith('/diskA/') ? 'mdopp' : 'cdopp';
+    const result = buildPlan(buildInventory(files), hasherFrom(hashes), { areaOf });
+    // Each private area dedups only within itself → no merge across users.
+    expect(actionOf(result.items, '/diskA/song.mp3')).toBe('copy');
+    expect(actionOf(result.items, '/diskB/song.mp3')).toBe('copy');
+    expect(result.conflicts).toHaveLength(0);
+  });
+
+  it('same content already cataloged in shared does NOT dupe-skip a private area', () => {
+    const cat = new ImportCatalog(':memory:');
+    cat.upsert({
+      sha256: sha('a'),
+      area: 'shared',
+      target: 'music/song.mp3',
+      sourcePath: '/old/song.mp3',
+      size: 5000,
+      importedAtMs: 0,
+    });
+    // Importing the same bytes/target but owned by a user → fresh copy in the
+    // user area (shared catalog hit must not leak across the area boundary).
+    const result = buildPlan(
+      buildInventory([{ path: '/disk/song.mp3', size: 5000, mtimeMs: 0 }]),
+      hasherFrom({ '/disk/song.mp3': sha('a') }),
+      { catalog: cat, areaOf: () => 'mdopp' },
+    );
+    expect(actionOf(result.items, '/disk/song.mp3')).toBe('copy');
+    cat.close();
+  });
+});
+
 describe('buildPlan — determinism', () => {
   it('produces a stable, source-path-ordered plan', () => {
     const files: ScannedFile[] = [
