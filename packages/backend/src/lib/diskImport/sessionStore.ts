@@ -69,6 +69,24 @@ export type SessionStep =
   | 'copy'
   | 'done';
 
+/**
+ * Dedup sub-state (#1937). The scan now flips to `reviewed` on METADATA ONLY (so
+ * the routing tree renders in seconds), then hashes the size-collision candidates
+ * in the BACKGROUND to fill in skip-dupe decisions. This tracks that background
+ * pass so the card can show a non-blocking "checking duplicates…" secondary line
+ * WITHOUT gating the already-rendered tree:
+ *
+ *   pending  → reviewed, the background hash/dedup pass hasn't started yet
+ *   running  → hashing candidates now (progress.hashed/total advance)
+ *   done     → dedup complete; the plan's skip-dupe decisions are final
+ *   partial  → dedup finished but some files couldn't be hashed (skipped, #1937
+ *              Part B) — they're imported un-deduped (safe; apply re-dedups)
+ *
+ * A scan with no size-collision candidates (nothing to hash) is `done`
+ * immediately. Absent on pre-#1937 sessions → the card treats that as `done`.
+ */
+export type DedupState = 'pending' | 'running' | 'done' | 'partial';
+
 /** Live progress counters the status route exposes so the card can render a
  *  phase + counts instead of a bare spinner (#1897). All monotonic within a
  *  pass; `total` is the denominator once known (0 until the walk finishes). */
@@ -117,6 +135,19 @@ export interface ScanSession {
    *  with the same pre-assignments. Absent while scanning. */
   autoRules?: Record<string, Rule>;
   phase: SessionPhase;
+  /**
+   * Background-dedup sub-state (#1937). Present once the scan reaches `reviewed`
+   * on metadata only; the background hash pass advances it pending → running →
+   * done/partial. Absent on pre-#1937 sessions (treat as `done`). The
+   * `dedupProgress` pair drives the card's "checking duplicates… N / M" line.
+   */
+  dedup?: DedupState;
+  /** How many candidate files have been hashed in the background dedup pass so
+   *  far (#1937), and the total candidate count. Both 0 when there's nothing to
+   *  hash. Separate from `progress` so the card can show dedup advancing while
+   *  the (already-rendered) tree's `progress.step` stays `done`. */
+  dedupHashed?: number;
+  dedupTotal?: number;
   /** Live progress for the in-flight (or last) pass (#1897). */
   progress: SessionProgress;
   /** How many files the apply wrote/uploaded (set when `applied`). */
@@ -280,7 +311,13 @@ export async function setProgress(
 }
 
 /** Background scan completed: attach the reviewed plan + hashes and flip to
- *  `reviewed` so the apply gate accepts it. */
+ *  `reviewed` so the apply gate accepts it.
+ *
+ *  Review-first (#1937): the scan now finalizes on METADATA ONLY (no hashes yet)
+ *  with `dedup: 'pending'` so the tree renders immediately; the background hash
+ *  pass then re-finalizes via {@link finalizeDedup}. A scan with nothing to dedup
+ *  passes `dedup: 'done'`. `hashes` is whatever's known so far (empty for the
+ *  metadata-only finalize). */
 export async function finalizeScan(
   id: string,
   input: {
@@ -289,8 +326,11 @@ export async function finalizeScan(
     mountpoint?: string;
     boxUsers?: string[];
     autoRules?: Record<string, Rule>;
+    dedup?: DedupState;
+    dedupTotal?: number;
   },
 ): Promise<ScanSession | null> {
+  const dedup = input.dedup ?? 'done';
   return updateSession(id, {
     plan: input.plan,
     hashes: Object.fromEntries(input.hashes),
@@ -298,6 +338,9 @@ export async function finalizeScan(
     boxUsers: input.boxUsers,
     autoRules: input.autoRules,
     phase: 'reviewed',
+    dedup,
+    dedupHashed: 0,
+    dedupTotal: input.dedupTotal ?? 0,
     progress: {
       step: 'done',
       scanned: input.plan.items.length,
@@ -307,6 +350,56 @@ export async function finalizeScan(
       total: input.plan.items.length,
     },
   });
+}
+
+/** Flip a `reviewed` session's dedup sub-state to `running` (the background hash
+ *  pass started, #1937). The tree stays rendered; only the secondary
+ *  "checking duplicates…" line changes. */
+export async function startDedup(id: string, total: number): Promise<ScanSession | null> {
+  return updateSession(id, { dedup: 'running', dedupHashed: 0, dedupTotal: total });
+}
+
+/** Live progress of the background dedup hash pass (#1937). Best-effort, like
+ *  {@link setProgress}; a lost tick is non-fatal. */
+export async function setDedupProgress(id: string, hashed: number, total: number): Promise<void> {
+  await withSessionWriteLock(id, async () => {
+    const current = await getSession(id);
+    if (!current) return;
+    const next: ScanSession = {
+      ...current,
+      dedupHashed: hashed,
+      dedupTotal: total,
+      updatedAt: new Date().toISOString(),
+      seenBy: PROCESS_STARTED_AT,
+    };
+    try {
+      await atomicWrite(statePath(id), JSON.stringify(next, null, 2));
+    } catch {
+      /* best-effort live dedup progress */
+    }
+  });
+}
+
+/** Background dedup pass completed (#1937): replace the metadata-only plan with
+ *  the re-deduped plan + the resolved hashes, and mark `done` (all candidates
+ *  hashed) or `partial` (some files were un-hashable → imported un-deduped).
+ *  Stays `reviewed` — this never gates apply, which re-dedups at the catalog. */
+export async function finalizeDedup(
+  id: string,
+  input: { plan: ImportPlan; hashes: Map<string, string>; state: DedupState },
+): Promise<ScanSession | null> {
+  return updateSession(id, {
+    plan: input.plan,
+    hashes: Object.fromEntries(input.hashes),
+    dedup: input.state,
+  });
+}
+
+/** Mark a session's background dedup pass as `partial` without touching the plan
+ *  (#1937) — used when the whole dedup pass threw. The metadata-only plan stays
+ *  (everything `copy`/un-deduped); apply re-dedups at the catalog. */
+export async function markDedupPartial(id: string): Promise<ScanSession | null> {
+  return updateSession(id, { dedup: 'partial' });
 }
 
 /** Flip a reviewed session into `applying` (the apply background pass started). */

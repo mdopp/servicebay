@@ -56,6 +56,18 @@ describe('classifyRecord — junk', () => {
     expect(isJunk(rec('/disk/proj/.git/config'))).toBe(true);
     expect(isJunk(rec('/disk/photos/IMG.jpg'))).toBe(false);
   });
+  it('treats the widened dev/build/cache subtrees as junk (#1937)', () => {
+    // bower_components was the single biggest offender on the user's real disk
+    // (~5.6k checked-in Polymer deps); the rest are generated/build/cache trees.
+    for (const seg of [
+      'bower_components', 'vendor', 'dist', 'build', '.next', '.nuxt', '.gradle',
+      '.cache', '__pycache__', '.pytest_cache', '.mypy_cache', '.tox', '.svn', '.hg',
+    ]) {
+      expect(isJunk(rec(`/disk/proj/${seg}/file.js`))).toBe(true);
+    }
+    // A real file outside those trees is NOT junk.
+    expect(isJunk(rec('/disk/docs/report.pdf'))).toBe(false);
+  });
 });
 
 describe('classifyRecord — music vs audiobook disambiguation', () => {
