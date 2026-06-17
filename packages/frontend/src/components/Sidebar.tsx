@@ -45,6 +45,7 @@ export default function Sidebar() {
 
   useEffect(() => {
     if (window.innerWidth < 768) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- async app-version fetch on mount
       setIsCollapsed(true);
     }
   }, []);

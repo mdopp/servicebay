@@ -171,12 +171,14 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async service-log fetch on service/node change
     fetchLogs();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [serviceName, node]);
 
     useEffect(() => {
         if (activeTab === 'container-logs' && selectedContainerId) {
+                // eslint-disable-next-line react-hooks/set-state-in-effect -- async container-log fetch on tab/container change
                 fetchContainerLogs(selectedContainerId);
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps

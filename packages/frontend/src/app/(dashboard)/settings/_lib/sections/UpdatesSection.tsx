@@ -121,6 +121,7 @@ export default function UpdatesSection() {
         // ignore — keeps null and user can hit Check Now
       }
     })();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async update-status fetch on mount, guarded by a cancelled flag
     fetchBootStatus();
     return () => { cancelled = true; };
   }, []);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 
 interface AutocompleteProps {
   options: string[];
@@ -21,19 +21,23 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [filter, setFilter] = useState('');
-  const [filteredOptions, setFilteredOptions] = useState<string[]>([]);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
+  // The text input is locally editable but must also follow the `value`
+  // prop when the parent changes it (controlled-input sync) — a genuine
+  // external→React sync, not a redundant derive.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- prop-sync, not a cascading-render anti-pattern
     setFilter(value);
   }, [value]);
 
-  useEffect(() => {
+  // Pure derivation of the visible option list from the current filter +
+  // options — compute during render instead of an effect+setState pair.
+  const filteredOptions = useMemo(() => {
     const lowerFilter = filter.toLowerCase();
-    const filtered = options.filter(opt => 
-      opt.toLowerCase().includes(lowerFilter)
-    );
-    setFilteredOptions(filtered.slice(0, 50)); // Limit to 50 results for performance
+    return options
+      .filter(opt => opt.toLowerCase().includes(lowerFilter))
+      .slice(0, 50); // Limit to 50 results for performance
   }, [filter, options]);
 
   useEffect(() => {

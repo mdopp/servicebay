@@ -4,6 +4,7 @@ import path from 'path';
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'util';
 import { getConfig, RegistryConfig } from './config';
+import { DATA_DIR } from './dirs';
 import { readManifestAnnotations } from './template/contract';
 import { parseStackManifest, type StackManifest } from './template/stackContract';
 import { logger } from './logger';
@@ -26,6 +27,29 @@ const REGISTRIES_DIR = path.join(
   process.env.CONTAINER_CONFIG_DIR || CONTAINER_CONFIG_DIR,
   'registries'
 );
+
+/**
+ * Persistent, writable, **non-git** local template/stack source (#1919).
+ *
+ * Unlike `REGISTRIES_DIR` (under the ephemeral config dir) this lives on
+ * the persisted data mount (`DATA_DIR` = `/app/data`, mapped to
+ * `/mnt/data/servicebay` on the box), so a template dropped here survives
+ * a container restart and a reinstall. It is the install target for the
+ * `repo-to-template` skill (and file-drop by hand): no repo change and no
+ * git registry needed.
+ *
+ * Layout mirrors the built-in tree exactly:
+ *   local-templates/templates/<name>/{template.yml,variables.json,…}
+ *   local-templates/stacks/<name>/stack.yml
+ *
+ * Precedence is the **highest** of all sources — local > registry >
+ * built-in — so a local `vaultwarden` shadows both a registry copy and
+ * the bundled one. A malformed local entry is skipped with a warning
+ * (same as a bad registry entry) and never crashes catalog enumeration.
+ */
+const LOCAL_TEMPLATES_DIR = path.join(DATA_DIR, 'local-templates');
+const LOCAL_TEMPLATES_PATH = path.join(LOCAL_TEMPLATES_DIR, 'templates');
+const LOCAL_STACKS_PATH = path.join(LOCAL_TEMPLATES_DIR, 'stacks');
 
 // Default registry: the ServiceBay repo itself (public, no auth needed)
 const DEFAULT_REGISTRY: RegistryConfig = {
@@ -122,6 +146,39 @@ async function resolveRegistryItemPath(
   // Legacy fallback — also the path for manifest-less registries.
   const subdir = type === 'template' ? 'templates' : 'stacks';
   return path.join(REGISTRIES_DIR, regName, subdir, itemName);
+}
+
+/**
+ * The on-disk directory for a `Local`-source template or stack (#1919).
+ * Mirrors the built-in layout under the persisted data mount. Returns
+ * the path even when the dir doesn't exist — callers' fs failure paths
+ * handle "not found" the same way they do for built-in/registry items.
+ *
+ * `name` is request-supplied, so it is constrained to a single safe path
+ * segment (no separators, no `.`/`..`, no NUL) and the joined result is
+ * asserted to stay under its root. An unsafe `name` resolves to a
+ * guaranteed-nonexistent sentinel so every caller's fs path fails closed
+ * to "not found" rather than reading outside the local source
+ * (path-injection guard; CodeQL js/path-injection).
+ */
+function localItemPath(type: 'template' | 'stack', name: string): string {
+  const root = type === 'stack' ? LOCAL_STACKS_PATH : LOCAL_TEMPLATES_PATH;
+  // `name` is request-supplied. Collapse it to a single path component with
+  // path.basename (the recognised path-injection barrier) and reject if that
+  // changed the value or yielded a traversal/empty segment — only a plain,
+  // self-contained directory name is ever joined onto the local root, so the
+  // result can never escape it.
+  const segment = path.basename(name);
+  if (
+    !segment ||
+    segment !== name ||
+    segment === '.' ||
+    segment === '..' ||
+    segment.includes('\0')
+  ) {
+    return path.join(root, '\0nonexistent');
+  }
+  return path.join(root, segment);
 }
 
 export interface Template {
@@ -474,6 +531,24 @@ export async function getTemplates(): Promise<Template[]> {
         }
     }
 
+    // 3. Local persistent source (#1919) — overrides BOTH built-in and
+    // registry by name, so a user-generated/file-dropped template wins.
+    // `fetchDir` returns [] for a missing dir and skips a malformed entry
+    // with a warning, so an empty or partly-broken local-templates dir
+    // never crashes enumeration.
+    const [localStacks, localTemplates] = await Promise.all([
+        fetchDir(LOCAL_STACKS_PATH, 'stack', 'Local'),
+        fetchDir(LOCAL_TEMPLATES_PATH, 'template', 'Local'),
+    ]);
+    for (const item of [...localStacks, ...localTemplates]) {
+        const idx = allTemplates.findIndex(t => t.name === item.name && t.type === item.type);
+        if (idx !== -1) {
+            allTemplates[idx] = item;
+        } else {
+            allTemplates.push(item);
+        }
+    }
+
     return allTemplates;
 }
 
@@ -519,6 +594,15 @@ async function fetchManifestEntries(
 }
 
 export async function getReadme(name: string, type: 'template' | 'stack', source?: string): Promise<string | null> {
+  // Local pinned source (#1919) — read straight from the data mount.
+  if (source === 'Local') {
+    try {
+      return await fs.readFile(path.join(localItemPath(type, name), 'README.md'), 'utf-8');
+    } catch {
+      return null;
+    }
+  }
+
   // If a specific source is given, use it directly
   if (source && source !== 'Built-in') {
     try {
@@ -529,8 +613,12 @@ export async function getReadme(name: string, type: 'template' | 'stack', source
     }
   }
 
-  // Otherwise: check registries first, then fall back to built-in
+  // Otherwise: local persistent source first (#1919), then registries,
+  // then fall back to built-in.
   if (!source) {
+    try {
+      return await fs.readFile(path.join(localItemPath(type, name), 'README.md'), 'utf-8');
+    } catch { /* not in the local source */ }
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
@@ -552,6 +640,15 @@ export async function getReadme(name: string, type: 'template' | 'stack', source
 }
 
 export async function getTemplateYaml(name: string, source?: string): Promise<string | null> {
+  // Local pinned source (#1919) — read straight from the data mount.
+  if (source === 'Local') {
+    try {
+      return await fs.readFile(path.join(localItemPath('template', name), 'template.yml'), 'utf-8');
+    } catch {
+      return null;
+    }
+  }
+
   // If a specific source is given, use it directly
   if (source && source !== 'Built-in') {
     try {
@@ -562,8 +659,12 @@ export async function getTemplateYaml(name: string, source?: string): Promise<st
     }
   }
 
-  // Otherwise: check registries first (freshest), then fall back to built-in
+  // Otherwise: local persistent source first (#1919, freshest/user-owned),
+  // then registries, then fall back to built-in.
   if (!source) {
+    try {
+      return await fs.readFile(path.join(localItemPath('template', name), 'template.yml'), 'utf-8');
+    } catch { /* not in the local source */ }
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
@@ -732,12 +833,18 @@ export async function getTemplateVariables(name: string, source?: string): Promi
     } catch { return null; }
   };
 
+  if (source === 'Local') {
+    return tryRead(path.join(localItemPath('template', name), 'variables.json'));
+  }
+
   if (source && source !== 'Built-in') {
     const itemDir = await resolveRegistryItemPath(source, 'template', name);
     return tryRead(path.join(itemDir, 'variables.json'));
   }
 
   if (!source) {
+    const local = await tryRead(path.join(localItemPath('template', name), 'variables.json'));
+    if (local) return local;
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
@@ -783,11 +890,17 @@ export async function getTemplateConfigFiles(name: string, source?: string): Pro
     } catch { return []; }
   };
 
+  if (source === 'Local') {
+    return scanDir(localItemPath('template', name));
+  }
+
   if (source && source !== 'Built-in') {
     return scanDir(await resolveRegistryItemPath(source, 'template', name));
   }
 
   if (!source) {
+    const localFiles = await scanDir(localItemPath('template', name));
+    if (localFiles.length > 0) return localFiles;
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
@@ -868,11 +981,17 @@ export async function getTemplateAssetFiles(
   const walk = (templateDir: string) =>
     walkSkillsDir(path.join(templateDir, 'skills'), name);
 
+  if (source === 'Local') {
+    return walk(localItemPath('template', name));
+  }
+
   if (source && source !== 'Built-in') {
     return walk(await resolveRegistryItemPath(source, 'template', name));
   }
 
   if (!source) {
+    const localFiles = await walk(localItemPath('template', name));
+    if (localFiles.length > 0) return localFiles;
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
@@ -909,11 +1028,17 @@ export async function getTemplatePostDeployScript(name: string, source?: string)
     } catch { return null; }
   };
 
+  if (source === 'Local') {
+    return tryRead(localItemPath('template', name));
+  }
+
   if (source && source !== 'Built-in') {
     return tryRead(await resolveRegistryItemPath(source, 'template', name));
   }
 
   if (!source) {
+    const local = await tryRead(localItemPath('template', name));
+    if (local !== null) return local;
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
@@ -942,11 +1067,17 @@ export async function getTemplateUserGuide(name: string, source?: string): Promi
     } catch { return null; }
   };
 
+  if (source === 'Local') {
+    return tryRead(localItemPath('template', name));
+  }
+
   if (source && source !== 'Built-in') {
     return tryRead(await resolveRegistryItemPath(source, 'template', name));
   }
 
   if (!source) {
+    const local = await tryRead(localItemPath('template', name));
+    if (local !== null) return local;
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
@@ -970,11 +1101,17 @@ export async function getTemplateChangelog(name: string, source?: string): Promi
     } catch { return null; }
   };
 
+  if (source === 'Local') {
+    return tryRead(localItemPath('template', name));
+  }
+
   if (source && source !== 'Built-in') {
     return tryRead(await resolveRegistryItemPath(source, 'template', name));
   }
 
   if (!source) {
+    const local = await tryRead(localItemPath('template', name));
+    if (local !== null) return local;
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
@@ -1054,11 +1191,17 @@ export async function getTemplateMigrationScripts(
     return out;
   };
 
+  if (source === 'Local') {
+    return scanDir(localItemPath('template', name));
+  }
+
   if (source && source !== 'Built-in') {
     return scanDir(await resolveRegistryItemPath(source, 'template', name));
   }
 
   if (!source) {
+    const local = await scanDir(localItemPath('template', name));
+    if (local.length > 0) return local;
     const config = await getConfig();
     const registries = getRegistries(config);
     for (const reg of registries) {
@@ -1094,15 +1237,21 @@ export async function getStackManifest(
   };
 
   let yamlText: string | null = null;
-  if (source && source !== 'Built-in') {
+  if (source === 'Local') {
+    yamlText = await tryRead(localItemPath('stack', name));
+  } else if (source && source !== 'Built-in') {
     yamlText = await tryRead(await resolveRegistryItemPath(source, 'stack', name));
   } else {
     if (!source) {
-      const config = await getConfig();
-      const registries = getRegistries(config);
-      for (const reg of registries) {
-        const found = await tryRead(await resolveRegistryItemPath(reg.name, 'stack', name));
-        if (found !== null) { yamlText = found; break; }
+      // Local persistent source first (#1919), then registries.
+      yamlText = await tryRead(localItemPath('stack', name));
+      if (yamlText === null) {
+        const config = await getConfig();
+        const registries = getRegistries(config);
+        for (const reg of registries) {
+          const found = await tryRead(await resolveRegistryItemPath(reg.name, 'stack', name));
+          if (found !== null) { yamlText = found; break; }
+        }
       }
     }
     if (yamlText === null) yamlText = await tryRead(path.join(STACKS_PATH, name));

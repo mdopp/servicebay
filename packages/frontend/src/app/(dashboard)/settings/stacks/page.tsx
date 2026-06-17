@@ -54,6 +54,7 @@ function ManagedStacks() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async stacks load + poll, not a cascading-render anti-pattern
     void refresh();
     const id = setInterval(refresh, 15_000);
     return () => clearInterval(id);

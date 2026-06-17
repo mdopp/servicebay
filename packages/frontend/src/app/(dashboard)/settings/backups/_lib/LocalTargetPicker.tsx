@@ -150,6 +150,7 @@ function useMounts() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async mount-list load on mount
     void load();
   }, [load]);
 

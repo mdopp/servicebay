@@ -53,6 +53,7 @@ export function useImageUpdates() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async image-update check on mount
     refresh();
   }, [refresh]);
 

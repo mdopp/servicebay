@@ -121,6 +121,7 @@ export default function ServiceForm({ initialData, isEdit, defaultNode, onClose,
     if (initialData?.kubeContent) {
         const match = initialData.kubeContent.match(/Description=(.+)/);
         if (match) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- seeds editable Description from initialData.kubeContent; controlled-init sync
             setDescription(match[1].trim());
         }
     }
@@ -306,6 +307,7 @@ WantedBy=default.target`;
   useEffect(() => {
     if (name && yamlFileName) {
        if (!isEdit) {
+          // eslint-disable-next-line react-hooks/set-state-in-effect -- rebuilds KubeContent from form fields; controlled derive of an editable field
           setKubeContent(generateKubeContent(yamlFileName, autoUpdate, description));
        } else {
           // In edit mode, we try to preserve the existing structure but update our managed fields

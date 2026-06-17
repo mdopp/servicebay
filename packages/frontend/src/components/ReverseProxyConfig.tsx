@@ -13,10 +13,6 @@ export default function ReverseProxyConfig() {
     const [adminPort, setAdminPort] = useState<number>(8081);
     const { addToast } = useToast();
 
-    useEffect(() => {
-        checkStatus();
-    }, []);
-
     const checkStatus = async () => {
         setLoading(true);
         try {
@@ -32,6 +28,11 @@ export default function ReverseProxyConfig() {
             setLoading(false);
         }
     };
+
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- async nginx-status check on mount
+        checkStatus();
+    }, []);
 
     const handleInstall = async () => {
         setInstalling(true);

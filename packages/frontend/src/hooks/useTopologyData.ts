@@ -53,8 +53,10 @@ export function useTopologyData(options: UseTopologyDataOptions = {}): UseTopolo
   // the hook tolerant of unstable callers.
   const onLoadStartRef = useRef(options.onLoadStart);
   const onLoadErrorRef = useRef(options.onLoadError);
-  onLoadStartRef.current = options.onLoadStart;
-  onLoadErrorRef.current = options.onLoadError;
+  useEffect(() => {
+    onLoadStartRef.current = options.onLoadStart;
+    onLoadErrorRef.current = options.onLoadError;
+  });
 
   const fetchGraph = useCallback(async () => {
     onLoadStartRef.current?.();
@@ -74,6 +76,7 @@ export function useTopologyData(options: UseTopologyDataOptions = {}): UseTopolo
   // Kick off the first render as soon as the dashboard mounts so the
   // toast shows immediately.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async network-graph fetch on mount
     fetchGraph();
   }, [fetchGraph]);
 

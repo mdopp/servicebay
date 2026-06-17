@@ -84,6 +84,7 @@ export default function HealthDashboard() {
 
   useEffect(() => {
     if (!normalizedTab) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs active tab from URL; controlled URL→state sync
     setActiveTab(prev => (prev === normalizedTab ? prev : normalizedTab));
   }, [normalizedTab]);
 
@@ -190,6 +191,7 @@ export default function HealthDashboard() {
   }, [isModalOpen, formData.nodeName]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async initial data fetch on mount
     fetchData(); // Initial load (not silent)
 
     // Request notification permission
@@ -428,6 +430,7 @@ export default function HealthDashboard() {
           checks={checks}
           containers={containers}
           searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
           statusFilter={statusFilter}
           setStatusFilter={setStatusFilter}
           handleRun={handleRun}

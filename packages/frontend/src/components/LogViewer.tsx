@@ -257,13 +257,6 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
   const { socket, isConnected } = useSocket();
   const { addToast } = useToast();
 
-  // Load available log dates and tags
-  useEffect(() => {
-    loadLogDates();
-    loadTags();
-    loadSystemLogLevel();
-  }, []);
-
   const loadSystemLogLevel = async () => {
       try {
           const res = await fetch('/api/settings/logLevel');
@@ -305,6 +298,14 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
     }
   };
 
+  // Load available log dates and tags
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async log-dates/tags/level load on mount
+    loadLogDates();
+    loadTags();
+    loadSystemLogLevel();
+  }, []);
+
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     try {
@@ -338,6 +339,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
 
   // Fetch logs when date, filter, or search changes
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async logs fetch on filter change
     fetchLogs();
   }, [fetchLogs]);
 

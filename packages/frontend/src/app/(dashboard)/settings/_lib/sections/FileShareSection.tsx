@@ -67,6 +67,7 @@ export default function FileShareSection() {
   }, [addToast]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async Samba-user load on mount
     void loadUsers();
   }, [loadUsers]);
 
