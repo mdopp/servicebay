@@ -2,10 +2,15 @@
 //
 // Takes the deterministic ImportPlan (from dedup.ts) the operator approved and
 // realises it on the host, via the agent's `safe_exec` path only:
-//   - non-photos  → `rsync` from the (read-only) mount into
-//                    `file-share/data/<category>/…`
-//   - photos      → `immich` CLI upload (server-side checksum dedup); photos do
-//                    NOT land in file-share.
+//   - all files   → `rsync` from the (read-only) mount into
+//                    `file-share/data/<owner>/<category>/…`. Photos are NO
+//                    LONGER CLI-uploaded (#1904 Decision A): they land in
+//                    `data/<owner>/photos` like every other category and Immich
+//                    indexes them via per-user EXTERNAL LIBRARIES over a
+//                    read-only mount (the owning library's scan is triggered
+//                    after the apply, in service.ts). The importer therefore
+//                    performs NO active push for ANY category — uniform
+//                    place-in-folder.
 //   - conflict    → the superseded version is MOVED to
 //                    `file-share/data/_superseded/<date>/<target>` (nothing is
 //                    deleted), then the newer file is copied in.
@@ -22,7 +27,6 @@
 // over an arbitrary path. The source mount is read-only (mounter.ts), so rsync
 // only ever reads from it.
 
-import { CATEGORIES } from './categories';
 import { ImportCatalog, type CatalogEntry } from './catalog';
 import {
   resolveShareTarget,
@@ -31,17 +35,14 @@ import {
 } from './hostExec';
 import type { HashResolver } from './dedup';
 import type {
-  Category,
   ImportPlan,
   ImportPlanItem,
   ImportRecord,
-  ResolvedRule,
 } from './types';
 
 /** How a single planned item was handled in this apply pass. */
 export type ApplyOutcome =
   | 'copied'
-  | 'photo-uploaded'
   | 'superseded'
   | 'skipped-junk'
   | 'skipped-dupe'
@@ -56,8 +57,15 @@ export interface ApplyResultItem {
 
 export interface ApplyResult {
   items: ApplyResultItem[];
-  /** Count of files actually written/uploaded this pass (excludes skips). */
+  /** Count of files actually written this pass (excludes skips). */
   applied: number;
+  /**
+   * Destination-area owner keys that received PHOTO files this pass (#1904):
+   * `shared` for the shared photo area, a box-user id for a private one. The
+   * caller (service.ts) triggers the owning Immich External Library's scan for
+   * each so the new photos get indexed. Empty when no photos were written.
+   */
+  photoOwners: string[];
 }
 
 export interface ApplyOptions {
@@ -74,8 +82,6 @@ export interface ApplyOptions {
   shareGid: number;
   /** Resolves a record's sha256 (for the catalog row). Host hashes the bytes. */
   hashOf: HashResolver;
-  /** Immich apply config; omit to skip the photo pass. */
-  immich?: ImmichConfig;
   /** Don't touch the host — just compute the outcome set. */
   dryRun?: boolean;
   /** Clock for deterministic dates/tests. */
@@ -87,17 +93,6 @@ export interface ApplyOptions {
    */
   onProgress?: (p: { copied: number; bytes: number; done: number; total: number }) => void;
 }
-
-export interface ImmichConfig {
-  /** Immich server URL, e.g. `http://immich-server:2283`. */
-  serverUrl: string;
-  /** API key for the upload. Passed via env to the CLI container, not argv. */
-  apiKey: string;
-  /** CLI image; defaults to the upstream immich-cli. */
-  image?: string;
-}
-
-const DEFAULT_IMMICH_IMAGE = 'ghcr.io/immich-app/immich-cli';
 
 /**
  * How many copied files to group into one batched `mkdir`/`chown` flush (#1898).
@@ -112,74 +107,14 @@ const COPY_BATCH_SIZE = 256;
 
 // --- target-path resolution (issue #1913, parent epic #1901) ---------------
 //
-// Derive a file's TARGET path (relative to `file-share/data/`) from its resolved
-// routing rule (#1912's `effectiveRule`: disposition + mode + owner). Only the
-// target changes here — the apply SOURCE stays the verbatim absolute
-// `record.sourcePath` (#1906), conflict-parking / chown / resume are untouched.
-//
-//   owner 'shared'  → `<category>/…`            (no owner segment)
-//   owner user 'u'  → `<u>/<category>/…`
-//   mode  'merge'   → flatten: every file lands directly in the category folder
-//                     (basename only — sources collapse together, dedup applies)
-//   mode  'parallel'→ preserve the source subtree BELOW the rule's anchor under
-//                     the category folder (structure is load-bearing: code/1:1)
-//
-// `relPath` is the file's path RELATIVE to the imported disk root (the routing
-// tree's coordinate space, e.g. `Backup-2023/src/main.ts`); the caller strips
-// the mountpoint to obtain it — this helper never re-prefixes a mountpoint.
+// `resolveTargetPath` now lives in routing.ts (so the dedup/plan builder can
+// resolve owner-aware targets without a dedup↔plan import cycle). Re-exported
+// here for the apply path + the existing #1913 tests that import it from plan.ts.
+// Only the target changes via the rule — the apply SOURCE stays the verbatim
+// absolute `record.sourcePath` (#1906); conflict-parking / chown / resume are
+// untouched.
 
-/** Normalised relative path: forward slashes, no leading/trailing slash, no `.`/empty segs. */
-function relSegments(relPath: string): string[] {
-  return relPath
-    .replace(/\\/g, '/')
-    .split('/')
-    .filter(s => s !== '' && s !== '.');
-}
-
-/** The category folder name without the trailing slash CATEGORIES stores (e.g. `documents`). */
-function categoryFolder(category: Category): string {
-  return CATEGORIES[category].folder.replace(/\/+$/, '');
-}
-
-/**
- * Resolve the relative target path (under `file-share/data/`) for a file given
- * its resolved routing rule and category. Returns `null` for the `junk` category
- * (nothing is written). Owner prefixes the path (shared omits the segment); the
- * mode decides whether the source subtree below the rule's anchor is preserved
- * (`parallel`) or flattened to the basename (`merge`).
- *
- * @param relPath the file's path RELATIVE to the imported disk root
- * @param category the classified category
- * @param rule the file's `effectiveRule` (#1912: owner + mode + anchor)
- */
-export function resolveTargetPath(
-  relPath: string,
-  category: Category,
-  rule: Pick<ResolvedRule, 'owner' | 'mode' | 'anchor'>,
-): string | null {
-  const folder = categoryFolder(category);
-  if (folder === '') return null; // junk — no destination folder.
-
-  const fileSegs = relSegments(relPath);
-  if (fileSegs.length === 0) return null; // nothing addressable.
-
-  let tailSegs: string[];
-  if (rule.mode === 'parallel') {
-    // Preserve the source subtree BELOW the anchor (the dir that supplied the
-    // rule). Drop the anchor prefix so the kept structure starts at the anchor.
-    const anchorSegs = relSegments(rule.anchor);
-    tailSegs = fileSegs.slice(anchorSegs.length);
-    // A file sitting exactly at the anchor (no deeper subtree) still keeps its
-    // own basename so it isn't dropped.
-    if (tailSegs.length === 0) tailSegs = fileSegs.slice(-1);
-  } else {
-    // merge: flatten — everything lands directly in the category folder.
-    tailSegs = fileSegs.slice(-1);
-  }
-
-  const ownerPrefix = rule.owner === 'shared' ? [] : [rule.owner];
-  return [...ownerPrefix, folder, ...tailSegs].join('/');
-}
+export { resolveTargetPath } from './routing';
 
 /** Map epoch-ms to a stable `YYYY-MM-DD` bucket for the _superseded tree. */
 function dateBucket(ms: number): string {
@@ -199,18 +134,21 @@ function assertShareGid(gid: number): void {
  * can simply be re-run.
  */
 export async function applyPlan(plan: ImportPlan, opts: ApplyOptions): Promise<ApplyResult> {
-  const { exec, catalog, shareGid, hashOf, immich, dryRun = false, now = Date.now, onProgress } = opts;
+  const { exec, catalog, shareGid, hashOf, dryRun = false, now = Date.now, onProgress } = opts;
   assertShareGid(shareGid);
-  const ctx: ItemCtx = { exec, catalog, shareGid, hashOf, immich, dryRun, now };
+  const ctx: ItemCtx = { exec, catalog, shareGid, hashOf, dryRun, now };
 
   const results: ApplyResultItem[] = [];
   // Items that need a host copy (`copied`/`superseded`) are queued and flushed in
   // batches so `mkdir`/`chown` aren't one agent round-trip per file (#1898);
-  // everything else (skips, photos, dry-run, already-cataloged) resolves inline.
-  // The progress cursor is shared across both paths so the live count advances
-  // for every item in plan order.
+  // everything else (skips, dry-run, already-cataloged) resolves inline. The
+  // progress cursor is shared across both paths so the live count advances for
+  // every item in plan order.
   const progress = { applied: 0, bytes: 0, done: 0, total: plan.items.length, onProgress };
   let pending: CopyJob[] = [];
+  // Destination-area owners that received PHOTO files this pass (#1904) — used to
+  // trigger the owning Immich External Library scan after the apply.
+  const photoOwners = new Set<string>();
 
   const flush = async () => {
     if (pending.length === 0) return;
@@ -221,6 +159,9 @@ export async function applyPlan(plan: ImportPlan, opts: ApplyOptions): Promise<A
   for (const item of plan.items) {
     const planned = await classifyItem(item, ctx);
     if (planned.copy) {
+      if (item.category === 'photos' && item.target) {
+        photoOwners.add(ownerOfTarget(item.target));
+      }
       pending.push(planned.copy);
       if (pending.length >= COPY_BATCH_SIZE) await flush();
       continue;
@@ -232,7 +173,20 @@ export async function applyPlan(plan: ImportPlan, opts: ApplyOptions): Promise<A
   }
   await flush();
 
-  return { items: results, applied: progress.applied };
+  return { items: results, applied: progress.applied, photoOwners: [...photoOwners] };
+}
+
+/**
+ * The destination-area owner key encoded in a relative target path (#1904):
+ * `<owner>/<category>/…` → that owner; a path starting with the category folder
+ * (no owner segment) → `shared`. Mirrors `resolveTargetPath`'s owner-prefix.
+ */
+function ownerOfTarget(target: string): string {
+  const segs = target.split('/').filter(s => s !== '');
+  // `photos` is the only category whose first segment can be the category itself
+  // (shared) or an owner id. A shared photo target is `photos/…`; a private one
+  // is `<owner>/photos/…`.
+  return segs[0] === 'photos' ? 'shared' : segs[0] ?? 'shared';
 }
 
 interface ItemCtx {
@@ -240,7 +194,6 @@ interface ItemCtx {
   catalog: ImportCatalog;
   shareGid: number;
   hashOf: HashResolver;
-  immich?: ImmichConfig;
   dryRun: boolean;
   now: () => number;
 }
@@ -266,10 +219,13 @@ interface CopyJob {
 
 /**
  * Decide an item's fate WITHOUT issuing the copy: returns either a terminal
- * outcome (skip/photo/dry-run/already-cataloged) or a {@link CopyJob} to be
- * flushed in a batch. Conflict superseding (`mkdir`+`mv` of the existing file)
- * still happens here, in plan order, BEFORE the newer file is queued — exactly
- * as before.
+ * outcome (skip/dry-run/already-cataloged) or a {@link CopyJob} to be flushed in
+ * a batch. Conflict superseding (`mkdir`+`mv` of the existing file) still happens
+ * here, in plan order, BEFORE the newer file is queued — exactly as before.
+ *
+ * Photos take the SAME copy path as every other category now (#1904 Decision A):
+ * they land in `data/<owner>/photos` and Immich indexes them via an external
+ * library — there is no CLI upload / active push anywhere.
  */
 async function classifyItem(
   item: ImportPlanItem,
@@ -277,13 +233,6 @@ async function classifyItem(
 ): Promise<{ outcome: ApplyOutcome; copy?: undefined } | { outcome?: undefined; copy: CopyJob }> {
   if (item.action === 'skip-junk') return { outcome: 'skipped-junk' };
   if (item.action === 'skip-dupe') return { outcome: 'skipped-dupe' };
-
-  // Photos go to Immich, never into file-share.
-  if (item.category === 'photos') {
-    if (ctx.dryRun) return { outcome: 'dry-run' };
-    await uploadPhoto(item.record, ctx);
-    return { outcome: 'photo-uploaded' };
-  }
 
   const target = item.target;
   if (target === null) return { outcome: 'skipped-junk' };
@@ -384,40 +333,12 @@ async function supersedeExisting(target: string, ctx: ItemCtx): Promise<void> {
   await runOk(ctx.exec, ['mv', current, parked], 'mv to _superseded', { sudo: true });
 }
 
-/** Upload a single photo file to Immich via the CLI container (checksum dedup). */
-async function uploadPhoto(record: ImportRecord, ctx: ItemCtx): Promise<void> {
-  if (!ctx.immich) {
-    throw new Error('disk-import: photo in plan but no immich config provided');
-  }
-  const { serverUrl, apiKey, image = DEFAULT_IMMICH_IMAGE } = ctx.immich;
-  // Already-absolute source path (see classifyItem) — no mountpoint re-prefixing.
-  const src = record.sourcePath;
-  // Mount the source file read-only into the CLI container; pass the API key
-  // via env (-e), never on the argv (so it can't leak into a process listing).
-  await runOk(
-    ctx.exec,
-    [
-      'podman', 'run', '--rm',
-      '-e', `IMMICH_INSTANCE_URL=${serverUrl}`,
-      '-e', `IMMICH_API_KEY=${apiKey}`,
-      '-v', `${src}:/import/${baseOf(src)}:ro`,
-      image, 'upload', '/import',
-    ],
-    'immich upload',
-  );
-}
-
 function catalogEntry(sha: string, target: string, record: ImportRecord, atMs: number): CatalogEntry {
   return { sha256: sha, target, sourcePath: record.sourcePath, size: record.size, importedAtMs: atMs };
 }
 
 function stripLeadingSlash(p: string): string {
   return p.replace(/^\/+/, '');
-}
-
-function baseOf(p: string): string {
-  const i = p.lastIndexOf('/');
-  return i === -1 ? p : p.slice(i + 1);
 }
 
 async function runOk(

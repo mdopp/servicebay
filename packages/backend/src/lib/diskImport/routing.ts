@@ -12,8 +12,10 @@
 // #1913, the taxonomy/movies split is #1914, the review UI is #1915 — this unit
 // models the data + resolution only.
 
+import { CATEGORIES } from './categories';
 import type {
   BoxUserId,
+  Category,
   Disposition,
   Owner,
   ResolvedRule,
@@ -171,4 +173,167 @@ export function autoAssignOwners(
  */
 export function destinationArea(owner: Owner): string {
   return owner === 'shared' ? 'shared' : owner;
+}
+
+// --- target-path resolution (issue #1913) ----------------------------------
+//
+// Derive a file's TARGET path (relative to `file-share/data/`) from its resolved
+// routing rule (disposition + mode + owner). Lives here (not plan.ts) so the
+// dedup/plan builder can resolve owner-aware targets WITHOUT a dedup↔plan import
+// cycle; plan.ts re-exports it for the apply path.
+//
+//   owner 'shared'  → `<category>/…`            (no owner segment)
+//   owner user 'u'  → `<u>/<category>/…`
+//   mode  'merge'   → flatten to the category folder (basename only)
+//   mode  'parallel'→ preserve the source subtree BELOW the rule's anchor
+
+/** Normalised relative path: forward slashes, no leading/trailing slash, no `.`/empty segs. */
+function relSegments(relPath: string): string[] {
+  return relPath
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(s => s !== '' && s !== '.');
+}
+
+/** The category folder name without the trailing slash CATEGORIES stores (e.g. `documents`). */
+function categoryFolder(category: Category): string {
+  return CATEGORIES[category].folder.replace(/\/+$/, '');
+}
+
+/**
+ * Resolve the relative target path (under `file-share/data/`) for a file given
+ * its resolved routing rule and category. Returns `null` for the `junk` category
+ * (nothing is written). Owner prefixes the path (shared omits the segment); the
+ * mode decides whether the source subtree below the rule's anchor is preserved
+ * (`parallel`) or flattened to the basename (`merge`).
+ *
+ * @param relPath the file's path RELATIVE to the imported disk root
+ * @param category the classified category
+ * @param rule the file's `effectiveRule` (owner + mode + anchor)
+ */
+export function resolveTargetPath(
+  relPath: string,
+  category: Category,
+  rule: Pick<ResolvedRule, 'owner' | 'mode' | 'anchor'>,
+): string | null {
+  const folder = categoryFolder(category);
+  if (folder === '') return null; // junk — no destination folder.
+
+  const fileSegs = relSegments(relPath);
+  if (fileSegs.length === 0) return null; // nothing addressable.
+
+  let tailSegs: string[];
+  if (rule.mode === 'parallel') {
+    // Preserve the source subtree BELOW the anchor (the dir that supplied the
+    // rule). Drop the anchor prefix so the kept structure starts at the anchor.
+    const anchorSegs = relSegments(rule.anchor);
+    tailSegs = fileSegs.slice(anchorSegs.length);
+    // A file sitting exactly at the anchor (no deeper subtree) still keeps its
+    // own basename so it isn't dropped.
+    if (tailSegs.length === 0) tailSegs = fileSegs.slice(-1);
+  } else {
+    // merge: flatten — everything lands directly in the category folder.
+    tailSegs = fileSegs.slice(-1);
+  }
+
+  const ownerPrefix = rule.owner === 'shared' ? [] : [rule.owner];
+  return [...ownerPrefix, folder, ...tailSegs].join('/');
+}
+
+// --- relative-dir helpers ---------------------------------------------------
+
+/** The directory of a relative file path (`''` for a top-level file). */
+export function dirOfRel(relPath: string): string {
+  const trimmed = relPath.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  const slash = trimmed.lastIndexOf('/');
+  return slash === -1 ? '' : trimmed.slice(0, slash);
+}
+
+// --- review tree (issue #1915) ---------------------------------------------
+//
+// The review UI needs a per-FOLDER picture of the source disk: every directory
+// that holds files, its file/byte tally, the categories its files classify to,
+// and the directory's resolved rule (so the card can show inherited-vs-explicit
+// dispositions + owners and the `data/<owner>/<category>/…` target preview).
+// This is derived purely from the (relative) source dirs + the explicit rule
+// map — no I/O. The classify pass already ran in `buildPlan`; the caller passes
+// each file's resolved relative dir + category so this helper just tallies.
+
+/** One file's already-resolved coordinates for the tree tally. */
+export interface TreeFileInput {
+  /** Directory of the file, RELATIVE to the disk root (`''` = root). */
+  dir: string;
+  /** The category the engine classified the file into. */
+  category: Category;
+  /** File size in bytes. */
+  size: number;
+}
+
+/** A directory node in the review tree. */
+export interface FolderNode {
+  /** Relative dir path (`''` = the disk root). */
+  dir: string;
+  /** Number of files directly in this dir (not counting subdirs). */
+  files: number;
+  /** Summed bytes of files directly in this dir. */
+  bytes: number;
+  /** Categories the dir's own files classify to (sorted, deduped). */
+  categories: Category[];
+  /** This dir's explicit rule (the axes the user set on THIS node), if any. */
+  explicit: Rule;
+  /** The fully-resolved effective rule (inherited where not explicit). */
+  resolved: ResolvedRule;
+}
+
+/**
+ * Build the per-folder review tree: one {@link FolderNode} per directory that
+ * holds files (plus every ancestor on the path, so the tree is connected to the
+ * root). Each node carries its file/byte tally, the categories its files map to,
+ * its explicit rule, and its resolved effective rule. Sorted by dir for a stable
+ * render. The root (`''`) is always present.
+ *
+ * @param files each file's relative dir + classified category + size
+ * @param explicit the explicit rule map (auto-assigned + user edits)
+ * @param rootDefault the root default (e.g. the disk-default owner)
+ */
+export function buildFolderTree(
+  files: readonly TreeFileInput[],
+  explicit: ReadonlyMap<string, Rule>,
+  rootDefault: Partial<Rule> = {},
+): FolderNode[] {
+  const tally = new Map<string, { files: number; bytes: number; cats: Set<Category> }>();
+  const dirs = new Set<string>(['']);
+
+  const touch = (dir: string) => {
+    if (!tally.has(dir)) tally.set(dir, { files: 0, bytes: 0, cats: new Set() });
+    return tally.get(dir)!;
+  };
+
+  for (const f of files) {
+    const t = touch(f.dir);
+    t.files += 1;
+    t.bytes += f.size;
+    t.cats.add(f.category);
+    // Register the dir and every ancestor so the tree stays connected.
+    let cursor: string | null = f.dir;
+    while (cursor !== null) {
+      dirs.add(cursor);
+      touch(cursor);
+      cursor = parentDir(cursor);
+    }
+  }
+
+  return [...dirs]
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(dir => {
+      const t = tally.get(dir)!;
+      return {
+        dir,
+        files: t.files,
+        bytes: t.bytes,
+        categories: [...t.cats].sort((a, b) => (a < b ? -1 : 1)),
+        explicit: explicit.get(dir) ?? {},
+        resolved: effectiveRule(dir, explicit, rootDefault),
+      };
+    });
 }

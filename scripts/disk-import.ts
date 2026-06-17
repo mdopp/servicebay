@@ -32,7 +32,7 @@ import { buildInventory, type ScannedFile } from '../packages/backend/src/lib/di
 import { buildPlan, type HashResolver } from '../packages/backend/src/lib/diskImport/dedup.js';
 import { classifyRecord } from '../packages/backend/src/lib/diskImport/classify.js';
 import { ImportCatalog } from '../packages/backend/src/lib/diskImport/catalog.js';
-import { applyPlan, type ApplyResult, type ImmichConfig } from '../packages/backend/src/lib/diskImport/plan.js';
+import { applyPlan, type ApplyResult } from '../packages/backend/src/lib/diskImport/plan.js';
 import type { SafeExec } from '../packages/backend/src/lib/diskImport/hostExec.js';
 import type { Category, ImportPlan, ImportRecord } from '../packages/backend/src/lib/diskImport/types.js';
 
@@ -255,13 +255,6 @@ export interface DiskImportIO {
    * asserted to happen only after confirmation, never in dry-run.
    */
   makeExec: (opts: DiskImportOptions) => SafeExec;
-  /**
-   * Immich config for the photo upload pass. Optional — this CLI doesn't wire
-   * Immich credentials yet (that's the UI card, #1697), so when it's absent the
-   * apply skips photos (with a warning) rather than failing. Returns `undefined`
-   * to skip photos.
-   */
-  immich?: ImmichConfig;
 }
 
 /**
@@ -330,28 +323,19 @@ async function applyApprovedPlan(
   io: DiskImportIO,
   catalog: ImportCatalog,
 ): Promise<ApplyResult> {
-  // Photos go to Immich, which this CLI doesn't yet wire credentials for. With
-  // no immich config, drop photo items (with a warning) rather than letting
-  // applyPlan throw on the first photo.
-  let toApply = plan;
-  if (!io.immich) {
-    const photoCount = plan.items.filter(i => i.category === 'photos').length;
-    if (photoCount > 0) {
-      io.log(`Note: ${photoCount} photo(s) skipped — Immich upload isn't wired in the CLI yet (use the UI card, #1697).`);
-      toApply = { items: plan.items.filter(i => i.category !== 'photos'), conflicts: plan.conflicts };
-    }
-  }
-
+  // Photos are now place-in-folder like every other category — they copy to
+  // `data/<owner>/photos` and Immich indexes them via per-user External
+  // Libraries over a read-only mount (#1904). The importer pushes nothing, so
+  // there's no per-photo upload pass and no Immich credentials to wire here.
   const exec = io.makeExec(opts);
   io.log('Applying …');
   try {
-    const result = await applyPlan(toApply, {
+    const result = await applyPlan(plan, {
       exec,
       mountpoint: opts.mount,
       catalog,
       shareGid: opts.shareGid,
       hashOf: io.hashOf,
-      immich: io.immich,
     });
     io.log(`Applied ${result.applied} file(s); ${result.items.length - result.applied} skipped.`);
     return result;

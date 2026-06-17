@@ -201,8 +201,9 @@ describe('applyImportPlan — the review gate', () => {
     const { exec } = mockExec({ find: ok(FIND_OUT) });
     const scan = await scanDevice({ exec, device: '/dev/sda1', catalogPath: ':memory:' });
 
-    // No immich config wired → photos throw on apply; use a residue-only disk to
-    // prove the copy path runs. Re-scan a docs-only listing.
+    // A docs-only disk keeps this test focused on the plain copy path (photos
+    // now copy too, #1904 — their library-scan trigger is covered separately).
+    // Re-scan a docs-only listing.
     await __clearSessions();
     const docOut = '/mnt/docs/report.pdf\t10\t1700000000\0';
     const { exec: exec2, calls: calls2 } = mockExec({

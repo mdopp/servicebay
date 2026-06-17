@@ -26,7 +26,7 @@ import path from 'path';
 
 import { DATA_DIR } from '@/lib/dirs';
 
-import type { ImportPlan } from './types';
+import type { ImportPlan, Rule } from './types';
 
 const SESSIONS_DIR = path.join(DATA_DIR, 'disk-import-sessions');
 
@@ -104,6 +104,18 @@ export interface ScanSession {
    *  by `sessionHashes`. Absent while `scanning`. */
   hashes?: Record<string, string>;
   catalogPath: string;
+  /**
+   * The scan mountpoint (#1915). Stable per device (derived from the device
+   * name), persisted so the apply re-plan can strip it to recover each record's
+   * routing-tree-relative path. Absent while `scanning`.
+   */
+  mountpoint?: string;
+  /** Box users that drive the review Owner picker (#1915). Absent while scanning. */
+  boxUsers?: string[];
+  /** The auto-assigned explicit rule map (exact-match owners) the scan seeded
+   *  (#1915), keyed by relative dir. Lets a re-attaching card rebuild the tree
+   *  with the same pre-assignments. Absent while scanning. */
+  autoRules?: Record<string, Rule>;
   phase: SessionPhase;
   /** Live progress for the in-flight (or last) pass (#1897). */
   progress: SessionProgress;
@@ -271,11 +283,20 @@ export async function setProgress(
  *  `reviewed` so the apply gate accepts it. */
 export async function finalizeScan(
   id: string,
-  input: { plan: ImportPlan; hashes: Map<string, string> },
+  input: {
+    plan: ImportPlan;
+    hashes: Map<string, string>;
+    mountpoint?: string;
+    boxUsers?: string[];
+    autoRules?: Record<string, Rule>;
+  },
 ): Promise<ScanSession | null> {
   return updateSession(id, {
     plan: input.plan,
     hashes: Object.fromEntries(input.hashes),
+    mountpoint: input.mountpoint,
+    boxUsers: input.boxUsers,
+    autoRules: input.autoRules,
     phase: 'reviewed',
     progress: {
       step: 'done',

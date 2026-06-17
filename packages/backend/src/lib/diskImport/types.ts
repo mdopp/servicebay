@@ -3,9 +3,15 @@
 // Pure data shapes for the deterministic core of the disk-import feature
 // (issue #1693). No I/O lives here.
 
-/** A canonical category a file can be sorted into. `junk` means "skip". */
+/**
+ * A canonical category a file can be sorted into. `junk` means "skip".
+ * `movies` and `photos` both hold video by extension; which one a given
+ * video subtree lands in is decided by the image-vs-video heuristic /
+ * an explicit disposition (#1914), not by the extension map alone.
+ */
 export type Category =
   | 'photos'
+  | 'movies'
   | 'music'
   | 'audiobooks'
   | 'podcasts'

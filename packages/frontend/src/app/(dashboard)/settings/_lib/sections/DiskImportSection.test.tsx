@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import DiskImportSection, { DiskImportReview, JobProgressView, type ScanReview } from './DiskImportSection';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import DiskImportSection, {
+  DiskImportReview,
+  DiskImportTree,
+  JobProgressView,
+  type ScanReview,
+} from './DiskImportSection';
+import type { FolderNode, Rule } from '../routingTree';
 import { ToastProvider } from '@/providers/ToastProvider';
 
 const review: ScanReview = {
@@ -23,9 +29,55 @@ const review: ScanReview = {
   ],
 };
 
+/** A review-tree fixture: root + an exact-match auto-assigned `mdopp/` owner. */
+const treeNodes: FolderNode[] = [
+  {
+    dir: '',
+    files: 0,
+    bytes: 0,
+    categories: [],
+    explicit: {},
+    resolved: { disposition: 'auto', mode: 'merge', owner: 'shared', anchor: '' },
+  },
+  {
+    dir: 'mdopp',
+    files: 2,
+    bytes: 3000,
+    categories: ['photos'],
+    explicit: { owner: 'mdopp' }, // exact-match auto-assigned
+    resolved: { disposition: 'auto', mode: 'merge', owner: 'mdopp', anchor: '' },
+  },
+  {
+    dir: 'mdopp/Filme',
+    files: 1,
+    bytes: 3000,
+    categories: ['movies'],
+    explicit: {},
+    resolved: { disposition: 'auto', mode: 'merge', owner: 'mdopp', anchor: '' },
+  },
+];
+
+const treeReview: ScanReview = {
+  ...review,
+  tree: treeNodes,
+  boxUsers: ['mdopp', 'cdopp'],
+  defaultOwner: 'shared',
+};
+
+const noop = () => {};
+const reviewProps = {
+  rules: {} as Record<string, Rule>,
+  defaultOwner: 'shared',
+  onRuleChange: noop,
+  onDefaultOwnerChange: noop,
+  onConfirm: noop,
+  onCancel: noop,
+  busy: false,
+};
+
 describe('DiskImportReview (presentational)', () => {
   it('renders per-category sizing and the non-blocking actions[]', () => {
-    render(<DiskImportReview review={review} onConfirm={() => {}} onCancel={() => {}} busy={false} />);
+    render(<DiskImportReview {...reviewProps} review={review} />);
 
     // Per-category rows.
     expect(screen.getByText('photos')).toBeDefined();
@@ -39,23 +91,81 @@ describe('DiskImportReview (presentational)', () => {
 
   it('fires onConfirm only on the explicit Confirm & import click (review gate)', () => {
     const onConfirm = vi.fn();
-    render(<DiskImportReview review={review} onConfirm={onConfirm} onCancel={() => {}} busy={false} />);
+    render(<DiskImportReview {...reviewProps} review={review} onConfirm={onConfirm} />);
     expect(onConfirm).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText(/Confirm & import/i));
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
   it('renders even with zero actions (nothing ambiguous → no action wall)', () => {
-    render(
-      <DiskImportReview
-        review={{ ...review, actions: [] }}
-        onConfirm={() => {}}
-        onCancel={() => {}}
-        busy={false}
-      />,
-    );
+    render(<DiskImportReview {...reviewProps} review={{ ...review, actions: [] }} />);
     expect(screen.queryByTestId('disk-import-actions')).toBeNull();
     expect(screen.getByText(/Confirm & import/i)).toBeDefined();
+  });
+
+  it('shows the per-folder tree + disk-default-owner picker when a tree is present', () => {
+    // The section seeds the edit map from the tree's explicit rules (the
+    // exact-match auto-assigned `mdopp` owner); pass that seed here.
+    render(<DiskImportReview {...reviewProps} review={treeReview} rules={{ mdopp: { owner: 'mdopp' } }} />);
+    expect(screen.getByTestId('disk-import-tree')).toBeDefined();
+    expect(screen.getByLabelText('Disk default owner')).toBeDefined();
+    // The exact-match auto-assigned owner (`mdopp/`) renders pre-selected.
+    const node = screen.getByTestId('tree-node-mdopp');
+    const ownerSelect = within(node).getByLabelText('Owner') as HTMLSelectElement;
+    expect(ownerSelect.value).toBe('mdopp');
+  });
+
+  it('omits the tree for a pre-#1915 payload with no tree', () => {
+    render(<DiskImportReview {...reviewProps} review={review} />);
+    expect(screen.queryByTestId('disk-import-tree')).toBeNull();
+  });
+});
+
+describe('DiskImportTree (per-folder routing)', () => {
+  it('distinguishes inherited from explicit and previews the resolved target', () => {
+    render(
+      <DiskImportTree
+        nodes={treeNodes}
+        rules={{ mdopp: { owner: 'mdopp' } }}
+        defaultOwner="shared"
+        boxUsers={['mdopp', 'cdopp']}
+        onChange={() => {}}
+      />,
+    );
+    // Explicit owner on `mdopp/` is NOT inherited → solid (no italic class).
+    const mdopp = screen.getByTestId('tree-node-mdopp');
+    const explicitOwner = within(mdopp).getByLabelText('Owner') as HTMLSelectElement;
+    expect(explicitOwner.value).toBe('mdopp');
+    expect(explicitOwner.className).not.toContain('italic');
+
+    // The child `mdopp/Filme` inherits the owner from `mdopp/` → italic + the
+    // resolved target preview reflects the inherited owner (`data/mdopp/…`).
+    const child = screen.getByTestId('tree-node-mdopp/Filme');
+    const childOwner = within(child).getByLabelText('Owner') as HTMLSelectElement;
+    expect(childOwner.className).toContain('italic');
+    expect(childOwner.value).toBe('__inherit__');
+    expect(screen.getByTestId('tree-target-mdopp/Filme').textContent).toContain('data/mdopp/');
+  });
+
+  it('edits flow through onChange (owner override) and clearing reverts to inherit', () => {
+    const onChange = vi.fn();
+    render(
+      <DiskImportTree
+        nodes={treeNodes}
+        rules={{}}
+        defaultOwner="shared"
+        boxUsers={['mdopp', 'cdopp']}
+        onChange={onChange}
+      />,
+    );
+    const child = screen.getByTestId('tree-node-mdopp/Filme');
+    const disp = within(child).getByLabelText('Disposition');
+    // Pick "Movies → Jellyfin" on the child → an explicit disposition edit.
+    fireEvent.change(disp, { target: { value: 'movies_jellyfin' } });
+    expect(onChange).toHaveBeenCalledWith('mdopp/Filme', 'disposition', 'movies_jellyfin');
+    // Re-pick "Inherited" → clears the axis (value === undefined).
+    fireEvent.change(disp, { target: { value: '__inherit__' } });
+    expect(onChange).toHaveBeenCalledWith('mdopp/Filme', 'disposition', undefined);
   });
 });
 
@@ -166,6 +276,34 @@ describe('DiskImportSection (async flow)', () => {
     expect(applyCall).toBeDefined();
     const sent = JSON.parse((applyCall![1] as RequestInit).body as string);
     expect(sent).toEqual({ sessionId: 'sess-1', confirmed: true });
+  });
+
+  it('a review-tree owner edit flows through to the apply body (rules + defaultOwner)', async () => {
+    vi.stubGlobal('fetch', mockAsyncFetch({
+      statuses: [
+        { ok: true, sessionId: 'sess-1', device: '/dev/sda1', phase: 'reviewed', progress: { step: 'done', scanned: 3, hashed: 3, copied: 0, bytes: 0, total: 3 }, review: treeReview },
+        { ok: true, sessionId: 'sess-1', device: '/dev/sda1', phase: 'applied', progress: { step: 'done', scanned: 0, hashed: 0, copied: 3, bytes: 6000, total: 3 }, applied: 3 },
+      ],
+    }));
+    renderSection();
+
+    fireEvent.click(await screen.findByText('Scan disk'));
+    await waitFor(() => expect(screen.getByTestId('disk-import-tree')).toBeDefined());
+
+    // Override the child folder's owner from the picker, then confirm.
+    const child = screen.getByTestId('tree-node-mdopp/Filme');
+    fireEvent.change(within(child).getByLabelText('Owner'), { target: { value: 'cdopp' } });
+    fireEvent.click(screen.getByText(/Confirm & import/i));
+    await waitFor(() => expect(screen.getByText(/Imported 3 file/i)).toBeDefined());
+
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const applyCall = fetchMock.mock.calls.find(c => String(c[0]).includes('disk-import/apply'));
+    const sent = JSON.parse((applyCall![1] as RequestInit).body as string);
+    expect(sent.sessionId).toBe('sess-1');
+    expect(sent.confirmed).toBe(true);
+    // Seeded auto-assign (mdopp owner) + the new child override both ride along.
+    expect(sent.rules).toMatchObject({ mdopp: { owner: 'mdopp' }, 'mdopp/Filme': { owner: 'cdopp' } });
+    expect(sent.defaultOwner).toBe('shared');
   });
 
   it('re-attaches to a finished scan job left in localStorage after a reload', async () => {
