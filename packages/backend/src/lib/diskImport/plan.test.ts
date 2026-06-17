@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { applyPlan } from './plan';
+import { applyPlan, resolveTargetPath } from './plan';
 import { ImportCatalog } from './catalog';
 import { resolveShareTarget, resolveSupersededPath, type SafeExec, type SafeExecResult } from './hostExec';
 import type { HashResolver } from './dedup';
@@ -52,6 +52,89 @@ const hashConst = (h: string): HashResolver => () => h;
 function baseOpts(exec: SafeExec, catalog: ImportCatalog, hashOf: HashResolver) {
   return { exec, mountpoint: MOUNT, catalog, shareGid: GID, hashOf, now: () => FIXED_NOW };
 }
+
+describe('resolveTargetPath — owner prefix + merge/parallel (#1913)', () => {
+  describe('owner prefix', () => {
+    it('shared owner omits the owner segment', () => {
+      expect(
+        resolveTargetPath('Musik/song.mp3', 'music', { owner: 'shared', mode: 'merge', anchor: '' }),
+      ).toBe('music/song.mp3');
+    });
+
+    it('a user owner prefixes data/<owner>/<category>/…', () => {
+      expect(
+        resolveTargetPath('Musik/song.mp3', 'music', { owner: 'cdopp', mode: 'merge', anchor: '' }),
+      ).toBe('cdopp/music/song.mp3');
+    });
+
+    it('the same file under different owners lands in different areas', () => {
+      const rel = 'inbox/report.pdf';
+      expect(resolveTargetPath(rel, 'documents', { owner: 'shared', mode: 'merge', anchor: '' })).toBe(
+        'documents/report.pdf',
+      );
+      expect(resolveTargetPath(rel, 'documents', { owner: 'mdopp', mode: 'merge', anchor: '' })).toBe(
+        'mdopp/documents/report.pdf',
+      );
+    });
+  });
+
+  describe('mode: merge flattens into the category folder', () => {
+    it('drops the source subtree, keeping only the basename', () => {
+      expect(
+        resolveTargetPath('Docs/2023/Q1/report.pdf', 'documents', { owner: 'shared', mode: 'merge', anchor: 'Docs' }),
+      ).toBe('documents/report.pdf');
+    });
+
+    it('flattens identically regardless of how deep the source nests', () => {
+      expect(
+        resolveTargetPath('a/b/c/d/track.flac', 'music', { owner: 'cdopp', mode: 'merge', anchor: 'a' }),
+      ).toBe('cdopp/music/track.flac');
+    });
+  });
+
+  describe('mode: parallel preserves the source subtree below the anchor', () => {
+    it('keeps the structure under the category folder (shared)', () => {
+      expect(
+        resolveTargetPath('Code/proj/src/main.ts', 'documents', { owner: 'shared', mode: 'parallel', anchor: 'Code' }),
+      ).toBe('documents/proj/src/main.ts');
+    });
+
+    it('keeps the structure under data/<owner>/<category>/… (user owner)', () => {
+      expect(
+        resolveTargetPath('Code/proj/src/main.ts', 'documents', { owner: 'mdopp', mode: 'parallel', anchor: 'Code' }),
+      ).toBe('mdopp/documents/proj/src/main.ts');
+    });
+
+    it('a file sitting exactly at the anchor keeps its basename (not dropped)', () => {
+      expect(
+        resolveTargetPath('Archive/readme.txt', 'documents', { owner: 'shared', mode: 'parallel', anchor: 'Archive/readme.txt' }),
+      ).toBe('documents/readme.txt');
+    });
+
+    it('a root anchor preserves the whole relative path', () => {
+      expect(
+        resolveTargetPath('top/inner/file.bin', 'documents', { owner: 'shared', mode: 'parallel', anchor: '' }),
+      ).toBe('documents/top/inner/file.bin');
+    });
+  });
+
+  describe('junk + edge cases', () => {
+    it('junk has no destination folder → null', () => {
+      expect(resolveTargetPath('x/thumbs.db', 'junk', { owner: 'shared', mode: 'merge', anchor: '' })).toBeNull();
+    });
+
+    it('an empty / dot-only relative path → null', () => {
+      expect(resolveTargetPath('', 'music', { owner: 'shared', mode: 'merge', anchor: '' })).toBeNull();
+      expect(resolveTargetPath('./.', 'music', { owner: 'cdopp', mode: 'parallel', anchor: '' })).toBeNull();
+    });
+
+    it('normalises backslash separators and strips empty segments', () => {
+      expect(
+        resolveTargetPath('Code\\proj\\\\main.ts', 'documents', { owner: 'shared', mode: 'parallel', anchor: 'Code' }),
+      ).toBe('documents/proj/main.ts');
+    });
+  });
+});
 
 describe('applyPlan — copy + chown', () => {
   it('rsyncs from the read-only mount into file-share/data and chowns to the share gid only', async () => {
