@@ -92,6 +92,17 @@ export interface ImmichConfig {
 
 const DEFAULT_IMMICH_IMAGE = 'ghcr.io/immich-app/immich-cli';
 
+/**
+ * How many copied files to group into one batched `mkdir`/`chown` flush (#1898).
+ * The apply pass used to issue THREE sudo agent round-trips per copied file
+ * (`mkdir -p`, `rsync`, `chown`); now the dir-creation and ownership are batched
+ * across a chunk (`mkdir -p <dirs…>`, `chown :gid <files…>`) so a big disk no
+ * longer costs one mkdir + one chown round-trip per file. rsync stays per-file
+ * (one byte-copy invocation each) so the catalog row — the resume marker — is
+ * only written once a file is fully copied AND chowned.
+ */
+const COPY_BATCH_SIZE = 256;
+
 /** Map epoch-ms to a stable `YYYY-MM-DD` bucket for the _superseded tree. */
 function dateBucket(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
@@ -112,26 +123,38 @@ function assertShareGid(gid: number): void {
 export async function applyPlan(plan: ImportPlan, opts: ApplyOptions): Promise<ApplyResult> {
   const { exec, mountpoint, catalog, shareGid, hashOf, immich, dryRun = false, now = Date.now, onProgress } = opts;
   assertShareGid(shareGid);
+  const ctx: ItemCtx = { exec, mountpoint, catalog, shareGid, hashOf, immich, dryRun, now };
 
   const results: ApplyResultItem[] = [];
-  let applied = 0;
-  let bytes = 0;
-  let done = 0;
+  // Items that need a host copy (`copied`/`superseded`) are queued and flushed in
+  // batches so `mkdir`/`chown` aren't one agent round-trip per file (#1898);
+  // everything else (skips, photos, dry-run, already-cataloged) resolves inline.
+  // The progress cursor is shared across both paths so the live count advances
+  // for every item in plan order.
+  const progress = { applied: 0, bytes: 0, done: 0, total: plan.items.length, onProgress };
+  let pending: CopyJob[] = [];
+
+  const flush = async () => {
+    if (pending.length === 0) return;
+    await copyBatch(pending, ctx, progress, results);
+    pending = [];
+  };
 
   for (const item of plan.items) {
-    const outcome = await applyItem(item, {
-      exec, mountpoint, catalog, shareGid, hashOf, immich, dryRun, now,
-    });
-    results.push({ sourcePath: item.record.sourcePath, target: item.target, outcome });
-    if (outcome === 'copied' || outcome === 'photo-uploaded' || outcome === 'superseded') {
-      applied += 1;
-      bytes += item.record.size;
+    const planned = await classifyItem(item, ctx);
+    if (planned.copy) {
+      pending.push(planned.copy);
+      if (pending.length >= COPY_BATCH_SIZE) await flush();
+      continue;
     }
-    done += 1;
-    onProgress?.({ copied: applied, bytes, done, total: plan.items.length });
+    // Non-copy outcome: record it and advance the cursor inline.
+    results.push({ sourcePath: item.record.sourcePath, target: item.target, outcome: planned.outcome });
+    progress.done += 1;
+    progress.onProgress?.({ copied: progress.applied, bytes: progress.bytes, done: progress.done, total: progress.total });
   }
+  await flush();
 
-  return { items: results, applied };
+  return { items: results, applied: progress.applied };
 }
 
 interface ItemCtx {
@@ -145,57 +168,124 @@ interface ItemCtx {
   now: () => number;
 }
 
-async function applyItem(item: ImportPlanItem, ctx: ItemCtx): Promise<ApplyOutcome> {
-  if (item.action === 'skip-junk') return 'skipped-junk';
-  if (item.action === 'skip-dupe') return 'skipped-dupe';
+/** Shared progress cursor threaded through the inline + batched apply paths. */
+interface ProgressCursor {
+  applied: number;
+  bytes: number;
+  done: number;
+  total: number;
+  onProgress?: ApplyOptions['onProgress'];
+}
+
+/** A queued file copy (resolved + validated) awaiting the batched flush. */
+interface CopyJob {
+  item: ImportPlanItem;
+  target: string;
+  sha: string;
+  src: string;
+  dest: string;
+  outcome: 'copied' | 'superseded';
+}
+
+/**
+ * Decide an item's fate WITHOUT issuing the copy: returns either a terminal
+ * outcome (skip/photo/dry-run/already-cataloged) or a {@link CopyJob} to be
+ * flushed in a batch. Conflict superseding (`mkdir`+`mv` of the existing file)
+ * still happens here, in plan order, BEFORE the newer file is queued — exactly
+ * as before.
+ */
+async function classifyItem(
+  item: ImportPlanItem,
+  ctx: ItemCtx,
+): Promise<{ outcome: ApplyOutcome; copy?: undefined } | { outcome?: undefined; copy: CopyJob }> {
+  if (item.action === 'skip-junk') return { outcome: 'skipped-junk' };
+  if (item.action === 'skip-dupe') return { outcome: 'skipped-dupe' };
 
   // Photos go to Immich, never into file-share.
   if (item.category === 'photos') {
-    if (ctx.dryRun) return 'dry-run';
+    if (ctx.dryRun) return { outcome: 'dry-run' };
     await uploadPhoto(item.record, ctx);
-    return 'photo-uploaded';
+    return { outcome: 'photo-uploaded' };
   }
 
   const target = item.target;
-  if (target === null) return 'skipped-junk';
+  if (target === null) return { outcome: 'skipped-junk' };
 
   const sha = ctx.hashOf(item.record);
 
   // RESUMABILITY: this exact content already at this exact target → done.
-  if (ctx.catalog.has(sha, target)) return 'skipped-cataloged';
+  if (ctx.catalog.has(sha, target)) return { outcome: 'skipped-cataloged' };
 
-  if (ctx.dryRun) return 'dry-run';
+  if (ctx.dryRun) return { outcome: 'dry-run' };
 
   // Validate the destination stays under file-share/data/ BEFORE any host I/O.
   const dest = resolveShareTarget(target);
   const src = `${ctx.mountpoint}/${stripLeadingSlash(item.record.sourcePath)}`;
 
-  let outcome: ApplyOutcome = 'copied';
+  let outcome: 'copied' | 'superseded' = 'copied';
   if (item.action === 'conflict') {
     await supersedeExisting(target, ctx);
     outcome = 'superseded';
   }
 
-  await copyAndOwn(src, dest, ctx);
-  ctx.catalog.upsert(catalogEntry(sha, target, item.record, ctx.now()));
-  return outcome;
+  return { copy: { item, target, sha, src, dest, outcome } };
 }
 
-/** rsync the source file into its destination, then chown to the share gid. */
-async function copyAndOwn(src: string, dest: string, ctx: ItemCtx): Promise<void> {
-  const destDir = dest.slice(0, dest.lastIndexOf('/'));
-  // Privileged (#1713): the file-share data tree under /mnt/data is owned by
-  // container subuids, not `core`, so creating dirs, rsync-copying in, and
-  // chowning all need root. The destination path is validated to stay under
-  // file-share/data/ by resolveShareTarget BEFORE this runs — privilege does
-  // not relax that guard.
-  await runOk(ctx.exec, ['mkdir', '-p', destDir], 'mkdir dest dir', { sudo: true });
-  // `-a` preserves metadata; the source mount is read-only so this only reads
-  // from it. Explicit src/dest argv — no globbing, no `--delete`.
-  await runOk(ctx.exec, ['rsync', '-a', src, dest], 'rsync', { sudo: true });
-  // chown to the share GID ONLY (`:<gid>` leaves the uid untouched). Single
-  // file target — never recursive, never an arbitrary path.
-  await runOk(ctx.exec, ['chown', `:${ctx.shareGid}`, dest], 'chown', { sudo: true });
+/**
+ * Flush a batch of queued copies: one `mkdir -p <dirs…>` for the union of
+ * destination dirs, one `rsync` per file (the byte copy — kept per-file so the
+ * resume marker tracks exactly which files landed), then one `chown :gid
+ * <files…>` + catalog over the files that successfully copied. A file is
+ * cataloged ONLY after it is copied AND chowned, so an interrupted run re-copies
+ * AND re-chowns anything not yet cataloged — resume semantics are unchanged. If
+ * an rsync mid-batch fails, we still chown + catalog the files copied so far
+ * before propagating, so a resumed run skips them (no re-copy). Each file
+ * advances the shared progress cursor as it's copied.
+ */
+async function copyBatch(
+  jobs: CopyJob[],
+  ctx: ItemCtx,
+  progress: ProgressCursor,
+  results: ApplyResultItem[],
+): Promise<void> {
+  // Pre-create every destination directory in one privileged call (#1713 guards
+  // still hold — every dest was resolved under file-share/data/).
+  const dirs = [...new Set(jobs.map(j => j.dest.slice(0, j.dest.lastIndexOf('/'))))];
+  await runOk(ctx.exec, ['mkdir', '-p', ...dirs], 'mkdir dest dirs', { sudo: true });
+
+  // rsync each file (per-file byte copy, no globbing / --delete), advancing the
+  // progress cursor as we go so the live count still ticks within the batch.
+  // Track the files that actually landed so a mid-batch failure still chowns +
+  // catalogs them (resume parity with the old per-file path).
+  const copied: CopyJob[] = [];
+  try {
+    for (const job of jobs) {
+      await runOk(ctx.exec, ['rsync', '-a', job.src, job.dest], 'rsync', { sudo: true });
+      copied.push(job);
+      results.push({ sourcePath: job.item.record.sourcePath, target: job.target, outcome: job.outcome });
+      progress.applied += 1;
+      progress.bytes += job.item.record.size;
+      progress.done += 1;
+      progress.onProgress?.({ copied: progress.applied, bytes: progress.bytes, done: progress.done, total: progress.total });
+    }
+  } finally {
+    await finalizeCopied(copied, ctx);
+  }
+}
+
+/**
+ * chown (group-only) + catalog the files that successfully rsync'd this batch.
+ * Runs even when a mid-batch rsync threw, so every fully-copied file is marked
+ * done before the error propagates (resume skips it next pass).
+ */
+async function finalizeCopied(copied: CopyJob[], ctx: ItemCtx): Promise<void> {
+  if (copied.length === 0) return;
+  // chown to the share GID ONLY (`:<gid>` leaves uid untouched; never recursive,
+  // never an arbitrary path).
+  await runOk(ctx.exec, ['chown', `:${ctx.shareGid}`, ...copied.map(j => j.dest)], 'chown', { sudo: true });
+  for (const job of copied) {
+    ctx.catalog.upsert(catalogEntry(job.sha, job.target, job.item.record, ctx.now()));
+  }
 }
 
 /**

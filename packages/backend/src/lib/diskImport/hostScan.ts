@@ -82,40 +82,104 @@ export function parseFindOutput(stdout: string): ScannedFile[] {
 }
 
 /**
+ * How many paths to feed a single `sha256sum` invocation. Batching the hash
+ * pass kills the per-file agent round-trip that made a 269k-file disk take
+ * hours (#1898): instead of one `safe_exec` per file we hand `sha256sum` a whole
+ * chunk of paths and parse its per-line output. Chunked (not one giant argv) to
+ * stay clear of the host's `ARG_MAX`/argv limits on a huge disk.
+ */
+export const HASH_BATCH_SIZE = 256;
+
+/**
  * Build a dedup {@link import('./dedup').HashResolver} backed by host-side
  * `sha256sum` over the read-only mount. dedup only calls this for size-collision
  * candidates, so the host doesn't hash every file. Synchronous-looking resolver
- * contract: we pre-hash the candidate set up front (one batched pass) so the
+ * contract: we pre-hash the candidate set up front (batched passes) so the
  * deterministic engine can stay synchronous.
+ *
+ * Throughput (#1898): paths are hashed in {@link HASH_BATCH_SIZE} chunks — one
+ * `sha256sum <p1> <p2> …` agent round-trip per chunk, not one per file. The
+ * hashes are byte-for-byte identical to the per-file path; only the number of
+ * round-trips changes. `onProgress` still fires once per file so the card's live
+ * `hashed/total` count advances smoothly within a chunk.
  */
 export async function hashRecords(
   exec: SafeExec,
   records: ImportRecord[],
   onProgress?: (hashed: number, total: number) => void,
 ): Promise<Map<string, string>> {
+  return hashPaths(exec, records.map(r => r.sourcePath), onProgress);
+}
+
+/**
+ * Hash many source files via host `sha256sum` (read-only), batched in
+ * {@link HASH_BATCH_SIZE} chunks — one `sha256sum <p1> <p2> …` agent round-trip
+ * per chunk, not one per file (#1898). Returns a path→sha256 map keyed by the
+ * EXACT input path. `sha256sum` prints one `<hex>  <path>` line per file (and,
+ * for a path containing a backslash or newline, prefixes the line with `\` and
+ * escapes `\`→`\\`, `\n`→`\\n`); we undo that escaping so the map keys match the
+ * paths we passed in. `onProgress` (optional) fires once per file so a live
+ * `hashed/total` count still advances within a chunk. Empty input → no round-trip.
+ */
+export async function hashPaths(
+  exec: SafeExec,
+  paths: string[],
+  onProgress?: (hashed: number, total: number) => void,
+): Promise<Map<string, string>> {
   const out = new Map<string, string>();
+  if (paths.length === 0) return out;
+  for (const p of paths) {
+    if (p.includes('\0')) throw new Error('disk-import: NUL byte in source path');
+  }
+  const total = paths.length;
   let hashed = 0;
-  for (const record of records) {
-    out.set(record.sourcePath, await hashSourceFile(exec, record.sourcePath));
-    hashed += 1;
-    onProgress?.(hashed, records.length);
+  for (let i = 0; i < paths.length; i += HASH_BATCH_SIZE) {
+    const chunk = paths.slice(i, i + HASH_BATCH_SIZE);
+    const byPath = parseSha256sumOutput(await runSha256sum(exec, chunk));
+    for (const p of chunk) {
+      const hex = byPath.get(p);
+      if (hex === undefined) {
+        throw new Error(`disk-import: sha256sum returned no hash for ${JSON.stringify(p)}`);
+      }
+      out.set(p, hex);
+      hashed += 1;
+      onProgress?.(hashed, total);
+    }
+  }
+  return out;
+}
+
+async function runSha256sum(exec: SafeExec, paths: string[]): Promise<string> {
+  const { stdout, code, stderr } = await exec(['sha256sum', ...paths]);
+  if (code !== 0) {
+    throw new Error(`disk-import: sha256sum failed (code ${code}): ${stderr}`);
+  }
+  return stdout;
+}
+
+/** Parse `sha256sum`'s per-line `<hex>  <path>` output into a path→hex map. */
+function parseSha256sumOutput(stdout: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const line of stdout.split('\n')) {
+    if (line.length === 0) continue;
+    const escaped = line.startsWith('\\');
+    const body = escaped ? line.slice(1) : line;
+    // `<hex><space><space><path>` — the hash is fixed-width, the path follows
+    // exactly two spaces (`sha256sum` text mode). Split off the first token.
+    const sep = body.indexOf('  ');
+    const hex = sep === -1 ? '' : body.slice(0, sep);
+    if (!/^[0-9a-f]{64}$/.test(hex)) {
+      throw new Error(`disk-import: unexpected sha256sum output: ${JSON.stringify(line.slice(0, 80))}`);
+    }
+    let path = body.slice(sep + 2);
+    if (escaped) path = path.replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
+    out.set(path, hex);
   }
   return out;
 }
 
 /** Hash one source file's bytes via host `sha256sum` (read-only). */
 export async function hashSourceFile(exec: SafeExec, sourcePath: string): Promise<string> {
-  if (sourcePath.includes('\0')) {
-    throw new Error('disk-import: NUL byte in source path');
-  }
-  const { stdout, code, stderr } = await exec(['sha256sum', sourcePath]);
-  if (code !== 0) {
-    throw new Error(`disk-import: sha256sum failed (code ${code}): ${stderr}`);
-  }
-  // `sha256sum` prints `<hex>  <path>`; take the first whitespace-delimited token.
-  const hex = stdout.trim().split(/\s+/, 1)[0];
-  if (!/^[0-9a-f]{64}$/.test(hex)) {
-    throw new Error(`disk-import: unexpected sha256sum output: ${JSON.stringify(stdout.slice(0, 80))}`);
-  }
-  return hex;
+  const byPath = await hashPaths(exec, [sourcePath]);
+  return byPath.get(sourcePath)!;
 }

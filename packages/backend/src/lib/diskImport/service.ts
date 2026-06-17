@@ -21,7 +21,7 @@ import { buildInventory } from './inventory';
 import { buildPlan, type HashResolver } from './dedup';
 import { classifyRecord } from './classify';
 import { listBlockDevices, mountReadOnly, unmount, type BlockDevice } from './mounter';
-import { hashRecords, hashSourceFile, scanMount } from './hostScan';
+import { hashPaths, hashRecords, scanMount } from './hostScan';
 import { applyPlan, type ApplyResult, type ImmichConfig } from './plan';
 import {
   createScanJob,
@@ -365,12 +365,21 @@ async function topUpHashes(
   base: Map<string, string>,
 ): Promise<Map<string, string>> {
   const hashes = new Map(base);
+  // Collect the still-unhashed write targets, then hash them in ONE batched pass
+  // (#1898) instead of a `sha256sum` round-trip per file. Dedup by path so a
+  // plan that names the same source twice isn't hashed twice.
+  const missing: string[] = [];
+  const seen = new Set<string>();
   for (const item of plan.items) {
     const writes = item.action === 'copy' || item.action === 'conflict';
-    if (writes && item.category !== 'photos' && !hashes.has(item.record.sourcePath)) {
-      hashes.set(item.record.sourcePath, await hashSourceFile(exec, item.record.sourcePath));
+    const p = item.record.sourcePath;
+    if (writes && item.category !== 'photos' && !hashes.has(p) && !seen.has(p)) {
+      seen.add(p);
+      missing.push(p);
     }
   }
+  const fresh = await hashPaths(exec, missing);
+  for (const [p, h] of fresh) hashes.set(p, h);
   return hashes;
 }
 

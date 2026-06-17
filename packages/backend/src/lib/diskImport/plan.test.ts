@@ -90,6 +90,38 @@ describe('applyPlan — copy + chown', () => {
   });
 });
 
+describe('applyPlan — batched mkdir/chown (#1898)', () => {
+  it('copies an N-file plan with ONE mkdir + ONE chown (not one per file)', async () => {
+    const { exec, calls } = mockExec();
+    const catalog = new ImportCatalog(':memory:');
+    const n = 8;
+    const items = Array.from({ length: n }, (_, i) =>
+      item({ record: record({ sourcePath: `/f${i}.mp3`, name: `f${i}.mp3` }), target: `music/f${i}.mp3` }),
+    );
+    const res = await applyPlan(planOf(...items), baseOpts(exec, catalog, hashConst('a'.repeat(64))));
+
+    const mkdirs = calls.filter(c => c[0] === 'mkdir');
+    const rsyncs = calls.filter(c => c[0] === 'rsync');
+    const chowns = calls.filter(c => c[0] === 'chown');
+    // mkdir + chown are batched: one each for the whole batch. rsync stays
+    // per-file (the byte copy + resume granularity).
+    expect(mkdirs).toHaveLength(1);
+    expect(chowns).toHaveLength(1);
+    expect(rsyncs).toHaveLength(n);
+    // The single chown carries every dest, group-only, never -R.
+    expect(chowns[0][0]).toBe('chown');
+    expect(chowns[0][1]).toBe(`:${GID}`);
+    expect(chowns[0]).not.toContain('-R');
+    expect(chowns[0].slice(2)).toEqual(items.map(i => resolveShareTarget(i.target!)));
+    // The single mkdir -p carries the (deduped) dest dir.
+    expect(mkdirs[0]).toEqual(['mkdir', '-p', '/mnt/data/stacks/file-share/data/music']);
+    expect(res.applied).toBe(n);
+    expect(res.items.every(i => i.outcome === 'copied')).toBe(true);
+    expect(items.every(i => catalog.has('a'.repeat(64), i.target!))).toBe(true);
+    catalog.close();
+  });
+});
+
 describe('applyPlan — conflict routes to _superseded', () => {
   it('moves the existing target into _superseded/<date>/ before copying the newer file', async () => {
     const { exec, calls, opts } = mockExec();
