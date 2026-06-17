@@ -1995,9 +1995,9 @@ class ImmichScript(unittest.TestCase):
                 self.stderr = ""
 
         def run_fn(cmd, *_a, **_kw):
-            # bcrypt mint: `podman exec -e SB_NEW_PW=… <ctr> node -e <src>`
+            # bcrypt mint: `podman exec -e SB_NEW_PW=… -w <dir> <ctr> node -e <src>`
             if "node" in cmd and "-e" in cmd:
-                calls.append({"kind": "bcrypt"})
+                calls.append({"kind": "bcrypt", "cmd": list(cmd)})
                 if not bcrypt_ok:
                     return _CP(1, "")
                 return _CP(0, "$2b$11$" + "x" * 53)
@@ -2056,6 +2056,20 @@ class ImmichScript(unittest.TestCase):
         kinds = [c["kind"] for c in calls]
         self.assertIn("user_select", kinds)
         self.assertIn("bcrypt", kinds)
+        # The bcrypt mint must run with `-w /usr/src/app/server` so Node
+        # resolves `bcrypt` from immich-server's app node_modules; without it
+        # `require('bcrypt')` fails "Cannot find module" (rc=1). The `-w <dir>`
+        # is a `podman exec` flag, so it must precede the container name
+        # (arg order: `podman exec [flags] CONTAINER CMD...`).
+        bcrypt_cmd = next(c for c in calls if c["kind"] == "bcrypt")["cmd"]
+        self.assertIn("-w", bcrypt_cmd)
+        w_idx = bcrypt_cmd.index("-w")
+        self.assertEqual(bcrypt_cmd[w_idx + 1], "/usr/src/app/server")
+        self.assertIn("immich-immich-server", bcrypt_cmd)
+        self.assertLess(
+            w_idx, bcrypt_cmd.index("immich-immich-server"),
+            "the -w workdir flag must precede the container name",
+        )
         update = next(c for c in calls if c["kind"] == "user_update")
         self.assertTrue(update["bound"].get("hash", "").startswith("$2"))
         self.assertEqual(update["bound"].get("email"), "op@example.com")

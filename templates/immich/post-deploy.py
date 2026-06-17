@@ -267,9 +267,15 @@ def _bcrypt_hash(password: str) -> str:
         "const b=require('bcrypt');"
         "process.stdout.write(b.hashSync(process.env.SB_NEW_PW,11));"
     )
+    # `-w /usr/src/app/server` so Node resolves modules from immich-server's
+    # app dir where `bcrypt` lives (node_modules/); without it Node resolves
+    # from `/root` and `require('bcrypt')` fails with "Cannot find module"
+    # (rc=1). The `-w <dir>` is a `podman exec` flag, so it must precede the
+    # container name (arg order: `podman exec [flags] CONTAINER CMD...`).
     cmd = [
         "podman", "exec",
         "-e", f"SB_NEW_PW={password}",
+        "-w", "/usr/src/app/server",
         SERVER_CONTAINER,
         "node", "-e", node_src,
     ]
