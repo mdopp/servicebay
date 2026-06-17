@@ -269,9 +269,12 @@ const eslintConfig = defineConfig([
       "react-hooks/unsupported-syntax": "error",
       "react-hooks/config": "error",
       "react-hooks/gating": "error",
-      // `set-state-in-effect` is adopted separately (#1922); keep it OFF
-      // until that lands so the gate stays clean.
-      "react-hooks/set-state-in-effect": "off",
+      // `set-state-in-effect` adopted (#1922): redundant useEffect+setState
+      // pairs were removed (derive during render). The remaining unavoidable
+      // cases — async fetch-on-mount / poll loaders and controlled
+      // URL/prop→state syncs — each carry a per-line disable directive with
+      // a written rationale at the call site.
+      "react-hooks/set-state-in-effect": "error",
       // Maintainability thresholds (#724). Several core modules
       // currently exceed these — flagging them as warn (not error) so
       // CI doesn't break on legacy files while the rule still surfaces

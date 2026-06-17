@@ -40,6 +40,7 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
 
   useEffect(() => {
     const query = nodeName && nodeName !== 'Local' ? `?node=${encodeURIComponent(nodeName)}` : '';
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async container-detail fetch on id/node change
     setDetails(null);
 
     fetch(`/api/containers/${container.id}${query}`)
@@ -53,6 +54,7 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
   useEffect(() => {
     const controller = new AbortController();
     const query = nodeName && nodeName !== 'Local' ? `?node=${encodeURIComponent(nodeName)}` : '';
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async log-stream fetch, AbortController-guarded
     setLogs('');
     setLogsLoading(true);
 

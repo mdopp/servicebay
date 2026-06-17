@@ -521,6 +521,7 @@ export default function OnboardingWizard() {
   // re-evaluates without reading Date.now() during render.
   useEffect(() => {
     if (!status?.installInProgress) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- install-progress tick (nowMs) for the stalled-job banner; interval-driven external sync
     setNowMs(Date.now());
     const id = setInterval(() => setNowMs(Date.now()), 30_000);
     return () => clearInterval(id);
@@ -553,6 +554,7 @@ export default function OnboardingWizard() {
   // action legitimately changes M); the express-flow steps use the pin.
   useEffect(() => {
     if (currentStep === 'welcome') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- pins activeSteps count on selection commit (#694); intentional step-count sync
       setCommittedStepCount(null);
       return;
     }
@@ -597,6 +599,7 @@ export default function OnboardingWizard() {
     if (stackInstallStep !== 'done') return;
     if (diagnoseRanOnce) return;
      
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- auto-run self-diagnose when install lands on done; one-shot external action
     setDiagnoseRanOnce(true);
     setDiagnoseRunning(true);
     setDiagnoseError(null);
@@ -693,6 +696,7 @@ export default function OnboardingWizard() {
         && availableStacks.length === 0
         && !stacksLoading
     ) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- eager async stacks load on install steps
       loadStacks();
     }
   }, [currentStep, availableStacks.length, stacksLoading, loadStacks]);

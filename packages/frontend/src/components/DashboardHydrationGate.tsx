@@ -72,6 +72,7 @@ export default function DashboardHydrationGate({ phase, subMessage }: DashboardH
   const [phaseStartTick, setPhaseStartTick] = useState(0);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- captures phase-start tick on phase swap (see #1921); intentional post-render sync
     setPhaseStartTick(tick);
     // Intentional: capture the tick we were on when this phase took
     // effect. Re-running this on `tick` changes would defeat the

@@ -30,6 +30,7 @@ export default function ReverseProxyConfig() {
     };
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- async nginx-status check on mount
         checkStatus();
     }, []);
 

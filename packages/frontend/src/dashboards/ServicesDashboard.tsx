@@ -172,6 +172,7 @@ export default function ServicesDashboard() {
     }, []);
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- async external-links load on mount
         loadExternalLinks();
     }, [loadExternalLinks]);
 
@@ -366,6 +367,7 @@ export default function ServicesDashboard() {
 
         const found = allContainers.find(c => c.id === containerIdParam || c.id.startsWith(containerIdParam));
         if (found) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- opens drawer from URL ?container param; controlled URL→state sync, one-shot guarded
             setDrawerContainer(attachNodeContext(found));
             setContainerDrawerMode(drawerParam === 'terminal' ? 'terminal' : 'logs');
             setHandledQueryContainer(containerIdParam);
@@ -396,6 +398,7 @@ export default function ServicesDashboard() {
     }, [collectBundlesFromTwin]);
 
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- recomputes service bundles from the live twin; external-system sync
         setServiceBundles(collectBundlesFromTwin());
     }, [collectBundlesFromTwin]);
 
@@ -753,6 +756,7 @@ export default function ServicesDashboard() {
             )
           : services;
       const sorted = sortServicesByDisplayName(filtered);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- filters/sorts services on search change; mirrors a non-render-derivable list with bundle filtering
       setFilteredServices(sorted);
 
       const filteredBundleList = q

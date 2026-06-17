@@ -72,6 +72,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
   useEffect(() => {
     if (!isOpen) return;
     controller.reset();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async node list load on mount
     setDeviceOptions({});
 
     let cancelled = false;
@@ -125,6 +126,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
     const deviceVars = controller.variables.filter(v => v.meta?.type === 'device');
     if (deviceVars.length === 0) return;
     const paths = new Set(deviceVars.map(v => v.meta?.devicePath || '/dev/serial/by-id'));
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async existing-services seed on open, cancelled-guarded
     setLoadingDevices(true);
     Promise.all(
       Array.from(paths).map(async (devicePath) => {
@@ -167,6 +169,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
   // nothing to choose between when only one service exists.
   useEffect(() => {
     if (isOpen && template.type === 'template' && selectItems.length > 0 && controller.phase === 'idle' && !advancing) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- async device enumeration on node select
       void advanceToConfigure();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

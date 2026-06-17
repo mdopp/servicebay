@@ -76,6 +76,7 @@ export function useTopologyData(options: UseTopologyDataOptions = {}): UseTopolo
   // Kick off the first render as soon as the dashboard mounts so the
   // toast shows immediately.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async network-graph fetch on mount
     fetchGraph();
   }, [fetchGraph]);
 

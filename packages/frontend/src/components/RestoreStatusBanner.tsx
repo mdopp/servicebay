@@ -54,6 +54,7 @@ export default function RestoreStatusBanner() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async reinstall-status fetch + poll on mount
     refresh();
     // Poll while the banner is plausibly active. 8s is fast enough
     // that the operator sees the count change as services come up,

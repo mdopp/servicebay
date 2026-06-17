@@ -258,6 +258,7 @@ export default function McpSection() {
 
   useEffect(() => {
     // Read window.location after mount to avoid SSR/hydration mismatch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async settings fetch, guarded by a cancelled flag
     setMcpUrl(`${window.location.origin}/mcp`);
   }, []);
 

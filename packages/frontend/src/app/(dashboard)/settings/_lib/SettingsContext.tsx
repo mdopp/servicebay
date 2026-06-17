@@ -306,7 +306,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
   }, [addToast, refreshNodes]);
 
+  // Load persisted settings from the API once on mount. Async fetch that
+  // synchronises React state with an external system (the config file) —
+  // the canonical effect use.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async config load on mount, not a cascading-render anti-pattern
     void refreshConfig();
   }, [refreshConfig]);
 

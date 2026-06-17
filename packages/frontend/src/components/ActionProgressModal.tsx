@@ -33,6 +33,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
 
   // When closed, reset minimized so reopening starts fresh.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- external-system sync (action toast lifecycle)
     if (!isOpen) setMinimized(false);
   }, [isOpen]);
 

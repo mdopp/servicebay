@@ -141,6 +141,7 @@ export default function ContainersDashboard() {
 
     const found = containers.find(c => c.Id === containerIdParam || c.Id.startsWith(containerIdParam));
     if (found) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- opens drawer from URL ?container param; controlled URL→state sync, one-shot via handledQueryContainer guard
         setDrawerContainer(found);
          
         setDrawerMode(drawerParam === 'terminal' ? 'terminal' : 'logs');
