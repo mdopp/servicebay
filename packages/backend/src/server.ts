@@ -50,6 +50,7 @@ import { SSHConnectionPool } from './lib/ssh/pool';
 import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './lib/auth/session';
 import { setIo as setInstallSocketIo } from './lib/install/socketBridge';
 import { markCrashedOnStartup as markCrashedInstallsOnStartup } from './lib/install/jobStore';
+import { markCrashedOnStartup as markCrashedImportsOnStartup } from './lib/diskImport/sessionStore';
 
 // Fail-fast at startup so misconfigured deploys don't appear to work.
 assertAuthSecret();
@@ -315,6 +316,15 @@ app.prepare().then(() => {
   markCrashedInstallsOnStartup()
     .then((n) => {
       if (n > 0) logger.info('Server', `Marked ${n} crashed install job(s) on startup.`);
+    })
+    .catch(() => { /* best-effort */ });
+
+  // Same recovery for disk-import jobs (#1897): a scan/apply running in the
+  // background when the backend died is flipped to 'error' so a reopened card
+  // re-attaches to a terminal state instead of polling forever.
+  markCrashedImportsOnStartup()
+    .then((n) => {
+      if (n > 0) logger.info('Server', `Marked ${n} crashed disk-import job(s) on startup.`);
     })
     .catch(() => { /* best-effort */ });
 

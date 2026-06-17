@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { scanDevice } from '@/lib/diskImport/service';
+import { startScan } from '@/lib/diskImport/service';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { catalogPath, makeExec, resolveNode } from '../wiring';
@@ -14,23 +14,25 @@ const Body = z.object({
 });
 
 /**
- * POST — mount the device READ-ONLY, walk + classify + dedup it into a plan, and
- * return the review payload (per-category sizing, total, and unavoidable
- * `actions[]`) plus a `sessionId`. Writes NOTHING to the host: this is the review
- * step before the confirm + apply. The `sessionId` is the only thing that
- * authorises a later apply of this exact reviewed plan.
+ * POST — start a background scan of the device (mount RO → walk → classify →
+ * dedup → plan) and return a `jobId` IMMEDIATELY (#1897). The walk + per-file
+ * hashing on a large disk far exceeds the HTTP/proxy timeout, so the work runs
+ * detached and the card polls `GET ./status?id=<jobId>` for live phase + counts
+ * and, once reviewed, the plan. Writes NOTHING to the host: this is the review
+ * step before the confirm + apply. The `jobId` is the only thing that authorises
+ * a later apply of this exact reviewed plan.
  */
 export const POST = withApiHandler<z.infer<typeof Body>>(
   { body: Body, tokenScope: 'mutate' },
   async ({ body }) => {
     try {
       const node = resolveNode(body.node);
-      const result = await scanDevice({
+      const { jobId } = await startScan({
         exec: makeExec(node),
         device: body.device,
         catalogPath: catalogPath(),
       });
-      return NextResponse.json({ ok: true, ...result });
+      return NextResponse.json({ ok: true, jobId });
     } catch (e) {
       return apiError(e, { tag: 'api:system:disk-import:scan', status: 400, exposeMessage: true });
     }

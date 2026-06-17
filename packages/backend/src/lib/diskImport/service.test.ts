@@ -1,11 +1,34 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import os from 'os';
+import path from 'path';
+
+// Mock DATA_DIR to a process-scoped tmpdir so the durable session store
+// (#1896) writes to a real fs path without colliding with the dev box.
+vi.mock('@/lib/dirs', () => ({
+  DATA_DIR: path.join(os.tmpdir(), `sb-diskimport-svc-${process.pid}`),
+}));
+
 import {
   listImportDevices,
   scanDevice,
+  startScan,
+  startApply,
+  getImportJob,
   applyImportPlan,
   __clearSessions,
 } from './service';
 import type { SafeExec, SafeExecResult } from './hostExec';
+
+/** Spin the event loop until `cond()` is true or we give up. The background
+ *  scan/apply tasks are detached promises; this lets a test await their
+ *  completion without a real timer. */
+async function waitFor(cond: () => Promise<boolean> | boolean, tries = 200): Promise<void> {
+  for (let i = 0; i < tries; i++) {
+    if (await cond()) return;
+    await new Promise(r => setImmediate(r));
+  }
+  throw new Error('waitFor: condition not met');
+}
 
 const ok = (stdout = ''): SafeExecResult => ({ stdout, stderr: '', code: 0 });
 
@@ -26,7 +49,9 @@ function mockExec(
   return { exec, calls };
 }
 
-beforeEach(() => __clearSessions());
+beforeEach(async () => {
+  await __clearSessions();
+});
 
 describe('listImportDevices', () => {
   it('keeps only removable partitions that carry a filesystem', async () => {
@@ -91,6 +116,77 @@ describe('scanDevice', () => {
   });
 });
 
+describe('startScan / getImportJob — async hand-off + live status (#1897)', () => {
+  it('returns a jobId immediately and the job walks scanning → reviewed with progress + review', async () => {
+    const { exec } = mockExec({ find: ok(FIND_OUT) });
+    const { jobId } = await startScan({ exec, device: '/dev/sda1', catalogPath: ':memory:' });
+
+    // Hand-off is immediate — a job exists and is pollable right away.
+    expect(jobId).toBeTruthy();
+    const first = await getImportJob(jobId);
+    expect(first).not.toBeNull();
+    expect(['scanning', 'reviewed']).toContain(first!.phase);
+
+    // The background scan finishes → phase=reviewed, with the review payload a
+    // re-attaching card renders (this is the re-attach-by-id path).
+    await waitFor(async () => (await getImportJob(jobId))!.phase === 'reviewed');
+    const done = await getImportJob(jobId);
+    expect(done!.phase).toBe('reviewed');
+    expect(done!.review).toBeDefined();
+    expect(done!.review!.totalFiles).toBe(3);
+    expect(done!.progress.step).toBe('done');
+    expect(done!.progress.scanned).toBe(3);
+  });
+
+  it('records a scan failure on the job (phase=error) instead of throwing into the void', async () => {
+    // find exits non-zero with NO stdout → scanMount throws → recorded on the job.
+    const { exec } = mockExec({ find: { stdout: '', stderr: 'boom', code: 2 } });
+    const { jobId } = await startScan({ exec, device: '/dev/sda1', catalogPath: ':memory:' });
+    await waitFor(async () => (await getImportJob(jobId))!.phase === 'error');
+    const failed = await getImportJob(jobId);
+    expect(failed!.phase).toBe('error');
+    expect(failed!.error).toMatch(/scan walk failed/);
+  });
+
+  it('getImportJob returns null for an unknown/forged id', async () => {
+    expect(await getImportJob('nope')).toBeNull();
+  });
+});
+
+describe('startApply — async hand-off, gate checked synchronously (#1897)', () => {
+  it('rejects a forged id synchronously (no background job, no host write)', async () => {
+    const { exec, calls } = mockExec();
+    await expect(
+      startApply({ exec, sessionId: 'forged', shareGid: 1024 }),
+    ).rejects.toThrow(/no reviewed plan/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('returns a jobId, applies in the background, and the job reaches applied with a count', async () => {
+    const docOut = '/mnt/docs/report.pdf\t10\t1700000000\0';
+    const { exec, calls } = mockExec({
+      find: ok(docOut),
+      sha256sum: argv => ok(`${'c'.repeat(64)}  ${argv[1]}\n`),
+    });
+    // Scan synchronously so we have a reviewed session to apply.
+    const scan = await scanDevice({ exec, device: '/dev/sda1', catalogPath: ':memory:' });
+
+    const { jobId } = await startApply({ exec, sessionId: scan.sessionId, shareGid: 1024 });
+    expect(jobId).toBe(scan.sessionId);
+
+    await waitFor(async () => (await getImportJob(jobId))!.phase === 'applied');
+    const done = await getImportJob(jobId);
+    expect(done!.phase).toBe('applied');
+    expect(done!.applied).toBe(1);
+    expect(calls.some(c => c[0] === 'rsync')).toBe(true);
+
+    // One apply per review: a second startApply is refused (phase is now applied).
+    await expect(
+      startApply({ exec, sessionId: scan.sessionId, shareGid: 1024 }),
+    ).rejects.toThrow(/no reviewed plan/);
+  });
+});
+
 describe('applyImportPlan — the review gate', () => {
   it('refuses to apply without a scanned session (no host write)', async () => {
     const { exec, calls } = mockExec();
@@ -107,7 +203,7 @@ describe('applyImportPlan — the review gate', () => {
 
     // No immich config wired → photos throw on apply; use a residue-only disk to
     // prove the copy path runs. Re-scan a docs-only listing.
-    __clearSessions();
+    await __clearSessions();
     const docOut = '/mnt/docs/report.pdf\t10\t1700000000\0';
     const { exec: exec2, calls: calls2 } = mockExec({
       find: ok(docOut),

@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, HardDrive, AlertCircle, CheckCircle2, RefreshCw, Download } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { useImportJob, type JobProgress, type JobStatus } from '../useImportJob';
 
 interface DeviceView {
   path: string;
@@ -261,6 +262,64 @@ function ImportDone({ applied, onReset }: { applied: number; onReset: () => void
   );
 }
 
+const STEP_LABEL: Record<JobProgress['step'], string> = {
+  mount: 'Mounting the disk…',
+  walk: 'Listing files…',
+  hash: 'Checking for duplicates…',
+  plan: 'Planning the import…',
+  copy: 'Copying files…',
+  done: 'Finishing up…',
+};
+
+/** Live phase + counts while a scan or apply runs in the background (#1897). */
+export function JobProgressView({ status }: { status: JobStatus | null }) {
+  const p = status?.progress;
+  const isApply = status?.phase === 'applying';
+  return (
+    <div className="space-y-3" data-testid="disk-import-progress">
+      <p className="text-sm text-gray-800 dark:text-gray-200 flex items-center gap-2">
+        <Loader2 size={16} className="animate-spin text-blue-600" />
+        {p ? STEP_LABEL[p.step] : 'Starting…'}
+      </p>
+      {p && (
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+          {!isApply && (
+            <>
+              <div className="flex justify-between">
+                <dt>Scanned</dt>
+                <dd className="text-gray-800 dark:text-gray-200">{p.scanned}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt>Hashed</dt>
+                <dd className="text-gray-800 dark:text-gray-200">
+                  {p.total > 0 ? `${p.hashed} / ${p.total}` : p.hashed}
+                </dd>
+              </div>
+            </>
+          )}
+          {isApply && (
+            <>
+              <div className="flex justify-between">
+                <dt>Copied</dt>
+                <dd className="text-gray-800 dark:text-gray-200">
+                  {p.total > 0 ? `${p.copied} / ${p.total}` : p.copied}
+                </dd>
+              </div>
+              <div className="flex justify-between">
+                <dt>Bytes</dt>
+                <dd className="text-gray-800 dark:text-gray-200">{formatBytes(p.bytes)}</dd>
+              </div>
+            </>
+          )}
+        </dl>
+      )}
+      <p className="text-[11px] text-gray-400">
+        This keeps running even if you close the page — reopen this card to check back.
+      </p>
+    </div>
+  );
+}
+
 export default function DiskImportSection() {
   const { addToast } = useToast();
   const [devices, setDevices] = useState<DeviceView[]>([]);
@@ -293,6 +352,27 @@ export default function DiskImportSection() {
 
   useEffect(fetchDevices, [fetchDevices]);
 
+  // Background-job polling + re-attach (#1897) lives in useImportJob; the card
+  // just wires the terminal transitions into its phase/review/applied UI state.
+  const job = useImportJob({
+    onReviewed: review => {
+      setReview(review as ScanReview | null);
+      setPhase('review');
+    },
+    onApplied: count => {
+      setApplied(count);
+      setPhase('done');
+      addToast('success', 'Import finished');
+    },
+    onError: (kind, message, review) => {
+      const wasApply = kind === 'applying';
+      addToast('error', wasApply ? 'Import failed' : 'Scan failed', message);
+      setReview(review as ScanReview | null);
+      setPhase(wasApply && review ? 'review' : 'pick');
+    },
+    onGone: () => setPhase('pick'),
+  });
+
   const runScan = async () => {
     if (!selected) {
       addToast('error', 'Pick a USB device first');
@@ -306,13 +386,12 @@ export default function DiskImportSection() {
         body: JSON.stringify({ device: selected }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
+      if (!res.ok || !data.jobId) {
         addToast('error', 'Scan failed', data.error || `HTTP ${res.status}`);
         setPhase('pick');
         return;
       }
-      setReview(data as ScanReview);
-      setPhase('review');
+      job.track(data.jobId, 'scanning'); // start polling
     } catch {
       addToast('error', 'Scan failed');
       setPhase('pick');
@@ -329,14 +408,12 @@ export default function DiskImportSection() {
         body: JSON.stringify({ sessionId: review.sessionId, confirmed: true }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
+      if (!res.ok || !data.jobId) {
         addToast('error', 'Import failed', data.error || `HTTP ${res.status}`);
         setPhase('review');
         return;
       }
-      setApplied(typeof data.applied === 'number' ? data.applied : 0);
-      setPhase('done');
-      addToast('success', 'Import finished');
+      job.track(data.jobId, 'applying'); // start polling
     } catch {
       addToast('error', 'Import failed');
       setPhase('review');
@@ -347,6 +424,7 @@ export default function DiskImportSection() {
     setReview(null);
     setApplied(null);
     setSelected('');
+    job.clear();
     setPhase('pick');
     refreshDevices();
   };
@@ -359,10 +437,14 @@ export default function DiskImportSection() {
     );
   }
 
-  if (phase === 'applying' && review) {
+  // Background scan or apply in flight: live phase + counts from the poll
+  // (#1897), not a bare spinner. Covers a fresh run, the gap before the first
+  // poll lands, AND a cold re-attach after a reload/restart (a still-running job
+  // is `active` from localStorage before the card's own phase has caught up).
+  if (phase === 'scanning' || phase === 'applying' || job.active) {
     return (
       <Card>
-        <DiskImportReview review={review} onConfirm={() => {}} onCancel={() => {}} busy />
+        <JobProgressView status={job.status} />
       </Card>
     );
   }
@@ -386,7 +468,9 @@ export default function DiskImportSection() {
           devices={devices}
           selected={selected}
           loading={loadingDevices}
-          scanning={phase === 'scanning'}
+          // Reaching here means phase==='pick' (scanning renders the progress
+          // frame above); a scan in flight never shows the picker.
+          scanning={false}
           onSelect={setSelected}
           onRefresh={refreshDevices}
           onScan={runScan}

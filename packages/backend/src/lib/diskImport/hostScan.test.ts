@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseFindOutput, scanMount, hashSourceFile, hashRecords } from './hostScan';
+import { parseFindOutput, scanMount, hashSourceFile, hashRecords, hashPaths, HASH_BATCH_SIZE } from './hostScan';
 import type { SafeExec, SafeExecResult } from './hostExec';
 import type { ImportRecord } from './types';
 
@@ -60,6 +60,31 @@ describe('scanMount', () => {
     const { exec } = mockExec({ find: { stdout: '', stderr: 'boom', code: 1 } });
     await expect(scanMount(exec, '/run/servicebay/disk-import/sda1')).rejects.toThrow(/scan walk failed/);
   });
+
+  it('prunes lost+found from the walk', async () => {
+    const { exec, calls } = mockExec({ find: ok('') });
+    await scanMount(exec, '/run/servicebay/disk-import/sda1');
+    const argv = calls[0];
+    expect(argv).toContain('lost+found');
+    expect(argv).toContain('-prune');
+    // -prune comes before the -type f test (it's the first arm of the -o).
+    expect(argv.indexOf('-prune')).toBeLessThan(argv.lastIndexOf('-type'));
+  });
+
+  it('tolerates find exit 1 (permission-denied descent) when stdout still parsed', async () => {
+    // A real ext4 disk with a root-0700 subdir: find prints what it could read
+    // to stdout AND a "Permission denied" line on stderr, then exits 1. We keep
+    // the readable listing instead of failing the whole scan (#1893).
+    const { exec } = mockExec({
+      find: {
+        stdout: '/mnt/x/a.jpg\t10\t1700000000\0',
+        stderr: "find: '/mnt/x/private': Permission denied",
+        code: 1,
+      },
+    });
+    const files = await scanMount(exec, '/run/servicebay/disk-import/sda1');
+    expect(files).toEqual([{ path: '/mnt/x/a.jpg', size: 10, mtimeMs: 1700000000000 }]);
+  });
 });
 
 describe('hashSourceFile', () => {
@@ -81,15 +106,22 @@ describe('hashSourceFile', () => {
   });
 });
 
+/** A `sha256sum <p1> <p2> …` mock that hashes each arg path deterministically. */
+function batchedSha256(hashOf: (p: string) => string): { exec: SafeExec; calls: string[][] } {
+  const calls: string[][] = [];
+  const exec: SafeExec = vi.fn(async (argv: string[]) => {
+    calls.push(argv);
+    const lines = argv.slice(1).map(p => `${hashOf(p)}  ${p}`);
+    return ok(lines.join('\n') + '\n');
+  });
+  return { exec, calls };
+}
+
 describe('hashRecords', () => {
-  it('hashes each record host-side and returns a path→hash map', async () => {
+  it('hashes records in ONE batched sha256sum call and returns a path→hash map', async () => {
     const h1 = '1'.repeat(64);
     const h2 = '2'.repeat(64);
-    const exec: SafeExec = vi.fn(async (argv: string[]) => {
-      const path = argv[1];
-      const hex = path === '/mnt/a' ? h1 : h2;
-      return ok(`${hex}  ${path}\n`);
-    });
+    const { exec, calls } = batchedSha256(p => (p === '/mnt/a' ? h1 : h2));
     const records: ImportRecord[] = [
       { sourcePath: '/mnt/a', size: 1, mtimeMs: 0, ext: '', name: 'a' },
       { sourcePath: '/mnt/b', size: 1, mtimeMs: 0, ext: '', name: 'b' },
@@ -97,5 +129,60 @@ describe('hashRecords', () => {
     const map = await hashRecords(exec, records);
     expect(map.get('/mnt/a')).toBe(h1);
     expect(map.get('/mnt/b')).toBe(h2);
+    // Both files hashed in a single agent round-trip (not one per file).
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual(['sha256sum', '/mnt/a', '/mnt/b']);
+  });
+
+  it('fires onProgress once per file even within a batched call', async () => {
+    const { exec } = batchedSha256(() => 'a'.repeat(64));
+    const records: ImportRecord[] = [
+      { sourcePath: '/mnt/a', size: 1, mtimeMs: 0, ext: '', name: 'a' },
+      { sourcePath: '/mnt/b', size: 1, mtimeMs: 0, ext: '', name: 'b' },
+      { sourcePath: '/mnt/c', size: 1, mtimeMs: 0, ext: '', name: 'c' },
+    ];
+    const ticks: Array<[number, number]> = [];
+    await hashRecords(exec, records, (hashed, total) => ticks.push([hashed, total]));
+    expect(ticks).toEqual([[1, 3], [2, 3], [3, 3]]);
+  });
+});
+
+describe('hashPaths — batched execution (#1898)', () => {
+  it('drops exec round-trips from N (per-file) to ceil(N / HASH_BATCH_SIZE)', async () => {
+    const n = HASH_BATCH_SIZE * 2 + 5; // forces 3 chunks
+    const paths = Array.from({ length: n }, (_, i) => `/mnt/f${i}`);
+    const { exec, calls } = batchedSha256(() => 'b'.repeat(64));
+    const map = await hashPaths(exec, paths);
+    expect(map.size).toBe(n);
+    // 3 round-trips for 517 files — NOT 517 (the per-file regression #1898).
+    expect(calls).toHaveLength(3);
+    expect(calls.every(c => c[0] === 'sha256sum')).toBe(true);
+  });
+
+  it('returns no round-trip for an empty path list', async () => {
+    const { exec, calls } = batchedSha256(() => 'c'.repeat(64));
+    expect((await hashPaths(exec, [])).size).toBe(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('decodes sha256sum backslash-escaped lines (path with a newline)', async () => {
+    const hex = 'd'.repeat(64);
+    // GNU coreutils escapes a path containing a newline: it prefixes the line
+    // with `\` and writes `\n` for the embedded newline. We must map it back to
+    // the EXACT input path so the hash lands on the right record.
+    const exec: SafeExec = vi.fn(async () => ok(`\\${hex}  /mnt/od\\nd\n`));
+    const map = await hashPaths(exec, ['/mnt/od\nd']);
+    expect(map.get('/mnt/od\nd')).toBe(hex);
+  });
+
+  it('throws if sha256sum omits a requested path', async () => {
+    const exec: SafeExec = vi.fn(async () => ok(`${'e'.repeat(64)}  /mnt/a\n`));
+    await expect(hashPaths(exec, ['/mnt/a', '/mnt/b'])).rejects.toThrow(/no hash for/);
+  });
+
+  it('refuses a NUL byte in a path before any host call', async () => {
+    const { exec, calls } = batchedSha256(() => 'f'.repeat(64));
+    await expect(hashPaths(exec, ['/mnt/\0evil'])).rejects.toThrow(/NUL byte/);
+    expect(calls).toHaveLength(0);
   });
 });
