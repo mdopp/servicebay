@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { classifyRecord, type ResidueClassifier } from './classify';
+import {
+  classifyRecord,
+  dispositionCategory,
+  isVideoDominant,
+  buildSubtreeHints,
+  type ResidueClassifier,
+} from './classify';
 import { toRecord } from './inventory';
 import type { Category } from './types';
 
@@ -82,6 +88,108 @@ describe('classifyRecord — music vs audiobook disambiguation', () => {
 
   it('m4b is unconditionally an audiobook (no music refinement)', () => {
     expect(classifyRecord(rec('/disk/Music/whatever.m4b'))).toBe('audiobooks');
+  });
+});
+
+describe('isVideoDominant — image-vs-video subtree heuristic (#1914)', () => {
+  it('a folder of only videos is video-dominant', () => {
+    expect(isVideoDominant({ imageCount: 0, videoCount: 20 })).toBe(true);
+  });
+  it('a folder of only images is never video-dominant', () => {
+    expect(isVideoDominant({ imageCount: 30, videoCount: 0 })).toBe(false);
+  });
+  it('a camera roll (lots of photos + a few clips) stays image-dominant', () => {
+    expect(isVideoDominant({ imageCount: 200, videoCount: 12 })).toBe(false);
+  });
+  it('a movie folder (overwhelmingly video, a stray poster image) is video-dominant', () => {
+    expect(isVideoDominant({ imageCount: 1, videoCount: 40 })).toBe(true);
+  });
+  it('an empty folder is not video-dominant', () => {
+    expect(isVideoDominant({ imageCount: 0, videoCount: 0 })).toBe(false);
+  });
+});
+
+describe('classifyRecord — image-vs-video taxonomy split (#1914)', () => {
+  it('a video in a video-dominant subtree → movies', () => {
+    expect(classifyRecord(rec('/disk/Filme/heist.mkv'), { subtreeVideoDominant: true })).toBe('movies');
+  });
+  it('a video in an image-dominant subtree stays photos (→ Immich)', () => {
+    expect(classifyRecord(rec('/disk/2021/clip.mp4'), { subtreeVideoDominant: false })).toBe('photos');
+  });
+  it('a lone video with no subtree profile defaults to photos', () => {
+    expect(classifyRecord(rec('/disk/clip.mov'))).toBe('photos');
+  });
+  it('a still image is always photos, even in a video-dominant subtree', () => {
+    expect(classifyRecord(rec('/disk/Filme/poster.jpg'), { subtreeVideoDominant: true })).toBe('photos');
+  });
+});
+
+describe('classifyRecord — forced-type disposition override (#1914)', () => {
+  it('explicit Filme→Jellyfin sends a video to movies even when image-dominant', () => {
+    expect(
+      classifyRecord(rec('/disk/Holiday/clip.mp4'), { subtreeVideoDominant: false }, undefined, 'movies_jellyfin'),
+    ).toBe('movies');
+  });
+  it('a music disposition forces music regardless of extension', () => {
+    expect(classifyRecord(rec('/disk/x/track.wav'), {}, undefined, 'music')).toBe('music');
+  });
+  it('documents_merge forces documents', () => {
+    expect(classifyRecord(rec('/disk/x/clip.mp4'), {}, undefined, 'documents_merge')).toBe('documents');
+  });
+  it('junk is still filtered before a forced disposition applies', () => {
+    expect(classifyRecord(rec('/disk/Musik/Thumbs.db'), {}, undefined, 'music')).toBe('junk');
+  });
+  it('auto / structure dispositions fall through to the content classifier', () => {
+    expect(classifyRecord(rec('/disk/song.flac'), {}, undefined, 'auto')).toBe('music');
+    expect(classifyRecord(rec('/disk/song.flac'), {}, undefined, 'code_parallel')).toBe('music');
+    expect(classifyRecord(rec('/disk/song.flac'), {}, undefined, 'archive_1to1')).toBe('music');
+  });
+});
+
+describe('dispositionCategory — forced-type map (#1914)', () => {
+  const forced: Array<[Parameters<typeof dispositionCategory>[0], Category | null]> = [
+    ['photos_immich', 'photos'],
+    ['movies_jellyfin', 'movies'],
+    ['music', 'music'],
+    ['audiobooks', 'audiobooks'],
+    ['podcasts', 'podcasts'],
+    ['documents_merge', 'documents'],
+    ['auto', null],
+    ['code_parallel', null],
+    ['archive_1to1', null],
+    ['skip', null],
+  ];
+  it.each(forced)('%s → %s', (disposition, expected) => {
+    expect(dispositionCategory(disposition)).toBe(expected);
+  });
+});
+
+describe('buildSubtreeHints — per-folder dominance → movies vs photos (#1914)', () => {
+  it('marks videos in a video-dominant folder but not a camera-roll folder', () => {
+    const records = [
+      // Filme/ — overwhelmingly video → video-dominant.
+      ...Array.from({ length: 10 }, (_, i) => rec(`/disk/Filme/movie${i}.mkv`)),
+      // 2021/ — a camera roll: lots of photos + a couple clips → image-dominant.
+      ...Array.from({ length: 20 }, (_, i) => rec(`/disk/2021/IMG_${i}.jpg`)),
+      rec('/disk/2021/clip.mp4'),
+    ].map(r => ({ sourcePath: r.sourcePath, ext: r.ext }));
+
+    const hints = buildSubtreeHints(records);
+
+    // A movie in Filme/ routes to movies/.
+    expect(classifyRecord(rec('/disk/Filme/movie0.mkv'), hints['/disk/Filme/movie0.mkv'])).toBe('movies');
+    // The camera-roll clip stays photos/Immich.
+    expect(classifyRecord(rec('/disk/2021/clip.mp4'), hints['/disk/2021/clip.mp4'])).toBe('photos');
+    // Images are never tagged.
+    expect(hints['/disk/2021/IMG_0.jpg']).toBeUndefined();
+  });
+
+  it('leaves non-media folders untouched', () => {
+    const hints = buildSubtreeHints([
+      { sourcePath: '/disk/docs/a.pdf', ext: 'pdf' },
+      { sourcePath: '/disk/music/b.mp3', ext: 'mp3' },
+    ]);
+    expect(Object.keys(hints)).toHaveLength(0);
   });
 });
 

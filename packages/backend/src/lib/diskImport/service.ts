@@ -19,10 +19,15 @@ import { randomUUID } from 'node:crypto';
 import { ImportCatalog } from './catalog';
 import { buildInventory } from './inventory';
 import { buildPlan, type HashResolver } from './dedup';
-import { classifyRecord } from './classify';
+import { classifyRecord, buildSubtreeHints } from './classify';
 import { listBlockDevices, mountReadOnly, unmount, type BlockDevice } from './mounter';
 import { hashPaths, hashRecords, scanMount } from './hostScan';
-import { applyPlan, type ApplyResult, type ImmichConfig } from './plan';
+import { applyPlan, type ApplyResult } from './plan';
+import {
+  provisionExternalLibraries,
+  scanLibrariesForOwners,
+  type ImmichAdminConfig,
+} from './immichLibraries';
 import {
   createScanJob,
   finalizeScan,
@@ -32,6 +37,7 @@ import {
   markError,
   setProgress,
   sessionHashes,
+  appendLog,
   type ScanSession,
   __clearSessions as clearSessionStore,
 } from './sessionStore';
@@ -96,8 +102,14 @@ export interface ApplyOptions {
   sessionId: string;
   /** Numeric gid that owns file-share data; copied files are chown'd to it. */
   shareGid: number;
-  /** Immich config for the photo pass; omit to skip photos. */
-  immich?: ImmichConfig;
+  /**
+   * Immich ADMIN-API config (#1904 Decision A). When present, after a photo-
+   * writing apply the importer auto-provisions per-user + Shared External
+   * Libraries (one stored admin key — NOT per-user keys) and triggers the
+   * owning library's scan so Immich indexes the new photos. Omit on a box
+   * without Immich; photos still land in `data/<owner>/photos` regardless.
+   */
+  immich?: ImmichAdminConfig;
 }
 
 /**
@@ -192,7 +204,10 @@ async function runScan(sessionId: string, opts: ScanOptions): Promise<ScanResult
     const catalog = new ImportCatalog(catalogPath);
     let plan: ImportPlan;
     try {
-      plan = buildPlan(records, hashOf, { catalog });
+      // #1914: tag video-dominant folders so their videos route to `movies/`
+      // (Jellyfin) while camera-roll clips stay `photos`/Immich.
+      const hints = buildSubtreeHints(records);
+      plan = buildPlan(records, hashOf, { catalog, hints });
     } finally {
       catalog.close();
     }
@@ -285,7 +300,6 @@ async function runApply(
       catalog,
       shareGid,
       hashOf,
-      immich,
       onProgress: p => {
         void setProgress(sessionId, {
           step: 'copy',
@@ -295,6 +309,15 @@ async function runApply(
         });
       },
     });
+
+    // #1904: if photos were written and an Immich admin key is configured,
+    // auto-provision the External Libraries and scan the owning ones so the new
+    // photos get indexed. Best-effort — a scan failure must NOT fail the import
+    // (the files are safely on disk; a later provision+scan still finds them).
+    if (immich && result.photoOwners.length > 0) {
+      await triggerImmichScan(immich, result.photoOwners, sessionId);
+    }
+
     await markApplied(sessionId, result.applied); // one apply per reviewed plan
     return result;
   } finally {
@@ -347,6 +370,28 @@ export async function getImportJob(sessionId: string): Promise<ImportJobStatus |
   return status;
 }
 
+/**
+ * Provision the Immich External Libraries (idempotent) and trigger a scan for
+ * each owner that received photos this apply (#1904). Best-effort: any failure
+ * is recorded as a progress note but never propagated — photos are already on
+ * disk, and a later provision+scan picks them up.
+ */
+async function triggerImmichScan(
+  immich: ImmichAdminConfig,
+  photoOwners: string[],
+  sessionId: string,
+): Promise<void> {
+  try {
+    const { libraryIdByOwner } = await provisionExternalLibraries(immich);
+    await scanLibrariesForOwners(immich, libraryIdByOwner, photoOwners);
+  } catch (e) {
+    await appendLog(
+      sessionId,
+      `Immich library scan skipped: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+}
+
 /** Test seam: drop all persisted sessions. */
 export async function __clearSessions(): Promise<void> {
   await clearSessionStore();
@@ -373,7 +418,9 @@ async function topUpHashes(
   for (const item of plan.items) {
     const writes = item.action === 'copy' || item.action === 'conflict';
     const p = item.record.sourcePath;
-    if (writes && item.category !== 'photos' && !hashes.has(p) && !seen.has(p)) {
+    // Photos now copy like every other category (#1904), so they need a hash
+    // for the catalog row too — no longer excluded here.
+    if (writes && !hashes.has(p) && !seen.has(p)) {
       seen.add(p);
       missing.push(p);
     }

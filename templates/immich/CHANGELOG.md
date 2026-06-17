@@ -1,5 +1,27 @@
 # Immich — template changelog
 
+## v3 — #1904
+
+Disk-import photos become keyless External Libraries (Decision A):
+
+1. **Read-only photo-area mount.** immich-server gains a new mount of
+   the file-share data root (`${DATA_DIR}/file-share/data → /mnt/photos`,
+   `readOnly: true`). Disk-import copies photos into
+   `data/<owner>/photos` (or shared `data/photos`) like every other
+   category — no CLI upload, no per-user API keys — and Immich indexes
+   them in place via per-user External Libraries
+   (`/mnt/photos/<user>/photos`) plus a "Shared" one (`/mnt/photos/photos`).
+   The libraries are auto-provisioned via a single stored Immich **admin**
+   API key, and the owning library's scan is triggered after an import.
+
+2. **`file-share` dependency.** Added to `servicebay.dependencies` so its
+   data root exists before Immich mounts it.
+
+Operator impact: redeploy adds the read-only mount; no data moves and
+nothing is deleted. The photo areas are read-only **inside Immich**
+(curation/deletion happens on the filesystem / Filebrowser). External
+libraries reference files in place, so there's no double storage.
+
 ## v2 (breaking) — #410
 
 Three changes land together because they all sit on the same SSO path:

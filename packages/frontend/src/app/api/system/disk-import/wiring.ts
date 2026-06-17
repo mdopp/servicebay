@@ -30,3 +30,13 @@ export function makeExec(node: string): SafeExec {
   const executor = new AgentExecutor(node);
   return (argv, options) => executor.execSafe(argv, options ?? {});
 }
+
+/**
+ * Immich's loopback base URL for the admin-API library provisioning (#1904).
+ * Immich publishes IMMICH_PORT on the host (default 2283, the template default);
+ * the backend reaches it over loopback. Honours an IMMICH_PORT override.
+ */
+export function immichServerUrl(): string {
+  const port = process.env.IMMICH_PORT || '2283';
+  return `http://127.0.0.1:${port}`;
+}

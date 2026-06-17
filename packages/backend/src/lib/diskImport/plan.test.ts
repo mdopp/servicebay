@@ -232,29 +232,43 @@ describe('applyPlan — conflict routes to _superseded', () => {
   });
 });
 
-describe('applyPlan — photos go to Immich, not file-share', () => {
-  it('runs the immich CLI and never rsyncs photos into the share', async () => {
-    const { exec, calls, opts } = mockExec();
+describe('applyPlan — photos place-in-folder (#1904 Decision A, no upload)', () => {
+  it('rsyncs photos into the share like any category and never runs the immich CLI', async () => {
+    const { exec, calls } = mockExec();
     const catalog = new ImportCatalog(':memory:');
-    const photo = item({ category: 'photos', target: 'photos/IMG_1.jpg', record: record({ sourcePath: `${MOUNT}/IMG_1.jpg`, name: 'img_1.jpg', ext: 'jpg' }) });
+    const photo = item({ category: 'photos', target: 'mdopp/photos/IMG_1.jpg', record: record({ sourcePath: `${MOUNT}/IMG_1.jpg`, name: 'img_1.jpg', ext: 'jpg' }) });
 
-    const res = await applyPlan(planOf(photo), {
-      ...baseOpts(exec, catalog, hashConst('c'.repeat(64))),
-      immich: { serverUrl: 'http://immich:2283', apiKey: 'secret-key' },
-    });
+    const res = await applyPlan(planOf(photo), baseOpts(exec, catalog, hashConst('c'.repeat(64))));
 
-    const podman = calls.find(c => c[0] === 'podman')!;
-    expect(podman).toContain('upload');
-    // The bind-mount source is the absolute sourcePath verbatim — not doubled (#1906).
-    expect(podman).toContain(`${MOUNT}/IMG_1.jpg:/import/IMG_1.jpg:ro`);
-    // Immich upload runs through ROOTLESS podman as `core` — must NOT escalate.
-    expect(sudoFor(calls, opts, 'podman')).not.toBe(true);
-    expect(podman.join(' ')).toContain('IMMICH_INSTANCE_URL=http://immich:2283');
-    // API key passed via env, never bare on argv positionally beyond the -e pair.
-    expect(podman).toContain('IMMICH_API_KEY=secret-key');
-    // No file-share writes for a photo.
-    expect(calls.some(c => c[0] === 'rsync')).toBe(false);
-    expect(res.items[0].outcome).toBe('photo-uploaded');
+    // No CLI upload anywhere — photos copy via rsync like every other category.
+    expect(calls.some(c => c[0] === 'podman')).toBe(false);
+    const rsync = calls.find(c => c[0] === 'rsync')!;
+    expect(rsync).toContain(`${MOUNT}/IMG_1.jpg`);
+    expect(res.items[0].outcome).toBe('copied');
+    catalog.close();
+  });
+
+  it('reports the destination-area owners that received photos (for the library scan)', async () => {
+    const { exec } = mockExec();
+    const catalog = new ImportCatalog(':memory:');
+    const priv = item({ category: 'photos', target: 'mdopp/photos/a.jpg', record: record({ sourcePath: `${MOUNT}/a.jpg`, name: 'a.jpg', ext: 'jpg' }) });
+    const shared = item({ category: 'photos', target: 'photos/b.jpg', record: record({ sourcePath: `${MOUNT}/b.jpg`, name: 'b.jpg', ext: 'jpg' }) });
+    const notPhoto = item({ category: 'music', target: 'music/x.mp3', record: record({ sourcePath: `${MOUNT}/x.mp3` }) });
+
+    const res = await applyPlan(
+      planOf(priv, shared, notPhoto),
+      baseOpts(exec, catalog, hashConst('e'.repeat(64))),
+    );
+
+    expect([...res.photoOwners].sort()).toEqual(['mdopp', 'shared']);
+    catalog.close();
+  });
+
+  it('emits no photo owners when nothing photo-shaped was written', async () => {
+    const { exec } = mockExec();
+    const catalog = new ImportCatalog(':memory:');
+    const res = await applyPlan(planOf(item()), baseOpts(exec, catalog, hashConst('f'.repeat(64))));
+    expect(res.photoOwners).toEqual([]);
     catalog.close();
   });
 });

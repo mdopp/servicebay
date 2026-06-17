@@ -6,10 +6,12 @@ metadata:
     app: immich
   annotations:
     servicebay.label: "Photos"
-    servicebay.schema-version: "2"
+    servicebay.schema-version: "3"
     servicebay.ports: "{{IMMICH_PORT}}/tcp"
     # photos.<domain> is served via nginx; Immich's SSO uses Authelia.
-    servicebay.dependencies: "nginx,auth"
+    # file-share supplies the read-only photo areas for the disk-import
+    # External Libraries (#1904) — its data root is mounted below.
+    servicebay.dependencies: "nginx,auth,file-share"
     # Continuous health probe (#628). `/api/server/ping` is Immich's
     # unauthenticated liveness endpoint — returns `{"res":"pong"}`.
     # (Pre-v2.7 this lived at `/api/server-info/ping`; the old path now
@@ -67,6 +69,15 @@ spec:
       volumeMounts:
         - mountPath: /usr/src/app/upload
           name: immich-upload
+        # #1904: the file-share data root, mounted READ-ONLY, so Immich can
+        # index the disk-import photo areas via per-user External Libraries
+        # (`/mnt/photos/<user>/photos`) + a shared one (`/mnt/photos/photos`).
+        # Read-only by design — curation/deletion happens on the filesystem,
+        # never from within Immich (accepted trade-off, Decision A). The path
+        # must match IMMICH_EXTERNAL_MOUNT in lib/diskImport/immichLibraries.ts.
+        - mountPath: /mnt/photos
+          name: photo-areas
+          readOnly: true
 
     - name: immich-machine-learning
       image: ghcr.io/immich-app/immich-machine-learning:release
@@ -115,6 +126,15 @@ spec:
     - name: immich-upload
       hostPath:
         path: {{DATA_DIR}}/immich/upload
+        type: DirectoryOrCreate
+    # #1904: file-share's data root (the per-user `data/<user>/photos` + shared
+    # `data/photos` photo areas live under here). Mounted read-only into
+    # immich-server above. DirectoryOrCreate so a box without file-share data
+    # yet still starts; the External Libraries simply index nothing until photos
+    # land. file-share is declared in servicebay.dependencies so it installs first.
+    - name: photo-areas
+      hostPath:
+        path: {{DATA_DIR}}/file-share/data
         type: DirectoryOrCreate
     - name: model-cache
       hostPath:

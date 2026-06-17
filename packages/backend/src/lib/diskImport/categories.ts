@@ -37,12 +37,24 @@ export interface CategoryDef {
 export const CATEGORIES: Record<Category, CategoryDef> = {
   photos: {
     folder: 'photos/',
-    // Photos + personal video.
+    // Photos + personal video. Video extensions are shared with `movies`
+    // (below); the extension map's first-wins rule keeps a lone video in
+    // `photos` (→ Immich) by default — the image-vs-video subtree heuristic
+    // and an explicit `movies_jellyfin` disposition (classify.ts, #1914) are
+    // what redirect a video-dominant subtree to `movies/`.
     extensions: [
       'jpg', 'jpeg', 'heic', 'heif', 'png', 'gif', 'webp', 'tiff', 'tif', 'bmp',
       'raw', 'cr2', 'cr3', 'nef', 'arw', 'orf', 'rw2', 'dng',
       'mov', 'mp4', 'm4v', 'avi', 'mkv', '3gp',
     ],
+  },
+  movies: {
+    folder: 'movies/',
+    // No EXCLUSIVE extensions: every video extension is already claimed by
+    // `photos` above (first-wins). A file only lands in `movies/` when the
+    // subtree is video-dominant or carries an explicit `movies_jellyfin`
+    // disposition (classify.ts) — never by the bare extension rule.
+    extensions: [],
   },
   music: {
     folder: 'music/',
@@ -92,6 +104,22 @@ function buildExtensionIndex(): ReadonlyMap<string, Category> {
 }
 
 export const EXTENSION_INDEX: ReadonlyMap<string, Category> = buildExtensionIndex();
+
+/**
+ * Image extensions (the still-photo half of the `photos` bucket). Used by the
+ * image-vs-video subtree heuristic (#1914) to decide whether a video-extension
+ * file sitting in a mostly-image folder is personal media (→ Immich/`photos`)
+ * or a mostly-video folder that should go to `movies/`.
+ */
+export const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
+  'jpg', 'jpeg', 'heic', 'heif', 'png', 'gif', 'webp', 'tiff', 'tif', 'bmp',
+  'raw', 'cr2', 'cr3', 'nef', 'arw', 'orf', 'rw2', 'dng',
+]);
+
+/** Video extensions shared between `photos` (personal video) and `movies/`. */
+export const VIDEO_EXTENSIONS: ReadonlySet<string> = new Set([
+  'mov', 'mp4', 'm4v', 'avi', 'mkv', '3gp',
+]);
 
 /** File-name patterns (lower-case) that mark a file as junk and skipped. */
 export const JUNK_NAMES: ReadonlySet<string> = new Set([
