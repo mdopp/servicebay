@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { ImportCatalog } from './catalog';
 import { buildInventory } from './inventory';
 import { buildPlan, type HashResolver } from './dedup';
-import { classifyRecord, buildSubtreeHints } from './classify';
+import { classifyRecord, buildSubtreeHints, isJunk } from './classify';
 import { listBlockDevices, mountReadOnly, unmount, type BlockDevice } from './mounter';
 import { hashPaths, hashRecords, scanMount } from './hostScan';
 import { applyPlan, type ApplyResult } from './plan';
@@ -261,11 +261,22 @@ async function runScan(sessionId: string, opts: ScanOptions): Promise<ScanResult
   try {
     await setProgress(sessionId, { step: 'walk' });
     const files = await scanMount(exec, mountpoint);
-    const records = buildInventory(files);
+    // Drop junk records BEFORE the expensive size-collision/hash pass (#1932).
+    // Junk subtrees (node_modules/.git/…) are already pruned at the `find` walk;
+    // this is belt-and-suspenders for the junk a path-prune can't express —
+    // junk NAMES (thumbs.db/.ds_store) and junk EXTENSIONS (tmp/cache/…), plus
+    // any junk-named file outside a junk dir. The kept set is what the plan
+    // sees, so classification/dedup/counts stay junk-free and consistent (the
+    // plan simply never produces a `skip-junk` item for a pre-filtered record).
+    const records = buildInventory(files).filter(r => !isJunk(r));
+    // `scanned` reflects the KEPT (non-junk) records — the real candidate set.
     await setProgress(sessionId, { step: 'hash', scanned: records.length });
 
     // Pre-hash only the size-collision candidates host-side, then hand dedup a
-    // synchronous resolver over the resulting map (the engine stays sync).
+    // synchronous resolver over the resulting map (the engine stays sync). With
+    // junk pruned the residual real-content candidate set is small, so a single
+    // blocking hash pass suffices; background/non-blocking hashing is a planned
+    // follow-up UX (tracked under #1932) and intentionally NOT done here.
     const candidates = sizeCollisionCandidates(records);
     const hashes = await hashRecords(exec, candidates, (hashed, total) => {
       void setProgress(sessionId, { hashed, total });

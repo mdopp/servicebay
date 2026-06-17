@@ -134,7 +134,12 @@ export const JUNK_EXTENSIONS: ReadonlySet<string> = new Set([
   'tmp', 'temp', 'cache', 'part', 'crdownload', 'bak',
 ]);
 
-/** Path segments (lower-case) that mark a whole subtree as junk/cache. */
+/**
+ * Path segments (lower-case) that mark a whole subtree as junk/cache. These are
+ * also pruned at the host `find` walk (hostScan.ts) so the importer never
+ * descends, enumerates or hashes them — a repo-heavy disk's `node_modules`/`.git`
+ * never enter the inventory (#1932).
+ */
 export const JUNK_PATH_SEGMENTS: ReadonlyArray<string> = [
   '.trash',
   '.trashes',
@@ -143,4 +148,5 @@ export const JUNK_PATH_SEGMENTS: ReadonlyArray<string> = [
   '@eadir', // Synology thumbnail caches
   '__macosx',
   'node_modules',
+  '.git', // git internals are never library content (#1932)
 ];

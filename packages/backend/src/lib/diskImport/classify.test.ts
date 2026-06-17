@@ -4,6 +4,7 @@ import {
   dispositionCategory,
   isVideoDominant,
   buildSubtreeHints,
+  isJunk,
   type ResidueClassifier,
 } from './classify';
 import { toRecord } from './inventory';
@@ -46,6 +47,14 @@ describe('classifyRecord — junk', () => {
     expect(classifyRecord(rec('/disk/@eaDir/song.flac'))).toBe('junk');
     expect(classifyRecord(rec('/disk/__MACOSX/IMG.jpg'))).toBe('junk');
     expect(classifyRecord(rec('.Trash/x.pdf'))).toBe('junk');
+  });
+  it('treats node_modules and .git subtrees as junk (#1932)', () => {
+    expect(classifyRecord(rec('/disk/proj/node_modules/react/index.js'))).toBe('junk');
+    expect(classifyRecord(rec('/disk/proj/.git/objects/ab/cdef'))).toBe('junk');
+    // isJunk (now exported, used by the scan pre-filter) agrees with classify.
+    expect(isJunk(rec('/disk/proj/node_modules/react/index.js'))).toBe(true);
+    expect(isJunk(rec('/disk/proj/.git/config'))).toBe(true);
+    expect(isJunk(rec('/disk/photos/IMG.jpg'))).toBe(false);
   });
 });
 
