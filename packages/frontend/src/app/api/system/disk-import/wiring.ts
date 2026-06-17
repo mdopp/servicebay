@@ -9,6 +9,7 @@
 
 import { AgentExecutor } from '@/lib/agent/executor';
 import { getNodeIds } from '@/lib/store/repository';
+import { DATA_DIR } from '@/lib/dirs';
 import type { SafeExec } from '@/lib/diskImport/hostExec';
 
 /** Numeric gid that owns file-share data (rootless-podman subgid). */
@@ -16,8 +17,7 @@ export const SHARE_GID = 1024;
 
 /** Persistent import catalog — the resume + cross-disk delta-dedup basis. */
 export function catalogPath(): string {
-  const dataDir = process.env.DATA_DIR ?? '/mnt/data/servicebay';
-  return `${dataDir}/disk-import-catalog.sqlite`;
+  return `${DATA_DIR}/disk-import-catalog.sqlite`;
 }
 
 /** Resolve the node the host commands run on (the first/only node by default). */
