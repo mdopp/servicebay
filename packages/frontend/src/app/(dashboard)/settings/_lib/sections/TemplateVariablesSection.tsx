@@ -27,7 +27,6 @@ export default function TemplateVariablesSection() {
     const meta = templateSchema[key];
     if (meta?.required) return;
     setTemplateValues(prev => {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { [key]: _removed, ...rest } = prev;
       void persistSettings({ templateValues: rest });
       return rest;
