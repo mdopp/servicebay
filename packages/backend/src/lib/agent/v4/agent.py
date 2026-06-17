@@ -106,6 +106,7 @@ SAFE_EXEC_ALLOWLIST = frozenset({
     # `-o ro` to a controlled mountpoint; chown is `:<gid>` to the share gid
     # only — never arbitrary uid:gid; every dest stays under file-share/data/).
     'lsblk',         # enumerate source USB block devices (lsblk -J)
+    'findmnt',       # detect a stale/stacked mount before a fresh `mount` (#1941)
     'mount',         # mount the source READ-ONLY (-o ro) — never read-write
     'umount',        # unmount the source after the import
     'rsync',         # copy non-photo files into file-share/data/<category>/

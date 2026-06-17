@@ -102,6 +102,48 @@ describe('mountReadOnly', () => {
     expect(sudoFor(calls, opts, 'mount')).toBe(true);
   });
 
+  it('does NOT stack on a stale mount: sweeps existing layer(s) first, then mounts once (#1941)', async () => {
+    // The box failure: prior crashed scans left read-only mounts STACKED on the
+    // device at the same mountpoint. findmnt reports the device/target mounted
+    // until enough umounts have peeled the stack; then the fresh `mount` runs.
+    const mp = `${MOUNT_BASE}/sda1`;
+    let layers = 3; // three stale layers to drain
+    const { exec, calls, opts } = mockExec({
+      // findmnt --source <dev> / --mountpoint <mp>: "mounted" while layers remain.
+      findmnt: () => (layers > 0 ? ok(mp) : ok('')),
+      umount: () => {
+        if (layers > 0) layers -= 1;
+        return ok();
+      },
+    });
+
+    const result = await mountReadOnly(exec, '/dev/sda1');
+    expect(result).toBe(mp);
+
+    // Exactly ONE `mount -o ro`, and it runs AFTER every stale umount (no stack).
+    const mounts = calls.filter(c => c[0] === 'mount');
+    expect(mounts).toHaveLength(1);
+    expect(mounts[0]).toEqual(['mount', '-o', 'ro', '/dev/sda1', mp]);
+
+    // The three stale layers were peeled before the fresh mount.
+    const umounts = calls.filter(c => c[0] === 'umount');
+    expect(umounts).toHaveLength(3);
+    const lastUmountIdx = calls.map(c => c[0]).lastIndexOf('umount');
+    const mountIdx = calls.findIndex(c => c[0] === 'mount');
+    expect(lastUmountIdx).toBeLessThan(mountIdx); // unmount-then-mount sequence
+
+    // The sweep umounts run privileged, same as the mount.
+    expect(sudoFor(calls, opts, 'umount')).toBe(true);
+  });
+
+  it('does not unmount anything when nothing is already mounted (clean device)', async () => {
+    // findmnt reports "not mounted" (empty stdout) → no sweep, just mkdir+mount.
+    const { exec, calls } = mockExec({ findmnt: ok('') });
+    await mountReadOnly(exec, '/dev/sda1');
+    expect(calls.some(c => c[0] === 'umount')).toBe(false);
+    expect(calls.filter(c => c[0] === 'mount')).toHaveLength(1);
+  });
+
   it('throws (no mount) on an unsafe device path — shell metacharacters', async () => {
     const { exec, calls } = mockExec();
     await expect(mountReadOnly(exec, '/dev/sda1; rm -rf /')).rejects.toThrow(/unsafe device/);

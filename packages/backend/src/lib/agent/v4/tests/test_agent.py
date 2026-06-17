@@ -302,7 +302,9 @@ class TestDnsResolvers(unittest.TestCase):
     def test_disk_import_binaries_on_safe_exec_allowlist(self):
         # #1694 host-side mount + apply uses these via safe_exec (argv is
         # assembled + validated TS-side in diskImport/mounter.ts + plan.ts).
-        for binary in ('lsblk', 'mount', 'umount', 'rsync', 'chown'):
+        # findmnt (#1941): detect a stale/stacked mount before a fresh `mount` so
+        # idempotent mountReadOnly never stacks read-only layers on the device.
+        for binary in ('lsblk', 'findmnt', 'mount', 'umount', 'rsync', 'chown'):
             self.assertIn(binary, agent.SAFE_EXEC_ALLOWLIST)
 
     def test_mcp_read_tool_binaries_on_safe_exec_allowlist(self):

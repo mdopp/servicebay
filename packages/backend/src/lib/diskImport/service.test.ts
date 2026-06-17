@@ -217,6 +217,53 @@ describe('runScan — review-first, background dedup (#1937)', () => {
     expect(calls.some(c => c[0] === 'sha256sum')).toBe(false);
   });
 
+  it('a scan that THROWS still unmounts — the mount never leaks (#1941)', async () => {
+    // `find` exits non-zero → scanMount throws inside runScan. The mount happened
+    // BEFORE the throw, so the `finally` MUST release it or the next scan stacks.
+    const { exec, calls } = mockExec({ find: { stdout: '', stderr: 'boom', code: 2 } });
+    const { jobId } = await startScan({ exec, device: '/dev/sda1', catalogPath: ':memory:' });
+    await waitFor(async () => (await getImportJob(jobId))!.phase === 'error');
+
+    // It mounted, then — despite the throw — unmounted.
+    expect(calls.some(c => c[0] === 'mount' && c.includes('ro'))).toBe(true);
+    expect(calls.some(c => c[0] === 'umount')).toBe(true);
+  });
+
+  it('background dedup unmounts AFTER its read (mount outlives the review), not before (#1941)', async () => {
+    // Two same-size docs → background dedup hashes them off a RE-MOUNT. The mount
+    // must outlive the review render and stay alive WHILE the background read
+    // (sha256sum) runs, then unmount AFTER. We assert the ordering from the full
+    // host-call log once the pass completes: the dedup pass's read (sha256sum) is
+    // followed by an unmount — the mount was held across the read, never before.
+    const find = [
+      '/mnt/docs/a.pdf\t100\t1700000000',
+      '/mnt/docs/b.pdf\t100\t1700000001', // same size → collision candidate
+    ].join('\0') + '\0';
+    const calls: string[][] = [];
+    const exec: SafeExec = vi.fn(async (argv: string[]) => {
+      calls.push([...argv]);
+      if (argv[0] === 'find') return ok(find);
+      if (argv[0] === 'sha256sum') {
+        return ok(argv.slice(1).map((p, i) => `${String(i).repeat(64).slice(0, 63)}0  ${p}`).join('\n') + '\n');
+      }
+      return ok();
+    });
+
+    const { jobId } = await startScan({ exec, device: '/dev/sda1', catalogPath: ':memory:' });
+    // Let the whole flow finish: review render → detached dedup pass mounts,
+    // hashes, re-plans, unmounts → dedup done.
+    await waitFor(async () => (await getImportJob(jobId))!.dedup === 'done', 2000);
+
+    const kinds = calls.map(c => c[0]);
+    const lastHashIdx = kinds.lastIndexOf('sha256sum');
+    const lastUmountIdx = kinds.lastIndexOf('umount');
+    // The background read happened (the candidates were hashed)...
+    expect(lastHashIdx).toBeGreaterThanOrEqual(0);
+    // ...and the dedup pass's unmount lands AFTER its read — the mount was held
+    // across the read (outlived the review), then released. Never unmounted first.
+    expect(lastUmountIdx).toBeGreaterThan(lastHashIdx);
+  });
+
   it('survives a background hash failure: review stays up, dedup → partial (#1937 Part B)', async () => {
     // Two same-size docs collide → hashed. sha256sum fails at every width → the
     // resilient pass skips both, the dedup pass reports `partial`, and the review

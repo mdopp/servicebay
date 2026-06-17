@@ -146,6 +146,13 @@ export async function listBlockDevices(exec: SafeExec): Promise<BlockDevice[]> {
  * return that path. Creates the mountpoint first (`mkdir -p`). The `-o ro` flag
  * is non-negotiable — there is no read-write code path here by design, so the
  * source disk is never written.
+ *
+ * IDEMPOTENT (#1941): before mounting, sweep any pre-existing mount of THIS
+ * device or target mountpoint — including the STACKED case where prior scans
+ * crashed without unmounting and `mount -o ro` layered another mount on the same
+ * spot. Without this sweep, each fresh scan stacked another read-only layer until
+ * the kernel mount blocked and the scan hung at `Starting…`. We always unmount
+ * the stale layer(s) first, then mount exactly once. Never stacks.
  */
 export async function mountReadOnly(
   exec: SafeExec,
@@ -157,10 +164,53 @@ export async function mountReadOnly(
   // (see hostExec.SafeExec); the agent escalates via `sudo -n`. The argv guards
   // above (assertSafeDevice / mountpointFor) are unaffected by privilege.
   await runOk(exec, ['mkdir', '-p', mountpoint], 'mkdir mountpoint', { sudo: true });
+  // Defence-in-depth (#1941): clear any stale/stacked mount of this device or
+  // mountpoint BEFORE mounting, so a fresh scan after a crashed one can't stack.
+  await sweepStaleMounts(exec, device, mountpoint);
   // `-o ro` only. We never pass a caller-supplied option string — the option
   // set is a fixed literal so no `rw`/`exec`/`dev` can be smuggled in.
   await runOk(exec, ['mount', '-o', 'ro', device, mountpoint], 'mount -o ro', { sudo: true });
   return mountpoint;
+}
+
+/**
+ * True if `device` or `mountpoint` currently has at least one mount, per
+ * `findmnt`. `findmnt --source <dev>` / `--mountpoint <mp>` exits non-zero when
+ * nothing matches; we treat any zero exit with non-empty output as "mounted".
+ * Read-only, so it runs unprivileged.
+ */
+async function isMounted(exec: SafeExec, kind: '--source' | '--mountpoint', value: string): Promise<boolean> {
+  // `-n` no header, `-o TARGET` minimal output. A non-zero exit just means "no
+  // match" — not an error we should throw on (the disk may legitimately be
+  // unmounted), so we don't use runOk here.
+  const { code, stdout } = await exec(['findmnt', '-n', '-o', 'TARGET', kind, value]);
+  return code === 0 && stdout.trim().length > 0;
+}
+
+/**
+ * Unmount every stale layer of `device` and `mountpoint` (#1941). Stacked mounts
+ * are the failure mode the box hit: 5 read-only mounts piled on `/dev/sda` at the
+ * same mountpoint because crashed scans never unmounted and each `mount` added a
+ * layer. We unmount-until-clear, capped, scoped to OUR device + controlled
+ * mountpoint — we never touch an unrelated mount. Best-effort: a layer that won't
+ * release (busy) is left for the fresh `mount` to surface rather than throwing
+ * here; the loop's job is to drain the stack we created, not to fight the kernel.
+ */
+async function sweepStaleMounts(exec: SafeExec, device: string, mountpoint: string): Promise<void> {
+  // Cap the drain well above the worst case we saw (5) so a pathological stack
+  // still terminates rather than looping forever.
+  const MAX_LAYERS = 16;
+  for (let i = 0; i < MAX_LAYERS; i++) {
+    const deviceMounted = await isMounted(exec, '--source', device);
+    const targetMounted = await isMounted(exec, '--mountpoint', mountpoint);
+    if (!deviceMounted && !targetMounted) return;
+    // `umount <mountpoint>` peels one layer. We unmount by the controlled
+    // mountpoint (re-validated by `unmount`) so we never act on an arbitrary
+    // path; repeating drains the stack. Tolerate a failing umount — re-check on
+    // the next iteration; if it never clears we bail out of the loop.
+    const { code } = await exec(['umount', mountpoint], { sudo: true });
+    if (code !== 0) return;
+  }
 }
 
 /** Unmount a mountpoint previously returned by {@link mountReadOnly}. */
