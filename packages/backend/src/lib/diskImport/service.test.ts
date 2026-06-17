@@ -100,6 +100,44 @@ describe('scanDevice', () => {
     expect(result.categories.find(c => c.category === 'photos')?.files).toBe(2);
   });
 
+  it('drops junk records (node_modules/.git/thumbs.db) before hashing AND from the plan (#1932)', async () => {
+    // Two real same-size docs (would size-collide → be hashed) plus a pile of
+    // junk: a node_modules file, a .git file, and a Thumbs.db. The junk must
+    // NOT be hashed and must NOT appear in the plan (no skip-junk item needed —
+    // it's pre-filtered before the engine ever sees it).
+    const find = [
+      '/mnt/docs/a.pdf\t100\t1700000000',
+      '/mnt/docs/b.pdf\t100\t1700000001', // same size as a.pdf → collision candidate
+      '/mnt/proj/node_modules/react/index.js\t100\t1700000002',
+      '/mnt/proj/.git/objects/ab/cdef\t100\t1700000003',
+      '/mnt/docs/Thumbs.db\t100\t1700000004',
+    ].join('\0') + '\0';
+    const hashed: string[] = [];
+    const { exec } = mockExec({
+      find: ok(find),
+      // Distinct hash per path so the two real pdfs are NOT treated as dupes.
+      sha256sum: argv => {
+        const paths = argv.slice(1);
+        hashed.push(...paths);
+        return ok(paths.map((p, i) => `${String(i).repeat(64).slice(0, 63)}0  ${p}`).join('\n') + '\n');
+      },
+    });
+    const result = await scanDevice({ exec, device: '/dev/sda1', catalogPath: ':memory:' });
+
+    // Only the two real docs are in the plan — junk never entered the inventory.
+    expect(result.totalFiles).toBe(2);
+    // No category is `junk` and the docs category holds exactly the 2 real files.
+    expect(result.categories.some(c => c.category === 'junk')).toBe(false);
+    expect(result.categories.find(c => c.category === 'documents')?.files).toBe(2);
+
+    // The junk paths were never handed to sha256sum (not hashed).
+    const junkPaths = ['/mnt/proj/node_modules/react/index.js', '/mnt/proj/.git/objects/ab/cdef', '/mnt/docs/Thumbs.db'];
+    for (const p of junkPaths) expect(hashed).not.toContain(p);
+    // The two real size-colliding docs WERE hashed (real content still deduped).
+    expect(hashed).toContain('/mnt/docs/a.pdf');
+    expect(hashed).toContain('/mnt/docs/b.pdf');
+  });
+
   it('surfaces the unclassifiable residue as a non-blocking ambiguous-folder action', async () => {
     const { exec } = mockExec({ find: ok(FIND_OUT) });
     const result = await scanDevice({ exec, device: '/dev/sda1', catalogPath: ':memory:' });

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseFindOutput, scanMount, hashSourceFile, hashRecords, hashPaths, HASH_BATCH_SIZE } from './hostScan';
+import { parseFindOutput, scanMount, hashSourceFile, hashRecords, hashPaths, HASH_BATCH_SIZE, buildScanFindArgs } from './hostScan';
+import { JUNK_PATH_SEGMENTS } from './categories';
 import type { SafeExec, SafeExecResult } from './hostExec';
 import type { ImportRecord } from './types';
 
@@ -71,6 +72,54 @@ describe('scanMount', () => {
     expect(argv.indexOf('-prune')).toBeLessThan(argv.lastIndexOf('-type'));
   });
 
+  it('prunes node_modules/.git and every junk subtree segment (#1932)', async () => {
+    const { exec, calls } = mockExec({ find: ok('') });
+    await scanMount(exec, '/run/servicebay/disk-import/sda1');
+    const argv = calls[0];
+    // Each junk segment is pruned (single-sourced from JUNK_PATH_SEGMENTS), so
+    // node_modules/.git etc. are never descended → never enumerated or hashed.
+    expect(argv).toContain('node_modules');
+    expect(argv).toContain('.git');
+    for (const seg of JUNK_PATH_SEGMENTS) expect(argv).toContain(seg);
+    // The prune group precedes the -type f test (it's the first -o arm).
+    expect(argv.indexOf('-prune')).toBeLessThan(argv.lastIndexOf('-type'));
+  });
+});
+
+describe('buildScanFindArgs (#1932)', () => {
+  it('wraps the prune names in a \\( … -o … \\) group, pruned before -type f', () => {
+    const argv = buildScanFindArgs('/mnt/x');
+    expect(argv.slice(0, 2)).toEqual(['find', '/mnt/x']);
+    // The pruned dir names live inside a parenthesised -name … -o -name … group.
+    const open = argv.indexOf('(');
+    const close = argv.indexOf(')');
+    expect(open).toBeGreaterThan(-1);
+    expect(close).toBeGreaterThan(open);
+    const group = argv.slice(open, close + 1);
+    expect(group).toContain('lost+found');
+    expect(group).toContain('node_modules');
+    expect(group).toContain('.git');
+    // -name precedes each pruned name; -o separates them.
+    expect(group.filter(a => a === '-name').length).toBe(1 + JUNK_PATH_SEGMENTS.length);
+    expect(group.filter(a => a === '-o').length).toBe(JUNK_PATH_SEGMENTS.length); // n names → n-1 separators (+ lost+found = n)
+    // -prune is applied to the whole group, before the -type f arm.
+    expect(argv[close + 1]).toBe('-prune');
+    expect(argv.indexOf('-prune')).toBeLessThan(argv.indexOf('-type'));
+    // The NUL-delimited printf output contract is unchanged.
+    expect(argv).toContain('-printf');
+    expect(argv).toContain('%p\t%s\t%T@\\0');
+  });
+
+  it('never descends a pruned subtree: scanMount returns exactly what find streams', async () => {
+    // The real prune happens in `find` itself; here we assert the contract that
+    // scanMount returns exactly what find streams (find having pruned the junk).
+    const { exec } = mockExec({ find: ok('/mnt/real/song.flac\t10\t1700000000\0') });
+    const files = await scanMount(exec, '/run/servicebay/disk-import/sda1');
+    expect(files).toEqual([{ path: '/mnt/real/song.flac', size: 10, mtimeMs: 1700000000000 }]);
+  });
+});
+
+describe('scanMount — partial-walk tolerance', () => {
   it('tolerates find exit 1 (permission-denied descent) when stdout still parsed', async () => {
     // A real ext4 disk with a root-0700 subdir: find prints what it could read
     // to stdout AND a "Permission denied" line on stderr, then exits 1. We keep

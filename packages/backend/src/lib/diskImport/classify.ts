@@ -175,7 +175,15 @@ const SPOKEN_GENRES = new Set(['audiobook', 'audio book', 'speech', 'spoken', 's
 /** A long track (> 30 min) is far more likely an audiobook chapter than a song. */
 const LONG_TRACK_SEC = 30 * 60;
 
-function isJunk(record: ImportRecord): boolean {
+/**
+ * Whether a record is junk (skipped, never copied). Matched by junk name
+ * (thumbs.db/.ds_store), junk extension (tmp/cache/…), or a junk path segment
+ * (node_modules/.git/.trash/…). Exported so the scan can DROP junk records
+ * before the expensive size-collision/hash pass (#1932) — junk that the host
+ * `find`-prune can't express (a junk-named file outside a junk dir) is filtered
+ * here, and classify still re-checks it so the plan never copies junk.
+ */
+export function isJunk(record: ImportRecord): boolean {
   if (JUNK_NAMES.has(record.name)) return true;
   if (record.ext && JUNK_EXTENSIONS.has(record.ext)) return true;
   const lowerPath = record.sourcePath.replace(/\\/g, '/').toLowerCase();

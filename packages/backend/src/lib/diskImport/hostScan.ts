@@ -12,9 +12,43 @@
 // `hashSourceFile` (as the dedup `HashResolver`) only for size-collision
 // candidates.
 
+import { JUNK_PATH_SEGMENTS } from './categories';
 import type { ScannedFile } from './inventory';
 import type { SafeExec } from './hostExec';
 import type { ImportRecord } from './types';
+
+/**
+ * The directory names pruned at the `find` walk: `lost+found` (root-0700, useless
+ * to us) plus every junk subtree segment (`node_modules`, `.git`, `.trash`, …).
+ * Single-sourced from {@link JUNK_PATH_SEGMENTS} so the prune list and the engine's
+ * junk classification never drift. Pruning here means a repo-heavy disk's
+ * `node_modules`/`.git` never get enumerated, hashed or imported (#1932) — these
+ * subtrees are near-identical across projects, so unpruned they all size-collide
+ * and the dedup hash pass tries to hash every one ("Checking for duplicates…"
+ * never finishes).
+ */
+const PRUNE_DIR_NAMES: ReadonlyArray<string> = ['lost+found', ...JUNK_PATH_SEGMENTS];
+
+/**
+ * Build the `find` argv that prunes {@link PRUNE_DIR_NAMES} before the `-type f`
+ * test. Shape: `find <mount> \( -name node_modules -o -name .git -o … \) -prune
+ * -o -type f -printf '%p\t%s\t%T@\0'`. The pruned subtrees are never descended,
+ * so they're never enumerated, hashed or imported. The NUL-delimited `-printf`
+ * output contract is unchanged (parseFindOutput depends on it).
+ */
+export function buildScanFindArgs(mountpoint: string): string[] {
+  const pruneGroup: string[] = ['('];
+  PRUNE_DIR_NAMES.forEach((name, i) => {
+    if (i > 0) pruneGroup.push('-o');
+    pruneGroup.push('-name', name);
+  });
+  pruneGroup.push(')');
+  return [
+    'find', mountpoint,
+    ...pruneGroup, '-prune', '-o',
+    '-type', 'f', '-printf', '%p\t%s\t%T@\\0',
+  ];
+}
 
 /** A `\0`-free absolute mountpoint we built ourselves (mounter.ts). */
 function assertMountpoint(mountpoint: string): void {
@@ -33,24 +67,23 @@ function assertMountpoint(mountpoint: string): void {
 export async function scanMount(exec: SafeExec, mountpoint: string): Promise<ScannedFile[]> {
   assertMountpoint(mountpoint);
   // The scan walk runs UNPRIVILEGED on purpose (read-only enumeration never
-  // escalates — see hostExec.ts). On a real ext4 disk that means two things:
+  // escalates — see hostExec.ts). On a real ext4 disk that means three things:
   //
   //  1. `lost+found` is root-owned 0700 and useless to us — prune it from the
-  //     walk so `find` never even tries to descend it (`-path .../lost+found
-  //     -prune`).
-  //  2. Any OTHER root-0700 subdir we hit still makes `find` print a
+  //     walk so `find` never even tries to descend it.
+  //  2. Junk subtrees (`node_modules`, `.git`, `.trash`, …) are pruned the same
+  //     way (#1932): a repo-heavy disk's node_modules is huge and near-identical
+  //     across projects, so unpruned it floods the inventory + the dedup hash
+  //     pass with size-colliding files and "Checking for duplicates…" never
+  //     finishes. Pruned, those subtrees never enter the inventory at all. The
+  //     prune list is single-sourced from JUNK_PATH_SEGMENTS via PRUNE_DIR_NAMES.
+  //  3. Any OTHER root-0700 subdir we hit still makes `find` print a
   //     "Permission denied" line on stderr and exit 1, EVEN THOUGH it already
   //     streamed every readable entry to stdout. Treating that exit 1 as fatal
   //     threw away a perfectly good listing ("Scan disk fails", #1893). So we
   //     tolerate exit 1 WHEN stdout parses into at least one record (a partial
   //     find), and only error on a genuinely failed walk (no usable stdout).
-  const { stdout, code, stderr } = await exec([
-    'find', mountpoint,
-    // Prune the ext4 `lost+found` (root 0700) before any `-type f` test so we
-    // neither descend it nor emit a permission-denied line for it.
-    '-name', 'lost+found', '-prune', '-o',
-    '-type', 'f', '-printf', '%p\t%s\t%T@\\0',
-  ]);
+  const { stdout, code, stderr } = await exec(buildScanFindArgs(mountpoint));
   const files = parseFindOutput(stdout);
   // `find` exits 1 on a permission-denied descent but still lists what it could
   // read. A partial walk (exit 1 WITH parsed records) is a success; only a walk
