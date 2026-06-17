@@ -24,10 +24,15 @@ import { listBlockDevices, mountReadOnly, unmount, type BlockDevice } from './mo
 import { hashRecords, hashSourceFile, scanMount } from './hostScan';
 import { applyPlan, type ApplyResult, type ImmichConfig } from './plan';
 import {
-  createSession,
+  createScanJob,
+  finalizeScan,
   getSession,
   markApplied,
+  markApplying,
+  markError,
+  setProgress,
   sessionHashes,
+  type ScanSession,
   __clearSessions as clearSessionStore,
 } from './sessionStore';
 import type { SafeExec } from './hostExec';
@@ -120,18 +125,61 @@ function describeDevice(d: BlockDevice): string {
  * source is `-o ro` and the catalog is opened read-only-in-effect (we only read
  * it for delta dedup here; nothing is upserted until apply). The mount is always
  * unmounted before returning, even on error.
+ *
+ * Synchronous variant (kept for the engine tests + any caller that can wait):
+ * creates its own session id and runs the walk/hash/plan inline. The HTTP route
+ * uses {@link startScan} instead, which returns the id immediately and runs this
+ * same work in the background (#1897) so a large disk never blocks past the HTTP
+ * timeout.
  */
 export async function scanDevice(opts: ScanOptions): Promise<ScanResult> {
+  const { device, catalogPath } = opts;
+  const sessionId = randomUUID();
+  await createScanJob({ id: sessionId, device, catalogPath });
+  return runScan(sessionId, opts);
+}
+
+/**
+ * Async entry point (#1897). Open a job in `scanning`, kick off the real scan as
+ * a detached task, and return the id IMMEDIATELY — no 504 on a large disk. The
+ * card polls {@link getImportJob} for live phase + counts and the reviewed
+ * plan. Errors are caught and recorded on the session (never propagate — there
+ * is no caller awaiting them), mirroring `install/runner.startJob`.
+ */
+export async function startScan(opts: ScanOptions): Promise<{ jobId: string }> {
+  const sessionId = randomUUID();
+  await createScanJob({ id: sessionId, device: opts.device, catalogPath: opts.catalogPath });
+  void (async () => {
+    try {
+      await runScan(sessionId, opts);
+    } catch (e) {
+      await markError(sessionId, e instanceof Error ? e.message : String(e));
+    }
+  })();
+  return { jobId: sessionId };
+}
+
+/**
+ * The scan work proper: mount → walk → hash → plan → finalize the session. Runs
+ * either inline ({@link scanDevice}) or as the detached body of {@link startScan}.
+ * Streams progress into the session as it goes (step + scanned/hashed counts).
+ */
+async function runScan(sessionId: string, opts: ScanOptions): Promise<ScanResult> {
   const { exec, device, catalogPath } = opts;
+  await setProgress(sessionId, { step: 'mount' });
   const mountpoint = await mountReadOnly(exec, device);
   try {
+    await setProgress(sessionId, { step: 'walk' });
     const files = await scanMount(exec, mountpoint);
     const records = buildInventory(files);
+    await setProgress(sessionId, { step: 'hash', scanned: records.length });
 
     // Pre-hash only the size-collision candidates host-side, then hand dedup a
     // synchronous resolver over the resulting map (the engine stays sync).
     const candidates = sizeCollisionCandidates(records);
-    const hashes = await hashRecords(exec, candidates);
+    const hashes = await hashRecords(exec, candidates, (hashed, total) => {
+      void setProgress(sessionId, { hashed, total });
+    });
     const hashOf: HashResolver = record => {
       const h = hashes.get(record.sourcePath);
       if (h === undefined) {
@@ -140,6 +188,7 @@ export async function scanDevice(opts: ScanOptions): Promise<ScanResult> {
       return h;
     };
 
+    await setProgress(sessionId, { step: 'plan' });
     const catalog = new ImportCatalog(catalogPath);
     let plan: ImportPlan;
     try {
@@ -148,8 +197,7 @@ export async function scanDevice(opts: ScanOptions): Promise<ScanResult> {
       catalog.close();
     }
 
-    const sessionId = randomUUID();
-    await createSession({ id: sessionId, device, plan, hashes, catalogPath });
+    await finalizeScan(sessionId, { plan, hashes });
 
     return {
       sessionId,
@@ -174,12 +222,46 @@ export async function scanDevice(opts: ScanOptions): Promise<ScanResult> {
  * session is consumed (one apply per review) on success.
  */
 export async function applyImportPlan(opts: ApplyOptions): Promise<ApplyResult> {
-  const { exec, sessionId, shareGid, immich } = opts;
-  const stored = await getSession(sessionId);
-  if (!stored || stored.phase === 'applied') {
+  return runApply(opts);
+}
+
+/**
+ * Async entry point (#1897). Verify the review gate SYNCHRONOUSLY (so a forged/
+ * unreviewed/already-applied id still gets an immediate error), flip the session
+ * to `applying`, kick off the apply as a detached task, and return the id. The
+ * card polls {@link getImportJob} for live copy progress. Errors are recorded on
+ * the session, mirroring `install/runner.startJob`.
+ */
+export async function startApply(opts: ApplyOptions): Promise<{ jobId: string }> {
+  const stored = await getSession(opts.sessionId);
+  if (!stored || stored.phase !== 'reviewed' || !stored.plan) {
     throw new Error('disk-import: no reviewed plan for this session — scan + review before applying');
   }
-  const session = { ...stored, hashes: sessionHashes(stored) };
+  await markApplying(opts.sessionId);
+  void (async () => {
+    try {
+      await runApply(opts, { gateChecked: true });
+    } catch (e) {
+      await markError(opts.sessionId, e instanceof Error ? e.message : String(e));
+    }
+  })();
+  return { jobId: opts.sessionId };
+}
+
+async function runApply(
+  opts: ApplyOptions,
+  ctx: { gateChecked?: boolean } = {},
+): Promise<ApplyResult> {
+  const { exec, sessionId, shareGid, immich } = opts;
+  const stored = await getSession(sessionId);
+  // `startApply` already verified + flipped the gate to `applying`; the inline
+  // path checks `reviewed` here. Either way an unreviewed/forged/consumed id is
+  // refused — there is no path to apply a plan that wasn't scanned + reviewed.
+  const acceptable = ctx.gateChecked ? stored?.phase === 'applying' : stored?.phase === 'reviewed';
+  if (!stored || !acceptable || !stored.plan) {
+    throw new Error('disk-import: no reviewed plan for this session — scan + review before applying');
+  }
+  const session = { ...stored, plan: stored.plan, hashes: sessionHashes(stored) };
 
   // Re-mount read-only for the apply pass (the scan unmounted it).
   const mountpoint = await mountReadOnly(exec, session.device);
@@ -187,15 +269,8 @@ export async function applyImportPlan(opts: ApplyOptions): Promise<ApplyResult> 
   try {
     // applyPlan writes a catalog row (keyed by sha) for EVERY copied/superseded
     // item, so it needs a hash for each — not just the size-collision set the
-    // scan pre-hashed. Top up the map host-side for the to-be-written items
-    // (the source is mounted read-only) so the sync resolver below never misses.
-    const hashes = new Map(session.hashes);
-    for (const item of session.plan.items) {
-      const writes = item.action === 'copy' || item.action === 'conflict';
-      if (writes && item.category !== 'photos' && !hashes.has(item.record.sourcePath)) {
-        hashes.set(item.record.sourcePath, await hashSourceFile(exec, item.record.sourcePath));
-      }
-    }
+    // scan pre-hashed. Top up the map host-side for the to-be-written items.
+    const hashes = await topUpHashes(exec, session.plan, session.hashes);
     const hashOf: HashResolver = record => {
       const h = hashes.get(record.sourcePath);
       if (h === undefined) {
@@ -211,8 +286,16 @@ export async function applyImportPlan(opts: ApplyOptions): Promise<ApplyResult> 
       shareGid,
       hashOf,
       immich,
+      onProgress: p => {
+        void setProgress(sessionId, {
+          step: 'copy',
+          copied: p.copied,
+          bytes: p.bytes,
+          total: p.total,
+        });
+      },
     });
-    await markApplied(sessionId); // one apply per reviewed plan
+    await markApplied(sessionId, result.applied); // one apply per reviewed plan
     return result;
   } finally {
     catalog.close();
@@ -220,9 +303,75 @@ export async function applyImportPlan(opts: ApplyOptions): Promise<ApplyResult> 
   }
 }
 
+/**
+ * Status for a disk-import job (#1897). The poll the card hangs off: returns the
+ * current phase + live progress counts, and — once `reviewed` — the review
+ * payload (per-category sizing + non-blocking actions[]) so a reopened/restarted
+ * card can re-attach to a finished scan, and once `applied` the final count. We
+ * read the deterministic engine functions again here (cheap, in-memory) rather
+ * than persist the derived review, keeping the stored session minimal.
+ */
+export interface ImportJobStatus {
+  sessionId: string;
+  device: string;
+  phase: ScanSession['phase'];
+  progress: ScanSession['progress'];
+  error?: string;
+  /** Present once `reviewed` (or later) — the review payload for the card. */
+  review?: ScanResult;
+  /** Files written this apply, present once `applied`. */
+  applied?: number;
+}
+
+export async function getImportJob(sessionId: string): Promise<ImportJobStatus | null> {
+  const s = await getSession(sessionId);
+  if (!s) return null;
+  const status: ImportJobStatus = {
+    sessionId: s.id,
+    device: s.device,
+    phase: s.phase,
+    progress: s.progress,
+    error: s.error,
+    applied: s.applied,
+  };
+  if (s.plan) {
+    status.review = {
+      sessionId: s.id,
+      device: s.device,
+      totalFiles: s.plan.items.length,
+      totalBytes: s.plan.items.reduce((sum, i) => sum + i.record.size, 0),
+      categories: summarizeCategories(s.plan),
+      actions: buildActions(s.plan, s.plan.items.map(i => i.record)),
+    };
+  }
+  return status;
+}
+
 /** Test seam: drop all persisted sessions. */
 export async function __clearSessions(): Promise<void> {
   await clearSessionStore();
+}
+
+/**
+ * Top up the hash map for the apply pass. The scan only pre-hashed size-
+ * collision candidates; applyPlan needs a hash for every copied/superseded
+ * non-photo item (the catalog row is keyed by sha). The source is mounted
+ * read-only, so this only reads. Returns a fresh map (the session's is left
+ * untouched).
+ */
+async function topUpHashes(
+  exec: SafeExec,
+  plan: ImportPlan,
+  base: Map<string, string>,
+): Promise<Map<string, string>> {
+  const hashes = new Map(base);
+  for (const item of plan.items) {
+    const writes = item.action === 'copy' || item.action === 'conflict';
+    if (writes && item.category !== 'photos' && !hashes.has(item.record.sourcePath)) {
+      hashes.set(item.record.sourcePath, await hashSourceFile(exec, item.record.sourcePath));
+    }
+  }
+  return hashes;
 }
 
 /** Records whose size is shared with another record — the only dedup candidates. */

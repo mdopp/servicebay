@@ -91,10 +91,14 @@ export function parseFindOutput(stdout: string): ScannedFile[] {
 export async function hashRecords(
   exec: SafeExec,
   records: ImportRecord[],
+  onProgress?: (hashed: number, total: number) => void,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
+  let hashed = 0;
   for (const record of records) {
     out.set(record.sourcePath, await hashSourceFile(exec, record.sourcePath));
+    hashed += 1;
+    onProgress?.(hashed, records.length);
   }
   return out;
 }

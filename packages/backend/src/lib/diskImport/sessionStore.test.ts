@@ -23,6 +23,13 @@ const SESSIONS_DIR = path.join(TEST_DIR, 'disk-import-sessions');
 
 import {
   createSession,
+  createScanJob,
+  finalizeScan,
+  updateSession,
+  setProgress,
+  markApplying,
+  markError,
+  markCrashedOnStartup,
   getSession,
   markApplied,
   sessionHashes,
@@ -67,7 +74,7 @@ describe('createSession + getSession (persistence)', () => {
     expect(got).not.toBeNull();
     expect(got!.device).toBe('/dev/sda1');
     expect(got!.phase).toBe('reviewed');
-    expect(got!.plan.items[0].target).toBe('documents/report.pdf');
+    expect(got!.plan!.items[0].target).toBe('documents/report.pdf');
     expect(sessionHashes(got!).get('/mnt/docs/report.pdf')).toBe('a'.repeat(64));
   });
 
@@ -91,7 +98,7 @@ describe('restart survival', () => {
     expect(got).not.toBeNull();
     expect(got!.device).toBe('/dev/sdb1');
     expect(got!.catalogPath).toBe('/tmp/cat.db');
-    expect(got!.plan.items[0].record.sourcePath).toBe('/mnt/music/track.flac');
+    expect(got!.plan!.items[0].record.sourcePath).toBe('/mnt/music/track.flac');
     expect(fresh.sessionHashes(got!).get('/mnt/music/track.flac')).toBe('b'.repeat(64));
   });
 });
@@ -131,6 +138,63 @@ describe('append/readLog', () => {
     expect(nextOffset).toBeGreaterThan(0);
     // Catch-up read from the offset returns nothing new.
     expect((await readLog('sess-log', nextOffset)).content).toBe('');
+  });
+});
+
+describe('async job lifecycle (#1897)', () => {
+  it('createScanJob opens a scanning job with no plan; finalizeScan attaches the plan + flips to reviewed', async () => {
+    await createScanJob({ id: 'job-1', device: '/dev/sda1', catalogPath: ':memory:' });
+    const opened = await getSession('job-1');
+    expect(opened!.phase).toBe('scanning');
+    expect(opened!.plan).toBeUndefined();
+    expect(opened!.progress.step).toBe('mount');
+
+    const plan = mkPlan();
+    const hashes = new Map([['/mnt/docs/report.pdf', 'd'.repeat(64)]]);
+    await finalizeScan('job-1', { plan, hashes });
+    const reviewed = await getSession('job-1');
+    expect(reviewed!.phase).toBe('reviewed');
+    expect(reviewed!.plan!.items[0].target).toBe('documents/report.pdf');
+    expect(sessionHashes(reviewed!).get('/mnt/docs/report.pdf')).toBe('d'.repeat(64));
+    expect(reviewed!.progress.scanned).toBe(1);
+  });
+
+  it('setProgress patches live counters; markApplying / markError flip phase', async () => {
+    await createScanJob({ id: 'job-2', device: '/dev/sda1', catalogPath: ':memory:' });
+    await setProgress('job-2', { step: 'hash', scanned: 120, hashed: 40, total: 60 });
+    let s = await getSession('job-2');
+    expect(s!.progress).toMatchObject({ step: 'hash', scanned: 120, hashed: 40, total: 60 });
+
+    await markApplying('job-2');
+    s = await getSession('job-2');
+    expect(s!.phase).toBe('applying');
+    expect(s!.progress.step).toBe('copy');
+
+    await markError('job-2', 'rsync blew up');
+    s = await getSession('job-2');
+    expect(s!.phase).toBe('error');
+    expect(s!.error).toBe('rsync blew up');
+  });
+
+  it('markApplied records the written count; updateSession is a no-op on a gone session', async () => {
+    await createSession({ id: 'job-3', device: '/dev/sda1', plan: mkPlan(), hashes: new Map(), catalogPath: ':memory:' });
+    const applied = await markApplied('job-3', 7);
+    expect(applied!.phase).toBe('applied');
+    expect(applied!.applied).toBe(7);
+    expect(await updateSession('ghost', { phase: 'error' })).toBeNull();
+  });
+
+  it('markCrashedOnStartup flips mid-flight jobs to error, leaves terminal ones alone', async () => {
+    await createScanJob({ id: 'crash-scan', device: '/dev/sda1', catalogPath: ':memory:' }); // scanning
+    await createScanJob({ id: 'crash-apply', device: '/dev/sda1', catalogPath: ':memory:' });
+    await markApplying('crash-apply'); // applying
+    await createSession({ id: 'survivor', device: '/dev/sda1', plan: mkPlan(), hashes: new Map(), catalogPath: ':memory:' }); // reviewed
+
+    const n = await markCrashedOnStartup();
+    expect(n).toBe(2);
+    expect((await getSession('crash-scan'))!.phase).toBe('error');
+    expect((await getSession('crash-apply'))!.phase).toBe('error');
+    expect((await getSession('survivor'))!.phase).toBe('reviewed');
   });
 });
 

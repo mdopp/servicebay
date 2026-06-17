@@ -73,6 +73,12 @@ export interface ApplyOptions {
   dryRun?: boolean;
   /** Clock for deterministic dates/tests. */
   now?: () => number;
+  /**
+   * Called after every item is handled so a background apply can stream live
+   * progress (#1897). `copied` counts files written/uploaded this pass,
+   * `bytes` their summed size, `done`/`total` the item cursor.
+   */
+  onProgress?: (p: { copied: number; bytes: number; done: number; total: number }) => void;
 }
 
 export interface ImmichConfig {
@@ -104,11 +110,13 @@ function assertShareGid(gid: number): void {
  * can simply be re-run.
  */
 export async function applyPlan(plan: ImportPlan, opts: ApplyOptions): Promise<ApplyResult> {
-  const { exec, mountpoint, catalog, shareGid, hashOf, immich, dryRun = false, now = Date.now } = opts;
+  const { exec, mountpoint, catalog, shareGid, hashOf, immich, dryRun = false, now = Date.now, onProgress } = opts;
   assertShareGid(shareGid);
 
   const results: ApplyResultItem[] = [];
   let applied = 0;
+  let bytes = 0;
+  let done = 0;
 
   for (const item of plan.items) {
     const outcome = await applyItem(item, {
@@ -117,7 +125,10 @@ export async function applyPlan(plan: ImportPlan, opts: ApplyOptions): Promise<A
     results.push({ sourcePath: item.record.sourcePath, target: item.target, outcome });
     if (outcome === 'copied' || outcome === 'photo-uploaded' || outcome === 'superseded') {
       applied += 1;
+      bytes += item.record.size;
     }
+    done += 1;
+    onProgress?.({ copied: applied, bytes, done, total: plan.items.length });
   }
 
   return { items: results, applied };
