@@ -94,6 +94,10 @@ def fake_urlopen_factory(responses: dict[str, dict[str, Any]]):
         url = req.full_url if hasattr(req, "full_url") else str(req)
         for prefix, resp in responses.items():
             if prefix in url:
+                # A callable lets a test return a different response per call
+                # (e.g. login that 401s until a rekey, then 201s).
+                if callable(resp):
+                    resp = resp()
                 return FakeResponse(resp["status"], resp.get("body"))
         raise urllib.error.URLError(f"unmocked URL: {url}")
 
@@ -1966,6 +1970,141 @@ class ImmichScript(unittest.TestCase):
         rc, out = self._run(m, env, responses, boom)
         self.assertEqual(rc, 0)
         self.assertIn("Immich OIDC configured", out)
+
+    # ---- #1928: preserved-pgdata admin password rekey ----------------------
+
+    def _rekey_recorder(self, *, user_exists=True, bcrypt_ok=True, login_after_rekey="201"):
+        """Fake `podman exec` for the rekey path. Distinguishes the three call
+        shapes: the `SELECT 1 FROM users` probe, the in-container `node -e`
+        bcrypt mint, and the `UPDATE users` re-stamp. `login_after_rekey` is
+        unused by the fake (login is HTTP, mocked separately) but documents
+        intent. Records the UPDATE's bound `hash=` value."""
+        calls: list[dict[str, Any]] = []
+
+        class _CP:
+            def __init__(self, rc=0, out=""):
+                self.returncode = rc
+                self.stdout = out
+                self.stderr = ""
+
+        def run_fn(cmd, *_a, **_kw):
+            # bcrypt mint: `podman exec -e SB_NEW_PW=… <ctr> node -e <src>`
+            if "node" in cmd and "-e" in cmd:
+                calls.append({"kind": "bcrypt"})
+                if not bcrypt_ok:
+                    return _CP(1, "")
+                return _CP(0, "$2b$11$" + "x" * 53)
+            sql = cmd[-1]
+            bound = {}
+            for i, tok in enumerate(cmd):
+                if tok == "-v" and i + 1 < len(cmd):
+                    k, _, v = cmd[i + 1].partition("=")
+                    bound[k] = v
+            upper = sql.strip().upper()
+            if upper.startswith("SELECT 1 FROM USERS"):
+                calls.append({"kind": "user_select", "bound": bound})
+                return _CP(0, "1" if user_exists else "")
+            if upper.startswith("UPDATE USERS"):
+                calls.append({"kind": "user_update", "bound": bound})
+                return _CP(0, "UPDATE 1")
+            # Any OIDC-secret SELECT/UPDATE that may still run afterwards.
+            if upper.startswith("SELECT"):
+                calls.append({"kind": "oidc_select"})
+                return _CP(0, "")
+            calls.append({"kind": "other", "sql": sql})
+            return _CP(0, "")
+
+        return run_fn, calls
+
+    def test_admin_password_rekey_recovers_login_on_preserved_pgdata(self):
+        """The core #1928 path: admin pre-exists, login 401s (preserved
+        password), so the script rekeys the admin password hash in the DB and
+        the follow-up login succeeds, letting the OIDC API config run."""
+        m = load_script("immich")
+        # Login 401s while the preserved password mismatches; once the rekey
+        # has re-stamped the hash, the follow-up login attempt succeeds.
+        login_states = {"n": 0}
+        responses = dict(self.BASE_RESPONSES)
+        responses["/api/auth/admin-sign-up"] = {"status": 400, "body": {}}
+        # Stateful login: first 8 attempts 401, then 201 after rekey.
+        def login_response():
+            login_states["n"] += 1
+            if login_states["n"] <= 8:
+                return {"status": 401, "body": {}}
+            return {"status": 201, "body": {"accessToken": "tok"}}
+        responses["/api/auth/login"] = login_response
+        responses["/api/system-config"] = {"status": 200, "body": {"oauth": {}}}
+        env = {
+            "PUBLIC_DOMAIN": "dopp.cloud",
+            "IMMICH_SSO_ENABLED": "true",
+            "IMMICH_SSO_SECRET": "fresh-secret",
+            "IMMICH_ADMIN_EMAIL": "op@example.com",
+            "IMMICH_ADMIN_PASSWORD": "regenerated-pw",
+            "DB_PASSWORD": "db-pass",
+        }
+        run_fn, calls = self._rekey_recorder()
+        rc, out = self._run(m, env, responses, run_fn)
+        self.assertEqual(rc, 0)
+        # The admin row was probed, bcrypt minted, and the hash re-stamped.
+        kinds = [c["kind"] for c in calls]
+        self.assertIn("user_select", kinds)
+        self.assertIn("bcrypt", kinds)
+        update = next(c for c in calls if c["kind"] == "user_update")
+        self.assertTrue(update["bound"].get("hash", "").startswith("$2"))
+        self.assertEqual(update["bound"].get("email"), "op@example.com")
+        self.assertIn("Rekeyed the preserved Immich admin password", out)
+        self.assertIn("Admin login succeeded after the DB rekey", out)
+        # And the API-authenticated OIDC config then ran.
+        self.assertIn("Immich OIDC configured", out)
+        # The new password / hash must not leak into a user-visible log line.
+        log_only = "\n".join(
+            line for line in out.splitlines() if not line.startswith("__SB_CREDENTIAL__ ")
+        )
+        self.assertNotIn("regenerated-pw", log_only)
+        self.assertNotIn(update["bound"]["hash"], log_only)
+
+    def test_rekey_skipped_when_admin_row_absent(self):
+        """Fresh DATA dir: no admin row yet → no rekey, no UPDATE. The script
+        must not invent a row; admin-sign-up seeds it via the API."""
+        m = load_script("immich")
+        responses = dict(self.BASE_RESPONSES)
+        responses["/api/auth/admin-sign-up"] = {"status": 400, "body": {}}
+        responses["/api/auth/login"] = {"status": 401, "body": {}}
+        env = {
+            "PUBLIC_DOMAIN": "dopp.cloud",
+            "IMMICH_SSO_ENABLED": "false",
+            "IMMICH_ADMIN_EMAIL": "op@example.com",
+            "IMMICH_ADMIN_PASSWORD": "regenerated-pw",
+            "DB_PASSWORD": "db-pass",
+        }
+        run_fn, calls = self._rekey_recorder(user_exists=False)
+        rc, out = self._run(m, env, responses, run_fn)
+        self.assertEqual(rc, 0)
+        self.assertFalse(any(c["kind"] == "user_update" for c in calls), calls)
+        self.assertFalse(any(c["kind"] == "bcrypt" for c in calls), calls)
+        self.assertIn("nothing to rekey", out)
+
+    def test_rekey_aborts_cleanly_when_bcrypt_unavailable(self):
+        """If the bcrypt mint fails, no UPDATE is issued and the script
+        degrades honestly (no masked success) — login still failed."""
+        m = load_script("immich")
+        responses = dict(self.BASE_RESPONSES)
+        responses["/api/auth/admin-sign-up"] = {"status": 400, "body": {}}
+        responses["/api/auth/login"] = {"status": 401, "body": {}}
+        env = {
+            "PUBLIC_DOMAIN": "dopp.cloud",
+            "IMMICH_SSO_ENABLED": "false",
+            "IMMICH_ADMIN_EMAIL": "op@example.com",
+            "IMMICH_ADMIN_PASSWORD": "regenerated-pw",
+            "DB_PASSWORD": "db-pass",
+        }
+        run_fn, calls = self._rekey_recorder(bcrypt_ok=False)
+        rc, out = self._run(m, env, responses, run_fn)
+        self.assertEqual(rc, 0)
+        self.assertFalse(any(c["kind"] == "user_update" for c in calls), calls)
+        self.assertNotIn("Rekeyed the preserved Immich admin password", out)
+        # Honest degrade message, not a cheerful success.
+        self.assertIn("admin row pre-dates this install", out)
 
 
 if __name__ == "__main__":

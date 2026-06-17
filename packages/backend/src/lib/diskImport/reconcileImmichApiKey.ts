@@ -105,7 +105,10 @@ export async function reconcileImmichApiKey(
   if (!token) {
     return {
       outcome: 'error',
-      message: 'Immich admin login was rejected — the stored password no longer matches the admin row.',
+      message:
+        'Immich admin login was rejected — the stored password no longer matches the admin row ' +
+        '(preserved pgdata). The immich post-deploy auto-rekeys this in place (#1928); if it ' +
+        'persists, re-run the immich post-deploy from Diagnose → post_deploy_failed.',
     };
   }
 

@@ -36,6 +36,13 @@ import urllib.request
 # `immich-database`. Used by the OIDC-secret DB reconcile below.
 DB_CONTAINER = "immich-database"
 
+# The immich-server container inside the same pod (container `immich-server`).
+# It's a Node app that bundles `bcrypt`, so we borrow its runtime to mint a
+# bcrypt hash for the admin password rekey below — exactly the trick the NPM
+# in-place admin rekey uses (hash inside the service's own container, write to
+# its DB). Immich hashes `users.password` with bcrypt (`$2b$`, cost 11).
+SERVER_CONTAINER = "immich-immich-server"
+
 
 # Single end-to-end budget covering everything between deploy and
 # "API answers 200": image pull (~2 GB for immich-server alone),
@@ -243,6 +250,116 @@ def reconcile_oidc_secret_in_db(sso_secret: str, db_password: str) -> bool:
     return True
 
 
+def _bcrypt_hash(password: str) -> str:
+    """Mint a bcrypt hash for `password` inside the immich-server container,
+    using the same `bcrypt` module Immich verifies logins with (cost 11,
+    `$2b$`). Returns the hash, or '' on any failure.
+
+    Why in the container and not in this script: the host has no bcrypt and
+    we must match Immich's exact algorithm/cost so `bcrypt.compare` at login
+    accepts it. The password rides in via an env var (not argv) so it never
+    lands on the host/container process table, and the tiny Node program reads
+    it from `process.env` — same containment as `_psql`'s PGPASSWORD."""
+    node_src = (
+        "const b=require('bcrypt');"
+        "process.stdout.write(b.hashSync(process.env.SB_NEW_PW,11));"
+    )
+    cmd = [
+        "podman", "exec",
+        "-e", f"SB_NEW_PW={password}",
+        SERVER_CONTAINER,
+        "node", "-e", node_src,
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"   ⚠️ bcrypt hash exec against {SERVER_CONTAINER} failed: {exc}")
+        return ""
+    out = (result.stdout or "").strip()
+    if result.returncode != 0 or not out.startswith("$2"):
+        log(f"   ⚠️ Could not mint a bcrypt hash inside {SERVER_CONTAINER} "
+            f"(rc={result.returncode}). Admin password rekey skipped.")
+        return ""
+    return out
+
+
+def rekey_admin_password_in_db(admin_email: str, new_password: str, db_password: str) -> bool:
+    """Re-stamp the preserved Immich admin's password hash to match the
+    freshly-generated IMMICH_ADMIN_PASSWORD, writing straight to the DB.
+
+    Why this exists (#1928): on a reinstall over preserved immich pgdata, the
+    persisted `users.password` row holds the OLD admin bcrypt while this install
+    handed out a NEW IMMICH_ADMIN_PASSWORD. Admin login then 401s, the
+    API-authenticated OIDC config path can't run, and #1904's
+    reconcileImmichApiKey can't mint the External-Library admin key. There is no
+    env-driven password reset in Immich — but we DO hold the DB credentials
+    (DB_PASSWORD, the same ones _psql already uses), so we rekey in place: mint a
+    bcrypt hash for the new password inside immich-server and UPDATE the admin
+    row. Same class as the LLDAP FORCE_RESET / NPM in-place bcrypt rekey. This is
+    an ACCESS credential, not an encryption key — re-keying it loses no data; the
+    admin's photos/library are owned by the user row, not the password.
+
+    Targets the admin by email (the seeded admin's login). Returns True iff it
+    wrote a fresh hash. Idempotent-safe: the caller re-attempts login after, so a
+    no-write just means login keeps failing and we degrade as before — we never
+    report a masked success (feedback_dont_mask_failures)."""
+    # Confirm the admin row exists before touching it — a fresh DATA dir has no
+    # row yet (admin-sign-up creates it via the API), and we must not invent one.
+    code, found = _psql(
+        db_password,
+        "SELECT 1 FROM users WHERE email = :'email' LIMIT 1;",
+        set_vars={"email": admin_email},
+    )
+    if code != 0:
+        log("   ⚠️ Could not query the Immich users table — skipping admin password rekey.")
+        return False
+    if not found:
+        log(f"   ℹ️ No Immich admin row for {admin_email} yet — nothing to rekey "
+            "(fresh data; admin-sign-up seeds it via the API).")
+        return False
+
+    new_hash = _bcrypt_hash(new_password)
+    if not new_hash:
+        return False  # _bcrypt_hash already logged the reason
+
+    # The hash rides in via a psql variable (:'hash') so psql quotes it — no
+    # manual escaping. `$2b$...` contains only bcrypt-alphabet chars, but the
+    # bound-variable form is injection-safe regardless.
+    code, _ = _psql(
+        db_password,
+        "UPDATE users SET password = :'hash' WHERE email = :'email';",
+        set_vars={"hash": new_hash, "email": admin_email},
+    )
+    if code != 0:
+        log("   ⚠️ Failed to re-stamp the Immich admin password hash in the DB.")
+        return False
+    log(f"   ✅ Rekeyed the preserved Immich admin password for {admin_email} "
+        "to this install's IMMICH_ADMIN_PASSWORD (DB re-stamp).")
+    return True
+
+
+def login_admin(base_url: str, email: str, password: str) -> tuple[int, object | None, str | None]:
+    """Log in as the admin, riding through the brief post-sign-up window where
+    Immich 401s while the user row propagates to the auth cache. Returns
+    (last status, last body, accessToken-or-None). ~20s with 2.5s backoff."""
+    code, body, token = 0, None, None
+    for attempt in range(8):
+        code, body = request_json(
+            "POST",
+            f"{base_url}/api/auth/login",
+            {"email": email, "password": password},
+        )
+        token = body.get("accessToken") if isinstance(body, dict) else None
+        if code == 201 and token:
+            return code, body, token
+        if attempt == 0:
+            log(f"   admin login attempt 1 returned HTTP {code} — retrying for ~20s while Immich settles...")
+        time.sleep(2.5)
+    return code, body, token
+
+
 def main() -> int:
     port = env("IMMICH_PORT", "2283")
     public_domain = env("PUBLIC_DOMAIN")
@@ -304,24 +421,24 @@ def main() -> int:
     # A persistent 401 after retries means something different: the admin
     # row pre-dates this install and was created with a different password
     # (preserved data dir + freshly-generated IMMICH_ADMIN_PASSWORD that
-    # never made it into savedSecrets). There's no automatic recovery — Immich
-    # has no env-driven password reset and we don't have its DB credentials
-    # to write a new bcrypt. Degrade gracefully: skip OIDC, surface what the
-    # operator needs to know, exit zero (Immich is still reachable via
-    # Authelia forward-auth at the proxy layer).
-    code, body, token = 0, None, None
-    for attempt in range(8):  # ~20s with 2.5s backoff
-        code, body = request_json(
-            "POST",
-            f"{base_url}/api/auth/login",
-            {"email": admin_email, "password": admin_password},
-        )
-        token = body.get("accessToken") if isinstance(body, dict) else None
-        if code == 201 and token:
-            break
-        if attempt == 0:
-            log(f"   admin login attempt 1 returned HTTP {code} — retrying for ~20s while Immich settles...")
-        time.sleep(2.5)
+    # never made it into savedSecrets). We DO hold the DB credentials
+    # (DB_PASSWORD), so we now auto-rekey the admin password hash in place
+    # (#1928, rekey_admin_password_in_db below) and retry login — same class
+    # as LLDAP FORCE_RESET / NPM in-place rekey. Only if that still can't
+    # produce a token do we degrade: skip OIDC, surface what the operator
+    # needs, exit zero (Immich stays reachable via Authelia forward-auth).
+    db_password = env("DB_PASSWORD")
+    code, body, token = login_admin(base_url, admin_email, admin_password)
+    if (code != 201 or not token) and db_password:
+        log("   Admin login still rejected after retries — the preserved pgdata holds "
+            "a different admin password. Attempting an in-place DB rekey (#1928)…")
+        if rekey_admin_password_in_db(admin_email, admin_password, db_password):
+            # Hash is updated; log in once more so the API-authenticated OIDC
+            # path (and #1904's API-key mint) can run on this same install.
+            code, body, token = login_admin(base_url, admin_email, admin_password)
+            if code == 201 and token:
+                log("   ✅ Admin login succeeded after the DB rekey — the preserved "
+                    "Immich admin now accepts this install's password.")
     if code != 201 or not token:
         log(
             f"ℹ️  Immich admin login returns HTTP {code} — the admin row pre-dates this install "
@@ -335,7 +452,6 @@ def main() -> int:
         # needed — so SSO works without a manual re-paste. The rest of the
         # OAuth config (issuer URL, auth method, etc.) already survived in
         # the same DATA, so only the secret can have gone stale.
-        db_password = env("DB_PASSWORD")
         if sso_enabled and sso_secret and db_password:
             log("   Attempting a DB-level OIDC secret reconcile (no admin login required)…")
             reconcile_oidc_secret_in_db(sso_secret, db_password)
