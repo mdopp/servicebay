@@ -1856,7 +1856,10 @@ class ImmichScript(unittest.TestCase):
         """Return (run_fn, calls) where run_fn fakes `podman exec … psql`.
         SELECT returns `select_value`; UPDATE returns rc 0 and is recorded
         with its bound `-v secret=…` value so the test can assert the
-        new secret was written."""
+        new secret was written.
+
+        SQL is now passed via `input=` kwarg (stdin mode — so psql variable
+        interpolation works); the recorder reads it from `_kw['input']`."""
         calls: list[dict[str, Any]] = []
 
         class _CP:
@@ -1866,7 +1869,7 @@ class ImmichScript(unittest.TestCase):
                 self.stderr = ""
 
         def run_fn(cmd, *_a, **_kw):
-            sql = cmd[-1]
+            sql = _kw.get("input", "")
             secret_var = None
             for i, tok in enumerate(cmd):
                 if tok == "-v" and i + 1 < len(cmd) and cmd[i + 1].startswith("secret="):
@@ -1975,10 +1978,14 @@ class ImmichScript(unittest.TestCase):
 
     def _rekey_recorder(self, *, user_exists=True, bcrypt_ok=True, login_after_rekey="201"):
         """Fake `podman exec` for the rekey path. Distinguishes the three call
-        shapes: the `SELECT 1 FROM users` probe, the in-container `node -e`
-        bcrypt mint, and the `UPDATE users` re-stamp. `login_after_rekey` is
+        shapes: the `SELECT 1 FROM "user"` probe, the in-container `node -e`
+        bcrypt mint, and the `UPDATE "user"` re-stamp. `login_after_rekey` is
         unused by the fake (login is HTTP, mocked separately) but documents
-        intent. Records the UPDATE's bound `hash=` value."""
+        intent. Records the UPDATE's bound `hash=` value.
+
+        SQL is now passed via `input=` kwarg (stdin mode); the recorder reads
+        it from `_kw['input']`. Table is `"user"` (singular, quoted reserved
+        word) — Immich's actual schema name, not the plural `users`."""
         calls: list[dict[str, Any]] = []
 
         class _CP:
@@ -1994,17 +2001,17 @@ class ImmichScript(unittest.TestCase):
                 if not bcrypt_ok:
                     return _CP(1, "")
                 return _CP(0, "$2b$11$" + "x" * 53)
-            sql = cmd[-1]
+            sql = _kw.get("input", "")
             bound = {}
             for i, tok in enumerate(cmd):
                 if tok == "-v" and i + 1 < len(cmd):
                     k, _, v = cmd[i + 1].partition("=")
                     bound[k] = v
             upper = sql.strip().upper()
-            if upper.startswith("SELECT 1 FROM USERS"):
+            if 'SELECT 1 FROM "USER"' in upper:
                 calls.append({"kind": "user_select", "bound": bound})
                 return _CP(0, "1" if user_exists else "")
-            if upper.startswith("UPDATE USERS"):
+            if upper.startswith('UPDATE "USER"'):
                 calls.append({"kind": "user_update", "bound": bound})
                 return _CP(0, "UPDATE 1")
             # Any OIDC-secret SELECT/UPDATE that may still run afterwards.
