@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.125.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.125.1...servicebay-v4.125.2) (2026-06-17)
+
+
+### Bug Fixes
+
+* **disk-import:** review-first scan, resilient hashing, wider junk prune ([#1937](https://github.com/mdopp/servicebay/issues/1937)) ([8ea6411](https://github.com/mdopp/servicebay/commit/8ea64117d7dc41a4e8e95400a44098692ce77405))
+* **disk-import:** review-first scan, resilient hashing, wider junk prune ([#1937](https://github.com/mdopp/servicebay/issues/1937)) ([c62fac6](https://github.com/mdopp/servicebay/commit/c62fac628c7e1fa29bacc51e8d415304ac1f06c5))
+
 ## [4.125.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.125.0...servicebay-v4.125.1) (2026-06-17)
 
 
