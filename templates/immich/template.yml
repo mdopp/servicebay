@@ -39,7 +39,11 @@ metadata:
     # Immich is a multi-container pod (server + machine-learning + redis +
     # database): the per-container approach used in the initial fix
     # (PR #1923) left the volume relabelling active. The pod-level form
-    # (no container-name suffix) suppresses it entirely.
+    # (no container-name suffix) suppresses it entirely — but ONLY when the
+    # hostPath volume uses `type: Directory`. Podman 5.x's `DirectoryOrCreate`
+    # code path bypasses this annotation and relabels regardless (confirmed
+    # on-box: type=DirectoryOrCreate fails; type=Directory succeeds). The
+    # `photo-areas` volume therefore uses `type: Directory` (see below).
     #
     # The shared tree already carries `container_file_t` from its other
     # long-lived consumers, so Immich's read-only photo-areas mount needs
@@ -154,13 +158,17 @@ spec:
         type: DirectoryOrCreate
     # #1904: file-share's data root (the per-user `data/<user>/photos` + shared
     # `data/photos` photo areas live under here). Mounted read-only into
-    # immich-server above. DirectoryOrCreate so a box without file-share data
-    # yet still starts; the External Libraries simply index nothing until photos
-    # land. file-share is declared in servicebay.dependencies so it installs first.
+    # immich-server above. Must use `Directory` (not `DirectoryOrCreate`) because
+    # Podman 5.x's `DirectoryOrCreate` code path ignores the pod-level
+    # `io.podman.annotations.label: "disable"` annotation and relabels the
+    # hostPath tree anyway — hitting "operation not permitted" on root-owned files
+    # (e.g. disk-import's audiobooks/book01.m4b, owned root:1024). `Directory`
+    # respects the annotation. The directory always exists by this point because
+    # `file-share` is declared in `servicebay.dependencies` and installs first.
     - name: photo-areas
       hostPath:
         path: {{DATA_DIR}}/file-share/data
-        type: DirectoryOrCreate
+        type: Directory
     - name: model-cache
       hostPath:
         path: {{DATA_DIR}}/immich/model-cache
