@@ -39,6 +39,10 @@ import type { RoutingResolution } from './dedup';
 import {
   createScanJob,
   finalizeScan,
+  finalizeDedup,
+  startDedup,
+  setDedupProgress,
+  markDedupPartial,
   getSession,
   markApplied,
   markApplying,
@@ -47,6 +51,7 @@ import {
   sessionHashes,
   appendLog,
   type ScanSession,
+  type DedupState,
   __clearSessions as clearSessionStore,
 } from './sessionStore';
 import type { SafeExec } from './hostExec';
@@ -250,46 +255,35 @@ export async function startScan(opts: ScanOptions): Promise<{ jobId: string }> {
 }
 
 /**
- * The scan work proper: mount → walk → hash → plan → finalize the session. Runs
- * either inline ({@link scanDevice}) or as the detached body of {@link startScan}.
- * Streams progress into the session as it goes (step + scanned/hashed counts).
+ * The scan work proper. Review-first (#1937): mount → walk → classify + plan on
+ * METADATA ONLY (no hashes, dedup deferred) → finalize the session to `reviewed`
+ * with the routing tree IMMEDIATELY so the card renders in seconds even on a
+ * 177k-file disk; THEN hash the size-collision candidates in the BACKGROUND and
+ * re-finalize the plan with real dedup decisions (the card polls `dedup`). Runs
+ * inline ({@link scanDevice}) or as the detached body of {@link startScan}.
+ *
+ * Why this is safe: the apply path's `topUpHashes` re-hashes copy targets and the
+ * catalog dedups AT APPLY, so deferring scan-time dedup loses nothing — a first/
+ * sparse import dedups correctly when applied. A background hash failure (Part B)
+ * degrades dedup to `partial` rather than killing the already-rendered review.
  */
 async function runScan(sessionId: string, opts: ScanOptions): Promise<ScanResult> {
   const { exec, device, catalogPath } = opts;
   await setProgress(sessionId, { step: 'mount' });
   const mountpoint = await mountReadOnly(exec, device);
+  // Set in the try-body when there are size-collision candidates; the `finally`
+  // releases the mount FIRST, then schedules this background dedup pass (#1937).
+  let pendingDedup: Parameters<typeof runBackgroundDedup>[0] | undefined;
   try {
     await setProgress(sessionId, { step: 'walk' });
     const files = await scanMount(exec, mountpoint);
-    // Drop junk records BEFORE the expensive size-collision/hash pass (#1932).
-    // Junk subtrees (node_modules/.git/…) are already pruned at the `find` walk;
-    // this is belt-and-suspenders for the junk a path-prune can't express —
-    // junk NAMES (thumbs.db/.ds_store) and junk EXTENSIONS (tmp/cache/…), plus
-    // any junk-named file outside a junk dir. The kept set is what the plan
-    // sees, so classification/dedup/counts stay junk-free and consistent (the
-    // plan simply never produces a `skip-junk` item for a pre-filtered record).
+    // Drop junk records BEFORE planning (#1932). Junk subtrees (node_modules/.git
+    // /bower_components/…) are already pruned at the `find` walk; this is belt-
+    // and-suspenders for the junk a path-prune can't express — junk NAMES
+    // (thumbs.db/.ds_store) and junk EXTENSIONS (tmp/cache/…). The kept set is
+    // what the plan sees, so classification/counts stay junk-free.
     const records = buildInventory(files).filter(r => !isJunk(r));
-    // `scanned` reflects the KEPT (non-junk) records — the real candidate set.
-    await setProgress(sessionId, { step: 'hash', scanned: records.length });
-
-    // Pre-hash only the size-collision candidates host-side, then hand dedup a
-    // synchronous resolver over the resulting map (the engine stays sync). With
-    // junk pruned the residual real-content candidate set is small, so a single
-    // blocking hash pass suffices; background/non-blocking hashing is a planned
-    // follow-up UX (tracked under #1932) and intentionally NOT done here.
-    const candidates = sizeCollisionCandidates(records);
-    const hashes = await hashRecords(exec, candidates, (hashed, total) => {
-      void setProgress(sessionId, { hashed, total });
-    });
-    const hashOf: HashResolver = record => {
-      const h = hashes.get(record.sourcePath);
-      if (h === undefined) {
-        throw new Error(`disk-import: missing pre-computed hash for ${record.sourcePath}`);
-      }
-      return h;
-    };
-
-    await setProgress(sessionId, { step: 'plan' });
+    await setProgress(sessionId, { step: 'plan', scanned: records.length });
 
     // #1915: seed the routing tree from the box-user list — a top-level source
     // dir named EXACTLY like a box user is pre-assigned that owner (overridable
@@ -297,32 +291,123 @@ async function runScan(sessionId: string, opts: ScanOptions): Promise<ScanResult
     const boxUsers = opts.boxUsers ?? [];
     const explicit = seedAutoOwners(records, mountpoint, boxUsers);
     const routing = buildRouting(mountpoint, Object.fromEntries(explicit), 'shared');
+    const hints = buildSubtreeHints(records);
 
-    const catalog = new ImportCatalog(catalogPath);
-    let plan: ImportPlan;
-    try {
-      // #1914: tag video-dominant folders so their videos route to `movies/`
-      // (Jellyfin) while camera-roll clips stay `photos`/Immich.
-      const hints = buildSubtreeHints(records);
-      plan = buildPlan(records, hashOf, { catalog, hints, routing });
-    } finally {
-      catalog.close();
-    }
+    // 1. METADATA-ONLY plan (#1937): no hashes yet. `metadataHashOf` hands every
+    //    record a UNIQUE token, so no two files are ever judged identical — dedup
+    //    is effectively off and every kept file is `copy` (a real same-target
+    //    collision still surfaces as a conflict, which doesn't need a hash). This
+    //    is what renders the tree in seconds.
+    const planNoDedup = buildPlanWithCatalog(records, metadataHashOf, catalogPath, { hints, routing });
+
+    // The size-collision candidates are the ONLY files dedup ever hashes. Compute
+    // the set up front so we can both decide the initial dedup state and drive
+    // the background pass.
+    const candidates = sizeCollisionCandidates(records);
 
     await finalizeScan(sessionId, {
-      plan,
-      hashes,
+      plan: planNoDedup,
+      hashes: new Map(),
       mountpoint,
       boxUsers: [...boxUsers],
       autoRules: Object.fromEntries(explicit),
+      // Nothing to hash → dedup is already final; otherwise the card shows
+      // "checking duplicates…" while the background pass runs.
+      dedup: candidates.length === 0 ? 'done' : 'pending',
+      dedupTotal: candidates.length,
     });
 
-    return buildScanResult({ sessionId, device, plan, records, mountpoint, explicit, boxUsers });
+    if (candidates.length > 0) {
+      pendingDedup = { sessionId, exec, device, records, candidates, hints, routing, catalogPath };
+    }
+
+    return buildScanResult({ sessionId, device, plan: planNoDedup, records, mountpoint, explicit, boxUsers });
   } finally {
-    // Always release the read-only mount; a failed scan must not leave it held.
+    // Always release the read-only mount once the walk+metadata plan is done; a
+    // failed scan must not leave it held. The background dedup pass (#1937)
+    // re-mounts the same controlled mountpoint itself to read the bytes, so the
+    // scan's mount lifetime stays self-contained (no cross-task mount ownership).
     await unmount(exec, mountpoint).catch(() => {});
+
+    // BACKGROUND dedup (#1937): hash the candidates, re-plan with real hashes,
+    // re-finalize. Scheduled AFTER the mount is released; it re-mounts read-only
+    // for its own pass. Detached so the review is already returned/rendered; a
+    // hash failure (Part B) degrades dedup to `partial`, never kills the scan.
+    if (pendingDedup) {
+      void runBackgroundDedup(pendingDedup);
+    }
   }
 }
+
+/**
+ * Background dedup pass (#1937). Re-mounts the device read-only, hashes the
+ * size-collision candidates, re-builds the plan with the REAL content hashes (so
+ * skip-dupe decisions resolve), and re-finalizes the reviewed session — all while
+ * the card already shows the tree. ALWAYS unmounts. Resilient: a file the hash
+ * pass couldn't hash (Part B skip) is simply absent from the map, so it routes to
+ * `copy` (un-deduped) and the run is reported `partial`. Never throws into the
+ * void (the review is already rendered; a dedup hiccup is non-fatal).
+ */
+async function runBackgroundDedup(args: {
+  sessionId: string;
+  exec: SafeExec;
+  device: string;
+  records: readonly ImportRecord[];
+  candidates: ImportRecord[];
+  hints: PlanHints;
+  routing: RoutingResolution;
+  catalogPath: string;
+}): Promise<void> {
+  const { sessionId, exec, device, records, candidates, hints, routing, catalogPath } = args;
+  let mountpoint: string | undefined;
+  try {
+    await startDedup(sessionId, candidates.length);
+    mountpoint = await mountReadOnly(exec, device);
+    const hashes = await hashRecords(exec, candidates, (hashed, total) => {
+      void setDedupProgress(sessionId, hashed, total);
+    });
+    // A candidate missing from the map was skipped by the resilient hash pass
+    // (Part B) — route it as a plain copy (un-deduped) rather than throwing. The
+    // run is `partial` when any candidate couldn't be hashed.
+    const hashOf: HashResolver = record => hashes.get(record.sourcePath) ?? uniqueToken(record);
+    const allHashed = candidates.every(c => hashes.has(c.sourcePath));
+    const plan = buildPlanWithCatalog([...records], hashOf, catalogPath, { hints, routing });
+    await finalizeDedup(sessionId, { plan, hashes, state: allHashed ? 'done' : 'partial' });
+  } catch (e) {
+    // The review is already rendered; a dedup-pass failure must not error the
+    // session. Mark dedup `partial` (import un-deduped; apply re-dedups) + log.
+    await appendLog(sessionId, `dedup pass failed (review unaffected): ${e instanceof Error ? e.message : String(e)}`);
+    await markDedupPartial(sessionId);
+  } finally {
+    if (mountpoint) await unmount(exec, mountpoint).catch(() => {});
+  }
+}
+
+/** Build a plan against a freshly-opened catalog (always closed). Shared by the
+ *  metadata-only pass and the background dedup pass. */
+function buildPlanWithCatalog(
+  records: ImportRecord[],
+  hashOf: HashResolver,
+  catalogPath: string,
+  opts: { hints: PlanHints; routing: RoutingResolution },
+): ImportPlan {
+  const catalog = new ImportCatalog(catalogPath);
+  try {
+    return buildPlan(records, hashOf, { catalog, hints: opts.hints, routing: opts.routing });
+  } finally {
+    catalog.close();
+  }
+}
+
+type PlanHints = ReturnType<typeof buildSubtreeHints>;
+
+/** A per-record unique token used where dedup must be effectively OFF (the
+ *  metadata-only plan, and an un-hashable candidate): no two records ever match,
+ *  so everything routes to `copy`. Stable per path so repeated builds agree. */
+function uniqueToken(record: ImportRecord): string {
+  return `nohash:${record.sourcePath}`;
+}
+const metadataHashOf: HashResolver = uniqueToken;
 
 /** Assemble the review {@link ScanResult} the card shows from a finished scan. */
 function buildScanResult(args: {
@@ -506,6 +591,18 @@ export interface ImportJobStatus {
   review?: ScanResult;
   /** Files written this apply, present once `applied`. */
   applied?: number;
+  /**
+   * Background-dedup sub-state (#1937). Once `reviewed`, this tells the card
+   * whether the duplicate check is still running so it can show a non-blocking
+   * "checking duplicates… N / M" line WITHOUT gating the (already-rendered) tree.
+   * `done`/`partial` = the dedup preview is final. Defaults to `done` for a
+   * pre-#1937 session that has no `dedup` field.
+   */
+  dedup?: DedupState;
+  /** Candidate files hashed so far / total candidates for the background dedup
+   *  pass (#1937) — drives the "checking duplicates… N / M" line. */
+  dedupHashed?: number;
+  dedupTotal?: number;
 }
 
 export async function getImportJob(sessionId: string): Promise<ImportJobStatus | null> {
@@ -518,6 +615,11 @@ export async function getImportJob(sessionId: string): Promise<ImportJobStatus |
     progress: s.progress,
     error: s.error,
     applied: s.applied,
+    // A reopened card re-attaches whether dedup is still pending/running or done
+    // (#1937). Pre-#1937 sessions have no `dedup` → treat as already done.
+    dedup: s.plan ? s.dedup ?? 'done' : undefined,
+    dedupHashed: s.dedupHashed ?? 0,
+    dedupTotal: s.dedupTotal ?? 0,
   };
   if (s.plan) {
     const records = s.plan.items.map(i => i.record);

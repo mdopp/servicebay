@@ -119,6 +119,32 @@ describe('DiskImportReview (presentational)', () => {
     render(<DiskImportReview {...reviewProps} review={review} />);
     expect(screen.queryByTestId('disk-import-tree')).toBeNull();
   });
+
+  it('shows a NON-BLOCKING "checking duplicates…" line while dedup runs (#1937)', () => {
+    render(
+      <DiskImportReview
+        {...reviewProps}
+        review={review}
+        dedup={{ state: 'running', hashed: 7168, total: 155875 }}
+      />,
+    );
+    // The duplicate-check note shows progress, the tree/review is fully rendered,
+    // and Confirm is available — dedup never gates the review.
+    const note = screen.getByTestId('disk-import-dedup');
+    expect(note.textContent).toMatch(/checking for duplicates/i);
+    expect(note.textContent).toContain('7168 / 155875');
+    expect(screen.getByText(/Confirm & import/i)).toBeDefined();
+  });
+
+  it('shows nothing once dedup is done (no noise)', () => {
+    render(<DiskImportReview {...reviewProps} review={review} dedup={{ state: 'done', hashed: 5, total: 5 }} />);
+    expect(screen.queryByTestId('disk-import-dedup')).toBeNull();
+  });
+
+  it('warns when dedup was partial (some files un-checked → imported as-is)', () => {
+    render(<DiskImportReview {...reviewProps} review={review} dedup={{ state: 'partial', hashed: 3, total: 5 }} />);
+    expect(screen.getByTestId('disk-import-dedup').textContent).toMatch(/couldn't be checked/i);
+  });
 });
 
 describe('DiskImportTree (per-folder routing)', () => {

@@ -130,6 +130,9 @@ describe('scanDevice', () => {
     expect(result.categories.some(c => c.category === 'junk')).toBe(false);
     expect(result.categories.find(c => c.category === 'documents')?.files).toBe(2);
 
+    // Hashing now runs in the BACKGROUND (#1937 review-first) — wait for the
+    // dedup pass to finish, then assert WHAT it hashed.
+    await waitFor(async () => (await getImportJob(result.sessionId))!.dedup === 'done');
     // The junk paths were never handed to sha256sum (not hashed).
     const junkPaths = ['/mnt/proj/node_modules/react/index.js', '/mnt/proj/.git/objects/ab/cdef', '/mnt/docs/Thumbs.db'];
     for (const p of junkPaths) expect(hashed).not.toContain(p);
@@ -151,6 +154,89 @@ describe('scanDevice', () => {
     // (defaulted to documents), so the action annotates rather than blocks.
     expect(result.totalFiles).toBe(3);
     expect(result.categories.some(c => c.category === 'documents')).toBe(true);
+  });
+});
+
+describe('runScan — review-first, background dedup (#1937)', () => {
+  it('reaches reviewed WITH the tree BEFORE hashing — dedup is pending while reviewed', async () => {
+    // Two same-size docs size-collide → they're dedup candidates that must be
+    // hashed. We GATE sha256sum so the background hash pass blocks, then assert
+    // the session is already `reviewed` (tree rendered) with `dedup: pending` —
+    // i.e. the review does NOT wait on hashing.
+    const find = [
+      '/mnt/docs/a.pdf\t100\t1700000000',
+      '/mnt/docs/b.pdf\t100\t1700000001', // same size → collision candidate
+    ].join('\0') + '\0';
+    let releaseHash!: () => void;
+    const hashGate = new Promise<void>(r => { releaseHash = r; });
+    let hashCalled = false;
+    const exec: SafeExec = vi.fn(async (argv: string[]) => {
+      if (argv[0] === 'sha256sum') {
+        hashCalled = true;
+        await hashGate; // block the background hash pass until we release it
+        return ok(argv.slice(1).map((p, i) => `${String(i).repeat(64).slice(0, 63)}0  ${p}`).join('\n') + '\n');
+      }
+      if (argv[0] === 'find') return ok(find);
+      return ok();
+    });
+
+    const { jobId } = await startScan({ exec, device: '/dev/sda1', catalogPath: ':memory:' });
+
+    // The scan flips to `reviewed` with the full tree while hashing is STILL
+    // blocked — the review precedes the hash pass.
+    await waitFor(async () => (await getImportJob(jobId))!.phase === 'reviewed');
+    const reviewed = await getImportJob(jobId);
+    expect(reviewed!.phase).toBe('reviewed');
+    expect(reviewed!.review).toBeDefined();
+    expect(reviewed!.review!.totalFiles).toBe(2);
+    expect(reviewed!.review!.tree.length).toBeGreaterThan(0); // tree is rendered
+    // Dedup has NOT completed — it's pending or running, gated on the hash pass.
+    expect(['pending', 'running']).toContain(reviewed!.dedup);
+
+    // Now let the background hash pass proceed → dedup completes to `done`.
+    releaseHash();
+    await waitFor(async () => (await getImportJob(jobId))!.dedup === 'done');
+    expect(hashCalled).toBe(true);
+    const done = await getImportJob(jobId);
+    expect(done!.phase).toBe('reviewed'); // still reviewed, just deduped now
+    expect(done!.dedup).toBe('done');
+  });
+
+  it('marks dedup done immediately when there is nothing to hash (no size collisions)', async () => {
+    // Distinct-size files → no dedup candidates → no background hash pass needed.
+    const find = [
+      '/mnt/docs/a.pdf\t100\t1700000000',
+      '/mnt/docs/b.pdf\t200\t1700000001',
+    ].join('\0') + '\0';
+    const { exec, calls } = mockExec({ find: ok(find) });
+    const { jobId } = await startScan({ exec, device: '/dev/sda1', catalogPath: ':memory:' });
+    await waitFor(async () => (await getImportJob(jobId))!.phase === 'reviewed');
+    const job = await getImportJob(jobId);
+    expect(job!.dedup).toBe('done');
+    // Nothing was hashed (no candidates).
+    expect(calls.some(c => c[0] === 'sha256sum')).toBe(false);
+  });
+
+  it('survives a background hash failure: review stays up, dedup → partial (#1937 Part B)', async () => {
+    // Two same-size docs collide → hashed. sha256sum fails at every width → the
+    // resilient pass skips both, the dedup pass reports `partial`, and the review
+    // is unaffected (the scan does NOT error).
+    const find = [
+      '/mnt/docs/a.pdf\t100\t1700000000',
+      '/mnt/docs/b.pdf\t100\t1700000001',
+    ].join('\0') + '\0';
+    const exec: SafeExec = vi.fn(async (argv: string[]) => {
+      if (argv[0] === 'sha256sum') return { stdout: '', stderr: 'I/O error', code: 1 };
+      if (argv[0] === 'find') return ok(find);
+      return ok();
+    });
+    const { jobId } = await startScan({ exec, device: '/dev/sda1', catalogPath: ':memory:' });
+    await waitFor(async () => ['done', 'partial'].includes((await getImportJob(jobId))!.dedup!));
+    const job = await getImportJob(jobId);
+    // The hash pass failed, but the scan did NOT error — review is intact.
+    expect(job!.phase).toBe('reviewed');
+    expect(job!.review!.totalFiles).toBe(2);
+    expect(job!.dedup).toBe('partial');
   });
 });
 

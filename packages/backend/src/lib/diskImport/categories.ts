@@ -149,4 +149,23 @@ export const JUNK_PATH_SEGMENTS: ReadonlyArray<string> = [
   '__macosx',
   'node_modules',
   '.git', // git internals are never library content (#1932)
+  // Dev / build / cache subtrees (#1937): checked-in dependency trees and
+  // generated/build output that flood a repo-heavy disk's inventory + dedup
+  // hash pass with near-identical, size-colliding files — never library
+  // content. `bower_components` was the biggest single offender on the user's
+  // real disk (~5.6k checked-in Polymer deps).
+  'bower_components',
+  'vendor', // Go/PHP vendored deps
+  'dist',
+  'build',
+  '.next',
+  '.nuxt',
+  '.gradle',
+  '.cache',
+  '__pycache__',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.tox',
+  '.svn', // other VCS internals
+  '.hg',
 ];

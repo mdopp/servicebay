@@ -40,6 +40,12 @@ export interface ScanReviewLike {
   defaultOwner?: string;
 }
 
+/** Background-dedup sub-state (#1937). The scan renders the tree at `reviewed`
+ *  immediately and hashes/dedups in the BACKGROUND; this drives a non-blocking
+ *  "checking duplicates… N / M" line WITHOUT gating the tree. Absent on a
+ *  pre-#1937 backend → treat as `done`. */
+export type DedupState = 'pending' | 'running' | 'done' | 'partial';
+
 /** The status-route payload the card polls. */
 export interface JobStatus {
   sessionId: string;
@@ -49,6 +55,10 @@ export interface JobStatus {
   error?: string;
   review?: ScanReviewLike;
   applied?: number;
+  /** Background-dedup sub-state (#1937) + its hashed/total counters. */
+  dedup?: DedupState;
+  dedupHashed?: number;
+  dedupTotal?: number;
 }
 
 /** Which background pass we're tracking — routes a terminal status. */
@@ -122,8 +132,15 @@ export interface UseImportJob {
  *  a TERMINAL phase (the caller stops polling); false to keep polling. */
 function routeStatus(s: JobStatus, kind: JobKind | null, h: ImportJobHandlers): boolean {
   if (s.phase === 'reviewed') {
+    // Review-first (#1937): hand the card the tree the MOMENT the scan reviews,
+    // even though background dedup may still be running. Keep polling while
+    // dedup is pending/running so the "checking duplicates…" line fills in live;
+    // only treat the scan as terminal once dedup is done/partial. (Pre-#1937
+    // backends have no `dedup` → treat as done = terminal immediately.)
     h.onReviewed(s.review ?? null);
-    return kind !== 'applying'; // mid-apply a reviewed re-read isn't terminal
+    if (kind === 'applying') return false; // mid-apply a reviewed re-read isn't terminal
+    const dedup = s.dedup ?? 'done';
+    return dedup === 'done' || dedup === 'partial';
   }
   if (s.phase === 'applied') {
     h.onApplied(s.applied ?? 0);

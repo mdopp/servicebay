@@ -378,6 +378,36 @@ function DefaultOwnerPicker({
 }
 
 /** Presentational review: per-category sizing + the non-blocking actions[]. */
+/**
+ * Non-blocking duplicate-check line under the review header (#1937). Review-first:
+ * the tree is fully usable the moment the scan reviews; this just tells the user
+ * the duplicate preview is still filling in (or is done) — it never gates the
+ * tree or the Confirm button. `done` shows nothing (no noise); `pending`/`running`
+ * shows a "checking duplicates… N / M" note; `partial` notes some files couldn't
+ * be checked (they're imported un-deduped — apply re-dedups, so it's safe).
+ */
+function DedupNote({
+  dedup,
+}: {
+  dedup?: { state: 'pending' | 'running' | 'done' | 'partial'; hashed: number; total: number };
+}) {
+  if (!dedup || dedup.state === 'done') return null;
+  if (dedup.state === 'partial') {
+    return (
+      <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="disk-import-dedup">
+        Some files couldn&apos;t be checked for duplicates — they&apos;ll be imported as-is (de-duplicated
+        on copy).
+      </p>
+    );
+  }
+  const count = dedup.total > 0 ? ` ${dedup.hashed} / ${dedup.total}` : '';
+  return (
+    <p className="text-xs text-gray-500 dark:text-gray-400" data-testid="disk-import-dedup">
+      Checking for duplicates in the background…{count} You can review and import now.
+    </p>
+  );
+}
+
 export function DiskImportReview({
   review,
   rules,
@@ -387,6 +417,7 @@ export function DiskImportReview({
   onConfirm,
   onCancel,
   busy,
+  dedup,
 }: {
   review: ScanReview;
   rules: Record<string, Rule>;
@@ -396,6 +427,10 @@ export function DiskImportReview({
   onConfirm: () => void;
   onCancel: () => void;
   busy: boolean;
+  /** Non-blocking background-dedup status (#1937): the tree is fully reviewable
+   *  while duplicate detection finishes in the background. Omit on a pre-#1937
+   *  backend. */
+  dedup?: { state: 'pending' | 'running' | 'done' | 'partial'; hashed: number; total: number };
 }) {
   const boxUsers = review.boxUsers ?? [];
   return (
@@ -406,6 +441,7 @@ export function DiskImportReview({
           {review.totalFiles} files · {formatBytes(review.totalBytes)} from {review.device}. Nothing has
           been written yet.
         </p>
+        <DedupNote dedup={dedup} />
       </div>
 
       {(review.tree?.length ?? 0) > 0 && (
@@ -810,9 +846,20 @@ export default function DiskImportSection() {
     setReview, setApplied, setSelected, setRules, setDefaultOwner, refreshDevices,
   });
 
+  // Surface the background-dedup status (#1937) so the review shows a non-blocking
+  // "checking duplicates…" line while the tree is already fully usable.
+  const dedup = review && job.status?.phase === 'reviewed'
+    ? {
+        state: job.status.dedup ?? 'done',
+        hashed: job.status.dedupHashed ?? 0,
+        total: job.status.dedupTotal ?? 0,
+      }
+    : undefined;
+
   const reviewProps = review && {
     review, rules, defaultOwner, onRuleChange,
     onDefaultOwnerChange: setDefaultOwner, onConfirm: applyPlan, onCancel: reset, busy: false,
+    dedup,
   };
 
   return (

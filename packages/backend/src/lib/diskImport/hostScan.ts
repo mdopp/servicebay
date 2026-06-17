@@ -124,24 +124,98 @@ export function parseFindOutput(stdout: string): ScannedFile[] {
 export const HASH_BATCH_SIZE = 256;
 
 /**
+ * Byte cap for a single `sha256sum` batch (#1937). The fixed 256-file count cap
+ * alone blew up on real media: a batch that lands on a run of large videos
+ * (each GBs) had to read hundreds of GB through `sha256sum` in ONE host call and
+ * blew the exec timeout → the batch threw → the whole scan died ("failed after
+ * ~130k files"). So a batch is flushed at {@link HASH_BATCH_SIZE} files OR when
+ * its accumulated `record.size` reaches this cap, whichever comes first. 768 MB
+ * is comfortably hashable within {@link batchTimeoutMs} even on slow USB media
+ * (a few GB/min), so a batch of big videos contains just a handful of files.
+ * Only the byte-aware {@link hashRecords} path knows sizes; the raw
+ * {@link hashPaths} path (no sizes) keeps the count-only cap.
+ */
+export const HASH_BATCH_BYTES = 768 * 1024 * 1024;
+
+/**
+ * Per-batch exec timeout (#1937). The agent's `safe_exec` default (~30s) is far
+ * too short for a media batch — hashing up to {@link HASH_BATCH_BYTES} off slow
+ * USB at a few GB/min wants minutes, not seconds. We pass an explicit, generous
+ * timeout that scales with the batch's byte budget (a small floor for tiny
+ * batches). A batch that STILL times out is split + retried (never fatal).
+ */
+export const HASH_BATCH_TIMEOUT_FLOOR_MS = 60_000;
+
+/** Generous timeout for a batch carrying `bytes` of content: floor + ~1 min per
+ *  256 MB. Keeps even a worst-case (cap-sized) batch from spuriously timing out
+ *  on slow media, while a tiny batch still gets a sane floor. */
+function batchTimeoutMs(bytes: number): number {
+  return HASH_BATCH_TIMEOUT_FLOOR_MS + Math.ceil(bytes / (256 * 1024 * 1024)) * 60_000;
+}
+
+/**
  * Build a dedup {@link import('./dedup').HashResolver} backed by host-side
  * `sha256sum` over the read-only mount. dedup only calls this for size-collision
  * candidates, so the host doesn't hash every file. Synchronous-looking resolver
  * contract: we pre-hash the candidate set up front (batched passes) so the
  * deterministic engine can stay synchronous.
  *
- * Throughput (#1898): paths are hashed in {@link HASH_BATCH_SIZE} chunks — one
- * `sha256sum <p1> <p2> …` agent round-trip per chunk, not one per file. The
- * hashes are byte-for-byte identical to the per-file path; only the number of
- * round-trips changes. `onProgress` still fires once per file so the card's live
- * `hashed/total` count advances smoothly within a chunk.
+ * Throughput (#1898): paths are hashed in batches — one `sha256sum <p1> <p2> …`
+ * agent round-trip per batch, not one per file.
+ *
+ * Resilience (#1937): this size-aware path flushes a batch at
+ * {@link HASH_BATCH_SIZE} files OR {@link HASH_BATCH_BYTES} bytes (so a batch of
+ * large media stays small + within the time budget), passes an explicit generous
+ * {@link batchTimeoutMs}, and on a batch failure (timeout / non-zero exit) RETRIES
+ * by splitting the batch down to per-file; a file that STILL fails is SKIPPED
+ * (omitted from the map → simply not deduped) with a warning, never thrown. The
+ * caller (a background pass since #1937) must survive a hashing hiccup, so this
+ * degrades dedup gracefully instead of killing the scan.
+ *
+ * `onProgress` still fires once per (attempted) file so the card's live
+ * `hashed/total` count advances smoothly.
  */
 export async function hashRecords(
   exec: SafeExec,
   records: ImportRecord[],
   onProgress?: (hashed: number, total: number) => void,
 ): Promise<Map<string, string>> {
-  return hashPaths(exec, records.map(r => r.sourcePath), onProgress);
+  const out = new Map<string, string>();
+  if (records.length === 0) return out;
+  for (const r of records) {
+    if (r.sourcePath.includes('\0')) throw new Error('disk-import: NUL byte in source path');
+  }
+  const total = records.length;
+  let processed = 0;
+  let batch: ImportRecord[] = [];
+  let batchBytes = 0;
+  const flush = async (): Promise<void> => {
+    if (batch.length === 0) return;
+    const paths = batch.map(r => r.sourcePath);
+    const resolved = await hashBatchResilient(exec, paths, batchTimeoutMs(batchBytes));
+    for (const [p, hex] of resolved) out.set(p, hex);
+    processed += batch.length;
+    onProgress?.(processed, total);
+    batch = [];
+    batchBytes = 0;
+  };
+  for (const r of records) {
+    const size = Math.max(0, r.size);
+    // Flush BEFORE adding when this record would push a NON-EMPTY batch over the
+    // byte cap — so a run of large media yields one-file batches (each comfortably
+    // under the exec timeout) instead of a doomed mega-batch. A single record
+    // larger than the cap still goes alone (it can't be split further).
+    if (batch.length > 0 && batchBytes + size > HASH_BATCH_BYTES) {
+      await flush();
+    }
+    batch.push(r);
+    batchBytes += size;
+    if (batch.length >= HASH_BATCH_SIZE) {
+      await flush();
+    }
+  }
+  await flush();
+  return out;
 }
 
 /**
@@ -153,6 +227,11 @@ export async function hashRecords(
  * escapes `\`→`\\`, `\n`→`\\n`); we undo that escaping so the map keys match the
  * paths we passed in. `onProgress` (optional) fires once per file so a live
  * `hashed/total` count still advances within a chunk. Empty input → no round-trip.
+ *
+ * No `record.size` is available on this raw-path entry (the apply top-up), so it
+ * keeps the count-only batch cap. It still retries-splits a failing batch and
+ * skips a persistently-failing file (#1937) — a missing apply-hash is handled by
+ * the caller's resolver (it only needs hashes for write targets).
  */
 export async function hashPaths(
   exec: SafeExec,
@@ -165,25 +244,68 @@ export async function hashPaths(
     if (p.includes('\0')) throw new Error('disk-import: NUL byte in source path');
   }
   const total = paths.length;
-  let hashed = 0;
+  let processed = 0;
   for (let i = 0; i < paths.length; i += HASH_BATCH_SIZE) {
     const chunk = paths.slice(i, i + HASH_BATCH_SIZE);
-    const byPath = parseSha256sumOutput(await runSha256sum(exec, chunk));
-    for (const p of chunk) {
-      const hex = byPath.get(p);
-      if (hex === undefined) {
-        throw new Error(`disk-import: sha256sum returned no hash for ${JSON.stringify(p)}`);
-      }
-      out.set(p, hex);
-      hashed += 1;
-      onProgress?.(hashed, total);
-    }
+    const resolved = await hashBatchResilient(exec, chunk, batchTimeoutMs(0));
+    for (const [p, hex] of resolved) out.set(p, hex);
+    processed += chunk.length;
+    onProgress?.(processed, total);
   }
   return out;
 }
 
-async function runSha256sum(exec: SafeExec, paths: string[]): Promise<string> {
-  const { stdout, code, stderr } = await exec(['sha256sum', ...paths]);
+/**
+ * Hash one batch of paths resiliently (#1937). One `sha256sum` round-trip with an
+ * explicit `timeoutMs`; a NON-FATAL failure (timeout / non-zero exit / a path the
+ * tool omitted) is recovered by SPLITTING the batch (halve, down to per-file) and
+ * retrying each half. A single path that still fails at width 1 is SKIPPED
+ * (omitted from the returned map → simply not deduped) with a warning. Never
+ * throws for a hashing failure — the scan/review (already rendered, #1937 Part A)
+ * must survive a hash-pass hiccup.
+ */
+async function hashBatchResilient(
+  exec: SafeExec,
+  paths: string[],
+  timeoutMs: number,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (paths.length === 0) return out;
+  try {
+    const byPath = parseSha256sumOutput(await runSha256sum(exec, paths, timeoutMs));
+    let allPresent = true;
+    for (const p of paths) {
+      const hex = byPath.get(p);
+      if (hex === undefined) {
+        allPresent = false;
+        break;
+      }
+      out.set(p, hex);
+    }
+    if (allPresent) return out;
+    // The tool returned but omitted a requested path — fall through to split so
+    // the present paths in this batch still get hashed.
+    out.clear();
+  } catch {
+    // Timeout / non-zero exit / transport error — recover by splitting.
+  }
+
+  if (paths.length === 1) {
+    // A single file that still fails: skip its hash (it just isn't deduped).
+    // eslint-disable-next-line no-console
+    console.warn(`disk-import: skipping un-hashable file (left un-deduped): ${JSON.stringify(paths[0])}`);
+    return out;
+  }
+  const mid = Math.ceil(paths.length / 2);
+  const left = await hashBatchResilient(exec, paths.slice(0, mid), timeoutMs);
+  const right = await hashBatchResilient(exec, paths.slice(mid), timeoutMs);
+  for (const [p, h] of left) out.set(p, h);
+  for (const [p, h] of right) out.set(p, h);
+  return out;
+}
+
+async function runSha256sum(exec: SafeExec, paths: string[], timeoutMs?: number): Promise<string> {
+  const { stdout, code, stderr } = await exec(['sha256sum', ...paths], { timeoutMs });
   if (code !== 0) {
     throw new Error(`disk-import: sha256sum failed (code ${code}): ${stderr}`);
   }
@@ -211,8 +333,19 @@ function parseSha256sumOutput(stdout: string): Map<string, string> {
   return out;
 }
 
-/** Hash one source file's bytes via host `sha256sum` (read-only). */
+/**
+ * Hash one source file's bytes via host `sha256sum` (read-only). STRICT (unlike
+ * the batched {@link hashPaths}/{@link hashRecords}, which skip a persistently-
+ * failing file): a single explicit hash request must succeed or throw, so a
+ * caller asking for exactly one hash gets a clear failure rather than a silent
+ * `undefined`.
+ */
 export async function hashSourceFile(exec: SafeExec, sourcePath: string): Promise<string> {
-  const byPath = await hashPaths(exec, [sourcePath]);
-  return byPath.get(sourcePath)!;
+  if (sourcePath.includes('\0')) throw new Error('disk-import: NUL byte in source path');
+  const byPath = parseSha256sumOutput(await runSha256sum(exec, [sourcePath]));
+  const hex = byPath.get(sourcePath);
+  if (hex === undefined) {
+    throw new Error(`disk-import: sha256sum returned no hash for ${JSON.stringify(sourcePath)}`);
+  }
+  return hex;
 }

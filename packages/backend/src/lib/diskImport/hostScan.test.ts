@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseFindOutput, scanMount, hashSourceFile, hashRecords, hashPaths, HASH_BATCH_SIZE, buildScanFindArgs } from './hostScan';
+import { parseFindOutput, scanMount, hashSourceFile, hashRecords, hashPaths, HASH_BATCH_SIZE, HASH_BATCH_BYTES, buildScanFindArgs } from './hostScan';
 import { JUNK_PATH_SEGMENTS } from './categories';
 import type { SafeExec, SafeExecResult } from './hostExec';
 import type { ImportRecord } from './types';
@@ -183,7 +183,7 @@ describe('hashRecords', () => {
     expect(calls[0]).toEqual(['sha256sum', '/mnt/a', '/mnt/b']);
   });
 
-  it('fires onProgress once per file even within a batched call', async () => {
+  it('fires onProgress per flushed batch with the running hashed/total (#1937)', async () => {
     const { exec } = batchedSha256(() => 'a'.repeat(64));
     const records: ImportRecord[] = [
       { sourcePath: '/mnt/a', size: 1, mtimeMs: 0, ext: '', name: 'a' },
@@ -192,7 +192,9 @@ describe('hashRecords', () => {
     ];
     const ticks: Array<[number, number]> = [];
     await hashRecords(exec, records, (hashed, total) => ticks.push([hashed, total]));
-    expect(ticks).toEqual([[1, 3], [2, 3], [3, 3]]);
+    // All three tiny files fit one batch → one tick at completion. (The card's
+    // "checking duplicates… N / M" line advances per flushed batch, #1937.)
+    expect(ticks).toEqual([[3, 3]]);
   });
 });
 
@@ -224,14 +226,111 @@ describe('hashPaths — batched execution (#1898)', () => {
     expect(map.get('/mnt/od\nd')).toBe(hex);
   });
 
-  it('throws if sha256sum omits a requested path', async () => {
-    const exec: SafeExec = vi.fn(async () => ok(`${'e'.repeat(64)}  /mnt/a\n`));
-    await expect(hashPaths(exec, ['/mnt/a', '/mnt/b'])).rejects.toThrow(/no hash for/);
+  it('SKIPS (does not throw on) a path the tool omits — left un-deduped (#1937)', async () => {
+    // Resilient hashing (#1937): a batch where sha256sum omits a path is retried-
+    // split down to per-file; a file that still has no hash is SKIPPED (absent
+    // from the map → simply not deduped), never thrown. Here `/mnt/b` is omitted
+    // at every width, so `/mnt/a` is hashed and `/mnt/b` is dropped.
+    const exec: SafeExec = vi.fn(async (argv: string[]) =>
+      argv.includes('/mnt/a') && !argv.includes('/mnt/b')
+        ? ok(`${'e'.repeat(64)}  /mnt/a\n`)
+        : argv.includes('/mnt/a')
+          ? ok(`${'e'.repeat(64)}  /mnt/a\n`) // batch [a,b]: only a returned → split
+          : ok(''),
+    );
+    const map = await hashPaths(exec, ['/mnt/a', '/mnt/b']);
+    expect(map.get('/mnt/a')).toBe('e'.repeat(64));
+    expect(map.has('/mnt/b')).toBe(false);
   });
 
   it('refuses a NUL byte in a path before any host call', async () => {
     const { exec, calls } = batchedSha256(() => 'f'.repeat(64));
     await expect(hashPaths(exec, ['/mnt/\0evil'])).rejects.toThrow(/NUL byte/);
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('hashRecords — byte-aware batching (#1937, THE crash fix)', () => {
+  const rec = (sourcePath: string, size: number): ImportRecord => ({
+    sourcePath, size, mtimeMs: 0, ext: '', name: sourcePath,
+  });
+
+  it('flushes a batch at the BYTE cap, not just the file count — big media → small batches', async () => {
+    // Five "videos" each just over HALF the byte cap: no two fit one batch, so
+    // the byte-aware flush splits them into one-or-two-file sha256sum calls,
+    // keeping each call within the time budget. The OLD 256-file-count cap would
+    // have crammed all five (≈ 5× the cap of bytes) into a single doomed call.
+    const big = Math.ceil(HASH_BATCH_BYTES * 0.6); // two won't fit one batch
+    const records = Array.from({ length: 5 }, (_, i) => rec(`/mnt/v${i}`, big));
+    const { exec, calls } = batchedSha256(p => 'a'.repeat(64).slice(0, 63) + (p.endsWith('0') ? '0' : '1'));
+    const map = await hashRecords(exec, records);
+    expect(map.size).toBe(5);
+    // Each batch carries at most ONE big file (a second would exceed the cap), so
+    // we get 5 sha256sum calls — never one giant call over all five.
+    expect(calls.length).toBe(5);
+    expect(calls.every(c => c.slice(1).length === 1)).toBe(true);
+  });
+
+  it('still batches small files by the file-count cap (no regression)', async () => {
+    const n = HASH_BATCH_SIZE + 10; // tiny files → count cap drives the split
+    const records = Array.from({ length: n }, (_, i) => rec(`/mnt/s${i}`, 4));
+    const { exec, calls } = batchedSha256(() => 'b'.repeat(64));
+    const map = await hashRecords(exec, records);
+    expect(map.size).toBe(n);
+    // ceil(266 / 256) = 2 batches — byte budget never reached for tiny files.
+    expect(calls.length).toBe(2);
+  });
+
+  it('passes an explicit generous timeoutMs on every hash batch (#1937)', async () => {
+    const seen: Array<number | undefined> = [];
+    const exec: SafeExec = vi.fn(async (argv: string[], options?: { timeoutMs?: number }) => {
+      seen.push(options?.timeoutMs);
+      return ok(argv.slice(1).map(p => `${'c'.repeat(64)}  ${p}`).join('\n') + '\n');
+    });
+    await hashRecords(exec, [rec('/mnt/a', 4), rec('/mnt/b', 4)]);
+    // The ~30s safe_exec default is too short for media — we always pass a large
+    // explicit timeout (well over 30s) so a media batch can't spuriously time out.
+    expect(seen.length).toBeGreaterThan(0);
+    for (const t of seen) {
+      expect(t).toBeDefined();
+      expect(t!).toBeGreaterThan(30_000);
+    }
+  });
+
+  it('RETRIES-SPLITS a failing batch and SKIPS a persistently-failing file (never throws)', async () => {
+    // `/mnt/bad` fails (non-zero exit) at EVERY width; the others succeed. The
+    // batch retry halves down to per-file: the good files are hashed, the bad
+    // file is skipped (omitted from the map → just not deduped) — and crucially
+    // the whole call RESOLVES (the scan survives a hashing failure, #1937 Part B).
+    const records = Array.from({ length: 8 }, (_, i) => rec(`/mnt/f${i}`, 4));
+    records[3] = rec('/mnt/bad', 4);
+    const exec: SafeExec = vi.fn(async (argv: string[]) => {
+      const paths = argv.slice(1);
+      if (paths.includes('/mnt/bad')) {
+        return { stdout: '', stderr: 'sha256sum: /mnt/bad: I/O error', code: 1 };
+      }
+      return ok(paths.map(p => `${'d'.repeat(64)}  ${p}`).join('\n') + '\n');
+    });
+    const map = await hashRecords(exec, records);
+    // The bad file is skipped; every other file IS hashed.
+    expect(map.has('/mnt/bad')).toBe(false);
+    for (const r of records) {
+      if (r.sourcePath !== '/mnt/bad') expect(map.get(r.sourcePath)).toBe('d'.repeat(64));
+    }
+  });
+
+  it('survives a batch that TIMES OUT (exec rejects) by splitting + skipping', async () => {
+    // A timeout surfaces as a thrown exec (the agent rejects). The resilient path
+    // catches it, splits, and skips the offending file rather than letting the
+    // throw kill the background pass.
+    const records = [rec('/mnt/ok', 4), rec('/mnt/slow', 4)];
+    const exec: SafeExec = vi.fn(async (argv: string[]) => {
+      const paths = argv.slice(1);
+      if (paths.includes('/mnt/slow')) throw new Error('safe_exec: timed out after 30000ms');
+      return ok(paths.map(p => `${'e'.repeat(64)}  ${p}`).join('\n') + '\n');
+    });
+    const map = await hashRecords(exec, records);
+    expect(map.get('/mnt/ok')).toBe('e'.repeat(64));
+    expect(map.has('/mnt/slow')).toBe(false);
   });
 });
