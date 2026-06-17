@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.122.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.122.0...servicebay-v4.122.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* **diskImport:** use absolute sourcePath as rsync/immich src ([f2b6503](https://github.com/mdopp/servicebay/commit/f2b65033ff5d5ec631eb8a3f1bf98f1d9cbb9196))
+* **diskImport:** use absolute sourcePath as rsync/immich src ([5310325](https://github.com/mdopp/servicebay/commit/5310325e6315f603aa585317053fbd7caacabcf9)), closes [#1906](https://github.com/mdopp/servicebay/issues/1906)
+
 ## [4.122.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.121.1...servicebay-v4.122.0) (2026-06-17)
 
 
