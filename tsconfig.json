@@ -34,6 +34,9 @@
       "@servicebay/disk-import-worker": ["./packages/disk-import-worker/src/index.ts"],
       "@servicebay/disk-import-worker/contract": ["./packages/disk-import-worker/src/contract/status.ts"],
       "@servicebay/disk-import-worker/*": ["./packages/disk-import-worker/src/*"],
+      "@servicebay/backup-worker": ["./packages/backup-worker/src/index.ts"],
+      "@servicebay/backup-worker/contract": ["./packages/backup-worker/src/contract/status.ts"],
+      "@servicebay/backup-worker/*": ["./packages/backup-worker/src/*"],
       "@servicebay/frontend/*": ["./packages/frontend/src/*"],
       "@servicebay/backend/*": ["./packages/backend/src/*"]
     }
