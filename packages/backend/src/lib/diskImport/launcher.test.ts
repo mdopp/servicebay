@@ -13,7 +13,7 @@ vi.mock('@/lib/hostDataDir', () => ({
   resolveHostDataDir: vi.fn(async () => '/data'),
 }));
 
-import { launchWorker, readStatus, isWorkerRunning, stopWorker, cleanupRunMount, WORKER_IMAGE, WORKER_MEMORY } from './launcher';
+import { launchWorker, readStatus, isWorkerRunning, stopWorker, cleanupRunMount, ensureWorkerImage, WORKER_IMAGE, WORKER_MEMORY } from './launcher';
 import { resolveImmichProvisionEnv } from './immichProvisionEnv';
 import type { SafeExec } from '@servicebay/disk-import-worker';
 
@@ -98,6 +98,18 @@ describe('launchWorker', () => {
     expect(calls.some(c => c[0] === 'mount')).toBe(true);
   });
 
+  it('mounts a real disk with a generous timeout, not the agent 30s default', async () => {
+    // A large/USB ext4 can take >30s to mount (spin-up, journal recovery); the
+    // mount must override the agent default or the scan times out before launch.
+    let mountOpts: { timeoutMs?: number } | undefined;
+    const exec: SafeExec = vi.fn(async (argv: string[], options?: { timeoutMs?: number; sudo?: boolean }) => {
+      if (argv[0] === 'mount') mountOpts = options;
+      return { stdout: '', stderr: '', code: 0 };
+    });
+    await launchWorker({ exec, device: '/dev/sda1', runId: 'tmo', shareGid: 1024 });
+    expect(mountOpts?.timeoutMs).toBeGreaterThanOrEqual(120_000);
+  });
+
   it('injects the resolved Immich provisioning env into the container (#1954)', async () => {
     vi.mocked(resolveImmichProvisionEnv).mockResolvedValueOnce([
       '-e', 'IMMICH_SERVER_URL=http://127.0.0.1:2283',
@@ -170,6 +182,35 @@ describe('stopWorker', () => {
     const { exec, calls } = recExec({ 'podman rm': { code: 1 } });
     await stopWorker(exec, run);
     expect(calls).toContainEqual(['umount', '-A', '/dev/sda1']);
+  });
+});
+
+describe('ensureWorkerImage', () => {
+  // Regression: re-pulling on every scan blew the agent's 30s timeout while a
+  // ~50s `podman pull` ran ("Agent request timeout (safe_exec after 30000ms)"),
+  // so the scan never reached the mount. When the image is already present we
+  // must NOT pull on the hot path.
+  it('does NOT pull when the image already exists', async () => {
+    const { exec, calls } = recExec({ 'podman image exists': { code: 0 } });
+    await ensureWorkerImage(exec);
+    expect(calls).toContainEqual(['podman', 'image', 'exists', WORKER_IMAGE]);
+    expect(calls.some(c => c[0] === 'podman' && c[1] === 'pull')).toBe(false);
+  });
+
+  it('pulls only when the image is missing', async () => {
+    const { exec, calls } = recExec({ 'podman image exists': { code: 1 } });
+    await ensureWorkerImage(exec);
+    expect(calls).toContainEqual(['podman', 'pull', WORKER_IMAGE]);
+  });
+
+  it('passes a generous timeout to the cold pull (default 30s is too short)', async () => {
+    const optsSeen: Array<{ timeoutMs?: number } | undefined> = [];
+    const exec: SafeExec = vi.fn(async (argv: string[], options?: { timeoutMs?: number; sudo?: boolean }) => {
+      if (argv[0] === 'podman' && argv[1] === 'pull') optsSeen.push(options);
+      return { stdout: '', stderr: '', code: argv[1] === 'image' ? 1 : 0 };
+    });
+    await ensureWorkerImage(exec);
+    expect(optsSeen[0]?.timeoutMs).toBeGreaterThanOrEqual(120_000);
   });
 });
 

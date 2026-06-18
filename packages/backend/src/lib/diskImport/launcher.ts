@@ -33,6 +33,16 @@ export const WORKER_MEMORY = '1g';
 /** Port the worker app server listens on inside the container (Containerfile EXPOSE). */
 export const WORKER_PORT = 8080;
 
+/**
+ * Timeout for slow host ops in the scan path (image pull, mounting a real
+ * disk). The agent's default command timeout is only 30s (handler
+ * `timeoutMs ?? 30000`); a scan that fell back to it died with "Agent request
+ * timeout (safe_exec after 30000ms)" while a ~50s `podman pull` was still
+ * running. A cold pull or a large/USB ext4 mount legitimately takes minutes, so
+ * these ops pass this generous timeout explicitly.
+ */
+const SLOW_OP_TIMEOUT_MS = 600_000; // 10 min
+
 /** A launched worker run servicebay tracks by container name + out dir. */
 export interface WorkerRun {
   /** Opaque run id (also the container name suffix + out-dir name). */
@@ -128,7 +138,9 @@ export async function launchWorker(args: {
   // source already has the right label.
   await exec(
     ['mount', '-o', 'ro,context="system_u:object_r:container_file_t:s0"', device, mountpoint],
-    { sudo: true },
+    // A real large/USB ext4 can take well over 30s to mount (drive spin-up,
+    // journal recovery), so override the agent's 30s default here too.
+    { sudo: true, timeoutMs: SLOW_OP_TIMEOUT_MS },
   );
 
   // Resolve the Immich External-Library provisioning inputs (admin key + box
@@ -223,9 +235,19 @@ export async function stopWorker(exec: SafeExec, run: WorkerRun): Promise<void> 
   await cleanupRunMount(exec, run);
 }
 
-/** Ensure the worker image is present on the node (pull if missing). */
+/**
+ * Ensure the worker image is present on the node — pull ONLY if missing.
+ *
+ * Re-pulling on every scan was the bug behind the "Agent request timeout
+ * (safe_exec after 30000ms)" failure: `podman pull` does a registry round-trip
+ * even when the image is already local, which took ~50s here and blew the 30s
+ * agent timeout, so the scan errored before it ever mounted the disk. The image
+ * is refreshed out-of-band when servicebay is updated, so on the hot path we
+ * skip the pull entirely when it already exists, and give the cold pull (first
+ * ever scan) a generous timeout.
+ */
 export async function ensureWorkerImage(exec: SafeExec): Promise<void> {
-  const { stdout } = await exec(['podman', 'image', 'exists', WORKER_IMAGE]).catch(() => ({ stdout: '', stderr: '', code: 1 }));
-  void stdout;
-  await exec(['podman', 'pull', WORKER_IMAGE]);
+  const { code } = await exec(['podman', 'image', 'exists', WORKER_IMAGE]).catch(() => ({ stdout: '', stderr: '', code: 1 }));
+  if (code === 0) return; // already present — don't re-pull on the scan hot path
+  await exec(['podman', 'pull', WORKER_IMAGE], { timeoutMs: SLOW_OP_TIMEOUT_MS });
 }
