@@ -11,7 +11,7 @@
 // proxied, admin-gated route — NOT rendered in this control-plane page.
 
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, HardDrive, RefreshCw, Download, ExternalLink } from 'lucide-react';
+import { Loader2, HardDrive, RefreshCw, Download } from 'lucide-react';
 
 interface DeviceView {
   path: string;
@@ -31,13 +31,31 @@ interface RunStatus {
     planned: number;
     applied: number;
     conflicts: number;
+    /** Per-category rollup the worker writes when planning completes — drives the
+     *  in-page review (counts of copy / skip-duplicate / conflict per category). */
+    categories?: CategoryRollup[];
+    totalBytes?: number;
     error: string | null;
   } | null;
 }
 
-/** The worker app's own proxied route (provisioned in #1954). The tile links
- *  out to it for the lazy review tree, like an immich/jellyfin tile. */
-const WORKER_APP_PATH = '/disk-import-app/';
+interface CategoryRollup {
+  category: string;
+  files: number;
+  bytes: number;
+  copy: number;
+  skipDupe: number;
+  conflict: number;
+}
+
+/** Human-readable size (e.g. "457 GB") for the review table. */
+function formatBytes(bytes: number): string {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const val = bytes / 1024 ** i;
+  return `${val >= 100 || i === 0 ? Math.round(val) : val.toFixed(1)} ${units[i]}`;
+}
 
 function useDevices() {
   const [devices, setDevices] = useState<DeviceView[]>([]);
@@ -239,14 +257,6 @@ function WorkerProgress({ run, onStartOver }: { run: RunStatus; onStartOver: () 
           <div className="flex justify-between"><dt>Planned</dt><dd>{s.planned}</dd></div>
         </dl>
       )}
-      <a
-        href={WORKER_APP_PATH}
-        target="_blank"
-        rel="noreferrer"
-        className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
-      >
-        <ExternalLink size={14} /> Open import app to review &amp; confirm
-      </a>
       <button
         onClick={onStartOver}
         className="block text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 inline-flex items-center gap-1"
@@ -258,6 +268,98 @@ function WorkerProgress({ run, onStartOver }: { run: RunStatus; onStartOver: () 
 }
 
 /** Scan/plan complete — review out in the worker app, then APPLY on the host. */
+/** Sum a list of category rollups into a single totals row. */
+function sumCategories(cats: CategoryRollup[]): Omit<CategoryRollup, 'category'> {
+  return cats.reduce(
+    (t, c) => ({
+      files: t.files + c.files,
+      bytes: t.bytes + c.bytes,
+      copy: t.copy + c.copy,
+      skipDupe: t.skipDupe + c.skipDupe,
+      conflict: t.conflict + c.conflict,
+    }),
+    { files: 0, bytes: 0, copy: 0, skipDupe: 0, conflict: 0 },
+  );
+}
+
+/** In-page review of the planned import — per-category copy / skip-duplicate /
+ *  conflict rollup with totals. Replaces the old (dead) out-link to the worker
+ *  app: the data is already in the worker's status.json, so render it here. */
+function PlanReview({ status }: { status: NonNullable<RunStatus['status']> }) {
+  const cats = (status.categories ?? []).filter(c => c.files > 0);
+  const totals = sumCategories(cats);
+  const amber = 'text-amber-600 dark:text-amber-400';
+  return (
+    <>
+      <div>
+        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+          Review — {status.planned.toLocaleString()} file{status.planned === 1 ? '' : 's'} planned
+        </p>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          <span className="font-medium text-blue-600 dark:text-blue-400">{totals.copy.toLocaleString()}</span> to import
+          {' · '}{totals.skipDupe.toLocaleString()} duplicate{totals.skipDupe === 1 ? '' : 's'} skipped
+          {totals.conflict > 0 && (
+            <> {' · '}<span className={`font-medium ${amber}`}>{totals.conflict.toLocaleString()} conflict{totals.conflict === 1 ? '' : 's'}</span></>
+          )}
+        </p>
+      </div>
+
+      {cats.length > 0 ? (
+        <div className="overflow-x-auto -mx-1">
+          <table className="w-full text-xs">
+            <thead className="text-gray-500 dark:text-gray-400">
+              <tr className="border-b border-gray-200 dark:border-gray-700">
+                <th className="py-1.5 pr-3 text-left font-medium">Category</th>
+                <th className="py-1.5 px-2 text-right font-medium">Files</th>
+                <th className="py-1.5 px-2 text-right font-medium">Size</th>
+                <th className="py-1.5 px-2 text-right font-medium">Import</th>
+                <th className="py-1.5 px-2 text-right font-medium">Dupes</th>
+                <th className="py-1.5 pl-2 text-right font-medium">Conflicts</th>
+              </tr>
+            </thead>
+            <tbody className="text-gray-700 dark:text-gray-300">
+              {cats.map(c => (
+                <tr key={c.category} className="border-b border-gray-100 dark:border-gray-800">
+                  <td className="py-1.5 pr-3 capitalize">{c.category}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums">{c.files.toLocaleString()}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums">{formatBytes(c.bytes)}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums text-blue-600 dark:text-blue-400">{c.copy.toLocaleString()}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums">{c.skipDupe.toLocaleString()}</td>
+                  <td className={`py-1.5 pl-2 text-right tabular-nums ${c.conflict ? `font-medium ${amber}` : ''}`}>
+                    {c.conflict.toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="font-semibold text-gray-900 dark:text-gray-100">
+              <tr>
+                <td className="py-1.5 pr-3">Total</td>
+                <td className="py-1.5 px-2 text-right tabular-nums">{totals.files.toLocaleString()}</td>
+                <td className="py-1.5 px-2 text-right tabular-nums">{formatBytes(totals.bytes)}</td>
+                <td className="py-1.5 px-2 text-right tabular-nums text-blue-600 dark:text-blue-400">{totals.copy.toLocaleString()}</td>
+                <td className="py-1.5 px-2 text-right tabular-nums">{totals.skipDupe.toLocaleString()}</td>
+                <td className={`py-1.5 pl-2 text-right tabular-nums ${totals.conflict ? amber : ''}`}>
+                  {totals.conflict.toLocaleString()}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      ) : (
+        <p className="text-xs text-gray-500 dark:text-gray-400">No category breakdown available for this run.</p>
+      )}
+
+      {totals.conflict > 0 && (
+        <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+          {totals.conflict.toLocaleString()} file{totals.conflict === 1 ? '' : 's'} clash with a different file headed to the same name/folder.
+          These are <strong>not imported</strong> in this pass — the others import normally; nothing is overwritten.
+        </p>
+      )}
+    </>
+  );
+}
+
+/** Scan/plan complete — show the in-page review, then APPLY on the host. */
 function PlanReady({
   run,
   applying,
@@ -269,20 +371,9 @@ function PlanReady({
   onApply: () => void;
   onStartOver: () => void;
 }) {
-  const s = run.status!;
   return (
-    <div className="space-y-3 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-      <p className="text-sm text-gray-800 dark:text-gray-200">
-        Scan complete — {s.planned} file(s) planned{s.conflicts ? `, ${s.conflicts} conflict(s)` : ''}.
-      </p>
-      <a
-        href={WORKER_APP_PATH}
-        target="_blank"
-        rel="noreferrer"
-        className="inline-flex items-center gap-2 text-sm text-blue-600 hover:underline"
-      >
-        <ExternalLink size={14} /> Review the plan
-      </a>
+    <div className="space-y-4 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+      <PlanReview status={run.status!} />
       <div>
         <button
           onClick={onApply}
