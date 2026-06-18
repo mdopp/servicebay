@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.129.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.129.2...servicebay-v4.129.3) (2026-06-18)
+
+
+### Bug Fixes
+
+* **disk-import:** scan no longer times out — skip redundant image pull, longer mount timeout ([cc79353](https://github.com/mdopp/servicebay/commit/cc79353d0d9abb10e4158bcfca5020f87e77ee3e))
+* **disk-import:** scan no longer times out — skip redundant image pull, longer mount timeout ([278948d](https://github.com/mdopp/servicebay/commit/278948df7f61f877c0039f656d546913b170f284))
+* **disk-import:** trust the fingerprint for dedup — no full-hash confirm ([5451309](https://github.com/mdopp/servicebay/commit/5451309a9afd9ffe9b0503c59cd320b0fee7b8c5))
+* **disk-import:** trust the fingerprint for dedup — no full-hash confirm ([#1995](https://github.com/mdopp/servicebay/issues/1995)) ([656858f](https://github.com/mdopp/servicebay/commit/656858fc3e114925fded722837eff4ab78d16166))
+* **disk-import:** two-tier fingerprint dedup + planning progress ([853b3ed](https://github.com/mdopp/servicebay/commit/853b3ed4bdbb97211aa658b1ce3da9538c0ea4f9))
+* **disk-import:** two-tier fingerprint dedup + planning progress ([#1995](https://github.com/mdopp/servicebay/issues/1995)) ([c6ed475](https://github.com/mdopp/servicebay/commit/c6ed475378efc9d10c5760a5c908923a3740e3c8))
+
 ## [4.129.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.129.1...servicebay-v4.129.2) (2026-06-18)
 
 
