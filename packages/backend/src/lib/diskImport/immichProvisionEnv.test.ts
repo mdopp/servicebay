@@ -7,11 +7,13 @@ vi.mock('./reconcileImmichApiKey', () => ({
 vi.mock('@/lib/install/savedSecrets', () => ({ loadSavedSecrets: vi.fn() }));
 vi.mock('@/lib/config', () => ({ getConfig: vi.fn() }));
 vi.mock('@/lib/lldap/client', () => ({ listLldapUsers: vi.fn() }));
+vi.mock('@/lib/logger', () => ({ logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn() } }));
 
 import { reconcileImmichApiKey } from './reconcileImmichApiKey';
 import { loadSavedSecrets } from '@/lib/install/savedSecrets';
 import { getConfig } from '@/lib/config';
 import { listLldapUsers } from '@/lib/lldap/client';
+import { logger } from '@/lib/logger';
 import { resolveImmichProvisionEnv, IMMICH_SERVER_URL } from './immichProvisionEnv';
 
 beforeEach(() => {
@@ -43,6 +45,19 @@ describe('resolveImmichProvisionEnv', () => {
     vi.mocked(loadSavedSecrets).mockReturnValue({});
     expect(await resolveImmichProvisionEnv()).toEqual([]);
     expect(listLldapUsers).not.toHaveBeenCalled();
+  });
+
+  it('warns (does not swallow) when no key resolves, surfacing the reconcile reason', async () => {
+    vi.mocked(reconcileImmichApiKey).mockResolvedValue({
+      outcome: 'error',
+      message: 'No stored Immich admin credentials — missing admin email; cannot mint an admin API key.',
+    });
+    vi.mocked(loadSavedSecrets).mockReturnValue({});
+    expect(await resolveImmichProvisionEnv()).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'disk-import:immich',
+      expect.stringContaining('No stored Immich admin credentials'),
+    );
   });
 
   it('still injects when the user directory is unavailable (Shared library only)', async () => {

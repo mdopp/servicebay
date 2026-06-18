@@ -27,6 +27,7 @@
  * is servicebay's, before it launches `--apply`). This keeps the container a pure
  * one-shot batch job.
  */
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -309,9 +310,8 @@ function realIO(): WorkerIO {
     makeExec: opts => {
       // The worker runs host-apply commands locally inside the container against
       // the bind-mounted out-volume — a plain child_process SafeExec. (Wiring the
-      // real privileged host-apply path is #1954.)
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
+      // real privileged host-apply path is #1954.) spawnSync is statically
+      // imported at the top of this ESM module — there is no `require` global here.
       void opts;
       return (argv: string[]) => {
         const r = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8' });
