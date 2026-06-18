@@ -41,6 +41,10 @@ export interface WorkerRun {
   outDir: string;
   /** The container name (`disk-import-worker-<runId>`). */
   container: string;
+  /** The source device node (`/dev/sda1`) — so teardown can unmount it (#1941). */
+  device: string;
+  /** The host-side RO mountpoint of the device (under MOUNT_BASE) (#1941). */
+  mountpoint: string;
 }
 
 /** A removable partition the tile offers as an import source. */
@@ -89,6 +93,13 @@ export async function launchWorker(args: {
   const outDir = `${workerOutBase(hostDataDir)}/${runId}`;
   const container = containerName(runId);
 
+  // IDEMPOTENT MOUNT (#1941): a prior scan (incl. one that crashed before its
+  // teardown unmount) can leave the device stacked-mounted at `mountpoint`.
+  // `mount -o ro` does NOT check this and just stacks another layer; after a few
+  // the kernel mount on the over-stacked device blocks and the next scan hangs at
+  // "Starting…". So sweep EVERY existing mount of this device/mountpoint first,
+  // then mount exactly once — repeated scans of the same disk leave one mount.
+  await sweepDeviceMounts(exec, device, mountpoint);
   // The mountpoint dir must exist before `mount` (same as mounter.mountReadOnly).
   // It lives under /run (root-owned), so creating it needs sudo — without this
   // the mount fails with "mount point does not exist" and the worker never runs.
@@ -134,7 +145,39 @@ export async function launchWorker(args: {
     '--serve', '--share-gid', String(shareGid),
   ]);
 
-  return { runId, outDir, container };
+  return { runId, outDir, container, device, mountpoint };
+}
+
+/**
+ * Unmount EVERY mount of `device` at `mountpoint` and tear the dir down, so a
+ * fresh mount can't stack on a leftover (#1941). Idempotent + best-effort: if
+ * nothing is mounted, `umount` reports "not mounted" — we ignore that and any
+ * other umount error so a cold/clean device never blocks the launch. `umount -A`
+ * detaches all of the device's mounts in one go (clears a stack), then we drop
+ * the (now-empty) controlled mountpoint dir.
+ */
+async function sweepDeviceMounts(exec: SafeExec, device: string, mountpoint: string): Promise<void> {
+  assertSafeDevice(device);
+  // `umount -A <device>` unmounts every mount of the device wherever it sits —
+  // exactly the stacked-layer case the issue hit. Best-effort: ignore the
+  // "not mounted" exit for a clean device. Then `umount -A <mountpoint>` mops up
+  // any mount left there by a different device node (defence in depth).
+  await exec(['umount', '-A', device], { sudo: true }).catch(() => undefined);
+  await exec(['umount', '-A', mountpoint], { sudo: true }).catch(() => undefined);
+  // Drop the now-empty controlled mountpoint dir (re-created before the mount).
+  // `rmdir` (not `rm -rf`) — it only removes an EMPTY dir, so a still-mounted
+  // path is left intact rather than risking a recursive delete into a mount.
+  await exec(['rmdir', mountpoint], { sudo: true }).catch(() => undefined);
+}
+
+/**
+ * Unmount a finished/aborted run's source device and remove its mountpoint
+ * (#1941). Called on worker teardown so the one-shot `--rm` worker leaves no
+ * mount behind. Best-effort + idempotent — ignores "not mounted"/missing-dir.
+ */
+export async function cleanupRunMount(exec: SafeExec, run: WorkerRun): Promise<void> {
+  if (!run.device || !run.mountpoint) return;
+  await sweepDeviceMounts(exec, run.device, run.mountpoint);
 }
 
 /**
@@ -158,9 +201,15 @@ export async function isWorkerRunning(exec: SafeExec, run: WorkerRun): Promise<b
   return stdout.split('\n').some(line => line.trim() === run.container);
 }
 
-/** Stop a worker container (the tile's "Start over" / abort). Best-effort. */
+/**
+ * Stop a worker container (the tile's "Start over" / abort) AND unmount its
+ * source device (#1941). Both steps are best-effort so a half-gone run still
+ * fully cleans up — and the unmount runs even if the container is already gone,
+ * so a crashed worker's mount can't leak past teardown.
+ */
 export async function stopWorker(exec: SafeExec, run: WorkerRun): Promise<void> {
   await exec(['podman', 'rm', '-f', run.container]).catch(() => {});
+  await cleanupRunMount(exec, run);
 }
 
 /** Ensure the worker image is present on the node (pull if missing). */

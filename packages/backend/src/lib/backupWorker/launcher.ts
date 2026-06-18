@@ -6,7 +6,10 @@
 // plane on a HACS HA config (~5.3 GB, #1894 — feedback_control_plane_vs_worker).
 // Now the heavy walk/copy/tar runs in a resource-capped worker CONTAINER:
 // servicebay only launches it, reads the compact status.json it writes, and
-// streams the per-service tars it produced to the NAS one at a time.
+// streams the per-service tars it produced to the NAS one at a time. The out dir
+// is also mounted into servicebay's own /app/data, so it reads the produced tars
+// DIRECTLY off its filesystem rather than shelling them back through the agent
+// (the agent doesn't allowlist `base64`, which broke the tar→NAS read, #1973).
 //
 //   servicebay ──"Back up config"──▶ podman run --rm --memory=2g <worker> --stacks …
 //      reads status.json (compact)        (stacks ro at /mnt/stacks, out volume /out)
@@ -17,8 +20,12 @@
 // bookkeeping. The worker mounts the stacks dir READ-ONLY and writes only into
 // /out — it never writes back into a stack (feedback_fileshare_relabel_crashloop).
 
+import { readFile } from 'node:fs/promises';
+
 import type { WorkerStatus } from '@servicebay/backup-worker';
 import { STATUS_FILE } from '@servicebay/backup-worker';
+
+import { DATA_DIR } from '@/lib/dirs';
 
 /** Result of one structured `safe_exec` argv invocation (the agent seam). */
 export interface SafeExecResult {
@@ -27,10 +34,11 @@ export interface SafeExecResult {
   code: number;
 }
 
-/** The host-exec seam the launcher runs `podman`/`mkdir`/`cat`/`base64` through —
- *  the agent's structured `safe_exec` (no shell). Mirrors the disk-import worker's
+/** The host-exec seam the launcher runs `podman`/`mkdir`/`cat` through — the
+ *  agent's structured `safe_exec` (no shell). Mirrors the disk-import worker's
  *  SafeExec shape; defined locally so backup-worker doesn't depend on the
- *  disk-import worker package. */
+ *  disk-import worker package. Tars are read DIRECTLY off the filesystem
+ *  (readBackupTar), not through this seam (#1973). */
 export type SafeExec = (argv: string[], options?: { timeoutMs?: number; sudo?: boolean }) => Promise<SafeExecResult>;
 
 /** The published worker image — built + pushed by .github/workflows/build-images.yml. */
@@ -158,13 +166,31 @@ export async function ensureBackupWorkerImage(exec: SafeExec): Promise<void> {
   await exec(['podman', 'pull', BACKUP_WORKER_IMAGE]);
 }
 
-/** Read one produced tar's bytes from the out volume (host-side, base64 over the
- *  agent channel — the agent's read path is utf-8-only, so base64 keeps binary
- *  config intact). servicebay streams these to the NAS one at a time. */
-export async function readBackupTar(exec: SafeExec, run: BackupWorkerRun, tarName: string): Promise<Buffer> {
-  const { stdout, code, stderr } = await exec(['base64', `${run.outDir}/${tarName}`]);
-  if (code !== 0) {
-    throw new Error(`backup-worker: failed to read ${tarName} from ${run.outDir}: ${stderr || stdout}`);
+/**
+ * The IN-CONTAINER path of a run's out dir. `run.outDir` is the HOST path
+ * (`${HOST_DATA_DIR}/backup-runs/<runId>`) used to bind-mount the worker's /out;
+ * servicebay sees the SAME bytes at its own data mount (`${DATA_DIR}/backup-runs/
+ * <runId>`), so it can read the produced tars directly off its filesystem — no
+ * shelling `base64` through the agent seam (which doesn't allowlist `base64`,
+ * #1973). In dev/test HOST_DATA_DIR === DATA_DIR so this is identity.
+ */
+function inContainerOutDir(run: BackupWorkerRun): string {
+  return `${backupWorkerOutBase(DATA_DIR)}/${run.runId}`;
+}
+
+/**
+ * Read one produced tar's bytes from the out volume. The worker wrote it into the
+ * shared out dir, which is also mounted into servicebay's own /app/data — so we
+ * read it DIRECTLY off the filesystem (in-container path), never through the agent
+ * `base64` exec (`base64` isn't on the agent allowlist → the tars never reached
+ * the NAS, #1973). servicebay streams these to the NAS one at a time.
+ */
+export async function readBackupTar(_exec: SafeExec, run: BackupWorkerRun, tarName: string): Promise<Buffer> {
+  const path = `${inContainerOutDir(run)}/${tarName}`;
+  try {
+    return await readFile(path);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    throw new Error(`backup-worker: failed to read ${tarName} from ${path}: ${message}`);
   }
-  return Buffer.from(stdout.replace(/\s+/g, ''), 'base64');
 }

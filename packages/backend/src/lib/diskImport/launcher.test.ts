@@ -13,7 +13,7 @@ vi.mock('@/lib/hostDataDir', () => ({
   resolveHostDataDir: vi.fn(async () => '/data'),
 }));
 
-import { launchWorker, readStatus, isWorkerRunning, stopWorker, WORKER_IMAGE, WORKER_MEMORY } from './launcher';
+import { launchWorker, readStatus, isWorkerRunning, stopWorker, cleanupRunMount, WORKER_IMAGE, WORKER_MEMORY } from './launcher';
 import { resolveImmichProvisionEnv } from './immichProvisionEnv';
 import type { SafeExec } from '@servicebay/disk-import-worker';
 
@@ -58,6 +58,36 @@ describe('launchWorker', () => {
     expect(podmanRun).toContain('--serve');
     // source mounted read-only into the container
     expect(podmanRun.some(a => a.endsWith(':/mnt/src:ro'))).toBe(true);
+
+    // the run handle carries device + mountpoint so teardown can unmount (#1941)
+    expect(run.device).toBe('/dev/sda1');
+    expect(run.mountpoint).toBe(mountpoint);
+  });
+
+  // #1941 — repeated scans of the same device must never stack mounts. The
+  // launcher sweeps every existing mount of the device/mountpoint BEFORE mounting.
+  it('sweeps stale mounts of the device before mounting, so scans never stack (#1941)', async () => {
+    const { exec, calls } = recExec();
+    await launchWorker({ exec, device: '/dev/sda1', runId: 'abc123', shareGid: 1024 });
+
+    const mountIdx = calls.findIndex(c => c[0] === 'mount');
+    // umount -A on both the device and the mountpoint runs BEFORE the fresh mount
+    const sweepDevIdx = calls.findIndex(c => c[0] === 'umount' && c[1] === '-A' && c[2] === '/dev/sda1');
+    const sweepMpIdx = calls.findIndex(c => c[0] === 'umount' && c[1] === '-A' && c[2]?.startsWith('/run/servicebay/disk-import/'));
+    expect(sweepDevIdx).toBeGreaterThanOrEqual(0);
+    expect(sweepMpIdx).toBeGreaterThanOrEqual(0);
+    expect(sweepDevIdx).toBeLessThan(mountIdx);
+    expect(sweepMpIdx).toBeLessThan(mountIdx);
+    // exactly one fresh `mount` call — never stacked
+    expect(calls.filter(c => c[0] === 'mount')).toHaveLength(1);
+  });
+
+  it('launches cleanly even when the sweep umount fails (cold/clean device) (#1941)', async () => {
+    // "not mounted" → non-zero umount exit must NOT abort the launch.
+    const { exec, calls } = recExec({ 'umount -A': { code: 1 } });
+    const run = await launchWorker({ exec, device: '/dev/sda1', runId: 'abc123', shareGid: 1024 });
+    expect(run.container).toBe('disk-import-worker-abc123');
+    expect(calls.some(c => c[0] === 'mount')).toBe(true);
   });
 
   it('injects the resolved Immich provisioning env into the container (#1954)', async () => {
@@ -82,7 +112,7 @@ describe('launchWorker', () => {
 });
 
 describe('readStatus', () => {
-  const run = { runId: 'r', outDir: '/data/runs/r', container: 'disk-import-worker-r' };
+  const run = { runId: 'r', outDir: '/data/runs/r', container: 'disk-import-worker-r', device: '/dev/sda1', mountpoint: '/run/servicebay/disk-import/sda1' };
 
   it('parses the compact status.json', async () => {
     const { exec } = recExec({ 'cat /data/runs/r/status.json': { stdout: JSON.stringify({ phase: 'done', planned: 5 }) } });
@@ -96,7 +126,7 @@ describe('readStatus', () => {
 });
 
 describe('isWorkerRunning', () => {
-  const run = { runId: 'r', outDir: '/o', container: 'disk-import-worker-r' };
+  const run = { runId: 'r', outDir: '/o', container: 'disk-import-worker-r', device: '/dev/sda1', mountpoint: '/run/servicebay/disk-import/sda1' };
 
   it('is true when podman ps lists the container', async () => {
     const { exec } = recExec({ 'podman ps': { stdout: 'disk-import-worker-r\n' } });
@@ -110,9 +140,40 @@ describe('isWorkerRunning', () => {
 });
 
 describe('stopWorker', () => {
+  const run = { runId: 'r', outDir: '/o', container: 'disk-import-worker-r', device: '/dev/sda1', mountpoint: '/run/servicebay/disk-import/sda1' };
+
   it('force-removes the container', async () => {
     const { exec, calls } = recExec();
-    await stopWorker(exec, { runId: 'r', outDir: '/o', container: 'disk-import-worker-r' });
+    await stopWorker(exec, run);
     expect(calls).toContainEqual(['podman', 'rm', '-f', 'disk-import-worker-r']);
+  });
+
+  // #1941 — teardown must unmount the source device so the one-shot worker
+  // leaves no mount behind (a crashed worker's mount would otherwise leak).
+  it('unmounts the source device + drops the mountpoint on teardown (#1941)', async () => {
+    const { exec, calls } = recExec();
+    await stopWorker(exec, run);
+    expect(calls).toContainEqual(['umount', '-A', '/dev/sda1']);
+    expect(calls).toContainEqual(['umount', '-A', '/run/servicebay/disk-import/sda1']);
+    expect(calls).toContainEqual(['rmdir', '/run/servicebay/disk-import/sda1']);
+  });
+
+  it('unmounts even if podman rm fails — a crashed worker still cleans up (#1941)', async () => {
+    const { exec, calls } = recExec({ 'podman rm': { code: 1 } });
+    await stopWorker(exec, run);
+    expect(calls).toContainEqual(['umount', '-A', '/dev/sda1']);
+  });
+});
+
+describe('cleanupRunMount', () => {
+  it('sweeps the run device mounts; no-ops when the handle has no device (#1941)', async () => {
+    const { exec, calls } = recExec();
+    await cleanupRunMount(exec, { runId: 'r', outDir: '/o', container: 'c', device: '/dev/sdb1', mountpoint: '/run/servicebay/disk-import/sdb1' });
+    expect(calls).toContainEqual(['umount', '-A', '/dev/sdb1']);
+
+    const { exec: exec2, calls: calls2 } = recExec();
+    // legacy handle without device/mountpoint (e.g. persisted before #1941)
+    await cleanupRunMount(exec2, { runId: 'r', outDir: '/o', container: 'c' } as never);
+    expect(calls2).toHaveLength(0);
   });
 });

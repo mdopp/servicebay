@@ -1,4 +1,12 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+
+const readFileMock = vi.fn();
+vi.mock('node:fs/promises', () => {
+  const readFile = (...args: unknown[]) => readFileMock(...args);
+  return { readFile, default: { readFile } };
+});
+
+import { DATA_DIR } from '@/lib/dirs';
 
 import {
   launchBackupWorker,
@@ -101,14 +109,44 @@ describe('stopBackupWorker', () => {
 });
 
 describe('readBackupTar', () => {
-  const run = { runId: 'r', outDir: '/out/r', container: 'backup-worker-r' };
-  it('decodes the base64 tar bytes', async () => {
-    const tar = Buffer.from('hello tar');
-    const { exec } = recExec({ 'base64 /out/r/adguard.tar': { stdout: tar.toString('base64') } });
-    expect((await readBackupTar(exec, run, 'adguard.tar')).equals(tar)).toBe(true);
+  // run.outDir is the HOST path; servicebay reads the SAME bytes off its own
+  // in-container data mount (DATA_DIR). The read goes through fs.readFile
+  // directly — never the agent seam / `base64` exec (#1973).
+  const run = { runId: 'r', outDir: '/mnt/data/servicebay/backup-runs/r', container: 'backup-worker-r' };
+  const inContainerTar = (name: string) => `${DATA_DIR}/backup-runs/r/${name}`;
+
+  beforeEach(() => {
+    readFileMock.mockReset();
   });
-  it('throws on a read failure', async () => {
-    const { exec } = recExec({ base64: { code: 1, stdout: 'no such file' } });
-    await expect(readBackupTar(exec, run, 'x.tar')).rejects.toThrow(/failed to read/);
+
+  it('reads the tar directly off the in-container out dir, never via the agent', async () => {
+    const tar = Buffer.from('hello tar');
+    readFileMock.mockImplementation(async (p: string) =>
+      p === inContainerTar('adguard.tar') ? tar : Promise.reject(new Error(`ENOENT: ${p}`)),
+    );
+    const { exec, calls } = recExec();
+
+    const got = await readBackupTar(exec, run, 'adguard.tar');
+
+    expect(got.equals(tar)).toBe(true);
+    expect(readFileMock).toHaveBeenCalledWith(inContainerTar('adguard.tar'));
+    // The agent exec seam (and therefore `base64`) is NOT used for the read.
+    expect(calls).toHaveLength(0);
+  });
+
+  it('translates the HOST outDir to the in-container path (not run.outDir)', async () => {
+    readFileMock.mockResolvedValue(Buffer.from('x'));
+    const { exec } = recExec();
+    await readBackupTar(exec, run, 'npm.tar');
+    expect(readFileMock).toHaveBeenCalledWith(inContainerTar('npm.tar'));
+    expect(readFileMock).not.toHaveBeenCalledWith(`${run.outDir}/npm.tar`);
+  });
+
+  it('throws a path-tagged error on a read failure', async () => {
+    readFileMock.mockRejectedValue(new Error('ENOENT: no such file'));
+    const { exec } = recExec();
+    await expect(readBackupTar(exec, run, 'x.tar')).rejects.toThrow(
+      new RegExp(`failed to read x\\.tar from ${inContainerTar('x.tar').replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`),
+    );
   });
 });
