@@ -33,12 +33,22 @@ import {
   resolveSupersededPath,
   type SafeExec,
 } from './hostExec';
-import type { HashResolver } from './dedup';
 import type {
   ImportPlan,
   ImportPlanItem,
   ImportRecord,
 } from './types';
+
+/**
+ * Resolves a record's content hash (sha256 hex) on the HOST — asynchronously, via
+ * the agent `safe_exec` (`sha256sum`). The apply runs in servicebay's control-plane
+ * container, which does NOT bind-mount the source device, so the bytes can ONLY be
+ * read host-side through `exec`; a synchronous in-process `readFileSync` of the
+ * host mountpoint throws ENOENT (#1983). Called LAZILY — only on a real catalog
+ * size/target collision and to key the catalog row of a file that is actually
+ * written — never once-per-item up front.
+ */
+export type AsyncHashResolver = (record: ImportRecord) => Promise<string>;
 
 /** How a single planned item was handled in this apply pass. */
 export type ApplyOutcome =
@@ -80,8 +90,14 @@ export interface ApplyOptions {
    * be a non-negative integer — never a name, never arbitrary uid:gid.
    */
   shareGid: number;
-  /** Resolves a record's sha256 (for the catalog row). Host hashes the bytes. */
-  hashOf: HashResolver;
+  /**
+   * Resolves a record's sha256 (the catalog row key) on the HOST, via `exec`
+   * (`sha256sum`) — see {@link AsyncHashResolver}. Invoked LAZILY: only when the
+   * catalog already holds the target slot (resume / delta-dedup compare) and once
+   * per file that is actually copied (to key its catalog row). Never read in the
+   * control-plane process — the source device isn't mounted there (#1983).
+   */
+  hashOf: AsyncHashResolver;
   /** Don't touch the host — just compute the outcome set. */
   dryRun?: boolean;
   /** Clock for deterministic dates/tests. */
@@ -193,7 +209,7 @@ interface ItemCtx {
   exec: SafeExec;
   catalog: ImportCatalog;
   shareGid: number;
-  hashOf: HashResolver;
+  hashOf: AsyncHashResolver;
   dryRun: boolean;
   now: () => number;
 }
@@ -211,7 +227,13 @@ interface ProgressCursor {
 interface CopyJob {
   item: ImportPlanItem;
   target: string;
-  sha: string;
+  /**
+   * The content sha, if it was already resolved during classification (a catalog
+   * collision forced a host compare). `undefined` for a plain copy to a fresh
+   * target — the catalog row is keyed by a host hash computed lazily at finalize
+   * time, so a clean apply never hashes a file BEFORE it's confirmed for copy.
+   */
+  sha?: string;
   src: string;
   dest: string;
   outcome: 'copied' | 'superseded';
@@ -237,10 +259,19 @@ async function classifyItem(
   const target = item.target;
   if (target === null) return { outcome: 'skipped-junk' };
 
-  const sha = ctx.hashOf(item.record);
-
-  // RESUMABILITY: this exact content already at this exact target → done.
-  if (ctx.catalog.has(sha, target)) return { outcome: 'skipped-cataloged' };
+  // LAZY HASH (#1983): hashing reads the file's bytes via the HOST (`exec`
+  // sha256sum) — never an in-process readFileSync of the device mountpoint, which
+  // the control-plane container can't see. So we hash ONLY when the catalog
+  // already holds this target slot (a real resume / delta-dedup collision that
+  // needs a content compare). A plain copy to a FRESH target is NOT hashed here;
+  // its catalog row key is resolved at finalize time, on the host, after the file
+  // is confirmed copied. A clean apply therefore hashes nothing up front.
+  let sha: string | undefined;
+  if (ctx.catalog.getByTarget(target) !== undefined) {
+    sha = await ctx.hashOf(item.record);
+    // RESUMABILITY: this exact content already at this exact target → done.
+    if (ctx.catalog.has(sha, target)) return { outcome: 'skipped-cataloged' };
+  }
 
   if (ctx.dryRun) return { outcome: 'dry-run' };
 
@@ -313,7 +344,12 @@ async function finalizeCopied(copied: CopyJob[], ctx: ItemCtx): Promise<void> {
   // never an arbitrary path).
   await runOk(ctx.exec, ['chown', `:${ctx.shareGid}`, ...copied.map(j => j.dest)], 'chown', { sudo: true });
   for (const job of copied) {
-    ctx.catalog.upsert(catalogEntry(job.sha, job.target, job.item.record, ctx.now()));
+    // The catalog row needs the content sha as its key. For a fresh-target copy we
+    // didn't hash during classification (no collision), so resolve it NOW on the
+    // host (#1983) — after the file is confirmed copied, never via an in-process
+    // read of the device.
+    const sha = job.sha ?? (await ctx.hashOf(job.item.record));
+    ctx.catalog.upsert(catalogEntry(sha, job.target, job.item.record, ctx.now()));
   }
 }
 

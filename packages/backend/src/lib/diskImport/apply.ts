@@ -24,13 +24,12 @@
 // before applyPlan rsyncs it. The mount stays present until apply completes; the
 // tile's "Start over" / teardown unmounts it.
 
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { readFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
   applyPlan,
+  hashSourceFile,
   ImportCatalog,
   provisionExternalLibraries,
   scanLibrariesForOwners,
@@ -52,10 +51,20 @@ export function runOutDir(runId: string): string {
   return path.join(DATA_DIR, 'disk-import-runs', runId);
 }
 
-/** Host-side sha256 of a file's bytes (catalog row key) — mirrors the worker's
- *  hashFileContent. Used only on size-collisions by the resume catalog. */
-function hashFileContent(record: ImportRecord): string {
-  return createHash('sha256').update(readFileSync(record.sourcePath)).digest('hex');
+/**
+ * Resolve a record's sha256 (the catalog row key) on the HOST, via the agent
+ * `safe_exec` (`sha256sum`) — NOT an in-process `readFileSync`. servicebay's
+ * control-plane container does NOT bind-mount the source device (only `/app/data`
+ * + the podman socket), so the rebased host mountpoint
+ * (`/run/servicebay/disk-import/<dev>/…`) is invisible in-process — a `readFileSync`
+ * there threw ENOENT and landed ZERO bytes (#1983). Reading the bytes through the
+ * same `exec` that already runs rsync/mkdir/chown on the host both works and keeps
+ * the control plane memory-safe (no whole file in the Node heap). The applyPlan
+ * call invokes this LAZILY (only on a real catalog collision + to key a written
+ * file's row), so a clean apply hashes only the files it actually copies.
+ */
+function makeHostHashOf(exec: SafeExec): (record: ImportRecord) => Promise<string> {
+  return record => hashSourceFile(exec, record.sourcePath);
 }
 
 /**
@@ -127,7 +136,7 @@ export async function applyImport(args: ApplyImportArgs): Promise<ApplyImportRes
       mountpoint,
       catalog,
       shareGid,
-      hashOf: hashFileContent,
+      hashOf: makeHostHashOf(exec),
       onProgress: p => {
         // Fire-and-forget the progress write; a slow disk poll must not block rsync.
         void writeOutStatus(outDir, { ...status, mode: 'apply', applied: p.copied, updatedAt: Date.now() });
