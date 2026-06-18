@@ -270,7 +270,8 @@ export async function scanLibrariesForOwners(
 export function immichProvisionFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): { cfg: ImmichAdminConfig; boxUsers: BoxUser[] } | null {
-  const serverUrl = (env.IMMICH_SERVER_URL ?? '').replace(/\/+$/, '');
+  let serverUrl = env.IMMICH_SERVER_URL ?? '';
+  while (serverUrl.endsWith('/')) serverUrl = serverUrl.slice(0, -1);
   const adminApiKey = env.IMMICH_ADMIN_API_KEY ?? '';
   if (!serverUrl || !adminApiKey) return null;
 
