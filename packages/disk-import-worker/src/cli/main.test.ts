@@ -25,6 +25,7 @@ function makeIO(overrides: Partial<WorkerIO> = {}): {
         { path: '/mnt/src/thumbs.db', size: 1, mtimeMs: 3 },
       ] satisfies ScannedFile[],
     hashOf: r => `hash-${r.sourcePath}`,
+    fingerprintOf: r => `fp-${r.sourcePath}`,
     writeStatus: (_out, status) => statuses.push({ ...status }),
     writePlanSidecar: (_out, sidecar) => sidecars.push(sidecar),
     makeExec: () => {

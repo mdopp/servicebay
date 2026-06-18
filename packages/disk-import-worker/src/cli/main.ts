@@ -29,7 +29,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, openSync, readSync, closeSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -192,15 +192,50 @@ export async function walkMount(mount: string, fsImpl: typeof fs = fs): Promise<
   return out;
 }
 
-/** Lazy sha256 of a file's bytes — used by dedup on size collisions only. */
+/** Lazy sha256 of a file's bytes — the full hash, used only to CONFIRM a
+ *  fingerprint collision (so a real backup disk is never read whole). */
 export function hashFileContent(record: ImportRecord): string {
   return createHash('sha256').update(readFileSync(record.sourcePath)).digest('hex');
+}
+
+/** Bytes read from each end for the cheap dedup fingerprint (#1995). */
+const FINGERPRINT_EDGE_BYTES = 64 * 1024;
+
+/**
+ * Cheap content FINGERPRINT: sha256 of (size + first 64KB + last 64KB) — reads
+ * at most 128KB instead of the whole file. Two files with the same size AND
+ * fingerprint are almost certainly identical; the planner still full-hashes
+ * those to be sure, so this never causes a wrong dedup — it just avoids reading
+ * hundreds of GB of same-size files on a backup disk (#1995).
+ */
+export function fingerprintFileContent(record: ImportRecord): string {
+  const size = record.size;
+  const h = createHash('sha256').update(String(size));
+  const fd = openSync(record.sourcePath, 'r');
+  try {
+    if (size <= FINGERPRINT_EDGE_BYTES * 2) {
+      const buf = Buffer.allocUnsafe(size);
+      readSync(fd, buf, 0, size, 0);
+      h.update(buf);
+    } else {
+      const head = Buffer.allocUnsafe(FINGERPRINT_EDGE_BYTES);
+      readSync(fd, head, 0, FINGERPRINT_EDGE_BYTES, 0);
+      const tail = Buffer.allocUnsafe(FINGERPRINT_EDGE_BYTES);
+      readSync(fd, tail, 0, FINGERPRINT_EDGE_BYTES, size - FINGERPRINT_EDGE_BYTES);
+      h.update(head).update(tail);
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return h.digest('hex');
 }
 
 /** IO seams — injected so the run is testable without a real device/agent. */
 export interface WorkerIO {
   scan: (mount: string) => Promise<ScannedFile[]>;
   hashOf: HashResolver;
+  /** Cheap fingerprint resolver for the two-tier dedup (#1995). */
+  fingerprintOf: HashResolver;
   /** Persist the compact status doc (atomic-ish: caller passes the full object). */
   writeStatus: (out: string, status: WorkerStatus) => void;
   /** Persist the heavy plan sidecar once. */
@@ -239,7 +274,14 @@ export async function runWorker(opts: WorkerOptions, io: WorkerIO): Promise<Work
     const catalog = new ImportCatalog(opts.catalog);
     let plan: ImportPlan;
     try {
-      plan = buildPlan(records, io.hashOf, { catalog });
+      plan = buildPlan(records, io.hashOf, {
+        catalog,
+        fingerprintOf: io.fingerprintOf,
+        // Live progress over the dedup fingerprint pass so a big disk never
+        // looks hung (#1995). Throttled by buildPlan to ~every 1000 files.
+        onProgress: (done, total) =>
+          tick({ step: `Planning: deduplicating ${done}/${total} same-size files …` }),
+      });
     } finally {
       if (opts.mode === 'dry-run') catalog.close();
     }
@@ -307,6 +349,7 @@ function realIO(): WorkerIO {
   return {
     scan: mount => walkMount(mount),
     hashOf: hashFileContent,
+    fingerprintOf: fingerprintFileContent,
     writeStatus: (out, status) => writeJson(path.join(out, STATUS_FILE), status),
     writePlanSidecar: (out, sidecar) => writeJson(path.join(out, PLAN_SIDECAR_FILE), sidecar),
     makeExec: opts => {
