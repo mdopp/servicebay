@@ -269,7 +269,9 @@ export async function runWorker(opts: WorkerOptions, io: WorkerIO): Promise<Work
       mountpoint: opts.mount,
       catalog,
       shareGid: opts.shareGid,
-      hashOf: io.hashOf,
+      // applyPlan's hashOf is async (it hashes on the HOST via exec, #1983); the
+      // CLI-only stub apply still reuses the sync in-process hasher, wrapped.
+      hashOf: async record => io.hashOf(record),
     });
     catalog.close();
 

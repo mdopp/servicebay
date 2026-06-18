@@ -24,6 +24,9 @@ interface RunStatus {
   status: {
     phase: string;
     step: string;
+    // Which pass the worker/host ran — distinguishes scan-done (offer "Import
+    // now") from apply-done (show the terminal "imported" state). #1981.
+    mode: 'dry-run' | 'apply';
     scanned: number;
     planned: number;
     applied: number;
@@ -127,12 +130,6 @@ export default function DiskImportPage() {
     refresh();
   });
 
-  const active = run?.running || (run?.status && run.status.phase !== 'done' && run.status.phase !== 'error');
-  // The dry-run scan finished (worker is gone, phase `done`) and there's a plan to
-  // apply — offer the host-apply action (#1972). The apply itself runs in
-  // servicebay; the status poll then shows the `applying` phase the backend writes.
-  const planReady = !run?.running && run?.status?.phase === 'done' && (run.status.planned ?? 0) > 0;
-
   return (
     <div className="p-6 max-w-2xl space-y-4 overflow-auto">
       <header className="flex items-center gap-3">
@@ -150,27 +147,79 @@ export default function DiskImportPage() {
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
-      {active ? (
-        <WorkerProgress run={run!} onStartOver={() => void startOver()} />
-      ) : planReady ? (
-        <PlanReady
-          run={run!}
-          applying={launching}
-          onApply={() => void apply()}
-          onStartOver={() => void startOver()}
-        />
-      ) : (
-        <DevicePicker
-          devices={devices}
-          loading={loading}
-          selected={selected}
-          launching={launching}
-          onSelect={setSelected}
-          onRefresh={refresh}
-          onLaunch={() => void launch()}
-        />
-      )}
+      <TileBody
+        run={run}
+        devices={devices}
+        loading={loading}
+        selected={selected}
+        launching={launching}
+        onSelect={setSelected}
+        onRefresh={refresh}
+        onLaunch={() => void launch()}
+        onApply={() => void apply()}
+        onStartOver={() => void startOver()}
+      />
     </div>
+  );
+}
+
+type TileState = 'active' | 'apply-done' | 'plan-ready' | 'pick';
+
+/** Map a run's compact status to the tile state to render. Pure so the boolean
+ *  complexity lives in one tested spot, not inline in the render. */
+function tileState(run: RunStatus | null): TileState {
+  const s = run?.status;
+  if (run?.running || (s && s.phase !== 'done' && s.phase !== 'error')) return 'active';
+  if (s?.phase !== 'done') return 'pick';
+  // Apply finished (host pass, mode `apply`) — terminal imported state, NOT the
+  // "Import now" plan again (#1981).
+  if (s.mode === 'apply') return 'apply-done';
+  // Dry-run scan finished with a plan to apply — offer the host-apply (#1972).
+  // Gating on mode==='dry-run' keeps apply-done out of this branch.
+  if (s.mode === 'dry-run' && (s.planned ?? 0) > 0) return 'plan-ready';
+  return 'pick';
+}
+
+/** Picks the right tile state from the run status. Kept out of the page so the
+ *  page stays a thin shell and the phase-selection complexity lives here. */
+function TileBody({
+  run,
+  devices,
+  loading,
+  selected,
+  launching,
+  onSelect,
+  onRefresh,
+  onLaunch,
+  onApply,
+  onStartOver,
+}: {
+  run: RunStatus | null;
+  devices: DeviceView[];
+  loading: boolean;
+  selected: string;
+  launching: boolean;
+  onSelect: (path: string) => void;
+  onRefresh: () => void;
+  onLaunch: () => void;
+  onApply: () => void;
+  onStartOver: () => void;
+}) {
+  const state = tileState(run);
+  if (state === 'active') return <WorkerProgress run={run!} onStartOver={onStartOver} />;
+  if (state === 'apply-done') return <ApplyDone run={run!} onStartOver={onStartOver} />;
+  if (state === 'plan-ready')
+    return <PlanReady run={run!} applying={launching} onApply={onApply} onStartOver={onStartOver} />;
+  return (
+    <DevicePicker
+      devices={devices}
+      loading={loading}
+      selected={selected}
+      launching={launching}
+      onSelect={onSelect}
+      onRefresh={onRefresh}
+      onLaunch={onLaunch}
+    />
   );
 }
 
@@ -248,6 +297,25 @@ function PlanReady({
         className="block text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 inline-flex items-center gap-1"
       >
         <RefreshCw size={12} /> Start over
+      </button>
+    </div>
+  );
+}
+
+/** Apply finished — terminal "imported" state (#1981). Shows the count copied and
+ *  a "Start over" to run another import (which aborts the now-stale run). */
+function ApplyDone({ run, onStartOver }: { run: RunStatus; onStartOver: () => void }) {
+  const s = run.status!;
+  return (
+    <div className="space-y-3 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+      <p className="text-sm text-gray-800 dark:text-gray-200">
+        {s.applied} file(s) imported. Start over to run another import.
+      </p>
+      <button
+        onClick={onStartOver}
+        className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
+      >
+        <RefreshCw size={14} /> Start over
       </button>
     </div>
   );

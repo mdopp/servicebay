@@ -1,8 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { applyPlan, resolveTargetPath } from './plan';
+import { applyPlan, resolveTargetPath, type AsyncHashResolver } from './plan';
 import { ImportCatalog } from './catalog';
 import { resolveShareTarget, resolveSupersededPath, type SafeExec, type SafeExecResult } from './hostExec';
-import type { HashResolver } from './dedup';
 import type { ImportPlan, ImportPlanItem, ImportRecord } from './types';
 
 const ok: SafeExecResult = { stdout: '', stderr: '', code: 0 };
@@ -47,9 +46,11 @@ function planOf(...items: ImportPlanItem[]): ImportPlan {
   return { items, conflicts: [] };
 }
 
-const hashConst = (h: string): HashResolver => () => h;
+// The apply hasher is ASYNC and HOST-backed (#1983): it must read the source
+// bytes through the agent `exec` (sha256sum), NEVER an in-process readFileSync.
+const hashConst = (h: string): AsyncHashResolver => () => Promise.resolve(h);
 
-function baseOpts(exec: SafeExec, catalog: ImportCatalog, hashOf: HashResolver) {
+function baseOpts(exec: SafeExec, catalog: ImportCatalog, hashOf: AsyncHashResolver) {
   return { exec, mountpoint: MOUNT, catalog, shareGid: GID, hashOf, now: () => FIXED_NOW };
 }
 
@@ -305,6 +306,72 @@ describe('applyPlan — resumability', () => {
     expect(res.items.find(i => i.sourcePath === `${MOUNT}/a.mp3`)?.outcome).toBe('skipped-cataloged');
     expect(res.items.find(i => i.sourcePath === `${MOUNT}/b.mp3`)?.outcome).toBe('copied');
     expect(catalog.has('d'.repeat(64), 'music/b.mp3')).toBe(true);
+    catalog.close();
+  });
+});
+
+describe('applyPlan — lazy HOST hashing (#1983)', () => {
+  // The control-plane container does NOT bind-mount the source device, so reading
+  // the bytes in-process (readFileSync) throws ENOENT and lands zero files. The
+  // hasher must go through `exec` (sha256sum on the host), and must be invoked
+  // LAZILY — only on a real catalog collision + to key a written file's row.
+  it('resolves the catalog row key via the async host resolver (only host I/O is exec)', async () => {
+    const { exec, calls } = mockExec();
+    const catalog = new ImportCatalog(':memory:');
+    const hashOf = vi.fn<AsyncHashResolver>(async () => 'a'.repeat(64));
+
+    const res = await applyPlan(planOf(item()), baseOpts(exec, catalog, hashOf));
+
+    expect(res.applied).toBe(1);
+    // The async host hasher resolved the catalog row key …
+    expect(hashOf).toHaveBeenCalledWith(expect.objectContaining({ sourcePath: `${MOUNT}/song.mp3` }));
+    // … and the ONLY host I/O applyPlan performed is via the injected exec
+    // (mkdir/rsync/chown). It never touches the filesystem in-process — plan.ts
+    // imports no fs module, so the source bytes can only flow through exec/hashOf.
+    expect(calls.map(c => c[0]).every(bin => bin === 'mkdir' || bin === 'rsync' || bin === 'chown')).toBe(true);
+    expect(catalog.has('a'.repeat(64), 'music/song.mp3')).toBe(true);
+    catalog.close();
+  });
+
+  it('does NOT hash a fresh-target copy during classification — only after it is written', async () => {
+    // With an EMPTY catalog there is no collision, so classifyItem must not hash
+    // before the copy. The single hash (to key the new row) happens at finalize,
+    // i.e. after rsync — proving no per-item up-front hashing of the device.
+    const calls: string[] = [];
+    const { exec } = mockExec();
+    const catalog = new ImportCatalog(':memory:');
+    const hashOf = vi.fn<AsyncHashResolver>(async () => {
+      calls.push('hash');
+      return 'a'.repeat(64);
+    });
+    // Wrap rsync to record ordering relative to the hash call.
+    const recordingExec: SafeExec = async (argv, options) => {
+      if (argv[0] === 'rsync') calls.push('rsync');
+      return exec(argv, options);
+    };
+
+    await applyPlan(planOf(item()), baseOpts(recordingExec, catalog, hashOf));
+
+    // Exactly one hash, AFTER the rsync — never an eager per-item hash up front.
+    expect(hashOf).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(['rsync', 'hash']);
+    catalog.close();
+  });
+
+  it('hashes during classification when the catalog already holds the target slot (resume compare)', async () => {
+    // Seed the catalog with the SAME content at the target → the second apply must
+    // hash up front (collision) and skip without re-copying.
+    const catalog = new ImportCatalog(':memory:');
+    const sha = 'd'.repeat(64);
+    catalog.upsert({ sha256: sha, target: 'music/song.mp3', sourcePath: `${MOUNT}/song.mp3`, size: 100, importedAtMs: 0 });
+    const { exec, calls } = mockExec();
+    const hashOf = vi.fn<AsyncHashResolver>(async () => sha);
+
+    const res = await applyPlan(planOf(item()), baseOpts(exec, catalog, hashOf));
+
+    expect(hashOf).toHaveBeenCalledTimes(1);
+    expect(res.items[0].outcome).toBe('skipped-cataloged');
+    expect(calls.some(c => c[0] === 'rsync')).toBe(false); // nothing re-copied
     catalog.close();
   });
 });

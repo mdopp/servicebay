@@ -342,7 +342,9 @@ async function applyApprovedPlan(
       mountpoint: opts.mount,
       catalog,
       shareGid: opts.shareGid,
-      hashOf: io.hashOf,
+      // applyPlan's hashOf is async (it hashes on the HOST via exec, #1983); this
+      // dev script's stub apply reuses the sync in-process hasher, wrapped.
+      hashOf: async record => io.hashOf(record),
     });
     io.log(`Applied ${result.applied} file(s); ${result.items.length - result.applied} skipped.`);
     return result;

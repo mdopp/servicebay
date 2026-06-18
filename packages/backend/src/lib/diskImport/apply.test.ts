@@ -9,9 +9,12 @@ const applyPlanMock = vi.fn();
 const catalogClose = vi.fn();
 const provisionExternalLibrariesMock = vi.fn();
 const scanLibrariesForOwnersMock = vi.fn();
+// hashSourceFile runs `sha256sum <path>` through the agent exec (host-side, #1983).
+const hashSourceFileMock = vi.fn();
 
 vi.mock('@servicebay/disk-import-worker', () => ({
   applyPlan: (...args: unknown[]) => applyPlanMock(...args),
+  hashSourceFile: (...a: unknown[]) => hashSourceFileMock(...a),
   ImportCatalog: class { close = catalogClose; },
   provisionExternalLibraries: (...a: unknown[]) => provisionExternalLibrariesMock(...a),
   scanLibrariesForOwners: (...a: unknown[]) => scanLibrariesForOwnersMock(...a),
@@ -91,6 +94,7 @@ beforeEach(() => {
   });
   provisionExternalLibrariesMock.mockResolvedValue({ libraryIdByOwner: new Map([['shared', 'lib1']]), unmatchedUsers: [] });
   scanLibrariesForOwnersMock.mockResolvedValue(undefined);
+  hashSourceFileMock.mockResolvedValue('a'.repeat(64));
 });
 
 describe('rebasePlanSource', () => {
@@ -122,6 +126,20 @@ describe('applyImport', () => {
     expect(opts.shareGid).toBe(1024);
     // the plan handed to applyPlan reads the source from the HOST mount
     expect(plan.items[0].record.sourcePath).toBe('/run/servicebay/disk-import/sda1/dcim/a.jpg');
+  });
+
+  it('passes a HOST-exec hashOf (sha256sum via exec, never an in-process readFileSync) — #1983', async () => {
+    await applyImport({ exec, runId: 'run1', mountpoint: '/run/servicebay/disk-import/sda1', shareGid: 1024 });
+
+    const [, opts] = applyPlanMock.mock.calls[0];
+    // hashOf resolves a record's sha by handing the rebased HOST path to the
+    // worker's host-side hasher (sha256sum through exec) — the fix for the
+    // ENOENT-zero-bytes bug. It delegates EXCLUSIVELY to hashSourceFile(exec, …);
+    // apply.ts imports no fs read (the old readFileSync(hostPath) is gone), so the
+    // source bytes can only flow through the host exec.
+    const sha = await opts.hashOf({ sourcePath: '/run/servicebay/disk-import/sda1/dcim/a.jpg' });
+    expect(sha).toBe('a'.repeat(64));
+    expect(hashSourceFileMock).toHaveBeenCalledWith(exec, '/run/servicebay/disk-import/sda1/dcim/a.jpg');
   });
 
   it('fires the Immich provision + scan for the photo owners after apply', async () => {
