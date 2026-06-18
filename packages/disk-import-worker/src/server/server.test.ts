@@ -1,0 +1,98 @@
+import { describe, it, expect, vi } from 'vitest';
+import { Readable } from 'node:stream';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { handleRequest, type ServerDeps } from './server';
+import { STATUS_FILE, PLAN_SIDECAR_FILE, type WorkerStatus, type PlanSidecar } from '../contract/status';
+import type { ImportPlan } from '../engine/types';
+
+function mockRes() {
+  const res = {
+    statusCode: 0,
+    headers: {} as Record<string, unknown>,
+    body: '',
+    writeHead(status: number, headers?: Record<string, unknown>) {
+      this.statusCode = status;
+      if (headers) Object.assign(this.headers, headers);
+      return this;
+    },
+    end(chunk?: string) {
+      if (chunk) this.body += chunk;
+      return this;
+    },
+  };
+  return res as unknown as ServerResponse & typeof res;
+}
+
+function mockReq(method: string, url: string, body?: unknown): IncomingMessage {
+  const stream = Readable.from(body ? [Buffer.from(JSON.stringify(body))] : []) as unknown as IncomingMessage;
+  stream.method = method;
+  stream.url = url;
+  return stream;
+}
+
+const plan: ImportPlan = {
+  items: [{ record: { sourcePath: '/mnt/src/p/a.jpg', size: 1, mtimeMs: 0, ext: 'jpg', name: 'a.jpg' }, category: 'photos', target: 'p/a.jpg', action: 'copy' }],
+  conflicts: [],
+};
+
+function deps(over: Partial<ServerDeps> = {}): ServerDeps {
+  const files: Record<string, unknown> = {
+    [STATUS_FILE]: { phase: 'done', planned: 1 } as Partial<WorkerStatus>,
+    [PLAN_SIDECAR_FILE]: { version: 1, runId: 'r', plan, mountBase: '/mnt/src' } as PlanSidecar,
+  };
+  return {
+    outDir: '/out',
+    readJson: async <T>(f: string) => (files[f] as T) ?? null,
+    listDevices: async () => [{ path: '/dev/sda1', display: 'USB' }],
+    launchJob: vi.fn(async () => {}),
+    ...over,
+  };
+}
+
+describe('worker server handleRequest', () => {
+  it('serves the SPA at /', async () => {
+    const res = mockRes();
+    await handleRequest(deps(), mockReq('GET', '/'), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('<!doctype html>');
+  });
+
+  it('returns the compact status.json', async () => {
+    const res = mockRes();
+    await handleRequest(deps(), mockReq('GET', '/api/status'), res);
+    expect(JSON.parse(res.body)).toMatchObject({ phase: 'done', planned: 1 });
+  });
+
+  it('returns 204 when no status yet', async () => {
+    const res = mockRes();
+    await handleRequest(deps({ readJson: async () => null }), mockReq('GET', '/api/status'), res);
+    expect(res.statusCode).toBe(204);
+  });
+
+  it('returns ONE lazy tree level', async () => {
+    const res = mockRes();
+    await handleRequest(deps(), mockReq('GET', '/api/tree?dir='), res);
+    const level = JSON.parse(res.body);
+    expect(level.children.map((c: { dir: string }) => c.dir)).toEqual(['p']);
+  });
+
+  it('launches a scan and 202s', async () => {
+    const d = deps();
+    const res = mockRes();
+    await handleRequest(d, mockReq('POST', '/api/scan', { device: '/dev/sda1' }), res);
+    expect(res.statusCode).toBe(202);
+    expect(d.launchJob).toHaveBeenCalledWith('dry-run', '/dev/sda1');
+  });
+
+  it('rejects a launch without a device', async () => {
+    const res = mockRes();
+    await handleRequest(deps(), mockReq('POST', '/api/scan', {}), res);
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('404s an unknown route', async () => {
+    const res = mockRes();
+    await handleRequest(deps(), mockReq('GET', '/nope'), res);
+    expect(res.statusCode).toBe(404);
+  });
+});

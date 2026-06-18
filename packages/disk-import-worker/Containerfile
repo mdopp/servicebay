@@ -9,12 +9,16 @@
 # Built from the monorepo root context (single pipeline, no second build system):
 #   podman build -f packages/disk-import-worker/Containerfile -t disk-import-worker .
 #
-# Run (servicebay does this in #1954) — note the memory cap and read-only source:
-#   podman run --rm --memory=1g --memory-swap=1g \
-#     -v /dev/<device>:/mnt/src:ro \
+# Run — servicebay launches it in --serve mode to back the disk-import tile
+# (#1953/#1954): the container exposes the app (lazy review tree) AND runs the
+# heavy scan/apply over the read-only mount, into the shared out volume.
+#   podman run --rm --memory=1g --memory-swap=1g -p 8080 \
+#     -v <ro-mountpoint>:/mnt/src:ro \
 #     -v <shared-out-dir>:/out \
 #     -e DISK_IMPORT_RUN_ID=<id> \
-#     disk-import-worker --mount /mnt/src --out /out [--apply]
+#     <image> --serve
+# A one-shot job (no app server) is still available for scripts/tests:
+#   podman run --rm --memory=1g -v … <image> --mount /mnt/src --out /out [--apply]
 
 FROM node:20-slim AS base
 # better-sqlite3 (the import catalog) is a native module → build toolchain.
@@ -45,5 +49,10 @@ COPY packages/api-client ./packages/api-client
 # chowns to the file-share gid only (feedback_fileshare_relabel_crashloop).
 USER node
 
+# The app server listens here in --serve mode; servicebay maps it behind the NPM
+# proxy + Authelia forward-auth (admin-gated), like every other service UI.
+EXPOSE 8080
+
 ENTRYPOINT ["npx", "tsx", "packages/disk-import-worker/src/cli/main.ts"]
-CMD ["--help"]
+# Default to serve mode so `podman run <image>` backs the disk-import tile.
+CMD ["--serve"]

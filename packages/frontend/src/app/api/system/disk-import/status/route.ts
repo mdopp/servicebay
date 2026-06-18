@@ -1,39 +1,25 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
-import { getImportJob } from '@/lib/diskImport/service';
+import { getRunStatus } from '@/lib/diskImport/service';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
+import { makeExec, resolveNode } from '../wiring';
 
 export const dynamic = 'force-dynamic';
 
-const Query = z.object({
-  /** The job id returned by `scan` / `apply`. */
-  id: z.string().min(1),
-});
-
 /**
- * GET — poll a disk-import job by id (#1897). The card hangs off this between
- * the immediate `scan`/`apply` hand-off and the result:
- *
- *   - while `scanning`/`applying`: live phase (`progress.step`) + counts
- *     (scanned / hashed / copied / bytes) so the card shows real progress, not
- *     a bare spinner;
- *   - once `reviewed`: the `review` payload (per-category sizing + non-blocking
- *     actions[]) — a reopened card re-attaches to the finished scan by id;
- *   - once `applied`: the final `applied` count;
- *   - `error`: the failure message.
- *
- * Read-only; the session store is durable (#1896) so this survives a backend
- * restart — a reopened card re-attaches to an in-flight or finished job.
- * `404` when the id is unknown/forged/pruned.
+ * GET — the active disk-import worker run's COMPACT status (#1949). Reads only
+ * the worker's status.json (step/phase/counts) + `podman ps` liveness — never the
+ * heavy 269k-node plan, which the worker app serves itself, lazily. `404` when no
+ * scan has been launched. The tile polls this for progress; the lazy review tree
+ * is served by the worker app behind its own proxied route.
  */
-export const GET = withApiHandler<undefined, z.infer<typeof Query>>(
-  { query: Query, tokenScope: 'mutate' },
-  async ({ query }) => {
+export const GET = withApiHandler(
+  { tokenScope: 'mutate' },
+  async () => {
     try {
-      const status = await getImportJob(query.id);
+      const status = await getRunStatus(makeExec(resolveNode()));
       if (!status) {
-        return NextResponse.json({ ok: false, error: 'unknown job' }, { status: 404 });
+        return NextResponse.json({ ok: false, error: 'no active run' }, { status: 404 });
       }
       return NextResponse.json({ ok: true, ...status });
     } catch (e) {

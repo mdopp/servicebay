@@ -50,7 +50,6 @@ import { SSHConnectionPool } from './lib/ssh/pool';
 import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './lib/auth/session';
 import { setIo as setInstallSocketIo } from './lib/install/socketBridge';
 import { markCrashedOnStartup as markCrashedInstallsOnStartup } from './lib/install/jobStore';
-import { markCrashedOnStartup as markCrashedImportsOnStartup } from './lib/diskImport/sessionStore';
 
 // Fail-fast at startup so misconfigured deploys don't appear to work.
 assertAuthSecret();
@@ -319,14 +318,10 @@ app.prepare().then(() => {
     })
     .catch(() => { /* best-effort */ });
 
-  // Same recovery for disk-import jobs (#1897): a scan/apply running in the
-  // background when the backend died is flipped to 'error' so a reopened card
-  // re-attaches to a terminal state instead of polling forever.
-  markCrashedImportsOnStartup()
-    .then((n) => {
-      if (n > 0) logger.info('Server', `Marked ${n} crashed disk-import job(s) on startup.`);
-    })
-    .catch(() => { /* best-effort */ });
+  // Disk-import no longer needs crash recovery on startup (#1949): the heavy job
+  // runs in a worker CONTAINER, so liveness is `podman ps` — a worker that died
+  // is simply not running, and the tile re-derives state from status.json +
+  // `podman ps` rather than from an in-process session that could be stranded.
 
   // Socket.IO auth: every connection must carry a valid session cookie.
   io.use(async (socket, next) => {

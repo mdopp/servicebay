@@ -22,6 +22,7 @@
 
 import {
   Bell,
+  Boxes,
   Database,
   Network,
   Server,
@@ -56,6 +57,21 @@ export interface SettingsGroup {
 }
 
 export const SETTINGS_GROUPS: SettingsGroup[] = [
+  {
+    // Per-service Operate pages (#1957 / slice 2 of #1950). This group is the
+    // entry point to one Operate page PER SERVICE (Health + Settings + Actions
+    // co-located — feedback_services_are_the_grouping_unit). Its `entries` are
+    // the dynamic list of installed services, resolved at render time from the
+    // digital twin (useOperateServices), so the static list here carries only
+    // the group itself as a searchable hit ("Services" jumps to the index).
+    id: 'services',
+    label: 'Services',
+    intent: 'Operate each service in one place — health, settings and actions.',
+    icon: Boxes,
+    entries: [
+      { id: '', label: 'Services', tier: 'essential', keywords: ['service', 'operate', 'immich', 'jellyfin', 'adguard', 'vaultwarden', 'home assistant', 'app', 'health', 'restart'] },
+    ],
+  },
   {
     id: 'network-domain',
     label: 'Network & Domain',
@@ -113,9 +129,9 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'update-window', label: 'Update window', tier: 'advanced', keywords: ['schedule', 'maintenance', 'auto-update'] },
       { id: 'log-level', label: 'Log level', tier: 'advanced', keywords: ['log', 'debug', 'verbose'] },
       { id: 'stacks', label: 'Stacks & templates', tier: 'advanced', keywords: ['stack', 'template', 'registry', 'variable'] },
-      // Disk import stays reachable here in slice 1 — it leaves Settings for
-      // its own app + tile in slice 3 (#1949 / #1958). Not removed, only homed.
-      { id: 'disk-import', label: 'Import data from a disk', tier: 'advanced', keywords: ['import', 'usb', 'disk', 'migrate', 'drive', 'photos'] },
+      // Disk import left Settings for its own app + launch tile (#1949 / #1953):
+      // the heavy job runs in a resource-capped worker container reached via a
+      // dashboard tile, so it is no longer a Settings entry here.
       { id: 'factory-reset', label: 'Factory reset', tier: 'advanced', keywords: ['reset', 'wipe', 'erase', 'danger'] },
     ],
   },

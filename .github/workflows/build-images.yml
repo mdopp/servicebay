@@ -2,21 +2,29 @@ name: build-images
 
 # Build and publish container images for ServiceBay-owned components.
 #
-# After the OSCAR migration (mdopp/oscar), the oscar-gatekeeper and
-# oscar-household-init images moved to mdopp/oscar's own
-# .github/workflows/build-images.yml. ServiceBay currently has no
-# remaining first-party container images of its own — the workflow
-# stays as scaffolding for any future ServiceBay-owned image.
+# Heavy batch jobs run as resource-capped worker containers, NOT in the
+# servicebay control plane (#1949). The disk-import-worker image is the
+# first such worker: servicebay launches it one-shot via
+# `podman run --rm --memory=…` and reads only the compact status.json it
+# writes. The box pulls this image to run a scan, so it MUST be built and
+# published here — otherwise box-verify fails "image not found" (#1953).
 
 on:
   push:
     branches: [main]
     tags: ['v*']
     paths:
+      - 'packages/disk-import-worker/**'
+      - 'packages/api-client/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
       - '.github/workflows/build-images.yml'
   pull_request:
     paths:
+      - 'packages/disk-import-worker/**'
       - '.github/workflows/build-images.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,14 +34,13 @@ jobs:
   build:
     name: ${{ matrix.image }}
     runs-on: ubuntu-latest
-    if: false  # no images to build until ServiceBay grows one — see header comment
     strategy:
       fail-fast: false
       matrix:
         include:
-          - image: placeholder
-            dockerfile: Dockerfile.placeholder
-            description: "Placeholder — keeps the workflow valid until ServiceBay ships its own image."
+          - image: disk-import-worker
+            dockerfile: packages/disk-import-worker/Containerfile
+            description: "Resource-capped one-shot disk-import worker (walk/hash/classify/dedup/plan/apply); servicebay launches it via podman run --memory=… and reads its status.json (#1949)."
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -65,7 +72,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          # Repo-scoped name so the worker rides the servicebay package namespace,
+          # matching the claude-dev image convention (ghcr.io/<owner>/<repo>-<img>).
+          images: ghcr.io/${{ github.repository }}-${{ matrix.image }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr

@@ -14,7 +14,7 @@
  *      bottom bar doesn't get cluttered (it's still in the top
  *      bar's icon row).
  */
-import { Box, Terminal, Activity, Settings, Network, Home } from 'lucide-react';
+import { Box, Terminal, Activity, Settings, Network, Home, Download } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavigationEntry {
@@ -62,5 +62,8 @@ export const NAVIGATION_ENTRIES: NavigationEntry[] = [
   { id: 'network', name: 'Network Map', shortLabel: 'Network', icon: Network, path: '/network' },
   { id: 'health', name: 'Diagnostics', shortLabel: 'Health', icon: Activity, path: '/health' },
   { id: 'terminal', name: 'SSH Terminal', shortLabel: 'Terminal', icon: Terminal, path: '/terminal' },
+  // Disk import is its own launch tile (#1949/#1953) — it opens the resource-
+  // capped worker app, not an in-process Settings subsection.
+  { id: 'disk-import', name: 'Import data', shortLabel: 'Import', icon: Download, path: '/disk-import', hiddenOnMobileBottom: true },
   { id: 'settings', name: 'Settings', shortLabel: 'Settings', icon: Settings, path: '/settings', hiddenOnMobileBottom: true },
 ];
