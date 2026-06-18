@@ -46,9 +46,13 @@ RUN npm ci
 COPY tsconfig.json ./tsconfig.json
 COPY packages/backup-worker ./packages/backup-worker
 
-# Non-root by default; the host bind-mounts (stacks ro, out rw) are owned by core
-# on the box. The worker only READS the stacks dir and WRITES tars into /out — it
-# never chowns or writes back into a stack (feedback_fileshare_relabel_crashloop).
-USER node
+# Run as root INSIDE the container. Under rootless podman (UserNS=keep-id, as on
+# the box) container-root maps to the host `core` user, which owns the bind-mounts
+# (stacks ro, out rw) — so root can write status.json + tars into /out. `USER node`
+# (UID 1000) maps to host 525287, which has NO write access to the core-owned /out
+# → EACCES on /out/status.json. Same reason the main servicebay container runs as
+# root. The worker only READS the stacks dir and WRITES into /out; it never chowns
+# or writes back into a stack (feedback_fileshare_relabel_crashloop).
+USER root
 
 ENTRYPOINT ["npx", "tsx", "packages/backup-worker/src/cli/main.ts"]

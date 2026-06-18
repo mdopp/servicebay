@@ -44,10 +44,14 @@ COPY tsconfig.json ./tsconfig.json
 COPY packages/disk-import-worker ./packages/disk-import-worker
 COPY packages/api-client ./packages/api-client
 
-# Non-root by default; the host bind-mounts (source ro, out rw) are owned by core
-# on the box. The worker never chowns imported files to a per-user uid — apply
-# chowns to the file-share gid only (feedback_fileshare_relabel_crashloop).
-USER node
+# Run as root INSIDE the container. Under rootless podman (UserNS=keep-id, as on
+# the box) container-root maps to the host `core` user, which owns the bind-mounts
+# (source ro, out rw) — so root can write status.json into the core-owned /out.
+# `USER node` (UID 1000) maps to host 525287, which has NO write access → EACCES on
+# /out/status.json. Same reason the main servicebay container runs as root. The
+# worker never chowns imported files to a per-user uid — apply chowns to the
+# file-share gid only (feedback_fileshare_relabel_crashloop).
+USER root
 
 # The app server listens here in --serve mode; servicebay maps it behind the NPM
 # proxy + Authelia forward-auth (admin-gated), like every other service UI.
