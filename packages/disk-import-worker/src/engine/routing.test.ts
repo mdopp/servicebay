@@ -196,6 +196,12 @@ describe('buildFolderTree (#1915)', () => {
     { dir: 'mdopp/Filme', category: 'movies' as const, size: 3 },
   ];
 
+  it('returns just the root node for an EMPTY scan (no crash on 0 files)', () => {
+    const tree = buildFolderTree([], new Map());
+    expect(tree).toHaveLength(1);
+    expect(tree[0]).toMatchObject({ dir: '', files: 0, bytes: 0, categories: [] });
+  });
+
   it('emits one connected node per dir incl. the root, with tallies + categories', () => {
     const tree = buildFolderTree(files, new Map());
     expect(tree.map(n => n.dir)).toEqual(['', 'mdopp', 'mdopp/Filme']);

@@ -344,6 +344,12 @@ export function buildFolderTree(
     return tally.get(dir)!;
   };
 
+  // The root always exists in `dirs`; tally it up front so an EMPTY scan (0
+  // files — e.g. a disk of only excluded/lost+found entries) still yields the
+  // root node instead of crashing on `tally.get('')!` (undefined → "reading
+  // 'files'"). With files present the ancestor walk below touches it anyway.
+  touch('');
+
   for (const f of files) {
     const t = touch(f.dir);
     t.files += 1;
