@@ -70,18 +70,25 @@ export interface WorkerOptions {
 const DEFAULT_SHARE_GID = 1024;
 
 export const USAGE = `Usage: disk-import-worker --mount <path> --out <dir> [--apply] [options]
+       disk-import-worker --serve [--port <n>] [--mount <path>] [--out <dir>]
 
 One-shot disk-import worker. Walks the read-only mount, plans the import, and
 writes a compact status.json + plan sidecar to the out-volume. Default is dry-run
 (plan only, no host writes).
 
+In --serve mode the worker exposes the disk-import app (the lazy review tree) AND
+runs the heavy scan/apply over the bind-mounted device — this is the mode
+servicebay launches the container in to back the disk-import tile (#1953/#1954).
+
 Options:
-  --mount <path>     Path the source device is mounted at, read-only (required)
-  --out <dir>        Shared out-volume for status.json + plan.json (required)
+  --mount <path>     Path the source device is mounted at, read-only (default /mnt/src in --serve)
+  --out <dir>        Shared out-volume for status.json + plan.json (default /out in --serve)
   --apply            Copy files into the shared out area (default: dry-run)
   --catalog <path>   Import catalog DB path (default: :memory: for dry-run)
   --run-id <id>      Run id (default: env DISK_IMPORT_RUN_ID or a random id)
   --share-gid <gid>  gid that owns file-share data (default: ${DEFAULT_SHARE_GID})
+  --serve            Run the in-container app server instead of a one-shot job
+  --port <n>         Port the --serve app listens on (default: env PORT or 8080)
   --help, -h         Show this help`;
 
 interface ArgDraft {
@@ -91,9 +98,11 @@ interface ArgDraft {
   catalog?: string;
   runId?: string;
   shareGid: number;
+  serve?: boolean;
+  port?: number;
 }
 
-const VALUE_ARGS = new Set(['--mount', '--out', '--catalog', '--run-id', '--share-gid']);
+const VALUE_ARGS = new Set(['--mount', '--out', '--catalog', '--run-id', '--share-gid', '--port']);
 
 function applyValueArg(draft: ArgDraft, arg: string, value: string | undefined): void {
   if (value === undefined) throw new WorkerArgError(`Missing value for ${arg}`);
@@ -101,7 +110,13 @@ function applyValueArg(draft: ArgDraft, arg: string, value: string | undefined):
   else if (arg === '--out') draft.out = value;
   else if (arg === '--catalog') draft.catalog = value;
   else if (arg === '--run-id') draft.runId = value;
-  else {
+  else if (arg === '--port') {
+    const port = Number(value);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      throw new WorkerArgError(`--port must be a valid port number, got "${value}"`);
+    }
+    draft.port = port;
+  } else {
     const gid = Number(value);
     if (!Number.isInteger(gid) || gid < 0) {
       throw new WorkerArgError(`--share-gid must be a non-negative integer, got "${value}"`);
@@ -110,21 +125,46 @@ function applyValueArg(draft: ArgDraft, arg: string, value: string | undefined):
   }
 }
 
-export function parseWorkerArgs(argv: string[]): WorkerOptions | { help: true } {
+/** Serve-mode options (the in-container app server). */
+export interface ServeArgs {
+  serve: true;
+  mount: string;
+  out: string;
+  port: number;
+  runId: string;
+  shareGid: number;
+}
+
+function defaultRunId(): string {
+  return process.env.DISK_IMPORT_RUN_ID ?? createHash('sha1').update(String(Date.now())).digest('hex').slice(0, 12);
+}
+
+export function parseWorkerArgs(argv: string[]): WorkerOptions | ServeArgs | { help: true } {
   const draft: ArgDraft = { shareGid: DEFAULT_SHARE_GID };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') return { help: true };
+    else if (arg === '--serve') draft.serve = true;
     else if (arg === '--apply') draft.mode = 'apply';
     else if (arg === '--dry-run') draft.mode = 'dry-run';
     else if (VALUE_ARGS.has(arg)) applyValueArg(draft, arg, argv[++i]);
     else throw new WorkerArgError(`Unknown argument: ${arg}`);
   }
+  if (draft.serve) {
+    return {
+      serve: true,
+      mount: draft.mount ?? '/mnt/src',
+      out: draft.out ?? '/out',
+      port: draft.port ?? (Number(process.env.PORT) || 8080),
+      runId: draft.runId ?? defaultRunId(),
+      shareGid: draft.shareGid,
+    };
+  }
   if (!draft.mount) throw new WorkerArgError('--mount is required');
   if (!draft.out) throw new WorkerArgError('--out is required');
   const mode = draft.mode ?? 'dry-run';
   const catalog = draft.catalog ?? (mode === 'apply' ? path.join(draft.out, 'catalog.sqlite') : ':memory:');
-  const runId = draft.runId ?? process.env.DISK_IMPORT_RUN_ID ?? createHash('sha1').update(String(Date.now())).digest('hex').slice(0, 12);
+  const runId = draft.runId ?? defaultRunId();
   return { mount: draft.mount, out: draft.out, mode, catalog, runId, shareGid: draft.shareGid };
 }
 
@@ -192,7 +232,7 @@ export async function runWorker(opts: WorkerOptions, io: WorkerIO): Promise<Work
 
     const categories = summarizeCategories(plan);
     const totalBytes = plan.items.reduce((sum, i) => sum + i.record.size, 0);
-    io.writePlanSidecar(opts.out, { version: STATUS_CONTRACT_VERSION, runId: opts.runId, plan });
+    io.writePlanSidecar(opts.out, { version: STATUS_CONTRACT_VERSION, runId: opts.runId, plan, mountBase: opts.mount });
     tick({
       planned: plan.items.length,
       conflicts: plan.conflicts.length,
@@ -265,6 +305,12 @@ async function main(): Promise<void> {
   if ('help' in parsed) {
     console.log(USAGE);
     return;
+  }
+  if ('serve' in parsed) {
+    // Lazy import so the one-shot path never loads the http server module.
+    const { serve } = await import('../server/index');
+    serve(parsed);
+    return; // server keeps the process alive
   }
   await runWorker(parsed, realIO());
 }

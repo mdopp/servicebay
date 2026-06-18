@@ -1,34 +1,23 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
-import { abortImportJob } from '@/lib/diskImport/service';
+import { abortRun } from '@/lib/diskImport/service';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
+import { makeExec, resolveNode } from '../wiring';
 
 export const dynamic = 'force-dynamic';
 
-const Body = z.object({
-  /** The job id returned by `scan` / `apply`. */
-  id: z.string().min(1),
-});
-
 /**
- * POST — abort/dismiss a disk-import job (#1943). The card's "Start over": flips
- * a stuck or unwanted session terminal so it stops re-attaching and the user can
- * immediately begin a fresh scan. This is the fix for a killed/orphaned scan that
- * sat at 'Starting…' forever (a dead worker is also self-reaped on read, but the
- * user shouldn't have to wait — this dismisses it now). Idempotent + no-op-safe:
- * an unknown id returns 404; an already-terminal session returns its phase.
- * Writes only the session store; never touches the imported host.
+ * POST — stop the active disk-import worker container and forget the run (#1949).
+ * The tile's "Start over": `podman rm -f` the worker (an OOM/kill of it never
+ * touched the control plane) and clear the run handle so a fresh scan can start.
+ * Idempotent — a no-op when there's no active run.
  */
-export const POST = withApiHandler<z.infer<typeof Body>>(
-  { body: Body, tokenScope: 'mutate' },
-  async ({ body }) => {
+export const POST = withApiHandler(
+  { tokenScope: 'mutate' },
+  async () => {
     try {
-      const result = await abortImportJob(body.id);
-      if (!result) {
-        return NextResponse.json({ ok: false, error: 'unknown job' }, { status: 404 });
-      }
-      return NextResponse.json({ ok: true, phase: result.phase });
+      await abortRun(makeExec(resolveNode()));
+      return NextResponse.json({ ok: true });
     } catch (e) {
       return apiError(e, { tag: 'api:system:disk-import:abort', status: 400, exposeMessage: true });
     }

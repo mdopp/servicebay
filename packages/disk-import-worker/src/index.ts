@@ -26,3 +26,4 @@ export * from './engine/suggest';
 
 // --- Status-file contract (shared with servicebay) ---
 export * from './contract/status';
+export * from './contract/lazyTree';

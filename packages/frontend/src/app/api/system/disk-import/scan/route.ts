@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { startScan } from '@/lib/diskImport/service';
+import { launchScan } from '@/lib/diskImport/service';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
-import { catalogPath, listBoxUsers, makeExec, resolveNode } from '../wiring';
+import { makeExec, resolveNode, SHARE_GID } from '../wiring';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,30 +14,23 @@ const Body = z.object({
 });
 
 /**
- * POST — start a background scan of the device (mount RO → walk → classify →
- * dedup → plan) and return a `jobId` IMMEDIATELY (#1897). The walk + per-file
- * hashing on a large disk far exceeds the HTTP/proxy timeout, so the work runs
- * detached and the card polls `GET ./status?id=<jobId>` for live phase + counts
- * and, once reviewed, the plan. Writes NOTHING to the host: this is the review
- * step before the confirm + apply. The `jobId` is the only thing that authorises
- * a later apply of this exact reviewed plan.
+ * POST — launch the disk-import WORKER CONTAINER over the device (#1949). The
+ * heavy walk/hash/classify/dedup/plan runs in the worker's own resource-capped
+ * container (never the control plane), which serves the lazy review tree app and
+ * writes the compact status.json servicebay reads. Returns a `runId` immediately;
+ * the tile opens the worker app and polls `GET ./status`.
  */
 export const POST = withApiHandler<z.infer<typeof Body>>(
   { body: Body, tokenScope: 'mutate' },
   async ({ body }) => {
     try {
       const node = resolveNode(body.node);
-      // #1915: hand the engine the box-user list so a top-level source dir named
-      // exactly like a user is pre-assigned that owner (shown + overridable in the
-      // review tree), and so the review's Owner picker is driven by real users.
-      const boxUsers = await listBoxUsers();
-      const { jobId } = await startScan({
+      const { runId } = await launchScan({
         exec: makeExec(node),
         device: body.device,
-        catalogPath: catalogPath(),
-        boxUsers,
+        shareGid: SHARE_GID,
       });
-      return NextResponse.json({ ok: true, jobId });
+      return NextResponse.json({ ok: true, runId });
     } catch (e) {
       return apiError(e, { tag: 'api:system:disk-import:scan', status: 400, exposeMessage: true });
     }

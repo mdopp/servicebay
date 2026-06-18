@@ -113,9 +113,9 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'update-window', label: 'Update window', tier: 'advanced', keywords: ['schedule', 'maintenance', 'auto-update'] },
       { id: 'log-level', label: 'Log level', tier: 'advanced', keywords: ['log', 'debug', 'verbose'] },
       { id: 'stacks', label: 'Stacks & templates', tier: 'advanced', keywords: ['stack', 'template', 'registry', 'variable'] },
-      // Disk import stays reachable here in slice 1 — it leaves Settings for
-      // its own app + tile in slice 3 (#1949 / #1958). Not removed, only homed.
-      { id: 'disk-import', label: 'Import data from a disk', tier: 'advanced', keywords: ['import', 'usb', 'disk', 'migrate', 'drive', 'photos'] },
+      // Disk import left Settings for its own app + launch tile (#1949 / #1953):
+      // the heavy job runs in a resource-capped worker container reached via a
+      // dashboard tile, so it is no longer a Settings entry here.
       { id: 'factory-reset', label: 'Factory reset', tier: 'advanced', keywords: ['reset', 'wipe', 'erase', 'danger'] },
     ],
   },

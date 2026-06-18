@@ -98,6 +98,13 @@ export interface PlanSidecar {
   version: typeof STATUS_CONTRACT_VERSION;
   runId: string;
   plan: ImportPlan;
+  /**
+   * The mountpoint the device was scanned at (e.g. `/mnt/src`). The plan's
+   * records carry ABSOLUTE source paths; the lazy review tree needs the path
+   * relative to this base. Persisted here so the reader (the lazy-tree builder)
+   * never has to guess the base from a fragile common-prefix heuristic.
+   */
+  mountBase: string;
 }
 
 /** Build the per-category rollup from a plan — compact, no records inline. */

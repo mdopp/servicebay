@@ -9,7 +9,6 @@ import UpdatesSection from '../_lib/sections/UpdatesSection';
 import UpdateWindowSection from '../_lib/sections/UpdateWindowSection';
 import FactoryResetSection from '../_lib/sections/FactoryResetSection';
 import StacksSection from '../_lib/sections/StacksSection';
-import DiskImportSection from '../_lib/sections/DiskImportSection';
 
 const GROUP = SETTINGS_GROUPS.find(g => g.id === 'system')!;
 
@@ -32,9 +31,9 @@ export default function SystemSettingsPage() {
       <SettingDisclosure id="stacks" tier="advanced" label="Stacks & templates">
         <StacksSection />
       </SettingDisclosure>
-      <SettingDisclosure id="disk-import" tier="advanced" label="Import data from a disk">
-        <DiskImportSection />
-      </SettingDisclosure>
+      {/* Disk import left Settings for its own app + launch tile (#1949/#1953):
+          the heavy job runs in a resource-capped worker container, reached via a
+          dashboard tile — not an in-process Settings subsection. */}
       <SettingDisclosure id="factory-reset" tier="advanced" label="Factory reset">
         <FactoryResetSection />
       </SettingDisclosure>
