@@ -118,10 +118,12 @@ describe('buildPlan — conflicts (same target, different content)', () => {
   });
 });
 
-// Two-tier dedup (#1995): cheap fingerprint first, full hash only on a
-// fingerprint collision — so a backup disk full of same-size files is not read
-// whole, and dedup stays exact (a fingerprint match is CONFIRMED by full hash).
-describe('buildPlan — two-tier fingerprint dedup (#1995)', () => {
+// Fingerprint-trust dedup (#1995): the cheap fingerprint IS the dedup identity —
+// NO full-hash confirm on a first import — so a backup disk full of same-size
+// duplicates is never read whole. Full hashing happens ONLY for a cataloged
+// target (delta run). Source is read-only/copy-only, so a (near-impossible)
+// fingerprint false-match means one file not copied, never data loss.
+describe('buildPlan — fingerprint-trust dedup (#1995)', () => {
   it('same size + DIFFERENT fingerprint → conflict WITHOUT reading either file whole', () => {
     const files: ScannedFile[] = [
       { path: '/diskA/report.pdf', size: 5000, mtimeMs: 0 },
@@ -136,7 +138,7 @@ describe('buildPlan — two-tier fingerprint dedup (#1995)', () => {
     expect(fullHashed).toEqual([]); // distinct fingerprints settle it cheaply
   });
 
-  it('same size + SAME fingerprint → full-hash CONFIRMS: identical content is skip-dupe', () => {
+  it('same size + SAME fingerprint → skip-dupe WITHOUT a full read (first import)', () => {
     const files: ScannedFile[] = [
       { path: '/diskA/report.pdf', size: 5000, mtimeMs: 0 },
       { path: '/diskB/report.pdf', size: 5000, mtimeMs: 0 },
@@ -144,27 +146,25 @@ describe('buildPlan — two-tier fingerprint dedup (#1995)', () => {
     const { result, fullHashed } = planFp(
       files,
       { '/diskA/report.pdf': 'fp', '/diskB/report.pdf': 'fp' },
-      { '/diskA/report.pdf': sha('a'), '/diskB/report.pdf': sha('a') },
+      {}, // a full read would throw — proves we never do one
     );
     expect(actionOf(result.items, '/diskA/report.pdf')).toBe('copy');
     expect(actionOf(result.items, '/diskB/report.pdf')).toBe('skip-dupe');
-    expect(fullHashed.sort()).toEqual(['/diskA/report.pdf', '/diskB/report.pdf']);
+    expect(fullHashed).toEqual([]);
   });
 
-  it('same size + SAME fingerprint but DIFFERENT full hash → confirmed conflict with full shas', () => {
-    const files: ScannedFile[] = [
-      { path: '/diskA/report.pdf', size: 5000, mtimeMs: 0 },
-      { path: '/diskB/report.pdf', size: 5000, mtimeMs: 0 },
-    ];
-    const { result } = planFp(
+  it('a cataloged target IS full-hashed (delta run compares against stored sha256)', () => {
+    const catalog = new ImportCatalog(':memory:');
+    catalog.upsert({ sha256: sha('a'), target: 'documents/report.pdf', sourcePath: '/old/report.pdf', size: 5000, importedAtMs: 0 });
+    const files: ScannedFile[] = [{ path: '/diskA/report.pdf', size: 5000, mtimeMs: 0 }];
+    const { result, fullHashed } = planFp(
       files,
-      { '/diskA/report.pdf': 'fp', '/diskB/report.pdf': 'fp' },
-      { '/diskA/report.pdf': sha('a'), '/diskB/report.pdf': sha('b') },
+      { '/diskA/report.pdf': 'fp' },
+      { '/diskA/report.pdf': sha('a') },
+      catalog,
     );
-    expect(result.conflicts[0]).toMatchObject({
-      existing: { sourcePath: '/diskA/report.pdf', sha256: sha('a') },
-      incoming: { sourcePath: '/diskB/report.pdf', sha256: sha('b') },
-    });
+    expect(actionOf(result.items, '/diskA/report.pdf')).toBe('skip-dupe');
+    expect(fullHashed).toEqual(['/diskA/report.pdf']);
   });
 
   it('size-unique file is NEVER fingerprinted or hashed', () => {
