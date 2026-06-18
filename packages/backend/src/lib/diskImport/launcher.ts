@@ -21,6 +21,7 @@ import type { SafeExec } from '@servicebay/disk-import-worker';
 import { STATUS_FILE, type WorkerStatus } from '@servicebay/disk-import-worker';
 import { assertSafeDevice, mountpointFor } from '@servicebay/disk-import-worker';
 
+import { resolveHostDataDir } from '@/lib/hostDataDir';
 import { resolveImmichProvisionEnv } from './immichProvisionEnv';
 
 /** The published worker image — built + pushed by .github/workflows/build-images.yml. */
@@ -49,13 +50,13 @@ export interface ImportDevice {
 }
 
 /**
- * Base dir for per-run worker out volumes (status.json + plan). `dataDir` must
- * be the HOST-side data path (HOST_DATA_DIR), since the out dir is both `mkdir`'d
- * and bind-mounted (`-v <outDir>:/out`) by host-side commands — the in-container
- * `/app/data` is read-only on the host.
+ * Base dir for per-run worker out volumes (status.json + plan). `hostDataDir` must
+ * be the HOST-side data path (see {@link resolveHostDataDir}), since the out dir is
+ * both `mkdir`'d and bind-mounted (`-v <outDir>:/out`) by host-side commands — the
+ * in-container `/app/data` is read-only on the host.
  */
-export function workerOutBase(dataDir: string): string {
-  return `${dataDir}/disk-import-runs`;
+export function workerOutBase(hostDataDir: string): string {
+  return `${hostDataDir}/disk-import-runs`;
 }
 
 function containerName(runId: string): string {
@@ -75,13 +76,17 @@ export async function launchWorker(args: {
   exec: SafeExec;
   device: string;
   runId: string;
-  dataDir: string;
   shareGid: number;
 }): Promise<WorkerRun> {
-  const { exec, device, runId, dataDir, shareGid } = args;
+  const { exec, device, runId, shareGid } = args;
   assertSafeDevice(device);
   const mountpoint = mountpointFor(device);
-  const outDir = `${workerOutBase(dataDir)}/${runId}`;
+  // Resolve the HOST path of servicebay's data dir at launch time (env →
+  // self-inspect via the mounted podman socket → conventional default). The out
+  // dir is both `mkdir`'d and bind-mounted host-side, so it MUST be a host path,
+  // never the in-container /app/data (read-only on the host).
+  const hostDataDir = await resolveHostDataDir(exec);
+  const outDir = `${workerOutBase(hostDataDir)}/${runId}`;
   const container = containerName(runId);
 
   // The mountpoint dir must exist before `mount` (same as mounter.mountReadOnly).
@@ -89,18 +94,17 @@ export async function launchWorker(args: {
   // the mount fails with "mount point does not exist" and the worker never runs.
   await exec(['mkdir', '-p', mountpoint], { sudo: true });
   // outDir must be created before `podman run -v <outDir>:/out`. It lives on the
-  // HOST (dataDir = HOST_DATA_DIR), not in the container's /app/data (read-only
-  // on the host). Fail fast if the mkdir fails — a read-only-filesystem error here
-  // means HOST_DATA_DIR is wrong (fell back to /app/data). The caller will surface
+  // HOST (resolveHostDataDir), not in the container's /app/data (read-only on the
+  // host). Fail fast if the mkdir fails — a read-only-filesystem error here means
+  // the resolved host path is wrong (fell back to /app/data). The caller surfaces
   // the error; don't silently continue and let `podman run` fail with a confusing
   // "statfs: no such file or directory".
   const mkdirOut = await exec(['mkdir', '-p', outDir]);
   if (mkdirOut.code !== 0) {
     throw new Error(
       `disk-import: failed to create worker out dir ${outDir}: ${mkdirOut.stderr || mkdirOut.stdout}. ` +
-      `If this box was installed before HOST_DATA_DIR was added to the quadlet, ` +
-      `a reinstall (or adding Environment=HOST_DATA_DIR=/mnt/data/servicebay to ` +
-      `~/.config/containers/systemd/servicebay.container and restarting) will fix it.`,
+      `Resolved host data dir was ${hostDataDir}; if that is the in-container /app/data, ` +
+      `set HOST_DATA_DIR (or ensure servicebay's /app/data volume Source is inspectable).`,
     );
   }
   await exec(['mount', '-o', 'ro', device, mountpoint], { sudo: true });
