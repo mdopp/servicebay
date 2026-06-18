@@ -50,6 +50,7 @@ import { SSHConnectionPool } from './lib/ssh/pool';
 import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './lib/auth/session';
 import { setIo as setInstallSocketIo } from './lib/install/socketBridge';
 import { markCrashedOnStartup as markCrashedInstallsOnStartup } from './lib/install/jobStore';
+import { patchQuadletHostDataDir } from './lib/diskImport/quadletPatch';
 
 // Fail-fast at startup so misconfigured deploys don't appear to work.
 assertAuthSecret();
@@ -126,6 +127,18 @@ setTraceProvider(currentTraceId);
     }
   } catch (e) {
     logger.error('Server', 'Config initialization failed', e);
+  }
+})();
+
+// One-time quadlet patch: add HOST_DATA_DIR to the servicebay.container quadlet
+// for boxes installed before PR #1964 added it to the butane template. Runs once
+// per start; idempotent; no restart needed (the env var takes effect next restart,
+// which the :dev/:latest channel flip triggers). Errors are non-fatal.
+(async () => {
+  try {
+    await patchQuadletHostDataDir();
+  } catch (e) {
+    logger.warn('Server', 'quadlet HOST_DATA_DIR patch failed (non-fatal):', e);
   }
 })();
 
