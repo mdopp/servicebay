@@ -246,13 +246,21 @@ interface KeyInfo {
 }
 
 /**
- * Two-tier dedup keying (#1995). Reads as little as possible:
+ * Fingerprint-trust dedup keying (#1995). Reads as little as possible:
  *  - size-unique files are NEVER read (`u:` key, can't duplicate anything);
- *  - size-colliding files get a cheap FINGERPRINT (`f:` key, first/last 64KB);
- *  - only files that ALSO collide on fingerprint, or whose target is already in
- *    the catalog (which stores full hashes), are FULLY hashed (`h:` key).
- * Progress is reported across the fingerprint pass (the dominant I/O on a big
- * disk) so the worker can show live planning progress and never look hung.
+ *  - size-colliding files are deduped by a cheap FINGERPRINT (`f:` key, sha256 of
+ *    size + head/middle/tail 64KB) — equal fingerprint ⇒ treated as the same
+ *    content. A full read is NOT used to confirm: on a backup disk almost every
+ *    same-size file is a true duplicate, so confirming by full hash means reading
+ *    hundreds of GB (the original bug, just moved later). A head+middle+tail+size
+ *    match between two genuinely different files is astronomically unlikely, and
+ *    the import is copy-only over a READ-ONLY source — so the worst case of a
+ *    false match is one file not COPIED (still safe on the disk), never data loss.
+ *  - the ONLY full hash is for a record whose target is already in the catalog
+ *    (a delta/re-run), because the catalog stores full sha256 (`h:` key). A first
+ *    import has an empty catalog, so it does ZERO full reads.
+ * Progress is reported across the fingerprint pass (the dominant I/O) so a large
+ * plan shows live progress and never looks hung.
  */
 function resolveContentKeys(
   ordered: Classified[],
@@ -267,46 +275,34 @@ function resolveContentKeys(
 ): Map<string, KeyInfo> {
   const { hashOf, fingerprintOf, catalog, areaOf, onProgress } = opts;
 
-  // Pass 1: fingerprint every size-colliding record (the heavy, I/O-bound pass).
-  const colliding = ordered.filter(c => (bySize.get(c.record.size)?.length ?? 0) > 1);
-  const total = colliding.length;
-  const fpOf = new Map<string, string>();
+  // Records whose target is already cataloged need a FULL hash to compare with
+  // the catalog (it stores full sha256). Empty on a first import.
+  const needsFullForCatalog = (c: Classified): boolean =>
+    catalog?.getByTarget(c.target!, areaOf(c.record)) !== undefined;
+
+  // The work to report progress over: every size-colliding file is fingerprinted,
+  // plus any cataloged-target file is full-hashed.
+  const reads = ordered.filter(
+    c => (bySize.get(c.record.size)?.length ?? 0) > 1 || needsFullForCatalog(c),
+  );
+  const total = reads.length;
   let done = 0;
-  for (const c of colliding) {
-    fpOf.set(c.record.sourcePath, c.record.sha256 ?? fingerprintOf(c.record));
+  const tick = (): void => {
     done += 1;
     if (onProgress && (done % 1000 === 0 || done === total)) onProgress(done, total);
-  }
-
-  // Count (size, fingerprint) groups to find what still collides after pass 1.
-  const byFp = new Map<string, number>();
-  for (const c of colliding) {
-    const k = `${c.record.size}:${fpOf.get(c.record.sourcePath)}`;
-    byFp.set(k, (byFp.get(k) ?? 0) + 1);
-  }
-
-  // Full-hash cache (each record at most once).
-  const fullCache = new Map<string, string>();
-  const fullHash = (record: ImportRecord): string => {
-    if (record.sha256) return record.sha256;
-    const cached = fullCache.get(record.sourcePath);
-    if (cached) return cached;
-    const h = hashOf(record);
-    fullCache.set(record.sourcePath, h);
-    return h;
   };
 
-  // Pass 2: assign each record its comparable key.
   const out = new Map<string, KeyInfo>();
   for (const c of ordered) {
-    const fp = fpOf.get(c.record.sourcePath);
-    const catHit = catalog?.getByTarget(c.target!, areaOf(c.record));
-    const fpCollides = fp !== undefined && (byFp.get(`${c.record.size}:${fp}`) ?? 0) > 1;
-    if (catHit !== undefined || fpCollides) {
-      const sha = fullHash(c.record);
+    const sizeCollides = (bySize.get(c.record.size)?.length ?? 0) > 1;
+    if (needsFullForCatalog(c)) {
+      const sha = c.record.sha256 ?? hashOf(c.record);
       out.set(c.record.sourcePath, { key: `h:${sha}`, sha256: sha });
-    } else if (fp !== undefined) {
+      tick();
+    } else if (sizeCollides) {
+      const fp = c.record.sha256 ?? fingerprintOf(c.record);
       out.set(c.record.sourcePath, { key: `f:${fp}` });
+      tick();
     } else {
       out.set(c.record.sourcePath, { key: `u:${c.record.sourcePath}` });
     }

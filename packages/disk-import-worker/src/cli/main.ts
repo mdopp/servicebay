@@ -202,27 +202,34 @@ export function hashFileContent(record: ImportRecord): string {
 const FINGERPRINT_EDGE_BYTES = 64 * 1024;
 
 /**
- * Cheap content FINGERPRINT: sha256 of (size + first 64KB + last 64KB) — reads
- * at most 128KB instead of the whole file. Two files with the same size AND
- * fingerprint are almost certainly identical; the planner still full-hashes
- * those to be sure, so this never causes a wrong dedup — it just avoids reading
- * hundreds of GB of same-size files on a backup disk (#1995).
+ * Cheap content FINGERPRINT: sha256 of (size + 64KB head + 64KB middle + 64KB
+ * tail) — reads at most 192KB instead of the whole file. This IS the dedup
+ * identity (#1995): equal size+fingerprint is treated as the same content, with
+ * no full-hash confirm, so a backup disk full of same-size duplicates is not
+ * read whole. A head+middle+tail+size collision between two genuinely different
+ * files is astronomically unlikely, and the import is copy-only over a READ-ONLY
+ * source — worst case of a false match is one file not copied (still on the
+ * disk), never data loss.
  */
 export function fingerprintFileContent(record: ImportRecord): string {
   const size = record.size;
   const h = createHash('sha256').update(String(size));
   const fd = openSync(record.sourcePath, 'r');
   try {
-    if (size <= FINGERPRINT_EDGE_BYTES * 2) {
+    if (size <= FINGERPRINT_EDGE_BYTES * 3) {
       const buf = Buffer.allocUnsafe(size);
       readSync(fd, buf, 0, size, 0);
       h.update(buf);
     } else {
-      const head = Buffer.allocUnsafe(FINGERPRINT_EDGE_BYTES);
-      readSync(fd, head, 0, FINGERPRINT_EDGE_BYTES, 0);
-      const tail = Buffer.allocUnsafe(FINGERPRINT_EDGE_BYTES);
-      readSync(fd, tail, 0, FINGERPRINT_EDGE_BYTES, size - FINGERPRINT_EDGE_BYTES);
-      h.update(head).update(tail);
+      const seg = Buffer.allocUnsafe(FINGERPRINT_EDGE_BYTES);
+      for (const offset of [
+        0,
+        Math.floor(size / 2 - FINGERPRINT_EDGE_BYTES / 2),
+        size - FINGERPRINT_EDGE_BYTES,
+      ]) {
+        readSync(fd, seg, 0, FINGERPRINT_EDGE_BYTES, offset);
+        h.update(seg);
+      }
     }
   } finally {
     closeSync(fd);
