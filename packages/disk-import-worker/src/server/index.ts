@@ -11,9 +11,14 @@
 // it does NOT re-enumerate or re-mount inside the container.
 
 import { spawn } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { startServer, fileReader, moduleDir, type ServerDeps } from './server';
+import { runReplan, type ReplanIO, type ReplanRequest } from '../engine/replan';
+import { PLAN_SIDECAR_FILE, STATUS_FILE } from '../contract/status';
+import { hashFileContent, fingerprintFileContent } from '../cli/main';
 
 /** The read-only mount + shared out paths the container is launched with. */
 export interface ServeOptions {
@@ -57,8 +62,35 @@ export function serveDeps(opts: ServeOptions): ServerDeps {
     launchJob: async mode => {
       if (mode === 'dry-run') launchWorkerChild(opts);
     },
+    // RE-PLAN runs IN-PROCESS here: serve mode has the device bind-mounted at
+    // `opts.mount`, so the hashers can read the bytes to re-dedup per owner (the
+    // control plane can't, #1983). Reads/rewrites plan.json + status in the out dir.
+    replan: async request => {
+      const plan = await runReplan(request, serveReplanIO(opts.out));
+      return { planned: plan.items.length, conflicts: plan.conflicts.length };
+    },
   };
 }
+
+/** fs-backed re-plan IO over the out dir, hashing via the live mount. */
+function serveReplanIO(out: string): ReplanIO {
+  const writeJson = async (file: string, data: unknown): Promise<void> => {
+    mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, JSON.stringify(data));
+    await fs.rename(tmp, file).catch(() => writeFileSync(file, JSON.stringify(data)));
+  };
+  return {
+    readJson: fileReader(out),
+    writePlanSidecar: sidecar => writeJson(path.join(out, PLAN_SIDECAR_FILE), sidecar),
+    writeStatus: status => writeJson(path.join(out, STATUS_FILE), status),
+    hashOf: hashFileContent,
+    fingerprintOf: fingerprintFileContent,
+  };
+}
+
+/** Re-export the request type for callers building the serve deps. */
+export type { ReplanRequest };
 
 /** Start the worker app server over the bind-mounted device + out volume. */
 export function serve(opts: ServeOptions) {

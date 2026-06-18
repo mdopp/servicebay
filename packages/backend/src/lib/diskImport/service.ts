@@ -8,7 +8,7 @@
 // reached via a launch TILE; this facade is the small launch/status glue the
 // tile's API routes call.
 
-import type { SafeExec } from '@servicebay/disk-import-worker';
+import type { SafeExec, ReplanRequest } from '@servicebay/disk-import-worker';
 import { SHARE_DATA_ROOT, type WorkerStatus } from '@servicebay/disk-import-worker';
 
 import { logger } from '@/lib/logger';
@@ -25,7 +25,7 @@ import {
 } from './launcher';
 import { listImportDevices } from './devices';
 import { setActiveRun, getActiveRun, clearActiveRun } from './runStore';
-import { applyImport, type ApplyImportResult } from './apply';
+import { applyImport, replanImport, type ApplyImportResult } from './apply';
 
 export type { ImportDevice } from './launcher';
 
@@ -111,9 +111,36 @@ export async function getRunStatus(exec: SafeExec): Promise<RunStatus | null> {
  * still mounted at. Status.json is updated through the apply so the tile poll keeps
  * reflecting progress. Throws when there's no active run, or on a real apply error.
  */
-export async function applyRun(exec: SafeExec, shareGid: number): Promise<ApplyImportResult> {
+/**
+ * Re-plan the active run with the page's per-folder routing rules (#2000) WITHOUT
+ * applying — re-routes/re-dedups per owner in the worker (over the live mount) and
+ * rewrites plan.json + status.json so the tile poll reflects the new owner-aware
+ * plan. Used to preview the effect of the routing picks before "Import now".
+ */
+export async function replanRun(exec: SafeExec, request: ReplanRequest): Promise<void> {
+  const run = await getActiveRun();
+  if (!run) throw new Error('disk-import: no active run to re-plan');
+  await replanImport({ exec, runId: run.runId, container: run.container, request });
+}
+
+/**
+ * Apply the active run. When `request` is given, RE-PLAN with the page's routing
+ * rules first (#2000) so files land in `data/<owner>/<category>/…` and the dedup
+ * splits per owner; then the host-apply applies the rewritten plan.json unchanged.
+ */
+export async function applyRun(
+  exec: SafeExec,
+  shareGid: number,
+  request?: ReplanRequest,
+): Promise<ApplyImportResult> {
   const run = await getActiveRun();
   if (!run) throw new Error('disk-import: no active run to apply');
+  // #2000: re-plan with the routing rules BEFORE applying, so the host-apply reads
+  // the owner-aware, per-owner-deduped plan.json. Skipped when no rules were sent
+  // (a plain apply of the auto-sorted plan).
+  if (request) {
+    await replanImport({ exec, runId: run.runId, container: run.container, request });
+  }
   // Resolve the REAL file-share group gid host-side — the passed `shareGid` is the
   // fallback. The apply chowns every copied file to `core:<this gid>`; a wrong gid
   // (the 1024 fallback) leaves files in an unnamed group the containers can't read

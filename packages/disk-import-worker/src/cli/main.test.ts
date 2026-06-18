@@ -76,6 +76,11 @@ describe('parseWorkerArgs', () => {
   it('--help short-circuits', () => {
     expect(parseWorkerArgs(['--help'])).toEqual({ help: true });
   });
+
+  it('--replan returns replan-mode opts with mount/out defaults (#2000)', () => {
+    expect(parseWorkerArgs(['--replan'])).toEqual({ replan: true, mount: '/mnt/src', out: '/out' });
+    expect(parseWorkerArgs(['--replan', '--out', '/o'])).toEqual({ replan: true, mount: '/mnt/src', out: '/o' });
+  });
 });
 
 describe('runWorker (dry-run)', () => {

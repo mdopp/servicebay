@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 
 import { STATUS_FILE, PLAN_SIDECAR_FILE, type WorkerStatus, type PlanSidecar } from '../contract/status';
 import { lazyChildren, type LazyTreeLevel } from '../contract/lazyTree';
+import type { ReplanRequest } from '../engine/replan';
 import { APP_HTML } from './appHtml';
 
 /** Seams so the server is testable without a real filesystem / child process. */
@@ -44,6 +45,14 @@ export interface ServerDeps {
   /** Launch the heavy DRY-RUN scan/plan job as a detached child. (Apply runs in
    *  servicebay over the host mount, #1972 — never in this sandboxed worker.) */
   launchJob: (mode: 'dry-run', device: string) => Promise<void>;
+  /**
+   * RE-PLAN the existing plan with the page's routing rules (#2000): re-classify /
+   * re-route / re-dedup PER OWNER over the already-scanned records, hashing via the
+   * live read-only mount (only the worker can — #1983), then rewrite plan.json +
+   * the status rollup. Returns the new planned/conflict counts. Throws when no
+   * plan exists yet. Optional so the one-shot ServerDeps (tests) needn't supply it.
+   */
+  replan?: (request: ReplanRequest) => Promise<{ planned: number; conflicts: number }>;
 }
 
 /** JSON response helper. */
@@ -103,6 +112,31 @@ async function handleLaunch(
   sendJson(res, 202, { ok: true });
 }
 
+/**
+ * POST /api/replan → re-plan the existing plan with the page's routing rules
+ * (#2000). Body: `{ explicit: Record<relDir, Rule>, rootDefault?: Partial<Rule> }`.
+ * 409 when no plan exists yet (re-plan before a scan completed); 503 when this
+ * server wasn't given a `replan` seam (the sandboxed one-shot deps).
+ */
+async function handleReplan(deps: ServerDeps, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!deps.replan) {
+    sendJson(res, 503, { error: 're-plan not available in this mode' });
+    return;
+  }
+  const body = (await readBody(req)) as unknown as ReplanRequest;
+  const request: ReplanRequest = {
+    explicit: body.explicit ?? {},
+    rootDefault: body.rootDefault,
+  };
+  try {
+    const result = await deps.replan(request);
+    sendJson(res, 200, { ok: true, ...result });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    sendJson(res, message.includes('no plan') ? 409 : 500, { error: message });
+  }
+}
+
 /** Dispatch a GET request to its handler, or null when none matches. */
 function getRoute(
   deps: ServerDeps,
@@ -135,6 +169,8 @@ export async function handleRequest(deps: ServerDeps, req: IncomingMessage, res:
       if (handled) return await handled;
     } else if (req.method === 'POST' && url.pathname === '/api/scan') {
       return await handleLaunch(deps, req, res);
+    } else if (req.method === 'POST' && url.pathname === '/api/replan') {
+      return await handleReplan(deps, req, res);
     }
     sendJson(res, 404, { error: 'not found' });
   } catch (e) {
