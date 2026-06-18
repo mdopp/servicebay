@@ -1,12 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ToastProvider } from '@/providers/ToastProvider';
-import BackupsSettingsPage from './page';
+import BackupPage from './page';
 
-// The page reads `nodes` from the settings context; stub it so the page can
-// render without a full <SettingsProvider> tree.
-vi.mock('../_lib/SettingsContext', () => ({
-  useSettings: () => ({ nodes: [] }),
+// The backup app loads its node list via the getNodes server action; stub it so
+// the page can render without a live backend.
+vi.mock('@/app/actions/nodes', () => ({
+  getNodes: () => Promise.resolve([]),
+}));
+
+// PageHeader calls useRouter(); the app router isn't mounted under bare render().
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), back: vi.fn() }),
 }));
 
 /** Fresh Response per call, dispatched by URL (memory: never reuse a Response). */
@@ -41,7 +46,7 @@ const renderPage = (enabled: boolean) => {
     '/api/settings/backups': () => [],
     'external-backup': () => ({}),
   }));
-  return render(<ToastProvider><BackupsSettingsPage /></ToastProvider>);
+  return render(<ToastProvider><BackupPage /></ToastProvider>);
 };
 
 describe('BackupsSettingsPage — Backup Sync collapse', () => {

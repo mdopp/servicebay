@@ -7,7 +7,10 @@
       "@servicebay/api-client/*": ["../api-client/src/*"],
       "@servicebay/disk-import-worker": ["../disk-import-worker/src/index.ts"],
       "@servicebay/disk-import-worker/contract": ["../disk-import-worker/src/contract/status.ts"],
-      "@servicebay/disk-import-worker/*": ["../disk-import-worker/src/*"]
+      "@servicebay/disk-import-worker/*": ["../disk-import-worker/src/*"],
+      "@servicebay/backup-worker": ["../backup-worker/src/index.ts"],
+      "@servicebay/backup-worker/contract": ["../backup-worker/src/contract/status.ts"],
+      "@servicebay/backup-worker/*": ["../backup-worker/src/*"]
     }
   },
   "include": ["src/**/*.ts"]

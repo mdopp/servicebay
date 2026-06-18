@@ -14,7 +14,7 @@
  *      bottom bar doesn't get cluttered (it's still in the top
  *      bar's icon row).
  */
-import { Box, Terminal, Activity, Settings, Network, Home, Download } from 'lucide-react';
+import { Box, Terminal, Activity, Settings, Network, Home, Download, DatabaseBackup } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavigationEntry {
@@ -65,5 +65,9 @@ export const NAVIGATION_ENTRIES: NavigationEntry[] = [
   // Disk import is its own launch tile (#1949/#1953) — it opens the resource-
   // capped worker app, not an in-process Settings subsection.
   { id: 'disk-import', name: 'Import data', shortLabel: 'Import', icon: Download, path: '/disk-import', hiddenOnMobileBottom: true },
+  // Backup & restore is its own launch tile (#1949/#1958) — the heavy backup/
+  // restore UI left Settings entirely; the actions run in the capped backup
+  // worker (#1955), surfaced here rather than as an in-process Settings page.
+  { id: 'backup', name: 'Backup & restore', shortLabel: 'Backup', icon: DatabaseBackup, path: '/backup', hiddenOnMobileBottom: true },
   { id: 'settings', name: 'Settings', shortLabel: 'Settings', icon: Settings, path: '/settings', hiddenOnMobileBottom: true },
 ];
