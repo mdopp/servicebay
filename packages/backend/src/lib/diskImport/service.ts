@@ -11,7 +11,7 @@
 import type { SafeExec } from '@servicebay/disk-import-worker';
 import type { WorkerStatus } from '@servicebay/disk-import-worker';
 
-import { DATA_DIR } from '@/lib/dirs';
+import { HOST_DATA_DIR } from '@/lib/dirs';
 import {
   launchWorker,
   readStatus,
@@ -44,7 +44,10 @@ export async function launchScan(args: {
 }): Promise<{ runId: string }> {
   const runId = randomRunId();
   await ensureWorkerImage(args.exec);
-  const run = await launchWorker({ ...args, runId, dataDir: DATA_DIR });
+  // HOST_DATA_DIR (not DATA_DIR): the worker's out dir is created + bind-mounted
+  // host-side via `podman run`, so it must be the box path (/mnt/data/servicebay),
+  // never the in-container /app/data (read-only on the host).
+  const run = await launchWorker({ ...args, runId, dataDir: HOST_DATA_DIR });
   await setActiveRun(run);
   return { runId: run.runId };
 }

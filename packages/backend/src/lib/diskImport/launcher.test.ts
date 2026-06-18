@@ -25,6 +25,14 @@ describe('launchWorker', () => {
     // device is mounted read-only, with sudo
     const mountCall = calls.find(c => c[0] === 'mount');
     expect(mountCall).toEqual(['mount', '-o', 'ro', '/dev/sda1', expect.any(String)]);
+    const mountpoint = mountCall![4];
+
+    // the RO mountpoint dir is created (sudo) BEFORE the mount — else
+    // "mount point does not exist" and the worker never launches (#1963).
+    const mkdirIdx = calls.findIndex(c => c[0] === 'mkdir' && c[1] === '-p' && c[2] === mountpoint);
+    const mountIdx = calls.findIndex(c => c[0] === 'mount');
+    expect(mkdirIdx).toBeGreaterThanOrEqual(0);
+    expect(mkdirIdx).toBeLessThan(mountIdx);
 
     // the container runs detached, --rm, memory-capped, with the worker image
     const podmanRun = calls.find(c => c[0] === 'podman' && c[1] === 'run')!;
