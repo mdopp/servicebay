@@ -38,6 +38,12 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # jlaffaye/ftp v0.2.1+ declares `go 1.26`; tools/sb stays on Go 1.24, so
+      # taking it would force a toolchain bump. Declined (#1801) — pin to 0.2.0
+      # until the Go toolchain is intentionally bumped, then drop this ignore.
+      - dependency-name: "github.com/jlaffaye/ftp"
+        versions: [">=0.2.1"]
     commit-message:
       prefix: chore
       include: scope
