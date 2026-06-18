@@ -22,6 +22,7 @@
 
 import {
   Bell,
+  Boxes,
   Database,
   Network,
   Server,
@@ -56,6 +57,21 @@ export interface SettingsGroup {
 }
 
 export const SETTINGS_GROUPS: SettingsGroup[] = [
+  {
+    // Per-service Operate pages (#1957 / slice 2 of #1950). This group is the
+    // entry point to one Operate page PER SERVICE (Health + Settings + Actions
+    // co-located — feedback_services_are_the_grouping_unit). Its `entries` are
+    // the dynamic list of installed services, resolved at render time from the
+    // digital twin (useOperateServices), so the static list here carries only
+    // the group itself as a searchable hit ("Services" jumps to the index).
+    id: 'services',
+    label: 'Services',
+    intent: 'Operate each service in one place — health, settings and actions.',
+    icon: Boxes,
+    entries: [
+      { id: '', label: 'Services', tier: 'essential', keywords: ['service', 'operate', 'immich', 'jellyfin', 'adguard', 'vaultwarden', 'home assistant', 'app', 'health', 'restart'] },
+    ],
+  },
   {
     id: 'network-domain',
     label: 'Network & Domain',
