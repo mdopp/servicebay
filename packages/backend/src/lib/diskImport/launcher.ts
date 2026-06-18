@@ -118,7 +118,18 @@ export async function launchWorker(args: {
       `set HOST_DATA_DIR (or ensure servicebay's /app/data volume Source is inspectable).`,
     );
   }
-  await exec(['mount', '-o', 'ro', device, mountpoint], { sudo: true });
+  // SELinux is Enforcing on the box. Without a label the source filesystem is
+  // `unlabeled_t` and the `container_t` worker gets EACCES on `scandir /mnt/src`.
+  // `:z`/`:Z` on the `-v` bind is IMPOSSIBLE here — the source is a READ-ONLY
+  // mount, so podman's `lsetxattr` relabel fails. Instead, label the whole
+  // filesystem at MOUNT time with the SELinux `context=` mount option: the source
+  // then carries `container_file_t` and the worker can read it (verified on-box).
+  // The `-v …:ro` bind below intentionally stays plain `:ro` — the context-mounted
+  // source already has the right label.
+  await exec(
+    ['mount', '-o', 'ro,context="system_u:object_r:container_file_t:s0"', device, mountpoint],
+    { sudo: true },
+  );
 
   // Resolve the Immich External-Library provisioning inputs (admin key + box
   // users) the worker's apply path needs (#1954). Injected as env so the apply

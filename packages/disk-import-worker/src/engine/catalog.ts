@@ -10,7 +10,15 @@
 // constructor param — no hardcoded host paths, no DATA_DIR coupling. `:memory:`
 // is valid and used by the tests.
 
+import { createRequire } from 'node:module';
+
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
+
+// This package is ESM ("type":"module") and runs as raw TS ESM via tsx, so the
+// CommonJS `require` global does NOT exist here. better-sqlite3 is a native CJS
+// addon; load it through a createRequire() bridge to keep the native binding out
+// of any ESM resolution edge cases while staying require-free at the global level.
+const require = createRequire(import.meta.url);
 
 /** The default destination area when no owner-derived area is supplied. */
 export const DEFAULT_AREA = 'shared';
@@ -63,9 +71,9 @@ export class ImportCatalog {
   private db: BetterSqliteDatabase;
 
   constructor(dbPath: string) {
-    // Runtime require keeps better-sqlite3 (a native addon) out of any client
-    // bundle, matching the rest of the codebase (logger.ts, rateLimit.ts).
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    // better-sqlite3 is a native CJS addon; load it via the module-scoped
+    // createRequire() bridge (this package runs as ESM under tsx, where the
+    // `require` global is undefined).
     const Database = require('better-sqlite3');
     this.db = new Database(dbPath) as BetterSqliteDatabase;
     this.db.pragma('journal_mode = WAL');

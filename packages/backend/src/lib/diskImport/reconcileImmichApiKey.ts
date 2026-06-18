@@ -88,13 +88,27 @@ export async function reconcileImmichApiKey(
     return { outcome: 'aligned', message: 'Immich admin API key already stored — no change.' };
   }
 
-  const email = secrets.IMMICH_ADMIN_EMAIL || secrets.OPERATOR_EMAIL || '';
+  // Derive the admin email. On a normal box NEITHER IMMICH_ADMIN_EMAIL nor
+  // OPERATOR_EMAIL is written to the secret store (they're plain post-deploy env
+  // vars, not secrets), so without a fallback this always returns [] and the
+  // post-apply Immich library scan silently never runs. Fall back to the SAME
+  // canonical operator identity the install runner uses to seed admin accounts:
+  // config.notifications.email.to[0] (see install/runner.ts OPERATOR_EMAIL). That
+  // is exactly the email the immich post-deploy seeds the admin account with, so
+  // it's the right login here.
+  const operatorEmailFromConfig = config.notifications?.email?.to?.[0]?.trim() || '';
+  const email = secrets.IMMICH_ADMIN_EMAIL || secrets.OPERATOR_EMAIL || operatorEmailFromConfig;
   const password = secrets.IMMICH_ADMIN_PASSWORD || '';
   if (!email || !password) {
+    const missing = [
+      !email && 'admin email (set IMMICH_ADMIN_EMAIL/OPERATOR_EMAIL, or notifications.email.to[0] in config)',
+      !password && 'IMMICH_ADMIN_PASSWORD (in the encrypted secret store)',
+    ]
+      .filter(Boolean)
+      .join(' and ');
     return {
       outcome: 'error',
-      message:
-        'No stored Immich admin credentials (IMMICH_ADMIN_EMAIL/OPERATOR_EMAIL + IMMICH_ADMIN_PASSWORD) — cannot mint an admin API key.',
+      message: `No stored Immich admin credentials — missing ${missing}; cannot mint an admin API key.`,
     };
   }
 

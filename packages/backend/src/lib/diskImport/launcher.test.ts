@@ -37,9 +37,17 @@ describe('launchWorker', () => {
     expect(run.container).toBe('disk-import-worker-abc123');
     expect(run.outDir).toBe('/data/disk-import-runs/abc123');
 
-    // device is mounted read-only, with sudo
+    // device is mounted read-only, with sudo, and SELinux-labeled at mount time
+    // so the container_t worker can read the source (a read-only mount can't be
+    // relabeled via `:z` on the bind, so the label is set with `context=`).
     const mountCall = calls.find(c => c[0] === 'mount');
-    expect(mountCall).toEqual(['mount', '-o', 'ro', '/dev/sda1', expect.any(String)]);
+    expect(mountCall).toEqual([
+      'mount',
+      '-o',
+      'ro,context="system_u:object_r:container_file_t:s0"',
+      '/dev/sda1',
+      expect.any(String),
+    ]);
     const mountpoint = mountCall![4];
 
     // the RO mountpoint dir is created (sudo) BEFORE the mount — else

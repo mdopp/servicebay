@@ -35,9 +35,19 @@ export const IMMICH_SERVER_URL = 'http://127.0.0.1:2283';
  */
 export async function resolveImmichProvisionEnv(): Promise<string[]> {
   try {
-    await reconcileImmichApiKey(IMMICH_SERVER_URL);
+    const reconcile = await reconcileImmichApiKey(IMMICH_SERVER_URL);
     const adminApiKey = loadSavedSecrets(await getConfig())[IMMICH_ADMIN_API_KEY_VAR];
-    if (!adminApiKey) return [];
+    if (!adminApiKey) {
+      // Don't fail the launch, but DON'T fail silently either — a no-op Immich
+      // scan must be diagnosable. Surface the reconcile outcome (it carries the
+      // exact missing-credential reason) so it's visible in the logs.
+      logger.warn(
+        'disk-import:immich',
+        `No Immich admin API key after reconcile (${reconcile.outcome}) — ` +
+          `the post-apply Immich library scan will be skipped: ${reconcile.message}`,
+      );
+      return [];
+    }
 
     const users = await listLldapUsers();
     const boxUsers = users.ok ? users.users.map(u => ({ id: u.id, email: u.email })) : [];
