@@ -268,7 +268,7 @@ export async function scanLibrariesForOwners(
  *   DISK_IMPORT_BOX_USERS  JSON `[{ "id": "...", "email": "..." }, …]`
  */
 export function immichProvisionFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
+  env: Record<string, string | undefined> = process.env,
 ): { cfg: ImmichAdminConfig; boxUsers: BoxUser[] } | null {
   const serverUrl = (env.IMMICH_SERVER_URL ?? '').replace(/\/+$/, '');
   const adminApiKey = env.IMMICH_ADMIN_API_KEY ?? '';
