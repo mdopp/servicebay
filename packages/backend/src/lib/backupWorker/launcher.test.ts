@@ -146,7 +146,7 @@ describe('readBackupTar', () => {
     readFileMock.mockRejectedValue(new Error('ENOENT: no such file'));
     const { exec } = recExec();
     await expect(readBackupTar(exec, run, 'x.tar')).rejects.toThrow(
-      new RegExp(`failed to read x\\.tar from ${inContainerTar('x.tar').replace(/[/.]/g, '\\$&')}`),
+      new RegExp(`failed to read x\\.tar from ${inContainerTar('x.tar').replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`),
     );
   });
 });
