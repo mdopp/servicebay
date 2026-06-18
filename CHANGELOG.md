@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.129.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.129.1...servicebay-v4.129.2) (2026-06-18)
+
+
+### Bug Fixes
+
+* **disk-import:** chown imported files to core:&lt;real file-share gid&gt;, not :1024 ([8016a5a](https://github.com/mdopp/servicebay/commit/8016a5aaf6445a287100889a097e34f46e453f25))
+* **disk-import:** chown imported files to core:&lt;real file-share gid&gt;, not :1024 ([8fbf6aa](https://github.com/mdopp/servicebay/commit/8fbf6aafa133a3de4510ce9184dcb854dbe06307)), closes [#1985](https://github.com/mdopp/servicebay/issues/1985)
+
 ## [4.129.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.129.0...servicebay-v4.129.1) (2026-06-18)
 
 
