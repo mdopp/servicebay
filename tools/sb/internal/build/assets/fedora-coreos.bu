@@ -634,6 +634,10 @@ storage:
           Volume=/run/user/1000/podman/podman.sock:/run/podman/podman.sock
           Environment=CONTAINER_HOST=unix:///run/podman/podman.sock
           Volume=${DATA_ROOT}/servicebay:/app/data:Z
+          # HOST-side path of the /app/data volume. Host-side commands the agent
+          # runs (e.g. the disk-import worker's `podman run -v <out>:/out`) must
+          # use this box path, not the in-container /app/data (read-only on host).
+          Environment=HOST_DATA_DIR=${DATA_ROOT}/servicebay
           Environment=PORT=${SERVICEBAY_PORT}
           Environment=NODE_ENV=production
           Environment=HOST_USER=${HOST_USER}

@@ -46,7 +46,12 @@ export interface ImportDevice {
   display: string;
 }
 
-/** Base dir under DATA for per-run worker out volumes (status.json + plan). */
+/**
+ * Base dir for per-run worker out volumes (status.json + plan). `dataDir` must
+ * be the HOST-side data path (HOST_DATA_DIR), since the out dir is both `mkdir`'d
+ * and bind-mounted (`-v <outDir>:/out`) by host-side commands — the in-container
+ * `/app/data` is read-only on the host.
+ */
 export function workerOutBase(dataDir: string): string {
   return `${dataDir}/disk-import-runs`;
 }
@@ -77,6 +82,10 @@ export async function launchWorker(args: {
   const outDir = `${workerOutBase(dataDir)}/${runId}`;
   const container = containerName(runId);
 
+  // The mountpoint dir must exist before `mount` (same as mounter.mountReadOnly).
+  // It lives under /run (root-owned), so creating it needs sudo — without this
+  // the mount fails with "mount point does not exist" and the worker never runs.
+  await exec(['mkdir', '-p', mountpoint], { sudo: true });
   await exec(['mkdir', '-p', outDir]);
   await exec(['mount', '-o', 'ro', device, mountpoint], { sudo: true });
 
