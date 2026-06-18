@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.126.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.125.3...servicebay-v4.126.0) (2026-06-18)
+
+
+### Features
+
+* disk-import worker container, image-update poller throttle, settings IA shell ([82a8658](https://github.com/mdopp/servicebay/commit/82a86586c93bc57a89f6548ea343f46a7da2bd71))
+
+
+### Bug Fixes
+
+* **updater:** throttle image-update poller manifest-inspect fan-out ([d7df23a](https://github.com/mdopp/servicebay/commit/d7df23ae55b8066c42fb1e872f04183242120bd3)), closes [#1952](https://github.com/mdopp/servicebay/issues/1952)
+
 ## [4.125.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.125.2...servicebay-v4.125.3) (2026-06-17)
 
 
