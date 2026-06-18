@@ -37,6 +37,11 @@ import { buildInventory, type ScannedFile } from '../engine/inventory';
 import { buildPlan, type HashResolver } from '../engine/dedup';
 import { ImportCatalog } from '../engine/catalog';
 import { applyPlan } from '../engine/plan';
+import {
+  immichProvisionFromEnv,
+  provisionExternalLibraries,
+  scanLibrariesForOwners,
+} from '../engine/immichLibraries';
 import type { SafeExec } from '../engine/hostExec';
 import type { ImportPlan, ImportRecord } from '../engine/types';
 import {
@@ -201,6 +206,14 @@ export interface WorkerIO {
   writePlanSidecar: (out: string, sidecar: PlanSidecar) => void;
   /** Build the host-apply SafeExec for --apply (lazy: never touched on dry-run). */
   makeExec: (opts: WorkerOptions) => SafeExec;
+  /**
+   * Best-effort: after photos were written, provision the per-owner Immich
+   * External Libraries and trigger their scan (#1954). A no-op when Immich
+   * provisioning isn't wired (env not injected / Immich not installed). MUST NOT
+   * throw — the files are already on disk; a scan failure must not fail apply.
+   * Returns a short note for the status step, or '' when nothing was done.
+   */
+  provisionImmich: (photoOwners: string[]) => Promise<string>;
 }
 
 /**
@@ -258,7 +271,19 @@ export async function runWorker(opts: WorkerOptions, io: WorkerIO): Promise<Work
       hashOf: io.hashOf,
     });
     catalog.close();
-    tick({ applied: result.applied, phase: 'done', step: `Applied ${result.applied} file(s).` });
+
+    // #1904/#1954: if photos were written, auto-provision the per-owner Immich
+    // External Libraries and scan the owning ones so the new photos get indexed.
+    // Best-effort — a provision/scan failure must NOT fail the import (the files
+    // are safely on disk; a later provision+scan still finds them).
+    let immichNote = '';
+    if (result.photoOwners.length > 0) {
+      immichNote = await io.provisionImmich(result.photoOwners);
+    }
+
+    const doneStep =
+      `Applied ${result.applied} file(s).` + (immichNote ? ` ${immichNote}` : '');
+    tick({ applied: result.applied, phase: 'done', step: doneStep });
     return status;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -297,7 +322,26 @@ function realIO(): WorkerIO {
         });
       };
     },
+    provisionImmich: realProvisionImmich,
   };
+}
+
+/**
+ * Real Immich provision/scan after an --apply that wrote photos (#1954). Reads
+ * the launcher-injected config from env; a no-op when it's absent (Immich not
+ * installed / not wired). Never throws — returns a one-line note for the status
+ * step (errors are reported as a "skipped" note, not a failure).
+ */
+export async function realProvisionImmich(photoOwners: string[]): Promise<string> {
+  const provision = immichProvisionFromEnv();
+  if (!provision) return '';
+  try {
+    const { libraryIdByOwner } = await provisionExternalLibraries(provision.cfg, provision.boxUsers);
+    await scanLibrariesForOwners(provision.cfg, libraryIdByOwner, photoOwners);
+    return 'Immich External Libraries provisioned + scan triggered.';
+  } catch (e) {
+    return `Immich library scan skipped: ${e instanceof Error ? e.message : String(e)}`;
+  }
 }
 
 async function main(): Promise<void> {

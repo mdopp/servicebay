@@ -1,0 +1,59 @@
+// Disk-import — resolve the Immich External-Library provisioning inputs the
+// worker container needs, and shape them into `podman run -e` env args (#1954).
+//
+// The worker (one-shot container) provisions the per-user Immich External
+// Libraries + triggers a scan after an --apply that wrote photos, but it has NO
+// access to the encrypted secret store, the seeded admin credentials, or the
+// LLDAP directory — those live in the control plane. So the launcher resolves
+// them HERE and injects only the result into the container:
+//
+//   IMMICH_SERVER_URL      loopback Immich URL (host network)
+//   IMMICH_ADMIN_API_KEY   the single stored admin x-api-key (reconcile-or-mint)
+//   DISK_IMPORT_BOX_USERS  JSON `[{ id, email }, …]` (the routing owner axis)
+//
+// Best-effort: when Immich isn't installed / the key can't be resolved, we inject
+// NOTHING and the worker's apply just places photos in the folder (graceful skip).
+// The key is passed via `-e` (env), never logged.
+
+import { loadSavedSecrets } from '@/lib/install/savedSecrets';
+import { getConfig } from '@/lib/config';
+import { listLldapUsers } from '@/lib/lldap/client';
+import { logger } from '@/lib/logger';
+
+import { IMMICH_ADMIN_API_KEY_VAR, reconcileImmichApiKey } from './reconcileImmichApiKey';
+
+/** Immich loopback base URL on the box (host network). No trailing slash. */
+export const IMMICH_SERVER_URL = 'http://127.0.0.1:2283';
+
+/**
+ * Resolve the worker's Immich-provisioning env args. Reconciles (mint-once,
+ * idempotent) the admin API key, enumerates box users, and returns the flat
+ * `['-e', 'VAR=value', …]` array to splice into the `podman run` argv. Returns
+ * `[]` (inject nothing → worker skips provisioning) when no admin key is
+ * available — Immich not installed, admin login rejected, etc. Never throws and
+ * never logs the key.
+ */
+export async function resolveImmichProvisionEnv(): Promise<string[]> {
+  try {
+    await reconcileImmichApiKey(IMMICH_SERVER_URL);
+    const adminApiKey = loadSavedSecrets(await getConfig())[IMMICH_ADMIN_API_KEY_VAR];
+    if (!adminApiKey) return [];
+
+    const users = await listLldapUsers();
+    const boxUsers = users.ok ? users.users.map(u => ({ id: u.id, email: u.email })) : [];
+
+    return [
+      '-e', `IMMICH_SERVER_URL=${IMMICH_SERVER_URL}`,
+      '-e', `IMMICH_ADMIN_API_KEY=${adminApiKey}`,
+      '-e', `DISK_IMPORT_BOX_USERS=${JSON.stringify(boxUsers)}`,
+    ];
+  } catch (e) {
+    // Provisioning is best-effort — a resolve failure must NOT block the scan/
+    // apply launch (the photos still land on disk).
+    logger.warn(
+      'disk-import:immich',
+      `Skipping Immich provisioning env (apply will place photos only): ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return [];
+  }
+}

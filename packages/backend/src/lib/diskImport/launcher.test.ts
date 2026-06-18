@@ -1,5 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
+
+// The launcher resolves Immich-provisioning env (admin key + box users) before
+// `podman run` (#1954). That touches the secret store + LLDAP; stub it so these
+// launcher unit tests stay hermetic. Per-test overrides via vi.mocked below.
+vi.mock('./immichProvisionEnv', () => ({
+  resolveImmichProvisionEnv: vi.fn(async () => [] as string[]),
+}));
+
 import { launchWorker, readStatus, isWorkerRunning, stopWorker, WORKER_IMAGE, WORKER_MEMORY } from './launcher';
+import { resolveImmichProvisionEnv } from './immichProvisionEnv';
 import type { SafeExec } from '@servicebay/disk-import-worker';
 
 /** A SafeExec recording its calls, with per-argv canned stdout. */
@@ -43,6 +52,19 @@ describe('launchWorker', () => {
     expect(podmanRun).toContain('--serve');
     // source mounted read-only into the container
     expect(podmanRun.some(a => a.endsWith(':/mnt/src:ro'))).toBe(true);
+  });
+
+  it('injects the resolved Immich provisioning env into the container (#1954)', async () => {
+    vi.mocked(resolveImmichProvisionEnv).mockResolvedValueOnce([
+      '-e', 'IMMICH_SERVER_URL=http://127.0.0.1:2283',
+      '-e', 'IMMICH_ADMIN_API_KEY=secret',
+      '-e', 'DISK_IMPORT_BOX_USERS=[]',
+    ]);
+    const { exec, calls } = recExec();
+    await launchWorker({ exec, device: '/dev/sda1', runId: 'k', dataDir: '/data', shareGid: 1024 });
+    const podmanRun = calls.find(c => c[0] === 'podman' && c[1] === 'run')!;
+    expect(podmanRun).toContain('IMMICH_ADMIN_API_KEY=secret');
+    expect(podmanRun).toContain('IMMICH_SERVER_URL=http://127.0.0.1:2283');
   });
 
   it('refuses an unsafe device path', async () => {

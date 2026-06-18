@@ -17,6 +17,7 @@ export * from './engine/classify';
 export * from './engine/dedup';
 export * from './engine/hostExec';
 export * from './engine/hostScan';
+export * from './engine/immichLibraries';
 export * from './engine/inventory';
 export * from './engine/mounter';
 export * from './engine/ollama';

@@ -21,6 +21,8 @@ import type { SafeExec } from '@servicebay/disk-import-worker';
 import { STATUS_FILE, type WorkerStatus } from '@servicebay/disk-import-worker';
 import { assertSafeDevice, mountpointFor } from '@servicebay/disk-import-worker';
 
+import { resolveImmichProvisionEnv } from './immichProvisionEnv';
+
 /** The published worker image — built + pushed by .github/workflows/build-images.yml. */
 export const WORKER_IMAGE = 'ghcr.io/mdopp/servicebay-disk-import-worker:latest';
 
@@ -89,6 +91,12 @@ export async function launchWorker(args: {
   await exec(['mkdir', '-p', outDir]);
   await exec(['mount', '-o', 'ro', device, mountpoint], { sudo: true });
 
+  // Resolve the Immich External-Library provisioning inputs (admin key + box
+  // users) the worker's apply path needs (#1954). Injected as env so the apply
+  // child inside the serve container inherits them; `[]` (no-op) when Immich
+  // isn't installed / the key can't be resolved.
+  const immichEnv = await resolveImmichProvisionEnv();
+
   await exec([
     'podman', 'run', '-d', '--rm',
     '--name', container,
@@ -99,6 +107,7 @@ export async function launchWorker(args: {
     '-v', `${outDir}:/out`,
     '-e', `DISK_IMPORT_RUN_ID=${runId}`,
     '-e', `DISK_IMPORT_SHARE_GID=${shareGid}`,
+    ...immichEnv,
     WORKER_IMAGE,
     '--serve', '--share-gid', String(shareGid),
   ]);
