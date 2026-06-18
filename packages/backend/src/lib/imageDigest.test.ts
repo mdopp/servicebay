@@ -31,6 +31,7 @@ import {
   getRunningImageDigest,
   getServiceImageUpdate,
   getInstalledImageUpdates,
+  clearImageUpdatesCache,
 } from './imageDigest';
 
 // A multi-arch manifest-list document (registry side, `podman manifest inspect`).
@@ -52,6 +53,7 @@ function inspectDoc(digest: string): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearImageUpdatesCache();
   mockExec.execArgv.mockResolvedValue({ stdout: '', stderr: '' });
   mockConfig.current = { installedTemplates: {} };
   mockRegistry.yaml = null;
@@ -166,5 +168,66 @@ describe('getInstalledImageUpdates (fan-out)', () => {
   it('returns empty when nothing is installed', async () => {
     mockConfig.current = { installedTemplates: {} };
     await expect(getInstalledImageUpdates()).resolves.toEqual([]);
+  });
+});
+
+describe('getInstalledImageUpdates throttle (#1952)', () => {
+  // Each installed service declares one image; the yaml uses {{name}} so
+  // collectImagesToPull lifts a distinct image per service.
+  function installN(n: number) {
+    const installedTemplates: Record<string, unknown> = {};
+    for (let i = 0; i < n; i++) installedTemplates[`svc${i}`] = { schemaVersion: 1 };
+    mockConfig.current = { installedTemplates };
+    mockRegistry.yaml = 'spec:\n  containers:\n  - image: ghcr.io/x:1\n    name: x\n';
+  }
+
+  it('caps concurrent podman processes regardless of stack count', async () => {
+    installN(10);
+    let inFlight = 0;
+    let peak = 0;
+    mockExec.execArgv.mockImplementation(async (argv: string[]) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      if (argv.includes('manifest')) return { stdout: manifestList('sha256:reg'), stderr: '' };
+      return { stdout: inspectDoc('sha256:run'), stderr: '' };
+    });
+
+    const out = await getInstalledImageUpdates();
+    expect(out).toHaveLength(10);
+    // FANOUT_CONCURRENCY=2 services × 2 podman calls each (inspect + manifest,
+    // run in parallel within a service) → at most 4 live podman processes, far
+    // below the 20 the old unbounded fan-out would have spawned at once.
+    expect(peak).toBeLessThanOrEqual(4);
+  });
+
+  it('serves a cached result on a second poll without re-spawning podman', async () => {
+    installN(3);
+    mockExec.execArgv.mockImplementation(async (argv: string[]) => {
+      if (argv.includes('manifest')) return { stdout: manifestList('sha256:reg'), stderr: '' };
+      return { stdout: inspectDoc('sha256:run'), stderr: '' };
+    });
+
+    const first = await getInstalledImageUpdates();
+    const callsAfterFirst = mockExec.execArgv.mock.calls.length;
+    const second = await getInstalledImageUpdates();
+
+    expect(second).toEqual(first);
+    expect(mockExec.execArgv.mock.calls.length).toBe(callsAfterFirst); // no new podman
+  });
+
+  it('dedups concurrent polls onto one in-flight fan-out', async () => {
+    installN(3);
+    mockExec.execArgv.mockImplementation(async (argv: string[]) => {
+      await new Promise((r) => setTimeout(r, 5));
+      if (argv.includes('manifest')) return { stdout: manifestList('sha256:reg'), stderr: '' };
+      return { stdout: inspectDoc('sha256:run'), stderr: '' };
+    });
+
+    const [a, b] = await Promise.all([getInstalledImageUpdates(), getInstalledImageUpdates()]);
+    expect(a).toEqual(b);
+    // 3 images × 2 podman calls = 6 — one fan-out, not two (would be 12).
+    expect(mockExec.execArgv.mock.calls.length).toBe(6);
   });
 });

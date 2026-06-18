@@ -16,6 +16,7 @@ COPY package.json package-lock.json* ./
 COPY packages/api-client/package.json ./packages/api-client/package.json
 COPY packages/backend/package.json ./packages/backend/package.json
 COPY packages/frontend/package.json ./packages/frontend/package.json
+COPY packages/disk-import-worker/package.json ./packages/disk-import-worker/package.json
 RUN npm ci
 
 # Rebuild the source code only when needed
@@ -45,6 +46,7 @@ COPY package.json package-lock.json* ./
 COPY packages/api-client/package.json ./packages/api-client/package.json
 COPY packages/backend/package.json ./packages/backend/package.json
 COPY packages/frontend/package.json ./packages/frontend/package.json
+COPY packages/disk-import-worker/package.json ./packages/disk-import-worker/package.json
 # Install prod deps (builds native modules). tsx/typescript are no longer
 # needed at runtime because the custom server is pre-bundled to CJS.
 RUN npm ci --omit=dev

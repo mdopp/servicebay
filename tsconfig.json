@@ -31,6 +31,9 @@
       "@/providers/*": ["./packages/frontend/src/providers/*"],
       "@servicebay/api-client": ["./packages/api-client/src/index.ts"],
       "@servicebay/api-client/*": ["./packages/api-client/src/*"],
+      "@servicebay/disk-import-worker": ["./packages/disk-import-worker/src/index.ts"],
+      "@servicebay/disk-import-worker/contract": ["./packages/disk-import-worker/src/contract/status.ts"],
+      "@servicebay/disk-import-worker/*": ["./packages/disk-import-worker/src/*"],
       "@servicebay/frontend/*": ["./packages/frontend/src/*"],
       "@servicebay/backend/*": ["./packages/backend/src/*"]
     }

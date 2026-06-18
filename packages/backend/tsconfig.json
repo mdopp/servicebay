@@ -4,7 +4,10 @@
     "paths": {
       "@/lib/*": ["./src/lib/*"],
       "@servicebay/api-client": ["../api-client/src/index.ts"],
-      "@servicebay/api-client/*": ["../api-client/src/*"]
+      "@servicebay/api-client/*": ["../api-client/src/*"],
+      "@servicebay/disk-import-worker": ["../disk-import-worker/src/index.ts"],
+      "@servicebay/disk-import-worker/contract": ["../disk-import-worker/src/contract/status.ts"],
+      "@servicebay/disk-import-worker/*": ["../disk-import-worker/src/*"]
     }
   },
   "include": ["src/**/*.ts"]

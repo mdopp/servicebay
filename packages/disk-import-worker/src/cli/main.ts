@@ -1,0 +1,279 @@
+#!/usr/bin/env node
+/**
+ * disk-import-worker — one-shot, resource-capped container entrypoint (#1951).
+ *
+ * This is the heavy path, moved OUT of the servicebay control plane. servicebay
+ * launches this as a one-shot container:
+ *
+ *   podman run --rm --memory=1g \
+ *     -v /dev/<device>:/mnt/src:ro \
+ *     -v <shared-out>:/out \
+ *     -e DISK_IMPORT_RUN_ID=<id> \
+ *     disk-import-worker --mount /mnt/src --out /out [--apply] [--catalog /out/catalog.sqlite]
+ *
+ * It walks the read-only mount, builds the inventory, classifies, dedups (lazy
+ * hash), and plans — all in ITS OWN `--memory`-bounded process. It writes a
+ * COMPACT `status.json` (step/phase/counts/error) frequently and the HEAVY plan
+ * to `plan.json` (the sidecar) ONCE when planning completes. servicebay reads
+ * only those files; an OOM/kill of THIS container never touches servicebay
+ * (feedback_control_plane_vs_worker).
+ *
+ * Default mode is dry-run (plan only, no host writes). `--apply` copies files into
+ * the shared out area. Per feedback_fileshare_relabel_crashloop, imported files
+ * stay CORE-owned (the apply chowns to the file-share GID/core, never to a
+ * per-user uid) so the next file-share `:Z` relabel doesn't crash-loop.
+ *
+ * The worker is NON-interactive: there is no readline review gate here (that gate
+ * is servicebay's, before it launches `--apply`). This keeps the container a pure
+ * one-shot batch job.
+ */
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { buildInventory, type ScannedFile } from '../engine/inventory';
+import { buildPlan, type HashResolver } from '../engine/dedup';
+import { ImportCatalog } from '../engine/catalog';
+import { applyPlan } from '../engine/plan';
+import type { SafeExec } from '../engine/hostExec';
+import type { ImportPlan, ImportRecord } from '../engine/types';
+import {
+  STATUS_FILE,
+  PLAN_SIDECAR_FILE,
+  STATUS_CONTRACT_VERSION,
+  initialStatus,
+  summarizeCategories,
+  type WorkerStatus,
+  type PlanSidecar,
+} from '../contract/status';
+
+/** Thrown for user-facing failures (bad args). */
+export class WorkerArgError extends Error {}
+
+export interface WorkerOptions {
+  /** Path the source device is mounted at (read-only) inside the container. */
+  mount: string;
+  /** Shared out-volume dir the status.json + plan sidecar are written to. */
+  out: string;
+  mode: 'dry-run' | 'apply';
+  /** Catalog DB path (resume basis). `:memory:` for a dry-run. */
+  catalog: string;
+  /** Opaque run id (mirrors the servicebay session). */
+  runId: string;
+  /** gid that owns file-share data — copied files are chown'd to it, NOT to a
+   *  per-user uid (feedback_fileshare_relabel_crashloop). */
+  shareGid: number;
+}
+
+const DEFAULT_SHARE_GID = 1024;
+
+export const USAGE = `Usage: disk-import-worker --mount <path> --out <dir> [--apply] [options]
+
+One-shot disk-import worker. Walks the read-only mount, plans the import, and
+writes a compact status.json + plan sidecar to the out-volume. Default is dry-run
+(plan only, no host writes).
+
+Options:
+  --mount <path>     Path the source device is mounted at, read-only (required)
+  --out <dir>        Shared out-volume for status.json + plan.json (required)
+  --apply            Copy files into the shared out area (default: dry-run)
+  --catalog <path>   Import catalog DB path (default: :memory: for dry-run)
+  --run-id <id>      Run id (default: env DISK_IMPORT_RUN_ID or a random id)
+  --share-gid <gid>  gid that owns file-share data (default: ${DEFAULT_SHARE_GID})
+  --help, -h         Show this help`;
+
+interface ArgDraft {
+  mount?: string;
+  out?: string;
+  mode?: 'dry-run' | 'apply';
+  catalog?: string;
+  runId?: string;
+  shareGid: number;
+}
+
+const VALUE_ARGS = new Set(['--mount', '--out', '--catalog', '--run-id', '--share-gid']);
+
+function applyValueArg(draft: ArgDraft, arg: string, value: string | undefined): void {
+  if (value === undefined) throw new WorkerArgError(`Missing value for ${arg}`);
+  if (arg === '--mount') draft.mount = value;
+  else if (arg === '--out') draft.out = value;
+  else if (arg === '--catalog') draft.catalog = value;
+  else if (arg === '--run-id') draft.runId = value;
+  else {
+    const gid = Number(value);
+    if (!Number.isInteger(gid) || gid < 0) {
+      throw new WorkerArgError(`--share-gid must be a non-negative integer, got "${value}"`);
+    }
+    draft.shareGid = gid;
+  }
+}
+
+export function parseWorkerArgs(argv: string[]): WorkerOptions | { help: true } {
+  const draft: ArgDraft = { shareGid: DEFAULT_SHARE_GID };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--help' || arg === '-h') return { help: true };
+    else if (arg === '--apply') draft.mode = 'apply';
+    else if (arg === '--dry-run') draft.mode = 'dry-run';
+    else if (VALUE_ARGS.has(arg)) applyValueArg(draft, arg, argv[++i]);
+    else throw new WorkerArgError(`Unknown argument: ${arg}`);
+  }
+  if (!draft.mount) throw new WorkerArgError('--mount is required');
+  if (!draft.out) throw new WorkerArgError('--out is required');
+  const mode = draft.mode ?? 'dry-run';
+  const catalog = draft.catalog ?? (mode === 'apply' ? path.join(draft.out, 'catalog.sqlite') : ':memory:');
+  const runId = draft.runId ?? process.env.DISK_IMPORT_RUN_ID ?? createHash('sha1').update(String(Date.now())).digest('hex').slice(0, 12);
+  return { mount: draft.mount, out: draft.out, mode, catalog, runId, shareGid: draft.shareGid };
+}
+
+/** Read-only metadata walk of the mount. The engine never reads file contents. */
+export async function walkMount(mount: string, fsImpl: typeof fs = fs): Promise<ScannedFile[]> {
+  const out: ScannedFile[] = [];
+  async function walk(dir: string): Promise<void> {
+    const entries = await fsImpl.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else if (entry.isFile()) {
+        const st = await fsImpl.stat(full);
+        out.push({ path: full, size: st.size, mtimeMs: st.mtimeMs });
+      }
+    }
+  }
+  await walk(mount);
+  return out;
+}
+
+/** Lazy sha256 of a file's bytes — used by dedup on size collisions only. */
+export function hashFileContent(record: ImportRecord): string {
+  return createHash('sha256').update(readFileSync(record.sourcePath)).digest('hex');
+}
+
+/** IO seams — injected so the run is testable without a real device/agent. */
+export interface WorkerIO {
+  scan: (mount: string) => Promise<ScannedFile[]>;
+  hashOf: HashResolver;
+  /** Persist the compact status doc (atomic-ish: caller passes the full object). */
+  writeStatus: (out: string, status: WorkerStatus) => void;
+  /** Persist the heavy plan sidecar once. */
+  writePlanSidecar: (out: string, sidecar: PlanSidecar) => void;
+  /** Build the host-apply SafeExec for --apply (lazy: never touched on dry-run). */
+  makeExec: (opts: WorkerOptions) => SafeExec;
+}
+
+/**
+ * Run the worker: scan → inventory → plan, write the compact status + heavy plan
+ * sidecar; on --apply, copy files. Returns the final status doc. Any failure is
+ * captured into an `error`-phase status (the container still exits non-zero) so
+ * servicebay sees a terminal state rather than a vanished worker.
+ */
+export async function runWorker(opts: WorkerOptions, io: WorkerIO): Promise<WorkerStatus> {
+  let status = initialStatus(opts.runId, opts.mode);
+  const tick = (patch: Partial<WorkerStatus>): void => {
+    status = { ...status, ...patch, updatedAt: Date.now() };
+    io.writeStatus(opts.out, status);
+  };
+  tick({ step: `Scanning ${opts.mount} …` });
+
+  try {
+    const files = await io.scan(opts.mount);
+    tick({ scanned: files.length, phase: 'planning', step: `Planning ${files.length} files …` });
+
+    const records = buildInventory(files);
+    const catalog = new ImportCatalog(opts.catalog);
+    let plan: ImportPlan;
+    try {
+      plan = buildPlan(records, io.hashOf, { catalog });
+    } finally {
+      if (opts.mode === 'dry-run') catalog.close();
+    }
+
+    const categories = summarizeCategories(plan);
+    const totalBytes = plan.items.reduce((sum, i) => sum + i.record.size, 0);
+    io.writePlanSidecar(opts.out, { version: STATUS_CONTRACT_VERSION, runId: opts.runId, plan });
+    tick({
+      planned: plan.items.length,
+      conflicts: plan.conflicts.length,
+      categories,
+      totalBytes,
+      planSidecar: PLAN_SIDECAR_FILE,
+    });
+
+    if (opts.mode === 'dry-run') {
+      tick({ phase: 'done', step: `Dry run complete: ${plan.items.length} items planned, nothing written.` });
+      return status;
+    }
+
+    // --apply: copy into the shared out area. applyPlan keeps files core-owned
+    // (chown to shareGid, never a per-user uid) — feedback_fileshare_relabel_crashloop.
+    tick({ phase: 'applying', step: 'Applying plan …' });
+    const exec = io.makeExec(opts);
+    const result = await applyPlan(plan, {
+      exec,
+      mountpoint: opts.mount,
+      catalog,
+      shareGid: opts.shareGid,
+      hashOf: io.hashOf,
+    });
+    catalog.close();
+    tick({ applied: result.applied, phase: 'done', step: `Applied ${result.applied} file(s).` });
+    return status;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    tick({ phase: 'error', step: 'Failed', error: message });
+    throw error;
+  }
+}
+
+/** Default (real) IO: fs walk, crypto hash, atomic-write status/plan, agent exec. */
+function realIO(): WorkerIO {
+  const writeJson = (file: string, data: unknown): void => {
+    mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, JSON.stringify(data));
+    // rename for an atomic swap so a polling reader never sees a half file
+    fs.rename(tmp, file).catch(() => writeFileSync(file, JSON.stringify(data)));
+  };
+  return {
+    scan: mount => walkMount(mount),
+    hashOf: hashFileContent,
+    writeStatus: (out, status) => writeJson(path.join(out, STATUS_FILE), status),
+    writePlanSidecar: (out, sidecar) => writeJson(path.join(out, PLAN_SIDECAR_FILE), sidecar),
+    makeExec: opts => {
+      // The worker runs host-apply commands locally inside the container against
+      // the bind-mounted out-volume — a plain child_process SafeExec. (Wiring the
+      // real privileged host-apply path is #1954.)
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
+      void opts;
+      return (argv: string[]) => {
+        const r = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8' });
+        return Promise.resolve({
+          stdout: r.stdout ?? '',
+          stderr: r.stderr ?? '',
+          code: r.status ?? -1,
+        });
+      };
+    },
+  };
+}
+
+async function main(): Promise<void> {
+  const parsed = parseWorkerArgs(process.argv.slice(2));
+  if ('help' in parsed) {
+    console.log(USAGE);
+    return;
+  }
+  await runWorker(parsed, realIO());
+}
+
+// Only run when executed directly (not when imported by tests).
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  main().catch((error: unknown) => {
+    if (error instanceof WorkerArgError) console.error(`error: ${error.message}`);
+    else console.error(error);
+    process.exitCode = 1;
+  });
+}

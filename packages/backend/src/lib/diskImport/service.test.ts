@@ -17,7 +17,7 @@ import {
   applyImportPlan,
   __clearSessions,
 } from './service';
-import type { SafeExec, SafeExecResult } from './hostExec';
+import type { SafeExec, SafeExecResult } from '@servicebay/disk-import-worker';
 
 /** Spin the event loop until `cond()` is true or we give up. The background
  *  scan/apply tasks are detached promises; this lets a test await their

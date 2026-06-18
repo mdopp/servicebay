@@ -17,8 +17,7 @@ import {
   type DiskImportOptions,
   type DiskImportIO,
 } from './disk-import';
-import { buildInventory } from '../packages/backend/src/lib/diskImport/inventory';
-import { buildPlan } from '../packages/backend/src/lib/diskImport/dedup';
+import { buildInventory, buildPlan } from '@servicebay/disk-import-worker';
 
 // A small fixture mount: a photo, a music track, a doc, and one junk file.
 let mount: string;

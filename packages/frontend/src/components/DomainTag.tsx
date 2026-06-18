@@ -87,7 +87,7 @@ export default function DomainTag({ username, collapsed = false }: DomainTagProp
       <div className="flex flex-col gap-0.5 min-w-0">
         {line}
         <Link
-          href="/settings#reverse-proxy"
+          href="/settings/network-domain#reverse-proxy"
           className="text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors truncate"
         >
           + add a public domain →

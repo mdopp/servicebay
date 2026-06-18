@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
 
 export default function SettingsRootPage() {
-  redirect('/settings/nodes');
+  redirect('/settings/network-domain');
 }

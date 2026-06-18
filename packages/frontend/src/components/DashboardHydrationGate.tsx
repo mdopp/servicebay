@@ -159,7 +159,7 @@ export default function DashboardHydrationGate({ phase, subMessage }: DashboardH
           <div className="mt-4 text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded p-3 text-center">
             Still on this phase after {elapsedSec}s. The agent may not have completed its first inventory pass &mdash;
             check <a href="/diagnose" className="underline">Diagnose</a> or
-            restart the node from <a href="/settings/nodes" className="underline">Settings &rarr; Nodes</a>.
+            restart the node from <a href="/settings/network-domain#nodes" className="underline">Settings &rarr; Nodes</a>.
           </div>
         )}
       </div>

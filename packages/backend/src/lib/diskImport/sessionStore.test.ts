@@ -41,7 +41,7 @@ import {
   MAX_TREE_NODES,
   __clearSessions,
 } from './sessionStore';
-import type { ImportPlan } from './types';
+import type { ImportPlan } from '@servicebay/disk-import-worker';
 
 function mkPlan(sourcePath = '/mnt/docs/report.pdf'): ImportPlan {
   return {

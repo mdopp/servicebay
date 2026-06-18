@@ -53,7 +53,7 @@ describe('DomainTag', () => {
 
     await waitFor(() => expect(screen.getByText('home.arpa')).toBeDefined());
     const link = screen.getByText(/add a public domain/i).closest('a');
-    expect(link?.getAttribute('href')).toBe('/settings#reverse-proxy');
+    expect(link?.getAttribute('href')).toBe('/settings/network-domain#reverse-proxy');
   });
 
   it('self-fetches the username from /api/auth/me when not supplied', async () => {

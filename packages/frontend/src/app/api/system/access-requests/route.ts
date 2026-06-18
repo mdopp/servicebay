@@ -155,7 +155,7 @@ export const POST = withApiHandler({ skipAuth: true }, async ({ request }) => {
  */
 function notifyAdminOfRequest(config: Awaited<ReturnType<typeof getConfig>>, req: AccessRequest): void {
   const adminBase = getAdminBaseUrl(config);
-  const deepLink = adminBase ? `${adminBase}/settings/networking#access-requests` : null;
+  const deepLink = adminBase ? `${adminBase}/settings/access#access-requests` : null;
   void sendEmailAlert(
     'New access request',
     `${req.name} (${req.email}) has requested access to your home server.\n\n` +
