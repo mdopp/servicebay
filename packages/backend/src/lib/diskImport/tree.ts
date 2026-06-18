@@ -64,9 +64,12 @@ export interface ReviewTree {
   mountBase: string;
 }
 
-/** The folder name (no trailing slash) a category lands in (`documents`, …). */
+/** The folder name (no trailing slash) a category lands in (`documents`, …).
+ *  CATEGORIES folders carry a single trailing `/` (or are empty); strip it
+ *  without a backtracking `/\/+$/` regex (ReDoS-safe; CodeQL flags `+$`). */
 function categoryFolder(category: Category): string {
-  return CATEGORIES[category].folder.replace(/\/+$/, '');
+  const folder = CATEGORIES[category].folder;
+  return folder.endsWith('/') ? folder.slice(0, -1) : folder;
 }
 
 /**
@@ -87,9 +90,16 @@ function previewFor(node: FolderNode): string {
   return folder ? `data/${ownerSeg}${folder}/…` : `data/${ownerSeg}…`;
 }
 
+/** Strip trailing `/` linearly (ReDoS-safe; CodeQL flags the `/\/+$/` form). */
+function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
+  return s.slice(0, end);
+}
+
 /** Relative dir of a source path under the worker mountBase (`''` = root). */
 export function relDirOf(sourcePath: string, mountBase: string): string {
-  const base = mountBase.replace(/\/+$/, '');
+  const base = stripTrailingSlashes(mountBase);
   const rel =
     sourcePath === base
       ? ''

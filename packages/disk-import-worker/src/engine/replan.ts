@@ -63,9 +63,19 @@ export interface ReplanIO {
   now?: () => number;
 }
 
+/**
+ * Strip trailing `/` without a backtracking `/\/+$/` regex (ReDoS-safe — the
+ * CodeQL `js/polynomial-redos` rule flags the `+$` form; this is linear).
+ */
+function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
+  return s.slice(0, end);
+}
+
 /** The relative dir of a source path under `mountBase` (`''` = the disk root). */
 export function relPathUnder(sourcePath: string, mountBase: string): string {
-  const base = mountBase.replace(/\/+$/, '');
+  const base = stripTrailingSlashes(mountBase);
   if (sourcePath === base) return '';
   if (sourcePath.startsWith(`${base}/`)) return sourcePath.slice(base.length + 1);
   return sourcePath; // not under the base (defensive) — route by its own path.
