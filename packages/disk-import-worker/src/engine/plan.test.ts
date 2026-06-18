@@ -138,7 +138,7 @@ describe('resolveTargetPath — owner prefix + merge/parallel (#1913)', () => {
 });
 
 describe('applyPlan — copy + chown', () => {
-  it('rsyncs from the read-only mount into file-share/data and chowns to the share gid only', async () => {
+  it('rsyncs from the read-only mount into file-share/data and chowns to core:<share gid>', async () => {
     const { exec, calls, opts } = mockExec();
     const catalog = new ImportCatalog(':memory:');
     const res = await applyPlan(planOf(item()), baseOpts(exec, catalog, hashConst('a'.repeat(64))));
@@ -155,9 +155,14 @@ describe('applyPlan — copy + chown', () => {
     expect(rsync[3].startsWith('/mnt/data/stacks/file-share/data/')).toBe(true);
 
     const chown = calls.find(c => c[0] === 'chown')!;
-    expect(chown).toEqual(['chown', `:${GID}`, dest]); // group only, never uid, never -R
+    // owner=core + group=share gid — files must end up core-owned (rsync runs via
+    // sudo → would be root otherwise; a non-core stray crash-loops file-share's
+    // :Z relabel). Never -R, never a per-user uid.
+    expect(chown).toEqual(['chown', `core:${GID}`, dest]);
     expect(chown).not.toContain('-R');
-    expect(chown[1]).toMatch(/^:\d+$/);
+    expect(chown[1]).toBe(`core:${GID}`);
+    expect(chown[1]).toMatch(/^core:\d+$/);
+    expect(chown[1].startsWith('root')).toBe(false);
 
     // The /mnt/data writes all run privileged (#1713): mkdir, rsync, chown.
     expect(sudoFor(calls, opts, 'mkdir')).toBe(true);
@@ -199,9 +204,9 @@ describe('applyPlan — batched mkdir/chown (#1898)', () => {
     expect(mkdirs).toHaveLength(1);
     expect(chowns).toHaveLength(1);
     expect(rsyncs).toHaveLength(n);
-    // The single chown carries every dest, group-only, never -R.
+    // The single chown carries every dest, owner=core + group=share gid, never -R.
     expect(chowns[0][0]).toBe('chown');
-    expect(chowns[0][1]).toBe(`:${GID}`);
+    expect(chowns[0][1]).toBe(`core:${GID}`);
     expect(chowns[0]).not.toContain('-R');
     expect(chowns[0].slice(2)).toEqual(items.map(i => resolveShareTarget(i.target!)));
     // The single mkdir -p carries the (deduped) dest dir.

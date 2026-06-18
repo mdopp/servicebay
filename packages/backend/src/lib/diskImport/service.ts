@@ -9,7 +9,9 @@
 // tile's API routes call.
 
 import type { SafeExec } from '@servicebay/disk-import-worker';
-import type { WorkerStatus } from '@servicebay/disk-import-worker';
+import { SHARE_DATA_ROOT, type WorkerStatus } from '@servicebay/disk-import-worker';
+
+import { logger } from '@/lib/logger';
 
 import {
   launchWorker,
@@ -33,6 +35,33 @@ export async function getImportDevices(exec: SafeExec): Promise<ImportDevice[]> 
 }
 
 /**
+ * Resolve the REAL gid that owns file-share's data dir, host-side, by `stat`ing
+ * {@link SHARE_DATA_ROOT} (the same way `ensureSambaPosixUser` resolves the share
+ * owner — `stat -c %g`). Imported files are chown'd to `core:<this gid>`, so it
+ * MUST be the actual file-share group (973 on the box), not the stale 1024
+ * fallback the route hard-codes — a wrong gid leaves the files in an unnamed
+ * group the containers can't read. Falls back to `fallbackGid` only when the
+ * stat can't produce a non-negative integer (share not deployed yet / unexpected
+ * output); never throws.
+ */
+export async function resolveShareGid(exec: SafeExec, fallbackGid: number): Promise<number> {
+  try {
+    const { stdout, code } = await exec(['stat', '-c', '%g', SHARE_DATA_ROOT]);
+    if (code === 0) {
+      const parsed = Number.parseInt(stdout.trim(), 10);
+      if (Number.isInteger(parsed) && parsed >= 0) return parsed;
+    }
+    logger.warn(
+      'DiskImport',
+      `resolveShareGid: \`stat -c %g ${SHARE_DATA_ROOT}\` gave ${JSON.stringify(stdout.trim())} (exit ${code}) — using fallback ${fallbackGid}`,
+    );
+  } catch (e) {
+    logger.warn('DiskImport', `resolveShareGid: stat failed — using fallback ${fallbackGid}`, e);
+  }
+  return fallbackGid;
+}
+
+/**
  * Launch a worker container to scan `device` (read-only). Pulls the worker image
  * if absent, mounts the device, runs the container detached, and persists the run
  * handle so a reopened tile re-attaches. Returns the run id; the worker app is
@@ -45,11 +74,15 @@ export async function launchScan(args: {
 }): Promise<{ runId: string }> {
   const runId = randomRunId();
   await ensureWorkerImage(args.exec);
+  // Resolve the REAL file-share group gid host-side (the passed `shareGid` is only
+  // the fallback) so the worker's apply chowns to `core:<file-share gid>`, never
+  // the stale 1024 fallback (feedback_fileshare_relabel_crashloop).
+  const shareGid = await resolveShareGid(args.exec, args.shareGid);
   // launchWorker resolves the HOST data dir itself (env → self-inspect via the
   // mounted podman socket → conventional default): the worker's out dir is
   // created + bind-mounted host-side via `podman run`, so it must be the box path
   // (/mnt/data/servicebay), never the in-container /app/data (read-only on host).
-  const run = await launchWorker({ ...args, runId });
+  const run = await launchWorker({ ...args, shareGid, runId });
   await setActiveRun(run);
   return { runId: run.runId };
 }
@@ -81,7 +114,13 @@ export async function getRunStatus(exec: SafeExec): Promise<RunStatus | null> {
 export async function applyRun(exec: SafeExec, shareGid: number): Promise<ApplyImportResult> {
   const run = await getActiveRun();
   if (!run) throw new Error('disk-import: no active run to apply');
-  const result = await applyImport({ exec, runId: run.runId, mountpoint: run.mountpoint, shareGid });
+  // Resolve the REAL file-share group gid host-side — the passed `shareGid` is the
+  // fallback. The apply chowns every copied file to `core:<this gid>`; a wrong gid
+  // (the 1024 fallback) leaves files in an unnamed group the containers can't read
+  // AND risks a non-core stray crash-looping file-share on its next redeploy
+  // (feedback_fileshare_relabel_crashloop).
+  const realGid = await resolveShareGid(exec, shareGid);
+  const result = await applyImport({ exec, runId: run.runId, mountpoint: run.mountpoint, shareGid: realGid });
   // Apply succeeded — unmount the source device and forget the run (#1982) so the
   // USB doesn't leak a mount and a reopened tile lands on the picker, not a stale
   // "active run". Both are best-effort/idempotent (cleanupRunMount ignores
