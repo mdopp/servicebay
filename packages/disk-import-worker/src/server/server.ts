@@ -10,9 +10,12 @@
 //   GET  /                 → the self-contained lazy-tree SPA (one HTML file)
 //   GET  /api/devices      → removable partitions to pick from
 //   POST /api/scan         → launch a dry-run scan job (writes status.json)
-//   POST /api/apply        → launch an --apply job
 //   GET  /api/status       → the COMPACT status.json (poll target)
 //   GET  /api/tree?dir=…   → ONE directory's immediate children (lazy fetch)
+//
+// There is NO /api/apply here: the worker is sandboxed (no rsync, no `sudo`, no
+// host file-share mount), so it can't land a byte. APPLY runs in SERVICEBAY over
+// the host mount (#1972); this container only scans/plans + serves the review.
 //
 // Auth is NOT handled here — the container sits behind the existing NPM +
 // Authelia forward-auth (admin-gated), exactly like every other service UI, so
@@ -38,8 +41,9 @@ export interface ServerDeps {
   readJson: <T>(file: string) => Promise<T | null>;
   /** List removable partitions for the device picker. */
   listDevices: () => Promise<Array<{ path: string; display: string }>>;
-  /** Launch a heavy job (dry-run or apply) as a detached child. */
-  launchJob: (mode: 'dry-run' | 'apply', device: string) => Promise<void>;
+  /** Launch the heavy DRY-RUN scan/plan job as a detached child. (Apply runs in
+   *  servicebay over the host mount, #1972 — never in this sandboxed worker.) */
+  launchJob: (mode: 'dry-run', device: string) => Promise<void>;
 }
 
 /** JSON response helper. */
@@ -83,12 +87,11 @@ async function handleTree(deps: ServerDeps, url: URL, res: ServerResponse): Prom
   sendJson(res, 200, level);
 }
 
-/** POST /api/scan|/api/apply → launch the heavy job. */
+/** POST /api/scan → launch the heavy dry-run scan/plan job. */
 async function handleLaunch(
   deps: ServerDeps,
   req: IncomingMessage,
   res: ServerResponse,
-  mode: 'dry-run' | 'apply',
 ): Promise<void> {
   const body = await readBody(req);
   const device = typeof body.device === 'string' ? body.device : '';
@@ -96,7 +99,7 @@ async function handleLaunch(
     sendJson(res, 400, { error: 'device is required' });
     return;
   }
-  await deps.launchJob(mode, device);
+  await deps.launchJob('dry-run', device);
   sendJson(res, 202, { ok: true });
 }
 
@@ -130,8 +133,8 @@ export async function handleRequest(deps: ServerDeps, req: IncomingMessage, res:
     if (req.method === 'GET') {
       const handled = getRoute(deps, url, res);
       if (handled) return await handled;
-    } else if (req.method === 'POST' && (url.pathname === '/api/scan' || url.pathname === '/api/apply')) {
-      return await handleLaunch(deps, req, res, url.pathname === '/api/apply' ? 'apply' : 'dry-run');
+    } else if (req.method === 'POST' && url.pathname === '/api/scan') {
+      return await handleLaunch(deps, req, res);
     }
     sendJson(res, 404, { error: 'not found' });
   } catch (e) {

@@ -308,10 +308,14 @@ function realIO(): WorkerIO {
     writeStatus: (out, status) => writeJson(path.join(out, STATUS_FILE), status),
     writePlanSidecar: (out, sidecar) => writeJson(path.join(out, PLAN_SIDECAR_FILE), sidecar),
     makeExec: opts => {
-      // The worker runs host-apply commands locally inside the container against
-      // the bind-mounted out-volume — a plain child_process SafeExec. (Wiring the
-      // real privileged host-apply path is #1954.) spawnSync is statically
-      // imported at the top of this ESM module — there is no `require` global here.
+      // PRODUCTION DOES NOT USE THIS. The worker is sandboxed — rsync isn't
+      // installed, `sudo` is ignored, and the host file-share isn't mounted — so a
+      // host apply can't land a byte here (it failed with "rsync failed (code -1)").
+      // The real privileged host apply now runs in SERVICEBAY over the host mount
+      // (#1972: packages/backend/src/lib/diskImport/apply.ts); serve mode no longer
+      // launches an `--apply` child. This stub child_process SafeExec only backs the
+      // standalone `--apply` CLI for tests. spawnSync is statically imported at the
+      // top of this ESM module — there is no `require` global here.
       void opts;
       return (argv: string[]) => {
         const r = spawnSync(argv[0], argv.slice(1), { encoding: 'utf8' });

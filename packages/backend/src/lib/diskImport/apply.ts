@@ -1,0 +1,213 @@
+// Disk-import — HOST-side apply, run from servicebay (#1972, slice of #1949).
+//
+// THE FIX-FORWARD for "apply does nothing / rsync failed (code -1)": the worker
+// container is SANDBOXED — rsync isn't installed there, `sudo` is ignored, and the
+// host `file-share/data` isn't mounted, so its stub-exec apply could never land a
+// byte. The worker now does ONLY the heavy scan/classify/dedup/PLAN (which is the
+// OOM-prone part — feedback_control_plane_vs_worker — and stays capped). The
+// privileged host-apply runs HERE, in servicebay, where the agent's real
+// `safe_exec` runs `mkdir`/`rsync`/`chown` on the host as core (honoring `sudo`)
+// and `file-share/data` actually exists.
+//
+// This is memory-safe: the byte copy is the rsync subprocess (it streams), and
+// applyPlan already batches mkdir/chown across a chunk (#1898), so servicebay's
+// Node heap stays bounded. The control plane never re-walks/re-hashes the whole
+// disk — it reads the worker's compact plan.json + catalog sidecar from the shared
+// out dir (host `${HOST_DATA_DIR}/disk-import-runs/<runId>/`, which servicebay sees
+// in-container at `${DATA_DIR}/disk-import-runs/<runId>/`).
+//
+// SOURCE: the worker scanned at its OWN mountpoint (`mountBase`, e.g. `/mnt/src`),
+// so the plan's `record.sourcePath`s are absolute under that container path. The
+// host rsync must read the device at the HOST mountpoint servicebay mounted it at
+// (`run.mountpoint`, under MOUNT_BASE) — the same read-only mount persists from the
+// scan. We therefore REBASE every source path from `mountBase` → host mountpoint
+// before applyPlan rsyncs it. The mount stays present until apply completes; the
+// tile's "Start over" / teardown unmounts it.
+
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { readFile, mkdir, rename, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import {
+  applyPlan,
+  ImportCatalog,
+  provisionExternalLibraries,
+  scanLibrariesForOwners,
+  STATUS_FILE,
+  PLAN_SIDECAR_FILE,
+  type SafeExec,
+  type PlanSidecar,
+  type WorkerStatus,
+  type ImportRecord,
+} from '@servicebay/disk-import-worker';
+
+import { DATA_DIR } from '@/lib/dirs';
+import { logger } from '@/lib/logger';
+import { resolveImmichProvision } from './immichProvisionEnv';
+
+/** Where servicebay reads the worker's out dir IN-CONTAINER (same data as the
+ *  host `${HOST_DATA_DIR}/disk-import-runs/<runId>` the worker bind-mounted). */
+export function runOutDir(runId: string): string {
+  return path.join(DATA_DIR, 'disk-import-runs', runId);
+}
+
+/** Host-side sha256 of a file's bytes (catalog row key) — mirrors the worker's
+ *  hashFileContent. Used only on size-collisions by the resume catalog. */
+function hashFileContent(record: ImportRecord): string {
+  return createHash('sha256').update(readFileSync(record.sourcePath)).digest('hex');
+}
+
+/**
+ * Rebase a plan's source paths from the worker mountBase (`/mnt/src`) to the host
+ * mountpoint, so the HOST rsync reads the real device. Returns a NEW plan (the
+ * records are shallow-cloned with the rewritten sourcePath; everything else —
+ * target, action, size — is untouched). A path that doesn't start with mountBase
+ * is left as-is (defensive; shouldn't happen for a worker-produced plan).
+ */
+export function rebasePlanSource(sidecar: PlanSidecar, hostMountpoint: string): PlanSidecar['plan'] {
+  const base = sidecar.mountBase.replace(/\/+$/, '');
+  const rebase = (p: string): string =>
+    p === base ? hostMountpoint : p.startsWith(`${base}/`) ? path.join(hostMountpoint, p.slice(base.length + 1)) : p;
+  return {
+    ...sidecar.plan,
+    items: sidecar.plan.items.map(it => ({ ...it, record: { ...it.record, sourcePath: rebase(it.record.sourcePath) } })),
+  };
+}
+
+export interface ApplyImportArgs {
+  /** servicebay's REAL agent SafeExec (runs mkdir/rsync/chown on the host as core). */
+  exec: SafeExec;
+  /** The run whose plan.json + catalog to apply. */
+  runId: string;
+  /** Host RO mountpoint of the source device (the rsync source root). */
+  mountpoint: string;
+  /** gid that owns file-share data — copies are chown'd to it, never a uid. */
+  shareGid: number;
+}
+
+export interface ApplyImportResult {
+  applied: number;
+  photoOwners: string[];
+  immichNote: string;
+}
+
+/**
+ * Read the worker's plan.json + catalog from the out dir and APPLY it on the host
+ * via applyPlan + servicebay's real exec. Streams status.json progress so the
+ * tile's poll keeps reflecting the apply (phase `applying` → `done`/`error`). On
+ * a photo-writing apply, fires the Immich External-Library provision + scan from
+ * servicebay (it owns the secret store + LLDAP). Throws on a real apply failure
+ * (so the route surfaces it) AFTER recording an `error`-phase status.
+ */
+export async function applyImport(args: ApplyImportArgs): Promise<ApplyImportResult> {
+  const { exec, runId, mountpoint, shareGid } = args;
+  const outDir = runOutDir(runId);
+
+  const sidecar = JSON.parse(await readFile(path.join(outDir, PLAN_SIDECAR_FILE), 'utf-8')) as PlanSidecar;
+  const plan = rebasePlanSource(sidecar, mountpoint);
+
+  // Resume basis: the same catalog file the worker created in the out dir. Opened
+  // in-container (better-sqlite3 is a backend dep); the out dir is the same bytes
+  // host-side.
+  const catalog = new ImportCatalog(path.join(outDir, 'catalog.sqlite'));
+
+  // Seed the status doc so the tile poll keeps ticking through the apply. We patch
+  // the worker's last status (its plan counts) rather than inventing a new one.
+  let status = await readOutStatus(outDir, runId);
+  const tick = async (patch: Partial<WorkerStatus>): Promise<void> => {
+    status = { ...status, ...patch, mode: 'apply', updatedAt: Date.now() };
+    await writeOutStatus(outDir, status);
+  };
+  await tick({ phase: 'applying', step: 'Applying plan …', applied: 0 });
+
+  try {
+    const result = await applyPlan(plan, {
+      exec,
+      mountpoint,
+      catalog,
+      shareGid,
+      hashOf: hashFileContent,
+      onProgress: p => {
+        // Fire-and-forget the progress write; a slow disk poll must not block rsync.
+        void writeOutStatus(outDir, { ...status, mode: 'apply', applied: p.copied, updatedAt: Date.now() });
+      },
+    });
+    catalog.close();
+
+    // #1904/#1954: photos written → provision + scan the owning Immich libraries
+    // from servicebay (it owns the admin key + LLDAP directory). Best-effort — the
+    // files are already on disk; a scan failure must NOT fail the import.
+    let immichNote = '';
+    if (result.photoOwners.length > 0) immichNote = await provisionImmichForOwners(result.photoOwners);
+
+    await tick({
+      phase: 'done',
+      applied: result.applied,
+      step: `Applied ${result.applied} file(s).` + (immichNote ? ` ${immichNote}` : ''),
+    });
+    return { applied: result.applied, photoOwners: result.photoOwners, immichNote };
+  } catch (e) {
+    catalog.close();
+    const message = e instanceof Error ? e.message : String(e);
+    await tick({ phase: 'error', step: 'Apply failed', error: message });
+    throw e;
+  }
+}
+
+/**
+ * Provision the per-owner Immich External Libraries and trigger the owning ones'
+ * scan after a photo-writing apply (#1954, moved into servicebay). Never throws —
+ * returns a one-line note for the status step.
+ */
+async function provisionImmichForOwners(photoOwners: string[]): Promise<string> {
+  const provision = await resolveImmichProvision();
+  if (!provision) return '';
+  try {
+    const { libraryIdByOwner } = await provisionExternalLibraries(provision.cfg, provision.boxUsers);
+    await scanLibrariesForOwners(provision.cfg, libraryIdByOwner, photoOwners);
+    return 'Immich External Libraries provisioned + scan triggered.';
+  } catch (e) {
+    logger.warn('disk-import:immich', `Immich library scan skipped: ${e instanceof Error ? e.message : String(e)}`);
+    return `Immich library scan skipped: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
+/** Read the worker's last status.json, or a minimal apply-phase doc when absent. */
+async function readOutStatus(outDir: string, runId: string): Promise<WorkerStatus> {
+  try {
+    return JSON.parse(await readFile(path.join(outDir, STATUS_FILE), 'utf-8')) as WorkerStatus;
+  } catch {
+    const now = Date.now();
+    return {
+      version: 1,
+      runId,
+      phase: 'applying',
+      step: 'Applying plan …',
+      mode: 'apply',
+      scanned: 0,
+      planned: 0,
+      applied: 0,
+      conflicts: 0,
+      categories: [],
+      totalBytes: 0,
+      planSidecar: PLAN_SIDECAR_FILE,
+      error: null,
+      updatedAt: now,
+      startedAt: now,
+    };
+  }
+}
+
+/** Atomic-ish status write (tmp + rename) so a polling reader never sees a half file. */
+async function writeOutStatus(outDir: string, status: WorkerStatus): Promise<void> {
+  const file = path.join(outDir, STATUS_FILE);
+  const tmp = `${file}.tmp`;
+  try {
+    await mkdir(outDir, { recursive: true });
+    await writeFile(tmp, JSON.stringify(status), 'utf-8');
+    await rename(tmp, file);
+  } catch {
+    await writeFile(file, JSON.stringify(status), 'utf-8').catch(() => {});
+  }
+}
