@@ -1,0 +1,54 @@
+# backup-worker — resource-capped one-shot config-backup worker (#1955, slice of #1949).
+#
+# The heavy external/config backup (walk every installed service's stacks dir,
+# apply the include/exclude/strip/transform manifest, copy + tar the config) runs
+# HERE, in its own container with a hard `--memory` cap, so a big config (a HACS
+# HA install is thousands of files) OOMs the worker — never the servicebay control
+# plane (feedback_control_plane_vs_worker). The old in-process path copied those
+# files one-by-one through the agent channel and held every tar in Node memory →
+# ~5.3 GB → box-wide crash-loop (#1894). servicebay now launches this one-shot and
+# reads only the compact status.json + the per-service tars it writes to the
+# shared out-volume.
+#
+# Built from the monorepo root context (single pipeline, no second build system):
+#   podman build -f packages/backup-worker/Containerfile -t backup-worker .
+#
+# Run — servicebay launches it one-shot over the read-only stacks dir, into the
+# shared out volume; it writes <service>.tar per service + a compact status.json:
+#   podman run --rm --memory=2g --memory-swap=2g \
+#     -v /mnt/data/stacks:/mnt/stacks:ro \
+#     -v <shared-out-dir>:/out \
+#     -e BACKUP_RUN_ID=<id> \
+#     <image> --stacks /mnt/stacks --out /out --services home-assistant,authelia,…
+
+FROM node:20-slim AS base
+# `npm ci` builds the workspace's native modules (node-pty in the backend, etc.) →
+# node-gyp needs a build toolchain even though this worker doesn't use them itself
+# (same constraint as the disk-import worker image).
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Workspace-aware install: the root + every member manifest must be present so
+# `npm ci` resolves the workspace graph (same constraint as the disk-import worker).
+COPY package.json package-lock.json* ./
+COPY packages/api-client/package.json ./packages/api-client/package.json
+COPY packages/backend/package.json ./packages/backend/package.json
+COPY packages/frontend/package.json ./packages/frontend/package.json
+COPY packages/disk-import-worker/package.json ./packages/disk-import-worker/package.json
+COPY packages/backup-worker/package.json ./packages/backup-worker/package.json
+RUN npm ci
+
+# The worker is run via tsx (a one-shot CLI, no separate build step). Only the
+# worker's own sources are needed — it carries its own staging engine + manifest.
+COPY tsconfig.json ./tsconfig.json
+COPY packages/backup-worker ./packages/backup-worker
+
+# Non-root by default; the host bind-mounts (stacks ro, out rw) are owned by core
+# on the box. The worker only READS the stacks dir and WRITES tars into /out — it
+# never chowns or writes back into a stack (feedback_fileshare_relabel_crashloop).
+USER node
+
+ENTRYPOINT ["npx", "tsx", "packages/backup-worker/src/cli/main.ts"]

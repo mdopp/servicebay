@@ -1,160 +1,85 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import fs from 'fs/promises';
-import os from 'os';
-import path from 'path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const execFileAsync = promisify(execFile);
-
-const { mockNas, mockCfg } = vi.hoisted(() => ({
+// The box "back up all" path launches the resource-capped backup worker (#1955)
+// for every installed manifest service (the heavy walk/copy/tar runs in the worker
+// container, not in this process — the in-process host-agent path OOM'd the box,
+// #1894), then streams each produced tar to the NAS. Here we mock the worker
+// service surface + the NAS client and assert the upload/skip behaviour; the worker
+// launch/poll is covered by backupWorker/service.test.ts.
+const { mockWorker, mockNas, mockCfg } = vi.hoisted(() => ({
+  mockWorker: {
+    runBackupForInstalled: vi.fn(),
+    readBackupTar: vi.fn(),
+    cleanupBackupRun: vi.fn(),
+  },
   mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn(), nasRemove: vi.fn() },
   mockCfg: { getConfig: vi.fn() },
 }));
+vi.mock('../backupWorker/service', () => mockWorker);
 vi.mock('./nasClient', () => mockNas);
 vi.mock('../config', () => mockCfg);
-// The box backup routes through the host agent (#1597). In-process, wire the
-// executor straight to the local fs so the same staging/tar logic runs against
-// the test's real temp dir (and exercises the agent-backend code path).
-const stageDirs: string[] = [];
-vi.mock('../executor', () => ({
-  getExecutor: () => ({
-    // Bulk plain-copy (#1894): one shell pipe `tar -C src --null -T list -cf - |
-    // tar -C dest -xf -` instead of a cp per file. Emulate it against the local fs.
-    async exec(command: string) {
-      const m = /tar -C (\S+) --null -T (\S+) -cf - \| tar -C (\S+) -xf -/.exec(command);
-      if (!m) throw new Error(`unexpected exec: ${command}`);
-      const unq = (s: string) => s.replace(/^'(.*)'$/, '$1').replace(/'\\''/g, "'");
-      const [, srcRoot, listFile, destRoot] = m.map(unq);
-      const rels = (await fs.readFile(listFile, 'utf8')).split('\0').filter(Boolean);
-      for (const rel of rels) {
-        const dest = path.join(destRoot, rel);
-        await fs.mkdir(path.dirname(dest), { recursive: true });
-        await fs.copyFile(path.join(srcRoot, rel), dest);
-      }
-      return { stdout: '', stderr: '' };
+
+import { backupInstalledServicesToNas, NAS_BACKUP_DIR } from './producer';
+
+const RUN = { runId: 'r', outDir: '/out/r', container: 'backup-worker-r' };
+
+function completed(results: Array<{ service: string; ok: boolean; outcome?: string; detail?: string | null }>) {
+  return {
+    exec: vi.fn(),
+    run: RUN,
+    status: {
+      version: 1, runId: 'r', phase: 'done', step: 'done', total: results.length, processed: results.length,
+      results: results.map(r => ({
+        service: r.service, ok: r.ok, tarName: r.ok ? `${r.service}.tar` : null,
+        bytes: 0, files: 0, outcome: r.outcome ?? (r.ok ? 'ok' : 'error'), detail: r.detail ?? null,
+      })),
+      error: null, updatedAt: 0, startedAt: 0,
     },
-    async execArgv(argv: string[]) {
-      const [cmd, ...args] = argv;
-      if (cmd === 'find') {
-        const ents = await fs.readdir(args[0], { withFileTypes: true }).catch(() => []);
-        return {
-          stdout: ents.map(e => `${e.isDirectory() ? 'd' : e.isFile() ? 'f' : 'o'}\t${e.name}`).join('\n'),
-          stderr: '',
-        };
-      }
-      if (cmd === 'test' && args[0] === '-d') {
-        if (!(await fs.stat(args[1]).then(s => s.isDirectory(), () => false))) throw new Error('not a dir');
-        return { stdout: '', stderr: '' };
-      }
-      if (cmd === 'test' && args[0] === '-e') {
-        if (!(await fs.access(args[1]).then(() => true, () => false))) throw new Error('missing');
-        return { stdout: '', stderr: '' };
-      }
-      if (cmd === 'mkdir') { await fs.mkdir(args[1], { recursive: true }); return { stdout: '', stderr: '' }; }
-      if (cmd === 'cp') { await fs.copyFile(args[args.length - 2], args[args.length - 1]); return { stdout: '', stderr: '' }; }
-      if (cmd === 'mktemp') {
-        const d = await fs.mkdtemp(path.join(os.tmpdir(), 'backupall-stage-'));
-        stageDirs.push(d);
-        return { stdout: d, stderr: '' };
-      }
-      if (cmd === 'tar') {
-        await execFileAsync('tar', ['-cf', args[1], '-C', args[3], '.']);
-        stageDirs.push(args[1]);
-        return { stdout: '', stderr: '' };
-      }
-      if (cmd === 'base64') {
-        return { stdout: (await fs.readFile(args[0])).toString('base64'), stderr: '' };
-      }
-      if (cmd === 'rm') return { stdout: '', stderr: '' };
-      throw new Error(`unexpected execArgv: ${argv.join(' ')}`);
-    },
-    exists: (p: string) => fs.access(p).then(() => true, () => false),
-    readFile: (p: string) => fs.readFile(p, 'utf8'),
-    writeFile: (p: string, c: string) => fs.writeFile(p, c),
-  }),
-}));
-
-import { backupInstalledServicesToNas } from './producer';
-
-let tmpRoot: string;
-
-async function write(rel: string, content: string) {
-  const full = path.join(tmpRoot, rel);
-  await fs.mkdir(path.dirname(full), { recursive: true });
-  await fs.writeFile(full, content);
+  };
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   vi.clearAllMocks();
+  mockCfg.getConfig.mockResolvedValue({});
   mockNas.nasUpload.mockResolvedValue(undefined);
-  // #1865 — each write prunes (lists then removes); no prior snapshots here.
-  mockNas.nasList.mockResolvedValue([]);
+  mockNas.nasList.mockResolvedValue([]); // prune lists then removes; empty NAS
   mockNas.nasRemove.mockResolvedValue(undefined);
-  tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'backupall-'));
-});
-afterEach(async () => {
-  await fs.rm(tmpRoot, { recursive: true, force: true });
-  await Promise.all(stageDirs.splice(0).map(d => fs.rm(d, { recursive: true, force: true })));
+  mockWorker.readBackupTar.mockResolvedValue(Buffer.from('tarbytes'));
+  mockWorker.cleanupBackupRun.mockResolvedValue(undefined);
 });
 
 describe('backupInstalledServicesToNas', () => {
-  it('backs up only installed manifest services, skipping the rest', async () => {
-    // adguard is installed (with a manifest config file); home-assistant is NOT.
-    await write('adguard/conf/AdGuardHome.yaml', 'bind_host: 0.0.0.0');
-    mockCfg.getConfig.mockResolvedValue({
-      templateSettings: { DATA_DIR: tmpRoot },
-      installedTemplates: { adguard: { schemaVersion: 1, installedAt: 'x' } },
-    });
+  it('uploads each ok tar as a dated NAS slot and cleans up the run', async () => {
+    mockWorker.runBackupForInstalled.mockResolvedValue(completed([{ service: 'adguard', ok: true }]));
 
     const results = await backupInstalledServicesToNas();
 
-    // Only adguard ran; home-assistant/authelia/etc. are not installed → not attempted.
     expect(results.map(r => r.service)).toEqual(['adguard']);
     expect(results[0]).toMatchObject({ service: 'adguard', ok: true });
     expect(results[0].tarName).toMatch(/^adguard-\d{8}-\d{4}\.tar$/); // dated slot (#1865)
-    // The tar + meta were uploaded to the NAS.
     const uploaded = mockNas.nasUpload.mock.calls.map(c => String(c[0]));
-    expect(uploaded.some(p => /sb-backup\/adguard-\d{8}-\d{4}\.tar$/.test(p))).toBe(true);
+    expect(uploaded.some(p => new RegExp(`${NAS_BACKUP_DIR}/adguard-\\d{8}-\\d{4}\\.tar$`).test(p))).toBe(true);
+    expect(mockWorker.cleanupBackupRun).toHaveBeenCalledTimes(1);
   });
 
-  it('captures a per-service failure without aborting the run', async () => {
-    // adguard installed but its data dir is missing its config → produces no
-    // files → backupServiceToNas throws; the run records it as ok:false.
-    mockCfg.getConfig.mockResolvedValue({
-      templateSettings: { DATA_DIR: tmpRoot },
-      installedTemplates: { adguard: { schemaVersion: 1, installedAt: 'x' } },
-    });
+  it('records a worker skip/error as a per-service failure without uploading it', async () => {
+    mockWorker.runBackupForInstalled.mockResolvedValue(
+      completed([
+        { service: 'adguard', ok: false, outcome: 'skip', detail: 'No config files to back up' },
+        { service: 'nginx', ok: true },
+      ]),
+    );
 
     const results = await backupInstalledServicesToNas();
-    expect(results).toHaveLength(1);
-    expect(results[0].service).toBe('adguard');
-    expect(results[0].ok).toBe(false);
-    expect(results[0].error).toBeTruthy();
+    expect(results.find(r => r.service === 'adguard')).toMatchObject({ ok: false });
+    expect(results.find(r => r.service === 'nginx')).toMatchObject({ ok: true });
+    // Only the ok service was uploaded (1 tar + 1 meta).
+    expect(mockNas.nasUpload).toHaveBeenCalledTimes(2);
   });
 
-  it('returns empty when nothing with a manifest is installed', async () => {
-    mockCfg.getConfig.mockResolvedValue({ installedTemplates: { 'some-unmanaged-thing': {} } });
+  it('returns empty when nothing with a manifest is installed (no launch)', async () => {
+    mockWorker.runBackupForInstalled.mockResolvedValue(null);
     expect(await backupInstalledServicesToNas()).toEqual([]);
-  });
-
-  it('backs up the zwave-js sibling store when home-assistant is installed (#1594)', async () => {
-    // HA config + the sibling zwave-js store (network keys) both present.
-    await write('home-assistant/homeassistant/configuration.yaml', 'default_config:');
-    await write('home-assistant/zwave-js/settings.json', '{"zwave":{"securityKeys":{"S0_Legacy":"deadbeef"}}}');
-    mockCfg.getConfig.mockResolvedValue({
-      templateSettings: { DATA_DIR: tmpRoot },
-      // Only `home-assistant` is an installedTemplates key; `home-assistant-zwave`
-      // is a synthetic gate-on-parent entry that must still get backed up.
-      installedTemplates: { 'home-assistant': { schemaVersion: 1, installedAt: 'x' } },
-    });
-
-    const results = await backupInstalledServicesToNas();
-    const services = results.map(r => r.service);
-    expect(services).toContain('home-assistant');
-    expect(services).toContain('home-assistant-zwave');
-    expect(results.find(r => r.service === 'home-assistant-zwave')).toMatchObject({ ok: true });
-    const uploaded = mockNas.nasUpload.mock.calls.map(c => String(c[0]));
-    expect(uploaded.some(p => /sb-backup\/home-assistant-zwave-\d{8}-\d{4}\.tar$/.test(p))).toBe(true);
+    expect(mockNas.nasUpload).not.toHaveBeenCalled();
   });
 });

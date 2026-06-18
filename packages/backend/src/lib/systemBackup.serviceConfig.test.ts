@@ -8,21 +8,21 @@ import type { Executor } from './executor';
 
 const execFileAsync = promisify(execFile);
 
-const { mockManifest, mockProducer, mockGetExecutor, mockCfg } = vi.hoisted(() => ({
-    mockManifest: { SERVICE_BACKUP_MANIFESTS: [] as unknown[], getBackupGate: vi.fn() },
-    mockProducer: {
-        buildServiceBackupTar: vi.fn(),
-        agentFileBackend: vi.fn(() => ({})),
-        resolveServiceDataDir: vi.fn(),
-        runBackupCollector: vi.fn(),
+// stageServiceConfig now delegates the heavy walk/copy/tar to the resource-capped
+// backup worker (#1955): the worker writes <service>.tar to a shared out dir, and
+// stageServiceConfig reads each tar (via readBackupTar) and safeTarExtracts it
+// into the archive. We mock the worker service so the test drives the worker's
+// status results + tar bytes without launching a container.
+const { mockWorker, mockCfg } = vi.hoisted(() => ({
+    mockWorker: {
+        stageInstalledServiceConfigViaWorker: vi.fn(),
+        readBackupTar: vi.fn(),
+        cleanupBackupRun: vi.fn(),
     },
-    mockGetExecutor: vi.fn(),
     mockCfg: { getConfig: vi.fn(), updateConfig: vi.fn() },
 }));
 
-vi.mock('./externalBackup/serviceManifest', () => mockManifest);
-vi.mock('./externalBackup/producer', () => mockProducer);
-vi.mock('./executor', () => ({ getExecutor: (...a: unknown[]) => mockGetExecutor(...a) }));
+vi.mock('./backupWorker/service', () => mockWorker);
 vi.mock('./config', () => mockCfg);
 
 import { stageServiceConfig, extractServiceConfigToNode } from './systemBackup';
@@ -50,13 +50,34 @@ function makeMeta(): { version: number; createdAt: string; nodes: never[]; confi
 
 let tmpRoot: string;
 
+/** Build a worker status doc with the given per-service results. */
+function workerStatus(results: Array<{ service: string; ok: boolean; tarName?: string | null; outcome?: 'ok' | 'skip' | 'error'; detail?: string | null }>) {
+    return {
+        version: 1, runId: 'r', phase: 'done', step: 'done', total: results.length, processed: results.length,
+        results: results.map(r => ({
+            service: r.service, ok: r.ok, tarName: r.tarName ?? (r.ok ? `${r.service}.tar` : null),
+            bytes: 0, files: 0, outcome: r.outcome ?? (r.ok ? 'ok' : 'error'), detail: r.detail ?? null,
+        })),
+        error: null, updatedAt: 0, startedAt: 0,
+    };
+}
+
+/** Wire the worker mock: status results + per-tar bytes keyed by tarName. */
+function wireWorker(status: ReturnType<typeof workerStatus>, tars: Record<string, Buffer> = {}) {
+    const run = { runId: 'r', outDir: '/out/r', container: 'backup-worker-r' };
+    const exec = vi.fn();
+    mockWorker.stageInstalledServiceConfigViaWorker.mockResolvedValue({ exec, run, status });
+    mockWorker.readBackupTar.mockImplementation(async (_e: unknown, _r: unknown, tarName: string) => {
+        const buf = tars[tarName];
+        if (!buf) throw new Error(`no tar for ${tarName}`);
+        return buf;
+    });
+    mockWorker.cleanupBackupRun.mockResolvedValue(undefined);
+}
+
 beforeEach(async () => {
     vi.clearAllMocks();
     tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'sysbackup-svccfg-'));
-    mockManifest.SERVICE_BACKUP_MANIFESTS = [];
-    mockManifest.getBackupGate.mockImplementation((m: { service: string }) => m.service);
-    mockProducer.agentFileBackend.mockReturnValue({});
-    mockGetExecutor.mockReturnValue({} as Executor);
     mockCfg.getConfig.mockResolvedValue({ installedTemplates: {} });
 });
 
@@ -65,15 +86,13 @@ afterEach(async () => {
 });
 
 describe('stageServiceConfig', () => {
-    it('stages config for each installed manifest into service-config/<svc>/ and records metadata', async () => {
-        mockCfg.getConfig.mockResolvedValue({ installedTemplates: { 'home-assistant': {}, nginx: {} } });
-        mockManifest.SERVICE_BACKUP_MANIFESTS = [
-            { service: 'home-assistant' },
-            { service: 'nginx' },
-        ];
-        mockProducer.resolveServiceDataDir.mockImplementation(async (svc: string) => `/mnt/data/stacks/${svc}`);
-        mockProducer.buildServiceBackupTar.mockImplementation(async (_dir: string, m: { service: string }) =>
-            buildTar({ [`${m.service}.conf`]: `cfg for ${m.service}` }),
+    it('extracts each worker-produced tar into service-config/<svc>/ and records metadata', async () => {
+        wireWorker(
+            workerStatus([{ service: 'home-assistant', ok: true }, { service: 'nginx', ok: true }]),
+            {
+                'home-assistant.tar': await buildTar({ 'home-assistant.conf': 'cfg for home-assistant' }),
+                'nginx.tar': await buildTar({ 'nginx.conf': 'cfg for nginx' }),
+            },
         );
 
         const metadata = makeMeta();
@@ -81,64 +100,38 @@ describe('stageServiceConfig', () => {
         const staged = await stageServiceConfig(tmpRoot, metadata as never, logs as never, undefined);
 
         expect(staged).toBe(true);
-        // Files landed under service-config/<svc>/
         const haFile = path.join(tmpRoot, 'service-config', 'home-assistant', 'home-assistant.conf');
         const nginxFile = path.join(tmpRoot, 'service-config', 'nginx', 'nginx.conf');
         await expect(fs.readFile(haFile, 'utf8')).resolves.toBe('cfg for home-assistant');
         await expect(fs.readFile(nginxFile, 'utf8')).resolves.toBe('cfg for nginx');
         // The per-service tmp tar is cleaned up.
         await expect(fs.access(path.join(tmpRoot, 'service-config', 'home-assistant.tar'))).rejects.toThrow();
+        // The worker run's out dir is cleaned up.
+        expect(mockWorker.cleanupBackupRun).toHaveBeenCalledTimes(1);
         // Metadata records {label, service, sourcePath, nodeName}.
         const sd = metadata.serviceData;
         expect(sd).toEqual([
-            { label: 'home-assistant', service: 'home-assistant', sourcePath: '/mnt/data/stacks/home-assistant', nodeName: 'Local' },
-            { label: 'nginx', service: 'nginx', sourcePath: '/mnt/data/stacks/nginx', nodeName: 'Local' },
+            { label: 'home-assistant', service: 'home-assistant', sourcePath: 'home-assistant', nodeName: 'Local' },
+            { label: 'nginx', service: 'nginx', sourcePath: 'nginx', nodeName: 'Local' },
         ]);
     });
 
-    it('skips manifests whose backup-gate template is not installed', async () => {
-        mockCfg.getConfig.mockResolvedValue({ installedTemplates: { nginx: {} } });
-        mockManifest.SERVICE_BACKUP_MANIFESTS = [
-            { service: 'home-assistant' },
-            { service: 'nginx' },
-        ];
-        mockProducer.resolveServiceDataDir.mockImplementation(async (svc: string) => `/mnt/data/stacks/${svc}`);
-        mockProducer.buildServiceBackupTar.mockResolvedValue(await buildTar({ 'nginx.conf': 'x' }));
-
+    it('returns false when no installed service has a backup manifest', async () => {
+        mockWorker.stageInstalledServiceConfigViaWorker.mockResolvedValue(null);
         const metadata = makeMeta();
-        await stageServiceConfig(tmpRoot, metadata as never, [], undefined);
-
-        const sd = metadata.serviceData;
-        expect(sd.map(e => e.service)).toEqual(['nginx']);
-        expect(mockProducer.buildServiceBackupTar).toHaveBeenCalledTimes(1);
+        const staged = await stageServiceConfig(tmpRoot, metadata as never, [], undefined);
+        expect(staged).toBe(false);
+        expect(metadata.serviceData).toEqual([]);
     });
 
-    it('runs the collector when the manifest declares one', async () => {
-        mockCfg.getConfig.mockResolvedValue({ installedTemplates: { npm: {} } });
-        const collectedManifest = { service: 'npm', collected: true };
-        mockManifest.SERVICE_BACKUP_MANIFESTS = [{ service: 'npm', collector: 'snapshot' }];
-        mockProducer.resolveServiceDataDir.mockResolvedValue('/mnt/data/stacks/npm');
-        mockProducer.runBackupCollector.mockResolvedValue(collectedManifest);
-        mockProducer.buildServiceBackupTar.mockResolvedValue(await buildTar({ 'npm.conf': 'x' }));
-
-        await stageServiceConfig(tmpRoot, { version: 3, createdAt: '', nodes: [], configFiles: [] } as never, [], undefined);
-
-        expect(mockProducer.runBackupCollector).toHaveBeenCalledWith(
-            expect.objectContaining({ service: 'npm' }),
-            'Local',
+    it('treats a worker "skip" outcome as a skip log, not an error, and continues', async () => {
+        wireWorker(
+            workerStatus([
+                { service: 'a', ok: false, outcome: 'skip', detail: 'No config files to back up' },
+                { service: 'b', ok: true },
+            ]),
+            { 'b.tar': await buildTar({ 'b.conf': 'x' }) },
         );
-        // The collector's effective manifest is what gets tarred.
-        expect(mockProducer.buildServiceBackupTar).toHaveBeenCalledWith('/mnt/data/stacks/npm', collectedManifest, expect.anything());
-    });
-
-    it('treats "No config files to back up" as a skip, not an error, and continues', async () => {
-        mockCfg.getConfig.mockResolvedValue({ installedTemplates: { a: {}, b: {} } });
-        mockManifest.SERVICE_BACKUP_MANIFESTS = [{ service: 'a' }, { service: 'b' }];
-        mockProducer.resolveServiceDataDir.mockImplementation(async (svc: string) => `/mnt/data/stacks/${svc}`);
-        mockProducer.buildServiceBackupTar.mockImplementation(async (_dir: string, m: { service: string }) => {
-            if (m.service === 'a') throw new Error('No config files to back up');
-            return buildTar({ 'b.conf': 'x' });
-        });
 
         const logs: Array<{ status: string; message: string }> = [];
         const staged = await stageServiceConfig(tmpRoot, { version: 3, createdAt: '', nodes: [], configFiles: [] } as never, logs as never, undefined);
@@ -148,11 +141,8 @@ describe('stageServiceConfig', () => {
         expect(logs.some(l => l.status === 'error')).toBe(false);
     });
 
-    it('logs an error (not skip) for an unexpected per-service failure and returns false when nothing staged', async () => {
-        mockCfg.getConfig.mockResolvedValue({ installedTemplates: { a: {} } });
-        mockManifest.SERVICE_BACKUP_MANIFESTS = [{ service: 'a' }];
-        mockProducer.resolveServiceDataDir.mockResolvedValue('/mnt/data/stacks/a');
-        mockProducer.buildServiceBackupTar.mockRejectedValue(new Error('disk exploded'));
+    it('logs an error (not skip) for a worker error outcome and returns false when nothing staged', async () => {
+        wireWorker(workerStatus([{ service: 'a', ok: false, outcome: 'error', detail: 'disk exploded' }]));
 
         const logs: Array<{ status: string; message: string }> = [];
         const staged = await stageServiceConfig(tmpRoot, { version: 3, createdAt: '', nodes: [], configFiles: [] } as never, logs as never, undefined);

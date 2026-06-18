@@ -22,18 +22,16 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getConfig } from '../config';
 import { logger } from '../logger';
-import { agentManager } from '../agent/manager';
-import { getExecutor, type Executor } from '../executor';
-import { shellQuote } from '../util/shellQuote';
 import { nasUpload, nasDownload, nasList, nasRemove } from './nasClient';
 import {
   getServiceManifest,
-  getBackupGate,
   applyStripRules,
   applyTransformRules,
-  SERVICE_BACKUP_MANIFESTS,
   type ServiceBackupManifest,
 } from './serviceManifest';
+// Re-exported for back-compat: the collector moved to its own module to break the
+// producer ↔ backupWorker/service import cycle (#1955).
+export { runBackupCollector } from './collector';
 
 const execFileAsync = promisify(execFile);
 
@@ -145,19 +143,16 @@ async function pathExists(target: string): Promise<boolean> {
 }
 
 /**
- * The few filesystem primitives the staging + tar-building logic needs, so the
- * SAME selection/exclude/strip/rename logic can run against either:
- *  - the **local** container filesystem (the `sb-config-upload` CLI seed in
- *    #1219 / the HA-OS import #1353, which extract to a container-local temp
- *    dir), or
- *  - the **host** filesystem via the node agent (#1597 — the box backup reads
- *    `/mnt/data/stacks/<service>`, which is NOT bind-mounted into the
- *    servicebay container; only the host agent can see it, the same way
- *    install/restore/deploy reach the stacks).
+ * The few filesystem primitives the staging + tar-building logic needs. Only the
+ * **local** container-filesystem backend remains (the `sb-config-upload` CLI seed
+ * #1219 / the HA-OS import #1353, which extract a single uploaded archive into a
+ * container-local temp dir — small, no OOM risk). The box backup's HEAVY host-side
+ * walk/copy/tar moved into the resource-capped backup worker container (#1955,
+ * backupWorker/) — the old host-agent backend that held every tar in this process
+ * and OOM'd the box (#1894) is retired.
  *
- * Source reads and the staging dir both live on whichever side the backend
- * targets; the resulting tar bytes are always returned to the caller (the
- * container) for upload to the NAS.
+ * The seam is kept so the local-seed path stays unit-testable; the staging tar
+ * bytes are returned to the caller for upload to the NAS.
  */
 export interface BackupFileBackend {
   /** Directory entries with their type (no recursion). */
@@ -169,13 +164,9 @@ export interface BackupFileBackend {
   /** Copy a file byte-for-byte (binary-safe — sqlite, certs, …). */
   copyFile(src: string, dest: string): Promise<void>;
   /**
-   * Copy MANY files (given as relative paths under `srcRoot`) into `destRoot`,
-   * preserving their relative subdirs, in as few operations as possible. The
-   * host-agent backend does this in a SINGLE exec (one `tar -C srcRoot … | tar
-   * -x -C destRoot`) instead of a `mkdirp`+`copyFile` round-trip per file — a HA
-   * config with HACS is thousands of files, and per-file agent round-trips OOM'd
-   * the box (#1894). `relFiles` are plain copies only; strip/transform/renamed
-   * files are still staged individually (they're few and need a content rewrite).
+   * Copy MANY files (relative paths under `srcRoot`) into `destRoot`, preserving
+   * their relative subdirs. `relFiles` are plain copies only; strip/transform/
+   * renamed files are still staged individually (they need a content rewrite).
    */
   bulkCopyFiles(srcRoot: string, relFiles: string[], destRoot: string): Promise<void>;
   writeText(dest: string, content: string): Promise<void>;
@@ -226,98 +217,6 @@ const localFileBackend: BackupFileBackend = {
     await fs.rm(target, { recursive: true, force: true });
   },
 };
-
-/**
- * Bulk-copy `relFiles` (relative to `srcRoot`) into `destRoot` host-side in ONE
- * exec (#1894): write the paths NUL-separated to a temp list, then
- * `tar -C srcRoot --null -T list -cf - | tar -C destRoot -xf -`. The pipe streams
- * through the host filesystem — no `cp`/`mkdir` round-trip per file, so a HACS HA
- * config (thousands of files) no longer floods the agent channel and OOMs the
- * box. NUL separation means a path with spaces/newlines/quotes is taken verbatim
- * (no tar `-T` unquoting). Both tar invocations + the pipe need a shell, so this
- * uses `exec` (not execArgv); every interpolated path is shellQuote'd.
- */
-async function agentBulkCopyFiles(
-  executor: Executor,
-  srcRoot: string,
-  relFiles: string[],
-  destRoot: string,
-): Promise<void> {
-  if (relFiles.length === 0) return;
-  const listFile = `${destRoot}.copylist`;
-  await executor.writeFile(listFile, relFiles.join('\0'));
-  try {
-    const cmd =
-      `tar -C ${shellQuote(srcRoot)} --null -T ${shellQuote(listFile)} -cf - | ` +
-      `tar -C ${shellQuote(destRoot)} -xf -`;
-    await executor.exec(cmd, { timeoutMs: 120_000 });
-  } finally {
-    await executor.execArgv(['rm', '-f', listFile]);
-  }
-}
-
-/**
- * Host-agent backend (#1597) — reads/stages on the HOST via the node agent, so
- * it sees `/mnt/data/stacks/<service>` (not mounted into the servicebay
- * container). The staging dir + tar are built host-side; only the final tar
- * bytes cross back into the container (base64 over the agent channel, since the
- * agent's `read_file` is utf-8-only and would corrupt binary config).
- */
-export function agentFileBackend(executor: Executor): BackupFileBackend {
-  return {
-    async readdirTypes(dir) {
-      // `find -maxdepth 1` with a type tag per entry — one round-trip, and it
-      // distinguishes files from dirs without a stat-per-entry storm.
-      const { stdout } = await executor.execArgv([
-        'find', dir, '-maxdepth', '1', '-mindepth', '1', '-printf', '%y\t%f\n',
-      ]);
-      return stdout
-        .split('\n')
-        .map(l => l.trim())
-        .filter(Boolean)
-        .map(l => {
-          const [type, ...rest] = l.split('\t');
-          const name = rest.join('\t');
-          return { name, isDir: type === 'd', isFile: type === 'f' };
-        });
-    },
-    exists: target => executor.exists(target),
-    async isDirectory(target) {
-      // `test -d` exits non-zero (→ execArgv throws) for a non-dir.
-      return executor.execArgv(['test', '-d', target]).then(() => true, () => false);
-    },
-    readText: target => executor.readFile(target),
-    async copyFile(src, dest) {
-      await executor.execArgv(['cp', '-p', src, dest]);
-    },
-    bulkCopyFiles: (srcRoot, relFiles, destRoot) =>
-      agentBulkCopyFiles(executor, srcRoot, relFiles, destRoot),
-    writeText: (dest, content) => executor.writeFile(dest, content),
-    async mkdirp(dir) {
-      await executor.execArgv(['mkdir', '-p', dir]);
-    },
-    async makeStagingDir() {
-      const { stdout } = await executor.execArgv(['mktemp', '-d', '-t', 'sb-svcbackup-XXXXXX']);
-      return stdout.trim();
-    },
-    async tarStagingDir(stagingDir) {
-      // Tar host-side to a file, then read it back base64-encoded — no shell
-      // pipe and no exec template-literal (each arg is execArgv-quoted). The
-      // agent's read_file is utf-8-only, so base64 keeps binary config intact.
-      const tarPath = `${stagingDir}.tar`;
-      try {
-        await executor.execArgv(['tar', '-cf', tarPath, '-C', stagingDir, '.'], { timeoutMs: 120_000 });
-        const { stdout } = await executor.execArgv(['base64', tarPath], { timeoutMs: 120_000 });
-        return Buffer.from(stdout.replace(/\s+/g, ''), 'base64');
-      } finally {
-        await executor.execArgv(['rm', '-f', tarPath]);
-      }
-    },
-    async rmrf(target) {
-      await executor.execArgv(['rm', '-rf', target]);
-    },
-  };
-}
 
 /** A relative path is excluded when it equals an exclude entry or lives under
  *  one (an exclude dir). Excludes always win over includes. */
@@ -478,95 +377,6 @@ export async function resolveServiceDataDir(service: string): Promise<string> {
   return path.join(dataDir, subdir);
 }
 
-// Runs inside the NPM container: a consistent snapshot of the live WAL-mode
-// /data/database.sqlite to /data/database.sqlite.sb-backup using sqlite3's
-// online `.backup`, then `mv` over the canonical name so the file-copy producer
-// reads a torn-free copy. NPM's image bundles sqlite3.
-//
-// Since #1679 the live DB runs in WAL mode (the auth/nginx post-deploys flip
-// `journal_mode=WAL`), so committed writes can sit in the `-wal` sidecar rather
-// than the main file. We first `wal_checkpoint(TRUNCATE)` to fold the WAL back
-// into the main DB and truncate the sidecar — so even a plain reader of
-// database.sqlite would be consistent — then take the online `.backup` (itself
-// WAL-aware) into a single self-contained file the producer stages under the
-// canonical name. The checkpoint is best-effort (a busy DB may not fully
-// checkpoint); `.backup` guarantees consistency regardless.
-const NPM_SQLITE_SNAPSHOT_SH = [
-  'set -e',
-  "DB=/data/database.sqlite",
-  'if [ ! -f "$DB" ]; then echo "nodb"; exit 0; fi',
-  // Not every NPM image ships sqlite3 (#1894 — the current jc21 image does not).
-  // Probe for it FIRST and report a precise, greppable reason so the producer can
-  // degrade honestly (copy the live file) instead of logging a misleading
-  // "(unknown)". The real `sh: sqlite3: not found` stderr never made it back
-  // before, so this gap was undiagnosable from the logs.
-  'if ! command -v sqlite3 >/dev/null 2>&1; then echo "no-sqlite3"; exit 0; fi',
-  // Fold the WAL back into the main DB so the snapshot has no dependence on the
-  // -wal/-shm sidecars. Best-effort: ignore a non-zero (busy) checkpoint.
-  'sqlite3 "$DB" "PRAGMA wal_checkpoint(TRUNCATE);" || true',
-  // `.backup` produces a transactionally-consistent copy even mid-write.
-  'sqlite3 "$DB" ".backup \'$DB.sb-snap\'"',
-  'mv -f "$DB.sb-snap" "$DB.sb-backup"',
-  'echo "ok"',
-].join('\n');
-
-/**
- * Run a manifest's `collector` (in-container snapshot) before the file-copy
- * producer reads the data dir. For NPM: takes a consistent `sqlite3 .backup`
- * of the live database.sqlite to `database.sqlite.sb-backup` on disk, then
- * remaps the manifest's `data/database.sqlite` include to that snapshot path so
- * the producer stages the consistent copy under the original name. Returns a
- * possibly-rewritten manifest. Best-effort: if the snapshot can't be taken the
- * original manifest is returned (the producer copies the live file and logs).
- */
-export async function runBackupCollector(
-  manifest: ServiceBackupManifest,
-  node: string,
-): Promise<ServiceBackupManifest> {
-  if (manifest.collector?.kind !== 'npm-sqlite') return manifest;
-  try {
-    const agent = await agentManager.ensureAgent(node);
-    const find = await agent.sendCommand('exec', {
-      command: `podman ps --format '{{.Names}} {{.Image}}' | awk '/proxy-manager/{print $1; exit}'`,
-    }, { timeoutMs: 15_000 });
-    const container = ((find as { stdout?: string }).stdout || '').trim().split(/\s+/)[0];
-    if (!container) {
-      logger.warn('ExternalBackup', 'NPM container not found — backing up database.sqlite as-is (may be inconsistent)');
-      return manifest;
-    }
-    const b64 = Buffer.from(NPM_SQLITE_SNAPSHOT_SH).toString('base64');
-    const res = await agent.sendCommand('exec', {
-      command: `echo ${b64} | base64 -d | podman exec -i ${container} sh -`,
-    }, { timeoutMs: 30_000 });
-    const out = ((res as { stdout?: string }).stdout || '').trim();
-    const errOut = ((res as { stderr?: string }).stderr || '').trim();
-    const code = (res as { code?: number }).code;
-    // sqlite3 isn't in this NPM image — degrade honestly to copying the live DB
-    // (consistent enough since #1679 flips WAL and the live file is read whole),
-    // and say SO in the log rather than a misleading "(unknown)" (#1894).
-    if (out === 'no-sqlite3') {
-      logger.warn('ExternalBackup', 'NPM sqlite snapshot skipped: sqlite3 not present in the NPM container — backing up database.sqlite as-is');
-      return manifest;
-    }
-    if (code !== 0 || (out !== 'ok' && out !== 'nodb')) {
-      // Surface the REAL failure: prefer the container's stderr (the swallowed
-      // `sh: sqlite3: not found` etc.), then any stdout, before "(unknown)".
-      const reason = errOut || out || 'unknown';
-      logger.warn('ExternalBackup', `NPM sqlite snapshot failed (${reason}) — backing up database.sqlite as-is`);
-      return manifest;
-    }
-    // Stage the snapshot in place of the live DB, under the original rel path.
-    return {
-      ...manifest,
-      include: manifest.include.map(p => (p === 'data/database.sqlite' ? 'data/database.sqlite.sb-backup' : p)),
-      renames: { 'data/database.sqlite.sb-backup': 'data/database.sqlite' },
-    };
-  } catch (e) {
-    logger.warn('ExternalBackup', `NPM sqlite snapshot errored (${e instanceof Error ? e.message : String(e)}) — backing up database.sqlite as-is`);
-    return manifest;
-  }
-}
-
 /**
  * Produce a service's config tarball and write it (plus its meta sidecar) to
  * the NAS. Pass `serviceDataDir` to back up from an arbitrary location (the
@@ -577,25 +387,34 @@ export async function backupServiceToNas(
   service: string,
   opts: { serviceDataDir?: string; node?: string } = {},
 ): Promise<ServiceBackupResult> {
-  let manifest = getServiceManifest(service);
+  const manifest = getServiceManifest(service);
   if (!manifest) {
     throw new Error(`No backup manifest for service "${service}"`);
   }
-  // Run any in-container snapshot collector (e.g. NPM's consistent sqlite copy)
-  // before reading the data dir — only for a live box backup, never for the
-  // arbitrary-dir CLI seed (which has no running container to exec into).
-  if (manifest.collector && !opts.serviceDataDir) {
-    manifest = await runBackupCollector(manifest, opts.node || 'Local');
+  // A box backup (no serviceDataDir) reads the stacks dir host-side — the HEAVY
+  // walk/copy/tar that OOM'd the control plane in-process (#1894). It now runs in
+  // the resource-capped backup worker container (#1955); servicebay only launches
+  // it, polls status, then streams the produced tar to the NAS.
+  if (!opts.serviceDataDir) {
+    const { runBackupForServices } = await import('../backupWorker/service');
+    const completed = await runBackupForServices([service], opts.node || 'Local');
+    const [entry] = await uploadBackupRun(completed);
+    if (!entry || !entry.ok) {
+      throw new Error(entry?.error ?? `No backup produced for "${service}"`);
+    }
+    return {
+      service,
+      tarName: entry.tarName ?? `${service}.tar`,
+      metaName: `${entry.tarName ?? `${service}.tar`}.meta.json`,
+      size: entry.size ?? 0,
+      meta: { service, schemaVersion: META_SCHEMA_VERSION, createdAt: new Date().toISOString(), nodeId: os.hostname() },
+    };
   }
   // An explicit serviceDataDir is a container-local source (CLI seed / HA-OS
-  // import) → local fs backend. A box backup reads the stacks dir, which is NOT
-  // mounted into the servicebay container, so it MUST go through the host agent
-  // (#1597) — same path install/restore/deploy use.
-  const serviceDataDir = opts.serviceDataDir ?? (await resolveServiceDataDir(service));
-  const backend = opts.serviceDataDir
-    ? localFileBackend
-    : agentFileBackend(getExecutor(opts.node || 'Local'));
-  const tar = await buildServiceBackupTar(serviceDataDir, manifest, backend);
+  // import): the dir is already extracted in the servicebay container and is
+  // small (one uploaded archive), so it's staged in-process on the local fs — the
+  // worker can't see a container-local temp dir, and there's no OOM risk here.
+  const tar = await buildServiceBackupTar(opts.serviceDataDir, manifest, localFileBackend);
   return writeServiceBackupToNas(service, tar);
 }
 
@@ -609,27 +428,53 @@ export interface ServiceBackupRunEntry {
 }
 
 /**
- * On-demand "back up now" (#1217): back up every INSTALLED service that has a
- * backup manifest to the NAS, in one pass. Per-service failures are captured in
- * the result (one bad service doesn't abort the rest) — a NAS-not-configured /
- * connection error surfaces on the first attempt and repeats per service, which
- * the caller can detect (all `ok:false` with the same error).
+ * Stream a completed worker run's tars to the NAS, one at a time (bounded I/O —
+ * the control plane never holds them all), then remove the per-run out dir.
+ * Returns the per-service entries (ok services on the NAS + the worker's skip/
+ * error rollup). Shared by the per-service + back-up-all NAS paths (#1955).
  */
-export async function backupInstalledServicesToNas(): Promise<ServiceBackupRunEntry[]> {
-  const installed = new Set(Object.keys((await getConfig()).installedTemplates ?? {}));
+async function uploadBackupRun(
+  completed: import('../backupWorker/service').BackupRun,
+): Promise<ServiceBackupRunEntry[]> {
+  const { readBackupTar, cleanupBackupRun } = await import('../backupWorker/service');
+  const { exec, run, status } = completed;
   const results: ServiceBackupRunEntry[] = [];
-  for (const manifest of SERVICE_BACKUP_MANIFESTS) {
-    // A sibling-store entry (#1594) gates on its parent template, not its own
-    // synthetic service name (which is never an installedTemplates key).
-    if (!installed.has(getBackupGate(manifest))) continue;
-    try {
-      const r = await backupServiceToNas(manifest.service);
-      results.push({ service: manifest.service, ok: true, tarName: r.tarName, size: r.size });
-    } catch (e) {
-      results.push({ service: manifest.service, ok: false, error: e instanceof Error ? e.message : String(e) });
+  try {
+    for (const r of status.results) {
+      if (r.ok && r.tarName) {
+        try {
+          const tar = await readBackupTar(exec, run, r.tarName);
+          const written = await writeServiceBackupToNas(r.service, tar);
+          results.push({ service: r.service, ok: true, tarName: written.tarName, size: written.size });
+        } catch (e) {
+          results.push({ service: r.service, ok: false, error: e instanceof Error ? e.message : String(e) });
+        }
+      } else {
+        // skip (no config on disk yet) or a per-service worker error — mirror the
+        // old producer's per-service failure entry (one bad service doesn't abort).
+        results.push({ service: r.service, ok: false, error: r.detail ?? 'No config files to back up' });
+      }
     }
+  } finally {
+    await cleanupBackupRun(exec, run);
   }
   return results;
+}
+
+/**
+ * On-demand "back up now" (#1217): back up every INSTALLED service that has a
+ * backup manifest to the NAS, in one pass — now worker-backed (#1955). The heavy
+ * multi-service walk/copy/tar runs in ONE backup-worker container; servicebay
+ * launches it, polls the compact status, then streams each produced tar to the
+ * NAS. The old in-process per-service agent file-copy held every tar in the
+ * control plane and OOM'd the box (#1894). Per-service failures are captured in
+ * the result (one bad service doesn't abort the rest).
+ */
+export async function backupInstalledServicesToNas(): Promise<ServiceBackupRunEntry[]> {
+  const { runBackupForInstalled } = await import('../backupWorker/service');
+  const completed = await runBackupForInstalled();
+  if (!completed) return []; // nothing installed with a manifest
+  return uploadBackupRun(completed);
 }
 
 // ─── Nightly scheduler (#1217) ───────────────────────────────────────
@@ -782,7 +627,7 @@ async function pruneServiceBackups(service: string, keep: number): Promise<strin
  * Shared by the dir-based producer (`backupServiceToNas`) and the upload route
  * (#1351) so the on-NAS format has a single source of truth.
  */
-async function writeServiceBackupToNas(service: string, tar: Buffer): Promise<ServiceBackupResult> {
+export async function writeServiceBackupToNas(service: string, tar: Buffer): Promise<ServiceBackupResult> {
   const now = new Date();
   const meta: ServiceBackupMeta = {
     service,
