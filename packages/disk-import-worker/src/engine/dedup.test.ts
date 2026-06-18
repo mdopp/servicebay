@@ -19,6 +19,28 @@ function plan(files: ScannedFile[], hashes: Record<string, string>, catalog?: Im
   return buildPlan(buildInventory(files), hasherFrom(hashes), { catalog });
 }
 
+/**
+ * Two-tier plan: explicit cheap `fingerprints` + full `hashes`, with both
+ * resolvers spied so a test can assert WHICH files were actually read full
+ * (#1995). A full-hash fixture may be omitted for files that should never be
+ * fully read — the spy throws if such a file is full-hashed.
+ */
+function planFp(
+  files: ScannedFile[],
+  fingerprints: Record<string, string>,
+  hashes: Record<string, string>,
+  catalog?: ImportCatalog,
+) {
+  const fullHashed: string[] = [];
+  const hashOf = vi.fn((r: ImportRecord) => {
+    fullHashed.push(r.sourcePath);
+    return hasherFrom(hashes)(r);
+  });
+  const fingerprintOf = vi.fn(hasherFrom(fingerprints));
+  const result = buildPlan(buildInventory(files), hashOf, { catalog, fingerprintOf });
+  return { result, fullHashed, hashOf, fingerprintOf };
+}
+
 function actionOf(items: ImportPlanItem[], sourcePath: string) {
   return items.find(i => i.record.sourcePath === sourcePath)?.action;
 }
@@ -90,9 +112,71 @@ describe('buildPlan — conflicts (same target, different content)', () => {
     expect(result.conflicts).toHaveLength(1);
     expect(result.conflicts[0]).toMatchObject({
       target: 'documents/report.pdf',
+      existing: { sourcePath: '/diskA/report.pdf' },
+      incoming: { sourcePath: '/diskB/report.pdf' },
+    });
+  });
+});
+
+// Two-tier dedup (#1995): cheap fingerprint first, full hash only on a
+// fingerprint collision — so a backup disk full of same-size files is not read
+// whole, and dedup stays exact (a fingerprint match is CONFIRMED by full hash).
+describe('buildPlan — two-tier fingerprint dedup (#1995)', () => {
+  it('same size + DIFFERENT fingerprint → conflict WITHOUT reading either file whole', () => {
+    const files: ScannedFile[] = [
+      { path: '/diskA/report.pdf', size: 5000, mtimeMs: 0 },
+      { path: '/diskB/report.pdf', size: 5000, mtimeMs: 0 },
+    ];
+    const { result, fullHashed } = planFp(
+      files,
+      { '/diskA/report.pdf': 'fpA', '/diskB/report.pdf': 'fpB' },
+      {}, // no full-hash fixtures: full-hashing either file would throw
+    );
+    expect(actionOf(result.items, '/diskB/report.pdf')).toBe('conflict');
+    expect(fullHashed).toEqual([]); // distinct fingerprints settle it cheaply
+  });
+
+  it('same size + SAME fingerprint → full-hash CONFIRMS: identical content is skip-dupe', () => {
+    const files: ScannedFile[] = [
+      { path: '/diskA/report.pdf', size: 5000, mtimeMs: 0 },
+      { path: '/diskB/report.pdf', size: 5000, mtimeMs: 0 },
+    ];
+    const { result, fullHashed } = planFp(
+      files,
+      { '/diskA/report.pdf': 'fp', '/diskB/report.pdf': 'fp' },
+      { '/diskA/report.pdf': sha('a'), '/diskB/report.pdf': sha('a') },
+    );
+    expect(actionOf(result.items, '/diskA/report.pdf')).toBe('copy');
+    expect(actionOf(result.items, '/diskB/report.pdf')).toBe('skip-dupe');
+    expect(fullHashed.sort()).toEqual(['/diskA/report.pdf', '/diskB/report.pdf']);
+  });
+
+  it('same size + SAME fingerprint but DIFFERENT full hash → confirmed conflict with full shas', () => {
+    const files: ScannedFile[] = [
+      { path: '/diskA/report.pdf', size: 5000, mtimeMs: 0 },
+      { path: '/diskB/report.pdf', size: 5000, mtimeMs: 0 },
+    ];
+    const { result } = planFp(
+      files,
+      { '/diskA/report.pdf': 'fp', '/diskB/report.pdf': 'fp' },
+      { '/diskA/report.pdf': sha('a'), '/diskB/report.pdf': sha('b') },
+    );
+    expect(result.conflicts[0]).toMatchObject({
       existing: { sourcePath: '/diskA/report.pdf', sha256: sha('a') },
       incoming: { sourcePath: '/diskB/report.pdf', sha256: sha('b') },
     });
+  });
+
+  it('size-unique file is NEVER fingerprinted or hashed', () => {
+    const files: ScannedFile[] = [
+      { path: '/disk/a.jpg', size: 111, mtimeMs: 0 },
+      { path: '/disk/b.mp3', size: 222, mtimeMs: 0 },
+    ];
+    const { result, fullHashed, fingerprintOf } = planFp(files, {}, {});
+    expect(actionOf(result.items, '/disk/a.jpg')).toBe('copy');
+    expect(actionOf(result.items, '/disk/b.mp3')).toBe('copy');
+    expect(fullHashed).toEqual([]);
+    expect(fingerprintOf).not.toHaveBeenCalled();
   });
 });
 

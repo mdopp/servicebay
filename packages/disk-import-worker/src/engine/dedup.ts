@@ -29,6 +29,22 @@ import type {
 export type HashResolver = (record: ImportRecord) => string;
 
 export interface PlanOptions {
+  /**
+   * Cheap content FINGERPRINT resolver (e.g. sha256 of the first+last 64KB +
+   * size) used to dedup same-size files WITHOUT reading them whole. Only when
+   * two files also share a fingerprint do we fall back to the full `hashOf` to
+   * confirm they're truly identical (avoids a false "duplicate" → never drops a
+   * file). On a backup disk full of same-size files this turns hours of full
+   * reads into a few MB. Defaults to `hashOf` when omitted (correct, just not
+   * faster). (#1995)
+   */
+  fingerprintOf?: HashResolver;
+  /**
+   * Progress callback fired while fingerprinting the size-colliding files (the
+   * only expensive, I/O-bound part of planning a large disk). Lets the worker
+   * write live progress so a long plan never looks hung. (#1995)
+   */
+  onProgress?: (done: number, total: number) => void;
   /** Per-record classification hints (keyed by source path). */
   hints?: Record<string, ClassifyHints>;
   /** Optional LLM-residue classifier seam (#1695); never invoked here itself. */
@@ -169,41 +185,35 @@ export function buildPlan(
     else bySize.set(c.record.size, [c]);
   }
 
-  // Hash a record at most once.
-  const hashCache = new Map<string, string>();
-  const hashFor = (record: ImportRecord): string => {
-    if (record.sha256) return record.sha256;
-    const cached = hashCache.get(record.sourcePath);
-    if (cached) return cached;
-    const h = hashOf(record);
-    hashCache.set(record.sourcePath, h);
-    return h;
-  };
-
-  // Track, within this tree, the content hash already claiming each destination
-  // slot. The slot key is (area, target): the SAME target in two areas (e.g.
-  // `shared` vs a user area) is two distinct slots — private dedups within
-  // itself, `shared` merges across sources.
-  const targetOwner = new Map<string, { sha256: string; sourcePath: string }>();
-
-  // 3. Decide each kept record. Iterate in stable (sourcePath) order so the
-  //    first file at a target is the deterministic winner.
+  // Stable (sourcePath) iteration order so the first file at a target wins.
   const ordered = keep
     .slice()
     .sort((a, b) =>
       a.record.sourcePath < b.record.sourcePath ? -1 : a.record.sourcePath > b.record.sourcePath ? 1 : 0,
     );
 
+  // Two-tier content keys: cheap fingerprint first, full hash only on a
+  // fingerprint collision or a cataloged target (#1995).
+  const keys = resolveContentKeys(ordered, bySize, {
+    hashOf,
+    fingerprintOf: opts.fingerprintOf ?? hashOf,
+    catalog,
+    areaOf,
+    onProgress: opts.onProgress,
+  });
+
+  // Track, within this tree, the content hash already claiming each destination
+  // slot. The slot key is (area, target): the SAME target in two areas (e.g.
+  // `shared` vs a user area) is two distinct slots — private dedups within
+  // itself, `shared` merges across sources.
+  const targetOwner = new Map<string, { key: string; sha256?: string; sourcePath: string }>();
+
+  // 3. Decide each kept record from its precomputed content key.
   for (const c of ordered) {
     const target = c.target!;
     const area = areaOf(c.record);
     const slot = dedupSlot(area, target);
-    const sizeGroup = bySize.get(c.record.size)!;
-    const catHit = catalog?.getByTarget(target, area);
-    // Hash only when this size collides in-tree, the slot already has an in-tree
-    // owner, or the catalog already holds this content slot.
-    const mustHash = sizeGroup.length > 1 || targetOwner.has(slot) || catHit !== undefined;
-    const action = decide(c, target, area, slot, mustHash ? hashFor : null, {
+    const action = decide(c, target, area, slot, keys.get(c.record.sourcePath)!, {
       targetOwner,
       catalog,
       conflicts,
@@ -224,52 +234,129 @@ function dedupSlot(area: string, target: string): string {
   return `${area} ${target}`;
 }
 
+/**
+ * A record's comparable content identity. `key` is what dedup compares (equal
+ * keys mean same content); `sha256` is the FULL hash, present only when the
+ * record was fully hashed (needed for catalog comparison, which stores full
+ * hashes).
+ */
+interface KeyInfo {
+  key: string;
+  sha256?: string;
+}
+
+/**
+ * Two-tier dedup keying (#1995). Reads as little as possible:
+ *  - size-unique files are NEVER read (`u:` key, can't duplicate anything);
+ *  - size-colliding files get a cheap FINGERPRINT (`f:` key, first/last 64KB);
+ *  - only files that ALSO collide on fingerprint, or whose target is already in
+ *    the catalog (which stores full hashes), are FULLY hashed (`h:` key).
+ * Progress is reported across the fingerprint pass (the dominant I/O on a big
+ * disk) so the worker can show live planning progress and never look hung.
+ */
+function resolveContentKeys(
+  ordered: Classified[],
+  bySize: Map<number, Classified[]>,
+  opts: {
+    hashOf: HashResolver;
+    fingerprintOf: HashResolver;
+    catalog?: ImportCatalog;
+    areaOf: (record: ImportRecord) => string;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Map<string, KeyInfo> {
+  const { hashOf, fingerprintOf, catalog, areaOf, onProgress } = opts;
+
+  // Pass 1: fingerprint every size-colliding record (the heavy, I/O-bound pass).
+  const colliding = ordered.filter(c => (bySize.get(c.record.size)?.length ?? 0) > 1);
+  const total = colliding.length;
+  const fpOf = new Map<string, string>();
+  let done = 0;
+  for (const c of colliding) {
+    fpOf.set(c.record.sourcePath, c.record.sha256 ?? fingerprintOf(c.record));
+    done += 1;
+    if (onProgress && (done % 1000 === 0 || done === total)) onProgress(done, total);
+  }
+
+  // Count (size, fingerprint) groups to find what still collides after pass 1.
+  const byFp = new Map<string, number>();
+  for (const c of colliding) {
+    const k = `${c.record.size}:${fpOf.get(c.record.sourcePath)}`;
+    byFp.set(k, (byFp.get(k) ?? 0) + 1);
+  }
+
+  // Full-hash cache (each record at most once).
+  const fullCache = new Map<string, string>();
+  const fullHash = (record: ImportRecord): string => {
+    if (record.sha256) return record.sha256;
+    const cached = fullCache.get(record.sourcePath);
+    if (cached) return cached;
+    const h = hashOf(record);
+    fullCache.set(record.sourcePath, h);
+    return h;
+  };
+
+  // Pass 2: assign each record its comparable key.
+  const out = new Map<string, KeyInfo>();
+  for (const c of ordered) {
+    const fp = fpOf.get(c.record.sourcePath);
+    const catHit = catalog?.getByTarget(c.target!, areaOf(c.record));
+    const fpCollides = fp !== undefined && (byFp.get(`${c.record.size}:${fp}`) ?? 0) > 1;
+    if (catHit !== undefined || fpCollides) {
+      const sha = fullHash(c.record);
+      out.set(c.record.sourcePath, { key: `h:${sha}`, sha256: sha });
+    } else if (fp !== undefined) {
+      out.set(c.record.sourcePath, { key: `f:${fp}` });
+    } else {
+      out.set(c.record.sourcePath, { key: `u:${c.record.sourcePath}` });
+    }
+  }
+  return out;
+}
+
 function decide(
   c: Classified,
   target: string,
   area: string,
   slot: string,
-  hashFor: HashResolver | null,
+  info: KeyInfo,
   ctx: {
-    targetOwner: Map<string, { sha256: string; sourcePath: string }>;
+    targetOwner: Map<string, { key: string; sha256?: string; sourcePath: string }>;
     catalog?: ImportCatalog;
     conflicts: Conflict[];
   },
 ): ImportAction {
-  // No hashing needed → unique file, plain copy, claim the slot.
-  if (!hashFor) {
-    return 'copy';
+  const { key, sha256 } = info;
+
+  // Catalog dedup compares FULL hashes (the catalog stores full sha256). sha256
+  // is present exactly when this record was fully hashed, which resolveContentKeys
+  // guarantees whenever the target is already cataloged.
+  if (sha256 !== undefined) {
+    if (ctx.catalog?.has(sha256, target, area)) return 'skip-dupe';
+    const catHit = ctx.catalog?.getByTarget(target, area);
+    if (catHit && catHit.sha256 !== sha256) {
+      ctx.conflicts.push({
+        target,
+        existing: { sourcePath: catHit.sourcePath, sha256: catHit.sha256 },
+        incoming: { sourcePath: c.record.sourcePath, sha256 },
+      });
+      return 'conflict';
+    }
   }
 
-  const sha = hashFor(c.record);
-
-  // Already imported this exact content to this exact area+target (delta run)?
-  if (ctx.catalog?.has(sha, target, area)) return 'skip-dupe';
-
-  // A different content already cataloged at this area+target → conflict.
-  const catHit = ctx.catalog?.getByTarget(target, area);
-  if (catHit && catHit.sha256 !== sha) {
-    ctx.conflicts.push({
-      target,
-      existing: { sourcePath: catHit.sourcePath, sha256: catHit.sha256 },
-      incoming: { sourcePath: c.record.sourcePath, sha256: sha },
-    });
-    return 'conflict';
-  }
-
-  // In-tree collision at this slot (same area + target)?
+  // In-tree collision at this slot (same area + target)? Compare by content key.
   const owner = ctx.targetOwner.get(slot);
   if (owner) {
-    if (owner.sha256 === sha) return 'skip-dupe'; // same bytes, different path
+    if (owner.key === key) return 'skip-dupe'; // same content, different path
     ctx.conflicts.push({
       target,
-      existing: { sourcePath: owner.sourcePath, sha256: owner.sha256 },
-      incoming: { sourcePath: c.record.sourcePath, sha256: sha },
+      existing: { sourcePath: owner.sourcePath, sha256: owner.sha256 ?? '' },
+      incoming: { sourcePath: c.record.sourcePath, sha256: sha256 ?? '' },
     });
     return 'conflict';
   }
 
-  // First copy to this slot — claim it.
-  ctx.targetOwner.set(slot, { sha256: sha, sourcePath: c.record.sourcePath });
+  // First file to claim this slot.
+  ctx.targetOwner.set(slot, { key, sha256, sourcePath: c.record.sourcePath });
   return 'copy';
 }
