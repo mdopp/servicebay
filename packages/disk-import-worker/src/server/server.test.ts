@@ -95,4 +95,32 @@ describe('worker server handleRequest', () => {
     await handleRequest(deps(), mockReq('GET', '/nope'), res);
     expect(res.statusCode).toBe(404);
   });
+
+  it('re-plans via POST /api/replan and returns the new counts', async () => {
+    const replan = vi.fn(async () => ({ planned: 5, conflicts: 0 }));
+    const res = mockRes();
+    await handleRequest(
+      deps({ replan }),
+      mockReq('POST', '/api/replan', { explicit: { mdopp: { owner: 'mdopp' } } }),
+      res,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ ok: true, planned: 5, conflicts: 0 });
+    expect(replan).toHaveBeenCalledWith({ explicit: { mdopp: { owner: 'mdopp' } }, rootDefault: undefined });
+  });
+
+  it('503s /api/replan when the seam is absent (sandboxed deps)', async () => {
+    const res = mockRes();
+    await handleRequest(deps(), mockReq('POST', '/api/replan', { explicit: {} }), res);
+    expect(res.statusCode).toBe(503);
+  });
+
+  it('409s /api/replan when there is no plan yet', async () => {
+    const replan = vi.fn(async () => {
+      throw new Error('disk-import: no plan to re-plan — scan first');
+    });
+    const res = mockRes();
+    await handleRequest(deps({ replan }), mockReq('POST', '/api/replan', { explicit: {} }), res);
+    expect(res.statusCode).toBe(409);
+  });
 });

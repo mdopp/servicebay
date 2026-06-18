@@ -22,6 +22,7 @@ export * from './engine/inventory';
 export * from './engine/mounter';
 export * from './engine/ollama';
 export * from './engine/plan';
+export * from './engine/replan';
 export * from './engine/routing';
 export * from './engine/suggest';
 

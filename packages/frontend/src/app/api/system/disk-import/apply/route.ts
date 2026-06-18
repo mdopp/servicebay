@@ -3,6 +3,7 @@ import { applyRun } from '@/lib/diskImport/service';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { makeExec, resolveNode, SHARE_GID } from '../wiring';
+import { parseReplanBody } from '../replanBody';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,13 +16,19 @@ export const dynamic = 'force-dynamic';
  * copy is the rsync subprocess (streams) and mkdir/chown are batched, so the
  * control-plane heap stays bounded. Status.json reflects apply progress for the
  * tile poll.
+ *
+ * When the body carries the page's per-folder routing rules (#2000), servicebay
+ * RE-PLANS with them first (re-routes/re-dedups per owner in the worker, over the
+ * live mount) so files land in `data/<owner>/<category>/…` — then applies the
+ * rewritten plan.json unchanged. An empty/absent body applies the auto-sorted plan.
  */
 export const POST = withApiHandler(
   { tokenScope: 'mutate' },
-  async () => {
+  async ({ request }) => {
     try {
       const node = resolveNode();
-      const result = await applyRun(makeExec(node), SHARE_GID);
+      const replanReq = await parseReplanBody(request);
+      const result = await applyRun(makeExec(node), SHARE_GID, replanReq);
       return NextResponse.json({ ok: true, ...result });
     } catch (e) {
       return apiError(e, { tag: 'api:system:disk-import:apply', status: 400, exposeMessage: true });

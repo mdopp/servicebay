@@ -12,6 +12,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, HardDrive, RefreshCw, Download } from 'lucide-react';
+import { RoutingTree } from './_lib/RoutingTree';
+import type { ReviewTree, Rule } from './_lib/types';
 
 interface DeviceView {
   path: string;
@@ -133,11 +135,62 @@ function useDiskImportRun(selected: string, onAfterAbort: () => void) {
   };
 
   // APPLY runs on the HOST in servicebay (#1972) — the sandboxed worker only
-  // scanned/planned. POST kicks off the privileged host apply; the status poll
-  // then reflects the `applying` → `done` phase the backend writes.
-  const apply = () => runAction('/api/system/disk-import/apply');
+  // scanned/planned. POST kicks off the privileged host apply; when routing rules
+  // are passed (#2000) servicebay re-plans with them (re-route + re-dedup per
+  // owner) BEFORE applying. The status poll reflects `applying` → `done`.
+  const apply = (rules?: Record<string, Rule>, rootDefault?: Rule) =>
+    runAction('/api/system/disk-import/apply', rules ? { rules, rootDefault } : undefined);
 
   return { run, launching, error, launch, startOver, apply };
+}
+
+/** Fetch + edit the per-folder routing tree (#2000). Holds the explicit rule map
+ *  and re-fetches the tree (host-side re-resolution) on each edit so resolved
+ *  rules + the live target preview stay current. */
+function useRoutingTree(active: boolean) {
+  const [data, setData] = useState<ReviewTree | null>(null);
+  const [rules, setRules] = useState<Record<string, Rule>>({});
+
+  const fetchTree = useCallback(async (currentRules: Record<string, Rule>) => {
+    const hasEdits = Object.keys(currentRules).length > 0;
+    const res = await fetch('/api/system/disk-import/tree', {
+      method: hasEdits ? 'POST' : 'GET',
+      ...(hasEdits
+        ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules: currentRules }) }
+        : {}),
+    });
+    return res.ok ? ((await res.json()) as ReviewTree) : null;
+  }, []);
+
+  // Load the tree when the plan becomes ready. The setState is in the async
+  // callback (post-await), guarded by a cancellation flag — never synchronous.
+  useEffect(() => {
+    if (!active) return;
+    let live = true;
+    void fetchTree({}).then(t => {
+      if (live && t) setData(t);
+    });
+    return () => {
+      live = false;
+    };
+  }, [active, fetchTree]);
+
+  // Set one folder's axis (or clear it when re-picking the inherited value is not
+  // needed — we keep explicit picks; the engine treats absent axes as inherited).
+  const setRule = useCallback(
+    (dir: string, patch: Rule) => {
+      setRules(prev => {
+        const next = { ...prev, [dir]: { ...prev[dir], ...patch } };
+        void fetchTree(next).then(t => {
+          if (t) setData(t);
+        });
+        return next;
+      });
+    },
+    [fetchTree],
+  );
+
+  return { data, rules, setRule };
 }
 
 export default function DiskImportPage() {
@@ -147,9 +200,12 @@ export default function DiskImportPage() {
     setSelected('');
     refresh();
   });
+  // The routing tree is only meaningful once a scan has produced a plan to review.
+  const planReady = tileState(run) === 'plan-ready';
+  const { data: tree, rules, setRule } = useRoutingTree(planReady);
 
   return (
-    <div className="p-6 max-w-2xl space-y-4 overflow-auto">
+    <div className="p-6 max-w-3xl space-y-4 overflow-auto">
       <header className="flex items-center gap-3">
         <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
           <Download size={20} />
@@ -171,10 +227,13 @@ export default function DiskImportPage() {
         loading={loading}
         selected={selected}
         launching={launching}
+        tree={tree}
+        rules={rules}
+        onSetRule={setRule}
         onSelect={setSelected}
         onRefresh={refresh}
         onLaunch={() => void launch()}
-        onApply={() => void apply()}
+        onApply={() => void apply(Object.keys(rules).length ? rules : undefined)}
         onStartOver={() => void startOver()}
       />
     </div>
@@ -206,6 +265,9 @@ function TileBody({
   loading,
   selected,
   launching,
+  tree,
+  rules,
+  onSetRule,
   onSelect,
   onRefresh,
   onLaunch,
@@ -217,6 +279,9 @@ function TileBody({
   loading: boolean;
   selected: string;
   launching: boolean;
+  tree: ReviewTree | null;
+  rules: Record<string, Rule>;
+  onSetRule: (dir: string, patch: Rule) => void;
   onSelect: (path: string) => void;
   onRefresh: () => void;
   onLaunch: () => void;
@@ -227,7 +292,17 @@ function TileBody({
   if (state === 'active') return <WorkerProgress run={run!} onStartOver={onStartOver} />;
   if (state === 'apply-done') return <ApplyDone run={run!} onStartOver={onStartOver} />;
   if (state === 'plan-ready')
-    return <PlanReady run={run!} applying={launching} onApply={onApply} onStartOver={onStartOver} />;
+    return (
+      <PlanReady
+        run={run!}
+        applying={launching}
+        tree={tree}
+        rules={rules}
+        onSetRule={onSetRule}
+        onApply={onApply}
+        onStartOver={onStartOver}
+      />
+    );
   return (
     <DevicePicker
       devices={devices}
@@ -359,28 +434,57 @@ function PlanReview({ status }: { status: NonNullable<RunStatus['status']> }) {
   );
 }
 
-/** Scan/plan complete — show the in-page review, then APPLY on the host. */
+/** Scan/plan complete — show the per-category summary + the per-folder routing
+ *  tree (owner + target pickers), then APPLY on the host (#2000). The apply
+ *  re-plans with the operator's picks first (re-route + re-dedup per owner). */
 function PlanReady({
   run,
   applying,
+  tree,
+  rules,
+  onSetRule,
   onApply,
   onStartOver,
 }: {
   run: RunStatus;
   applying: boolean;
+  tree: ReviewTree | null;
+  rules: Record<string, Rule>;
+  onSetRule: (dir: string, patch: Rule) => void;
   onApply: () => void;
   onStartOver: () => void;
 }) {
+  const edited = Object.keys(rules).length > 0;
   return (
     <div className="space-y-4 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
       <PlanReview status={run.status!} />
+
+      <div className="space-y-2">
+        <div>
+          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Where each folder goes</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Pick an owner and a target per folder — sub-folders inherit unless you change them.
+            Assigning each person their own folders splits duplicate clashes and files land in that
+            person&apos;s area + their Immich.
+          </p>
+        </div>
+        {tree ? (
+          <RoutingTree data={tree} rules={rules} onSetRule={onSetRule} />
+        ) : (
+          <p className="text-xs text-gray-500 flex items-center gap-2">
+            <Loader2 size={12} className="animate-spin" /> Loading folders…
+          </p>
+        )}
+      </div>
+
       <div>
         <button
           onClick={onApply}
           disabled={applying}
           className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg disabled:opacity-50"
         >
-          {applying && <Loader2 size={14} className="animate-spin" />} <Download size={14} /> Import now
+          {applying && <Loader2 size={14} className="animate-spin" />} <Download size={14} />{' '}
+          {edited ? 'Re-plan & import' : 'Import now'}
         </button>
       </div>
       <button

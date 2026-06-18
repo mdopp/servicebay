@@ -38,6 +38,7 @@ import { buildInventory, type ScannedFile } from '../engine/inventory';
 import { buildPlan, type HashResolver } from '../engine/dedup';
 import { ImportCatalog } from '../engine/catalog';
 import { applyPlan } from '../engine/plan';
+import { runReplan, REPLAN_REQUEST_FILE, type ReplanRequest, type ReplanIO } from '../engine/replan';
 import {
   immichProvisionFromEnv,
   provisionExternalLibraries,
@@ -106,6 +107,7 @@ interface ArgDraft {
   shareGid: number;
   serve?: boolean;
   port?: number;
+  replan?: boolean;
 }
 
 const VALUE_ARGS = new Set(['--mount', '--out', '--catalog', '--run-id', '--share-gid', '--port']);
@@ -141,20 +143,37 @@ export interface ServeArgs {
   shareGid: number;
 }
 
+/**
+ * Re-plan-mode options (#2000). servicebay writes the routing rules to
+ * `replan-request.json` in the shared out dir, then `podman exec`s the running
+ * serve container with `--replan` so the re-plan hashes via the LIVE mount
+ * (`mount`) — the control plane can't hash (#1983). Reads the existing plan.json
+ * (no re-scan) and rewrites it + the status rollup in place.
+ */
+export interface ReplanArgs {
+  replan: true;
+  mount: string;
+  out: string;
+}
+
 function defaultRunId(): string {
   return process.env.DISK_IMPORT_RUN_ID ?? createHash('sha1').update(String(Date.now())).digest('hex').slice(0, 12);
 }
 
-export function parseWorkerArgs(argv: string[]): WorkerOptions | ServeArgs | { help: true } {
+export function parseWorkerArgs(argv: string[]): WorkerOptions | ServeArgs | ReplanArgs | { help: true } {
   const draft: ArgDraft = { shareGid: DEFAULT_SHARE_GID };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') return { help: true };
     else if (arg === '--serve') draft.serve = true;
+    else if (arg === '--replan') draft.replan = true;
     else if (arg === '--apply') draft.mode = 'apply';
     else if (arg === '--dry-run') draft.mode = 'dry-run';
     else if (VALUE_ARGS.has(arg)) applyValueArg(draft, arg, argv[++i]);
     else throw new WorkerArgError(`Unknown argument: ${arg}`);
+  }
+  if (draft.replan) {
+    return { replan: true, mount: draft.mount ?? '/mnt/src', out: draft.out ?? '/out' };
   }
   if (draft.serve) {
     return {
@@ -400,10 +419,51 @@ export async function realProvisionImmich(photoOwners: string[]): Promise<string
   }
 }
 
+/**
+ * Run the re-plan over the already-scanned plan.json with the routing rules from
+ * `replan-request.json` in the out dir (#2000). Hashes via the LIVE read-only
+ * mount (the worker can; servicebay can't, #1983), rewrites plan.json + status.
+ * Invoked by servicebay via `podman exec <serve-container> … --replan`.
+ */
+export async function runReplanCli(opts: ReplanArgs, io?: ReplanIO): Promise<void> {
+  const resolved = io ?? realReplanIO(opts.out);
+  const reqPath = path.join(opts.out, REPLAN_REQUEST_FILE);
+  const request = JSON.parse(readFileSync(reqPath, 'utf8')) as ReplanRequest;
+  const plan = await runReplan(request, resolved);
+  console.log(`disk-import: re-planned ${plan.items.length} items, ${plan.conflicts.length} conflict(s).`);
+}
+
+/** Real (fs-backed) re-plan IO: reads the out dir, hashes via the live mount. */
+function realReplanIO(out: string): ReplanIO {
+  const writeJson = async (file: string, data: unknown): Promise<void> => {
+    mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.tmp`;
+    writeFileSync(tmp, JSON.stringify(data));
+    await fs.rename(tmp, file).catch(() => writeFileSync(file, JSON.stringify(data)));
+  };
+  return {
+    readJson: async <T>(file: string): Promise<T | null> => {
+      try {
+        return JSON.parse(readFileSync(path.join(out, file), 'utf8')) as T;
+      } catch {
+        return null;
+      }
+    },
+    writePlanSidecar: sidecar => writeJson(path.join(out, PLAN_SIDECAR_FILE), sidecar),
+    writeStatus: status => writeJson(path.join(out, STATUS_FILE), status),
+    hashOf: hashFileContent,
+    fingerprintOf: fingerprintFileContent,
+  };
+}
+
 async function main(): Promise<void> {
   const parsed = parseWorkerArgs(process.argv.slice(2));
   if ('help' in parsed) {
     console.log(USAGE);
+    return;
+  }
+  if ('replan' in parsed) {
+    await runReplanCli(parsed);
     return;
   }
   if ('serve' in parsed) {

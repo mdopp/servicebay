@@ -35,10 +35,12 @@ import {
   scanLibrariesForOwners,
   STATUS_FILE,
   PLAN_SIDECAR_FILE,
+  REPLAN_REQUEST_FILE,
   type SafeExec,
   type PlanSidecar,
   type WorkerStatus,
   type ImportRecord,
+  type ReplanRequest,
 } from '@servicebay/disk-import-worker';
 
 import { DATA_DIR } from '@/lib/dirs';
@@ -82,6 +84,54 @@ export function rebasePlanSource(sidecar: PlanSidecar, hostMountpoint: string): 
     ...sidecar.plan,
     items: sidecar.plan.items.map(it => ({ ...it, record: { ...it.record, sourcePath: rebase(it.record.sourcePath) } })),
   };
+}
+
+/** The worker container's in-container out path (its `-v <outDir>:/out` mount). */
+const WORKER_OUT_IN_CONTAINER = '/out';
+
+export interface ReplanImportArgs {
+  /** servicebay's REAL agent SafeExec (runs `podman exec` on the host as core). */
+  exec: SafeExec;
+  /** The run whose plan.json to re-plan. */
+  runId: string;
+  /** The serve container name to `podman exec --replan` into (#2000). */
+  container: string;
+  /** The page's routing rules + disk-default owner. */
+  request: ReplanRequest;
+}
+
+/**
+ * RE-PLAN the active run with the page's per-folder routing rules (#2000).
+ *
+ * The re-plan must re-dedup PER OWNER (so a cross-owner duplicate lands in BOTH
+ * owners' areas instead of being dropped as a `shared`-scope dupe) — which needs
+ * CONTENT HASHING, and only the worker can hash (the source disk is bind-mounted
+ * `/mnt/src` in the worker, NOT in servicebay's container — #1983). So servicebay
+ * writes the routing rules into the shared out dir and `podman exec`s the running
+ * serve container to re-plan in-place: it reads the existing plan.json (no re-scan),
+ * re-routes/re-dedups over the live mount, and rewrites plan.json + status.json.
+ * The subsequent host-apply then applies the rewritten plan.json UNCHANGED.
+ */
+export async function replanImport(args: ReplanImportArgs): Promise<void> {
+  const { exec, runId, container, request } = args;
+  const outDir = runOutDir(runId);
+  // Write the request the worker reads. servicebay sees the out dir in-container at
+  // runOutDir() (same bytes as the worker's host-bind-mounted /out), so a direct fs
+  // write here lands in the worker's /out.
+  await mkdir(outDir, { recursive: true });
+  await writeFile(path.join(outDir, REPLAN_REQUEST_FILE), JSON.stringify(request), 'utf-8');
+
+  // Run a one-shot `--replan` process IN the serve container (it has /mnt/src +
+  // /out): reads replan-request.json + plan.json, re-plans over the live mount,
+  // rewrites plan.json + status.json. The serve server keeps running alongside.
+  const { code, stdout, stderr } = await exec([
+    'podman', 'exec', container,
+    'npx', 'tsx', 'packages/disk-import-worker/src/cli/main.ts',
+    '--replan', '--out', WORKER_OUT_IN_CONTAINER,
+  ]);
+  if (code !== 0) {
+    throw new Error(`disk-import: re-plan failed (code ${code}): ${stderr || stdout}`);
+  }
 }
 
 export interface ApplyImportArgs {
