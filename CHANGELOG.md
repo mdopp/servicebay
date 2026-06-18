@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.128.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.128.0...servicebay-v4.128.1) (2026-06-18)
+
+
+### Bug Fixes
+
+* backup-worker direct tar read + disk-import mount idempotency ([2b6ccc6](https://github.com/mdopp/servicebay/commit/2b6ccc638b897707f1bf799ae99a99c0ca25c357))
+* **backupWorker:** read produced tars directly off the out volume, not via base64 exec ([ea2899c](https://github.com/mdopp/servicebay/commit/ea2899cc38e91232d868c22837ed30365a36965d)), closes [#1973](https://github.com/mdopp/servicebay/issues/1973)
+* **diskImport:** make worker device mount idempotent + sweep stale mounts ([7440cd7](https://github.com/mdopp/servicebay/commit/7440cd77a93251f597eda7a7bbfbcdb148e22275)), closes [#1941](https://github.com/mdopp/servicebay/issues/1941)
+
 ## [4.128.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.127.0...servicebay-v4.128.0) (2026-06-18)
 
 
