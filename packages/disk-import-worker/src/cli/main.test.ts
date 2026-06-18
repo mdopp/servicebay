@@ -1,13 +1,18 @@
 import { describe, it, expect, vi } from 'vitest';
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import {
   parseWorkerArgs,
   runWorker,
+  fingerprintFileContent,
   WorkerArgError,
   type WorkerIO,
   type WorkerOptions,
 } from './main';
 import type { ScannedFile } from '../engine/inventory';
+import type { ImportRecord } from '../engine/types';
 import type { WorkerStatus, PlanSidecar } from '../contract/status';
 
 function makeIO(overrides: Partial<WorkerIO> = {}): {
@@ -154,5 +159,47 @@ describe('runWorker (apply)', () => {
     });
     await runWorker({ ...dryOpts, mode: 'apply' }, io);
     expect(provisionImmich).not.toHaveBeenCalled();
+  });
+});
+
+describe('fingerprintFileContent (#1995)', () => {
+  const rec = (sourcePath: string, size: number): ImportRecord =>
+    ({ sourcePath, size, mtimeMs: 0 }) as ImportRecord;
+
+  it('small file (<=192KB): deterministic; same bytes -> same fp, different -> different', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'sb-fp-'));
+    try {
+      writeFileSync(path.join(dir, 'a'), 'hello world');
+      writeFileSync(path.join(dir, 'b'), 'hello world');
+      writeFileSync(path.join(dir, 'c'), 'HELLO WORLD');
+      const fa = fingerprintFileContent(rec(path.join(dir, 'a'), 11));
+      const fb = fingerprintFileContent(rec(path.join(dir, 'b'), 11));
+      const fc = fingerprintFileContent(rec(path.join(dir, 'c'), 11));
+      expect(fa).toBe(fb);
+      expect(fa).not.toBe(fc);
+      expect(fa).toMatch(/^[0-9a-f]{64}$/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('large file (>192KB): differs only in the MIDDLE -> different fingerprint', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'sb-fp-'));
+    try {
+      const size = 64 * 1024 * 4; // 256KB -> head/middle/tail path
+      const base = Buffer.alloc(size, 0x41); // all 'A'
+      const mid = Buffer.from(base);
+      mid[Math.floor(size / 2)] = 0x42; // flip one byte in the middle
+      writeFileSync(path.join(dir, 'big1'), base);
+      writeFileSync(path.join(dir, 'big2'), base);
+      writeFileSync(path.join(dir, 'bigM'), mid);
+      const f1 = fingerprintFileContent(rec(path.join(dir, 'big1'), size));
+      const f2 = fingerprintFileContent(rec(path.join(dir, 'big2'), size));
+      const fM = fingerprintFileContent(rec(path.join(dir, 'bigM'), size));
+      expect(f1).toBe(f2);
+      expect(f1).not.toBe(fM); // middle sample catches a mid-file difference
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
