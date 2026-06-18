@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.129.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.129.0...servicebay-v4.129.1) (2026-06-18)
+
+
+### Bug Fixes
+
+* **disk-import:** adapt dev script to async applyPlan hashOf ([#1983](https://github.com/mdopp/servicebay/issues/1983)) ([2ae576c](https://github.com/mdopp/servicebay/commit/2ae576cbf05390f5c359d7a9f5af89940cb88e40))
+* **disk-import:** apply-done UX + auto-unmount source after apply ([577bbb2](https://github.com/mdopp/servicebay/commit/577bbb27ed92cd819d908be54159c8f71b57de31)), closes [#1981](https://github.com/mdopp/servicebay/issues/1981) [#1982](https://github.com/mdopp/servicebay/issues/1982)
+* **disk-import:** hash on the host via exec, lazily — host-apply lands zero bytes ([8d705f7](https://github.com/mdopp/servicebay/commit/8d705f7646a09f9f51f410a09dff8df01e0246e7)), closes [#1983](https://github.com/mdopp/servicebay/issues/1983)
+* **disk-import:** host-apply lands zero bytes + apply-done UX + auto-unmount ([1a3a326](https://github.com/mdopp/servicebay/commit/1a3a326454c5ccaa77ce29b780a1d5a176245fd8))
+* **disk-import:** repair worker runtime — ESM require, SELinux source mount, Immich env ([cbfe2df](https://github.com/mdopp/servicebay/commit/cbfe2dfcfbed90791105bb6b154cff80b85bb34a))
+* **disk-import:** repair worker runtime — ESM require, SELinux source mount, Immich env ([4ad2218](https://github.com/mdopp/servicebay/commit/4ad22186822af1ffe86f32804af111bdba0a970e))
+* **disk-import:** run APPLY on the host from servicebay, not the sandboxed worker ([6ee7d22](https://github.com/mdopp/servicebay/commit/6ee7d2227858165cb59a9ccebceb74a8c7b9df37))
+* **disk-import:** run APPLY on the host from servicebay, not the sandboxed worker ([27fe93c](https://github.com/mdopp/servicebay/commit/27fe93cfddaf0e02b708e062926fb8314335e2de))
+
 ## [4.129.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.128.1...servicebay-v4.129.0) (2026-06-18)
 
 
