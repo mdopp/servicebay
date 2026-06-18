@@ -15,6 +15,7 @@ on:
     tags: ['v*']
     paths:
       - 'packages/disk-import-worker/**'
+      - 'packages/backup-worker/**'
       - 'packages/api-client/**'
       - 'package.json'
       - 'package-lock.json'
@@ -23,6 +24,7 @@ on:
   pull_request:
     paths:
       - 'packages/disk-import-worker/**'
+      - 'packages/backup-worker/**'
       - '.github/workflows/build-images.yml'
   workflow_dispatch:
 
@@ -41,6 +43,9 @@ jobs:
           - image: disk-import-worker
             dockerfile: packages/disk-import-worker/Containerfile
             description: "Resource-capped one-shot disk-import worker (walk/hash/classify/dedup/plan/apply); servicebay launches it via podman run --memory=… and reads its status.json (#1949)."
+          - image: backup-worker
+            dockerfile: packages/backup-worker/Containerfile
+            description: "Resource-capped one-shot config-backup worker (walk/copy/tar each installed service's config per the backup manifest); servicebay launches it via podman run --memory=… and reads its status.json (#1955/#1949)."
     steps:
       - name: Checkout
         uses: actions/checkout@v6

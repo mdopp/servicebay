@@ -49,7 +49,6 @@ import {
   NAS_BACKUP_DIR,
   DEFAULT_BACKUP_RETENTION,
   latestServiceBackupName,
-  agentFileBackend,
 } from './producer';
 import { getServiceManifest, type ServiceBackupManifest } from './serviceManifest';
 import { logger } from '../logger';
@@ -360,146 +359,14 @@ describe('resolveServiceDataDir', () => {
   });
 });
 
-describe('backupServiceToNas via the host agent (#1597)', () => {
-  // The servicebay container can't see /mnt/data/stacks, so a box backup (no
-  // serviceDataDir override) must route every fs op through the host agent.
-  // Here the mocked executor runs the same ops against a REAL local temp dir,
-  // exercising the actual agentFileBackend round-trip (incl. tar | base64).
-  function wireExecutorToHostDir(): { stagingDir: string; execShellCalls: number } {
-    const ref = { stagingDir: '', execShellCalls: 0 };
-    // The bulk copy (#1894) runs as ONE shell pipe per service via executor.exec:
-    //   tar -C <src> --null -T <listfile> -cf - | tar -C <dest> -xf -
-    // Emulate it against the real local temp dirs and count the calls so a test
-    // can assert "one bulk exec, not a round-trip per file".
-    mockExecutor.exec.mockImplementation(async (command: string) => {
-      const m = /tar -C (\S+) --null -T (\S+) -cf - \| tar -C (\S+) -xf -/.exec(command);
-      if (!m) throw new Error(`unexpected exec: ${command}`);
-      ref.execShellCalls += 1;
-      const unq = (s: string) => s.replace(/^'(.*)'$/, '$1').replace(/'\\''/g, "'");
-      const [, srcRoot, listFile, destRoot] = m.map(unq);
-      const rels = (await fs.readFile(listFile, 'utf8')).split('\0').filter(Boolean);
-      for (const rel of rels) {
-        const dest = path.join(destRoot, rel);
-        await fs.mkdir(path.dirname(dest), { recursive: true });
-        await fs.copyFile(path.join(srcRoot, rel), dest);
-      }
-      return { stdout: '', stderr: '' };
-    });
-    mockExecutor.execArgv.mockImplementation(async (argv: string[]) => {
-      const [cmd, ...args] = argv;
-      if (cmd === 'find') {
-        const dir = args[0];
-        const ents = await fs.readdir(dir, { withFileTypes: true });
-        const lines = ents.map(e => `${e.isDirectory() ? 'd' : e.isFile() ? 'f' : 'o'}\t${e.name}`);
-        return { stdout: lines.join('\n'), stderr: '' };
-      }
-      if (cmd === 'test' && args[0] === '-d') {
-        const ok = await fs.stat(args[1]).then(s => s.isDirectory(), () => false);
-        if (!ok) throw new Error('not a dir');
-        return { stdout: '', stderr: '' };
-      }
-      if (cmd === 'test' && args[0] === '-e') {
-        const ok = await fs.access(args[1]).then(() => true, () => false);
-        if (!ok) throw new Error('missing');
-        return { stdout: '', stderr: '' };
-      }
-      if (cmd === 'mkdir') { await fs.mkdir(args[1], { recursive: true }); return { stdout: '', stderr: '' }; }
-      if (cmd === 'cp') {
-        const src = args[args.length - 2];
-        const dest = args[args.length - 1];
-        await fs.copyFile(src, dest);
-        return { stdout: '', stderr: '' };
-      }
-      if (cmd === 'mktemp') {
-        ref.stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'producer-test-hoststage-'));
-        tmpDirs.push(ref.stagingDir);
-        return { stdout: ref.stagingDir, stderr: '' };
-      }
-      if (cmd === 'tar') {
-        // tar -cf <tarPath> -C <stagingDir> .
-        const tarPath = args[1];
-        const stagingDir = args[3];
-        await execFileAsync('tar', ['-cf', tarPath, '-C', stagingDir, '.']);
-        tmpDirs.push(tarPath);
-        return { stdout: '', stderr: '' };
-      }
-      if (cmd === 'base64') {
-        const buf = await fs.readFile(args[0]);
-        return { stdout: buf.toString('base64'), stderr: '' };
-      }
-      if (cmd === 'rm') return { stdout: '', stderr: '' }; // leave temp for afterEach cleanup
-      throw new Error(`unexpected execArgv: ${argv.join(' ')}`);
-    });
-    mockExecutor.exists.mockImplementation((p: string) => fs.access(p).then(() => true, () => false));
-    mockExecutor.readFile.mockImplementation((p: string) => fs.readFile(p, 'utf8'));
-    mockExecutor.writeFile.mockImplementation((p: string, c: string) => fs.writeFile(p, c));
-    return ref;
-  }
-
-  it('reads + tars the stacks dir host-side and uploads the tar (config-survival is non-functional without this)', async () => {
-    const hostStacks = await mkTmp();
-    await writeFile(hostStacks, 'adguard/conf/AdGuardHome.yaml', 'bind_host: 0.0.0.0');
-    await writeFile(hostStacks, 'adguard/data/querylog.json', '[]'); // excluded
-    mockGetConfig.mockResolvedValue({ templateSettings: { DATA_DIR: hostStacks } });
-    wireExecutorToHostDir();
-
-    const result = await backupServiceToNas('adguard');
-
-    expect(mockGetExecutor).toHaveBeenCalledWith('Local');
-    expect(result.size).toBeGreaterThan(0);
-    // The tar bytes that came back through the agent contain the config, not the excluded querylog.
-    const tarCall = mockNas.nasUpload.mock.calls.find(c => datedTarRe('adguard').test(String(c[0])))!;
-    const out = await mkTmp();
-    const tarFile = path.join(out, 'a.tar');
-    await fs.writeFile(tarFile, tarCall[1] as Buffer);
-    await execFileAsync('tar', ['-xf', tarFile, '-C', out]);
-    expect(await fs.readFile(path.join(out, 'conf/AdGuardHome.yaml'), 'utf8')).toBe('bind_host: 0.0.0.0');
-    await expect(fs.access(path.join(out, 'data/querylog.json'))).rejects.toThrow();
-  });
-
-  it('copies a large file tree in ONE host-side bulk exec, not a round-trip per file (#1894)', async () => {
-    const hostStacks = await mkTmp();
-    // A custom_components dir with many plain files — what OOM'd the box when each
-    // was a separate agent cp/mkdir round-trip.
-    for (let i = 0; i < 50; i++) {
-      await writeFile(hostStacks, `demo/custom_components/pkg/file${i}.py`, `x${i}`);
-    }
-    mockGetConfig.mockResolvedValue({ templateSettings: { DATA_DIR: hostStacks } });
-    // A throwaway manifest service that maps to the demo/ dir.
-    const ref = wireExecutorToHostDir();
-
-    const tar = await buildServiceBackupTar(
-      path.join(hostStacks, 'demo'),
-      { service: 'demo', include: ['custom_components'], exclude: [] },
-      // Build the tar directly against the wired agent backend (one bulk exec).
-      agentFileBackend(mockExecutor as unknown as Parameters<typeof agentFileBackend>[0]),
-    );
-    expect(tar.length).toBeGreaterThan(0);
-    // The 50 plain files were copied by a SINGLE bulk shell exec — no per-file cp.
-    expect(ref.execShellCalls).toBe(1);
-    const cpCalls = mockExecutor.execArgv.mock.calls.filter((c: unknown[]) => (c[0] as string[])[0] === 'cp');
-    expect(cpCalls).toHaveLength(0);
-  });
-
-  it('applies strip rules host-side via the agent (password hashes never leave the box)', async () => {
-    const hostStacks = await mkTmp();
-    await writeFile(hostStacks, 'authelia/users_database.yml',
-      'users:\n  a:\n    password: $argon2$SEKRIT\n    email: a@x\n');
-    mockGetConfig.mockResolvedValue({ templateSettings: { DATA_DIR: hostStacks } });
-    wireExecutorToHostDir();
-
-    const result = await backupServiceToNas('authelia');
-    const tarCall = mockNas.nasUpload.mock.calls.find(c => datedTarRe('authelia').test(String(c[0])))!;
-    const out = await mkTmp();
-    const tarFile = path.join(out, 'a.tar');
-    await fs.writeFile(tarFile, tarCall[1] as Buffer);
-    await execFileAsync('tar', ['-xf', tarFile, '-C', out]);
-    const stripped = await fs.readFile(path.join(out, 'users_database.yml'), 'utf8');
-    expect(stripped).not.toContain('SEKRIT');
-    expect(stripped).toContain('a@x');
-    expect(result.size).toBeGreaterThan(0);
-  });
-});
+// The box backup (no serviceDataDir) now routes the HEAVY walk/copy/tar through
+// the resource-capped backup worker container (#1955) — the old in-process
+// host-agent backend that OOM'd the box (#1894) is retired. The worker launch +
+// status polling is covered by backupWorker/launcher.test.ts and
+// backupWorker/service.test.ts; the worker's own staging engine (selection /
+// exclude / strip / bulk copy / tar) is covered by the backup-worker package's
+// staging.test.ts. The producer's remaining responsibilities (local-seed staging,
+// NAS write/prune/list/fetch/delete, scheduler) are tested below.
 
 describe('backupServiceToNas', () => {
   it('uploads the tar and a meta sidecar under sb-backup/', async () => {

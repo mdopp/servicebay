@@ -502,56 +502,58 @@ export async function stageServiceConfig(
     const serviceConfigRoot = path.join(stagingDir, 'service-config');
     metadata.serviceData = [];
 
-    const { SERVICE_BACKUP_MANIFESTS, getBackupGate } = await import('./externalBackup/serviceManifest');
-    const { buildServiceBackupTar, agentFileBackend, resolveServiceDataDir, runBackupCollector } = await import('./externalBackup/producer');
-    const { getExecutor } = await import('./executor');
-
-    const installed = new Set(Object.keys((await getConfig()).installedTemplates ?? {}));
     const nodeName = 'Local';
-    const backend = agentFileBackend(getExecutor(nodeName));
+    // The heavy per-service walk/copy/tar runs in the resource-capped backup
+    // worker container (#1955) — NOT in this control-plane process, where the old
+    // agent file-copy held every tar in memory and OOM'd the box (#1894). The
+    // worker writes <service>.tar into a shared out dir; we read each tar (one at
+    // a time, bounded), then safeTarExtract it into the archive's
+    // service-config/<svc>/ tree.
+    const { stageInstalledServiceConfigViaWorker, readBackupTar, cleanupBackupRun } =
+        await import('./backupWorker/service');
+
+    const staged = await stageInstalledServiceConfigViaWorker(nodeName);
+    if (!staged) return false; // no installed services with a backup manifest
+
+    const { exec, run, status } = staged;
     let stagedAny = false;
+    try {
+        for (const r of status.results) {
+            const svc = r.service;
+            if (r.ok && r.tarName) {
+                try {
+                    const tar = await readBackupTar(exec, run, r.tarName);
+                    const destDir = path.join(serviceConfigRoot, svc);
+                    await fs.mkdir(destDir, { recursive: true });
+                    const tmpTar = path.join(serviceConfigRoot, `${svc}.tar`);
+                    await fs.writeFile(tmpTar, tar);
+                    // The worker builds a SAFE-by-construction plain tar from a
+                    // staging dir it controls; safeTarExtract (gzip:false) still
+                    // applies the standard restore-side hardening as belt-and-braces.
+                    await safeTarExtract(tmpTar, destDir, { gzip: false });
+                    await fs.rm(tmpTar, { force: true });
 
-    for (const manifest of SERVICE_BACKUP_MANIFESTS) {
-        // Sibling-store entries (#1594) gate on their parent template, not their
-        // own synthetic service name.
-        if (!installed.has(getBackupGate(manifest))) continue;
-        const svc = manifest.service;
-        try {
-            const serviceDataDir = await resolveServiceDataDir(svc);
-            // The producer runs any in-container collector (NPM's consistent
-            // sqlite snapshot) itself when given an agent backend + node — but
-            // buildServiceBackupTar takes a resolved manifest, so we mirror
-            // backupServiceToNas's collector step.
-            const effective = manifest.collector
-                ? await runBackupCollector(manifest, nodeName)
-                : manifest;
-            const tar = await buildServiceBackupTar(serviceDataDir, effective, backend);
-
-            const destDir = path.join(serviceConfigRoot, svc);
-            await fs.mkdir(destDir, { recursive: true });
-            const tmpTar = path.join(serviceConfigRoot, `${svc}.tar`);
-            await fs.writeFile(tmpTar, tar);
-            // The producer builds a SAFE-by-construction plain tar from a staging
-            // dir it controls; safeTarExtract (gzip:false) still applies the
-            // standard restore-side hardening as belt-and-suspenders.
-            await safeTarExtract(tmpTar, destDir, { gzip: false });
-            await fs.rm(tmpTar, { force: true });
-
-            (metadata.serviceData as ServiceDataEntry[]).push({
-                label: svc,
-                service: svc,
-                sourcePath: serviceDataDir,
-                nodeName,
-            });
-            stagedAny = true;
-            pushLog(logs, progress, { scope: 'local', status: 'success', node: nodeName, message: `Captured config for ${svc}` });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            // "No config files to back up" just means the service has no
-            // on-disk config yet — a skip, not an error.
-            const status: BackupLogStatus = /No config files to back up/.test(message) ? 'skip' : 'error';
-            pushLog(logs, progress, { scope: 'local', status, node: nodeName, message: `${svc}: ${message}` });
+                    (metadata.serviceData as ServiceDataEntry[]).push({
+                        label: svc,
+                        service: svc,
+                        sourcePath: svc,
+                        nodeName,
+                    });
+                    stagedAny = true;
+                    pushLog(logs, progress, { scope: 'local', status: 'success', node: nodeName, message: `Captured config for ${svc}` });
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    pushLog(logs, progress, { scope: 'local', status: 'error', node: nodeName, message: `${svc}: ${message}` });
+                }
+            } else {
+                // skip (no config on disk yet) or a per-service worker error —
+                // neither aborts the snapshot.
+                const status: BackupLogStatus = r.outcome === 'skip' ? 'skip' : 'error';
+                pushLog(logs, progress, { scope: 'local', status, node: nodeName, message: `${svc}: ${r.detail ?? 'no config'}` });
+            }
         }
+    } finally {
+        await cleanupBackupRun(exec, run);
     }
 
     return stagedAny;

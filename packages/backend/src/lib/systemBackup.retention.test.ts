@@ -26,13 +26,12 @@ vi.mock('./dirs', () => ({
 
 vi.mock('./nodes', () => ({ listNodes: vi.fn(async () => []) }));
 vi.mock('./config', () => ({ getConfig: vi.fn(async () => ({ installedTemplates: {} })), updateConfig: vi.fn() }));
-// stageServiceConfig pulls these in lazily — return "nothing staged".
-vi.mock('./externalBackup/serviceManifest', () => ({ SERVICE_BACKUP_MANIFESTS: [], getBackupGate: (m: { service: string }) => m.service }));
-vi.mock('./externalBackup/producer', () => ({
-    buildServiceBackupTar: vi.fn(),
-    agentFileBackend: vi.fn(() => ({})),
-    resolveServiceDataDir: vi.fn(),
-    runBackupCollector: vi.fn(),
+// stageServiceConfig pulls the backup worker in lazily — return "nothing staged"
+// (no installed service has a backup manifest) so the snapshot has no service config.
+vi.mock('./backupWorker/service', () => ({
+    stageInstalledServiceConfigViaWorker: vi.fn(async () => null),
+    readBackupTar: vi.fn(),
+    cleanupBackupRun: vi.fn(),
 }));
 vi.mock('./executor', () => ({ getExecutor: vi.fn(() => ({})) }));
 vi.mock('./ssh/pool', () => ({ SSHConnectionPool: { getInstance: () => ({ getConnection: vi.fn() }) } }));
