@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.127.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.126.0...servicebay-v4.127.0) (2026-06-18)
+
+
+### Features
+
+* disk-import worker container + per-service Operate pages ([792e4f1](https://github.com/mdopp/servicebay/commit/792e4f1abcd561c7f32eafdb5fffeccaa5130005))
+* **disk-import:** run the worker as a launched container behind a tile ([cc2e91e](https://github.com/mdopp/servicebay/commit/cc2e91ef22338b877a678fb9fa1126df2fae11e9)), closes [#1953](https://github.com/mdopp/servicebay/issues/1953)
+* **settings:** per-service Operate pages with Health, Settings and Actions ([9bcf333](https://github.com/mdopp/servicebay/commit/9bcf333a5416fba033a8784195a46a9186f45253)), closes [#1957](https://github.com/mdopp/servicebay/issues/1957)
+
+
+### Bug Fixes
+
+* **disk-import:** create RO mountpoint + use host data dir so the worker launches ([3e3ae67](https://github.com/mdopp/servicebay/commit/3e3ae67ed44175f82f573676d184c02f94c3b312))
+* **disk-import:** create RO mountpoint + use host data dir so the worker launches ([f6fb17a](https://github.com/mdopp/servicebay/commit/f6fb17af7fca01eb7df5d490d8208df0f473cf9f)), closes [#1963](https://github.com/mdopp/servicebay/issues/1963)
+* **disk-import:** fail fast on outDir mkdir + self-heal HOST_DATA_DIR in quadlet ([4963d94](https://github.com/mdopp/servicebay/commit/4963d9475e53a0932e79431d889c45a275a2c463))
+* **disk-import:** fail fast on outDir mkdir + self-heal HOST_DATA_DIR in quadlet ([cac4bfe](https://github.com/mdopp/servicebay/commit/cac4bfe650dcdeacf503ca69939ffe5dbfa956f6))
+* **disk-import:** loosen immichProvisionFromEnv param to Record so partial-env tests typecheck ([439bf28](https://github.com/mdopp/servicebay/commit/439bf2854ba3ad16f62e1cf59adddfc2e07c5f7f))
+* **disk-import:** re-add post-apply Immich External Library provision/scan ([bcc268f](https://github.com/mdopp/servicebay/commit/bcc268fa932a217e9d601feed0746570bc3c3d9e)), closes [#1954](https://github.com/mdopp/servicebay/issues/1954)
+* **disk-import:** resolve host data dir at launch via podman self-inspect ([8bbf82b](https://github.com/mdopp/servicebay/commit/8bbf82b29018427c9f6c916cdc02b6cf57be449c))
+* **disk-import:** resolve host data dir at launch via podman self-inspect ([64381cd](https://github.com/mdopp/servicebay/commit/64381cd8aa3a843b443172dfd51a7227cea564d6))
+* **disk-import:** strip trailing slashes without backtracking regex (CodeQL js/polynomial-redos) ([97add1e](https://github.com/mdopp/servicebay/commit/97add1e00a63eb5f03186bfefae0f589aed4402c))
+
 ## [4.126.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.125.3...servicebay-v4.126.0) (2026-06-18)
 
 
