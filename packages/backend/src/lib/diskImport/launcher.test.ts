@@ -7,6 +7,12 @@ vi.mock('./immichProvisionEnv', () => ({
   resolveImmichProvisionEnv: vi.fn(async () => [] as string[]),
 }));
 
+// launchWorker resolves the HOST data dir itself (env → self-inspect → default).
+// Pin it for these launcher tests; resolveHostDataDir has its own unit tests.
+vi.mock('@/lib/hostDataDir', () => ({
+  resolveHostDataDir: vi.fn(async () => '/data'),
+}));
+
 import { launchWorker, readStatus, isWorkerRunning, stopWorker, WORKER_IMAGE, WORKER_MEMORY } from './launcher';
 import { resolveImmichProvisionEnv } from './immichProvisionEnv';
 import type { SafeExec } from '@servicebay/disk-import-worker';
@@ -26,7 +32,7 @@ function recExec(responses: Record<string, { stdout?: string; code?: number }> =
 describe('launchWorker', () => {
   it('mounts the device RO and runs the worker container, memory-capped', async () => {
     const { exec, calls } = recExec();
-    const run = await launchWorker({ exec, device: '/dev/sda1', runId: 'abc123', dataDir: '/data', shareGid: 1024 });
+    const run = await launchWorker({ exec, device: '/dev/sda1', runId: 'abc123', shareGid: 1024 });
 
     expect(run.container).toBe('disk-import-worker-abc123');
     expect(run.outDir).toBe('/data/disk-import-runs/abc123');
@@ -61,7 +67,7 @@ describe('launchWorker', () => {
       '-e', 'DISK_IMPORT_BOX_USERS=[]',
     ]);
     const { exec, calls } = recExec();
-    await launchWorker({ exec, device: '/dev/sda1', runId: 'k', dataDir: '/data', shareGid: 1024 });
+    await launchWorker({ exec, device: '/dev/sda1', runId: 'k', shareGid: 1024 });
     const podmanRun = calls.find(c => c[0] === 'podman' && c[1] === 'run')!;
     expect(podmanRun).toContain('IMMICH_ADMIN_API_KEY=secret');
     expect(podmanRun).toContain('IMMICH_SERVER_URL=http://127.0.0.1:2283');
@@ -70,7 +76,7 @@ describe('launchWorker', () => {
   it('refuses an unsafe device path', async () => {
     const { exec } = recExec();
     await expect(
-      launchWorker({ exec, device: '/dev/sda1; rm -rf /', runId: 'x', dataDir: '/data', shareGid: 1024 }),
+      launchWorker({ exec, device: '/dev/sda1; rm -rf /', runId: 'x', shareGid: 1024 }),
     ).rejects.toThrow();
   });
 });
