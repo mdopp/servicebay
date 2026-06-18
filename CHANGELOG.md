@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.128.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.127.0...servicebay-v4.128.0) (2026-06-18)
+
+
+### Features
+
+* **backup-worker:** run external/config backup in a capped one-shot worker ([6ca1c07](https://github.com/mdopp/servicebay/commit/6ca1c074ba491645b1d2612d4a50025af602792a))
+* **backup-worker:** run external/config backup in a capped one-shot worker ([e40f2f3](https://github.com/mdopp/servicebay/commit/e40f2f323d671e1917793045c3f4099a7f7e7e7d)), closes [#1955](https://github.com/mdopp/servicebay/issues/1955)
+
+
+### Bug Fixes
+
+* **backup-worker:** add @servicebay/backup-worker path aliases for Turbopack build ([0a276fb](https://github.com/mdopp/servicebay/commit/0a276fbffd8ecf64a7f33b26cd8e3c247deed770))
+* **backup-worker:** install native build toolchain for npm ci in worker image ([d3988cb](https://github.com/mdopp/servicebay/commit/d3988cba2d45e8354d05230d51f39b05f4a7623d)), closes [#1955](https://github.com/mdopp/servicebay/issues/1955)
+* **backup-worker:** register backup-worker as workspace in Dockerfile ([e4d88b0](https://github.com/mdopp/servicebay/commit/e4d88b043d83e2e9200b4636830c5f127bf79159))
+* **backup-worker:** register backup-worker as workspace in Dockerfile deps stages ([7d72390](https://github.com/mdopp/servicebay/commit/7d72390fc3588d930b28a405261e5c4ef5188d07))
+* **workers:** :z relabel the worker /out mount so the worker can write status.json ([c9603fa](https://github.com/mdopp/servicebay/commit/c9603fa6b430ab431cdcdef3bf3926d3a1ebf97a))
+* **workers:** :z relabel worker /out mount (SELinux MCS) so status.json writes ([dfc2931](https://github.com/mdopp/servicebay/commit/dfc29314e7508267fa055ab2e80feae899eb26de))
+* **workers:** run worker containers as root for rootless-podman /out writes ([efb2f6d](https://github.com/mdopp/servicebay/commit/efb2f6d38ac86f2c00a8d6515622970806f79a34))
+* **workers:** run worker containers as root for rootless-podman bind-mount writes ([e74de49](https://github.com/mdopp/servicebay/commit/e74de4922b48f635e6534a727e04a0d7e4f50809))
+
 ## [4.127.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.126.0...servicebay-v4.127.0) (2026-06-18)
 
 
