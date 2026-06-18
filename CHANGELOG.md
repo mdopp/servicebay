@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.129.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.128.1...servicebay-v4.129.0) (2026-06-18)
+
+
+### Features
+
+* **settings:** demote disk-import from main nav to Settings → Maintenance ([b5afb4f](https://github.com/mdopp/servicebay/commit/b5afb4f81e7ca978646b9e583e70a9ee12d761f0))
+* **settings:** move disk-import from main nav to Settings → Maintenance + searchable ([7735c6a](https://github.com/mdopp/servicebay/commit/7735c6a976131e936e5e1d219db6eb351923aa1e))
+
 ## [4.128.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.128.0...servicebay-v4.128.1) (2026-06-18)
 
 
