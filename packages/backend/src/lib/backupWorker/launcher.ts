@@ -109,7 +109,13 @@ export async function launchBackupWorker(args: {
     `--memory=${BACKUP_WORKER_MEMORY}`,
     `--memory-swap=${BACKUP_WORKER_MEMORY}`,
     '-v', `${stacksDir}:${STACKS_MOUNT}:ro`,
-    '-v', `${outDir}:/out`,
+    // `:z` relabels the out dir to a SHARED SELinux label so the worker
+    // container can write it. Without it the dir keeps servicebay's private
+    // MCS categories (container_file_t:s0:cNNN,cMMM) and the freshly-spawned
+    // worker gets different categories → EACCES on /out/status.json even as
+    // root. Shared (`:z`) not private (`:Z`) because servicebay also reads the
+    // status + tars back from this dir. (#1955 box-verify, rootless podman.)
+    '-v', `${outDir}:/out:z`,
     '-e', `BACKUP_RUN_ID=${runId}`,
     BACKUP_WORKER_IMAGE,
     '--stacks', STACKS_MOUNT,

@@ -122,7 +122,11 @@ export async function launchWorker(args: {
     `--memory-swap=${WORKER_MEMORY}`,
     '-p', `${WORKER_PORT}`,
     '-v', `${mountpoint}:/mnt/src:ro`,
-    '-v', `${outDir}:/out`,
+    // `:z` relabels the out dir to a SHARED SELinux label so the worker can
+    // write it — otherwise it keeps servicebay's private MCS categories and the
+    // worker gets EACCES on /out/status.json even as root. Shared (`:z`) because
+    // servicebay reads status/plan back from here. (#1955 box-verify.)
+    '-v', `${outDir}:/out:z`,
     '-e', `DISK_IMPORT_RUN_ID=${runId}`,
     '-e', `DISK_IMPORT_SHARE_GID=${shareGid}`,
     ...immichEnv,
