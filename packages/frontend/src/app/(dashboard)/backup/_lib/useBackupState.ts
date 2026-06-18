@@ -3,7 +3,7 @@
 import { useCallback, useState } from 'react';
 import { useToast } from '@/providers/ToastProvider';
 import type { BackupLogEntry, BackupPreviewResult } from '@/lib/systemBackup';
-import type { SystemBackupEntrySummary } from '../../_lib/helpers';
+import type { SystemBackupEntrySummary } from './helpers';
 
 type RestoreSelectionState = {
   nodes: Record<string, boolean>;

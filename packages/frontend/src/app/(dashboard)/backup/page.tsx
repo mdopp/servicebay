@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useBackupState } from './_lib/useBackupState';
 import {
   Save,
@@ -30,11 +30,13 @@ import {
   Plus,
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
 import FileViewer from '@/components/FileViewer';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import type { BackupPreviewResult, BackupRestoreSelection } from '@/lib/systemBackup';
-import { useSettings } from '../_lib/SettingsContext';
+import { getNodes } from '@/app/actions/nodes';
+import type { PodmanConnection } from '@/lib/nodes';
 import {
   formatBytes,
   groupFilesByService,
@@ -46,13 +48,18 @@ import {
   SERVICE_DATA_CATEGORY_LABELS,
   type BackupStreamEvent,
   type SystemBackupEntrySummary,
-} from '../_lib/helpers';
-import ExternalBackupDestinationSection from '../_lib/sections/ExternalBackupDestinationSection';
+} from './_lib/helpers';
+import ExternalBackupDestinationSection from './_lib/ExternalBackupDestinationSection';
 import LocalTargetPicker from './_lib/LocalTargetPicker';
 
-export default function BackupsSettingsPage() {
+export default function BackupPage() {
   const { addToast } = useToast();
-  const { nodes } = useSettings();
+  // Backup is its own app now (#1958), outside the settings <SettingsProvider>,
+  // so it loads the node list directly instead of reading the settings context.
+  const [nodes, setNodes] = useState<PodmanConnection[]>([]);
+  useEffect(() => {
+    void getNodes().then(setNodes).catch(() => {});
+  }, []);
   const BACKUP_PREVIEW_COUNT = 5;
 
   const {
@@ -725,7 +732,9 @@ export default function BackupsSettingsPage() {
         (schedule.nextRunAt ? ` · next run ${new Date(schedule.nextRunAt).toLocaleString()}` : '');
 
   return (
-    <div id="backups" className="space-y-6 scroll-mt-24">
+    <div className="h-full flex flex-col min-h-0">
+      <PageHeader title="Backup & restore" helpId="backups" />
+      <div id="backups" className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 scroll-mt-24">
       {/* Primary CTA: one-click restore from latest snapshot. The selective
           flow stays available behind "Selective restore…" / per-row Restore. */}
       {backups.length > 0 && (
@@ -1708,6 +1717,7 @@ export default function BackupsSettingsPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

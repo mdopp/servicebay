@@ -23,7 +23,6 @@
 import {
   Bell,
   Boxes,
-  Database,
   Network,
   Server,
   Users,
@@ -108,16 +107,10 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'email', label: 'Email notifications', tier: 'essential', keywords: ['email', 'smtp', 'alert', 'notify'] },
     ],
   },
-  {
-    id: 'backups',
-    label: 'Backups',
-    intent: 'Protect your data — snapshots, restore and off-box destinations.',
-    icon: Database,
-    entries: [
-      { id: 'backups', label: 'Backups & restore', tier: 'essential', keywords: ['backup', 'restore', 'snapshot', 'nas', 'usb'] },
-      { id: 'external-backup', label: 'Off-box destination', tier: 'advanced', keywords: ['nas', 'ftp', 'external', 'destination'] },
-    ],
-  },
+  // Backups left Settings for its own app + launch tile (#1949/#1958): the
+  // heavy backup/restore + off-box-destination UI is now the Backup app behind
+  // a dashboard tile, with the actions running in the capped backup worker
+  // (#1955). It is no longer a Settings group here.
   {
     id: 'system',
     label: 'System',
