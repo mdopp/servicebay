@@ -98,9 +98,8 @@ export async function launchBackupWorker(args: {
   if (mkdirOut.code !== 0) {
     throw new Error(
       `backup-worker: failed to create worker out dir ${outDir}: ${mkdirOut.stderr || mkdirOut.stdout}. ` +
-      `If this box was installed before HOST_DATA_DIR was added to the quadlet, a reinstall ` +
-      `(or adding Environment=HOST_DATA_DIR=/mnt/data/servicebay to the servicebay.container ` +
-      `quadlet and restarting) will fix it.`,
+      `dataDir should be the HOST-side data dir resolved by resolveHostDataDir() (#1966); a ` +
+      `read-only-filesystem error here means it fell back to the container-internal /app/data.`,
     );
   }
 

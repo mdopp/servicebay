@@ -51,11 +51,11 @@ describe('launchBackupWorker', () => {
     expect(podmanRun[sIdx + 1]).toBe('adguard,nginx');
   });
 
-  it('fails fast with a HOST_DATA_DIR hint when the out mkdir errors (EROFS)', async () => {
+  it('fails fast with a resolveHostDataDir hint when the out mkdir errors (EROFS)', async () => {
     const { exec } = recExec({ 'mkdir -p': { code: 1, stdout: 'Read-only file system' } });
     await expect(
       launchBackupWorker({ exec, services: ['adguard'], runId: 'x', dataDir: '/app/data', stacksDir: '/s' }),
-    ).rejects.toThrow(/HOST_DATA_DIR/);
+    ).rejects.toThrow(/resolveHostDataDir/);
   });
 
   it('refuses an empty service list', async () => {

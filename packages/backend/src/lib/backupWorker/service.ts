@@ -20,7 +20,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { AgentExecutor } from '@/lib/agent/executor';
-import { HOST_DATA_DIR } from '@/lib/dirs';
+import { resolveHostDataDir } from '@/lib/hostDataDir';
 import { getConfig } from '@/lib/config';
 import {
   SERVICE_BACKUP_MANIFESTS,
@@ -105,7 +105,11 @@ async function runWorkerToCompletion(
 ): Promise<BackupRun> {
   await ensureBackupWorkerImage(exec);
   const runId = Math.random().toString(36).slice(2, 14);
-  const run = await launchBackupWorker({ exec, services, runId, dataDir: HOST_DATA_DIR, stacksDir });
+  // Resolve the HOST-side data dir at launch time (env → podman self-inspect of
+  // the /app/data mount source → default), not the container-internal path —
+  // the out volume must be created + bind-mounted on the host (#1966).
+  const dataDir = await resolveHostDataDir(exec);
+  const run = await launchBackupWorker({ exec, services, runId, dataDir, stacksDir });
 
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   for (;;) {
