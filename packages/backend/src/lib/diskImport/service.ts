@@ -16,6 +16,7 @@ import {
   readStatus,
   isWorkerRunning,
   stopWorker,
+  cleanupRunMount,
   ensureWorkerImage,
   type ImportDevice,
   type WorkerRun,
@@ -80,7 +81,16 @@ export async function getRunStatus(exec: SafeExec): Promise<RunStatus | null> {
 export async function applyRun(exec: SafeExec, shareGid: number): Promise<ApplyImportResult> {
   const run = await getActiveRun();
   if (!run) throw new Error('disk-import: no active run to apply');
-  return applyImport({ exec, runId: run.runId, mountpoint: run.mountpoint, shareGid });
+  const result = await applyImport({ exec, runId: run.runId, mountpoint: run.mountpoint, shareGid });
+  // Apply succeeded — unmount the source device and forget the run (#1982) so the
+  // USB doesn't leak a mount and a reopened tile lands on the picker, not a stale
+  // "active run". Both are best-effort/idempotent (cleanupRunMount ignores
+  // not-mounted/missing-dir), and only run on success: on an apply ERROR we throw
+  // above WITHOUT cleanup, leaving the mount live for retry/inspection until the
+  // user's explicit "Start over" (abortRun).
+  await cleanupRunMount(exec, run);
+  await clearActiveRun();
+  return result;
 }
 
 /** Stop the active worker container and forget it (the tile's "Start over"). */
