@@ -14,8 +14,11 @@
 //   - conflict    → the superseded version is MOVED to
 //                    `file-share/data/_superseded/<date>/<target>` (nothing is
 //                    deleted), then the newer file is copied in.
-//   - ownership   → each copied file is `chown`ed to the share gid so the
-//                    containers can read it.
+//   - ownership   → each copied file is `chown`ed to `core:<share gid>` so it is
+//                    core-owned (rsync runs via sudo, which would leave it
+//                    root-owned — a non-core stray under file-share's `:Z` data
+//                    dir crash-loops the stack, feedback_fileshare_relabel_crashloop)
+//                    and group-readable by the containers.
 //   - catalog     → every done file is upserted into the catalog, which makes
 //                    the whole apply RESUMABLE: an interrupted run re-runs and
 //                    skips anything already cataloged (same sha+target).
@@ -86,8 +89,9 @@ export interface ApplyOptions {
   catalog: ImportCatalog;
   /**
    * Numeric gid that owns existing `file-share/data` content (rootless-podman
-   * subgid). Copied files are `chown :<gid>` so containers can read them. Must
-   * be a non-negative integer — never a name, never arbitrary uid:gid.
+   * subgid). Copied files are `chown core:<gid>` (core owner + share group) so
+   * they stay core-owned (no root strays) and containers can read them. Must be a
+   * non-negative integer — never a name, never an arbitrary uid:gid pair.
    */
   shareGid: number;
   /**
@@ -114,7 +118,7 @@ export interface ApplyOptions {
  * How many copied files to group into one batched `mkdir`/`chown` flush (#1898).
  * The apply pass used to issue THREE sudo agent round-trips per copied file
  * (`mkdir -p`, `rsync`, `chown`); now the dir-creation and ownership are batched
- * across a chunk (`mkdir -p <dirs…>`, `chown :gid <files…>`) so a big disk no
+ * across a chunk (`mkdir -p <dirs…>`, `chown core:gid <files…>`) so a big disk no
  * longer costs one mkdir + one chown round-trip per file. rsync stays per-file
  * (one byte-copy invocation each) so the catalog row — the resume marker — is
  * only written once a file is fully copied AND chowned.
@@ -294,7 +298,7 @@ async function classifyItem(
 /**
  * Flush a batch of queued copies: one `mkdir -p <dirs…>` for the union of
  * destination dirs, one `rsync` per file (the byte copy — kept per-file so the
- * resume marker tracks exactly which files landed), then one `chown :gid
+ * resume marker tracks exactly which files landed), then one `chown core:gid
  * <files…>` + catalog over the files that successfully copied. A file is
  * cataloged ONLY after it is copied AND chowned, so an interrupted run re-copies
  * AND re-chowns anything not yet cataloged — resume semantics are unchanged. If
@@ -334,15 +338,20 @@ async function copyBatch(
 }
 
 /**
- * chown (group-only) + catalog the files that successfully rsync'd this batch.
+ * chown (owner + group) + catalog the files that successfully rsync'd this batch.
  * Runs even when a mid-batch rsync threw, so every fully-copied file is marked
  * done before the error propagates (resume skips it next pass).
  */
 async function finalizeCopied(copied: CopyJob[], ctx: ItemCtx): Promise<void> {
   if (copied.length === 0) return;
-  // chown to the share GID ONLY (`:<gid>` leaves uid untouched; never recursive,
-  // never an arbitrary path).
-  await runOk(ctx.exec, ['chown', `:${ctx.shareGid}`, ...copied.map(j => j.dest)], 'chown', { sudo: true });
+  // chown to `core:<shareGid>` — owner AND group. rsync runs via `sudo` so the
+  // copied file would otherwise land root-owned; a non-`core`-owned stray under
+  // file-share's `:Z` data dir crash-loops the stack on the next redeploy
+  // (feedback_fileshare_relabel_crashloop — data/ must stay core-owned).
+  // `<shareGid>` is the REAL file-share group (resolved host-side, not the 1024
+  // fallback) so the containers can read it. Never recursive, never an arbitrary
+  // path — every dest is resolved under file-share/data/.
+  await runOk(ctx.exec, ['chown', `core:${ctx.shareGid}`, ...copied.map(j => j.dest)], 'chown', { sudo: true });
   for (const job of copied) {
     // The catalog row needs the content sha as its key. For a fresh-target copy we
     // didn't hash during classification (no collision), so resolve it NOW on the

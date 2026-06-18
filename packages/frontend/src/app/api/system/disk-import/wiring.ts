@@ -11,9 +11,12 @@ import { AgentExecutor } from '@/lib/agent/executor';
 import { getNodeIds } from '@/lib/store/repository';
 import type { SafeExec } from '@servicebay/disk-import-worker';
 
-/** Numeric gid that owns file-share data (rootless-podman subgid). The worker's
- *  apply chowns copies to this gid — never a per-user uid
- *  (feedback_fileshare_relabel_crashloop). */
+/** FALLBACK gid for file-share data, used ONLY when the real gid can't be
+ *  resolved host-side. The service layer resolves the ACTUAL file-share group
+ *  (`stat -c %g` on the share data dir — 973 on the box) at launch/apply time and
+ *  chowns copies to `core:<that gid>`, never a per-user uid
+ *  (feedback_fileshare_relabel_crashloop). This constant is the last-resort
+ *  default for a not-yet-deployed share, not the value normally used. */
 export const SHARE_GID = 1024;
 
 /** Resolve the node the host commands run on (the first/only node by default). */
