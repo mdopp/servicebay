@@ -22,6 +22,13 @@
 #     <image> --stacks /mnt/stacks --out /out --services home-assistant,authelia,…
 
 FROM node:20-slim AS base
+# `npm ci` builds the workspace's native modules (node-pty in the backend, etc.) →
+# node-gyp needs a build toolchain even though this worker doesn't use them itself
+# (same constraint as the disk-import worker image).
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Workspace-aware install: the root + every member manifest must be present so
