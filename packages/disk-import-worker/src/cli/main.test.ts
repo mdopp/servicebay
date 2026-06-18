@@ -30,6 +30,7 @@ function makeIO(overrides: Partial<WorkerIO> = {}): {
     makeExec: () => {
       throw new Error('makeExec must NOT be called on a dry run');
     },
+    provisionImmich: async () => '',
     ...overrides,
   };
   return { io, statuses, sidecars };
@@ -125,5 +126,32 @@ describe('runWorker (apply)', () => {
     for (const c of chowns) {
       expect(c.some(arg => arg.includes('1024'))).toBe(true);
     }
+  });
+
+  it('provisions/scans Immich for the photo owners after photos are written (#1954)', async () => {
+    const exec = vi.fn(async () => ({ stdout: '', stderr: '', code: 0 }));
+    const provisionImmich = vi.fn(async () => 'Immich External Libraries provisioned + scan triggered.');
+    const { io, statuses } = makeIO({ makeExec: () => exec, provisionImmich });
+    const final = await runWorker({ ...dryOpts, mode: 'apply' }, io);
+
+    expect(final.phase).toBe('done');
+    // a.jpg is a photo → its owner ('shared') is handed to the provision hook.
+    expect(provisionImmich).toHaveBeenCalledTimes(1);
+    expect(provisionImmich).toHaveBeenCalledWith(expect.arrayContaining(['shared']));
+    // The provision note is folded into the terminal step text.
+    expect(statuses.at(-1)!.step).toContain('Immich External Libraries provisioned');
+  });
+
+  it('skips the Immich hook when no photos were written', async () => {
+    const exec = vi.fn(async () => ({ stdout: '', stderr: '', code: 0 }));
+    const provisionImmich = vi.fn(async () => '');
+    const { io } = makeIO({
+      makeExec: () => exec,
+      provisionImmich,
+      // Only non-photo files → no photo owners.
+      scan: async () => [{ path: '/mnt/src/b.mp3', size: 50, mtimeMs: 2 }] satisfies ScannedFile[],
+    });
+    await runWorker({ ...dryOpts, mode: 'apply' }, io);
+    expect(provisionImmich).not.toHaveBeenCalled();
   });
 });

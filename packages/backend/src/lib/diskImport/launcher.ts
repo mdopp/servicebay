@@ -21,6 +21,8 @@ import type { SafeExec } from '@servicebay/disk-import-worker';
 import { STATUS_FILE, type WorkerStatus } from '@servicebay/disk-import-worker';
 import { assertSafeDevice, mountpointFor } from '@servicebay/disk-import-worker';
 
+import { resolveImmichProvisionEnv } from './immichProvisionEnv';
+
 /** The published worker image — built + pushed by .github/workflows/build-images.yml. */
 export const WORKER_IMAGE = 'ghcr.io/mdopp/servicebay-disk-import-worker:latest';
 
@@ -86,8 +88,28 @@ export async function launchWorker(args: {
   // It lives under /run (root-owned), so creating it needs sudo — without this
   // the mount fails with "mount point does not exist" and the worker never runs.
   await exec(['mkdir', '-p', mountpoint], { sudo: true });
-  await exec(['mkdir', '-p', outDir]);
+  // outDir must be created before `podman run -v <outDir>:/out`. It lives on the
+  // HOST (dataDir = HOST_DATA_DIR), not in the container's /app/data (read-only
+  // on the host). Fail fast if the mkdir fails — a read-only-filesystem error here
+  // means HOST_DATA_DIR is wrong (fell back to /app/data). The caller will surface
+  // the error; don't silently continue and let `podman run` fail with a confusing
+  // "statfs: no such file or directory".
+  const mkdirOut = await exec(['mkdir', '-p', outDir]);
+  if (mkdirOut.code !== 0) {
+    throw new Error(
+      `disk-import: failed to create worker out dir ${outDir}: ${mkdirOut.stderr || mkdirOut.stdout}. ` +
+      `If this box was installed before HOST_DATA_DIR was added to the quadlet, ` +
+      `a reinstall (or adding Environment=HOST_DATA_DIR=/mnt/data/servicebay to ` +
+      `~/.config/containers/systemd/servicebay.container and restarting) will fix it.`,
+    );
+  }
   await exec(['mount', '-o', 'ro', device, mountpoint], { sudo: true });
+
+  // Resolve the Immich External-Library provisioning inputs (admin key + box
+  // users) the worker's apply path needs (#1954). Injected as env so the apply
+  // child inside the serve container inherits them; `[]` (no-op) when Immich
+  // isn't installed / the key can't be resolved.
+  const immichEnv = await resolveImmichProvisionEnv();
 
   await exec([
     'podman', 'run', '-d', '--rm',
@@ -99,6 +121,7 @@ export async function launchWorker(args: {
     '-v', `${outDir}:/out`,
     '-e', `DISK_IMPORT_RUN_ID=${runId}`,
     '-e', `DISK_IMPORT_SHARE_GID=${shareGid}`,
+    ...immichEnv,
     WORKER_IMAGE,
     '--serve', '--share-gid', String(shareGid),
   ]);
