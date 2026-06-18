@@ -16,6 +16,44 @@ rubric, or invariant).
 
 ---
 
+## Settings IA: goal-based groups + 3-tier disclosure + global search
+
+**What.** Settings are organised by **goal**, not by component. Five
+cross-cutting groups (`Network & Domain · Access & People ·
+Notifications · Backups · System`) replace the old flat tab list
+(Nodes/System/Networking/Security/Notifications/Sharing/Stacks/Backups).
+Every setting carries a disclosure **tier**: *Essential* (shown by
+default — the handful people actually change), *Advanced* (collapsed
+behind one click, defaults intact, every expert knob still reachable),
+*Auto-managed* (not a setting at all — the system self-heals and surfaces
+unavoidable input via the diagnose `actions[]` path). A **global search /
+command palette** in the header indexes every setting by name + keywords
+so any knob is one search away. **Nothing was removed** — the old
+sections were relocated into groups and/or collapsed, never deleted.
+
+**Why.** Settings had grown into a large, flat, intimidating monolith
+(#1950). Goal-grouping ("Reachable from the internet" bundles domain +
+proxy + cert + DNS) matches how a family-homelab admin thinks about a
+task; disclosure hides expert knobs without amputating capability;
+search makes a big surface navigable. The box is non-live, so this
+shipped as a rip-and-replace (no feature flags / old-beside-new /
+compat shims) — but in verifiable slices so a wrong IA call is cheap to
+correct. This is **slice 1** (#1956): the shell + search + disclosure +
+groups. Slice 2 (#1957) adds per-service Operate pages; slice 3 (#1958)
+moves heavy features (disk-import, backup) to their own apps + tiles.
+
+**Where enforced.**
+- IA registry (single source of truth for nav + search):
+  `packages/frontend/src/app/(dashboard)/settings/_lib/ia.ts`.
+- Shell + search: `settings/layout.tsx`,
+  `settings/_lib/SettingsSearch.tsx`.
+- Disclosure tiers: `settings/_lib/SettingDisclosure.tsx`.
+- Group pages: `settings/{network-domain,access,notifications,backups,system}/`.
+- Disk-import is homed under System until slice 3 (#1949/#1958) moves
+  it out — relocated in slice 1, not removed.
+
+---
+
 ## Self-heal first, diagnose-with-actions second
 
 **What.** Every error path walks this hierarchy: (1) heal silently

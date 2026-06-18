@@ -2,25 +2,16 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Bell, Database, Layers, Loader2, Network, Server, Settings, Share2, ShieldCheck } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { SettingsProvider, useSettings } from './_lib/SettingsContext';
-
-const TABS = [
-  { id: 'nodes', label: 'Nodes', icon: Server },
-  { id: 'system', label: 'System', icon: Settings },
-  { id: 'networking', label: 'Networking & Access', icon: Network },
-  { id: 'security', label: 'Security', icon: ShieldCheck },
-  { id: 'notifications', label: 'Notifications', icon: Bell },
-  { id: 'sharing', label: 'Sharing', icon: Share2 },
-  { id: 'stacks', label: 'Stacks', icon: Layers },
-  { id: 'backups', label: 'Backups', icon: Database },
-] as const;
+import { SETTINGS_GROUPS, DEFAULT_GROUP } from './_lib/ia';
+import SettingsSearch from './_lib/SettingsSearch';
 
 function SettingsShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '';
   const { saving, loading } = useSettings();
-  const activeTab = pathname.split('/').filter(Boolean)[1] ?? 'nodes';
+  const activeGroupId = pathname.split('/').filter(Boolean)[1] ?? DEFAULT_GROUP.id;
 
   if (loading) {
     return <div className="p-8 text-center text-gray-500">Loading settings...</div>;
@@ -42,16 +33,19 @@ function SettingsShell({ children }: { children: React.ReactNode }) {
             )}
           </span>
         }
-      />
+      >
+        <SettingsSearch />
+      </PageHeader>
 
       <div className="flex border-b border-gray-200 dark:border-gray-700 px-6 bg-white dark:bg-gray-900 sticky top-0 z-10 overflow-x-auto">
-        {TABS.map(tab => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
+        {SETTINGS_GROUPS.map(group => {
+          const Icon = group.icon;
+          const isActive = activeGroupId === group.id;
           return (
             <Link
-              key={tab.id}
-              href={`/settings/${tab.id}`}
+              key={group.id}
+              href={`/settings/${group.id}`}
+              title={group.intent}
               className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 isActive
                   ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
@@ -59,7 +53,7 @@ function SettingsShell({ children }: { children: React.ReactNode }) {
               }`}
             >
               <Icon size={16} />
-              {tab.label}
+              {group.label}
             </Link>
           );
         })}

@@ -725,7 +725,7 @@ export default function BackupsSettingsPage() {
         (schedule.nextRunAt ? ` · next run ${new Date(schedule.nextRunAt).toLocaleString()}` : '');
 
   return (
-    <>
+    <div id="backups" className="space-y-6 scroll-mt-24">
       {/* Primary CTA: one-click restore from latest snapshot. The selective
           flow stays available behind "Selective restore…" / per-row Restore. */}
       {backups.length > 0 && (
@@ -965,7 +965,9 @@ export default function BackupsSettingsPage() {
         <div className="p-6 space-y-6">
           {/* Destination config (#1525/#1527): FritzBox NAS creds defaulting to
               the gateway, or a separate FTP/SSH host — settable from the web UI. */}
-          <ExternalBackupDestinationSection onSaved={() => void fetchNasOverview()} />
+          <div id="external-backup" className="scroll-mt-24">
+            <ExternalBackupDestinationSection onSaved={() => void fetchNasOverview()} />
+          </div>
 
           <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
           {nasLoading ? (
@@ -1706,6 +1708,6 @@ export default function BackupsSettingsPage() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

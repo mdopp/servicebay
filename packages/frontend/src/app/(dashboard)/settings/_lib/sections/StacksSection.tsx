@@ -6,8 +6,8 @@ import { Loader2 } from 'lucide-react';
 import StackCard from '@/components/StackCard';
 import type { StackManifest } from '@/lib/template/stackContract';
 import type { StackHealth } from '@/lib/install/stackHealth';
-import TemplateRegistriesSection from '../_lib/sections/TemplateRegistriesSection';
-import TemplateVariablesSection from '../_lib/sections/TemplateVariablesSection';
+import TemplateRegistriesSection from './TemplateRegistriesSection';
+import TemplateVariablesSection from './TemplateVariablesSection';
 
 interface StackSummary {
   name: string;
@@ -24,7 +24,7 @@ interface StackSummary {
  * follow-up. This page is where the operator lives once everything's
  * deployed and they need to wipe / reinstall a single feature stack.
  */
-export default function StacksPage() {
+export default function StacksSection() {
   return (
     <div className="space-y-6">
       <ManagedStacks />

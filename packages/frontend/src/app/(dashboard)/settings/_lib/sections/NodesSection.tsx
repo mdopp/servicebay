@@ -16,10 +16,10 @@ import {
   ShieldAlert,
   WifiOff,
 } from 'lucide-react';
-import { useSettings } from '../_lib/SettingsContext';
+import { useSettings } from '../SettingsContext';
 import { PodmanConnection } from '@/lib/nodes';
 
-export default function NodesSettingsPage() {
+export default function NodesSection() {
   const {
     nodes,
     nodeHealth,
