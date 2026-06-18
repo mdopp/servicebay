@@ -26,6 +26,7 @@ import {
   Network,
   Server,
   Users,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -41,6 +42,11 @@ export interface SettingEntry {
   tier: SettingTier;
   /** Extra search keywords (synonyms users might type). */
   keywords?: string[];
+  /** When set, this entry is a LAUNCHER for a feature that lives at its own
+   *  top-level route (e.g. the disk-import worker app at `/disk-import`), not an
+   *  in-page Settings section. Search links straight here, and the group page
+   *  renders it as a launch card instead of a disclosure section. */
+  launchHref?: string;
 }
 
 /** A goal-based cross-cutting group = one nav entry = one route. */
@@ -128,6 +134,19 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'factory-reset', label: 'Factory reset', tier: 'advanced', keywords: ['reset', 'wipe', 'erase', 'danger'] },
     ],
   },
+  {
+    // Occasional one-off tools that don't belong in the primary sidebar. Disk
+    // import (run once or twice ever) lives here as a launch card → the resource-
+    // capped worker app at /disk-import, rather than a permanent nav entry
+    // (#1958 follow-up). The heavy UI still runs in its own route/worker.
+    id: 'maintenance',
+    label: 'Maintenance',
+    intent: 'Occasional one-off tools — import a disk into the box.',
+    icon: Wrench,
+    entries: [
+      { id: 'disk-import', label: 'Import data', tier: 'essential', launchHref: '/disk-import', keywords: ['import', 'disk', 'usb', 'drive', 'sort', 'photos', 'music', 'copy', 'ingest', 'sd card'] },
+    ],
+  },
 ];
 
 export const DEFAULT_GROUP = SETTINGS_GROUPS[0];
@@ -144,7 +163,10 @@ export const SEARCH_INDEX: SearchHit[] = SETTINGS_GROUPS.flatMap(group =>
   group.entries.map(entry => ({
     group,
     entry,
-    href: `/settings/${group.id}#${entry.id}`,
+    // Launcher entries link straight to their own route (e.g. /disk-import) so
+    // searching "import" jumps right into the importer; everything else deep-
+    // links to the in-page Settings anchor.
+    href: entry.launchHref ?? `/settings/${group.id}#${entry.id}`,
   })),
 );
 
