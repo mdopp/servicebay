@@ -4,7 +4,7 @@
  * review gate, so a real disk can be imported before the UI card (#1697) exists.
  *
  * It is a thin argv + readline shell around the deterministic engine
- * (`packages/backend/src/lib/diskImport/`, #1693) and the host-apply path
+ * (`@servicebay/disk-import-worker`, #1693/#1951) and the host-apply path
  * (#1694). It mirrors `scripts/sb-config-upload.ts`: argv parsing, an injectable
  * IO seam (`log` / `confirm`), a clean `error: <message>` on user-facing failure.
  *
@@ -28,13 +28,20 @@ import readline from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { buildInventory, type ScannedFile } from '../packages/backend/src/lib/diskImport/inventory.js';
-import { buildPlan, type HashResolver } from '../packages/backend/src/lib/diskImport/dedup.js';
-import { classifyRecord } from '../packages/backend/src/lib/diskImport/classify.js';
-import { ImportCatalog } from '../packages/backend/src/lib/diskImport/catalog.js';
-import { applyPlan, type ApplyResult } from '../packages/backend/src/lib/diskImport/plan.js';
-import type { SafeExec } from '../packages/backend/src/lib/diskImport/hostExec.js';
-import type { Category, ImportPlan, ImportRecord } from '../packages/backend/src/lib/diskImport/types.js';
+import {
+  buildInventory,
+  type ScannedFile,
+  buildPlan,
+  type HashResolver,
+  classifyRecord,
+  ImportCatalog,
+  applyPlan,
+  type ApplyResult,
+  type SafeExec,
+  type Category,
+  type ImportPlan,
+  type ImportRecord,
+} from '@servicebay/disk-import-worker';
 
 /** Thrown for user-facing failures (bad args, abort) so the CLI prints a clean
  *  `error: <message>` instead of a stack trace. */

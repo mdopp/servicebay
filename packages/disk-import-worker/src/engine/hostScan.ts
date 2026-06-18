@@ -292,7 +292,6 @@ async function hashBatchResilient(
 
   if (paths.length === 1) {
     // A single file that still fails: skip its hash (it just isn't deduped).
-    // eslint-disable-next-line no-console
     console.warn(`disk-import: skipping un-hashable file (left un-deduped): ${JSON.stringify(paths[0])}`);
     return out;
   }

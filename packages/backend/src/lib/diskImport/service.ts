@@ -16,26 +16,45 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { ImportCatalog } from './catalog';
-import { buildInventory } from './inventory';
-import { buildPlan, type HashResolver } from './dedup';
-import { classifyRecord, buildSubtreeHints, isJunk } from './classify';
-import { listBlockDevices, mountReadOnly, unmount, type BlockDevice } from './mounter';
-import { hashPaths, hashRecords, scanMount } from './hostScan';
-import { applyPlan, type ApplyResult } from './plan';
+// Heavy disk-import engine now lives in the resource-capped worker package
+// (#1951, slice of #1949). servicebay's in-process orchestration imports it
+// from there for now; #1954 retires this in-process heavy path in favour of
+// launching the worker container.
 import {
-  provisionExternalLibraries,
-  scanLibrariesForOwners,
-  type ImmichAdminConfig,
-} from './immichLibraries';
-import {
+  ImportCatalog,
+  buildInventory,
+  buildPlan,
+  type HashResolver,
+  classifyRecord,
+  buildSubtreeHints,
+  isJunk,
+  listBlockDevices,
+  mountReadOnly,
+  unmount,
+  type BlockDevice,
+  hashPaths,
+  hashRecords,
+  scanMount,
+  applyPlan,
+  type ApplyResult,
   autoAssignOwners,
   buildFolderTree,
   dirOfRel,
   topLevelSegment,
   type FolderNode,
-} from './routing';
-import type { RoutingResolution } from './dedup';
+  type RoutingResolution,
+  type SafeExec,
+  type Category,
+  type ImportPlan,
+  type ImportRecord,
+  type Owner,
+  type Rule,
+} from '@servicebay/disk-import-worker';
+import {
+  provisionExternalLibraries,
+  scanLibrariesForOwners,
+  type ImmichAdminConfig,
+} from './immichLibraries';
 import {
   createScanJob,
   finalizeScan,
@@ -57,8 +76,6 @@ import {
   type ReviewSummary,
   __clearSessions as clearSessionStore,
 } from './sessionStore';
-import type { SafeExec } from './hostExec';
-import type { Category, ImportPlan, ImportRecord, Owner, Rule } from './types';
 
 /** A removable partition the card can offer as an import source. */
 export interface ImportDevice extends BlockDevice {

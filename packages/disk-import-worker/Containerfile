@@ -1,0 +1,49 @@
+# disk-import-worker — resource-capped one-shot worker image (#1951, slice of #1949).
+#
+# The heavy disk-import job (walk/hash/classify/dedup/plan/apply) runs HERE, in its
+# own container with a hard `--memory` cap, so a big input OOMs the worker — never
+# the servicebay control plane (feedback_control_plane_vs_worker). servicebay
+# launches it one-shot and reads only the compact status.json + plan sidecar the
+# worker writes to the shared out-volume.
+#
+# Built from the monorepo root context (single pipeline, no second build system):
+#   podman build -f packages/disk-import-worker/Containerfile -t disk-import-worker .
+#
+# Run (servicebay does this in #1954) — note the memory cap and read-only source:
+#   podman run --rm --memory=1g --memory-swap=1g \
+#     -v /dev/<device>:/mnt/src:ro \
+#     -v <shared-out-dir>:/out \
+#     -e DISK_IMPORT_RUN_ID=<id> \
+#     disk-import-worker --mount /mnt/src --out /out [--apply]
+
+FROM node:20-slim AS base
+# better-sqlite3 (the import catalog) is a native module → build toolchain.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Workspace-aware install: the root + every member manifest must be present so
+# `npm ci` resolves the workspace graph (same constraint as the main Dockerfile).
+COPY package.json package-lock.json* ./
+COPY packages/api-client/package.json ./packages/api-client/package.json
+COPY packages/backend/package.json ./packages/backend/package.json
+COPY packages/frontend/package.json ./packages/frontend/package.json
+COPY packages/disk-import-worker/package.json ./packages/disk-import-worker/package.json
+RUN npm ci
+
+# The worker is run via tsx (the engine is TS; the package has no separate build
+# step — it's a one-shot CLI, like scripts/disk-import.ts). Only the worker's own
+# sources + the engine it imports are needed.
+COPY tsconfig.json ./tsconfig.json
+COPY packages/disk-import-worker ./packages/disk-import-worker
+COPY packages/api-client ./packages/api-client
+
+# Non-root by default; the host bind-mounts (source ro, out rw) are owned by core
+# on the box. The worker never chowns imported files to a per-user uid — apply
+# chowns to the file-share gid only (feedback_fileshare_relabel_crashloop).
+USER node
+
+ENTRYPOINT ["npx", "tsx", "packages/disk-import-worker/src/cli/main.ts"]
+CMD ["--help"]

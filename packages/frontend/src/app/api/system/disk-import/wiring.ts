@@ -11,7 +11,7 @@ import { AgentExecutor } from '@/lib/agent/executor';
 import { getNodeIds } from '@/lib/store/repository';
 import { DATA_DIR } from '@/lib/dirs';
 import { listLldapUsers } from '@/lib/lldap/client';
-import type { SafeExec } from '@/lib/diskImport/hostExec';
+import type { SafeExec } from '@servicebay/disk-import-worker';
 
 /** Numeric gid that owns file-share data (rootless-podman subgid). */
 export const SHARE_GID = 1024;

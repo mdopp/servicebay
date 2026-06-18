@@ -46,7 +46,7 @@ import path from 'path';
 
 import { DATA_DIR } from '@/lib/dirs';
 
-import type { ImportPlan, Rule } from './types';
+import type { ImportPlan, Rule } from '@servicebay/disk-import-worker';
 
 const SESSIONS_DIR = path.join(DATA_DIR, 'disk-import-sessions');
 
