@@ -14,7 +14,7 @@ import { loadSavedSecrets } from '@/lib/install/savedSecrets';
 import { getConfig } from '@/lib/config';
 import { listLldapUsers } from '@/lib/lldap/client';
 import { logger } from '@/lib/logger';
-import { resolveImmichProvisionEnv, IMMICH_SERVER_URL } from './immichProvisionEnv';
+import { resolveImmichProvisionEnv, resolveImmichProvision, IMMICH_SERVER_URL } from './immichProvisionEnv';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -71,5 +71,30 @@ describe('resolveImmichProvisionEnv', () => {
   it('never throws — a reconcile error yields []', async () => {
     vi.mocked(reconcileImmichApiKey).mockRejectedValue(new Error('immich down'));
     expect(await resolveImmichProvisionEnv()).toEqual([]);
+  });
+});
+
+describe('resolveImmichProvision (host-apply, #1972)', () => {
+  it('returns the resolved admin cfg + box users for the servicebay host apply', async () => {
+    vi.mocked(loadSavedSecrets).mockReturnValue({ IMMICH_ADMIN_API_KEY: 'k-123' });
+    vi.mocked(listLldapUsers).mockResolvedValue({
+      ok: true,
+      users: [{ id: 'mdopp', email: 'm@x' }],
+    });
+    const r = await resolveImmichProvision();
+    expect(r).toEqual({
+      cfg: { serverUrl: IMMICH_SERVER_URL, adminApiKey: 'k-123' },
+      boxUsers: [{ id: 'mdopp', email: 'm@x' }],
+    });
+  });
+
+  it('returns null when no admin key is available (graceful skip)', async () => {
+    vi.mocked(loadSavedSecrets).mockReturnValue({});
+    expect(await resolveImmichProvision()).toBeNull();
+  });
+
+  it('never throws — a reconcile error yields null', async () => {
+    vi.mocked(reconcileImmichApiKey).mockRejectedValue(new Error('immich down'));
+    expect(await resolveImmichProvision()).toBeNull();
   });
 });

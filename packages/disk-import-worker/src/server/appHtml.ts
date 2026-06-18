@@ -61,8 +61,10 @@ The scan runs in its own resource-capped container — it can't slow down the bo
   <p class="muted">Each folder shows its whole contents. Expand to drill in — only the
   level you open is loaded, so even a huge disk stays responsive.</p>
   <div id="tree"></div>
-  <div class="row" style="margin-top:1rem">
-    <button id="apply">Confirm &amp; import</button>
+  <p class="muted" style="margin-top:1rem">Reviewed everything? Go back to the
+  <strong>Import data from a disk</strong> page in ServiceBay and press
+  <strong>Import now</strong> to copy the files into your library.</p>
+  <div class="row" style="margin-top:.5rem">
     <button id="cancel" class="secondary">Start over</button>
   </div>
 </section>
@@ -155,17 +157,12 @@ function nodeRow(node, depth) {
   return wrap;
 }
 
-async function apply() {
-  showError(''); $('apply').disabled = true;
-  const r = await fetch('api/apply', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ device: lastDevice }) });
-  if (!r.ok) { showError('Import failed to start'); $('apply').disabled = false; return; }
-  $('review').hidden = true; $('progress').hidden = false; poll();
-}
+// APPLY runs in ServiceBay over the host mount (#1972), NOT in this sandboxed
+// worker — so there is no apply button here; the review tree is the confirm
+// surface and "Import now" lives on the control-plane tile.
 
 $('refresh').onclick = loadDevices;
 $('scan').onclick = startScan;
-$('apply').onclick = apply;
 $('cancel').onclick = () => location.reload();
 loadDevices();
 </script>

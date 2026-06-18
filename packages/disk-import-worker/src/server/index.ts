@@ -29,8 +29,8 @@ export interface ServeOptions {
   shareGid: number;
 }
 
-/** Spawn the one-shot worker CLI as a detached child for a scan/apply pass. */
-function launchWorkerChild(opts: ServeOptions, mode: 'dry-run' | 'apply'): void {
+/** Spawn the one-shot worker CLI as a detached child for a DRY-RUN scan pass. */
+function launchWorkerChild(opts: ServeOptions): void {
   const cliEntry = path.join(moduleDir(), '..', 'cli', 'main.ts');
   const args = [
     'tsx', cliEntry,
@@ -38,7 +38,6 @@ function launchWorkerChild(opts: ServeOptions, mode: 'dry-run' | 'apply'): void 
     '--out', opts.out,
     '--run-id', opts.runId,
     '--share-gid', String(opts.shareGid),
-    ...(mode === 'apply' ? ['--apply', '--catalog', path.join(opts.out, 'catalog.sqlite')] : []),
   ];
   const child = spawn('npx', args, { stdio: 'inherit', detached: true });
   child.unref();
@@ -51,7 +50,13 @@ export function serveDeps(opts: ServeOptions): ServerDeps {
     readJson: fileReader(opts.out),
     // The device is pre-mounted by servicebay; the picker shows the one disk.
     listDevices: async () => [{ path: opts.mount, display: 'Imported disk' }],
-    launchJob: async mode => launchWorkerChild(opts, mode),
+    // The worker only SCANS/PLANS (it's sandboxed — no privileged host I/O, no
+    // rsync, no host file-share mount). APPLY runs in servicebay over the host
+    // mount (#1972), so serve mode never launches the stub `--apply` child:
+    // `apply` is a no-op here and the control plane drives the real host apply.
+    launchJob: async mode => {
+      if (mode === 'dry-run') launchWorkerChild(opts);
+    },
   };
 }
 

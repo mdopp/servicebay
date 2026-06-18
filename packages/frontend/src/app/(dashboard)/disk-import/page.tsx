@@ -26,6 +26,7 @@ interface RunStatus {
     step: string;
     scanned: number;
     planned: number;
+    applied: number;
     conflicts: number;
     error: string | null;
   } | null;
@@ -56,6 +57,18 @@ function useDevices() {
   return { devices, loading, refresh };
 }
 
+/** POST a disk-import action, surfacing `{error}` on failure. Shared by scan +
+ *  apply so the hook stays thin. Returns the failure message, or '' on success. */
+async function postAction(path: string, body?: unknown): Promise<string> {
+  const r = await fetch(path, {
+    method: 'POST',
+    ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
+  });
+  if (r.ok) return '';
+  const d = (await r.json().catch(() => ({}))) as { error?: string };
+  return d.error || 'Request failed';
+}
+
 /** Poll the active worker run + expose launch/abort. Kept out of the component
  *  so the page stays a thin render container. */
 function useDiskImportRun(selected: string, onAfterAbort: () => void) {
@@ -79,24 +92,18 @@ function useDiskImportRun(selected: string, onAfterAbort: () => void) {
     };
   }, []);
 
-  const launch = async () => {
-    if (!selected) return setError('Pick a USB disk first');
+  const runAction = async (path: string, body?: unknown) => {
     setError('');
     setLaunching(true);
     try {
-      const r = await fetch('/api/system/disk-import/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device: selected }),
-      });
-      if (!r.ok) {
-        const d = (await r.json().catch(() => ({}))) as { error?: string };
-        setError(d.error || 'Could not launch the import worker');
-      }
+      setError(await postAction(path, body));
     } finally {
       setLaunching(false);
     }
   };
+
+  const launch = () =>
+    selected ? runAction('/api/system/disk-import/scan', { device: selected }) : setError('Pick a USB disk first');
 
   const startOver = async () => {
     await fetch('/api/system/disk-import/abort', { method: 'POST' }).catch(() => {});
@@ -104,18 +111,27 @@ function useDiskImportRun(selected: string, onAfterAbort: () => void) {
     onAfterAbort();
   };
 
-  return { run, launching, error, launch, startOver };
+  // APPLY runs on the HOST in servicebay (#1972) — the sandboxed worker only
+  // scanned/planned. POST kicks off the privileged host apply; the status poll
+  // then reflects the `applying` → `done` phase the backend writes.
+  const apply = () => runAction('/api/system/disk-import/apply');
+
+  return { run, launching, error, launch, startOver, apply };
 }
 
 export default function DiskImportPage() {
   const { devices, loading, refresh } = useDevices();
   const [selected, setSelected] = useState('');
-  const { run, launching, error, launch, startOver } = useDiskImportRun(selected, () => {
+  const { run, launching, error, launch, startOver, apply } = useDiskImportRun(selected, () => {
     setSelected('');
     refresh();
   });
 
   const active = run?.running || (run?.status && run.status.phase !== 'done' && run.status.phase !== 'error');
+  // The dry-run scan finished (worker is gone, phase `done`) and there's a plan to
+  // apply — offer the host-apply action (#1972). The apply itself runs in
+  // servicebay; the status poll then shows the `applying` phase the backend writes.
+  const planReady = !run?.running && run?.status?.phase === 'done' && (run.status.planned ?? 0) > 0;
 
   return (
     <div className="p-6 max-w-2xl space-y-4 overflow-auto">
@@ -136,6 +152,13 @@ export default function DiskImportPage() {
 
       {active ? (
         <WorkerProgress run={run!} onStartOver={() => void startOver()} />
+      ) : planReady ? (
+        <PlanReady
+          run={run!}
+          applying={launching}
+          onApply={() => void apply()}
+          onStartOver={() => void startOver()}
+        />
       ) : (
         <DevicePicker
           devices={devices}
@@ -180,6 +203,51 @@ function WorkerProgress({ run, onStartOver }: { run: RunStatus; onStartOver: () 
         className="block text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 inline-flex items-center gap-1"
       >
         <RefreshCw size={12} /> Stop and start over
+      </button>
+    </div>
+  );
+}
+
+/** Scan/plan complete — review out in the worker app, then APPLY on the host. */
+function PlanReady({
+  run,
+  applying,
+  onApply,
+  onStartOver,
+}: {
+  run: RunStatus;
+  applying: boolean;
+  onApply: () => void;
+  onStartOver: () => void;
+}) {
+  const s = run.status!;
+  return (
+    <div className="space-y-3 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+      <p className="text-sm text-gray-800 dark:text-gray-200">
+        Scan complete — {s.planned} file(s) planned{s.conflicts ? `, ${s.conflicts} conflict(s)` : ''}.
+      </p>
+      <a
+        href={WORKER_APP_PATH}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-2 text-sm text-blue-600 hover:underline"
+      >
+        <ExternalLink size={14} /> Review the plan
+      </a>
+      <div>
+        <button
+          onClick={onApply}
+          disabled={applying}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg disabled:opacity-50"
+        >
+          {applying && <Loader2 size={14} className="animate-spin" />} <Download size={14} /> Import now
+        </button>
+      </div>
+      <button
+        onClick={onStartOver}
+        className="block text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 inline-flex items-center gap-1"
+      >
+        <RefreshCw size={12} /> Start over
       </button>
     </div>
   );

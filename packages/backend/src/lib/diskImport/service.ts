@@ -22,6 +22,7 @@ import {
 } from './launcher';
 import { listImportDevices } from './devices';
 import { setActiveRun, getActiveRun, clearActiveRun } from './runStore';
+import { applyImport, type ApplyImportResult } from './apply';
 
 export type { ImportDevice } from './launcher';
 
@@ -66,6 +67,20 @@ export async function getRunStatus(exec: SafeExec): Promise<RunStatus | null> {
   if (!run) return null;
   const [status, running] = await Promise.all([readStatus(exec, run), isWorkerRunning(exec, run)]);
   return { runId: run.runId, status, running };
+}
+
+/**
+ * Apply the active run's APPROVED plan ON THE HOST (#1972). The worker only
+ * scanned/planned (it's sandboxed — it can't do privileged host I/O); servicebay
+ * reads the worker's plan.json + catalog from the out dir and runs applyPlan with
+ * its REAL agent exec, reading the source from the HOST mountpoint the device is
+ * still mounted at. Status.json is updated through the apply so the tile poll keeps
+ * reflecting progress. Throws when there's no active run, or on a real apply error.
+ */
+export async function applyRun(exec: SafeExec, shareGid: number): Promise<ApplyImportResult> {
+  const run = await getActiveRun();
+  if (!run) throw new Error('disk-import: no active run to apply');
+  return applyImport({ exec, runId: run.runId, mountpoint: run.mountpoint, shareGid });
 }
 
 /** Stop the active worker container and forget it (the tile's "Start over"). */
