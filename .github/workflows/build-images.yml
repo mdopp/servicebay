@@ -48,7 +48,7 @@ jobs:
             description: "Resource-capped one-shot config-backup worker (walk/copy/tar each installed service's config per the backup manifest); servicebay launches it via podman run --memory=… and reads its status.json (#1955/#1949)."
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Check Dockerfile exists
         id: check
