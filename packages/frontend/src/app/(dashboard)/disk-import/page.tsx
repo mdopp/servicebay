@@ -48,6 +48,8 @@ interface CategoryRollup {
   copy: number;
   skipDupe: number;
   conflict: number;
+  /** Files imported under a disambiguated name (a subset of `copy`, #2006). */
+  renamed?: number;
 }
 
 /** Human-readable size (e.g. "457 GB") for the review table. */
@@ -352,7 +354,7 @@ function WorkerProgress({ run, onStartOver }: { run: RunStatus; onStartOver: () 
 
 /** Scan/plan complete — review out in the worker app, then APPLY on the host. */
 /** Sum a list of category rollups into a single totals row. */
-function sumCategories(cats: CategoryRollup[]): Omit<CategoryRollup, 'category'> {
+function sumCategories(cats: CategoryRollup[]): Omit<CategoryRollup, 'category' | 'renamed'> & { renamed: number } {
   return cats.reduce(
     (t, c) => ({
       files: t.files + c.files,
@@ -360,8 +362,9 @@ function sumCategories(cats: CategoryRollup[]): Omit<CategoryRollup, 'category'>
       copy: t.copy + c.copy,
       skipDupe: t.skipDupe + c.skipDupe,
       conflict: t.conflict + c.conflict,
+      renamed: t.renamed + (c.renamed ?? 0),
     }),
-    { files: 0, bytes: 0, copy: 0, skipDupe: 0, conflict: 0 },
+    { files: 0, bytes: 0, copy: 0, skipDupe: 0, conflict: 0, renamed: 0 },
   );
 }
 
@@ -380,6 +383,9 @@ function PlanReview({ status }: { status: NonNullable<RunStatus['status']> }) {
         </p>
         <p className="text-xs text-gray-500 dark:text-gray-400">
           <span className="font-medium text-blue-600 dark:text-blue-400">{totals.copy.toLocaleString()}</span> to import
+          {totals.renamed > 0 && (
+            <> {' ('}{totals.renamed.toLocaleString()} renamed to avoid clashes{')'}</>
+          )}
           {' · '}{totals.skipDupe.toLocaleString()} duplicate{totals.skipDupe === 1 ? '' : 's'} skipped
           {totals.conflict > 0 && (
             <> {' · '}<span className={`font-medium ${amber}`}>{totals.conflict.toLocaleString()} conflict{totals.conflict === 1 ? '' : 's'}</span></>
@@ -396,6 +402,7 @@ function PlanReview({ status }: { status: NonNullable<RunStatus['status']> }) {
                 <th className="py-1.5 px-2 text-right font-medium">Files</th>
                 <th className="py-1.5 px-2 text-right font-medium">Size</th>
                 <th className="py-1.5 px-2 text-right font-medium">Import</th>
+                <th className="py-1.5 px-2 text-right font-medium">Renamed</th>
                 <th className="py-1.5 px-2 text-right font-medium">Dupes</th>
                 <th className="py-1.5 pl-2 text-right font-medium">Conflicts</th>
               </tr>
@@ -407,6 +414,7 @@ function PlanReview({ status }: { status: NonNullable<RunStatus['status']> }) {
                   <td className="py-1.5 px-2 text-right tabular-nums">{c.files.toLocaleString()}</td>
                   <td className="py-1.5 px-2 text-right tabular-nums">{formatBytes(c.bytes)}</td>
                   <td className="py-1.5 px-2 text-right tabular-nums text-blue-600 dark:text-blue-400">{c.copy.toLocaleString()}</td>
+                  <td className="py-1.5 px-2 text-right tabular-nums">{(c.renamed ?? 0).toLocaleString()}</td>
                   <td className="py-1.5 px-2 text-right tabular-nums">{c.skipDupe.toLocaleString()}</td>
                   <td className={`py-1.5 pl-2 text-right tabular-nums ${c.conflict ? `font-medium ${amber}` : ''}`}>
                     {c.conflict.toLocaleString()}
@@ -420,6 +428,7 @@ function PlanReview({ status }: { status: NonNullable<RunStatus['status']> }) {
                 <td className="py-1.5 px-2 text-right tabular-nums">{totals.files.toLocaleString()}</td>
                 <td className="py-1.5 px-2 text-right tabular-nums">{formatBytes(totals.bytes)}</td>
                 <td className="py-1.5 px-2 text-right tabular-nums text-blue-600 dark:text-blue-400">{totals.copy.toLocaleString()}</td>
+                <td className="py-1.5 px-2 text-right tabular-nums">{totals.renamed.toLocaleString()}</td>
                 <td className="py-1.5 px-2 text-right tabular-nums">{totals.skipDupe.toLocaleString()}</td>
                 <td className={`py-1.5 pl-2 text-right tabular-nums ${totals.conflict ? amber : ''}`}>
                   {totals.conflict.toLocaleString()}
@@ -432,10 +441,18 @@ function PlanReview({ status }: { status: NonNullable<RunStatus['status']> }) {
         <p className="text-xs text-gray-500 dark:text-gray-400">No category breakdown available for this run.</p>
       )}
 
+      {totals.renamed > 0 && (
+        <p className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
+          {totals.renamed.toLocaleString()} file{totals.renamed === 1 ? '' : 's'} shared a name with a <strong>different</strong> file headed to the same folder
+          (e.g. two cameras both naming a photo <code>IMG_0001.jpg</code>). Each is imported under a disambiguated
+          name like <code>IMG_0001 (2).jpg</code> — <strong>nothing is dropped and nothing is overwritten</strong>.
+        </p>
+      )}
+
       {totals.conflict > 0 && (
         <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
-          {totals.conflict.toLocaleString()} file{totals.conflict === 1 ? '' : 's'} clash with a different file headed to the same name/folder.
-          These are <strong>not imported</strong> in this pass — the others import normally; nothing is overwritten.
+          {totals.conflict.toLocaleString()} file{totals.conflict === 1 ? '' : 's'} match a previously imported target with different
+          content — the earlier copy is preserved under <code>_superseded/</code> and the newer one imported. Nothing is lost.
         </p>
       )}
     </>

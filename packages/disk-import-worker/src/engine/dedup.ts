@@ -207,18 +207,28 @@ export function buildPlan(
   // `shared` vs a user area) is two distinct slots — private dedups within
   // itself, `shared` merges across sources.
   const targetOwner = new Map<string, { key: string; sha256?: string; sourcePath: string }>();
+  // Per-original-slot probe cursor for disambiguating renames (#2006), so N
+  // distinct files at one name resolve to (2),(3)… in O(N) not O(N²).
+  const renameCounters = new Map<string, number>();
 
   // 3. Decide each kept record from its precomputed content key.
   for (const c of ordered) {
     const target = c.target!;
     const area = areaOf(c.record);
     const slot = dedupSlot(area, target);
-    const action = decide(c, target, area, slot, keys.get(c.record.sourcePath)!, {
+    const decision = decide(c, target, area, slot, keys.get(c.record.sourcePath)!, {
       targetOwner,
+      renameCounters,
       catalog,
       conflicts,
     });
-    items.push({ record: c.record, category: c.category, target, action });
+    items.push({
+      record: c.record,
+      category: c.category,
+      target: decision.target,
+      action: decision.action,
+      ...(decision.renamed ? { renamed: true } : {}),
+    });
   }
 
   // Stable output ordering.
@@ -310,6 +320,13 @@ function resolveContentKeys(
   return out;
 }
 
+/** A decided record: its (possibly disambiguated) target, the action, and whether the name was changed. */
+interface Decision {
+  action: ImportAction;
+  target: string;
+  renamed?: boolean;
+}
+
 function decide(
   c: Classified,
   target: string,
@@ -318,17 +335,20 @@ function decide(
   info: KeyInfo,
   ctx: {
     targetOwner: Map<string, { key: string; sha256?: string; sourcePath: string }>;
+    renameCounters: Map<string, number>;
     catalog?: ImportCatalog;
     conflicts: Conflict[];
   },
-): ImportAction {
+): Decision {
   const { key, sha256 } = info;
 
   // Catalog dedup compares FULL hashes (the catalog stores full sha256). sha256
   // is present exactly when this record was fully hashed, which resolveContentKeys
-  // guarantees whenever the target is already cataloged.
+  // guarantees whenever the target is already cataloged. This is the cross-run
+  // newer-wins path (apply routes the existing file to _superseded) — left as a
+  // conflict on purpose; #2006 only changes the in-tree distinct-name case below.
   if (sha256 !== undefined) {
-    if (ctx.catalog?.has(sha256, target, area)) return 'skip-dupe';
+    if (ctx.catalog?.has(sha256, target, area)) return { action: 'skip-dupe', target };
     const catHit = ctx.catalog?.getByTarget(target, area);
     if (catHit && catHit.sha256 !== sha256) {
       ctx.conflicts.push({
@@ -336,23 +356,65 @@ function decide(
         existing: { sourcePath: catHit.sourcePath, sha256: catHit.sha256 },
         incoming: { sourcePath: c.record.sourcePath, sha256 },
       });
-      return 'conflict';
+      return { action: 'conflict', target };
     }
   }
 
   // In-tree collision at this slot (same area + target)? Compare by content key.
   const owner = ctx.targetOwner.get(slot);
   if (owner) {
-    if (owner.key === key) return 'skip-dupe'; // same content, different path
-    ctx.conflicts.push({
-      target,
-      existing: { sourcePath: owner.sourcePath, sha256: owner.sha256 ?? '' },
-      incoming: { sourcePath: c.record.sourcePath, sha256: sha256 ?? '' },
-    });
-    return 'conflict';
+    if (owner.key === key) return { action: 'skip-dupe', target }; // same content, different path
+    // DISTINCT files clashing on one name are NOT the same photo/doc — import the
+    // later one under a disambiguated name (`IMG_0001 (2).jpg`) instead of dropping
+    // it as an unresolved conflict (#2006, DATA SAFETY). Deterministic: stable
+    // sourcePath order + a per-original-slot probe cursor make re-runs reproduce
+    // the same names; a 3rd distinct clash → `(3)`, etc.
+    const renamedTarget = uniquifyTarget(target, area, slot, ctx);
+    ctx.targetOwner.set(dedupSlot(area, renamedTarget), { key, sha256, sourcePath: c.record.sourcePath });
+    return { action: 'copy', target: renamedTarget, renamed: true };
   }
 
   // First file to claim this slot.
   ctx.targetOwner.set(slot, { key, sha256, sourcePath: c.record.sourcePath });
-  return 'copy';
+  return { action: 'copy', target };
+}
+
+/**
+ * Split a target path into directory, stem and extension so a disambiguating
+ * suffix lands BEFORE the extension (`photos/IMG_0001.jpg` → `photos/IMG_0001 (2).jpg`).
+ * A leading dot (dotfile, e.g. `.bashrc`) is treated as no extension.
+ */
+function splitTarget(target: string): { dir: string; stem: string; ext: string } {
+  const slash = target.lastIndexOf('/');
+  const dir = slash >= 0 ? target.slice(0, slash + 1) : '';
+  const base = target.slice(slash + 1);
+  const dot = base.lastIndexOf('.');
+  if (dot > 0) return { dir, stem: base.slice(0, dot), ext: base.slice(dot) };
+  return { dir, stem: base, ext: '' };
+}
+
+/**
+ * Find a free disambiguated target for a name already claimed by different
+ * content (#2006). Probes `<stem> (2)<ext>`, `(3)`… within the same area, skipping
+ * any slot already claimed (including a real source file that genuinely has that
+ * name). `renameCounters` (keyed by the ORIGINAL slot) remembers where the last
+ * probe stopped so M clashes on one name cost O(M), not O(M²). Returns the new
+ * target relative path; the caller claims its slot.
+ */
+function uniquifyTarget(
+  target: string,
+  area: string,
+  originalSlot: string,
+  ctx: { targetOwner: Map<string, unknown>; renameCounters: Map<string, number> },
+): string {
+  const { dir, stem, ext } = splitTarget(target);
+  let n = ctx.renameCounters.get(originalSlot) ?? 2;
+  for (;;) {
+    const candidate = `${dir}${stem} (${n})${ext}`;
+    n += 1;
+    if (!ctx.targetOwner.has(dedupSlot(area, candidate))) {
+      ctx.renameCounters.set(originalSlot, n);
+      return candidate;
+    }
+  }
 }
