@@ -11,7 +11,7 @@
 // proxied, admin-gated route — NOT rendered in this control-plane page.
 
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, HardDrive, RefreshCw, Download } from 'lucide-react';
+import { Loader2, HardDrive, RefreshCw, Download, Save, Trash2 } from 'lucide-react';
 import { RoutingTree } from './_lib/RoutingTree';
 import type { ReviewTree, Rule } from './_lib/types';
 
@@ -215,7 +215,62 @@ function useRoutingTree(active: boolean) {
     [fetchTree],
   );
 
-  return { data, rules, setRule };
+  // Replace the whole rule map at once (loading a saved preset, #2007) and
+  // re-resolve the tree against it.
+  const loadRules = useCallback(
+    (next: Record<string, Rule>) => {
+      setRules(next);
+      void fetchTree(next).then(t => {
+        if (t) setData(t);
+      });
+    },
+    [fetchTree],
+  );
+
+  return { data, rules, setRule, loadRules };
+}
+
+/** A saved routing selection (#2007) — mirrors the backend `RoutingProfile`. */
+interface RoutingProfile {
+  name: string;
+  rules: Record<string, Rule>;
+  savedAt: number;
+}
+
+/** List/save/delete named routing presets (#2007). */
+function useRoutingProfiles() {
+  const [profiles, setProfiles] = useState<RoutingProfile[]>([]);
+  const reload = useCallback(() => {
+    fetch('/api/system/disk-import/profiles')
+      .then(r => (r.ok ? r.json() : null))
+      .then((d: { profiles?: RoutingProfile[] } | null) => setProfiles(d?.profiles ?? []))
+      .catch(() => {});
+  }, []);
+  useEffect(reload, [reload]);
+
+  const save = useCallback(
+    async (name: string, rules: Record<string, Rule>) => {
+      await fetch('/api/system/disk-import/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, rules }),
+      }).catch(() => {});
+      reload();
+    },
+    [reload],
+  );
+
+  const remove = useCallback(
+    async (name: string) => {
+      await fetch(`/api/system/disk-import/profiles?name=${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      }).catch(() => {});
+      reload();
+    },
+    [reload],
+  );
+
+  return { profiles, save, remove };
 }
 
 export default function DiskImportPage() {
@@ -227,7 +282,8 @@ export default function DiskImportPage() {
   });
   // The routing tree is only meaningful once a scan has produced a plan to review.
   const planReady = tileState(run) === 'plan-ready';
-  const { data: tree, rules, setRule } = useRoutingTree(planReady);
+  const { data: tree, rules, setRule, loadRules } = useRoutingTree(planReady);
+  const { profiles, save: savePreset, remove: deletePreset } = useRoutingProfiles();
 
   return (
     <div className="p-6 max-w-3xl space-y-4 overflow-auto">
@@ -255,7 +311,11 @@ export default function DiskImportPage() {
         launching={launching}
         tree={tree}
         rules={rules}
+        profiles={profiles}
         onSetRule={setRule}
+        onLoadPreset={loadRules}
+        onSavePreset={name => void savePreset(name, rules)}
+        onDeletePreset={name => void deletePreset(name)}
         onSelect={setSelected}
         onRefresh={refresh}
         onLaunch={() => void launch()}
@@ -302,7 +362,11 @@ function TileBody({
   launching,
   tree,
   rules,
+  profiles,
   onSetRule,
+  onLoadPreset,
+  onSavePreset,
+  onDeletePreset,
   onSelect,
   onRefresh,
   onLaunch,
@@ -317,7 +381,11 @@ function TileBody({
   launching: boolean;
   tree: ReviewTree | null;
   rules: Record<string, Rule>;
+  profiles: RoutingProfile[];
   onSetRule: (dir: string, patch: Rule) => void;
+  onLoadPreset: (rules: Record<string, Rule>) => void;
+  onSavePreset: (name: string) => void;
+  onDeletePreset: (name: string) => void;
   onSelect: (path: string) => void;
   onRefresh: () => void;
   onLaunch: () => void;
@@ -338,7 +406,11 @@ function TileBody({
         applying={launching}
         tree={tree}
         rules={rules}
+        profiles={profiles}
         onSetRule={onSetRule}
+        onLoadPreset={onLoadPreset}
+        onSavePreset={onSavePreset}
+        onDeletePreset={onDeletePreset}
         onApply={onApply}
         onStartOver={onStartOver}
       />
@@ -489,6 +561,77 @@ function PlanReview({ status }: { status: NonNullable<RunStatus['status']> }) {
   );
 }
 
+/** Save / load named routing presets (#2007). Loading a preset replaces the whole
+ *  rule map; Save persists the current picks under a name (disabled until something
+ *  is picked + a name typed). Lets the operator re-run a 30+-folder selection on a
+ *  fresh scan with zero re-entry. */
+function RoutingPresets({
+  profiles,
+  edited,
+  onLoad,
+  onSave,
+  onDelete,
+}: {
+  profiles: RoutingProfile[];
+  edited: boolean;
+  onLoad: (rules: Record<string, Rule>) => void;
+  onSave: (name: string) => void;
+  onDelete: (name: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [selected, setSelected] = useState('');
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs rounded-lg bg-gray-50 dark:bg-gray-800/40 px-2.5 py-2">
+      <span className="text-gray-500 dark:text-gray-400">Saved selections:</span>
+      <select
+        value={selected}
+        onChange={e => {
+          const picked = e.target.value;
+          setSelected(picked);
+          const p = profiles.find(x => x.name === picked);
+          if (p) onLoad(p.rules);
+        }}
+        className="rounded border px-1.5 py-1 bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200"
+      >
+        <option value="">{profiles.length ? 'Load a preset…' : 'No saved presets'}</option>
+        {profiles.map(p => (
+          <option key={p.name} value={p.name}>{p.name}</option>
+        ))}
+      </select>
+      {selected && (
+        <button
+          onClick={() => {
+            onDelete(selected);
+            setSelected('');
+          }}
+          className="inline-flex items-center gap-1 text-red-600 hover:text-red-700 dark:text-red-400"
+          title={`Delete preset “${selected}”`}
+        >
+          <Trash2 size={12} /> Delete
+        </button>
+      )}
+      <span className="mx-1 text-gray-300 dark:text-gray-600">|</span>
+      <input
+        value={name}
+        onChange={e => setName(e.target.value)}
+        placeholder="Name this selection"
+        className="rounded border px-2 py-1 bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200"
+      />
+      <button
+        onClick={() => {
+          onSave(name.trim());
+          setName('');
+        }}
+        disabled={!edited || !name.trim()}
+        className="inline-flex items-center gap-1 rounded bg-gray-200 dark:bg-gray-700 px-2 py-1 font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50"
+        title={edited ? 'Save the current owner/target picks as a named preset' : 'Pick owners/targets first'}
+      >
+        <Save size={12} /> Save selection
+      </button>
+    </div>
+  );
+}
+
 /** Scan/plan complete — show the per-category summary + the per-folder routing
  *  tree (owner + target pickers), then APPLY on the host (#2000). The apply
  *  re-plans with the operator's picks first (re-route + re-dedup per owner). */
@@ -497,7 +640,11 @@ function PlanReady({
   applying,
   tree,
   rules,
+  profiles,
   onSetRule,
+  onLoadPreset,
+  onSavePreset,
+  onDeletePreset,
   onApply,
   onStartOver,
 }: {
@@ -505,7 +652,11 @@ function PlanReady({
   applying: boolean;
   tree: ReviewTree | null;
   rules: Record<string, Rule>;
+  profiles: RoutingProfile[];
   onSetRule: (dir: string, patch: Rule) => void;
+  onLoadPreset: (rules: Record<string, Rule>) => void;
+  onSavePreset: (name: string) => void;
+  onDeletePreset: (name: string) => void;
   onApply: () => void;
   onStartOver: () => void;
 }) {
@@ -523,6 +674,13 @@ function PlanReady({
             person&apos;s area + their Immich.
           </p>
         </div>
+        <RoutingPresets
+          profiles={profiles}
+          edited={edited}
+          onLoad={onLoadPreset}
+          onSave={onSavePreset}
+          onDelete={onDeletePreset}
+        />
         {tree ? (
           <RoutingTree data={tree} rules={rules} onSetRule={onSetRule} />
         ) : (
