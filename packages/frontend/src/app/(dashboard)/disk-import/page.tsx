@@ -246,15 +246,23 @@ type TileState = 'active' | 'apply-done' | 'plan-ready' | 'pick';
  *  complexity lives in one tested spot, not inline in the render. */
 function tileState(run: RunStatus | null): TileState {
   const s = run?.status;
-  if (run?.running || (s && s.phase !== 'done' && s.phase !== 'error')) return 'active';
-  if (s?.phase !== 'done') return 'pick';
-  // Apply finished (host pass, mode `apply`) — terminal imported state, NOT the
-  // "Import now" plan again (#1981).
-  if (s.mode === 'apply') return 'apply-done';
-  // Dry-run scan finished with a plan to apply — offer the host-apply (#1972).
-  // Gating on mode==='dry-run' keeps apply-done out of this branch.
-  if (s.mode === 'dry-run' && (s.planned ?? 0) > 0) return 'plan-ready';
-  return 'pick';
+  // No status doc yet → the worker was just launched and is starting up: show
+  // progress while it's live, otherwise nothing is going on.
+  if (!s) return run?.running ? 'active' : 'pick';
+  // Drive the state off the PHASE, never off `run.running`: the #2000 routing-tree
+  // worker STAYS running after a dry-run (serve mode serves the review tree +
+  // replan), so liveness is always true here — gating on it kept the tile stuck on
+  // progress and never showed the plan/tree.
+  if (s.phase === 'done') {
+    // Apply finished (host pass) — terminal imported state, not the plan again (#1981).
+    if (s.mode === 'apply') return 'apply-done';
+    // Dry-run scan finished with a plan to review/apply (#1972/#2000).
+    if (s.mode === 'dry-run' && (s.planned ?? 0) > 0) return 'plan-ready';
+    return 'pick';
+  }
+  if (s.phase === 'error') return 'pick';
+  // scanning / planning / applying → in flight.
+  return 'active';
 }
 
 /** Picks the right tile state from the run status. Kept out of the page so the
