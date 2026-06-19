@@ -64,6 +64,9 @@ describe('launchWorker', () => {
     expect(podmanRun).toContain(`--memory=${WORKER_MEMORY}`);
     expect(podmanRun).toContain(WORKER_IMAGE);
     expect(podmanRun).toContain('--serve');
+    // SELinux confinement disabled for the trusted one-shot worker so /out access
+    // isn't gated by fragile MCS categories (the `:z` relabel was unreliable).
+    expect(podmanRun).toContain('label=disable');
     // source mounted read-only into the container
     expect(podmanRun.some(a => a.endsWith(':/mnt/src:ro'))).toBe(true);
 

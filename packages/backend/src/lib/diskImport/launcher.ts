@@ -155,12 +155,17 @@ export async function launchWorker(args: {
     `--memory=${WORKER_MEMORY}`,
     `--memory-swap=${WORKER_MEMORY}`,
     '-p', `${WORKER_PORT}`,
+    // SELinux: disable label confinement for this trusted, first-party one-shot
+    // worker. The `:z`/`:Z` relabel of /out proved fragile — podman assigned the
+    // mount MCS categories (c1022,c1023) that the worker's processes (the serve
+    // server, scan/replan children, and `podman exec` triggers) did NOT reliably
+    // get, so /out reads/writes hit EACCES inconsistently per run (scan could
+    // write but replan/exec could not). `label=disable` removes MCS gating so
+    // every worker process can read/write its own /out + the read-only source.
+    // Acceptable: the worker image is our code, runs one-shot, single-tenant box.
+    '--security-opt', 'label=disable',
     '-v', `${mountpoint}:/mnt/src:ro`,
-    // `:z` relabels the out dir to a SHARED SELinux label so the worker can
-    // write it — otherwise it keeps servicebay's private MCS categories and the
-    // worker gets EACCES on /out/status.json even as root. Shared (`:z`) because
-    // servicebay reads status/plan back from here. (#1955 box-verify.)
-    '-v', `${outDir}:/out:z`,
+    '-v', `${outDir}:/out`,
     '-e', `DISK_IMPORT_RUN_ID=${runId}`,
     '-e', `DISK_IMPORT_SHARE_GID=${shareGid}`,
     ...immichEnv,
