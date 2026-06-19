@@ -128,6 +128,15 @@ export interface Rule {
   mode?: RoutingMode;
   /** `shared` or a box user id. Inherits up-tree independently of `mode`. */
   owner?: Owner;
+  /**
+   * Mark this folder as a BASE ROOT (#2006 follow-up): its OWN name is dropped and
+   * only the structure BELOW it is kept in the library. Use it on redundant top-level
+   * wrappers (`backup_2025/`, `Backup copy 3/`) so `backup_2025/docs/a.txt` and
+   * `backup_2026/docs/a.txt` both land at `documents/docs/a.txt` (then identical bytes
+   * dedupe to one). It only moves the preserve ANCHOR — does NOT inherit down-tree
+   * like owner/disposition, and `false`/absent means "not a base".
+   */
+  base?: boolean;
 }
 
 /**

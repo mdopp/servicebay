@@ -159,6 +159,12 @@ function Row({
           </span>
         )}
         <div className="ml-auto flex items-center gap-2">
+          {node.dir !== '' && (
+            <BaseToggle
+              active={explicit.base === true}
+              onToggle={() => onSetRule(node.dir, { base: !(explicit.base === true) })}
+            />
+          )}
           <OwnerPicker
             owners={data.owners}
             value={node.resolved.owner}
@@ -193,6 +199,32 @@ function Row({
           />
         ))}
     </>
+  );
+}
+
+/**
+ * "Base root" toggle. When active, this folder's OWN name is dropped and only the
+ * structure below it is kept (e.g. mark `backup_2025/` so its contents merge with
+ * `backup_2026/`'s at `documents/docs/…`). Off by default; inherited folders keep
+ * their full path.
+ */
+function BaseToggle({ active, onToggle }: { active: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      title={
+        active
+          ? "Base root — this folder's name is dropped; the structure below it is kept"
+          : "Mark as a base/backup root — drop this folder's name, keep what's inside"
+      }
+      className={`rounded border px-1.5 py-0.5 text-[11px] ${
+        active
+          ? 'bg-blue-600 text-white border-blue-600 font-medium'
+          : 'bg-white dark:bg-gray-900 text-gray-400 border-gray-200 dark:border-gray-700 hover:text-gray-600 dark:hover:text-gray-300'
+      }`}
+    >
+      strip
+    </button>
   );
 }
 

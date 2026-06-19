@@ -156,6 +156,45 @@ describe('dirOfRel', () => {
   });
 });
 
+describe('effectiveRule — base-root anchor (#2006 follow-up)', () => {
+  it('a base-marked folder becomes the anchor (its name is dropped)', () => {
+    const explicit = new Map<string, Rule>([['backup_2025', { base: true }]]);
+    expect(effectiveRule('backup_2025/docs', explicit).anchor).toBe('backup_2025');
+  });
+
+  it('base does NOT inherit down-tree like owner — only the marked folder anchors', () => {
+    const explicit = new Map<string, Rule>([['backup_2025', { base: true }]]);
+    // A sibling subtree with its own deeper structure still anchors at backup_2025.
+    expect(effectiveRule('backup_2025/docs/2021', explicit).anchor).toBe('backup_2025');
+    // An unrelated top-level folder is unaffected (no base above it → root anchor).
+    expect(effectiveRule('Photos/2021', explicit).anchor).toBe('');
+  });
+
+  it('base:false is not a base mark', () => {
+    const explicit = new Map<string, Rule>([['backup_2025', { base: false }]]);
+    expect(effectiveRule('backup_2025/docs', explicit).anchor).toBe('');
+  });
+
+  it('a deeper owner/disposition anchor still wins over a shallower base', () => {
+    const explicit = new Map<string, Rule>([
+      ['backup_2025', { base: true }],
+      ['backup_2025/Work', { owner: 'mdopp' }],
+    ]);
+    expect(effectiveRule('backup_2025/Work/report.pdf', explicit).anchor).toBe('backup_2025/Work');
+  });
+
+  it('end-to-end: two backup roots stripped → same target (then content dedup collapses)', () => {
+    const explicit = new Map<string, Rule>([
+      ['backup_2025', { base: true }],
+      ['backup_2026', { base: true }],
+    ]);
+    const a = resolveTargetPath('backup_2025/docs/note.txt', 'documents', effectiveRule('backup_2025/docs', explicit));
+    const b = resolveTargetPath('backup_2026/docs/note.txt', 'documents', effectiveRule('backup_2026/docs', explicit));
+    expect(a).toBe('documents/docs/note.txt');
+    expect(b).toBe('documents/docs/note.txt');
+  });
+});
+
 describe('resolveTargetPath — layout is category-driven (#2006)', () => {
   it('music (flat category) flattens to the folder by basename; shared omits the owner segment', () => {
     expect(resolveTargetPath('Backup/sub/track.mp3', 'music', { owner: 'shared', anchor: '' }))
