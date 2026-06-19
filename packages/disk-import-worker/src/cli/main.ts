@@ -38,7 +38,7 @@ import { buildInventory, type ScannedFile } from '../engine/inventory';
 import { buildPlan, type HashResolver } from '../engine/dedup';
 import { ImportCatalog } from '../engine/catalog';
 import { applyPlan } from '../engine/plan';
-import { runReplan, REPLAN_REQUEST_FILE, type ReplanRequest, type ReplanIO } from '../engine/replan';
+import { runReplan, toRoutingResolution, REPLAN_REQUEST_FILE, type ReplanRequest, type ReplanIO } from '../engine/replan';
 import {
   immichProvisionFromEnv,
   provisionExternalLibraries,
@@ -303,6 +303,11 @@ export async function runWorker(opts: WorkerOptions, io: WorkerIO): Promise<Work
       plan = buildPlan(records, io.hashOf, {
         catalog,
         fingerprintOf: io.fingerprintOf,
+        // Route the INITIAL plan through the default routing too (anchor = disk
+        // root, owner = shared) so the first review already reflects per-category
+        // layout — preserve source folders for photos/docs/…, flatten music
+        // (#2006 redesign) — not a flat dump. The user's owner edits later re-plan.
+        routing: toRoutingResolution({ explicit: {} }, opts.mount),
         // Live progress over the dedup fingerprint pass so a big disk never
         // looks hung (#1995). Throttled by buildPlan to ~every 1000 files.
         onProgress: (done, total) =>

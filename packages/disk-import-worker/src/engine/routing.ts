@@ -103,10 +103,21 @@ export function effectiveRule(
     disposition: (disposition?.value as Disposition | undefined) ?? base.disposition,
     mode: (mode?.value as RoutingMode | undefined) ?? base.mode,
     owner: (owner?.value as Owner | undefined) ?? base.owner,
-    // Anchor follows the disposition axis (it drives relative-path math in #1913);
-    // falls back to the root when the disposition is inherited from the default.
-    anchor: disposition?.anchor ?? '',
+    // The preserve anchor (where the kept source subtree starts, #1913/#2006)
+    // follows the DEEPEST folder carrying an explicit rule on EITHER axis: putting
+    // a folder under an owner (or a disposition) means its contents belong there
+    // WITHOUT repeating that folder's name, so `backup_2025/docs/a.txt` assigned to
+    // mdopp lands at `mdopp/documents/docs/a.txt` (and `backup_2026/docs/a.txt`
+    // lands on the same target → identical bytes collapse). Root when inherited.
+    anchor: deeperAnchor(disposition?.anchor, owner?.anchor),
   };
+}
+
+/** The deeper (more specific) of two optional rule anchors; `''` (root) when both
+ *  are inherited. Depth: undefined < root('') < 'a' < 'a/b'. */
+function deeperAnchor(a: string | undefined, b: string | undefined): string {
+  const depth = (s: string | undefined): number => (s === undefined ? -1 : s === '' ? 0 : s.split('/').length);
+  return depth(a) >= depth(b) ? a ?? '' : b ?? '';
 }
 
 /** Walk up from `dir` to the first ancestor whose rule sets `axis`. */
@@ -230,18 +241,23 @@ function assertOwnerSegment(owner: string): void {
 /**
  * Resolve the relative target path (under `file-share/data/`) for a file given
  * its resolved routing rule and category. Returns `null` for the `junk` category
- * (nothing is written). Owner prefixes the path (shared omits the segment); the
- * mode decides whether the source subtree below the rule's anchor is preserved
- * (`parallel`) or flattened to the basename (`merge`).
+ * (nothing is written). Owner prefixes the path (shared omits the segment).
+ *
+ * The LAYOUT comes from the CATEGORY (#2006 redesign), not the routing `mode`:
+ * `preserve` categories (photos/documents/audiobooks/podcasts/movies) keep the
+ * source subtree BELOW the rule's anchor, so distinct files in different folders
+ * never collide; `flat` categories (music) drop the path to the basename. (The old
+ * per-folder merge/parallel `mode` axis was never surfaced in the UI; layout is now
+ * a property of WHAT the file is, which is what actually disambiguates it.)
  *
  * @param relPath the file's path RELATIVE to the imported disk root
  * @param category the classified category
- * @param rule the file's `effectiveRule` (owner + mode + anchor)
+ * @param rule the file's `effectiveRule` (owner + anchor)
  */
 export function resolveTargetPath(
   relPath: string,
   category: Category,
-  rule: Pick<ResolvedRule, 'owner' | 'mode' | 'anchor'>,
+  rule: Pick<ResolvedRule, 'owner' | 'anchor'>,
 ): string | null {
   const folder = categoryFolder(category);
   if (folder === '') return null; // junk — no destination folder.
@@ -250,7 +266,7 @@ export function resolveTargetPath(
   if (fileSegs.length === 0) return null; // nothing addressable.
 
   let tailSegs: string[];
-  if (rule.mode === 'parallel') {
+  if (CATEGORIES[category].layout === 'preserve') {
     // Preserve the source subtree BELOW the anchor (the dir that supplied the
     // rule). Drop the anchor prefix so the kept structure starts at the anchor.
     const anchorSegs = relSegments(rule.anchor);
@@ -259,7 +275,7 @@ export function resolveTargetPath(
     // own basename so it isn't dropped.
     if (tailSegs.length === 0) tailSegs = fileSegs.slice(-1);
   } else {
-    // merge: flatten — everything lands directly in the category folder.
+    // flat: everything lands directly in the category folder (basename only).
     tailSegs = fileSegs.slice(-1);
   }
 
