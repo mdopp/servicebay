@@ -185,9 +185,13 @@ describe('applyImport', () => {
 
     expect(applyPlanMock).toHaveBeenCalledTimes(1);
     const [plan, opts] = applyPlanMock.mock.calls[0];
-    expect(opts.exec).toBe(exec);
     expect(opts.mountpoint).toBe('/run/servicebay/disk-import/sda1');
     expect(opts.shareGid).toBe(1024);
+    // The exec is WRAPPED to inject a generous per-op timeout (a multi-GB file's
+    // rsync/hash blows the agent's 30s default → #2010-class apply failure). It
+    // still delegates to the real exec, and a per-call option overrides the default.
+    opts.exec(['rsync', 'a', 'b'], { sudo: true });
+    expect(exec).toHaveBeenCalledWith(['rsync', 'a', 'b'], { timeoutMs: 1_800_000, sudo: true });
     // the plan handed to applyPlan reads the source from the HOST mount
     expect(plan.items[0].record.sourcePath).toBe('/run/servicebay/disk-import/sda1/dcim/a.jpg');
   });
@@ -203,7 +207,11 @@ describe('applyImport', () => {
     // source bytes can only flow through the host exec.
     const sha = await opts.hashOf({ sourcePath: '/run/servicebay/disk-import/sda1/dcim/a.jpg' });
     expect(sha).toBe('a'.repeat(64));
-    expect(hashSourceFileMock).toHaveBeenCalledWith(exec, '/run/servicebay/disk-import/sda1/dcim/a.jpg');
+    // Hashes via the host exec (the wrapped one, with the generous timeout), never fs.
+    expect(hashSourceFileMock).toHaveBeenCalledWith(expect.any(Function), '/run/servicebay/disk-import/sda1/dcim/a.jpg');
+    const wrapped = hashSourceFileMock.mock.calls[0][0] as (a: string[], o?: object) => unknown;
+    wrapped(['sha256sum', 'x']);
+    expect(exec).toHaveBeenCalledWith(['sha256sum', 'x'], { timeoutMs: 1_800_000 });
   });
 
   it('fires the Immich provision + scan for the photo owners after apply', async () => {

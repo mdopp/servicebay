@@ -94,6 +94,11 @@ const WORKER_OUT_IN_CONTAINER = '/out';
  *  gives up (#2009). */
 const REPLAN_TIMEOUT_MS = 600_000; // 10 min
 
+/** Per-op ceiling for the host-apply's safe_exec calls (rsync/sha256sum/chown a
+ *  large media file or a big batch). The agent's 30s default errored the apply on
+ *  a multi-GB file mid-run (#2010-class bug, box-verified). 30 min is generous. */
+const APPLY_EXEC_TIMEOUT_MS = 1_800_000; // 30 min
+
 export interface ReplanImportArgs {
   /** servicebay's REAL agent SafeExec (runs `podman exec` on the host as core). */
   exec: SafeExec;
@@ -259,7 +264,15 @@ export interface ApplyImportResult {
  * (so the route surfaces it) AFTER recording an `error`-phase status.
  */
 export async function applyImport(args: ApplyImportArgs): Promise<ApplyImportResult> {
-  const { exec, runId, mountpoint, shareGid } = args;
+  const { runId, mountpoint, shareGid } = args;
+  // Every host op the apply runs (rsync a single file, sha256sum a single file,
+  // batched mkdir/chown) goes through this exec. The agent's DEFAULT command
+  // timeout is 30s — which a multi-GB media file's rsync or hash blows right past,
+  // erroring the whole apply mid-run ("Agent request timeout (safe_exec after
+  // 30000ms)"; box-verified on the real disk at ~66%). Same 30s-default trap #2010
+  // fixed for the re-plan exec — give the apply the same generous per-op ceiling.
+  // (Per-call options still win, so a caller can override.)
+  const exec: SafeExec = (argv, options) => args.exec(argv, { timeoutMs: APPLY_EXEC_TIMEOUT_MS, ...options });
   const outDir = runOutDir(runId);
 
   const sidecar = JSON.parse(await readFile(path.join(outDir, PLAN_SIDECAR_FILE), 'utf-8')) as PlanSidecar;
