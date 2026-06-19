@@ -114,12 +114,23 @@ export interface ReplanImportArgs {
  */
 export async function replanImport(args: ReplanImportArgs): Promise<void> {
   const { exec, runId, container, request } = args;
-  const outDir = runOutDir(runId);
-  // Write the request the worker reads. servicebay sees the out dir in-container at
-  // runOutDir() (same bytes as the worker's host-bind-mounted /out), so a direct fs
-  // write here lands in the worker's /out.
-  await mkdir(outDir, { recursive: true });
-  await writeFile(path.join(outDir, REPLAN_REQUEST_FILE), JSON.stringify(request), 'utf-8');
+  void runId;
+  // Write the request the worker reads INSIDE the container, not from servicebay's
+  // fs. A servicebay write lands with servicebay's PRIVATE SELinux MCS category, so
+  // the worker (different category) gets EACCES reading /out/replan-request.json
+  // even though the dir is `:z`-shared (feedback_worker_container_user_root_rootless).
+  // Writing it via `podman exec node` makes the worker create the file, so it carries
+  // the worker's own label and the --replan child can read it. JSON is passed as a
+  // clean argv element (no shell), so no escaping concerns.
+  const reqPath = `${WORKER_OUT_IN_CONTAINER}/${REPLAN_REQUEST_FILE}`;
+  const wr = await exec([
+    'podman', 'exec', container,
+    'node', '-e', 'require("fs").writeFileSync(process.argv[1], process.argv[2])',
+    reqPath, JSON.stringify(request),
+  ]);
+  if (wr.code !== 0) {
+    throw new Error(`disk-import: writing replan request failed (code ${wr.code}): ${wr.stderr || wr.stdout}`);
+  }
 
   // Run a one-shot `--replan` process IN the serve container (it has /mnt/src +
   // /out): reads replan-request.json + plan.json, re-plans over the live mount,

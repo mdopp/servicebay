@@ -134,35 +134,43 @@ describe('triggerScan', () => {
 });
 
 describe('replanImport', () => {
-  it('writes the rules to the out dir and podman-execs the worker --replan', async () => {
+  it('writes the rules IN the container (worker SELinux label) then execs --replan', async () => {
     const exec = vi.fn().mockResolvedValue({ code: 0, stdout: 'ok', stderr: '' });
-    await replanImport({
-      exec,
-      runId: 'run1',
-      container: 'disk-import-worker-run1',
-      request: { explicit: { alice: { owner: 'alice' } }, rootDefault: { owner: 'shared' } },
-    });
+    const request = { explicit: { alice: { owner: 'alice' } }, rootDefault: { owner: 'shared' } };
+    await replanImport({ exec, runId: 'run1', container: 'disk-import-worker-run1', request });
 
-    // The rules went to replan-request.json in the run out dir.
-    const reqWrite = writes.find(w => w.file.endsWith('replan-request.json'));
-    expect(reqWrite).toBeDefined();
-    expect(JSON.parse(reqWrite!.data)).toEqual({
-      explicit: { alice: { owner: 'alice' } },
-      rootDefault: { owner: 'shared' },
-    });
+    // 1st exec: write replan-request.json INSIDE the container (not servicebay fs —
+    // a servicebay write is unreadable by the worker due to SELinux MCS).
+    const writeArgv = exec.mock.calls[0][0] as string[];
+    expect(writeArgv.slice(0, 4)).toEqual(['podman', 'exec', 'disk-import-worker-run1', 'node']);
+    expect(writeArgv).toContain('/out/replan-request.json');
+    expect(writeArgv).toContain(JSON.stringify(request));
+    // No servicebay fs write of the request.
+    expect(writes.find(w => w.file.endsWith('replan-request.json'))).toBeUndefined();
 
-    // It ran a one-shot --replan IN the running serve container, over /out.
-    const argv = exec.mock.calls[0][0] as string[];
-    expect(argv.slice(0, 3)).toEqual(['podman', 'exec', 'disk-import-worker-run1']);
-    expect(argv).toContain('--replan');
-    expect(argv).toContain('/out');
+    // 2nd exec: the one-shot --replan over /out in the serve container.
+    const replanArgv = exec.mock.calls[1][0] as string[];
+    expect(replanArgv.slice(0, 3)).toEqual(['podman', 'exec', 'disk-import-worker-run1']);
+    expect(replanArgv).toContain('--replan');
+    expect(replanArgv).toContain('/out');
   });
 
   it('throws when the worker re-plan exits non-zero', async () => {
-    const exec = vi.fn().mockResolvedValue({ code: 1, stdout: '', stderr: 'no plan' });
+    // 1st exec (write request) succeeds; 2nd (--replan) fails.
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce({ code: 0, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ code: 1, stdout: '', stderr: 'no plan' });
     await expect(
       replanImport({ exec, runId: 'run1', container: 'c', request: { explicit: {} } }),
     ).rejects.toThrow(/re-plan failed/);
+  });
+
+  it('throws when writing the replan request into the container fails', async () => {
+    const exec = vi.fn().mockResolvedValueOnce({ code: 1, stdout: '', stderr: 'denied' });
+    await expect(
+      replanImport({ exec, runId: 'run1', container: 'c', request: { explicit: {} } }),
+    ).rejects.toThrow(/writing replan request failed/);
   });
 });
 
