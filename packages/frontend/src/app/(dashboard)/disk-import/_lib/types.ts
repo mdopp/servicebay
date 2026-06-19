@@ -25,6 +25,8 @@ export interface Rule {
   disposition?: Disposition;
   mode?: RoutingMode;
   owner?: Owner;
+  /** Base-root mark: drop this folder's own name, keep the structure below it. */
+  base?: boolean;
 }
 
 /** A folder's fully-resolved rule (inherited where not explicit) + the anchor. */

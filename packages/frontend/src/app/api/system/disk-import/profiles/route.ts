@@ -14,6 +14,7 @@ const ruleSchema = z
     disposition: z.string().optional(),
     mode: z.enum(['merge', 'parallel']).optional(),
     owner: z.string().optional(),
+    base: z.boolean().optional(),
   })
   .strict();
 

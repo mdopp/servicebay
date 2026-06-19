@@ -20,6 +20,9 @@ const ruleSchema = z
     // owner is `shared` or a box-user id (free string); the engine clamps it to a
     // single clean path segment before it ever forms a target (#1929).
     owner: z.string().optional(),
+    // Base-root mark: drop this folder's own name, keep the structure below it
+    // (#2006 follow-up — strips redundant backup wrappers).
+    base: z.boolean().optional(),
   })
   .strict();
 

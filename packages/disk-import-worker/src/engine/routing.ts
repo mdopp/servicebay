@@ -104,20 +104,34 @@ export function effectiveRule(
     mode: (mode?.value as RoutingMode | undefined) ?? base.mode,
     owner: (owner?.value as Owner | undefined) ?? base.owner,
     // The preserve anchor (where the kept source subtree starts, #1913/#2006)
-    // follows the DEEPEST folder carrying an explicit rule on EITHER axis: putting
-    // a folder under an owner (or a disposition) means its contents belong there
-    // WITHOUT repeating that folder's name, so `backup_2025/docs/a.txt` assigned to
-    // mdopp lands at `mdopp/documents/docs/a.txt` (and `backup_2026/docs/a.txt`
-    // lands on the same target → identical bytes collapse). Root when inherited.
-    anchor: deeperAnchor(disposition?.anchor, owner?.anchor),
+    // follows the DEEPEST folder carrying an explicit rule on owner/disposition OR
+    // an explicit BASE-ROOT mark: putting a folder under an owner/disposition (or
+    // marking it a base root) means its contents belong there WITHOUT repeating
+    // that folder's name, so `backup_2025/docs/a.txt` lands at `…/documents/docs/a.txt`
+    // (and `backup_2026/docs/a.txt` on the same target → identical bytes collapse).
+    // Root when inherited.
+    anchor: deeperAnchor(disposition?.anchor, owner?.anchor, resolveBaseAnchor(dir, explicit)),
   };
 }
 
-/** The deeper (more specific) of two optional rule anchors; `''` (root) when both
- *  are inherited. Depth: undefined < root('') < 'a' < 'a/b'. */
-function deeperAnchor(a: string | undefined, b: string | undefined): string {
+/** The deepest folder at/above `dir` explicitly marked `base: true`, or undefined.
+ *  Unlike owner/disposition, `base` does NOT inherit — it only anchors itself. */
+function resolveBaseAnchor(dir: string, explicit: ReadonlyMap<string, Rule>): string | undefined {
+  let cursor: string | null = dir;
+  while (cursor !== null) {
+    if (explicit.get(cursor)?.base === true) return cursor;
+    cursor = parentDir(cursor);
+  }
+  return undefined;
+}
+
+/** The deepest (most specific) of the given optional rule anchors; `''` (root) when
+ *  all are inherited. Depth: undefined < root('') < 'a' < 'a/b'. */
+function deeperAnchor(...anchors: (string | undefined)[]): string {
   const depth = (s: string | undefined): number => (s === undefined ? -1 : s === '' ? 0 : s.split('/').length);
-  return depth(a) >= depth(b) ? a ?? '' : b ?? '';
+  let best: string | undefined;
+  for (const a of anchors) if (depth(a) >= depth(best)) best = a;
+  return best ?? '';
 }
 
 /** Walk up from `dir` to the first ancestor whose rule sets `axis`. */
