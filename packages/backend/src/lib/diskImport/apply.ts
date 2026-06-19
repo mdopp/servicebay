@@ -89,6 +89,10 @@ export function rebasePlanSource(sidecar: PlanSidecar, hostMountpoint: string): 
 /** The worker container's in-container out path (its `-v <outDir>:/out` mount). */
 const WORKER_OUT_IN_CONTAINER = '/out';
 
+/** Re-plan over a real disk re-dedups every record — minutes, like the scan. The
+ *  agent's 30s default would kill it; give it a generous ceiling. (#2009) */
+const REPLAN_TIMEOUT_MS = 600_000; // 10 min
+
 export interface ReplanImportArgs {
   /** servicebay's REAL agent SafeExec (runs `podman exec` on the host as core). */
   exec: SafeExec;
@@ -135,11 +139,18 @@ export async function replanImport(args: ReplanImportArgs): Promise<void> {
   // Run a one-shot `--replan` process IN the serve container (it has /mnt/src +
   // /out): reads replan-request.json + plan.json, re-plans over the live mount,
   // rewrites plan.json + status.json. The serve server keeps running alongside.
-  const { code, stdout, stderr } = await exec([
-    'podman', 'exec', container,
-    'npx', 'tsx', 'packages/disk-import-worker/src/cli/main.ts',
-    '--replan', '--out', WORKER_OUT_IN_CONTAINER,
-  ]);
+  const { code, stdout, stderr } = await exec(
+    [
+      'podman', 'exec', container,
+      'npx', 'tsx', 'packages/disk-import-worker/src/cli/main.ts',
+      '--replan', '--out', WORKER_OUT_IN_CONTAINER,
+    ],
+    // Re-planning a real disk re-runs buildPlan over every record (re-dedup per
+    // owner) — minutes on a 234k-file drive, like the scan. The agent's default
+    // 30s command timeout killed it ("Agent request timeout after 30000ms"), so
+    // give it the same generous timeout the scan/mount use.
+    { timeoutMs: REPLAN_TIMEOUT_MS },
+  );
   if (code !== 0) {
     throw new Error(`disk-import: re-plan failed (code ${code}): ${stderr || stdout}`);
   }
