@@ -45,6 +45,10 @@ function actionOf(items: ImportPlanItem[], sourcePath: string) {
   return items.find(i => i.record.sourcePath === sourcePath)?.action;
 }
 
+function itemOf(items: ImportPlanItem[], sourcePath: string) {
+  return items.find(i => i.record.sourcePath === sourcePath);
+}
+
 describe('targetFor', () => {
   it('places files under their category folder with the base name', () => {
     const r = buildInventory([{ path: '/disk/sub/Photo.JPG', size: 1, mtimeMs: 0 }])[0];
@@ -100,21 +104,84 @@ describe('buildPlan — size→hash dedup within the tree', () => {
   });
 });
 
-describe('buildPlan — conflicts (same target, different content)', () => {
-  it('flags two different files competing for the same target path', () => {
+describe('buildPlan — in-tree name clashes RENAME, never drop (#2006)', () => {
+  it('two different files at the same target → both import, the later renamed', () => {
     const files: ScannedFile[] = [
       { path: '/diskA/report.pdf', size: 5000, mtimeMs: 0 },
       { path: '/diskB/report.pdf', size: 5000, mtimeMs: 0 },
     ];
     const result = plan(files, { '/diskA/report.pdf': sha('a'), '/diskB/report.pdf': sha('b') });
-    expect(actionOf(result.items, '/diskA/report.pdf')).toBe('copy');
-    expect(actionOf(result.items, '/diskB/report.pdf')).toBe('conflict');
-    expect(result.conflicts).toHaveLength(1);
-    expect(result.conflicts[0]).toMatchObject({
+    // The first claims the natural name; the distinct second is imported renamed.
+    expect(itemOf(result.items, '/diskA/report.pdf')).toMatchObject({
+      action: 'copy',
       target: 'documents/report.pdf',
-      existing: { sourcePath: '/diskA/report.pdf' },
-      incoming: { sourcePath: '/diskB/report.pdf' },
     });
+    expect(itemOf(result.items, '/diskB/report.pdf')).toMatchObject({
+      action: 'copy',
+      target: 'documents/report (2).pdf',
+      renamed: true,
+    });
+    // Nothing dropped — no unresolved conflicts.
+    expect(result.conflicts).toHaveLength(0);
+  });
+
+  it('N distinct same-name files import as (2),(3)…; byte-identical ones still dedupe', () => {
+    const files: ScannedFile[] = [
+      { path: '/d1/IMG_0001.jpg', size: 5000, mtimeMs: 0 },
+      { path: '/d2/IMG_0001.jpg', size: 5000, mtimeMs: 0 },
+      { path: '/d3/IMG_0001.jpg', size: 5000, mtimeMs: 0 },
+      { path: '/d4/IMG_0001.jpg', size: 5000, mtimeMs: 0 }, // byte-identical to /d1
+    ];
+    const result = plan(files, {
+      '/d1/IMG_0001.jpg': sha('a'),
+      '/d2/IMG_0001.jpg': sha('b'),
+      '/d3/IMG_0001.jpg': sha('c'),
+      '/d4/IMG_0001.jpg': sha('a'),
+    });
+    expect(itemOf(result.items, '/d1/IMG_0001.jpg')).toMatchObject({ action: 'copy', target: 'photos/img_0001.jpg' });
+    expect(itemOf(result.items, '/d2/IMG_0001.jpg')).toMatchObject({ action: 'copy', target: 'photos/img_0001 (2).jpg', renamed: true });
+    expect(itemOf(result.items, '/d3/IMG_0001.jpg')).toMatchObject({ action: 'copy', target: 'photos/img_0001 (3).jpg', renamed: true });
+    // True duplicate of /d1 dedupes — only DISTINCT files get renamed.
+    expect(actionOf(result.items, '/d4/IMG_0001.jpg')).toBe('skip-dupe');
+    expect(result.conflicts).toHaveLength(0);
+    // Renames are imports, not conflicts.
+    expect(result.items.filter(i => i.action === 'conflict')).toHaveLength(0);
+  });
+
+  it('is deterministic — re-running yields the same names', () => {
+    const files: ScannedFile[] = [
+      { path: '/d1/report.pdf', size: 5000, mtimeMs: 0 },
+      { path: '/d2/report.pdf', size: 5000, mtimeMs: 0 },
+      { path: '/d3/report.pdf', size: 5000, mtimeMs: 0 },
+    ];
+    const hashes = { '/d1/report.pdf': sha('a'), '/d2/report.pdf': sha('b'), '/d3/report.pdf': sha('c') };
+    const first = plan(files, hashes);
+    const second = plan(files, hashes);
+    expect(first.items.map(i => i.target)).toEqual(second.items.map(i => i.target));
+    expect(first.items.map(i => i.target).sort()).toEqual([
+      'documents/report (2).pdf',
+      'documents/report (3).pdf',
+      'documents/report.pdf',
+    ]);
+  });
+
+  it('a renamed file does not collide with a real source file already named (2)', () => {
+    const files: ScannedFile[] = [
+      { path: '/d1/IMG_0001.jpg', size: 5000, mtimeMs: 0 },
+      { path: '/d2/IMG_0001.jpg', size: 5000, mtimeMs: 0 }, // distinct → wants (2)
+      { path: '/d3/IMG_0001 (2).jpg', size: 5000, mtimeMs: 0 }, // a REAL file already named (2)
+    ];
+    const result = plan(files, {
+      '/d1/IMG_0001.jpg': sha('a'),
+      '/d2/IMG_0001.jpg': sha('b'),
+      '/d3/IMG_0001 (2).jpg': sha('c'),
+    });
+    const targets = result.items.map(i => i.target).sort();
+    // All three distinct files land on distinct names; nothing dropped.
+    expect(new Set(targets).size).toBe(3);
+    expect(targets).toContain('photos/img_0001.jpg');
+    expect(result.conflicts).toHaveLength(0);
+    expect(result.items.filter(i => i.action === 'conflict')).toHaveLength(0);
   });
 });
 
@@ -124,7 +191,7 @@ describe('buildPlan — conflicts (same target, different content)', () => {
 // target (delta run). Source is read-only/copy-only, so a (near-impossible)
 // fingerprint false-match means one file not copied, never data loss.
 describe('buildPlan — fingerprint-trust dedup (#1995)', () => {
-  it('same size + DIFFERENT fingerprint → conflict WITHOUT reading either file whole', () => {
+  it('same size + DIFFERENT fingerprint → distinct, so renamed WITHOUT reading either file whole', () => {
     const files: ScannedFile[] = [
       { path: '/diskA/report.pdf', size: 5000, mtimeMs: 0 },
       { path: '/diskB/report.pdf', size: 5000, mtimeMs: 0 },
@@ -134,7 +201,12 @@ describe('buildPlan — fingerprint-trust dedup (#1995)', () => {
       { '/diskA/report.pdf': 'fpA', '/diskB/report.pdf': 'fpB' },
       {}, // no full-hash fixtures: full-hashing either file would throw
     );
-    expect(actionOf(result.items, '/diskB/report.pdf')).toBe('conflict');
+    // Distinct fingerprints ⇒ distinct files ⇒ the later one is imported renamed (#2006).
+    expect(itemOf(result.items, '/diskB/report.pdf')).toMatchObject({
+      action: 'copy',
+      target: 'documents/report (2).pdf',
+      renamed: true,
+    });
     expect(fullHashed).toEqual([]); // distinct fingerprints settle it cheaply
   });
 

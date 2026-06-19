@@ -152,10 +152,19 @@ export interface ImportPlanItem {
   category: Category;
   /**
    * Target path relative to `file-share/data/` (e.g. `photos/IMG_0001.jpg`),
-   * or `null` for junk (nothing is written).
+   * or `null` for junk (nothing is written). When two DISTINCT files resolve to
+   * the same target, the later one is imported under a disambiguated name
+   * (`IMG_0001 (2).jpg`) — see `renamed` — so nothing is dropped (#2006).
    */
   target: string | null;
   action: ImportAction;
+  /**
+   * True when `target` was disambiguated because a different-content file already
+   * claimed the natural name (in-tree, #2006). The action is still `copy` (the
+   * file IS imported); this flag only drives the review wording ("renamed, nothing
+   * lost") so renames aren't confused with plain copies. Absent ⇒ false.
+   */
+  renamed?: boolean;
 }
 
 /**

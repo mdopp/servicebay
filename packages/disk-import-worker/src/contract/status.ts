@@ -50,6 +50,13 @@ export interface CategoryRollup {
   copy: number;
   skipDupe: number;
   conflict: number;
+  /**
+   * Files imported (action `copy`) under a disambiguated name because a different
+   * file already claimed the natural one (#2006). A subset of `copy` — counted
+   * separately so the review can say "renamed, nothing lost" instead of dropping
+   * them as conflicts.
+   */
+  renamed: number;
 }
 
 /**
@@ -113,11 +120,13 @@ export function summarizeCategories(plan: ImportPlan): CategoryRollup[] {
   for (const item of plan.items) {
     const r =
       byCat.get(item.category) ??
-      ({ category: item.category, files: 0, bytes: 0, copy: 0, skipDupe: 0, conflict: 0 } as CategoryRollup);
+      ({ category: item.category, files: 0, bytes: 0, copy: 0, skipDupe: 0, conflict: 0, renamed: 0 } as CategoryRollup);
     r.files += 1;
     r.bytes += item.record.size;
-    if (item.action === 'copy') r.copy += 1;
-    else if (item.action === 'skip-dupe') r.skipDupe += 1;
+    if (item.action === 'copy') {
+      r.copy += 1;
+      if (item.renamed) r.renamed += 1; // a disambiguated copy (#2006) — subset of copy
+    } else if (item.action === 'skip-dupe') r.skipDupe += 1;
     else if (item.action === 'conflict') r.conflict += 1;
     byCat.set(item.category, r);
   }

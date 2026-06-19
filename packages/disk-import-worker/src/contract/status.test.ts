@@ -51,11 +51,24 @@ describe('status contract', () => {
     const rollup = summarizeCategories(plan);
     expect(rollup.map(r => r.category)).toEqual(['music', 'photos']); // sorted
     const photos = rollup.find(r => r.category === 'photos')!;
-    expect(photos).toEqual({ category: 'photos', files: 2, bytes: 30, copy: 1, skipDupe: 1, conflict: 0 });
+    expect(photos).toEqual({ category: 'photos', files: 2, bytes: 30, copy: 1, skipDupe: 1, conflict: 0, renamed: 0 });
     const music = rollup.find(r => r.category === 'music')!;
-    expect(music).toEqual({ category: 'music', files: 2, bytes: 12, copy: 1, skipDupe: 0, conflict: 1 });
+    expect(music).toEqual({ category: 'music', files: 2, bytes: 12, copy: 1, skipDupe: 0, conflict: 1, renamed: 0 });
     // Rollup entries are scalar-only — no file records leak in.
     expect(Object.keys(photos)).not.toContain('record');
+  });
+
+  it('counts a disambiguated copy under both copy and renamed (#2006)', () => {
+    const plan: ImportPlan = {
+      items: [
+        { record: rec('a.jpg', 10), category: 'photos', target: 'photos/a.jpg', action: 'copy' },
+        { record: rec('b.jpg', 10), category: 'photos', target: 'photos/a (2).jpg', action: 'copy', renamed: true },
+      ],
+      conflicts: [],
+    };
+    const photos = summarizeCategories(plan).find(r => r.category === 'photos')!;
+    // The renamed file IS imported (copy) and ALSO tallied as renamed (a subset).
+    expect(photos).toMatchObject({ files: 2, copy: 2, renamed: 1, conflict: 0 });
   });
 
   it('exposes stable file-name constants for the shared volume', () => {
