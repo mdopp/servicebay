@@ -25,7 +25,7 @@ import {
 } from './launcher';
 import { listImportDevices } from './devices';
 import { setActiveRun, getActiveRun, clearActiveRun } from './runStore';
-import { applyImport, replanImport, type ApplyImportResult } from './apply';
+import { applyImport, replanImport, triggerScan, type ApplyImportResult } from './apply';
 
 export type { ImportDevice } from './launcher';
 
@@ -84,6 +84,10 @@ export async function launchScan(args: {
   // (/mnt/data/servicebay), never the in-container /app/data (read-only on host).
   const run = await launchWorker({ ...args, shareGid, runId });
   await setActiveRun(run);
+  // Kick off the scan walk in the serve container — without this the worker sits
+  // idle and the page never leaves "Starting the import worker…" (no in-browser
+  // app POSTs /api/scan in the in-page review flow).
+  await triggerScan(args.exec, run.container, shareGid);
   return { runId: run.runId };
 }
 
