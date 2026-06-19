@@ -269,10 +269,14 @@ export async function applyImport(args: ApplyImportArgs): Promise<ApplyImportRes
   // batched mkdir/chown) goes through this exec. The agent's DEFAULT command
   // timeout is 30s — which a multi-GB media file's rsync or hash blows right past,
   // erroring the whole apply mid-run ("Agent request timeout (safe_exec after
-  // 30000ms)"; box-verified on the real disk at ~66%). Same 30s-default trap #2010
+  // 30000ms)"; box-verified on the real disk twice). Same 30s-default trap #2010
   // fixed for the re-plan exec — give the apply the same generous per-op ceiling.
-  // (Per-call options still win, so a caller can override.)
-  const exec: SafeExec = (argv, options) => args.exec(argv, { timeoutMs: APPLY_EXEC_TIMEOUT_MS, ...options });
+  // CRITICAL: callers like runSha256sum pass an explicit `{ timeoutMs: undefined }`,
+  // so a `{ timeoutMs: DEFAULT, ...options }` spread is CLOBBERED back to undefined
+  // → 30s. Use a `??` fallback so an explicit number wins but undefined/absent gets
+  // the default (this exact bug re-broke the apply on the first fix).
+  const exec: SafeExec = (argv, options) =>
+    args.exec(argv, { ...options, timeoutMs: options?.timeoutMs ?? APPLY_EXEC_TIMEOUT_MS });
   const outDir = runOutDir(runId);
 
   const sidecar = JSON.parse(await readFile(path.join(outDir, PLAN_SIDECAR_FILE), 'utf-8')) as PlanSidecar;

@@ -189,9 +189,16 @@ describe('applyImport', () => {
     expect(opts.shareGid).toBe(1024);
     // The exec is WRAPPED to inject a generous per-op timeout (a multi-GB file's
     // rsync/hash blows the agent's 30s default → #2010-class apply failure). It
-    // still delegates to the real exec, and a per-call option overrides the default.
+    // still delegates to the real exec, and a per-call NUMBER overrides the default.
     opts.exec(['rsync', 'a', 'b'], { sudo: true });
-    expect(exec).toHaveBeenCalledWith(['rsync', 'a', 'b'], { timeoutMs: 1_800_000, sudo: true });
+    expect(exec).toHaveBeenLastCalledWith(['rsync', 'a', 'b'], { sudo: true, timeoutMs: 1_800_000 });
+    // REGRESSION: runSha256sum passes an explicit `{ timeoutMs: undefined }`; the
+    // wrap must NOT let that clobber the default back to undefined (that re-broke
+    // the apply at 30s). undefined/absent → default; a real number still wins.
+    opts.exec(['sha256sum', 'big.zip'], { timeoutMs: undefined });
+    expect(exec).toHaveBeenLastCalledWith(['sha256sum', 'big.zip'], { timeoutMs: 1_800_000 });
+    opts.exec(['x'], { timeoutMs: 5_000 });
+    expect(exec).toHaveBeenLastCalledWith(['x'], { timeoutMs: 5_000 });
     // the plan handed to applyPlan reads the source from the HOST mount
     expect(plan.items[0].record.sourcePath).toBe('/run/servicebay/disk-import/sda1/dcim/a.jpg');
   });
