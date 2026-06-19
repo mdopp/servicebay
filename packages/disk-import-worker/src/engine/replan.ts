@@ -113,9 +113,37 @@ export async function runReplan(req: ReplanRequest, io: ReplanIO): Promise<Impor
   const records: ImportRecord[] = sidecar.plan.items.map(i => i.record);
   const routing = toRoutingResolution(req, sidecar.mountBase);
 
+  const nowFn = io.now ?? Date.now;
+  // Carry the scan's status forward (scanned count, startedAt) so the rollup stays
+  // coherent; fall back defensively if none was written yet.
+  const base = (await io.readJson<WorkerStatus>(STATUS_FILE)) ?? freshStatus(sidecar.runId, nowFn());
+
+  // In-flight signal (#2009): the re-plan now runs DETACHED and servicebay/the page
+  // poll status.json for completion. Scan-done and replan-done are BOTH `phase:done`,
+  // so without flipping to an in-flight phase here a poller can't tell a launched
+  // re-plan from the prior scan result. Write `planning` first, then progress while
+  // the (multi-minute) re-dedup hashes, then `done` at the end.
+  await io.writeStatus({
+    ...base,
+    phase: 'planning',
+    mode: 'dry-run',
+    step: 'Re-planning …',
+    error: null,
+    updatedAt: nowFn(),
+  });
+
   const plan = buildPlan(records, io.hashOf, {
     routing,
     fingerprintOf: io.fingerprintOf,
+    onProgress: (done, total) =>
+      void io.writeStatus({
+        ...base,
+        phase: 'planning',
+        mode: 'dry-run',
+        step: `Re-planning … hashed ${done}/${total}`,
+        error: null,
+        updatedAt: nowFn(),
+      }),
   });
 
   const newSidecar: PlanSidecar = {
@@ -127,12 +155,12 @@ export async function runReplan(req: ReplanRequest, io: ReplanIO): Promise<Impor
   await io.writePlanSidecar(newSidecar);
 
   // Refresh the compact status rollup so the tile poll reflects the re-plan
-  // (new per-category copy/skip/conflict counts + the dropped conflict total).
-  const prev = await io.readJson<WorkerStatus>(STATUS_FILE);
-  const now = (io.now ?? Date.now)();
+  // (new per-category copy/skip/conflict/renamed counts). `done` marks it ready
+  // for the host-apply.
+  const now = nowFn();
   const totalBytes = plan.items.reduce((sum, i) => sum + i.record.size, 0);
   const status: WorkerStatus = {
-    ...(prev ?? freshStatus(sidecar.runId, now)),
+    ...base,
     phase: 'done',
     mode: 'dry-run',
     step: `Re-planned: ${plan.items.length} items, ${plan.conflicts.length} conflict(s).`,

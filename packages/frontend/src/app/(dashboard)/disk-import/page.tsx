@@ -99,6 +99,11 @@ async function postAction(path: string, body?: unknown): Promise<string> {
 function useDiskImportRun(selected: string, onAfterAbort: () => void) {
   const [run, setRun] = useState<RunStatus | null>(null);
   const [launching, setLaunching] = useState(false);
+  // True from an apply CLICK until the (now async, #2009) re-plan + host-apply reach
+  // a terminal phase. Bridges the brief window where status.json still shows the
+  // prior `plan-ready` before the detached re-plan/apply flips it in-flight, so the
+  // tile shows progress instead of re-offering the Import button (no double-submit).
+  const [flowActive, setFlowActive] = useState(false);
   const [error, setError] = useState('');
 
   // Re-attach to an already-running worker on open + poll while one is active.
@@ -107,7 +112,16 @@ function useDiskImportRun(selected: string, onAfterAbort: () => void) {
     const poll = async () => {
       const r = await fetch('/api/system/disk-import/status');
       if (!active) return;
-      setRun(r.ok ? ((await r.json()) as RunStatus) : null);
+      const next = r.ok ? ((await r.json()) as RunStatus) : null;
+      setRun(next);
+      // Clear the client flow flag (and surface a background error) once the async
+      // apply flow reaches a terminal phase — the work runs detached now (#2009).
+      const s = next?.status;
+      if (!s) setFlowActive(false);
+      else if (s.phase === 'error') {
+        setFlowActive(false);
+        setError(s.error || 'Import failed');
+      } else if (s.phase === 'done' && s.mode === 'apply') setFlowActive(false);
     };
     void poll();
     const id = setInterval(poll, 2000);
@@ -133,17 +147,26 @@ function useDiskImportRun(selected: string, onAfterAbort: () => void) {
   const startOver = async () => {
     await fetch('/api/system/disk-import/abort', { method: 'POST' }).catch(() => {});
     setRun(null);
+    setFlowActive(false);
     onAfterAbort();
   };
 
   // APPLY runs on the HOST in servicebay (#1972) — the sandboxed worker only
-  // scanned/planned. POST kicks off the privileged host apply; when routing rules
-  // are passed (#2000) servicebay re-plans with them (re-route + re-dedup per
-  // owner) BEFORE applying. The status poll reflects `applying` → `done`.
-  const apply = (rules?: Record<string, Rule>, rootDefault?: Rule) =>
-    runAction('/api/system/disk-import/apply', rules ? { rules, rootDefault } : undefined);
+  // scanned/planned. POST RETURNS PROMPTLY now (#2009): when routing rules are
+  // passed (#2000) servicebay launches the detached re-plan first, then the apply
+  // runs in the background. The status poll reflects `planning` → `applying` →
+  // `done`; `flowActive` keeps the tile on progress for the whole flow.
+  const apply = async (rules?: Record<string, Rule>, rootDefault?: Rule) => {
+    setError('');
+    setFlowActive(true);
+    const err = await postAction('/api/system/disk-import/apply', rules ? { rules, rootDefault } : undefined);
+    if (err) {
+      setError(err);
+      setFlowActive(false);
+    }
+  };
 
-  return { run, launching, error, launch, startOver, apply };
+  return { run, launching, flowActive, error, launch, startOver, apply };
 }
 
 /** Fetch + edit the per-folder routing tree (#2000). Holds the explicit rule map
@@ -198,7 +221,7 @@ function useRoutingTree(active: boolean) {
 export default function DiskImportPage() {
   const { devices, loading, refresh } = useDevices();
   const [selected, setSelected] = useState('');
-  const { run, launching, error, launch, startOver, apply } = useDiskImportRun(selected, () => {
+  const { run, launching, flowActive, error, launch, startOver, apply } = useDiskImportRun(selected, () => {
     setSelected('');
     refresh();
   });
@@ -225,6 +248,7 @@ export default function DiskImportPage() {
 
       <TileBody
         run={run}
+        flowActive={flowActive}
         devices={devices}
         loading={loading}
         selected={selected}
@@ -271,6 +295,7 @@ function tileState(run: RunStatus | null): TileState {
  *  page stays a thin shell and the phase-selection complexity lives here. */
 function TileBody({
   run,
+  flowActive,
   devices,
   loading,
   selected,
@@ -285,6 +310,7 @@ function TileBody({
   onStartOver,
 }: {
   run: RunStatus | null;
+  flowActive: boolean;
   devices: DeviceView[];
   loading: boolean;
   selected: string;
@@ -298,7 +324,11 @@ function TileBody({
   onApply: () => void;
   onStartOver: () => void;
 }) {
-  const state = tileState(run);
+  // While an apply flow is in flight (#2009), force the progress view — even if
+  // status.json momentarily still reads `plan-ready` before the detached re-plan/
+  // apply flips it — so the Import button isn't briefly re-offered (no double-submit).
+  const base = tileState(run);
+  const state = flowActive && base !== 'apply-done' ? 'active' : base;
   if (state === 'active') return <WorkerProgress run={run!} onStartOver={onStartOver} />;
   if (state === 'apply-done') return <ApplyDone run={run!} onStartOver={onStartOver} />;
   if (state === 'plan-ready')
