@@ -156,14 +156,18 @@ describe('dirOfRel', () => {
   });
 });
 
-describe('resolveTargetPath (moved from plan.ts)', () => {
-  it('shared owner omits the owner segment, merge flattens to basename', () => {
-    expect(resolveTargetPath('Backup/IMG.jpg', 'photos', { owner: 'shared', mode: 'merge', anchor: '' }))
-      .toBe('photos/IMG.jpg');
+describe('resolveTargetPath — layout is category-driven (#2006)', () => {
+  it('music (flat category) flattens to the folder by basename; shared omits the owner segment', () => {
+    expect(resolveTargetPath('Backup/sub/track.mp3', 'music', { owner: 'shared', anchor: '' }))
+      .toBe('music/track.mp3');
   });
-  it('user owner prefixes; parallel preserves the subtree below the anchor', () => {
+  it('photos (preserve category) keep the source subtree below the anchor', () => {
+    expect(resolveTargetPath('Backup/IMG.jpg', 'photos', { owner: 'shared', anchor: '' }))
+      .toBe('photos/Backup/IMG.jpg');
+  });
+  it('user owner prefixes; preserve keeps the subtree below the anchor', () => {
     expect(
-      resolveTargetPath('Code/src/main.ts', 'documents', { owner: 'mdopp', mode: 'parallel', anchor: 'Code' }),
+      resolveTargetPath('Code/src/main.ts', 'documents', { owner: 'mdopp', anchor: 'Code' }),
     ).toBe('mdopp/documents/src/main.ts');
   });
 
@@ -175,7 +179,7 @@ describe('resolveTargetPath (moved from plan.ts)', () => {
   it('rejects a traversal owner before building a target', () => {
     for (const evil of ['..', '../etc', '../../etc/cron.d', '.']) {
       expect(() =>
-        resolveTargetPath('Backup/IMG.jpg', 'photos', { owner: evil, mode: 'merge', anchor: '' }),
+        resolveTargetPath('Backup/IMG.jpg', 'photos', { owner: evil, anchor: '' }),
       ).toThrow(/invalid owner segment/);
     }
   });
@@ -183,7 +187,7 @@ describe('resolveTargetPath (moved from plan.ts)', () => {
   it('rejects an owner carrying a path separator, backslash, or NUL', () => {
     for (const evil of ['a/b', 'a\\b', 'mdopp/../cdopp', 'x\0y', '']) {
       expect(() =>
-        resolveTargetPath('Backup/IMG.jpg', 'photos', { owner: evil, mode: 'merge', anchor: '' }),
+        resolveTargetPath('Backup/IMG.jpg', 'photos', { owner: evil, anchor: '' }),
       ).toThrow(/invalid owner segment/);
     }
   });

@@ -177,14 +177,6 @@ export function buildPlan(
   // 1. Classify; junk is emitted as skip-junk, the rest kept for dedup.
   const keep = classifyAndSplit(records, opts, items);
 
-  // 2. Group by size to decide what must be hashed.
-  const bySize = new Map<number, Classified[]>();
-  for (const c of keep) {
-    const arr = bySize.get(c.record.size);
-    if (arr) arr.push(c);
-    else bySize.set(c.record.size, [c]);
-  }
-
   // Stable (sourcePath) iteration order so the first file at a target wins.
   const ordered = keep
     .slice()
@@ -192,9 +184,18 @@ export function buildPlan(
       a.record.sourcePath < b.record.sourcePath ? -1 : a.record.sourcePath > b.record.sourcePath ? 1 : 0,
     );
 
-  // Two-tier content keys: cheap fingerprint first, full hash only on a
-  // fingerprint collision or a cataloged target (#1995).
-  const keys = resolveContentKeys(ordered, bySize, {
+  // 2. CONTENT-identity files (photos/docs/audiobooks/podcasts/movies) dedupe by
+  //    BYTES — group them by size + fingerprint (cheap, #1995). Music (`nameSize`
+  //    identity) is deduped by name+size and is NEVER hashed, so it's excluded from
+  //    the (size→fingerprint) pass entirely.
+  const contentFiles = ordered.filter(c => CATEGORIES[c.category].identity === 'content');
+  const bySize = new Map<number, Classified[]>();
+  for (const c of contentFiles) {
+    const arr = bySize.get(c.record.size);
+    if (arr) arr.push(c);
+    else bySize.set(c.record.size, [c]);
+  }
+  const contentKeys = resolveContentKeys(contentFiles, bySize, {
     hashOf,
     fingerprintOf: opts.fingerprintOf ?? hashOf,
     catalog,
@@ -202,22 +203,33 @@ export function buildPlan(
     onProgress: opts.onProgress,
   });
 
-  // Track, within this tree, the content hash already claiming each destination
-  // slot. The slot key is (area, target): the SAME target in two areas (e.g.
-  // `shared` vs a user area) is two distinct slots — private dedups within
-  // itself, `shared` merges across sources.
-  const targetOwner = new Map<string, { key: string; sha256?: string; sourcePath: string }>();
-  // Per-original-slot probe cursor for disambiguating renames (#2006), so N
-  // distinct files at one name resolve to (2),(3)… in O(N) not O(N²).
+  // A file's dedup IDENTITY within its area: content bytes for content cats, or
+  // `name+size` for music (dir-independent, no hashing). `sha256` is the FULL hash,
+  // present only when the file was fully hashed (for catalog comparison).
+  const identityOf = (c: Classified): KeyInfo => {
+    if (CATEGORIES[c.category].identity === 'nameSize') {
+      return { key: `n:${baseName(c.record.sourcePath).toLowerCase()}:${c.record.size}` };
+    }
+    return contentKeys.get(c.record.sourcePath)!;
+  };
+
+  // In-tree dedup is by IDENTITY within an area (area\0identity), NOT by target
+  // slot — so identical content collapses no matter where it sits / what it's named
+  // (and a music track collapses across folders). `targetClaim` (area\0target) is a
+  // SEPARATE concern: it only resolves the rare case where two genuinely-distinct
+  // files want the same target path (mostly same-name/different-size music) → the
+  // loser is renamed `(2)`/`(3)`… so nothing is dropped or overwritten.
+  const seen = new Set<string>();
+  const targetClaim = new Map<string, string>();
   const renameCounters = new Map<string, number>();
 
-  // 3. Decide each kept record from its precomputed content key.
+  // 3. Decide each kept record.
   for (const c of ordered) {
-    const target = c.target!;
     const area = areaOf(c.record);
-    const slot = dedupSlot(area, target);
-    const decision = decide(c, target, area, slot, keys.get(c.record.sourcePath)!, {
-      targetOwner,
+    const target = c.target!;
+    const decision = decide(c, target, area, identityOf(c), {
+      seen,
+      targetClaim,
       renameCounters,
       catalog,
       conflicts,
@@ -331,10 +343,10 @@ function decide(
   c: Classified,
   target: string,
   area: string,
-  slot: string,
   info: KeyInfo,
   ctx: {
-    targetOwner: Map<string, { key: string; sha256?: string; sourcePath: string }>;
+    seen: Set<string>;
+    targetClaim: Map<string, string>;
     renameCounters: Map<string, number>;
     catalog?: ImportCatalog;
     conflicts: Conflict[];
@@ -342,13 +354,19 @@ function decide(
 ): Decision {
   const { key, sha256 } = info;
 
-  // Catalog dedup compares FULL hashes (the catalog stores full sha256). sha256
-  // is present exactly when this record was fully hashed, which resolveContentKeys
-  // guarantees whenever the target is already cataloged. This is the cross-run
-  // newer-wins path (apply routes the existing file to _superseded) — left as a
-  // conflict on purpose; #2006 only changes the in-tree distinct-name case below.
+  // In-tree dedup by IDENTITY within the area: this exact identity (content bytes,
+  // or name+size for music) was already imported → it's a duplicate, drop it.
+  const idSlot = `${area} ${key}`;
+  if (ctx.seen.has(idSlot)) return { action: 'skip-dupe', target };
+
+  // Cross-run catalog. CONTENT cats (sha known): same bytes already at this target
+  // → skip; different bytes at a cataloged target → newer-wins conflict (apply
+  // routes the old copy to `_superseded/`).
   if (sha256 !== undefined) {
-    if (ctx.catalog?.has(sha256, target, area)) return { action: 'skip-dupe', target };
+    if (ctx.catalog?.has(sha256, target, area)) {
+      ctx.seen.add(idSlot);
+      return { action: 'skip-dupe', target };
+    }
     const catHit = ctx.catalog?.getByTarget(target, area);
     if (catHit && catHit.sha256 !== sha256) {
       ctx.conflicts.push({
@@ -358,24 +376,32 @@ function decide(
       });
       return { action: 'conflict', target };
     }
+  } else if (ctx.catalog) {
+    // nameSize cats (music): the catalog stores no usable content key for us, so we
+    // dedupe cross-run by the (flat) target + size — the same name+size already
+    // imported is the same track. A different size at that name is a distinct track
+    // and falls through to placement (renamed if the slot is taken). Best-effort +
+    // empty on a first import.
+    const catHit = ctx.catalog.getByTarget(target, area);
+    if (catHit && catHit.size === c.record.size) {
+      ctx.seen.add(idSlot);
+      return { action: 'skip-dupe', target };
+    }
   }
 
-  // In-tree collision at this slot (same area + target)? Compare by content key.
-  const owner = ctx.targetOwner.get(slot);
-  if (owner) {
-    if (owner.key === key) return { action: 'skip-dupe', target }; // same content, different path
-    // DISTINCT files clashing on one name are NOT the same photo/doc — import the
-    // later one under a disambiguated name (`IMG_0001 (2).jpg`) instead of dropping
-    // it as an unresolved conflict (#2006, DATA SAFETY). Deterministic: stable
-    // sourcePath order + a per-original-slot probe cursor make re-runs reproduce
-    // the same names; a 3rd distinct clash → `(3)`, etc.
+  // A new, distinct file. Claim its identity, then place it at its target. Renaming
+  // only kicks in when a DIFFERENT distinct file already took this exact target
+  // (mostly same-name/different-size music in a flat folder; preserve-layout targets
+  // carry the unique source sub-path so they don't collide). Deterministic: stable
+  // sourcePath order + a per-target probe cursor → reproducible `(2)`/`(3)` names.
+  ctx.seen.add(idSlot);
+  const slot = dedupSlot(area, target);
+  if (ctx.targetClaim.has(slot)) {
     const renamedTarget = uniquifyTarget(target, area, slot, ctx);
-    ctx.targetOwner.set(dedupSlot(area, renamedTarget), { key, sha256, sourcePath: c.record.sourcePath });
+    ctx.targetClaim.set(dedupSlot(area, renamedTarget), key);
     return { action: 'copy', target: renamedTarget, renamed: true };
   }
-
-  // First file to claim this slot.
-  ctx.targetOwner.set(slot, { key, sha256, sourcePath: c.record.sourcePath });
+  ctx.targetClaim.set(slot, key);
   return { action: 'copy', target };
 }
 
@@ -405,14 +431,14 @@ function uniquifyTarget(
   target: string,
   area: string,
   originalSlot: string,
-  ctx: { targetOwner: Map<string, unknown>; renameCounters: Map<string, number> },
+  ctx: { targetClaim: Map<string, unknown>; renameCounters: Map<string, number> },
 ): string {
   const { dir, stem, ext } = splitTarget(target);
   let n = ctx.renameCounters.get(originalSlot) ?? 2;
   for (;;) {
     const candidate = `${dir}${stem} (${n})${ext}`;
     n += 1;
-    if (!ctx.targetOwner.has(dedupSlot(area, candidate))) {
+    if (!ctx.targetClaim.has(dedupSlot(area, candidate))) {
       ctx.renameCounters.set(originalSlot, n);
       return candidate;
     }

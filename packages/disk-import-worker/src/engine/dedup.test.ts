@@ -428,3 +428,73 @@ describe('buildPlan — routing tree (#1915)', () => {
     expect(result.items.map(i => i.target).sort()).toEqual(['cdopp/photos/IMG.jpg', 'mdopp/photos/IMG.jpg']);
   });
 });
+
+describe('buildPlan — per-category layout + identity (#2006 redesign)', () => {
+  // A routing resolution rooted at the disk (strips the `/disk/` prefix), default
+  // shared owner — the same shape the worker threads through for the initial plan.
+  const routingFor = (rules: Record<string, import('./types').Rule> = {}) => ({
+    relPathOf: (r: ImportRecord) => r.sourcePath.replace(/^\/disk\//, ''),
+    explicit: new Map(Object.entries(rules)),
+    rootDefault: {},
+  });
+
+  it('documents PRESERVE source folders; identical bytes across folders collapse by content', () => {
+    const files: ScannedFile[] = [
+      { path: '/disk/backup_2025/docs/note.txt', size: 10, mtimeMs: 0 },
+      { path: '/disk/backup_2026/docs/note.txt', size: 10, mtimeMs: 0 }, // identical bytes
+      { path: '/disk/backup_2023/notes/note.txt', size: 10, mtimeMs: 0 }, // DIFFERENT bytes
+    ];
+    const result = buildPlan(buildInventory(files), hasherFrom({
+      '/disk/backup_2025/docs/note.txt': sha('a'),
+      '/disk/backup_2026/docs/note.txt': sha('a'),
+      '/disk/backup_2023/notes/note.txt': sha('b'),
+    }), { routing: routingFor() });
+    // 2025 copies at its preserved path; 2026 (same bytes) dedupes; notes/ (different
+    // bytes, different folder) is kept distinct — exactly the operator's model.
+    expect(itemOf(result.items, '/disk/backup_2025/docs/note.txt')).toMatchObject({
+      action: 'copy', target: 'documents/backup_2025/docs/note.txt',
+    });
+    expect(actionOf(result.items, '/disk/backup_2026/docs/note.txt')).toBe('skip-dupe');
+    expect(itemOf(result.items, '/disk/backup_2023/notes/note.txt')).toMatchObject({
+      action: 'copy', target: 'documents/backup_2023/notes/note.txt',
+    });
+    expect(result.conflicts).toHaveLength(0);
+  });
+
+  it('photos dedupe by CONTENT only — same name, different bytes → BOTH kept (preserved paths)', () => {
+    const files: ScannedFile[] = [
+      { path: '/disk/2019/IMG_0001.jpg', size: 10, mtimeMs: 0 },
+      { path: '/disk/2021/IMG_0001.jpg', size: 10, mtimeMs: 0 }, // same name, different photo
+    ];
+    const result = buildPlan(buildInventory(files), hasherFrom({
+      '/disk/2019/IMG_0001.jpg': sha('a'),
+      '/disk/2021/IMG_0001.jpg': sha('b'),
+    }), { routing: routingFor() });
+    expect(result.items.every(i => i.action === 'copy')).toBe(true);
+    expect(result.items.map(i => i.target).sort()).toEqual([
+      'photos/2019/IMG_0001.jpg', 'photos/2021/IMG_0001.jpg',
+    ]);
+    expect(result.items.some(i => i.renamed)).toBe(false); // distinct paths, no rename
+  });
+
+  it('music dedupes by NAME+SIZE, flattened, WITHOUT hashing', () => {
+    const hashOf = vi.fn<HashResolver>(() => { throw new Error('music must not be hashed'); });
+    // Stable order is by sourcePath: backup < mix < rock.
+    const files: ScannedFile[] = [
+      { path: '/disk/backup/01.mp3', size: 100, mtimeMs: 0 }, // first claimant of music/01.mp3
+      { path: '/disk/mix/01.mp3', size: 200, mtimeMs: 0 },    // same name, different size → different track
+      { path: '/disk/rock/01.mp3', size: 100, mtimeMs: 0 },   // same name+size as backup → same track
+    ];
+    const result = buildPlan(buildInventory(files), hashOf, {
+      routing: routingFor(), fingerprintOf: hashOf,
+    });
+    expect(hashOf).not.toHaveBeenCalled(); // name+size identity → zero reads
+    expect(itemOf(result.items, '/disk/backup/01.mp3')).toMatchObject({ action: 'copy', target: 'music/01.mp3' });
+    expect(actionOf(result.items, '/disk/rock/01.mp3')).toBe('skip-dupe'); // same name+size as backup
+    // Different size = different track → kept, renamed off the flat clash.
+    expect(itemOf(result.items, '/disk/mix/01.mp3')).toMatchObject({
+      action: 'copy', target: 'music/01 (2).mp3', renamed: true,
+    });
+    expect(result.conflicts).toHaveLength(0);
+  });
+});

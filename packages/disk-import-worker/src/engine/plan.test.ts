@@ -54,84 +54,84 @@ function baseOpts(exec: SafeExec, catalog: ImportCatalog, hashOf: AsyncHashResol
   return { exec, mountpoint: MOUNT, catalog, shareGid: GID, hashOf, now: () => FIXED_NOW };
 }
 
-describe('resolveTargetPath — owner prefix + merge/parallel (#1913)', () => {
+describe('resolveTargetPath — owner prefix + category layout (#1913/#2006)', () => {
   describe('owner prefix', () => {
     it('shared owner omits the owner segment', () => {
       expect(
-        resolveTargetPath('Musik/song.mp3', 'music', { owner: 'shared', mode: 'merge', anchor: '' }),
+        resolveTargetPath('Musik/song.mp3', 'music', { owner: 'shared', anchor: '' }),
       ).toBe('music/song.mp3');
     });
 
     it('a user owner prefixes data/<owner>/<category>/…', () => {
       expect(
-        resolveTargetPath('Musik/song.mp3', 'music', { owner: 'cdopp', mode: 'merge', anchor: '' }),
+        resolveTargetPath('Musik/song.mp3', 'music', { owner: 'cdopp', anchor: '' }),
       ).toBe('cdopp/music/song.mp3');
     });
 
-    it('the same file under different owners lands in different areas', () => {
+    it('the same file under different owners lands in different areas (preserve cat)', () => {
       const rel = 'inbox/report.pdf';
-      expect(resolveTargetPath(rel, 'documents', { owner: 'shared', mode: 'merge', anchor: '' })).toBe(
-        'documents/report.pdf',
+      expect(resolveTargetPath(rel, 'documents', { owner: 'shared', anchor: '' })).toBe(
+        'documents/inbox/report.pdf',
       );
-      expect(resolveTargetPath(rel, 'documents', { owner: 'mdopp', mode: 'merge', anchor: '' })).toBe(
-        'mdopp/documents/report.pdf',
+      expect(resolveTargetPath(rel, 'documents', { owner: 'mdopp', anchor: '' })).toBe(
+        'mdopp/documents/inbox/report.pdf',
       );
     });
   });
 
-  describe('mode: merge flattens into the category folder', () => {
+  describe('flat categories (music) flatten into the category folder', () => {
     it('drops the source subtree, keeping only the basename', () => {
       expect(
-        resolveTargetPath('Docs/2023/Q1/report.pdf', 'documents', { owner: 'shared', mode: 'merge', anchor: 'Docs' }),
-      ).toBe('documents/report.pdf');
+        resolveTargetPath('Musik/2023/Q1/track.mp3', 'music', { owner: 'shared', anchor: 'Musik' }),
+      ).toBe('music/track.mp3');
     });
 
     it('flattens identically regardless of how deep the source nests', () => {
       expect(
-        resolveTargetPath('a/b/c/d/track.flac', 'music', { owner: 'cdopp', mode: 'merge', anchor: 'a' }),
+        resolveTargetPath('a/b/c/d/track.flac', 'music', { owner: 'cdopp', anchor: 'a' }),
       ).toBe('cdopp/music/track.flac');
     });
   });
 
-  describe('mode: parallel preserves the source subtree below the anchor', () => {
+  describe('preserve categories (documents) keep the source subtree below the anchor', () => {
     it('keeps the structure under the category folder (shared)', () => {
       expect(
-        resolveTargetPath('Code/proj/src/main.ts', 'documents', { owner: 'shared', mode: 'parallel', anchor: 'Code' }),
+        resolveTargetPath('Code/proj/src/main.ts', 'documents', { owner: 'shared', anchor: 'Code' }),
       ).toBe('documents/proj/src/main.ts');
     });
 
     it('keeps the structure under data/<owner>/<category>/… (user owner)', () => {
       expect(
-        resolveTargetPath('Code/proj/src/main.ts', 'documents', { owner: 'mdopp', mode: 'parallel', anchor: 'Code' }),
+        resolveTargetPath('Code/proj/src/main.ts', 'documents', { owner: 'mdopp', anchor: 'Code' }),
       ).toBe('mdopp/documents/proj/src/main.ts');
     });
 
     it('a file sitting exactly at the anchor keeps its basename (not dropped)', () => {
       expect(
-        resolveTargetPath('Archive/readme.txt', 'documents', { owner: 'shared', mode: 'parallel', anchor: 'Archive/readme.txt' }),
+        resolveTargetPath('Archive/readme.txt', 'documents', { owner: 'shared', anchor: 'Archive/readme.txt' }),
       ).toBe('documents/readme.txt');
     });
 
     it('a root anchor preserves the whole relative path', () => {
       expect(
-        resolveTargetPath('top/inner/file.bin', 'documents', { owner: 'shared', mode: 'parallel', anchor: '' }),
+        resolveTargetPath('top/inner/file.bin', 'documents', { owner: 'shared', anchor: '' }),
       ).toBe('documents/top/inner/file.bin');
     });
   });
 
   describe('junk + edge cases', () => {
     it('junk has no destination folder → null', () => {
-      expect(resolveTargetPath('x/thumbs.db', 'junk', { owner: 'shared', mode: 'merge', anchor: '' })).toBeNull();
+      expect(resolveTargetPath('x/thumbs.db', 'junk', { owner: 'shared', anchor: '' })).toBeNull();
     });
 
     it('an empty / dot-only relative path → null', () => {
-      expect(resolveTargetPath('', 'music', { owner: 'shared', mode: 'merge', anchor: '' })).toBeNull();
-      expect(resolveTargetPath('./.', 'music', { owner: 'cdopp', mode: 'parallel', anchor: '' })).toBeNull();
+      expect(resolveTargetPath('', 'music', { owner: 'shared', anchor: '' })).toBeNull();
+      expect(resolveTargetPath('./.', 'music', { owner: 'cdopp', anchor: '' })).toBeNull();
     });
 
-    it('normalises backslash separators and strips empty segments', () => {
+    it('normalises backslash separators and strips empty segments (preserve cat)', () => {
       expect(
-        resolveTargetPath('Code\\proj\\\\main.ts', 'documents', { owner: 'shared', mode: 'parallel', anchor: 'Code' }),
+        resolveTargetPath('Code\\proj\\\\main.ts', 'documents', { owner: 'shared', anchor: 'Code' }),
       ).toBe('documents/proj/main.ts');
     });
   });

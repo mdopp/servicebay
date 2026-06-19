@@ -543,11 +543,17 @@ function PlanReview({ status }: { status: NonNullable<RunStatus['status']> }) {
         <p className="text-xs text-gray-500 dark:text-gray-400">No category breakdown available for this run.</p>
       )}
 
+      <p className="text-xs text-gray-500 dark:text-gray-400">
+        Source folders are kept (photos, videos, documents). Identical files are merged:
+        photos/videos/documents by content, music by name — so the same track in several
+        folders becomes one copy.
+      </p>
+
       {totals.renamed > 0 && (
         <p className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
-          {totals.renamed.toLocaleString()} file{totals.renamed === 1 ? '' : 's'} shared a name with a <strong>different</strong> file headed to the same folder
-          (e.g. two cameras both naming a photo <code>IMG_0001.jpg</code>). Each is imported under a disambiguated
-          name like <code>IMG_0001 (2).jpg</code> — <strong>nothing is dropped and nothing is overwritten</strong>.
+          {totals.renamed.toLocaleString()} file{totals.renamed === 1 ? '' : 's'} would land on a name another
+          file already took (e.g. two <strong>different</strong> tracks both called <code>01.mp3</code>). Each is kept
+          under a disambiguated name like <code>01 (2).mp3</code> — <strong>nothing is dropped or overwritten</strong>.
         </p>
       )}
 

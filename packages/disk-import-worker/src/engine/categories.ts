@@ -14,6 +14,27 @@ import type { Category } from './types';
 // emits — are RELATIVE to that root; the host-apply step (a later issue) joins
 // them onto the real mount point.
 
+/**
+ * How a category lays out its files in the library (#2006 redesign):
+ *  - `preserve` — keep the source sub-folders under the category root
+ *    (`documents/holiday/notes/a.txt`). Distinct files in different folders never
+ *    collide, so their structure + context survive.
+ *  - `flat` — drop the source path; everything lands directly in the category
+ *    folder by basename (`music/track01.mp3`). The directory a file sat in is noise.
+ */
+export type CategoryLayout = 'preserve' | 'flat';
+
+/**
+ * What makes two files "the same" for dedup (#2006 redesign):
+ *  - `content` — identical BYTES (fingerprint/sha). A reused name (`IMG_0001.jpg`
+ *    from two cameras) is two DIFFERENT files → both kept; only byte-identical
+ *    copies collapse. Right for photos/videos/documents.
+ *  - `nameSize` — same FILENAME + byte-size, regardless of directory. Right for
+ *    music: the same track scattered across folders is one song; needs NO hashing.
+ *    Size guards against two distinct songs sharing a generic name (`01.mp3`).
+ */
+export type CategoryIdentity = 'content' | 'nameSize';
+
 export interface CategoryDef {
   /**
    * Folder under `file-share/data/`, lower-case (convention #1018), trailing
@@ -27,6 +48,10 @@ export interface CategoryDef {
    * audiobook) are resolved by heuristics in classify.ts, not here.
    */
   extensions: string[];
+  /** How files lay out in the library (preserve source folders vs flatten). */
+  layout: CategoryLayout;
+  /** What counts as a duplicate (bytes vs name+size). */
+  identity: CategoryIdentity;
 }
 
 /**
@@ -47,6 +72,11 @@ export const CATEGORIES: Record<Category, CategoryDef> = {
       'raw', 'cr2', 'cr3', 'nef', 'arw', 'orf', 'rw2', 'dng',
       'mov', 'mp4', 'm4v', 'avi', 'mkv', '3gp',
     ],
+    // A reused name (every camera's IMG_0001.jpg) is a DIFFERENT photo → identity
+    // is bytes only; keep source folders so distinct photos coexist (Immich
+    // reorganizes by EXIF date regardless).
+    layout: 'preserve',
+    identity: 'content',
   },
   movies: {
     folder: 'movies/',
@@ -55,22 +85,34 @@ export const CATEGORIES: Record<Category, CategoryDef> = {
     // subtree is video-dominant or carries an explicit `movies_jellyfin`
     // disposition (classify.ts) — never by the bare extension rule.
     extensions: [],
+    layout: 'preserve',
+    identity: 'content',
   },
   music: {
     folder: 'music/',
     extensions: ['mp3', 'flac', 'm4a', 'aac', 'ogg', 'opus', 'wav', 'wma', 'aiff'],
+    // The same track scattered across folders is one song → flatten + dedup by
+    // name+size (no hashing). Two distinct songs sharing a generic name differ in
+    // size, so they're kept (and the loser of a flat-name clash is renamed).
+    layout: 'flat',
+    identity: 'nameSize',
   },
   audiobooks: {
     folder: 'audiobooks/',
     // m4b is unambiguously an audiobook; mp3 audiobooks are reclassified out of
-    // `music` by heuristic / LLM (classify.ts).
+    // `music` by heuristic / LLM (classify.ts). Series chapters reuse names like
+    // `01.mp3` across books → identity is bytes, structure preserved.
     extensions: ['m4b', 'aax', 'aa'],
+    layout: 'preserve',
+    identity: 'content',
   },
   podcasts: {
     folder: 'podcasts/',
     // No extensions are podcast-exclusive — podcasts are detected by heuristic /
     // LLM from the (audio) residue, not by extension.
     extensions: [],
+    layout: 'preserve',
+    identity: 'content',
   },
   documents: {
     folder: 'documents/',
@@ -81,10 +123,17 @@ export const CATEGORIES: Record<Category, CategoryDef> = {
       'ppt', 'pptx', 'odp',
       'md', 'html', 'htm',
     ],
+    // docs/note1.txt and notes/note1.txt are different files → keep folders;
+    // identical bytes across yearly backups collapse by content.
+    layout: 'preserve',
+    identity: 'content',
   },
   junk: {
+    // Never written — defaults are placeholders so the map stays total.
     folder: '',
     extensions: [],
+    layout: 'flat',
+    identity: 'content',
   },
 };
 
