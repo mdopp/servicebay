@@ -65,7 +65,7 @@ function hoistedSidecar() {
   };
 }
 
-import { applyImport, rebasePlanSource, replanImport } from './apply';
+import { applyImport, rebasePlanSource, replanImport, triggerScan } from './apply';
 
 function recordOf(sourcePath: string) {
   return { sourcePath, size: 10, mtimeMs: 1, ext: 'jpg', name: 'a.jpg' };
@@ -111,6 +111,25 @@ describe('rebasePlanSource', () => {
     sc.plan.items[0].record.sourcePath = '/somewhere/else/a.jpg';
     const plan = rebasePlanSource(sc, '/run/servicebay/disk-import/sda1');
     expect(plan.items[0].record.sourcePath).toBe('/somewhere/else/a.jpg');
+  });
+});
+
+describe('triggerScan', () => {
+  it('detached-execs the scan walk in the serve container over the live mount', async () => {
+    const exec = vi.fn().mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+    await triggerScan(exec, 'disk-import-worker-run1', 973);
+    const argv = exec.mock.calls[0][0] as string[];
+    expect(argv.slice(0, 4)).toEqual(['podman', 'exec', '-d', 'disk-import-worker-run1']);
+    expect(argv).toContain('--mount');
+    expect(argv).toContain('/mnt/src');
+    expect(argv).toContain('--out');
+    expect(argv).toContain('/out');
+    expect(argv).toContain('973');
+  });
+
+  it('throws when the scan trigger exits non-zero', async () => {
+    const exec = vi.fn().mockResolvedValue({ code: 1, stdout: '', stderr: 'boom' });
+    await expect(triggerScan(exec, 'c', 973)).rejects.toThrow(/scan trigger failed/);
   });
 });
 

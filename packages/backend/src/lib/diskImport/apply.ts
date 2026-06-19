@@ -134,6 +134,34 @@ export async function replanImport(args: ReplanImportArgs): Promise<void> {
   }
 }
 
+/** Source device mountpoint inside the serve container (its `…:/mnt/src:ro` bind). */
+const WORKER_SRC_IN_CONTAINER = '/mnt/src';
+
+/**
+ * Start the dry-run SCAN walk inside the already-launched serve container.
+ *
+ * The worker runs in `--serve` mode and only walks the disk when something POSTs
+ * `/api/scan`. The original trigger was the in-browser worker app; the in-page
+ * review flow has no such page, so launching a scan left the worker idle forever
+ * ("Starting the import worker…" with no status.json). servicebay must kick it
+ * off itself: a DETACHED (`-d`) one-shot `npx tsx main.ts --mount /mnt/src --out
+ * /out` in the container — the same command the serve server spawns on POST —
+ * which walks the live mount and writes status.json/plan.json while the serve
+ * server keeps running for the review tree. Detached so the launch call returns
+ * immediately (a real disk takes minutes); the page polls status.json.
+ */
+export async function triggerScan(exec: SafeExec, container: string, shareGid: number): Promise<void> {
+  const { code, stdout, stderr } = await exec([
+    'podman', 'exec', '-d', container,
+    'npx', 'tsx', 'packages/disk-import-worker/src/cli/main.ts',
+    '--mount', WORKER_SRC_IN_CONTAINER, '--out', WORKER_OUT_IN_CONTAINER,
+    '--share-gid', String(shareGid),
+  ]);
+  if (code !== 0) {
+    throw new Error(`disk-import: scan trigger failed (code ${code}): ${stderr || stdout}`);
+  }
+}
+
 export interface ApplyImportArgs {
   /** servicebay's REAL agent SafeExec (runs mkdir/rsync/chown on the host as core). */
   exec: SafeExec;
