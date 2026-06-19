@@ -5,7 +5,13 @@ import type { SafeExec } from '@servicebay/disk-import-worker';
 // service.ts is a thin facade over apply/launcher/runStore — mock all three so
 // these tests assert the FACADE's wiring (teardown-on-apply-success #1982), not
 // the collaborators (each has its own unit tests).
-vi.mock('./apply', () => ({ applyImport: vi.fn() }));
+vi.mock('./apply', () => ({
+  applyImport: vi.fn(),
+  replanImport: vi.fn(),
+  triggerScan: vi.fn(),
+  waitForReplanDone: vi.fn(async () => undefined),
+  recordRunError: vi.fn(async () => undefined),
+}));
 vi.mock('./launcher', () => ({
   launchWorker: vi.fn(),
   readStatus: vi.fn(),
@@ -21,8 +27,8 @@ vi.mock('./runStore', () => ({
   clearActiveRun: vi.fn(async () => undefined),
 }));
 
-import { applyRun, resolveShareGid } from './service';
-import { applyImport } from './apply';
+import { startApplyFlow, runApplyFlow, resolveShareGid } from './service';
+import { applyImport, replanImport, waitForReplanDone, recordRunError } from './apply';
 import { cleanupRunMount } from './launcher';
 import { getActiveRun, clearActiveRun } from './runStore';
 
@@ -33,14 +39,13 @@ function statExec(gid: number): SafeExec {
 const exec = statExec(973);
 const RUN = { runId: 'r1', outDir: '/o', container: 'c', device: '/dev/sdb1', mountpoint: '/run/servicebay/disk-import/sdb1' };
 
-describe('applyRun teardown (#1982)', () => {
+describe('runApplyFlow teardown (#1982) + async flow (#2009)', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('unmounts the device and clears the run after a successful apply', async () => {
-    vi.mocked(getActiveRun).mockResolvedValue(RUN as never);
     vi.mocked(applyImport).mockResolvedValue({ copied: 3 } as never);
 
-    const result = await applyRun(exec, 1000);
+    const result = await runApplyFlow(exec, 1000, RUN as never, null);
 
     expect(result).toEqual({ copied: 3 });
     // The apply runs against the REAL host-resolved file-share gid (973), NOT the
@@ -48,23 +53,58 @@ describe('applyRun teardown (#1982)', () => {
     expect(vi.mocked(applyImport).mock.calls[0]![0]).toMatchObject({ shareGid: 973 });
     expect(cleanupRunMount).toHaveBeenCalledWith(exec, RUN);
     expect(clearActiveRun).toHaveBeenCalledOnce();
+    // No rules → no re-plan wait.
+    expect(waitForReplanDone).not.toHaveBeenCalled();
   });
 
-  it('leaves the mount live (no cleanup) when the apply throws', async () => {
-    vi.mocked(getActiveRun).mockResolvedValue(RUN as never);
+  it('waits for the detached re-plan before applying when one was launched', async () => {
+    vi.mocked(applyImport).mockResolvedValue({ copied: 1 } as never);
+
+    await runApplyFlow(exec, 1000, RUN as never, 1234);
+
+    // preUpdatedAt threaded through so the wait can spot the NEW done.
+    expect(waitForReplanDone).toHaveBeenCalledWith({ runId: RUN.runId, preUpdatedAt: 1234 });
+    expect(applyImport).toHaveBeenCalledOnce();
+  });
+
+  it('records an error and leaves the mount live (no cleanup) when the apply throws', async () => {
     vi.mocked(applyImport).mockRejectedValue(new Error('apply boom'));
 
-    await expect(applyRun(exec, 1000)).rejects.toThrow('apply boom');
+    // The route already returned (#2009), so the flow swallows + records, never throws.
+    const result = await runApplyFlow(exec, 1000, RUN as never, null);
+
+    expect(result).toBeNull();
+    expect(recordRunError).toHaveBeenCalledWith(RUN.runId, 'apply boom');
     expect(cleanupRunMount).not.toHaveBeenCalled();
     expect(clearActiveRun).not.toHaveBeenCalled();
   });
+});
 
-  it('throws when there is no active run, without touching cleanup', async () => {
+describe('startApplyFlow pre-flight (#2009)', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('throws promptly when there is no active run, without touching apply/re-plan', async () => {
     vi.mocked(getActiveRun).mockResolvedValue(null as never);
 
-    await expect(applyRun(exec, 1000)).rejects.toThrow('no active run');
+    await expect(startApplyFlow(exec, 1000)).rejects.toThrow('no active run');
     expect(applyImport).not.toHaveBeenCalled();
-    expect(cleanupRunMount).not.toHaveBeenCalled();
+    expect(replanImport).not.toHaveBeenCalled();
+  });
+
+  it('launches the detached re-plan synchronously when rules are passed', async () => {
+    vi.mocked(getActiveRun).mockResolvedValue(RUN as never);
+    vi.mocked(replanImport).mockResolvedValue(42 as never);
+    vi.mocked(applyImport).mockResolvedValue({ copied: 0 } as never);
+
+    await startApplyFlow(exec, 1000, { explicit: { docs: { owner: 'mdopp' } } } as never);
+
+    // The re-plan launch happens before the route returns (preUpdatedAt captured).
+    expect(replanImport).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: RUN.runId, container: RUN.container }),
+    );
+    // The heavy continuation is fire-and-forget — let its microtasks settle.
+    await new Promise(r => setImmediate(r));
+    expect(waitForReplanDone).toHaveBeenCalledWith({ runId: RUN.runId, preUpdatedAt: 42 });
   });
 });
 

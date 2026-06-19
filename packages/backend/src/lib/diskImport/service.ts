@@ -25,7 +25,14 @@ import {
 } from './launcher';
 import { listImportDevices } from './devices';
 import { setActiveRun, getActiveRun, clearActiveRun } from './runStore';
-import { applyImport, replanImport, triggerScan, type ApplyImportResult } from './apply';
+import {
+  applyImport,
+  replanImport,
+  triggerScan,
+  waitForReplanDone,
+  recordRunError,
+  type ApplyImportResult,
+} from './apply';
 
 export type { ImportDevice } from './launcher';
 
@@ -117,9 +124,10 @@ export async function getRunStatus(exec: SafeExec): Promise<RunStatus | null> {
  */
 /**
  * Re-plan the active run with the page's per-folder routing rules (#2000) WITHOUT
- * applying — re-routes/re-dedups per owner in the worker (over the live mount) and
- * rewrites plan.json + status.json so the tile poll reflects the new owner-aware
- * plan. Used to preview the effect of the routing picks before "Import now".
+ * applying — LAUNCHES the detached re-plan (#2009) and returns immediately; the
+ * worker re-routes/re-dedups per owner over the live mount and rewrites
+ * plan.json + status.json (phase `planning` → `done`), which the tile poll reflects.
+ * Used to preview the effect of the routing picks before "Import now".
  */
 export async function replanRun(exec: SafeExec, request: ReplanRequest): Promise<void> {
   const run = await getActiveRun();
@@ -128,39 +136,73 @@ export async function replanRun(exec: SafeExec, request: ReplanRequest): Promise
 }
 
 /**
- * Apply the active run. When `request` is given, RE-PLAN with the page's routing
- * rules first (#2000) so files land in `data/<owner>/<category>/…` and the dedup
- * splits per owner; then the host-apply applies the rewritten plan.json unchanged.
+ * START the apply of the active run and return PROMPTLY (#2009). When `request` is
+ * given, the detached re-plan is LAUNCHED synchronously (so the page immediately
+ * sees the re-plan run) — but neither the multi-minute re-plan nor the host-apply is
+ * awaited here: they run in {@link runApplyFlow} in the background while the page
+ * polls status.json. Replaces the old synchronous `applyRun` that blocked the POST
+ * for the whole re-plan + copy (risking proxy/browser timeouts on a big disk).
+ *
+ * Throws only on the fast pre-flight failures (no active run / re-plan launch
+ * failed); everything after is reported through status.json (`error` phase).
  */
-export async function applyRun(
+export async function startApplyFlow(
   exec: SafeExec,
   shareGid: number,
   request?: ReplanRequest,
-): Promise<ApplyImportResult> {
+): Promise<void> {
   const run = await getActiveRun();
   if (!run) throw new Error('disk-import: no active run to apply');
-  // #2000: re-plan with the routing rules BEFORE applying, so the host-apply reads
-  // the owner-aware, per-owner-deduped plan.json. Skipped when no rules were sent
-  // (a plain apply of the auto-sorted plan).
-  if (request) {
-    await replanImport({ exec, runId: run.runId, container: run.container, request });
+  // #2000/#2009: launch the re-plan (detached) BEFORE returning, so the routing
+  // rules are in flight and the page sees `planning`. preUpdatedAt lets the flow
+  // tell the re-plan's `done` apart from the prior scan's. Skipped with no rules.
+  const preUpdatedAt = request
+    ? await replanImport({ exec, runId: run.runId, container: run.container, request })
+    : null;
+  // Fire-and-forget the heavy work — the route returns now, the page polls.
+  void runApplyFlow(exec, shareGid, run, preUpdatedAt).catch((e: unknown) =>
+    logger.error('disk-import:apply', `apply flow crashed: ${e instanceof Error ? e.message : String(e)}`),
+  );
+}
+
+/**
+ * The background apply continuation (#2009): wait for any launched re-plan to
+ * finish, resolve the real file-share gid, run the privileged host-apply, then tear
+ * the run down. Never throws — a failure is recorded on status.json (the route has
+ * already returned) and the mount is LEFT LIVE for retry/inspection (mirrors the old
+ * apply-error path). Exported for unit tests.
+ */
+export async function runApplyFlow(
+  exec: SafeExec,
+  shareGid: number,
+  run: WorkerRun,
+  preUpdatedAt: number | null,
+): Promise<ApplyImportResult | null> {
+  try {
+    // Block on the detached re-plan completing (polls status.json) before applying
+    // the rewritten plan.json.
+    if (preUpdatedAt !== null) await waitForReplanDone({ runId: run.runId, preUpdatedAt });
+    // Resolve the REAL file-share group gid host-side — the passed `shareGid` is the
+    // fallback. The apply chowns every copied file to `core:<this gid>`; a wrong gid
+    // (the 1024 fallback) leaves files in an unnamed group the containers can't read
+    // AND risks a non-core stray crash-looping file-share on its next redeploy
+    // (feedback_fileshare_relabel_crashloop).
+    const realGid = await resolveShareGid(exec, shareGid);
+    const result = await applyImport({ exec, runId: run.runId, mountpoint: run.mountpoint, shareGid: realGid });
+    // Apply succeeded — unmount the source device and forget the run (#1982) so the
+    // USB doesn't leak a mount and a reopened tile lands on the picker, not a stale
+    // "active run". Both are best-effort/idempotent.
+    await cleanupRunMount(exec, run);
+    await clearActiveRun();
+    return result;
+  } catch (e) {
+    // The route already returned, so surface the failure through status.json and
+    // leave the mount live (no cleanup/clear) for retry/inspection.
+    const message = e instanceof Error ? e.message : String(e);
+    await recordRunError(run.runId, message).catch(() => {});
+    logger.error('disk-import:apply', `apply flow failed: ${message}`);
+    return null;
   }
-  // Resolve the REAL file-share group gid host-side — the passed `shareGid` is the
-  // fallback. The apply chowns every copied file to `core:<this gid>`; a wrong gid
-  // (the 1024 fallback) leaves files in an unnamed group the containers can't read
-  // AND risks a non-core stray crash-looping file-share on its next redeploy
-  // (feedback_fileshare_relabel_crashloop).
-  const realGid = await resolveShareGid(exec, shareGid);
-  const result = await applyImport({ exec, runId: run.runId, mountpoint: run.mountpoint, shareGid: realGid });
-  // Apply succeeded — unmount the source device and forget the run (#1982) so the
-  // USB doesn't leak a mount and a reopened tile lands on the picker, not a stale
-  // "active run". Both are best-effort/idempotent (cleanupRunMount ignores
-  // not-mounted/missing-dir), and only run on success: on an apply ERROR we throw
-  // above WITHOUT cleanup, leaving the mount live for retry/inspection until the
-  // user's explicit "Start over" (abortRun).
-  await cleanupRunMount(exec, run);
-  await clearActiveRun();
-  return result;
 }
 
 /** Stop the active worker container and forget it (the tile's "Start over"). */

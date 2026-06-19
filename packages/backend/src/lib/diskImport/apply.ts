@@ -90,7 +90,8 @@ export function rebasePlanSource(sidecar: PlanSidecar, hostMountpoint: string): 
 const WORKER_OUT_IN_CONTAINER = '/out';
 
 /** Re-plan over a real disk re-dedups every record — minutes, like the scan. The
- *  agent's 30s default would kill it; give it a generous ceiling. (#2009) */
+ *  detached re-plan is polled up to this ceiling before {@link waitForReplanDone}
+ *  gives up (#2009). */
 const REPLAN_TIMEOUT_MS = 600_000; // 10 min
 
 export interface ReplanImportArgs {
@@ -105,7 +106,8 @@ export interface ReplanImportArgs {
 }
 
 /**
- * RE-PLAN the active run with the page's per-folder routing rules (#2000).
+ * LAUNCH a RE-PLAN of the active run with the page's per-folder routing rules and
+ * return immediately (#2000 + async #2009).
  *
  * The re-plan must re-dedup PER OWNER (so a cross-owner duplicate lands in BOTH
  * owners' areas instead of being dropped as a `shared`-scope dupe) — which needs
@@ -114,11 +116,21 @@ export interface ReplanImportArgs {
  * writes the routing rules into the shared out dir and `podman exec`s the running
  * serve container to re-plan in-place: it reads the existing plan.json (no re-scan),
  * re-routes/re-dedups over the live mount, and rewrites plan.json + status.json.
- * The subsequent host-apply then applies the rewritten plan.json UNCHANGED.
+ *
+ * #2009: re-planning a real disk re-runs buildPlan over every record (minutes), so
+ * the `--replan` exec is now DETACHED (`-d`) — like {@link triggerScan} — and the
+ * caller polls status.json via {@link waitForReplanDone} instead of awaiting a
+ * multi-minute synchronous `podman exec` (which blocked the POST and risked
+ * NPM/Authelia/browser timeouts). Returns the status doc's `updatedAt` from BEFORE
+ * the launch so the poller can tell the re-plan's `done` apart from the prior scan's
+ * `done` (both are `phase:done`).
  */
-export async function replanImport(args: ReplanImportArgs): Promise<void> {
+export async function replanImport(args: ReplanImportArgs): Promise<number> {
   const { exec, runId, container, request } = args;
-  void runId;
+  // Snapshot the pre-launch status timestamp — the wait loop returns only once a
+  // NEW `done` (updatedAt changed) appears, never the scan's stale `done`.
+  const preUpdatedAt = (await readOutStatus(runOutDir(runId), runId)).updatedAt;
+
   // Write the request the worker reads INSIDE the container, not from servicebay's
   // fs. A servicebay write lands with servicebay's PRIVATE SELinux MCS category, so
   // the worker (different category) gets EACCES reading /out/replan-request.json
@@ -136,24 +148,61 @@ export async function replanImport(args: ReplanImportArgs): Promise<void> {
     throw new Error(`disk-import: writing replan request failed (code ${wr.code}): ${wr.stderr || wr.stdout}`);
   }
 
-  // Run a one-shot `--replan` process IN the serve container (it has /mnt/src +
-  // /out): reads replan-request.json + plan.json, re-plans over the live mount,
-  // rewrites plan.json + status.json. The serve server keeps running alongside.
-  const { code, stdout, stderr } = await exec(
-    [
-      'podman', 'exec', container,
-      'npx', 'tsx', 'packages/disk-import-worker/src/cli/main.ts',
-      '--replan', '--out', WORKER_OUT_IN_CONTAINER,
-    ],
-    // Re-planning a real disk re-runs buildPlan over every record (re-dedup per
-    // owner) — minutes on a 234k-file drive, like the scan. The agent's default
-    // 30s command timeout killed it ("Agent request timeout after 30000ms"), so
-    // give it the same generous timeout the scan/mount use.
-    { timeoutMs: REPLAN_TIMEOUT_MS },
-  );
+  // Launch the one-shot `--replan` DETACHED in the serve container (it has /mnt/src
+  // + /out): reads replan-request.json + plan.json, re-plans over the live mount,
+  // and rewrites plan.json + status.json (phase `planning` → `done`) on completion.
+  // The serve server keeps running alongside; servicebay returns now (#2009).
+  const { code, stdout, stderr } = await exec([
+    'podman', 'exec', '-d', container,
+    'npx', 'tsx', 'packages/disk-import-worker/src/cli/main.ts',
+    '--replan', '--out', WORKER_OUT_IN_CONTAINER,
+  ]);
   if (code !== 0) {
-    throw new Error(`disk-import: re-plan failed (code ${code}): ${stderr || stdout}`);
+    throw new Error(`disk-import: re-plan launch failed (code ${code}): ${stderr || stdout}`);
   }
+  return preUpdatedAt;
+}
+
+/** Poll cadence for {@link waitForReplanDone}; the ceiling reuses REPLAN_TIMEOUT_MS. */
+const REPLAN_POLL_MS = 2_000;
+
+const delay = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Wait for a DETACHED re-plan ({@link replanImport}) to finish by polling its
+ * status.json (#2009). Resolves once the worker writes a fresh `done`/dry-run doc
+ * (updatedAt changed from `preUpdatedAt`); throws on the worker's `error` phase or
+ * after the timeout. Reads the out dir host-side — the worker owns the writes, so
+ * servicebay never relabels the file mid-replan.
+ */
+export async function waitForReplanDone(args: {
+  runId: string;
+  preUpdatedAt: number;
+  pollMs?: number;
+  timeoutMs?: number;
+}): Promise<void> {
+  const { runId, preUpdatedAt } = args;
+  const outDir = runOutDir(runId);
+  const deadline = Date.now() + (args.timeoutMs ?? REPLAN_TIMEOUT_MS);
+  for (;;) {
+    const s = await readOutStatus(outDir, runId);
+    if (s.phase === 'error') throw new Error(`disk-import: re-plan failed: ${s.error ?? 'unknown error'}`);
+    if (s.phase === 'done' && s.mode === 'dry-run' && s.updatedAt !== preUpdatedAt) return;
+    if (Date.now() > deadline) throw new Error('disk-import: re-plan timed out');
+    await delay(args.pollMs ?? REPLAN_POLL_MS);
+  }
+}
+
+/**
+ * Record a terminal `error` on the run's status doc so the page surfaces it (#2009).
+ * Used by the DETACHED apply flow when something fails AFTER the route returned (the
+ * caller can no longer throw to the HTTP response). Written host-side — by apply time
+ * the worker is idle (serve mode, not writing status), so no relabel race.
+ */
+export async function recordRunError(runId: string, message: string): Promise<void> {
+  const outDir = runOutDir(runId);
+  const status = await readOutStatus(outDir, runId);
+  await writeOutStatus(outDir, { ...status, phase: 'error', step: 'Import failed', error: message, updatedAt: Date.now() });
 }
 
 /** Source device mountpoint inside the serve container (its `…:/mnt/src:ro` bind). */

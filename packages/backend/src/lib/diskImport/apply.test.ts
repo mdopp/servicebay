@@ -134,10 +134,12 @@ describe('triggerScan', () => {
 });
 
 describe('replanImport', () => {
-  it('writes the rules IN the container (worker SELinux label) then execs --replan', async () => {
+  it('writes the rules IN the container then LAUNCHES --replan DETACHED (#2009)', async () => {
     const exec = vi.fn().mockResolvedValue({ code: 0, stdout: 'ok', stderr: '' });
     const request = { explicit: { alice: { owner: 'alice' } }, rootDefault: { owner: 'shared' } };
-    await replanImport({ exec, runId: 'run1', container: 'disk-import-worker-run1', request });
+    const preUpdatedAt = await replanImport({ exec, runId: 'run1', container: 'disk-import-worker-run1', request });
+    // Returns the pre-launch status timestamp so the poller can spot the NEW done.
+    expect(typeof preUpdatedAt).toBe('number');
 
     // 1st exec: write replan-request.json INSIDE the container (not servicebay fs —
     // a servicebay write is unreadable by the worker due to SELinux MCS).
@@ -148,22 +150,23 @@ describe('replanImport', () => {
     // No servicebay fs write of the request.
     expect(writes.find(w => w.file.endsWith('replan-request.json'))).toBeUndefined();
 
-    // 2nd exec: the one-shot --replan over /out in the serve container.
+    // 2nd exec: the one-shot --replan over /out, launched DETACHED (`-d`) so the
+    // multi-minute re-plan doesn't block the POST (#2009).
     const replanArgv = exec.mock.calls[1][0] as string[];
-    expect(replanArgv.slice(0, 3)).toEqual(['podman', 'exec', 'disk-import-worker-run1']);
+    expect(replanArgv.slice(0, 4)).toEqual(['podman', 'exec', '-d', 'disk-import-worker-run1']);
     expect(replanArgv).toContain('--replan');
     expect(replanArgv).toContain('/out');
   });
 
-  it('throws when the worker re-plan exits non-zero', async () => {
-    // 1st exec (write request) succeeds; 2nd (--replan) fails.
+  it('throws when the worker re-plan launch exits non-zero', async () => {
+    // 1st exec (write request) succeeds; 2nd (--replan launch) fails.
     const exec = vi
       .fn()
       .mockResolvedValueOnce({ code: 0, stdout: '', stderr: '' })
       .mockResolvedValueOnce({ code: 1, stdout: '', stderr: 'no plan' });
     await expect(
       replanImport({ exec, runId: 'run1', container: 'c', request: { explicit: {} } }),
-    ).rejects.toThrow(/re-plan failed/);
+    ).rejects.toThrow(/re-plan launch failed/);
   });
 
   it('throws when writing the replan request into the container fails', async () => {

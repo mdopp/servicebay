@@ -9,7 +9,8 @@
 //
 // The user then edits owner + disposition per folder; those edits flow back to
 // the apply call as an explicit rule map and re-plan the import with routing
-// (see service.applyRun → applyImport, which threads a RoutingResolution).
+// (see service.startApplyFlow → replanImport/applyImport, which thread a
+// RoutingResolution; the re-plan + apply run async, #2009).
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';

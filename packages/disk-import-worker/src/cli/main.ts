@@ -429,8 +429,19 @@ export async function runReplanCli(opts: ReplanArgs, io?: ReplanIO): Promise<voi
   const resolved = io ?? realReplanIO(opts.out);
   const reqPath = path.join(opts.out, REPLAN_REQUEST_FILE);
   const request = JSON.parse(readFileSync(reqPath, 'utf8')) as ReplanRequest;
-  const plan = await runReplan(request, resolved);
-  console.log(`disk-import: re-planned ${plan.items.length} items, ${plan.conflicts.length} conflict(s).`);
+  try {
+    const plan = await runReplan(request, resolved);
+    console.log(`disk-import: re-planned ${plan.items.length} items, ${plan.conflicts.length} conflict(s).`);
+  } catch (e) {
+    // The re-plan now runs DETACHED (#2009), so nobody reads our exit code — write an
+    // `error` status so servicebay's poller (waitForReplanDone) surfaces the failure
+    // promptly instead of waiting out the full timeout.
+    const message = e instanceof Error ? e.message : String(e);
+    const prev = await resolved.readJson<WorkerStatus>(STATUS_FILE);
+    const base = prev ?? initialStatus('', 'dry-run');
+    await resolved.writeStatus({ ...base, phase: 'error', step: 'Re-plan failed', error: message, updatedAt: Date.now() });
+    throw e;
+  }
 }
 
 /** Real (fs-backed) re-plan IO: reads the out dir, hashes via the live mount. */
