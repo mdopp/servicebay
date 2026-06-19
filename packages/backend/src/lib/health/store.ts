@@ -54,10 +54,17 @@ export class HealthStore {
     fs.writeFileSync(CHECKS_FILE, JSON.stringify(checks, null, 2));
   }
 
-  static deleteCheck(id: string) {
+  /** Delete a STORED check by id. Returns false when nothing matched — e.g. a
+   *  synthetic `diagnose:<probeId>` row (those live only in the live diagnose
+   *  bridge, never in checks.json), so the caller can report honestly instead of
+   *  a fake success that silently no-ops and lets the row reappear. */
+  static deleteCheck(id: string): boolean {
     ensureDirs();
-    const checks = this.getChecks().filter(c => c.id !== id);
-    fs.writeFileSync(CHECKS_FILE, JSON.stringify(checks, null, 2));
+    const checks = this.getChecks();
+    const remaining = checks.filter(c => c.id !== id);
+    if (remaining.length === checks.length) return false;
+    fs.writeFileSync(CHECKS_FILE, JSON.stringify(remaining, null, 2));
+    return true;
   }
 
   /**

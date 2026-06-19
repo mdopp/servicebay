@@ -85,6 +85,26 @@ export const POST = withApiHandler({ body: CheckPostBody }, async ({ body, auth 
 const CheckDeleteQuery = z.object({ id: z.string().min(1).max(64) });
 
 export const DELETE = withApiHandler({ query: CheckDeleteQuery }, async ({ query }) => {
-  HealthStore.deleteCheck(query.id);
+  // `Self-diagnose: …` rows are synthetic `diagnose:<probeId>` projections of the
+  // live diagnose probes — never stored, so deleting them is impossible by design.
+  // Say so honestly instead of returning a fake success that no-ops and lets the row
+  // reappear on the next poll. It clears once the underlying probe passes.
+  if (query.id.startsWith('diagnose:')) {
+    return NextResponse.json(
+      {
+        ok: false,
+        code: 'DIAGNOSE_NOT_DELETABLE',
+        error:
+          "This is a self-diagnose check — it reflects a live probe result, not a stored check, so it can't be deleted. It clears on its own once the underlying issue is resolved.",
+      },
+      { status: 400 },
+    );
+  }
+  if (!HealthStore.deleteCheck(query.id)) {
+    return NextResponse.json(
+      { ok: false, code: 'CHECK_NOT_FOUND', error: `No deletable check with id "${query.id}".` },
+      { status: 404 },
+    );
+  }
   return { success: true };
 });
