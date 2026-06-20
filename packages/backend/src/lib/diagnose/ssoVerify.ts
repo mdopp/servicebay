@@ -276,6 +276,29 @@ export function classifyAdminReject(host: string, probe: DomainProbe): SsoDomain
   return { domain, status: 'fail', code: probe.code, detail: `HTTP ${probe.code} (unexpected — can't judge ACL)` };
 }
 
+/**
+ * Decide an OIDC authorization outcome from the response's `Location` header.
+ * Returns a probe result when the location is decisive, or `null` when it's
+ * inconclusive (the caller then inspects the body). Three healthy/known cases:
+ *  - an OAuth `error=` in the location → fail (registration/config fault).
+ *  - a `code=` → the full handshake completed → pass.
+ *  - a redirect to Authelia's `/consent` screen → HEALTHY handshake (client +
+ *    redirect_uri + scope accepted AND the user authenticated; only the human
+ *    "Approve" click remains, which the probe can't do and a real user does once).
+ *    Treating consent as pass is the fix for vault/immich's false "login broken":
+ *    a first-time / non-pre-consented client 302s here, not straight to `code=`
+ *    (#sso-redirect-uri). Exported for unit testing.
+ */
+export function classifyOidcRedirect(location: string, status: number): OidcAuthProbe | null {
+  const oauthError = extractOauthError(location);
+  if (oauthError) return { ok: false, code: status, oauthError, detail: `Authelia returned OAuth error "${oauthError}"` };
+  if (location.includes('code=')) return { ok: true, code: status, detail: 'authorization code issued' };
+  if (/\/consent(\/|\?|$)/.test(location)) {
+    return { ok: true, code: status, detail: 'reached the OIDC consent screen (handshake healthy; awaits user approval)' };
+  }
+  return null;
+}
+
 /** Classify an OIDC authorization probe for an OIDC-backed app. A real
  *  `code` (consent/redirect) passes; `invalid_client`/`server_error` (the
  *  broken-secret signature, #1559) or any non-redirect fails. Reachability
@@ -424,6 +447,7 @@ async function realProbeDomain(
   }
 }
 
+
 /** Resolve NPM's admin API base URL on this node (the admin port, not 80/443).
  *  Mirrors the local helper in danglingProxy.ts; kept local to avoid coupling. */
 async function findNpmAdminUrl(node: string): Promise<string | null> {
@@ -506,7 +530,7 @@ function realHostHasForwardAuth(node: string) {
  *  broken secret/registration answers `invalid_client`/`server_error`
  *  (#1559). The session cookie short-circuits the consent screen for a
  *  one_factor client. */
-async function realProbeOidcAuthorization(
+export async function realProbeOidcAuthorization(
   publicDomain: string,
   clientId: string,
   redirectUri: string,
@@ -533,16 +557,10 @@ async function realProbeOidcAuthorization(
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     const location = res.headers.get('location') ?? '';
-    const oauthError = extractOauthError(location);
-    if (oauthError) {
-      return { ok: false, code: res.status, oauthError, detail: `Authelia returned OAuth error "${oauthError}"` };
-    }
-    if (location.includes('code=')) {
-      return { ok: true, code: res.status, detail: 'authorization code issued' };
-    }
-    // A non-error redirect with no code (e.g. bounced to the auth portal
-    // because the cookie didn't authenticate) or a non-redirect body that
-    // names the error.
+    const byLocation = classifyOidcRedirect(location, res.status);
+    if (byLocation) return byLocation;
+    // Inconclusive redirect/location — fall back to the body: it may be a
+    // non-redirect error page that names the OAuth error.
     const body = await res.text().catch(() => '');
     const bodyError = extractOauthError(body);
     if (bodyError) {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { mockGetConfig } = vi.hoisted(() => ({ mockGetConfig: vi.fn() }));
 vi.mock('@/lib/config', () => ({ getConfig: () => mockGetConfig() }));
@@ -18,6 +18,8 @@ import {
   classifyUserDomain,
   classifyAdminReject,
   classifyOidcAuthorization,
+  classifyOidcRedirect,
+  realProbeOidcAuthorization,
   extractAutheliaCookie,
   extractOauthError,
   makeEphemeralUsername,
@@ -337,6 +339,64 @@ describe('classifyOidcAuthorization (#1685)', () => {
   });
   it('fails on transport error', () => {
     expect(classifyOidcAuthorization('vault.dopp.cloud', 'vaultwarden', { ok: false, code: 0, detail: 'ECONNREFUSED' }).status).toBe('fail');
+  });
+});
+
+describe('realProbeOidcAuthorization — drives Authelia /api/oidc/authorization', () => {
+  const okRes = (status: number, location: string, body = '') =>
+    ({ status, headers: { get: (h: string) => (h.toLowerCase() === 'location' ? location : null) }, text: async () => body } as unknown as Response);
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('passes on a code= redirect', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(okRes(302, 'https://photos.dopp.cloud/auth/login?code=abc'));
+    const r = await realProbeOidcAuthorization('dopp.cloud', 'immich', 'https://photos.dopp.cloud/auth/login', 'authelia_session=x');
+    expect(r.ok).toBe(true);
+  });
+
+  it('passes when redirected to the consent screen (the vault/immich case)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(okRes(302, 'https://auth.dopp.cloud/consent/openid/decision?flow_id=abc'));
+    const r = await realProbeOidcAuthorization('dopp.cloud', 'vaultwarden', 'https://vault.dopp.cloud/identity/connect/oidc-signin', 'authelia_session=x');
+    expect(r.ok).toBe(true);
+    expect(r.detail).toMatch(/consent/i);
+  });
+
+  it('fails on an OAuth error in the location', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(okRes(302, 'https://auth.dopp.cloud/?error=invalid_client'));
+    const r = await realProbeOidcAuthorization('dopp.cloud', 'immich', 'https://photos.dopp.cloud/auth/login', 'c');
+    expect(r).toMatchObject({ ok: false, oauthError: 'invalid_client' });
+  });
+
+  it('falls back to the body when the location is inconclusive, surfacing a body error', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(okRes(200, '', '{"error":"server_error"}'));
+    const r = await realProbeOidcAuthorization('dopp.cloud', 'immich', 'https://photos.dopp.cloud/auth/login', 'c');
+    expect(r).toMatchObject({ ok: false, oauthError: 'server_error' });
+  });
+
+  it('returns a transport failure when fetch throws', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+    const r = await realProbeOidcAuthorization('dopp.cloud', 'immich', 'https://photos.dopp.cloud/auth/login', 'c');
+    expect(r).toMatchObject({ ok: false, code: 0 });
+  });
+});
+
+describe('classifyOidcRedirect — Location-header outcome (#sso-redirect-uri)', () => {
+  it('passes a code= redirect (full handshake)', () => {
+    const r = classifyOidcRedirect('https://photos.dopp.cloud/auth/login?code=abc&state=x', 302);
+    expect(r).toMatchObject({ ok: true });
+  });
+  it('passes a redirect to the Authelia CONSENT screen (handshake healthy, awaits approval)', () => {
+    const r = classifyOidcRedirect('https://auth.dopp.cloud/consent/openid/decision?flow=openid_connect&flow_id=abc', 302);
+    expect(r).toMatchObject({ ok: true });
+    expect(r!.detail).toMatch(/consent/i);
+  });
+  it('fails on an OAuth error in the location', () => {
+    const r = classifyOidcRedirect('https://auth.dopp.cloud/?error=invalid_client', 302);
+    expect(r).toMatchObject({ ok: false, oauthError: 'invalid_client' });
+  });
+  it('returns null (inconclusive) for a redirect that is neither code, consent, nor error', () => {
+    expect(classifyOidcRedirect('https://auth.dopp.cloud/', 302)).toBeNull();
+    expect(classifyOidcRedirect('', 200)).toBeNull();
   });
 });
 
