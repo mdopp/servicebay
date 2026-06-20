@@ -20,6 +20,7 @@ import {
   classifyOidcAuthorization,
   classifyOidcRedirect,
   realProbeOidcAuthorization,
+  realProbeAdminDecision,
   extractAutheliaCookie,
   extractOauthError,
   makeEphemeralUsername,
@@ -61,14 +62,15 @@ function happyDeps(opts: { forwardAuthHosts?: string[] } = {}): { deps: SsoVerif
     deleteUser: vi.fn(async (id: string) => { calls.deleted.push(id); return { ok: true as const }; }),
     autheliaFirstFactor: vi.fn(async () => ({ ok: true, cookie: 'authelia_session=abc', detail: 'ok' })),
     probeDomain: vi.fn(async (_pd: string, host: string, _c: string | null, follow: boolean): Promise<DomainProbe> => {
-      // user apps follow redirects → 200 + matching signature; admin hosts
-      // don't follow → 302 (correctly blocked).
+      // user apps follow redirects → 200 + matching signature.
       if (follow) {
         const sig = USER_APP_SIGNATURES[host] ?? '';
         return { code: 200, body: sig || 'anything' };
       }
       return { code: 302, body: '' };
     }),
+    // Authelia denies a family user on admin hosts → 403 (correctly blocked).
+    probeAdminDecision: vi.fn(async (): Promise<DomainProbe> => ({ code: 403, body: '' })),
     // ollama.<domain> is gated iff opted in; FQDN-keyed.
     hostHasForwardAuth: vi.fn(async (fqdn: string) => {
       const host = fqdn.split('.')[0];
@@ -140,10 +142,8 @@ describe('verifySso orchestrator', () => {
 
   it('fails when a family user can REACH an admin domain (ACL bypass) — and still cleans up', async () => {
     const { deps, calls } = happyDeps();
-    deps.probeDomain = vi.fn(async (_pd, host, _c, follow) => {
-      if (!follow) return { code: 200, body: 'admin panel' }; // bypass!
-      return { code: 200, body: USER_APP_SIGNATURES[host] || 'ok' };
-    });
+    // Authelia ALLOWS the family user on the admin host (200) = a real bypass.
+    deps.probeAdminDecision = vi.fn(async () => ({ code: 200, body: '' }));
 
     const report = await verifySso({ deps });
 
@@ -380,6 +380,29 @@ describe('realProbeOidcAuthorization — drives Authelia /api/oidc/authorization
   });
 });
 
+describe('realProbeAdminDecision — asks Authelia /api/authz/auth-request directly', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('reports Authelia allowing the family user (200 = bypass) and sends the right shape', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({ status: 200 } as unknown as Response);
+    const r = await realProbeAdminDecision('dopp.cloud', 'nginx', 'authelia_session=x');
+    expect(r.code).toBe(200);
+    const [url, init] = spy.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/api\/authz\/auth-request$/);
+    const h = init.headers as Record<string, string>;
+    expect(h['X-Original-URL']).toBe('https://nginx.dopp.cloud/');
+    expect(h['X-Original-Method']).toBe('GET');
+    expect(h.Cookie).toBe('authelia_session=x');
+  });
+
+  it('reports a deny (403) and a transport failure (0)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({ status: 403 } as unknown as Response);
+    expect((await realProbeAdminDecision('dopp.cloud', 'dns', 'c')).code).toBe(403);
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    expect((await realProbeAdminDecision('dopp.cloud', 'ldap', 'c')).code).toBe(0);
+  });
+});
+
 describe('classifyOidcRedirect — Location-header outcome (#sso-redirect-uri)', () => {
   it('passes a code= redirect (full handshake)', () => {
     const r = classifyOidcRedirect('https://photos.dopp.cloud/auth/login?code=abc&state=x', 302);
@@ -451,33 +474,13 @@ describe('verifySso — #1673 set_password + couldNotRun', () => {
   });
 });
 
-describe('verifySso — #1685 ollama forward-auth gating', () => {
-  it('includes ollama when its proxy host carries forward-auth', async () => {
+describe('verifySso — ollama is admin-only, never probed as a family app', () => {
+  // Operator decision: ollama.dopp.cloud is admin-only (the chat uses ollama over
+  // internal loopback, not this gated host), so it's NOT in the family-app set and
+  // is never reported as a user domain — even if a forward-auth host exists for it.
+  it('does not probe ollama as a user domain (FORWARD_AUTH_DERIVED is empty)', async () => {
+    expect(FORWARD_AUTH_DERIVED_SUBDOMAINS).not.toContain('ollama');
     const { deps } = happyDeps({ forwardAuthHosts: ['ollama'] });
-    const report = await verifySso({ deps });
-
-    expect(report.ok).toBe(true);
-    expect(report.userDomains.some(d => d.domain === 'ollama.dopp.cloud')).toBe(true);
-    expect(deps.hostHasForwardAuth).toHaveBeenCalledWith('ollama.dopp.cloud');
-  });
-
-  it('catches a 403-ing ollama RED (the live breakage)', async () => {
-    const { deps } = happyDeps({ forwardAuthHosts: ['ollama'] });
-    deps.probeDomain = vi.fn(async (_pd, host, _c, follow) => {
-      if (!follow) return { code: 302, body: '' };
-      if (host === 'ollama') return { code: 403, body: 'Forbidden' };
-      return { code: 200, body: USER_APP_SIGNATURES[host] || 'ok' };
-    });
-
-    const report = await verifySso({ deps });
-
-    expect(report.ok).toBe(false);
-    expect(report.couldNotRun).toBe(false);
-    expect(report.userDomains.find(d => d.domain === 'ollama.dopp.cloud')?.status).toBe('fail');
-  });
-
-  it('does NOT probe ollama when its host carries no forward-auth', async () => {
-    const { deps } = happyDeps(); // ollama not gated
     const report = await verifySso({ deps });
     expect(report.userDomains.some(d => d.domain === 'ollama.dopp.cloud')).toBe(false);
   });
