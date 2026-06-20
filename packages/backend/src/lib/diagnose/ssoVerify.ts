@@ -75,7 +75,9 @@ export const USER_APP_SIGNATURES: Readonly<Record<string, string>> = {
   files: '',
   sync: '',
   caldav: '',
-  ollama: 'Ollama is running',
+  // ollama is intentionally absent: it's admin-only, not a family-reachable app
+  // (the chat uses ollama over internal loopback, not this gated host). See
+  // FORWARD_AUTH_DERIVED_SUBDOMAINS.
 };
 
 /**
@@ -104,7 +106,13 @@ export const SUBDOMAIN_TEMPLATE: Readonly<Record<string, string>> = {
  * the first: it's installed by the external honcho/OSCAR stack and got a
  * forward-auth NPM host this run.
  */
-export const FORWARD_AUTH_DERIVED_SUBDOMAINS: readonly string[] = ['ollama'];
+// Empty by operator decision: `ollama.dopp.cloud` is ADMIN-ONLY, not a family app.
+// The solaris chat reaches ollama over internal loopback (`OLLAMA_URL=
+// http://127.0.0.1:11434`), NOT this Authelia-gated public host — so a family user
+// never needs it and probing it as a family-reachable app was wrong (it returns 403
+// to family). Genuinely enforcing admin-only on it (an Authelia access rule) +
+// verifying via the admin-reject check is a follow-up tied to the auth template.
+export const FORWARD_AUTH_DERIVED_SUBDOMAINS: readonly string[] = [];
 
 /**
  * Subdomains backed by their OWN OIDC client (not Authelia forward-auth):
@@ -210,6 +218,17 @@ export interface SsoVerifyDeps {
     cookie: string | null,
     followRedirects: boolean,
   ) => Promise<DomainProbe>;
+  /**
+   * Ask Authelia DIRECTLY whether the signed-in family user is allowed to reach
+   * an admin host — by querying its forward-auth decision endpoint
+   * (`/api/authz/auth-request`) with the cookie + `X-Original-URL`, exactly the
+   * subrequest nginx makes. `200` = Authelia ALLOWS (a family user reaching an
+   * admin host = bypass); `401/403` = correctly denied. This replaces hitting the
+   * host on `http:80`, where the first hop is the HTTP→HTTPS 301 — before the auth
+   * decision — so the old probe never saw the real deny and false-flagged a bypass
+   * (#admin-acl-port). The `code` maps straight into {@link classifyAdminReject}.
+   */
+  probeAdminDecision: (publicDomain: string, host: string, cookie: string | null) => Promise<DomainProbe>;
   /** True iff the proxy host for `host` carries `auth_request /authelia`
    *  forward-auth — so a host is probed because it IS gated, not because a
    *  hard-coded list says so (#1685). */
@@ -447,6 +466,33 @@ async function realProbeDomain(
   }
 }
 
+/**
+ * Ask Authelia's forward-auth decision endpoint whether the family user may reach
+ * an admin host — the same `/api/authz/auth-request` subrequest nginx makes (the
+ * proven shape from portal/auth.ts: Cookie + X-Original-URL + X-Original-Method,
+ * no Host override). 200 = allowed (= bypass for a family user on an admin host);
+ * 401/403 = correctly denied. This is the real ACL decision, on plain http
+ * loopback — no TLS, and far more precise than scraping the host's HTTP status.
+ */
+export async function realProbeAdminDecision(publicDomain: string, host: string, cookie: string | null): Promise<DomainProbe> {
+  const originalUrl = `https://${host}.${publicDomain}/`;
+  try {
+    const res = await fetch(`http://127.0.0.1:${autheliaPort()}/api/authz/auth-request`, {
+      method: 'GET',
+      headers: {
+        'X-Original-URL': originalUrl,
+        'X-Original-Method': 'GET',
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+    return { code: res.status, body: '' };
+  } catch (e) {
+    return { code: 0, body: '', error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 
 /** Resolve NPM's admin API base URL on this node (the admin port, not 80/443).
  *  Mirrors the local helper in danglingProxy.ts; kept local to avoid coupling. */
@@ -591,6 +637,7 @@ function buildDeps(node: string, overrides?: Partial<SsoVerifyDeps>): SsoVerifyD
     setPassword: realSetPassword(node),
     autheliaFirstFactor: realAutheliaFirstFactor,
     probeDomain: realProbeDomain,
+    probeAdminDecision: realProbeAdminDecision,
     hostHasForwardAuth: realHostHasForwardAuth(node),
     probeOidcAuthorization: realProbeOidcAuthorization,
     ...overrides,
@@ -725,7 +772,7 @@ async function probeAllDomains(deps: SsoVerifyDeps, run: SsoRun, cookie: string)
     await probeForwardAuthHost(deps, run, host, cookie);
   }
   for (const host of ADMIN_ONLY_HOSTS) {
-    const probe = await deps.probeDomain(run.publicDomain, host, cookie, false);
+    const probe = await deps.probeAdminDecision(run.publicDomain, host, cookie);
     run.adminDomains.push(classifyAdminReject(`${host}.${run.publicDomain}`, probe));
   }
 }
