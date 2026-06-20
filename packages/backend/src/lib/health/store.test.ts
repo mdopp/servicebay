@@ -110,3 +110,31 @@ describe('HealthStore.markLastResultAlerted (#1661)', () => {
     expect(HealthStore.getResults('never-run')).toEqual([]);
   });
 });
+
+describe('HealthStore.deleteCheck — honest return (synthetic rows can\'t be deleted)', () => {
+  let HealthStore: typeof import('./store').HealthStore;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'healthstore-'));
+    vi.resetModules();
+    process.env.DATA_DIR = tmpDir;
+    ({ HealthStore } = await import('./store'));
+  });
+  afterEach(async () => {
+    delete process.env.DATA_DIR;
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns true when a stored check is actually removed', () => {
+    HealthStore.saveCheck(serviceCheck('immich'));
+    expect(HealthStore.deleteCheck('id-immich')).toBe(true);
+    expect(HealthStore.getChecks()).toHaveLength(0);
+  });
+
+  it('returns false (no fake success) for an id that is not stored — e.g. a synthetic diagnose row', () => {
+    HealthStore.saveCheck(serviceCheck('immich'));
+    expect(HealthStore.deleteCheck('diagnose:sso_verify')).toBe(false);
+    // the stored check is untouched — nothing was silently rewritten.
+    expect(HealthStore.getChecks().map(c => c.target)).toEqual(['immich']);
+  });
+});
