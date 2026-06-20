@@ -73,7 +73,7 @@ function happyDeps(opts: { forwardAuthHosts?: string[] } = {}): { deps: SsoVerif
       return gated.has(host);
     }),
     // OIDC-backed apps issue a real code by default.
-    probeOidcAuthorization: vi.fn(async (_pd: string, clientId: string): Promise<OidcAuthProbe> => ({
+    probeOidcAuthorization: vi.fn(async (_pd: string, clientId: string, _redirectUri: string): Promise<OidcAuthProbe> => ({
       ok: true, code: 302, detail: `code issued for ${clientId}`,
     })),
   };
@@ -316,14 +316,21 @@ describe('classifyOidcAuthorization (#1685)', () => {
     expect(r.status).toBe('pass');
     expect(r.detail).toMatch(/healthy/i);
   });
-  it('fails on invalid_client (the #1559 secret-mismatch signature)', () => {
+  it('fails on invalid_client (the #1559 registration signature) without claiming a secret fault', () => {
     const r = classifyOidcAuthorization('photos.dopp.cloud', 'immich', { ok: false, code: 302, oauthError: 'invalid_client', detail: 'x' });
     expect(r.status).toBe('fail');
     expect(r.detail).toMatch(/invalid_client/);
-    expect(r.detail).toMatch(/mismatch|broken/i);
+    expect(r.detail).toMatch(/registration|config/i);
+    // The authorization endpoint never validates the client SECRET — don't claim it.
+    expect(r.detail).not.toMatch(/secret/i);
   });
   it('fails on server_error', () => {
     expect(classifyOidcAuthorization('books.dopp.cloud', 'audiobookshelf', { ok: false, code: 500, oauthError: 'server_error', detail: 'x' }).status).toBe('fail');
+  });
+  it('SKIPs on invalid_request (a probe/redirect_uri setup issue, NOT a service fault — #sso-redirect-uri)', () => {
+    const r = classifyOidcAuthorization('photos.dopp.cloud', 'immich', { ok: false, code: 400, oauthError: 'invalid_request', detail: 'x' });
+    expect(r.status).toBe('skip');
+    expect(r.detail).toMatch(/could not run|setup/i);
   });
   it('fails on a redirect with no code', () => {
     expect(classifyOidcAuthorization('vault.dopp.cloud', 'vaultwarden', { ok: false, code: 302, detail: 'no code' }).status).toBe('fail');
@@ -423,9 +430,12 @@ describe('verifySso — #1685 OIDC apps exercise the real handshake', () => {
 
     expect(report.ok).toBe(true);
     // OIDC apps go through probeOidcAuthorization, NOT probeDomain
-    expect(deps.probeOidcAuthorization).toHaveBeenCalledWith('dopp.cloud', 'immich', expect.any(String));
-    expect(deps.probeOidcAuthorization).toHaveBeenCalledWith('dopp.cloud', 'vaultwarden', expect.any(String));
-    expect(deps.probeOidcAuthorization).toHaveBeenCalledWith('dopp.cloud', 'audiobookshelf', expect.any(String));
+    // The probe must send each client's REAL registered redirect_uri
+    // (https://<subdomain>.<domain><registered path>), not a placeholder —
+    // otherwise Authelia rejects an unregistered redirect_uri for every client.
+    expect(deps.probeOidcAuthorization).toHaveBeenCalledWith('dopp.cloud', 'immich', 'https://photos.dopp.cloud/auth/login', expect.any(String));
+    expect(deps.probeOidcAuthorization).toHaveBeenCalledWith('dopp.cloud', 'vaultwarden', 'https://vault.dopp.cloud/identity/connect/oidc-signin', expect.any(String));
+    expect(deps.probeOidcAuthorization).toHaveBeenCalledWith('dopp.cloud', 'audiobookshelf', 'https://books.dopp.cloud/auth/login', expect.any(String));
   });
 
   it('catches an invalid_client OIDC app RED even though its page loads 200 (#1559)', async () => {

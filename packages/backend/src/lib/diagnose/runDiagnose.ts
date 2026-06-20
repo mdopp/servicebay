@@ -156,6 +156,40 @@ export interface DiagnoseProbe {
  *  already in the store and counts toward the trend / last-ok. A probe
  *  whose history can't be read (none yet, flaky disk) simply ships
  *  without the field — the UI degrades to status + detail. */
+/**
+ * True when a `podman ps` Status string shows the container is CURRENTLY
+ * long-stable — `Up` for a minute or longer. Used to suppress the cumulative-
+ * RestartCount crash-loop signal: a high lifetime restart count on a container
+ * that has since been up for hours is historical, not an active loop
+ * (#crash-loop-cumulative). Defined as "starts with `Up` and is NOT measured in
+ * seconds" — which covers podman's `Up 44 hours`, `Up 2 days`, `Up 5 minutes`,
+ * `Up About a minute`, `Up About an hour` while excluding `Up <N> seconds`,
+ * `Up Less than a second`, and the non-`Up` states (`Restarting…`, `Exited…`,
+ * `Created`) — a genuinely-looping container is always one of those. Exported
+ * for unit testing.
+ */
+export function isContainerCurrentlyStable(status: string): boolean {
+  const s = status.trim();
+  if (!/^Up\b/i.test(s)) return false; // Restarting / Exited / Created → not stable
+  if (/^Up\s+Less than a second/i.test(s)) return false;
+  if (/^Up\s+\d+\s+seconds?\b/i.test(s)) return false; // Up N seconds → not yet stable
+  return true; // Up minutes / hours / days / About a minute / About an hour
+}
+
+/**
+ * True when a container's RestartCount marks it as an ACTIVE restart loop.
+ * RestartCount is CUMULATIVE/monotonic, so a container that crashed a few times
+ * early on but has since been `Up` for hours is NOT looping now (the real
+ * solaris-tts-bridge case: RestartCount=24 yet Up 44h, ExitCode 0 — a false
+ * "restart loop"). So a count at/over the threshold only counts as a loop when
+ * the container isn't currently long-stable. A genuinely-looping container
+ * (Authelia's #622 had 13,801) is Restarting/freshly-up, never long-stable, so it
+ * still fires. A non-numeric count never trips. Exported for unit testing.
+ */
+export function restartCountIndicatesLoop(restartCount: number, status: string, threshold: number): boolean {
+  return Number.isFinite(restartCount) && restartCount >= threshold && !isContainerCurrentlyStable(status);
+}
+
 function withHistory(probes: DiagnoseProbe[]): DiagnoseProbe[] {
   return probes.map(p => {
     const history = buildProbeHistory(p.id);
@@ -568,11 +602,9 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     const restartCountRaw = (parts[2] ?? '').trim();
     const restartCount = parseInt(restartCountRaw, 10);
     // Restart-count check first — it's the only signal that survives
-    // the status-string heuristics' boot/install grace window. If
-    // podman has had to restart this container several times since
-    // its current db generation, it's looping regardless of when the
-    // last attempt happened.
-    if (Number.isFinite(restartCount) && restartCount >= RESTART_COUNT_LOOP_THRESHOLD) return true;
+    // the status-string heuristics' boot/install grace window. (The CUMULATIVE-
+    // count vs current-stability nuance lives in restartCountIndicatesLoop.)
+    if (restartCountIndicatesLoop(restartCount, status, RESTART_COUNT_LOOP_THRESHOLD)) return true;
     if (/^Restarting/i.test(status)) return true;
     if (/^Initialized/i.test(status)) return true;
     // Only flag "Up <30s" when the system has been up long enough that a

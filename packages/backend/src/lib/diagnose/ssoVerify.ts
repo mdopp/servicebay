@@ -112,13 +112,20 @@ export const FORWARD_AUTH_DERIVED_SUBDOMAINS: readonly string[] = ['ollama'];
  * app's login page still renders 200). For these we additionally drive the
  * real OIDC authorization flow and assert it reaches a redirect with a code
  * — not `invalid_client`/`server_error` (#1685, the #1559 immich case).
- * Maps the subdomain → its Authelia `client_id` (from the template's
- * `oidcClient.client_id`).
+ *
+ * Maps the subdomain → its Authelia `client_id` AND the client's REGISTERED
+ * redirect path (the first entry of the template's `oidcClient.redirect_uris`).
+ * The probe MUST send a redirect_uri that matches one the client is registered
+ * with, or Authelia (correctly, as a security control) rejects it with
+ * `invalid_request`. The old probe sent a placeholder `https://auth.<domain>/`
+ * for EVERY client → it always failed and mislabelled the legitimate rejection
+ * as a broken secret. The real redirect_uri is
+ * `https://<subdomain>.<publicDomain><redirectPath>`.
  */
-export const OIDC_CLIENT_SUBDOMAINS: Readonly<Record<string, string>> = {
-  vault: 'vaultwarden',
-  photos: 'immich',
-  books: 'audiobookshelf',
+export const OIDC_CLIENT_SUBDOMAINS: Readonly<Record<string, { clientId: string; redirectPath: string }>> = {
+  vault: { clientId: 'vaultwarden', redirectPath: '/identity/connect/oidc-signin' },
+  photos: { clientId: 'immich', redirectPath: '/auth/login' },
+  books: { clientId: 'audiobookshelf', redirectPath: '/auth/login' },
 };
 
 /**
@@ -208,10 +215,13 @@ export interface SsoVerifyDeps {
    *  hard-coded list says so (#1685). */
   hostHasForwardAuth: (host: string) => Promise<boolean>;
   /** Drive a service's OIDC authorization flow as the signed-in ephemeral
-   *  user and report whether Authelia issued a real `code` (#1685). */
+   *  user and report whether Authelia issued a real `code` (#1685). The
+   *  `redirectUri` MUST be one the client is registered with, else Authelia
+   *  rejects the request (`invalid_request`) regardless of client health. */
   probeOidcAuthorization: (
     publicDomain: string,
     clientId: string,
+    redirectUri: string,
     cookie: string,
   ) => Promise<OidcAuthProbe>;
 }
@@ -277,7 +287,17 @@ export function classifyOidcAuthorization(host: string, clientId: string, probe:
     return { domain, status: 'pass', code: probe.code, detail: `OIDC authorization issued a code for client "${clientId}" (handshake healthy)` };
   }
   if (probe.oauthError) {
-    return { domain, status: 'fail', code: probe.code, detail: `OIDC authorization for "${clientId}" returned ${probe.oauthError} — client secret/registration mismatch (real login is broken)` };
+    // `invalid_client` / `unauthorized_client` / `access_denied` / `server_error`
+    // are genuine client-registration/config problems. The authorization endpoint
+    // does NOT validate the client SECRET (that's the token exchange), so this is a
+    // registration/config fault, not a "secret mismatch". A bare `invalid_request`
+    // means Authelia rejected the probe's REQUEST (e.g. a redirect_uri we no longer
+    // build wrong) — treat that as "couldn't validly test" (skip), never a red
+    // "login broken" that scares toward a needless reinstall (#sso-redirect-uri).
+    if (probe.oauthError === 'invalid_request') {
+      return { domain, status: 'skip', code: probe.code, detail: `OIDC authorization probe for "${clientId}" could not run (Authelia: invalid_request — likely a probe/redirect_uri setup issue, not a service fault)` };
+    }
+    return { domain, status: 'fail', code: probe.code, detail: `OIDC authorization for "${clientId}" returned ${probe.oauthError} — client registration/config problem (login is affected)` };
   }
   if (probe.code === 0) {
     return { domain, status: 'fail', code: 0, detail: `OIDC authorization for "${clientId}" did not respond: ${probe.detail}` };
@@ -489,9 +509,9 @@ function realHostHasForwardAuth(node: string) {
 async function realProbeOidcAuthorization(
   publicDomain: string,
   clientId: string,
+  redirectUri: string,
   cookie: string,
 ): Promise<OidcAuthProbe> {
-  const redirectUri = `https://auth.${publicDomain}/`;
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -645,8 +665,13 @@ async function probeForwardAuthHost(deps: SsoVerifyDeps, run: SsoRun, host: stri
  *  client secret is mismatched (the app's own login page still renders 200),
  *  so the OIDC handshake must be driven directly (#1685, the #1559 case). */
 async function probeOidcHost(deps: SsoVerifyDeps, run: SsoRun, host: string, cookie: string): Promise<void> {
-  const clientId = OIDC_CLIENT_SUBDOMAINS[host];
-  const probe = await deps.probeOidcAuthorization(run.publicDomain, clientId, cookie);
+  const { clientId, redirectPath } = OIDC_CLIENT_SUBDOMAINS[host];
+  // The redirect_uri must be one the client is registered with (#sso-redirect-uri):
+  // `https://<subdomain>.<publicDomain><redirectPath>`. Sending the auth-portal URL
+  // here is what produced the false "secret mismatch" — Authelia rejects an
+  // unregistered redirect_uri before any client-health check.
+  const redirectUri = `https://${host}.${run.publicDomain}${redirectPath}`;
+  const probe = await deps.probeOidcAuthorization(run.publicDomain, clientId, redirectUri, cookie);
   run.userDomains.push(classifyOidcAuthorization(`${host}.${run.publicDomain}`, clientId, probe));
 }
 
