@@ -50,6 +50,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -259,65 +260,151 @@ def jellyfin_enable_quick_connect(base_url: str, token: str) -> None:
         log(f"(note) Could not enable Quick Connect via API (HTTP {code}) — flip it in Dashboard → General → Quick Connect.")
 
 
-def jellyfin_add_music_library(base_url: str, token: str, music_path: str) -> None:
-    """Register a 'Music' collection pointing at /media/music inside the
-    container (which is the mounted host {{JELLYFIN_MEDIA_PATH}}/music).
-    Lowercase by convention per #1018 so the folder sits cleanly alongside
-    `audiobooks/`, `podcasts/`, and `notes/` under the same data root.
-    Idempotent: a 400 with `LibraryAlreadyExists` is treated as success."""
-    # The path that Jellyfin sees — /media is the container-side mount
-    # of JELLYFIN_MEDIA_PATH on the host. The wizard's MEDIA_PATH
-    # default is /mnt/data/stacks/file-share/data so /media/music maps
-    # to /mnt/data/stacks/file-share/data/music on the host.
-    container_path = "/media/music"
-    qs = f"?name=Music&collectionType=music&paths={container_path}&refreshLibrary=true"
-    code, body = request_json(
-        "POST", f"{base_url}/Library/VirtualFolders{qs}",
-        None,
-        extra_headers={
-            "X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"',
-        },
-    )
-    if code in (200, 204):
-        log(f"✅ Added 'Music' library → {container_path} (scan started).")
-    elif code == 400 and isinstance(body, dict) and "exists" in str(body).lower():
-        log("ℹ️ Music library already registered — leaving as-is.")
-    else:
-        log(f"(note) Could not auto-add Music library (HTTP {code}). Add it manually in Dashboard → Libraries.")
-    # Operator hint: tell them how to wire movies/tv/etc. The post-deploy
-    # doesn't auto-add those — Jellyfin's metadata sources differ per
-    # library type and we don't want to commit to a default. Lowercase
-    # folder names match the file-share convention (#1018).
-    log(f"   (Add movies/tv/photos libraries later from Dashboard → Libraries → Add Media Library; mount points live under /media/ inside the container — same tree as {music_path} on the host.)")
+# Disk-import sorts content into `file-share/data/<category>` (shared) and
+# `file-share/data/<owner>/<category>` (per-user). These are the categories
+# Jellyfin serves → (display name, Jellyfin collectionType). `photos` is Immich's
+# domain and `documents`/`notes`/`files` are Filebrowser's — deliberately NOT
+# Jellyfin libraries. `_superseded` is the conflict-park tree.
+JELLYFIN_MEDIA_CATEGORIES: dict[str, tuple[str, str]] = {
+    "music": ("Music", "music"),
+    "movies": ("Movies", "movies"),
+    "tv": ("Shows", "tvshows"),
+    "audiobooks": ("Audiobooks", "books"),
+}
+# Top-level dirs that are categories (media or not), NOT per-user owner dirs.
+_NON_OWNER_DIRS = set(JELLYFIN_MEDIA_CATEGORIES) | {
+    "photos", "documents", "notes", "files", "podcasts", "_superseded",
+}
 
 
-def jellyfin_add_audiobooks_library(base_url: str, token: str) -> None:
-    """Register a 'Books' collection pointing at /media/audiobooks inside the
-    container (the mounted host {{JELLYFIN_MEDIA_PATH}}/audiobooks). #1725:
-    Audiobookshelf is retired for fresh installs, so Jellyfin now serves the
-    audiobooks library — Symfonium et al. speak Jellyfin natively. Lowercase
-    folder name per #1018, alongside `music/`, `podcasts/`, `notes/`.
-    Idempotent: a 400 with `LibraryAlreadyExists` is treated as success, so a
-    redeploy never duplicates the library."""
-    # /media is the container-side mount of JELLYFIN_MEDIA_PATH; the wizard
-    # default is /mnt/data/stacks/file-share/data so /media/audiobooks maps
-    # to /mnt/data/stacks/file-share/data/audiobooks on the host — the same
-    # tree where the imported Hörspiele already live.
-    container_path = "/media/audiobooks"
-    qs = f"?name=Audiobooks&collectionType=books&paths={container_path}&refreshLibrary=true"
+def _dir_nonempty(path: str) -> bool:
+    """True iff `path` is a directory with at least one entry. Cheap (no walk)."""
+    try:
+        with os.scandir(path) as it:
+            return any(True for _ in it)
+    except OSError:
+        return False
+
+
+def _jellyfin_create_library(base_url: str, token: str, name: str, collection_type: str, container_path: str) -> str:
+    """Create one Jellyfin library. Returns 'created' / 'exists' / 'error'.
+    Idempotent: a 400 'already exists' is a no-op success — a redeploy never
+    duplicates a library. `refreshLibrary=false` so we scan ONCE at the end,
+    not once per library."""
+    qs = (
+        f"?name={urllib.parse.quote(name)}"
+        f"&collectionType={collection_type}&refreshLibrary=false"
+    )
     code, body = request_json(
         "POST", f"{base_url}/Library/VirtualFolders{qs}",
-        None,
-        extra_headers={
-            "X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"',
-        },
+        {"LibraryOptions": {"PathInfos": [{"Path": container_path}], "EnableRealtimeMonitor": False}},
+        extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
     )
     if code in (200, 204):
-        log(f"✅ Added 'Audiobooks' library → {container_path} (scan started).")
-    elif code == 400 and isinstance(body, dict) and "exists" in str(body).lower():
-        log("ℹ️ Audiobooks library already registered — leaving as-is.")
-    else:
-        log(f"(note) Could not auto-add Audiobooks library (HTTP {code}). Add it manually in Dashboard → Libraries (content type: Books, path /media/audiobooks).")
+        return "created"
+    if code == 400 and "exist" in str(body).lower():
+        return "exists"
+    log(f"   (note) could not create library '{name}' → {container_path} (HTTP {code})")
+    return "error"
+
+
+def jellyfin_provision_libraries(base_url: str, token: str, media_root: str) -> dict[str, object]:
+    """Create PUBLIC libraries from the shared `file-share/data/<category>` dirs
+    and PRIVATE per-user libraries from `data/<owner>/<category>` dirs, mirroring
+    how disk-import sorts content. Each private library is named `<Category>
+    (<owner>)`. Idempotent + self-healing on every deploy. A single library scan
+    is triggered only when something new was actually created.
+
+    Returns the library GUIDs so access can be wired immediately:
+    `{'public': [guid,…], 'private_by_user': {owner: [guid,…]}}`. `/media` is the
+    container-side mount of `media_root` (the host file-share data root)."""
+    public_names: list[str] = []
+    private_names_by_user: dict[str, list[str]] = {}
+    created_any = False
+    try:
+        entries = sorted(os.listdir(media_root))
+    except OSError as exc:
+        log(f"(note) cannot read media root {media_root} ({exc}) — skipping library auto-provision.")
+        return {"public": [], "private_by_user": {}}
+
+    for entry in entries:
+        host_path = os.path.join(media_root, entry)
+        if not os.path.isdir(host_path):
+            continue
+        if entry in JELLYFIN_MEDIA_CATEGORIES:
+            # shared category → PUBLIC library
+            disp, ctype = JELLYFIN_MEDIA_CATEGORIES[entry]
+            if _dir_nonempty(host_path):
+                outcome = _jellyfin_create_library(base_url, token, disp, ctype, f"/media/{entry}")
+                if outcome != "error":
+                    public_names.append(disp)
+                    created_any = created_any or outcome == "created"
+        elif entry not in _NON_OWNER_DIRS:
+            # a per-user owner dir → PRIVATE library per media subdir it holds
+            try:
+                subs = sorted(os.listdir(host_path))
+            except OSError:
+                continue
+            for sub in subs:
+                if sub in JELLYFIN_MEDIA_CATEGORIES and _dir_nonempty(os.path.join(host_path, sub)):
+                    disp, ctype = JELLYFIN_MEDIA_CATEGORIES[sub]
+                    name = f"{disp} ({entry})"
+                    outcome = _jellyfin_create_library(base_url, token, name, ctype, f"/media/{entry}/{sub}")
+                    if outcome != "error":
+                        private_names_by_user.setdefault(entry, []).append(name)
+                        created_any = created_any or outcome == "created"
+
+    # Resolve names → library GUIDs (the ItemId Jellyfin uses in user policies).
+    code, folders = request_json(
+        "GET", f"{base_url}/Library/VirtualFolders", None,
+        extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+    )
+    byname = {f["Name"]: f["ItemId"] for f in folders} if isinstance(folders, list) else {}
+    public_guids = [byname[n] for n in public_names if n in byname]
+    private_by_user = {
+        owner: [byname[n] for n in names if n in byname]
+        for owner, names in private_names_by_user.items()
+    }
+    if created_any:
+        request_json(
+            "POST", f"{base_url}/Library/Refresh", None,
+            extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+        )
+    n_private = sum(len(v) for v in private_by_user.values())
+    log(f"✅ Jellyfin libraries: {len(public_guids)} public, {n_private} private"
+        + (" (scan started)" if created_any else " (no change)") + ".")
+    return {"public": public_guids, "private_by_user": private_by_user}
+
+
+def jellyfin_set_user_access(base_url: str, token: str, public_guids: list[str], private_by_user: dict[str, list[str]]) -> None:
+    """Grant every non-admin Jellyfin user access to the PUBLIC libraries plus
+    THEIR OWN private libraries (matched by username). Admins keep
+    `EnableAllFolders` (full access). Idempotent — re-applies the same set each
+    deploy. New users who haven't logged in yet are covered by the LDAP-Auth
+    plugin's `EnabledFolders` default (public libs); their private libraries are
+    granted here on the first deploy after they log in."""
+    if not public_guids and not private_by_user:
+        return
+    code, users = request_json(
+        "GET", f"{base_url}/Users", None,
+        extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+    )
+    if not isinstance(users, list):
+        log(f"(note) could not list Jellyfin users (HTTP {code}) — skipping per-user library access.")
+        return
+    for user in users:
+        policy = user.get("Policy", {})
+        if policy.get("IsAdministrator"):
+            continue
+        enabled = list(dict.fromkeys(public_guids + private_by_user.get(user.get("Name", ""), [])))
+        policy["EnableAllFolders"] = False
+        policy["EnabledFolders"] = enabled
+        st, _ = request_json(
+            "POST", f"{base_url}/Users/{user['Id']}/Policy", policy,
+            extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+        )
+        ok = st in (200, 204)
+        log(f"   {user.get('Name')}: {len(enabled)} libraries" + ("" if ok else f" (FAILED HTTP {st})"))
 
 
 # ── Jellyfin LDAP-Authentication plugin → LLDAP (#1718) ──────────────────
@@ -340,6 +427,7 @@ def render_ldap_plugin_config(
     bind_dn: str,
     bind_password: str,
     admin_group_dn: str,
+    enabled_folders: list[str] | None = None,
 ) -> str:
     """Render the Jellyfin LDAP-Auth plugin's `LDAP-Auth.xml`.
 
@@ -363,6 +451,11 @@ def render_ldap_plugin_config(
     # `{username}` is the plugin's substitution token for the typed login.
     search_filter = "(&amp;(objectClass=person)(uid={username}))"
     admin_filter = f"(memberOf={admin_group_dn})"
+    # Library access for AUTO-PROVISIONED users (CreateUsersFromLdap): grant the
+    # PUBLIC libraries by default (their GUIDs), NOT EnableAllFolders=true — that
+    # would leak every user's PRIVATE library to everyone. A user's own private
+    # libraries are granted per-user by jellyfin_set_user_access after they exist.
+    folders_xml = "".join(f"<string>{f}</string>" for f in (enabled_folders or []))
     return (
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<PluginConfiguration xmlns:xsd="http://www.w3.org/2001/XMLSchema" '
@@ -386,8 +479,27 @@ def render_ldap_plugin_config(
         "  <EnableAdminUsers>true</EnableAdminUsers>\n"
         "  <CreateUsersFromLdap>true</CreateUsersFromLdap>\n"
         "  <AllowPassChange>false</AllowPassChange>\n"
+        "  <EnableAllFolders>false</EnableAllFolders>\n"
+        f"  <EnabledFolders>{folders_xml}</EnabledFolders>\n"
         "</PluginConfiguration>\n"
     )
+
+
+def _read_existing_enabled_folders(config_path: str) -> list[str]:
+    """Best-effort: pull the `<EnabledFolders><string>…</string></EnabledFolders>`
+    library GUIDs out of an existing LDAP-Auth.xml, so a token-less deploy that
+    rewrites the config preserves the public-libs default rather than wiping it.
+    Returns [] when the file is absent/unreadable/has none."""
+    try:
+        with open(config_path, encoding="utf-8") as fh:
+            content = fh.read()
+    except OSError:
+        return []
+    import re
+    block = re.search(r"<EnabledFolders>(.*?)</EnabledFolders>", content, re.S)
+    if not block:
+        return []
+    return re.findall(r"<string>([^<]+)</string>", block.group(1))
 
 
 def ensure_jellyfin_ldap_plugin(
@@ -396,6 +508,7 @@ def ensure_jellyfin_ldap_plugin(
     ldap_port: str,
     base_dn: str,
     bind_password: str,
+    enabled_folders: list[str] | None = None,
 ) -> bool:
     """Install + configure the Jellyfin LDAP-Authentication plugin so the
     family signs in with their LLDAP (Authelia) credentials (#1718).
@@ -447,8 +560,13 @@ def ensure_jellyfin_ldap_plugin(
     data_dir = env("DATA_DIR", "/mnt/data/stacks")
     config_path = os.path.join(data_dir, JELLYFIN_LDAP_CONFIG_REL)
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
+    # The config is rewritten every deploy. If THIS run couldn't determine the
+    # public library GUIDs (no admin token → no library provisioning), preserve
+    # whatever EnabledFolders the existing config already has, so a token-less
+    # deploy doesn't wipe the public-libs default new users rely on.
+    folders = enabled_folders if enabled_folders else _read_existing_enabled_folders(config_path)
     xml = render_ldap_plugin_config(
-        ldap_host, ldap_port, base_dn, bind_dn, bind_password, admin_group_dn,
+        ldap_host, ldap_port, base_dn, bind_dn, bind_password, admin_group_dn, folders,
     )
     try:
         with open(config_path, "w", encoding="utf-8") as fh:
@@ -501,18 +619,28 @@ def main() -> int:
             jellyfin_base, jf_user, jf_password, env("TZ", "Europe/Berlin"),
         )
         jf_token: str | None = None
+        # Library GUIDs from provisioning — fed into the LDAP-Auth plugin's
+        # EnabledFolders default (public libs for auto-provisioned users).
+        public_lib_guids: list[str] = []
         if ready:
             jf_token = jellyfin_get_token(jellyfin_base, jf_user, jf_password)
             if jf_token:
                 jellyfin_enable_quick_connect(jellyfin_base, jf_token)
-                jellyfin_add_music_library(
-                    jellyfin_base, jf_token, env("JELLYFIN_MEDIA_PATH", "/mnt/data/stacks/file-share/data"),
+                # Auto-create PUBLIC libraries (shared `data/<category>`) +
+                # PRIVATE per-user libraries (`data/<owner>/<category>`), mirroring
+                # how disk-import sorts content (#1725: Jellyfin also serves
+                # audiobooks now). Then grant each user the public libs + their own
+                # private libs. Music/Movies/Shows/Audiobooks; photos→Immich,
+                # documents→Filebrowser.
+                libs = jellyfin_provision_libraries(
+                    jellyfin_base, jf_token,
+                    env("JELLYFIN_MEDIA_PATH", "/mnt/data/stacks/file-share/data"),
                 )
-                # #1725: Audiobookshelf retired for fresh installs — Jellyfin
-                # serves the audiobooks library (content type Books) so
-                # Symfonium/Subsonic clients keep audiobooks under one robust
-                # LLDAP-SSO'd house login.
-                jellyfin_add_audiobooks_library(jellyfin_base, jf_token)
+                public_lib_guids = list(libs["public"])  # type: ignore[arg-type]
+                jellyfin_set_user_access(
+                    jellyfin_base, jf_token,
+                    public_lib_guids, libs["private_by_user"],  # type: ignore[arg-type]
+                )
 
         # ── Jellyfin → LLDAP SSO (#1718) ──────────────────────────────
         # Wire the LDAP-Auth plugin against LLDAP so the family signs in
@@ -526,6 +654,7 @@ def main() -> int:
             env("LLDAP_LDAP_PORT", "3890"),
             env("LLDAP_BASE_DN", "dc=dopp,dc=cloud"),
             env("LLDAP_ADMIN_PASSWORD"),
+            public_lib_guids,
         )
 
     return 0

@@ -6,7 +6,9 @@ Jellyfin in a single pod — Music, Audiobooks, and optionally Video/Photos late
 
 ## Containers
 
-1. **Jellyfin** — Music + Audiobooks (and optionally Video, Photos) library. Default port `8096`. Authenticates via **LDAP → LLDAP** (#1718) so the family signs in with their Authelia/LLDAP credentials; the local admin stays a break-glass login. Mobile apps (Symfonium, Findroid, Streamyfin) pair via **Quick Connect** — 6-digit code in the app, confirm once on the web UI, done.
+1. **Jellyfin** — Music, Movies, Shows, and Audiobooks. Default port `8096`. Authenticates via **LDAP → LLDAP** (#1718) so the family signs in with their Authelia/LLDAP credentials; the local admin stays a break-glass login. Mobile apps (Symfonium, Findroid, Streamyfin) pair via **Quick Connect** — 6-digit code in the app, confirm once on the web UI, done.
+
+   **Libraries auto-provision** on every deploy from how disk-import sorts the share: a **public** library per shared `file-share/data/<category>` (Music/Movies/Shows/Audiobooks — `photos` is Immich's, `documents`/`notes`/`files` are Filebrowser's), plus a **private** `<Category> (<user>)` library per `data/<user>/<category>` dir. Every user sees the public libraries; private libraries are visible only to their owner (new users auto-get the public set on first LDAP login).
 
 ## Default library paths
 
