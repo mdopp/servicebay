@@ -32,8 +32,26 @@ vi.mock('./immichProvisionEnv', () => ({
 }));
 
 // Capture status.json writes; stub plan.json reads.
-const { writes } = vi.hoisted(() => ({ writes: [] as Array<{ file: string; data: string }> }));
+//
+// MODEL the real tmp→rename atomic write so the #2044 race test is faithful: a
+// write's bytes only become the "persisted" status.json on `rename` (the commit),
+// not on the tmp `writeFile`. `tmpData` holds the in-flight tmp bytes; `committed`
+// holds what a poller would actually read; `renameGate` lets a test stall a specific
+// commit so a late progress rename can be ordered AFTER the done rename.
+const { writes, committed, writeGate } = vi.hoisted(() => ({
+  writes: [] as Array<{ file: string; data: string }>,
+  committed: { value: '' },
+  // A test sets `.hold` to a gate: given the bytes a tmp-write is about to stage, it
+  // returns a promise that write awaits (stalling that one writeOutStatus call mid
+  // flight) or null to proceed. Lets a test interleave a fire-and-forget progress
+  // write so its commit attempt lands AFTER the `done` tick (#2044).
+  writeGate: { hold: null as null | ((data: string) => Promise<void> | null) },
+}));
 vi.mock('node:fs/promises', () => {
+  // Model the real tmp→rename atomic write: bytes are staged to a tmp file and only
+  // become the persisted status.json on `rename` (the commit). `committed.value` is
+  // what a poller would actually read.
+  const tmpStage = { value: '' };
   const fsMock = {
     readFile: vi.fn(async (file: string) => {
       if (file.endsWith('plan.json')) return JSON.stringify(hoistedSidecar());
@@ -43,8 +61,14 @@ vi.mock('node:fs/promises', () => {
     writeFile: vi.fn(async (file: string, data: string) => {
       // status writes go via tmp + rename; record under the final name either way.
       writes.push({ file: file.replace(/\.tmp$/, ''), data });
+      const gate = writeGate.hold?.(data);
+      if (gate) await gate; // stall this writeOutStatus call mid-flight if gated
+      if (file.endsWith('.tmp')) tmpStage.value = data;
+      else committed.value = data; // direct (fallback-path) write commits immediately
     }),
-    rename: vi.fn(async () => {}),
+    rename: vi.fn(async () => {
+      committed.value = tmpStage.value; // the commit point
+    }),
     mkdir: vi.fn(async () => {}),
   };
   return { ...fsMock, default: fsMock };
@@ -88,6 +112,8 @@ function sidecarFixture(): PlanSidecar {
 beforeEach(() => {
   vi.clearAllMocks();
   writes.length = 0;
+  committed.value = '';
+  writeGate.hold = null;
   applyPlanMock.mockResolvedValue({ applied: 1, photoOwners: ['shared'] });
   resolveImmichProvisionMock.mockResolvedValue({
     cfg: { serverUrl: 'http://127.0.0.1:2283', adminApiKey: 'k' },
@@ -243,6 +269,43 @@ describe('applyImport', () => {
     const phases = writes.map(w => (JSON.parse(w.data) as { phase: string }).phase);
     expect(phases).toContain('applying');
     expect(phases.at(-1)).toBe('done');
+  });
+
+  it('keeps the terminal status when a late progress write lands after done (#2044)', async () => {
+    // Reproduce the race: applyPlan fires a fire-and-forget `onProgress` write
+    // (phase:applying) whose disk write is STALLED until after the `done` tick has
+    // committed. Without the monotonic-updatedAt guard the stale `applying` write
+    // would clobber `done` and strand the tile on "Applying…"; with it the late write
+    // is detected as superseded and dropped before it can commit.
+    let releaseLateWrite!: () => void;
+    const lateWriteResumed = new Promise<void>(res => (releaseLateWrite = res));
+    let progressFired = false;
+
+    applyPlanMock.mockImplementation(async (_plan, opts: { onProgress: (p: { copied: number }) => void }) => {
+      // Stall ONLY the progress write (the one staging applied:7) mid-flight, so the
+      // subsequent `done` tick wins the commit race.
+      writeGate.hold = (data: string) =>
+        (JSON.parse(data) as { applied: number }).applied === 7 ? lateWriteResumed : null;
+      opts.onProgress({ copied: 7 }); // fire-and-forget progress write (phase:applying)
+      writeGate.hold = null; // the `done` tick is not gated
+      progressFired = true;
+      return { applied: 9, photoOwners: [] };
+    });
+
+    await applyImport({ exec, runId: 'run1', mountpoint: '/m', shareGid: 1024 });
+    expect(progressFired).toBe(true);
+
+    // The `done` tick has committed; status.json is terminal.
+    expect((JSON.parse(committed.value) as { phase: string }).phase).toBe('done');
+
+    // NOW let the stalled progress write resume — the late, stale write.
+    releaseLateWrite();
+    await new Promise(r => setTimeout(r, 0)); // flush the resumed write's microtasks
+
+    // It must NOT have overwritten the terminal status — the tile stays on done.
+    const persisted = JSON.parse(committed.value) as { phase: string; applied: number };
+    expect(persisted.phase).toBe('done');
+    expect(persisted.applied).toBe(9);
   });
 
   it('records an error-phase status and rethrows on a real apply failure', async () => {

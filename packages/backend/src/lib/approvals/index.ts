@@ -38,6 +38,24 @@ const STACKS_ROOT = '/mnt/data/stacks';
  *  traversal). Mirrors the MCP/`npmAdminRekey` container-name guard. */
 const SERVICE_NAME_RE = /^[a-zA-Z0-9_.-]+$/;
 
+/**
+ * Reject a `service` name that is not a single safe path segment. A name
+ * with a separator or a `..` segment would let `serviceJailRoot` collapse
+ * the anchor outside `/mnt/data/stacks/<service>` (e.g. `../../../etc` →
+ * `/etc`), silently widening the move jail to a system path. The pure-regex
+ * check rejects separators and traversal both; `.` / `..` pass the charset
+ * (they are valid segment chars) so we name them explicitly. Mirrors the
+ * shape of `assertRestartTarget`'s guard.
+ */
+function assertServiceName(service: string): void {
+  if (typeof service !== 'string' || !SERVICE_NAME_RE.test(service)) {
+    throw new Error(`service is not a valid service name: "${service}".`);
+  }
+  if (service === '.' || service === '..') {
+    throw new Error(`service is not a valid service name: "${service}".`);
+  }
+}
+
 /** Absolute jail root for `service`'s declared move actions on the box. */
 function serviceJailRoot(service: string): string {
   return path.posix.join(STACKS_ROOT, service);
@@ -174,6 +192,10 @@ export async function getApproval(id: string): Promise<ApprovalRequest | null> {
 
 /** Persist a new pending request and return it. */
 export async function submitApproval(input: SubmitApprovalInput): Promise<ApprovalRequest> {
+  // AUTHORIZE the jail anchor at submit time so a traversal-style name
+  // (`../../../etc`) never reaches the store — `serviceJailRoot` would
+  // otherwise collapse it to a system path on approve.
+  assertServiceName(input.service);
   const request: ApprovalRequest = {
     id: randomUUID(),
     service: input.service,

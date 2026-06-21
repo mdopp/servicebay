@@ -289,10 +289,24 @@ export async function applyImport(args: ApplyImportArgs): Promise<ApplyImportRes
 
   // Seed the status doc so the tile poll keeps ticking through the apply. We patch
   // the worker's last status (its plan counts) rather than inventing a new one.
+  //
+  // RACE GUARD (#2044): `onProgress` fires a FIRE-AND-FORGET `writeOutStatus`
+  // (`void`, tmp→rename) so a slow disk poll never blocks rsync. But the final
+  // `done` tick is just another such write, and the last in-flight progress
+  // `rename` can land AFTER it — re-stamping status.json back to `phase:'applying'`
+  // and stranding the tile on "Applying…" forever. A monotonic in-process highwater
+  // makes every write carry a STRICTLY-increasing `updatedAt`, and writeOutStatus
+  // drops any write whose `updatedAt` is not the latest issued — so a stale progress
+  // write can never clobber a newer terminal status, regardless of rename ordering.
   let status = await readOutStatus(outDir, runId);
+  const nextUpdatedAt = makeMonotonicClock();
+  // The highwater is read LAZILY at write-execution time (a getter, not a snapshot):
+  // a fire-and-forget progress write's `rename` can run after the `done` tick has
+  // already advanced the highwater, and only then can we tell it is stale (#2044).
+  const isLatest = (updatedAt: number): boolean => updatedAt >= nextUpdatedAt.highwater;
   const tick = async (patch: Partial<WorkerStatus>): Promise<void> => {
-    status = { ...status, ...patch, mode: 'apply', updatedAt: Date.now() };
-    await writeOutStatus(outDir, status);
+    status = { ...status, ...patch, mode: 'apply', updatedAt: nextUpdatedAt() };
+    await writeOutStatus(outDir, status, isLatest);
   };
   await tick({ phase: 'applying', step: 'Applying plan …', applied: 0 });
 
@@ -305,7 +319,10 @@ export async function applyImport(args: ApplyImportArgs): Promise<ApplyImportRes
       hashOf: makeHostHashOf(exec),
       onProgress: p => {
         // Fire-and-forget the progress write; a slow disk poll must not block rsync.
-        void writeOutStatus(outDir, { ...status, mode: 'apply', applied: p.copied, updatedAt: Date.now() });
+        // The monotonic `updatedAt` + highwater guard keeps a late landing from
+        // overwriting a newer (terminal) status (#2044).
+        const at = nextUpdatedAt();
+        void writeOutStatus(outDir, { ...status, mode: 'apply', applied: p.copied, updatedAt: at }, isLatest);
       },
     });
     catalog.close();
@@ -374,15 +391,53 @@ async function readOutStatus(outDir: string, runId: string): Promise<WorkerStatu
   }
 }
 
-/** Atomic-ish status write (tmp + rename) so a polling reader never sees a half file. */
-async function writeOutStatus(outDir: string, status: WorkerStatus): Promise<void> {
+/**
+ * Hand out strictly-increasing `updatedAt` stamps for one apply's status writes
+ * (#2044). `Date.now()` can return the SAME ms for two writes issued back-to-back,
+ * so a coarse clock alone can't order a late progress write against the `done` tick;
+ * the counter guarantees monotonicity even within a millisecond. `.highwater`
+ * exposes the latest stamp issued so an `isLatest` predicate can drop a write that a
+ * newer one has already superseded.
+ */
+function makeMonotonicClock(): { (): number; readonly highwater: number } {
+  let last = 0;
+  const next = (): number => {
+    const now = Date.now();
+    last = now > last ? now : last + 1;
+    return last;
+  };
+  Object.defineProperty(next, 'highwater', { get: () => last });
+  return next as { (): number; readonly highwater: number };
+}
+
+/** Predicate: is this write's `updatedAt` still the most recent one issued? Re-checked
+ *  right before the `rename` so a stale fire-and-forget progress write that lost the
+ *  race to a newer (terminal) status is dropped, not persisted (#2044). */
+type IsLatest = (updatedAt: number) => boolean;
+
+/**
+ * Atomic-ish status write (tmp + rename) so a polling reader never sees a half file.
+ *
+ * `isLatest` (#2044): a FIRE-AND-FORGET progress write whose `updatedAt` has already
+ * been overtaken by a newer status must NOT land — its late `rename` would re-stamp
+ * status.json back to an earlier phase and strand the tile on "Applying…". The
+ * predicate is checked before building the tmp file AND again right before the
+ * `rename` (the commit point where ordering against a concurrent write matters), so a
+ * superseded write is committed neither path.
+ */
+async function writeOutStatus(outDir: string, status: WorkerStatus, isLatest?: IsLatest): Promise<void> {
+  if (isLatest && !isLatest(status.updatedAt)) return; // already superseded — skip the write
   const file = path.join(outDir, STATUS_FILE);
   const tmp = `${file}.tmp`;
   try {
     await mkdir(outDir, { recursive: true });
     await writeFile(tmp, JSON.stringify(status), 'utf-8');
+    // Re-check at the commit point: a newer status may have been issued while the tmp
+    // file was being written, in which case this rename would clobber it.
+    if (isLatest && !isLatest(status.updatedAt)) return;
     await rename(tmp, file);
   } catch {
+    if (isLatest && !isLatest(status.updatedAt)) return;
     await writeFile(file, JSON.stringify(status), 'utf-8').catch(() => {});
   }
 }
