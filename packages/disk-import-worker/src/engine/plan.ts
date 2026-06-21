@@ -34,6 +34,7 @@ import { ImportCatalog, type CatalogEntry } from './catalog';
 import {
   resolveShareTarget,
   resolveSupersededPath,
+  SHARE_DATA_ROOT,
   type SafeExec,
 } from './hostExec';
 import type {
@@ -316,6 +317,13 @@ async function copyBatch(
   // still hold — every dest was resolved under file-share/data/).
   const dirs = [...new Set(jobs.map(j => j.dest.slice(0, j.dest.lastIndexOf('/'))))];
   await runOk(ctx.exec, ['mkdir', '-p', ...dirs], 'mkdir dest dirs', { sudo: true });
+  // `mkdir -p` runs via sudo, so the directories it just created land ROOT-owned.
+  // The file-chown (#8fbf6aaf) only covers the copied files — it missed the dirs.
+  // A non-`core` DIRECTORY under file-share's `:Z` data dir crash-loops the stack
+  // on the next redeploy exactly like a non-core file does (this took media down
+  // 2026-06-21: 6k root-owned import dirs broke the SELinux relabel →
+  // feedback_fileshare_relabel_crashloop). Chown the freshly-created dir chain too.
+  await chownShareDirChain(dirs, ctx);
 
   // rsync each file (per-file byte copy, no globbing / --delete), advancing the
   // progress cursor as we go so the live count still ticks within the batch.
@@ -375,7 +383,39 @@ async function supersedeExisting(target: string, ctx: ItemCtx): Promise<void> {
   // resolved under file-share/data/ (resolveShareTarget / resolveSupersededPath)
   // — neither can escape the share root.
   await runOk(ctx.exec, ['mkdir', '-p', parkedDir], 'mkdir superseded dir', { sudo: true });
+  // Same root-owned-dir trap as copyBatch: the `_superseded/<date>/…` dirs mkdir
+  // just created are root-owned (sudo) and would otherwise crash-loop the stack.
+  await chownShareDirChain([parkedDir], ctx);
   await runOk(ctx.exec, ['mv', current, parked], 'mv to _superseded', { sudo: true });
+}
+
+/**
+ * Chown to `core:<shareGid>` every directory `mkdir -p` may have freshly created:
+ * each given dir AND its ancestors UP TO (but excluding) {@link SHARE_DATA_ROOT}.
+ * `mkdir -p` runs via sudo, so new dirs land root-owned; DIRECTORIES must stay
+ * core-owned just like files or the next `:Z` relabel fails
+ * (feedback_fileshare_relabel_crashloop). Idempotent — re-chowning an
+ * already-core dir is a no-op, and the share data root itself is never touched.
+ * Path-safe: every input is a resolved dest under file-share/data/.
+ */
+function shareDirChain(dirs: string[]): string[] {
+  const set = new Set<string>();
+  for (const dir of dirs) {
+    let cur = dir;
+    while (cur.length > SHARE_DATA_ROOT.length && cur.startsWith(`${SHARE_DATA_ROOT}/`)) {
+      set.add(cur);
+      const slash = cur.lastIndexOf('/');
+      if (slash <= 0) break;
+      cur = cur.slice(0, slash);
+    }
+  }
+  return [...set];
+}
+
+async function chownShareDirChain(dirs: string[], ctx: ItemCtx): Promise<void> {
+  const chain = shareDirChain(dirs);
+  if (chain.length === 0) return;
+  await runOk(ctx.exec, ['chown', `core:${ctx.shareGid}`, ...chain], 'chown dest dirs', { sudo: true });
 }
 
 function catalogEntry(sha: string, target: string, record: ImportRecord, atMs: number): CatalogEntry {

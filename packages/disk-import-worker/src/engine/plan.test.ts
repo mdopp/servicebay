@@ -154,15 +154,20 @@ describe('applyPlan — copy + chown', () => {
     expect(rsync[2].startsWith(MOUNT + '/')).toBe(true);
     expect(rsync[3].startsWith('/mnt/data/stacks/file-share/data/')).toBe(true);
 
-    const chown = calls.find(c => c[0] === 'chown')!;
-    // owner=core + group=share gid — files must end up core-owned (rsync runs via
-    // sudo → would be root otherwise; a non-core stray crash-loops file-share's
-    // :Z relabel). Never -R, never a per-user uid.
-    expect(chown).toEqual(['chown', `core:${GID}`, dest]);
-    expect(chown).not.toContain('-R');
-    expect(chown[1]).toBe(`core:${GID}`);
-    expect(chown[1]).toMatch(/^core:\d+$/);
-    expect(chown[1].startsWith('root')).toBe(false);
+    // TWO chowns to core:<gid>: the freshly-mkdir'd dir chain AND the copied file.
+    // BOTH must end up core-owned — mkdir + rsync run via sudo → root otherwise, and
+    // a non-core stray (file OR dir) crash-loops file-share's :Z relabel. Never -R,
+    // never a per-user uid.
+    const chowns = calls.filter(c => c[0] === 'chown');
+    const fileChown = chowns.find(c => c.includes(dest))!;
+    const dirChown = chowns.find(c => c.includes(resolveShareTarget('music')))!;
+    expect(fileChown).toEqual(['chown', `core:${GID}`, dest]);
+    expect(dirChown).toEqual(['chown', `core:${GID}`, resolveShareTarget('music')]);
+    for (const c of chowns) {
+      expect(c).not.toContain('-R');
+      expect(c[1]).toMatch(/^core:\d+$/);
+      expect(c[1].startsWith('root')).toBe(false);
+    }
 
     // The /mnt/data writes all run privileged (#1713): mkdir, rsync, chown.
     expect(sudoFor(calls, opts, 'mkdir')).toBe(true);
@@ -199,21 +204,54 @@ describe('applyPlan — batched mkdir/chown (#1898)', () => {
     const mkdirs = calls.filter(c => c[0] === 'mkdir');
     const rsyncs = calls.filter(c => c[0] === 'rsync');
     const chowns = calls.filter(c => c[0] === 'chown');
-    // mkdir + chown are batched: one each for the whole batch. rsync stays
-    // per-file (the byte copy + resume granularity).
+    // mkdir is batched (one for the whole batch). chown is batched too — ONE for all
+    // copied files + ONE for the dir chain — never one-per-file. rsync stays per-file.
     expect(mkdirs).toHaveLength(1);
-    expect(chowns).toHaveLength(1);
     expect(rsyncs).toHaveLength(n);
-    // The single chown carries every dest, owner=core + group=share gid, never -R.
-    expect(chowns[0][0]).toBe('chown');
-    expect(chowns[0][1]).toBe(`core:${GID}`);
-    expect(chowns[0]).not.toContain('-R');
-    expect(chowns[0].slice(2)).toEqual(items.map(i => resolveShareTarget(i.target!)));
+    expect(chowns.length).toBeLessThanOrEqual(2); // files + dirs, bounded — NOT n
+    // The FILE chown carries every dest, owner=core + group=share gid, never -R.
+    const fileChown = chowns.find(c => c.slice(2).length === n)!;
+    expect(fileChown[1]).toBe(`core:${GID}`);
+    expect(fileChown).not.toContain('-R');
+    expect(fileChown.slice(2)).toEqual(items.map(i => resolveShareTarget(i.target!)));
+    // The dir-chain chown keeps the mkdir'd dir core-owned too (#feedback_fileshare_relabel).
+    const dirChown = chowns.find(c => c.length === 3 && c[2] === '/mnt/data/stacks/file-share/data/music')!;
+    expect(dirChown).toEqual(['chown', `core:${GID}`, '/mnt/data/stacks/file-share/data/music']);
     // The single mkdir -p carries the (deduped) dest dir.
     expect(mkdirs[0]).toEqual(['mkdir', '-p', '/mnt/data/stacks/file-share/data/music']);
     expect(res.applied).toBe(n);
     expect(res.items.every(i => i.outcome === 'copied')).toBe(true);
     expect(items.every(i => catalog.has('a'.repeat(64), i.target!))).toBe(true);
+    catalog.close();
+  });
+
+  it('chowns the FULL nested dir chain to core (the audiobooks/Bro.Code/CD1 case that broke media 2026-06-21)', async () => {
+    const { exec, calls } = mockExec();
+    const catalog = new ImportCatalog(':memory:');
+    // A deep target — mkdir -p creates audiobooks/, Bro.Code/, CD1/ all root-owned.
+    const deep = item({
+      category: 'audiobooks',
+      target: 'audiobooks/Bro.Code/CD1/track.mp3',
+      record: record({ sourcePath: `${MOUNT}/track.mp3`, name: 'track.mp3' }),
+    });
+    await applyPlan(planOf(deep), baseOpts(exec, catalog, hashConst('a'.repeat(64))));
+
+    const chowns = calls.filter(c => c[0] === 'chown');
+    const chownedPaths = new Set(chowns.flatMap(c => c.slice(2)));
+    const R = '/mnt/data/stacks/file-share/data';
+    // EVERY intermediate dir mkdir created must be chowned — a single root-owned dir
+    // crash-loops the :Z relabel just like a file does.
+    expect(chownedPaths.has(`${R}/audiobooks`)).toBe(true);
+    expect(chownedPaths.has(`${R}/audiobooks/Bro.Code`)).toBe(true);
+    expect(chownedPaths.has(`${R}/audiobooks/Bro.Code/CD1`)).toBe(true);
+    expect(chownedPaths.has(`${R}/audiobooks/Bro.Code/CD1/track.mp3`)).toBe(true); // the file
+    // The share data ROOT itself is never chowned (file-share owns it).
+    expect(chownedPaths.has(R)).toBe(false);
+    // All chowns are core:<gid>, never root, never -R.
+    for (const c of chowns) {
+      expect(c[1]).toBe(`core:${GID}`);
+      expect(c).not.toContain('-R');
+    }
     catalog.close();
   });
 });
