@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Code, Settings, Wrench } from 'lucide-react';
+import { Code, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import DomainTag from './DomainTag';
 import { NAVIGATION_ENTRIES, isNavActive } from '@/config/navigation';
@@ -68,6 +68,12 @@ export function MobileTopBar() {
 
   const setupActive = pathname.startsWith('/setup');
 
+  // #1992 — entries the bottom bar omits (Backup, Settings) must still be
+  // reachable on a phone. Surface them as icons in the top bar's right row,
+  // driven by the same navigation schema (no hand-coded duplication), so a
+  // future `hiddenOnMobileBottom` entry stays reachable automatically.
+  const topBarEntries = NAVIGATION_ENTRIES.filter(p => p.hiddenOnMobileBottom);
+
   return (
     <div className="h-14 bg-gray-100 dark:bg-black border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-4 shrink-0 md:hidden z-20">
        {/* Left: Logo + Text */}
@@ -102,13 +108,25 @@ export function MobileTopBar() {
               <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
             </button>
           )}
-          <button
-            onClick={() => router.push(`/settings${node ? `?node=${node}` : ''}`)}
-            className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
-            aria-label="Open settings"
-          >
-             <Settings size={20} />
-          </button>
+          {topBarEntries.map(p => {
+            const Icon = p.icon;
+            const isActive = isNavActive(pathname, p.path);
+            return (
+              <button
+                key={p.id}
+                onClick={() => router.push(`${p.path}${node ? `?node=${node}` : ''}`)}
+                className={`transition-colors ${
+                  isActive
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                }`}
+                aria-label={p.name}
+                title={p.name}
+              >
+                <Icon size={20} />
+              </button>
+            );
+          })}
           <a href="https://github.com/mdopp/servicebay" target="_blank" rel="noreferrer" className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
              <Code size={20} />
           </a>
@@ -124,11 +142,20 @@ export function MobileBottomBar() {
   const node = searchParams?.get('node');
 
   // Honor the per-entry `hiddenOnMobileBottom` flag from the navigation
-  // schema — Settings opts out (it's in the mobile top bar's icon row).
+  // schema — Settings & Backup opt out of the bottom bar (they live in the
+  // mobile top bar's icon row instead, so the bottom bar doesn't overflow).
   const bottomDashboards = NAVIGATION_ENTRIES.filter(p => !p.hiddenOnMobileBottom);
 
+  // #1992 — as top-level entries grow, a fixed `justify-around` row crowds the
+  // labels and eventually overflows on narrow phones. Use an x-scrollable flex
+  // row with non-shrinking, min-width items: it stays evenly spread when the
+  // entries fit and degrades to a horizontal scroll (never a clipped/crushed
+  // row) when they don't. `justify-around` centres the content while it fits.
   return (
-    <div className="h-[72px] bg-gray-100 dark:bg-black border-t border-gray-200 dark:border-gray-800 flex items-center justify-around px-2 shrink-0 md:hidden z-20 pb-2">
+    <nav
+      aria-label="Primary"
+      className="h-[72px] bg-gray-100 dark:bg-black border-t border-gray-200 dark:border-gray-800 flex items-center justify-around gap-1 px-2 shrink-0 md:hidden z-20 pb-2 overflow-x-auto no-scrollbar"
+    >
        {bottomDashboards.map(p => {
           const Icon = p.icon;
           const isActive = isNavActive(pathname, p.path);
@@ -138,7 +165,7 @@ export function MobileBottomBar() {
                 onClick={() => router.push(`${p.path}${node ? `?node=${node}` : ''}`)}
                 title={p.name}
                 aria-label={p.name}
-                className={`p-2 rounded-xl flex flex-col items-center justify-center gap-1 transition-all ${
+                className={`p-2 rounded-xl flex flex-col items-center justify-center gap-1 shrink-0 min-w-[3.5rem] transition-all ${
                     isActive
                     ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20'
                     : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
@@ -149,6 +176,6 @@ export function MobileBottomBar() {
              </button>
           )
        })}
-    </div>
+    </nav>
   );
 }

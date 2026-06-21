@@ -108,6 +108,17 @@ body {
   background: rgba(255, 255, 255, 0.15);
 }
 
+/* Opt-out for elements that scroll but shouldn't show a scrollbar — used by
+   the mobile bottom nav (#1992), which scrolls horizontally when the
+   top-level entries don't fit but mustn't show a bar over a 72px row. */
+.no-scrollbar {
+  -ms-overflow-style: none; /* IE/Edge */
+  scrollbar-width: none;    /* Firefox */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;            /* WebKit */
+}
+
 /* Global theme switching fluid transitions */
 *, *::before, *::after {
   transition: background-color 300ms cubic-bezier(0.16, 1, 0.3, 1),

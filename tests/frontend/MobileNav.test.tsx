@@ -26,15 +26,25 @@ describe('MobileNav', () => {
         renderWithToast(<MobileTopBar />);
         expect(screen.getByText('ServiceBay')).toBeDefined();
 
-        const settingsBtn = screen.getByLabelText('Open settings');
+        // Top-bar icon row is schema-driven (#1992): entries flagged
+        // hiddenOnMobileBottom (Settings, Backup) get an aria-label of their
+        // full `name`.
+        const settingsBtn = screen.getByLabelText('Settings');
         fireEvent.click(settingsBtn);
         expect(mockPush).toHaveBeenCalledWith('/settings');
+    });
+
+    it('MobileTopBar exposes Backup so it is reachable on mobile (#1992)', () => {
+        renderWithToast(<MobileTopBar />);
+        const backupBtn = screen.getByLabelText('Backup & restore');
+        fireEvent.click(backupBtn);
+        expect(mockPush).toHaveBeenCalledWith('/backup');
     });
 
     it('MobileTopBar preserves ?node= on Settings click', () => {
         currentNode = 'edge-1';
         renderWithToast(<MobileTopBar />);
-        fireEvent.click(screen.getByLabelText('Open settings'));
+        fireEvent.click(screen.getByLabelText('Settings'));
         expect(mockPush).toHaveBeenCalledWith('/settings?node=edge-1');
     });
 
