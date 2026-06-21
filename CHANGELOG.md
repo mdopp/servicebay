@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.133.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.133.0...servicebay-v4.133.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* approvals service-name jail + disk-import apply status race ([634b799](https://github.com/mdopp/servicebay/commit/634b79947bab7f7a12a6a985c9c5c23cb573ce1b))
+* **approvals:** validate service name so the move-action jail can't anchor outside /mnt/data/stacks ([37d50f0](https://github.com/mdopp/servicebay/commit/37d50f0d6a42b3b909b7aa821c457c42bc74815c)), closes [#2043](https://github.com/mdopp/servicebay/issues/2043)
+* **disk-import:** drop a late progress write that would clobber the final apply status ([ebbe339](https://github.com/mdopp/servicebay/commit/ebbe33944ca8af1e953f721722358890f42257c0)), closes [#2044](https://github.com/mdopp/servicebay/issues/2044)
+
 ## [4.133.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.132.0...servicebay-v4.133.0) (2026-06-21)
 
 
