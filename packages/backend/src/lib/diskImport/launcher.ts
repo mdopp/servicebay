@@ -256,3 +256,22 @@ export async function ensureWorkerImage(exec: SafeExec): Promise<void> {
   if (code === 0) return; // already present — don't re-pull on the scan hot path
   await exec(['podman', 'pull', WORKER_IMAGE], { timeoutMs: SLOW_OP_TIMEOUT_MS });
 }
+
+/**
+ * Refresh the worker image OUT-OF-BAND — always `podman pull`, regardless of
+ * whether it's already present. This is the counterpart to {@link ensureWorkerImage}'s
+ * pull-only-when-missing hot-path behaviour (#1993): since the scan path never
+ * re-pulls a present image, a `:latest` worker rebuild (build-images.yml on main)
+ * would otherwise never reach the box — a worker-side fix needed a manual
+ * `podman pull` (#1995). Call this in the BACKGROUND on servicebay startup/update
+ * (off the scan hot path) so the next scan picks up the current image without a
+ * manual pull and without the 30s-timeout regression the hot-path pull caused.
+ *
+ * Best-effort: a pull failure (offline box, registry hiccup) is logged-and-swallowed
+ * by the caller, never thrown — a stale-but-present image is still usable; the next
+ * startup retries. Uses the same generous timeout as the cold pull so a slow
+ * registry round-trip doesn't trip the agent's 30s default.
+ */
+export async function refreshWorkerImage(exec: SafeExec): Promise<void> {
+  await exec(['podman', 'pull', WORKER_IMAGE], { timeoutMs: SLOW_OP_TIMEOUT_MS });
+}

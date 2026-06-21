@@ -698,6 +698,31 @@ app.prepare().then(() => {
       );
     }, 60_000);
 
+    // Refresh the disk-import worker image in the BACKGROUND on startup (#1995).
+    // The scan hot path only pulls the worker image when it's MISSING (#1993 —
+    // re-pulling on every scan blew the agent's 30s timeout), so a `:latest`
+    // worker rebuild shipped by build-images.yml would otherwise never reach the
+    // box without a manual `podman pull`. A servicebay update restarts this
+    // process, so doing the pull here makes "update servicebay" also refresh the
+    // worker image. Deferred 90s (after the agent + podman socket are up),
+    // fire-and-forget, best-effort: a failure is logged and the next startup
+    // retries; a stale-but-present image still works for the next scan. Off the
+    // hot path, so no 30s-timeout regression.
+    setTimeout(() => {
+      void (async () => {
+        try {
+          const { AgentExecutor } = await import('./lib/agent/executor');
+          const { refreshWorkerImage } = await import('./lib/diskImport/launcher');
+          const node = (await listNodes())[0]?.Name ?? 'Local';
+          const executor = new AgentExecutor(node);
+          await refreshWorkerImage((argv, options) => executor.execSafe(argv, options ?? {}));
+          logger.info('Server', 'Disk-import worker image refreshed in background.');
+        } catch (err) {
+          logger.warn('Server', `Disk-import worker image refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      })();
+    }, 90_000);
+
     // Auto-update logic to be migrated to Executor Task
   });
 });

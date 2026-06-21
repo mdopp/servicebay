@@ -13,7 +13,7 @@ vi.mock('@/lib/hostDataDir', () => ({
   resolveHostDataDir: vi.fn(async () => '/data'),
 }));
 
-import { launchWorker, readStatus, isWorkerRunning, stopWorker, cleanupRunMount, ensureWorkerImage, WORKER_IMAGE, WORKER_MEMORY } from './launcher';
+import { launchWorker, readStatus, isWorkerRunning, stopWorker, cleanupRunMount, ensureWorkerImage, refreshWorkerImage, WORKER_IMAGE, WORKER_MEMORY } from './launcher';
 import { resolveImmichProvisionEnv } from './immichProvisionEnv';
 import type { SafeExec } from '@servicebay/disk-import-worker';
 
@@ -213,6 +213,30 @@ describe('ensureWorkerImage', () => {
       return { stdout: '', stderr: '', code: argv[1] === 'image' ? 1 : 0 };
     });
     await ensureWorkerImage(exec);
+    expect(optsSeen[0]?.timeoutMs).toBeGreaterThanOrEqual(120_000);
+  });
+});
+
+describe('refreshWorkerImage', () => {
+  // #1995: the scan hot path only pulls when the image is MISSING (#1993), so a
+  // `:latest` worker rebuild never reaches the box without this out-of-band
+  // refresh. Unlike ensureWorkerImage it must ALWAYS pull (and must NOT gate on
+  // `podman image exists`), so a present-but-stale image gets the new build.
+  it('always pulls, even when the image is already present', async () => {
+    const { exec, calls } = recExec({ 'podman image exists': { code: 0 } });
+    await refreshWorkerImage(exec);
+    expect(calls).toContainEqual(['podman', 'pull', WORKER_IMAGE]);
+    // No `image exists` gate — refresh is unconditional.
+    expect(calls.some(c => c[1] === 'image' && c[2] === 'exists')).toBe(false);
+  });
+
+  it('passes a generous timeout so a slow pull does not trip the 30s default', async () => {
+    const optsSeen: Array<{ timeoutMs?: number } | undefined> = [];
+    const exec: SafeExec = vi.fn(async (argv: string[], options?: { timeoutMs?: number; sudo?: boolean }) => {
+      if (argv[0] === 'podman' && argv[1] === 'pull') optsSeen.push(options);
+      return { stdout: '', stderr: '', code: 0 };
+    });
+    await refreshWorkerImage(exec);
     expect(optsSeen[0]?.timeoutMs).toBeGreaterThanOrEqual(120_000);
   });
 });
