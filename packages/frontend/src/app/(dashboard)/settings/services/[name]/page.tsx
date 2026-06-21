@@ -1,6 +1,6 @@
-import OperatePage from './OperatePage';
+import { redirect } from 'next/navigation';
 
-export default async function ServiceOperatePage({ params }: { params: Promise<{ name: string }> }) {
-  const { name: raw } = await params;
-  return <OperatePage name={decodeURIComponent(raw)} />;
+export default async function ServiceOperateRedirect({ params }: { params: Promise<{ name: string }> }) {
+  const { name } = await params;
+  redirect(`/services/${name}`);
 }
