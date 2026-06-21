@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Activity, CheckCircle, XCircle, AlertTriangle, AlertCircle, Play, RefreshCw } from 'lucide-react';
 import { logger, type Check, type ServiceViewModel } from '@servicebay/api-client';
 import { rowStatus, lastCheckedLabel, type RowStatus } from '@/components/HealthChecks';
+import { useServiceHealth } from '@/components/serviceDetail/serviceHealth';
 
 const ROW_META: Record<RowStatus, { color: string; bg: string; Icon: typeof CheckCircle }> = {
   ok: { color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-900/20', Icon: CheckCircle },
@@ -12,16 +13,6 @@ const ROW_META: Record<RowStatus, { color: string; bg: string; Icon: typeof Chec
   unknown: { color: 'text-gray-400', bg: 'bg-gray-50 dark:bg-gray-800', Icon: AlertCircle },
 };
 
-/** Does this health check belong to the given service? Matches on the bare
- *  service name against the check's target / name (covers service, http,
- *  podman and systemd checks plus the per-service `Link:`/diagnose rows). */
-function checkBelongsToService(check: Check, baseName: string): boolean {
-  const needle = baseName.toLowerCase();
-  const target = (check.target || '').toLowerCase();
-  const name = (check.name || '').toLowerCase();
-  return target === needle || target.includes(needle) || name.includes(needle);
-}
-
 /**
  * Health tab of a service's Operate page (#1957). Co-locates the service's
  * health checks + daily self-diagnose rows with its Settings and Actions,
@@ -29,29 +20,8 @@ function checkBelongsToService(check: Check, baseName: string): boolean {
  * the per-service page rather than a global health dashboard.
  */
 export default function OperateHealthTab({ service }: { service: ServiceViewModel }) {
-  const baseName = (service.id || service.name).replace(/\.(service|scope|socket|timer)$/, '');
-  const [checks, setChecks] = useState<Check[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { checks, counts, loading, reload: load } = useServiceHealth(service);
   const [running, setRunning] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/health/checks', { cache: 'no-store' });
-      if (!res.ok) throw new Error('Failed to load health checks');
-      const all: Check[] = await res.json();
-      setChecks(all.filter(c => checkBelongsToService(c, baseName)));
-    } catch (e) {
-      logger.error('OperateHealthTab', 'Failed to load checks', e);
-    } finally {
-      setLoading(false);
-    }
-  }, [baseName]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async health-checks load on mount/service change
-    void load();
-  }, [load]);
 
   const handleRun = useCallback(async (id: string) => {
     setRunning(id);
@@ -64,13 +34,6 @@ export default function OperateHealthTab({ service }: { service: ServiceViewMode
       setRunning(null);
     }
   }, [load]);
-
-  const counts = useMemo(() => ({
-    ok: checks.filter(c => rowStatus(c) === 'ok').length,
-    warn: checks.filter(c => rowStatus(c) === 'warn').length,
-    fail: checks.filter(c => rowStatus(c) === 'fail').length,
-    unknown: checks.filter(c => rowStatus(c) === 'unknown').length,
-  }), [checks]);
 
   if (loading) {
     return (

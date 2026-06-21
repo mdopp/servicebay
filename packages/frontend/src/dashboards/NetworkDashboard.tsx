@@ -4,20 +4,14 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
-const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: false });
-import dynamic from 'next/dynamic';
 import { useTopologyData } from '@/hooks/useTopologyData';
-import type { PortMapping, EnrichedContainer, ServiceUnit } from '@servicebay/api-client';
+import type { PortMapping, ServiceUnit } from '@servicebay/api-client';
 import { buildServiceViewModel } from '@servicebay/api-client';
 import type { ServiceViewModel } from '@servicebay/api-client';
 import { useServiceActions } from '@/hooks/useServiceActions';
-import { useContainerActions } from '@/hooks/useContainerActions';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
-import ContainerLogsPanel, { ContainerLogsPanelData } from '@/components/ContainerLogsPanel';
 import { DomainHealthDot } from '@/components/DomainHealthDot';
-import type { TerminalRef } from '@/components/Terminal';
-import { ServiceActionBar } from '@/components/ServiceActionBar';
-import { AttachedContainerList } from '@/components/AttachedContainerList';
+import ServiceDetailSummary from '@/components/serviceDetail/ServiceDetailSummary';
 
 import { 
   ReactFlow, 
@@ -42,7 +36,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { getLayoutedElements } from '@servicebay/api-client';
-import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus, Terminal as TerminalIcon, RefreshCw, Eraser, ArrowRight, ArrowLeft, Lock } from 'lucide-react';
+import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus, ArrowRight, ArrowLeft, Lock } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
@@ -821,12 +815,6 @@ export default function NetworkDashboard() {
   const rawGraphData = React.useRef<{ nodes: Node[], edges: Edge[] } | null>(null);
     const activeToastRef = React.useRef<string | null>(null);
     const { addToast, updateToast, removeToast } = useToast();
-    const {
-        openActions: openContainerActions,
-        closeActions: closeContainerActions,
-        overlay: containerActionsOverlay,
-        isOpen: containerActionsOpen,
-    } = useContainerActions();
 
   const startReloadToast = useCallback((description = 'Reloading network graph...') => {
       if (activeToastRef.current) {
@@ -864,9 +852,6 @@ export default function NetworkDashboard() {
   const [pendingConnection, setPendingConnection] = useState<Connection | null>(null);
   const [connectionPort, setConnectionPort] = useState('');
   const [availablePorts, setAvailablePorts] = useState<number[]>([]);
-    const [containerDrawerMode, setContainerDrawerMode] = useState<'logs' | 'terminal' | null>(null);
-    const [drawerContainer, setDrawerContainer] = useState<EnrichedContainer | null>(null);
-    const terminalRef = useRef<TerminalRef>(null);
     const selectedEdgeDetails = useMemo(() => {
         if (!selectedEdge) return null;
         return edges.find(edge => edge.id === selectedEdge) || null;
@@ -1143,13 +1128,11 @@ export default function NetworkDashboard() {
     onLoadError: (message) => resolveReloadToast('error', message),
   });
 
-  const {
-      openMonitorDrawer,
-      openEditDrawer,
-      openActions: openServiceActions,
-      requestDelete: requestServiceDelete,
-      overlays: serviceActionOverlays,
-  } = useServiceActions({ onRefresh: fetchGraph });
+  // The service-action overlays (start/stop/restart/delete modals) still mount
+  // so deletions triggered elsewhere resolve cleanly; the per-service controls
+  // that used to open them moved to the shared ServiceDetailSummary → Operate
+  // page (IA slice 1, #2029).
+  const { overlays: serviceActionOverlays } = useServiceActions({ onRefresh: fetchGraph });
 
   // const refreshing = false; // Hidden
 
@@ -1289,48 +1272,6 @@ export default function NetworkDashboard() {
       }
   }, [selectedNodeData, selectedNodeName, twin]);
 
-  const nodeAttachedContainers = useMemo<EnrichedContainer[]>(() => {
-      if (selectedServiceViewModel?.attachedContainers?.length) {
-          return selectedServiceViewModel.attachedContainers;
-      }
-
-      if (selectedNodeData?.rawData?.containers) {
-          const containers = selectedNodeData.rawData.containers as EnrichedContainer[];
-          return containers.map(container => ({
-              ...container,
-              nodeName: container.nodeName || selectedNodeName || container.nodeName,
-          }));
-      }
-
-      return [];
-  }, [selectedNodeData, selectedNodeName, selectedServiceViewModel]);
-
-  const drawerNode = drawerContainer?.nodeName && drawerContainer.nodeName !== 'Local'
-      ? drawerContainer.nodeName
-      : drawerContainer
-          ? 'Local'
-          : null;
-
-  const logsPanelData = useMemo<ContainerLogsPanelData | null>(() => {
-      if (!drawerContainer) return null;
-      return {
-          id: drawerContainer.id,
-          name: drawerContainer.names?.[0]?.replace(/^\//, '') || drawerContainer.id,
-          image: drawerContainer.image,
-          state: drawerContainer.state,
-          status: drawerContainer.status,
-          created: drawerContainer.created,
-          ports: drawerContainer.ports?.map(port => ({
-              hostIp: port.hostIp,
-              containerPort: port.containerPort || 0,
-              hostPort: port.hostPort,
-              protocol: port.protocol,
-          })),
-          mounts: drawerContainer.mounts as ContainerLogsPanelData['mounts'],
-          hideMeta: true,
-      };
-  }, [drawerContainer]);
-
 
 
   useEffect(() => {
@@ -1388,11 +1329,6 @@ export default function NetworkDashboard() {
     };
   }, [updateToast]);
 
-    const closeContainerDrawer = useCallback(() => {
-            setContainerDrawerMode(null);
-            setDrawerContainer(null);
-    }, []);
-
         const closeNodeDetails = useCallback(() => {
             setSelectedNodeData(null);
         }, []);
@@ -1407,13 +1343,11 @@ export default function NetworkDashboard() {
             setFocusNodeId(null);
         }, []);
 
-        useEscapeKey(closeContainerActions, containerActionsOpen, true);
-        useEscapeKey(closeContainerDrawer, Boolean(containerDrawerMode), true);
         useEscapeKey(closeNodeDetails, Boolean(selectedNodeData), true);
         useEscapeKey(closeEdgeDetails, Boolean(selectedEdge), true);
         // Esc exits focus only when no overlay panel is open above it
         // (the panels' own Esc handlers take precedence via topMostOnly).
-        useEscapeKey(exitFocus, Boolean(focusNodeId) && !selectedNodeData && !selectedEdge && !containerDrawerMode, true);
+        useEscapeKey(exitFocus, Boolean(focusNodeId) && !selectedNodeData && !selectedEdge, true);
 
   const handleEditLink = () => {
       if (!selectedNodeData || !selectedNodeData.rawData) return;
@@ -1500,26 +1434,6 @@ export default function NetworkDashboard() {
       setSelectedNodeData(null);
       router.push(`/services?${params.toString()}`);
   }, [addToast, router, selectedNodeName]);
-
-  const openContainerLogs = useCallback((container: EnrichedContainer) => {
-      setDrawerContainer(container);
-      setContainerDrawerMode('logs');
-  }, []);
-
-  const openContainerTerminal = useCallback((container: EnrichedContainer) => {
-      setDrawerContainer(container);
-      setContainerDrawerMode('terminal');
-  }, []);
-
-  const openAttachedContainerActions = useCallback((container: EnrichedContainer) => {
-      openContainerActions({
-          id: container.id,
-          name: container.names?.[0]?.replace(/^\//, '') || container.id,
-          nodeName: container.nodeName,
-      });
-  }, [openContainerActions]);
-
-
 
   const handleDeleteEdge = async () => {
       if (!selectedEdge) return;
@@ -1812,70 +1726,14 @@ export default function NetworkDashboard() {
         </div>
       )}
 
-      {containerDrawerMode && drawerContainer && (
-          <div className="fixed inset-0 z-[60] flex justify-end bg-gray-950/70 backdrop-blur-sm">
-              <div className="w-full max-w-5xl h-full bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-800 shadow-2xl animate-in slide-in-from-right-10">
-                  {containerDrawerMode === 'logs' && logsPanelData ? (
-                      <ContainerLogsPanel
-                          container={logsPanelData}
-                          nodeName={drawerNode ?? undefined}
-                          onClose={closeContainerDrawer}
-                      />
-                  ) : (
-                      <div className="h-full flex flex-col bg-gray-950">
-                          <div className="flex items-start justify-between px-6 py-4 border-b border-gray-800 bg-gray-900">
-                              <div>
-                                  <p className="text-xs uppercase tracking-wider text-gray-500">Terminal</p>
-                                  <div className="flex items-center gap-3 text-white text-lg font-semibold">
-                                      <TerminalIcon size={18} />
-                                      <span>{drawerContainer.names?.[0]?.replace(/^\//, '') || drawerContainer.id}</span>
-                                  </div>
-                                  {drawerNode && (
-                                      <div className="mt-2 inline-flex items-center gap-2 text-xs text-gray-400">
-                                          <span className="uppercase tracking-wide">Node</span>
-                                          <span className="px-2 py-0.5 rounded-full bg-gray-800 text-gray-200 border border-gray-700">{drawerNode}</span>
-                                      </div>
-                                  )}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                  <button
-                                      onClick={() => terminalRef.current?.clear()}
-                                      className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-800"
-                                      title="Clear terminal"
-                                  >
-                                      <Eraser size={18} />
-                                  </button>
-                                  <button
-                                      onClick={() => terminalRef.current?.reconnect()}
-                                      className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-800"
-                                      title="Reconnect"
-                                  >
-                                      <RefreshCw size={18} />
-                                  </button>
-                                  <button
-                                      onClick={closeContainerDrawer}
-                                      className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-800"
-                                      title="Close"
-                                  >
-                                      <X size={18} />
-                                  </button>
-                              </div>
-                          </div>
-                          <div className="flex-1 overflow-hidden">
-                              <DynamicTerminal
-                                  ref={terminalRef}
-                                  id={`container:${(drawerNode && drawerNode !== 'Local' ? drawerNode : 'local')}:${drawerContainer.id}`}
-                                  showControls={false}
-                              />
-                          </div>
-                      </div>
-                  )}
-              </div>
-          </div>
-      )}
+      {/* IA slice 1 (#2029): the network map's bespoke per-service controls
+          (service-action overlays + per-container logs/terminal drawer) were
+          only reachable from the old sidebar's ServiceActionBar /
+          AttachedContainerList, which the shared ServiceDetailSummary replaced.
+          Those actions now live on the linked per-service Operate page, so there
+          is one source of truth. */}
       {serviceActionOverlays}
-      {containerActionsOverlay}
-      
+
       {/* Context Menu / Details Panel */}
       {selectedNodeData && (
           <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
@@ -2009,28 +1867,17 @@ export default function NetworkDashboard() {
                         )}
                       </div>
 
+                      {/* IA slice 1 (#2029, spec §4.2): the per-service detail is
+                          the ONE shared ServiceDetailSummary — identical to the
+                          Operate page header — so the map sidebar can no longer
+                          drift from the rest of the UI. The old bespoke
+                          ServiceActionBar + AttachedContainerList panel is gone;
+                          full lifecycle + per-container logs/shell live on the
+                          linked Operate page (status + health + settings +
+                          containers + actions). */}
                       {selectedServiceViewModel && (
-                          <div className="border border-gray-100 dark:border-gray-800 rounded-lg p-3 space-y-3">
-                              <div className="flex items-center gap-3">
-                                  <div>
-                                      <p className="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 font-semibold">Managed Service</p>
-                                      <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{selectedServiceViewModel.name}</p>
-                                  </div>
-                                  <ServiceActionBar
-                                      service={selectedServiceViewModel}
-                                      onMonitor={openMonitorDrawer}
-                                      onEdit={openEditDrawer}
-                                      onActions={openServiceActions}
-                                      onDelete={requestServiceDelete}
-                                      className="ml-auto"
-                                  />
-                              </div>
-                              <AttachedContainerList
-                                  containers={nodeAttachedContainers}
-                                  onLogs={openContainerLogs}
-                                  onTerminal={openContainerTerminal}
-                                  onActions={openAttachedContainerActions}
-                              />
+                          <div className="border border-gray-100 dark:border-gray-800 rounded-lg p-3">
+                              <ServiceDetailSummary service={selectedServiceViewModel} />
                           </div>
                       )}
 
