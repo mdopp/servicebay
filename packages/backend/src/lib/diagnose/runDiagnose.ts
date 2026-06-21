@@ -20,6 +20,7 @@ import { checkNpmDataStale } from '@/lib/diagnose/probes/npmDataStale';
 import { checkLanIpChanged } from '@/lib/diagnose/probes/lanIpChanged';
 import { checkRouterDnsNotPointing } from '@/lib/diagnose/probes/routerDnsNotPointing';
 import { checkPostDeployFailed } from '@/lib/diagnose/probes/postDeployFailed';
+import { checkMediaLibraryAccess } from '@/lib/diagnose/probes/mediaLibraryAccess';
 import { checkProxyRouteMissing } from '@/lib/diagnose/probes/proxyRouteMissing';
 import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
 import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailure';
@@ -957,6 +958,35 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     probes.push({
       id: 'post_deploy_failed',
       label: 'Service seed steps',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 15b) Jellyfin library access (#2040). An on-demand "Re-sync library
+  //     access" action for the media service: Jellyfin auto-creates a
+  //     user's account only on their first LDAP login, so a brand-new
+  //     user sees only the public libraries until the next media
+  //     redeploy re-runs `jellyfin_set_user_access`. No failure is
+  //     recorded (the deploy succeeded), so `post_deploy_failed` never
+  //     surfaces it. This row carries the on-demand re-run instead.
+  try {
+    const mla = await checkMediaLibraryAccess(nodeName);
+    // status === null → media not installed; omit the row (and its
+    // action) so a box without Jellyfin shows no "Re-sync" button.
+    if (mla.status !== null) {
+      probes.push({
+        id: 'media_library_access',
+        label: 'Jellyfin library access',
+        status: mla.status,
+        detail: mla.detail,
+        hint: mla.hint,
+      });
+    }
+  } catch (e) {
+    probes.push({
+      id: 'media_library_access',
+      label: 'Jellyfin library access',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

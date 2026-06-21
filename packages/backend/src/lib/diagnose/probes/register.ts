@@ -31,5 +31,6 @@ import './lanIpChanged';
 import './oidcProviderReachable';
 import './ssoVerify';
 import './hermesChat';
+import './mediaLibraryAccess';
 
 export {};
