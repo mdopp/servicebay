@@ -212,58 +212,26 @@ describe('checkDomainExternalReachability', () => {
     expect(r.items![0].detail).toMatch(/DNS check could not run/);
   });
 
-  it('#611 — flags DNS-green + HTTP-fail combo (the v4.0.x outage shape)', async () => {
-    // DNS is healthy for both domains.
-    state.results.set('domain:one.example.com', {
-      check_id: 'domain:one.example.com',
-      timestamp: isoAgo(60_000),
-      status: 'ok',
-      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
-    });
-    state.results.set('domain:two.example.com', {
-      check_id: 'domain:two.example.com',
-      timestamp: isoAgo(60_000),
-      status: 'ok',
-      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
-    });
-    // But the HTTPS GET surfaces a 502 for one.example.com (proxy
-    // forwarding to a crash-looping upstream).
-    vi.spyOn(globalThis, 'fetch').mockImplementation((async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input.toString();
-      if (url.includes('one.example.com')) {
-        return new Response('', { status: 502 }) as Response;
-      }
-      return new Response('', { status: 200 }) as Response;
-    }) as typeof fetch);
-
-    const r = await checkDomainExternalReachability();
-    expect(r.status).toBe('fail');
-    expect(r.items).toHaveLength(1);
-    expect(r.items![0].id).toBe('one.example.com');
-    expect(r.items![0].detail).toMatch(/HTTP 502/);
-    expect(r.items![0].detail).toMatch(/DNS layer OK/);
-  });
-
-  it('#611 — accepts 302 → auth.<publicDomain> as a healthy redirect (forward-auth)', async () => {
+  it('is DNS-routing only — DNS-green is ok and it does NO per-domain HTTP fetch', async () => {
+    // The flaky/redundant per-domain HTTPS GET (old #611) was removed: it
+    // false-timed-out under concurrent diagnose load and duplicated the upstream
+    // check that `domain_unreachable` already does via a Host-header fetch. This
+    // probe now judges DNS routing only; a DNS-green domain is ok regardless of
+    // upstream HTTP, and crucially it makes no outbound fetch (no cry-wolf).
     state.config.reverseProxy.publicDomain = 'example.com';
-    state.results.set('domain:one.example.com', {
-      check_id: 'domain:one.example.com',
-      timestamp: isoAgo(60_000),
-      status: 'ok',
-      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
-    });
-    state.results.set('domain:two.example.com', {
-      check_id: 'domain:two.example.com',
-      timestamp: isoAgo(60_000),
-      status: 'ok',
-      payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
-    });
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('', { status: 302, headers: { location: 'https://auth.example.com/' } }) as Response,
-    );
+    for (const d of ['one.example.com', 'two.example.com']) {
+      state.results.set(`domain:${d}`, {
+        check_id: `domain:${d}`,
+        timestamp: isoAgo(60_000),
+        status: 'ok',
+        payload: dnsRoutingPayload({ expected: '203.0.113.5', resolved: ['203.0.113.5'], matched: true }),
+      });
+    }
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const r = await checkDomainExternalReachability();
     expect(r.status).toBe('ok');
-    expect(r.items).toBeUndefined(); // healthy rows are collapsed
+    expect(r.items).toBeUndefined(); // healthy DNS-green rows collapse
+    expect(fetchSpy).not.toHaveBeenCalled(); // no flaky per-domain HTTP GET
   });
 
   it('appends letsdebug summary to a flagged row when one exists', async () => {
@@ -378,125 +346,5 @@ describe('_internalsForTesting', () => {
 
   it('returns null for a plaintext message', () => {
     expect(_internalsForTesting.decodeDnsRouting('connect ETIMEDOUT')).toBeNull();
-  });
-});
-
-describe('probeHttpStatus (#611)', () => {
-  // Run the helper directly via dependency injection so the test
-  // doesn't have to mock globalThis.fetch.
-  async function probe(
-    domain: string,
-    publicDomain: string | null,
-    fetchImpl: typeof fetch,
-  ): Promise<{ status: 'ok' | 'warn' | 'fail'; detail: string }> {
-    const { probeHttpStatus } = await import('./domainExternalReachability');
-    return probeHttpStatus(domain, publicDomain, fetchImpl, 1_000);
-  }
-
-  function fakeFetch(response: Response): typeof fetch {
-    return (async () => response) as typeof fetch;
-  }
-
-  it('200 → ok', async () => {
-    const r = await probe('x.example.com', 'example.com', fakeFetch(new Response('', { status: 200 })));
-    expect(r.status).toBe('ok');
-    expect(r.detail).toMatch(/HTTP 200/);
-  });
-
-  it('302 → auth.<publicDomain> → ok (forward-auth)', async () => {
-    const r = await probe(
-      'vault.example.com',
-      'example.com',
-      fakeFetch(new Response('', {
-        status: 302,
-        headers: { location: 'https://auth.example.com/?rd=https://vault.example.com/' },
-      })),
-    );
-    expect(r.status).toBe('ok');
-    expect(r.detail).toMatch(/forward-auth/);
-  });
-
-  it('302 to an unrelated host → warn', async () => {
-    const r = await probe(
-      'vault.example.com',
-      'example.com',
-      fakeFetch(new Response('', {
-        status: 302,
-        headers: { location: 'https://google.com/' },
-      })),
-    );
-    expect(r.status).toBe('warn');
-  });
-
-  it('302 to a relative path → ok (Navidrome / HA / Radicale same-origin)', async () => {
-    // music.dopp.cloud → /web/ (Navidrome), home.dopp.cloud → /onboarding.html (HA),
-    // caldav.dopp.cloud → /.web (Radicale). All are healthy "go to my UI" redirects.
-    for (const path of ['/web/', '/onboarding.html', '/.web']) {
-      const r = await probe(
-        'music.example.com',
-        'example.com',
-        fakeFetch(new Response('', { status: 302, headers: { location: path } })),
-      );
-      expect(r.status).toBe('ok');
-      expect(r.detail).toMatch(/same-origin/);
-    }
-  });
-
-  it('302 to an absolute same-host URL → ok', async () => {
-    const r = await probe(
-      'music.example.com',
-      'example.com',
-      fakeFetch(new Response('', {
-        status: 302,
-        headers: { location: 'https://music.example.com/web/' },
-      })),
-    );
-    expect(r.status).toBe('ok');
-    expect(r.detail).toMatch(/same-origin/);
-  });
-
-  it('401 → ok (auth-gated)', async () => {
-    const r = await probe('x.example.com', 'example.com', fakeFetch(new Response('', { status: 401 })));
-    expect(r.status).toBe('ok');
-    expect(r.detail).toMatch(/auth-gated/);
-  });
-
-  it('502 → fail with status code', async () => {
-    const r = await probe('x.example.com', 'example.com', fakeFetch(new Response('', { status: 502 })));
-    expect(r.status).toBe('fail');
-    expect(r.detail).toMatch(/HTTP 502/);
-  });
-
-  it('500 → fail', async () => {
-    const r = await probe('x.example.com', 'example.com', fakeFetch(new Response('', { status: 500 })));
-    expect(r.status).toBe('fail');
-  });
-
-  it('404 (other 4xx) → warn — many apps don\'t serve /', async () => {
-    const r = await probe('x.example.com', 'example.com', fakeFetch(new Response('', { status: 404 })));
-    expect(r.status).toBe('warn');
-  });
-
-  it('network error → fail with the message', async () => {
-    const failingFetch = (async () => {
-      throw new Error('connect ECONNREFUSED');
-    }) as typeof fetch;
-    const r = await probe('x.example.com', 'example.com', failingFetch);
-    expect(r.status).toBe('fail');
-    expect(r.detail).toMatch(/ECONNREFUSED/);
-  });
-
-  it('no public-domain suffix → 302 to anything is warn (can\'t recognise auth host)', async () => {
-    const r = await probe(
-      'vault.home.arpa',
-      null,
-      fakeFetch(new Response('', {
-        status: 302,
-        headers: { location: 'https://auth.home.arpa/' },
-      })),
-    );
-    // Without a configured publicDomain we can't tell forward-auth from
-    // any other redirect.
-    expect(r.status).toBe('warn');
   });
 });
