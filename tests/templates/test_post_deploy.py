@@ -780,100 +780,101 @@ class MediaScript(unittest.TestCase):
 
         return _open
 
-    def test_jellyfin_registers_audiobooks_library_books_type(self):
-        """#1725: a fresh install must register a Jellyfin Audiobooks library
-        at /media/audiobooks with content type Books — mirroring the Music
-        library registration."""
+    def _resp(self, status, body):
+        class _R:
+            def __init__(s): s.status = status
+            def read(s): return body.encode() if isinstance(body, str) else body
+            def __enter__(s): return s
+            def __exit__(s, *a): return False
+        return _R()
+
+    def test_jellyfin_provision_libraries_public_and_private(self):
+        """jellyfin_provision_libraries creates a PUBLIC library per shared media
+        category dir + a PRIVATE '<Cat> (<user>)' library per user/category dir,
+        excludes photos/documents, and returns the library GUIDs."""
         m = load_script("media")
-        import urllib.request
-        calls: list[tuple[str, str]] = []
-        env = {
-            "HOST": "h",
-            "JELLYFIN_ADMIN_PASSWORD": "jf-pass",
-            "JELLYFIN_PORT": "8096",
+        import urllib.request, urllib.parse, json
+        layout = {
+            "/root": ["music", "movies", "photos", "documents", "mdopp", "_superseded"],
+            "/root/mdopp": ["movies", "Security"],
         }
-        with run_with_env(env), mock.patch.object(
-            urllib.request, "urlopen", self._recording_jellyfin_urlopen(calls)
-        ):
-            rc, out = capture_main(m)
-        self.assertEqual(rc, 0)
-        # The audiobooks VirtualFolders POST must carry the Books collection
-        # type and the /media/audiobooks path.
-        lib_posts = [
-            u for (meth, u) in calls
-            if meth == "POST" and "/Library/VirtualFolders" in u
-        ]
-        audiobooks_post = next(
-            (u for u in lib_posts if "collectionType=books" in u), None
-        )
-        self.assertIsNotNone(
-            audiobooks_post, f"no Books VirtualFolders POST in {lib_posts}"
-        )
-        self.assertIn("paths=/media/audiobooks", audiobooks_post)
-        self.assertIn("Added 'Audiobooks' library", out)
-        # The Music library must still be registered too (not dropped).
-        self.assertTrue(
-            any("collectionType=music" in u for u in lib_posts),
-            "Music library registration regressed",
-        )
+        posts: list[tuple[str, str, str]] = []
+        outer = self
 
-    def test_jellyfin_audiobooks_library_idempotent_on_redeploy(self):
-        """A redeploy where the library already exists (Jellyfin answers 400
-        LibraryAlreadyExists) is treated as success, not an error — the
-        registration is idempotent."""
-        m = load_script("media")
-        import urllib.request
-        calls: list[tuple[str, str]] = []
-        env = {
-            "HOST": "h",
-            "JELLYFIN_ADMIN_PASSWORD": "jf-pass",
-            "JELLYFIN_PORT": "8096",
-        }
-        stub = self._recording_jellyfin_urlopen(
-            calls, library_status=400, library_body={"Error": "LibraryAlreadyExists"}
-        )
-        with run_with_env(env), mock.patch.object(urllib.request, "urlopen", stub):
-            rc, out = capture_main(m)
-        self.assertEqual(rc, 0)
-        self.assertIn("Audiobooks library already registered", out)
-        # No scary failure line for the already-exists case.
-        self.assertNotIn("Could not auto-add Audiobooks library", out)
-
-    def test_jellyfin_add_audiobooks_library_unit(self):
-        """Direct unit test of jellyfin_add_audiobooks_library: it POSTs to
-        VirtualFolders with name=Audiobooks, collectionType=books, the
-        /media/audiobooks path, and the admin token in the auth header."""
-        m = load_script("media")
-        import urllib.request
-        calls: list[tuple[str, str, str]] = []
-
-        class _Resp:
-            status = 204
-
-            def read(self):
-                return b"{}"
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-        def _open(req, *_a, **_kw):
+        def urlopen(req, *a, **k):
             url = req.full_url if hasattr(req, "full_url") else str(req)
-            auth = req.headers.get("X-emby-authorization", "")
-            calls.append((req.get_method(), url, auth))
-            return _Resp()
+            meth = req.get_method()
+            if meth == "POST" and "/Library/VirtualFolders" in url:
+                qs = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+                path = json.loads(req.data.decode())["LibraryOptions"]["PathInfos"][0]["Path"]
+                posts.append((qs["name"][0], qs["collectionType"][0], path))
+                return outer._resp(204, "{}")
+            if meth == "GET" and "/Library/VirtualFolders" in url:
+                return outer._resp(200, json.dumps([{"Name": n, "ItemId": "id-" + n} for (n, _, _) in posts]))
+            return outer._resp(204, "{}")
 
-        with mock.patch.object(urllib.request, "urlopen", _open):
-            m.jellyfin_add_audiobooks_library("http://127.0.0.1:8096", "tok-123")
-        self.assertEqual(len(calls), 1)
-        meth, url, auth = calls[0]
-        self.assertEqual(meth, "POST")
-        self.assertIn("name=Audiobooks", url)
-        self.assertIn("collectionType=books", url)
-        self.assertIn("paths=/media/audiobooks", url)
-        self.assertIn('Token="tok-123"', auth)
+        with mock.patch.object(m, "_dir_nonempty", lambda p: True), \
+             mock.patch.object(m.os, "listdir", lambda p: layout.get(p, [])), \
+             mock.patch.object(m.os.path, "isdir", lambda p: True), \
+             mock.patch.object(urllib.request, "urlopen", urlopen):
+            result = m.jellyfin_provision_libraries("http://jf", "tok", "/root")
+
+        names = {n for (n, _, _) in posts}
+        self.assertIn("Music", names)
+        self.assertIn("Movies", names)
+        self.assertIn("Movies (mdopp)", names)        # private per-user
+        self.assertNotIn("Photos", names)             # Immich's job, excluded
+        self.assertNotIn("Documents", names)          # Filebrowser's job
+        self.assertNotIn("Security (mdopp)", names)   # not a media category
+        # collectionType + container path are correct for the private movies lib.
+        priv = next((c, p) for (n, c, p) in posts if n == "Movies (mdopp)")
+        self.assertEqual(priv, ("movies", "/media/mdopp/movies"))
+        # GUIDs returned for access-wiring: public = Music/Movies, private under mdopp.
+        self.assertEqual(set(result["public"]), {"id-Music", "id-Movies"})
+        self.assertEqual(result["private_by_user"], {"mdopp": ["id-Movies (mdopp)"]})
+
+    def test_jellyfin_set_user_access_grants_public_plus_own_private(self):
+        """Each non-admin user gets the public libs + their OWN private libs;
+        admins are left untouched (keep EnableAllFolders)."""
+        m = load_script("media")
+        import urllib.request, json
+        users = [
+            {"Name": "admin", "Id": "a", "Policy": {"IsAdministrator": True}},
+            {"Name": "mdopp", "Id": "u1", "Policy": {"IsAdministrator": False}},
+        ]
+        policy_posts: dict[str, dict] = {}
+        outer = self
+
+        def urlopen(req, *a, **k):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if req.get_method() == "GET" and url.endswith("/Users"):
+                return outer._resp(200, json.dumps(users))
+            if req.get_method() == "POST" and "/Policy" in url:
+                policy_posts[url.rsplit("/Users/", 1)[1].split("/")[0]] = json.loads(req.data.decode())
+                return outer._resp(204, "")
+            return outer._resp(204, "{}")
+
+        with mock.patch.object(urllib.request, "urlopen", urlopen):
+            m.jellyfin_set_user_access("http://jf", "tok", ["pub1", "pub2"], {"mdopp": ["priv1"]})
+
+        self.assertNotIn("a", policy_posts)  # admin untouched
+        self.assertIn("u1", policy_posts)
+        pol = policy_posts["u1"]
+        self.assertFalse(pol["EnableAllFolders"])
+        self.assertEqual(pol["EnabledFolders"], ["pub1", "pub2", "priv1"])
+
+    def test_jellyfin_ldap_config_carries_public_enabled_folders(self):
+        """render_ldap_plugin_config bakes the public-library GUIDs into
+        EnabledFolders (so auto-provisioned users see public libs), and keeps
+        EnableAllFolders=false (never leak private libs to everyone)."""
+        m = load_script("media")
+        xml = m.render_ldap_plugin_config(
+            "host.containers.internal", "3890", "dc=dopp,dc=cloud",
+            "uid=admin,ou=people,dc=dopp,dc=cloud", "bindpw",
+            "cn=lldap_admin,ou=groups,dc=dopp,dc=cloud", ["pubA", "pubB"],
+        )
+        self.assertIn("<EnableAllFolders>false</EnableAllFolders>", xml)
+        self.assertIn("<EnabledFolders><string>pubA</string><string>pubB</string></EnabledFolders>", xml)
 
     def test_jellyfin_waits_for_default_user_before_seeding_admin(self):
         """`POST /Startup/User` returns 404 until Jellyfin's UserManager
