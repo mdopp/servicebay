@@ -13,8 +13,19 @@ const Action = z
   })
   .strict();
 
+// A service name anchors the move-action jail (`/mnt/data/stacks/<service>`),
+// so it must be a single safe path segment — no separators, no `..` traversal
+// — or the jail collapses to a system path (#2043). Mirrors the backend's
+// `assertServiceName`; the backend re-checks regardless (this is the outer
+// guard so a bad name 400s before it reaches the store).
+const ServiceName = z
+  .string()
+  .min(1)
+  .regex(/^[a-zA-Z0-9_.-]+$/, 'service must be a single safe path segment')
+  .refine(s => s !== '.' && s !== '..', 'service must be a single safe path segment');
+
 const Body = z.object({
-  service: z.string().min(1),
+  service: ServiceName,
   title: z.string().min(1),
   description: z.string().nullish(),
   payload: z.record(z.string(), z.unknown()).optional(),

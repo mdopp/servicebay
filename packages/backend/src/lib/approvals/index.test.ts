@@ -229,6 +229,53 @@ describe('move-jail authorization (#1884)', () => {
   });
 });
 
+describe('service-name jail anchor (#2043)', () => {
+  // A traversal-style `service` would let `serviceJailRoot` collapse the jail
+  // anchor outside /mnt/data/stacks/<service> (e.g. '../../../etc' -> '/etc'),
+  // so submitApproval must refuse it BEFORE anything is stored.
+  async function expectServiceRejected(service: string) {
+    await expect(submitApproval({ service, title: 't' })).rejects.toThrow(
+      /not a valid service name/,
+    );
+    // Nothing persisted — the store stays empty.
+    expect(await listApprovals()).toEqual([]);
+  }
+
+  it('rejects a ../ traversal that would anchor the jail at /etc', async () => {
+    await expectServiceRejected('../../../etc');
+  });
+
+  it('rejects a name with an embedded path separator', async () => {
+    await expectServiceRejected('svc/../../etc');
+  });
+
+  it('rejects a bare .. segment', async () => {
+    await expectServiceRejected('..');
+  });
+
+  it('rejects a leading-slash absolute name', async () => {
+    await expectServiceRejected('/etc');
+  });
+
+  it('rejects an empty service name', async () => {
+    await expectServiceRejected('');
+  });
+
+  it('accepts a valid single-segment service name and anchors the jail under it', async () => {
+    const SVC = '/mnt/data/stacks/svc';
+    fakeFs[`${SVC}/draft`] = 'c';
+    const r = await submitApproval({
+      service: 'svc',
+      title: 't',
+      on_approve: { move: { src: `${SVC}/draft`, dst: `${SVC}/done` } },
+    });
+    expect(r.service).toBe('svc');
+    const res = await approveApproval(r.id);
+    expect(res.request.status).toBe('approved');
+    expect(executor.rename).toHaveBeenCalledWith(`${SVC}/draft`, `${SVC}/done`);
+  });
+});
+
 describe('restart-target authorization (#1884)', () => {
   it('rejects restarting a load-bearing service (authelia) that is not the requester', async () => {
     const r = await submitApproval({
