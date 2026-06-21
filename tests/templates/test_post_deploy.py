@@ -833,6 +833,27 @@ class MediaScript(unittest.TestCase):
         self.assertEqual(set(result["public"]), {"id-Music", "id-Movies"})
         self.assertEqual(result["private_by_user"], {"mdopp": ["id-Movies (mdopp)"]})
 
+    def test_jellyfin_bookshelf_plugin_install_requested(self):
+        """ensure_jellyfin_bookshelf_plugin POSTs the Bookshelf package install
+        (so a books-type library indexes audiobooks as playable AudioBook items,
+        #2028) and returns True on a 204."""
+        m = load_script("media")
+        import urllib.request
+        responses = {"/Packages/Installed/Bookshelf": {"status": 204, "body": None}}
+        with mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory(responses)):
+            ok = m.ensure_jellyfin_bookshelf_plugin("http://127.0.0.1:8096", "jf-token")
+        self.assertTrue(ok)
+
+    def test_jellyfin_bookshelf_plugin_install_failsoft(self):
+        """A failed Bookshelf install is best-effort: returns False, never raises
+        (the deploy must not be blocked by a plugin-catalog hiccup)."""
+        m = load_script("media")
+        import urllib.request
+        # No matching response → URLError → request_json reports a non-2xx code.
+        with mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory({})):
+            ok = m.ensure_jellyfin_bookshelf_plugin("http://127.0.0.1:8096", "jf-token")
+        self.assertFalse(ok)
+
     def test_jellyfin_set_user_access_grants_public_plus_own_private(self):
         """Each non-admin user gets the public libs + their OWN private libs;
         admins are left untouched (keep EnableAllFolders)."""

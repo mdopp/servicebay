@@ -497,4 +497,38 @@ describe('buildPlan — per-category layout + identity (#2006 redesign)', () => 
     });
     expect(result.conflicts).toHaveLength(0);
   });
+
+  it('audiobooks flatten disc folders AND dedupe byte-identical copies at DIFFERENT paths (#2028)', () => {
+    // The real box case: `hoerspiele/Bro.Code/CD1/…` was a byte-identical copy of
+    // `Bro.Code/CD1/…`. The disc folders flatten into the book folder (disc-prefixed)
+    // and the cross-path identical copy is deduped by CONTENT (not by relative path).
+    const files: ScannedFile[] = [
+      { path: '/disk/Bro.Code/CD1/01.mp3', size: 100, mtimeMs: 0 },
+      { path: '/disk/Bro.Code/CD2/01.mp3', size: 200, mtimeMs: 0 }, // distinct disc-2 track
+      { path: '/disk/hoerspiele/Bro.Code/CD1/01.mp3', size: 100, mtimeMs: 0 }, // identical bytes to CD1/01
+    ];
+    const fixture = {
+      '/disk/Bro.Code/CD1/01.mp3': sha('a'),
+      '/disk/Bro.Code/CD2/01.mp3': sha('b'),
+      '/disk/hoerspiele/Bro.Code/CD1/01.mp3': sha('a'),
+    };
+    const result = buildPlan(buildInventory(files), hasherFrom(fixture), {
+      // The whole disk is marked audiobooks at the ROOT (anchor stays root), so the
+      // book folder (`Bro.Code`) is preserved while disc subfolders flatten into it.
+      routing: routingFor({ '': { disposition: 'audiobooks' } }),
+      // Force the size-collision fingerprint pass to confirm true content dedup.
+      fingerprintOf: hasherFrom(fixture),
+    });
+    // Disc folders flattened into the book folder with collision-safe disc prefixes.
+    expect(itemOf(result.items, '/disk/Bro.Code/CD1/01.mp3')).toMatchObject({
+      action: 'copy', target: 'audiobooks/Bro.Code/d01-01.mp3',
+    });
+    expect(itemOf(result.items, '/disk/Bro.Code/CD2/01.mp3')).toMatchObject({
+      action: 'copy', target: 'audiobooks/Bro.Code/d02-01.mp3',
+    });
+    // The cross-path byte-identical copy is deduped by content (same area `shared`),
+    // even though its source path differed — the gap #2028 closes.
+    expect(actionOf(result.items, '/disk/hoerspiele/Bro.Code/CD1/01.mp3')).toBe('skip-dupe');
+    expect(result.conflicts).toHaveLength(0);
+  });
 });

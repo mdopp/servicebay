@@ -288,6 +288,13 @@ export function resolveTargetPath(
     // A file sitting exactly at the anchor (no deeper subtree) still keeps its
     // own basename so it isn't dropped.
     if (tailSegs.length === 0) tailSegs = fileSegs.slice(-1);
+    // Audiobooks are a Bookshelf-shaped library (#2028): one folder per book,
+    // audio at most `Author/Book/track` deep. A ripped audiobook nests its
+    // tracks in disc folders (`Book/CD1/01.mp3`, even double-nested `CD1/CD1/`)
+    // — which Bookshelf treats as separate (broken) items. Flatten the disc
+    // folders into the book folder with a collision-safe disc prefix on the
+    // track name, and cap the kept depth at `Author/Book/`.
+    if (category === 'audiobooks') tailSegs = flattenAudiobookTail(tailSegs);
   } else {
     // flat: everything lands directly in the category folder (basename only).
     tailSegs = fileSegs.slice(-1);
@@ -303,6 +310,61 @@ export function resolveTargetPath(
     ownerPrefix = [rule.owner];
   }
   return [...ownerPrefix, folder, ...tailSegs].join('/');
+}
+
+// --- audiobook disc flattening (#2028) --------------------------------------
+
+/**
+ * A path segment that is a DISC folder of a ripped audiobook (`CD1`, `CD 2`,
+ * `Disc-3`, `Disk1`, `Part 2`, `Volume 4`, `Vol. 1`, German `Teil 3`/`Folge 2`).
+ * Matched case-insensitively; the captured group is the disc NUMBER (e.g. `1`)
+ * used to build the collision-safe track prefix. A bare `CD`/`Disc` with no
+ * number still matches (number group empty) so a stray disc wrapper is flattened.
+ */
+const DISC_FOLDER_RE =
+  /^(?:cd|disc|disk|part|teil|folge|vol(?:ume)?\.?)\s*[-_ ]?(\d*)$/i;
+
+/**
+ * Flatten the disc subfolders of an audiobook's preserved tail so the library is
+ * Bookshelf-shaped: one folder per book, audio no deeper than `Author/Book/`
+ * (#2028).
+ *
+ * Input is the path tail BELOW the anchor (e.g. `['Author','Book','CD1','01.mp3']`
+ * or the double-nested `['Book','CD1','CD1','01.mp3']`). Every trailing DISC
+ * folder is removed from the directory path and folded into the file name with a
+ * `dNN-` prefix (`01.mp3` → `d01-01.mp3`) so two discs' identically-named tracks
+ * (`CD1/01.mp3` + `CD2/01.mp3`) never collide in the flat book folder. Multiple
+ * stacked disc folders (the double-nested `CD1/CD1/` case) collapse to a single
+ * prefix from the OUTERMOST disc number. After disc removal the kept directory
+ * depth is capped at two (`Author/Book/`) by dropping the SHALLOWEST extra dirs,
+ * so audio never sits deeper than Bookshelf accepts.
+ *
+ * A tail with no disc folders and ≤2 dir levels is returned unchanged. The
+ * basename is always preserved (nothing is dropped).
+ */
+function flattenAudiobookTail(tail: string[]): string[] {
+  if (tail.length <= 1) return tail; // just a basename — nothing to flatten.
+  const file = tail[tail.length - 1];
+  const dirs = tail.slice(0, -1);
+
+  // Strip trailing disc folders, remembering the OUTERMOST disc number for the
+  // prefix (so a double-nested `CD1/CD1` yields one `d01-` prefix, not `d01-d01-`).
+  let discNum: string | undefined;
+  let end = dirs.length;
+  while (end > 0) {
+    const match = DISC_FOLDER_RE.exec(dirs[end - 1]);
+    if (!match) break;
+    if (match[1]) discNum = match[1]; // outermost numbered disc wins (loop walks inward→out)
+    end -= 1;
+  }
+  let keptDirs = dirs.slice(0, end);
+
+  // Cap the kept directory depth at two (`Author/Book/`). Drop the SHALLOWEST
+  // extra dirs so the book folder (the deepest, most specific) is preserved.
+  if (keptDirs.length > 2) keptDirs = keptDirs.slice(keptDirs.length - 2);
+
+  const name = discNum ? `d${discNum.padStart(2, '0')}-${file}` : file;
+  return [...keptDirs, name];
 }
 
 // --- relative-dir helpers ---------------------------------------------------
