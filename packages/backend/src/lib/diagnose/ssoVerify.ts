@@ -69,12 +69,17 @@ const SET_PASSWORD_TIMEOUT_MS = 15_000;
 export const USER_APP_SIGNATURES: Readonly<Record<string, string>> = {
   vault: 'Vaultwarden Web',
   photos: '',
-  music: '',
-  books: 'Audiobookshelf',
   home: '',
   files: '',
   sync: '',
   caldav: '',
+  // `music`/`books` were RETIRED: Jellyfin is one general media server at
+  // `media.<domain>` now (#media-rename), and it does its OWN auth (LDAP-Auth →
+  // LLDAP), NOT Authelia forward-auth/OIDC — so a reachability probe here told us
+  // nothing about whether login works (it 200s on the login page regardless). It
+  // is verified end-to-end instead by the dedicated Jellyfin LDAP-login check
+  // below (probeJellyfinLogin) — that's what would have caught the missing
+  // LDAP-Auth plugin that locked everyone out 2026-06-21.
   // ollama is intentionally absent: it's admin-only, not a family-reachable app
   // (the chat uses ollama over internal loopback, not this gated host). See
   // FORWARD_AUTH_DERIVED_SUBDOMAINS.
@@ -89,12 +94,12 @@ export const USER_APP_SIGNATURES: Readonly<Record<string, string>> = {
 export const SUBDOMAIN_TEMPLATE: Readonly<Record<string, string>> = {
   vault: 'vaultwarden',
   photos: 'immich',
-  music: 'media',
-  books: 'media',
   home: 'home-assistant',
   files: 'file-share',
   sync: 'file-share',
   caldav: 'radicale',
+  // `media` (Jellyfin) is intentionally absent — it isn't a forward-auth/OIDC
+  // host; its login is verified by probeJellyfinLogin, gated on installedTemplates.media.
 };
 
 /**
@@ -133,7 +138,8 @@ export const FORWARD_AUTH_DERIVED_SUBDOMAINS: readonly string[] = [];
 export const OIDC_CLIENT_SUBDOMAINS: Readonly<Record<string, { clientId: string; redirectPath: string }>> = {
   vault: { clientId: 'vaultwarden', redirectPath: '/identity/connect/oidc-signin' },
   photos: { clientId: 'immich', redirectPath: '/auth/login' },
-  books: { clientId: 'audiobookshelf', redirectPath: '/auth/login' },
+  // `books`/audiobookshelf was retired (#1725) — Jellyfin serves audiobooks now
+  // and authenticates via LDAP, not OIDC. Verified by probeJellyfinLogin instead.
 };
 
 /**
@@ -198,6 +204,15 @@ export interface OidcAuthProbe {
   detail: string;
 }
 
+/** Outcome of attempting a real Jellyfin login as the ephemeral LLDAP user.
+ *  `ok` ⇒ Jellyfin's LDAP-Auth plugin authenticated the LLDAP user end-to-end. */
+export interface JellyfinLoginProbe {
+  ok: boolean;
+  /** HTTP status of /Users/AuthenticateByName (0 = transport error). */
+  code: number;
+  detail: string;
+}
+
 export interface SsoVerifyDeps {
   createUser: typeof createLldapUser;
   addToGroup: typeof addUserToLldapGroup;
@@ -243,6 +258,11 @@ export interface SsoVerifyDeps {
     redirectUri: string,
     cookie: string,
   ) => Promise<OidcAuthProbe>;
+  /** Log into Jellyfin (`media`) AS the ephemeral LLDAP user via its LDAP-Auth
+   *  plugin — the only end-to-end check that the plugin is installed AND can bind
+   *  LLDAP. Jellyfin does its own auth (not Authelia), so nothing else covers this;
+   *  a missing plugin silently locked everyone out 2026-06-21. */
+  probeJellyfinLogin: (ephemeralUser: string, password: string) => Promise<JellyfinLoginProbe>;
 }
 
 export interface SsoVerifyOptions {
@@ -345,6 +365,20 @@ export function classifyOidcAuthorization(host: string, clientId: string, probe:
     return { domain, status: 'fail', code: 0, detail: `OIDC authorization for "${clientId}" did not respond: ${probe.detail}` };
   }
   return { domain, status: 'fail', code: probe.code, detail: `OIDC authorization for "${clientId}" did not reach a redirect (HTTP ${probe.code}): ${probe.detail}` };
+}
+
+/** Classify the Jellyfin LDAP-login probe. `ok` ⇒ the LDAP-Auth plugin
+ *  authenticated the LLDAP user end-to-end (plugin installed + LLDAP bind works).
+ *  A transport error (code 0) is "couldn't test" (skip) — Jellyfin may simply be
+ *  down/restarting — not a login-broken fail that scares toward a reinstall. */
+export function classifyJellyfinLogin(host: string, probe: JellyfinLoginProbe): SsoDomainResult {
+  if (probe.ok) {
+    return { domain: host, status: 'pass', code: probe.code, detail: probe.detail };
+  }
+  if (probe.code === 0) {
+    return { domain: host, status: 'skip', code: 0, detail: `Jellyfin LDAP-login probe could not run (Jellyfin unreachable): ${probe.detail}` };
+  }
+  return { domain: host, status: 'fail', code: probe.code, detail: probe.detail };
 }
 
 /** Pull the `authelia_session` cookie value out of a Set-Cookie header list. */
@@ -618,6 +652,86 @@ export async function realProbeOidcAuthorization(
   }
 }
 
+// Jellyfin's fixed container port (templates/media/template.yml) + the
+// X-Emby-Authorization client identifier every /Users/AuthenticateByName needs
+// (the server 400s without it).
+const JELLYFIN_PORT = 8096;
+function jellyfinAuthHeader(deviceId: string, token?: string): string {
+  const base = `MediaBrowser Client="servicebay-ssoverify", Device="servicebay", DeviceId="${deviceId}", Version="1"`;
+  return token ? `${base}, Token="${token}"` : base;
+}
+
+/** Log into Jellyfin AS the ephemeral LLDAP user through its LDAP-Auth plugin.
+ *  A `200` + AccessToken proves the plugin is installed AND bound LLDAP — the only
+ *  end-to-end check of Jellyfin's (non-Authelia) auth. `401` ⇒ the plugin is
+ *  missing/misconfigured (the exact silent break of 2026-06-21). A successful
+ *  login auto-creates a Jellyfin profile (`CreateUsersFromLdap`), so we delete it
+ *  again (best-effort, via the stored admin creds) to avoid orphan accrual. */
+export async function realProbeJellyfinLogin(ephemeralUser: string, password: string): Promise<JellyfinLoginProbe> {
+  const base = `http://127.0.0.1:${JELLYFIN_PORT}`;
+  const deviceId = `sb-ssoverify-${randomBytes(3).toString('hex')}`;
+  try {
+    const res = await fetch(`${base}/Users/AuthenticateByName`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Emby-Authorization': jellyfinAuthHeader(deviceId) },
+      body: JSON.stringify({ Username: ephemeralUser, Pw: password }),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+    if (res.status !== 200) {
+      return {
+        ok: false,
+        code: res.status,
+        detail: `Jellyfin rejected the LLDAP login (HTTP ${res.status}) — LDAP-Auth plugin missing or its LLDAP bind is broken`,
+      };
+    }
+    const body = (await res.json().catch(() => null)) as { AccessToken?: string; User?: { Id?: string } } | null;
+    if (!body?.AccessToken) {
+      return { ok: false, code: 200, detail: 'Jellyfin returned 200 but no AccessToken — LDAP-Auth not actually authenticating' };
+    }
+    const cleaned = await cleanupJellyfinProfile(base, body.User?.Id);
+    return {
+      ok: true,
+      code: 200,
+      detail: cleaned
+        ? 'Jellyfin authenticated the LLDAP user (LDAP-Auth plugin healthy)'
+        : 'Jellyfin authenticated the LLDAP user (LDAP-Auth healthy) — but the ephemeral test profile was left behind (admin cleanup unavailable)',
+    };
+  } catch (e) {
+    return { ok: false, code: 0, detail: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Delete the Jellyfin profile auto-created by the probe login. Best-effort:
+ *  mints an admin token from the stored `JELLYFIN_ADMIN_PASSWORD` (decrypted by
+ *  getConfig) and DELETEs the user. Returns false (never throws) when the admin
+ *  creds are unavailable/drifted — the login result must not hinge on cleanup. */
+export async function cleanupJellyfinProfile(base: string, userId: string | undefined): Promise<boolean> {
+  if (!userId) return false;
+  try {
+    const config = await getConfig();
+    const adminPw = config.installedSecrets?.find(s => s.varName === 'JELLYFIN_ADMIN_PASSWORD')?.password;
+    if (!adminPw) return false;
+    const deviceId = `sb-ssoverify-cleanup-${randomBytes(3).toString('hex')}`;
+    const auth = await fetch(`${base}/Users/AuthenticateByName`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Emby-Authorization': jellyfinAuthHeader(deviceId) },
+      body: JSON.stringify({ Username: 'admin', Pw: adminPw }),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+    if (auth.status !== 200) return false;
+    const token = ((await auth.json().catch(() => null)) as { AccessToken?: string } | null)?.AccessToken;
+    if (!token) return false;
+    const del = await fetch(`${base}/Users/${userId}`, {
+      method: 'DELETE',
+      headers: { 'X-Emby-Authorization': jellyfinAuthHeader(deviceId, token) },
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+    return del.status === 200 || del.status === 204;
+  } catch {
+    return false;
+  }
+}
+
 /** Pull an OAuth2 `error=` code out of a redirect Location or a JSON/HTML
  *  error body. Returns the bare error token (e.g. `invalid_client`). */
 export function extractOauthError(text: string): string | undefined {
@@ -640,6 +754,7 @@ function buildDeps(node: string, overrides?: Partial<SsoVerifyDeps>): SsoVerifyD
     probeAdminDecision: realProbeAdminDecision,
     hostHasForwardAuth: realHostHasForwardAuth(node),
     probeOidcAuthorization: realProbeOidcAuthorization,
+    probeJellyfinLogin: realProbeJellyfinLogin,
     ...overrides,
   };
 }
@@ -770,6 +885,14 @@ async function probeAllDomains(deps: SsoVerifyDeps, run: SsoRun, cookie: string)
   }
   for (const host of await forwardAuthDerivedHosts(deps, run)) {
     await probeForwardAuthHost(deps, run, host, cookie);
+  }
+  // Jellyfin (`media`) authenticates via its OWN LDAP-Auth plugin → LLDAP, NOT
+  // Authelia — so the forward-auth/OIDC probes above never touch it. Verify it
+  // end-to-end by actually logging the ephemeral user in. Gated on the `media`
+  // template being installed (no false-fail on a box without Jellyfin).
+  if (run.installedTemplates.media != null) {
+    const probe = await deps.probeJellyfinLogin(run.ephemeralUser, run.password);
+    run.userDomains.push(classifyJellyfinLogin(`media.${run.publicDomain}`, probe));
   }
   for (const host of ADMIN_ONLY_HOSTS) {
     const probe = await deps.probeAdminDecision(run.publicDomain, host, cookie);

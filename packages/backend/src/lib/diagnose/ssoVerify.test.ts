@@ -21,6 +21,7 @@ import {
   classifyOidcRedirect,
   realProbeOidcAuthorization,
   realProbeAdminDecision,
+  realProbeJellyfinLogin,
   extractAutheliaCookie,
   extractOauthError,
   makeEphemeralUsername,
@@ -30,9 +31,11 @@ import {
   FORWARD_AUTH_DERIVED_SUBDOMAINS,
   ADMIN_ONLY_HOSTS,
   probeableUserSubdomains,
+  classifyJellyfinLogin,
   type SsoVerifyDeps,
   type DomainProbe,
   type OidcAuthProbe,
+  type JellyfinLoginProbe,
 } from './ssoVerify';
 
 const tmpl = (n: string) => ({ [n]: { schemaVersion: 1, installedAt: '2026-05-01T00:00:00Z' } });
@@ -40,7 +43,9 @@ const tmpl = (n: string) => ({ [n]: { schemaVersion: 1, installedAt: '2026-05-01
 // A "full" install: auth + every template that backs a user subdomain. Used
 // by the happy-path tests so all USER_APP_SIGNATURES hosts are probed.
 const fullTemplates = Object.assign(
-  { auth: { schemaVersion: 1, installedAt: '2026-05-01T00:00:00Z' } },
+  // `media` (Jellyfin) is checked via probeJellyfinLogin, not SUBDOMAIN_TEMPLATE,
+  // so it's added explicitly here for the happy-path login probe to run.
+  { auth: { schemaVersion: 1, installedAt: '2026-05-01T00:00:00Z' }, ...tmpl('media') },
   ...[...new Set(Object.values(SUBDOMAIN_TEMPLATE))].map(tmpl),
 );
 
@@ -80,6 +85,8 @@ function happyDeps(opts: { forwardAuthHosts?: string[] } = {}): { deps: SsoVerif
     probeOidcAuthorization: vi.fn(async (_pd: string, clientId: string, _redirectUri: string): Promise<OidcAuthProbe> => ({
       ok: true, code: 302, detail: `code issued for ${clientId}`,
     })),
+    // Jellyfin LDAP login succeeds by default (plugin healthy).
+    probeJellyfinLogin: vi.fn(async (): Promise<JellyfinLoginProbe> => ({ ok: true, code: 200, detail: 'LDAP-Auth healthy' })),
   };
   return { deps, calls };
 }
@@ -96,10 +103,11 @@ describe('verifySso orchestrator', () => {
 
     expect(report.ok).toBe(true);
     expect(report.cleanedUp).toBe(true);
-    // every templated user app + every admin host probed (ollama is gated on
-    // actual forward-auth, off by default here).
+    // every templated user app + the Jellyfin (media) LDAP-login entry + every
+    // admin host probed (ollama is gated on actual forward-auth, off by default here).
     const templatedHosts = Object.keys(USER_APP_SIGNATURES).filter(h => SUBDOMAIN_TEMPLATE[h]);
-    expect(report.userDomains).toHaveLength(templatedHosts.length);
+    expect(report.userDomains).toHaveLength(templatedHosts.length + 1); // +1 = media (Jellyfin) login
+    expect(report.userDomains.some(d => d.domain === 'media.dopp.cloud')).toBe(true);
     expect(report.adminDomains).toHaveLength(ADMIN_ONLY_HOSTS.length);
     // ephemeral user deleted exactly once, matching the reported username
     expect(calls.deleted).toEqual([report.ephemeralUser]);
@@ -403,6 +411,56 @@ describe('realProbeAdminDecision — asks Authelia /api/authz/auth-request direc
   });
 });
 
+describe('realProbeJellyfinLogin — logs the ephemeral user into Jellyfin via LDAP-Auth', () => {
+  const jres = (status: number, body: unknown = {}) => ({ status, json: async () => body } as unknown as Response);
+  afterEach(() => vi.restoreAllMocks());
+
+  it('passes on a 200 + AccessToken and cleans up the auto-created profile', async () => {
+    mockGetConfig.mockResolvedValue({ installedSecrets: [{ varName: 'JELLYFIN_ADMIN_PASSWORD', password: 'adminpw' }] });
+    const deletes: string[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
+      const u = String(url);
+      if ((init?.method ?? 'GET') === 'DELETE') { deletes.push(u); return jres(204); }
+      const username = JSON.parse(String(init?.body)).Username as string;
+      return jres(200, { AccessToken: username === 'admin' ? 'admintok' : 'usertok', User: { Id: 'ephem-jf-id' } });
+    });
+    const r = await realProbeJellyfinLogin('sb-ssoverify-x', 'pw');
+    expect(r.ok).toBe(true);
+    expect(r.code).toBe(200);
+    expect(deletes.some(u => u.includes('/Users/ephem-jf-id'))).toBe(true); // orphan profile deleted
+  });
+
+  it('fails RED on a 401 — the LDAP-Auth plugin missing/misconfigured', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jres(401));
+    const r = await realProbeJellyfinLogin('sb-ssoverify-x', 'pw');
+    expect(r).toMatchObject({ ok: false, code: 401 });
+    expect(r.detail).toMatch(/LDAP-Auth plugin/);
+  });
+
+  it('fails on a 200 with no AccessToken (not actually authenticating)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jres(200, {}));
+    const r = await realProbeJellyfinLogin('sb-ssoverify-x', 'pw');
+    expect(r).toMatchObject({ ok: false, code: 200 });
+  });
+
+  it('still PASSES the login even when cleanup is impossible (admin creds absent)', async () => {
+    mockGetConfig.mockResolvedValue({ installedSecrets: [] }); // no JELLYFIN_ADMIN_PASSWORD
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_u, init) => {
+      const username = JSON.parse(String(init?.body)).Username as string;
+      return jres(200, { AccessToken: username === 'admin' ? 'admintok' : 'usertok', User: { Id: 'id' } });
+    });
+    const r = await realProbeJellyfinLogin('sb-ssoverify-x', 'pw');
+    expect(r.ok).toBe(true); // login result must not hinge on cleanup
+    expect(r.detail).toMatch(/left behind/);
+  });
+
+  it('returns a transport failure when fetch throws', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+    const r = await realProbeJellyfinLogin('sb-ssoverify-x', 'pw');
+    expect(r).toMatchObject({ ok: false, code: 0 });
+  });
+});
+
 describe('classifyOidcRedirect — Location-header outcome (#sso-redirect-uri)', () => {
   it('passes a code= redirect (full handshake)', () => {
     const r = classifyOidcRedirect('https://photos.dopp.cloud/auth/login?code=abc&state=x', 302);
@@ -487,7 +545,7 @@ describe('verifySso — ollama is admin-only, never probed as a family app', () 
 });
 
 describe('verifySso — #1685 OIDC apps exercise the real handshake', () => {
-  it('drives the OIDC authorization flow for vault/photos/books (not just reachability)', async () => {
+  it('drives the OIDC authorization flow for vault/photos (not just reachability)', async () => {
     const { deps } = happyDeps();
     const report = await verifySso({ deps });
 
@@ -498,7 +556,41 @@ describe('verifySso — #1685 OIDC apps exercise the real handshake', () => {
     // otherwise Authelia rejects an unregistered redirect_uri for every client.
     expect(deps.probeOidcAuthorization).toHaveBeenCalledWith('dopp.cloud', 'immich', 'https://photos.dopp.cloud/auth/login', expect.any(String));
     expect(deps.probeOidcAuthorization).toHaveBeenCalledWith('dopp.cloud', 'vaultwarden', 'https://vault.dopp.cloud/identity/connect/oidc-signin', expect.any(String));
-    expect(deps.probeOidcAuthorization).toHaveBeenCalledWith('dopp.cloud', 'audiobookshelf', 'https://books.dopp.cloud/auth/login', expect.any(String));
+    // `books`/audiobookshelf was retired — Jellyfin serves audiobooks via LDAP now.
+    expect(deps.probeOidcAuthorization).not.toHaveBeenCalledWith('dopp.cloud', 'audiobookshelf', expect.anything(), expect.anything());
+  });
+
+  it('verifies Jellyfin (media) by actually logging the ephemeral user in via LDAP-Auth', async () => {
+    const { deps } = happyDeps();
+    const report = await verifySso({ deps });
+    expect(report.ok).toBe(true);
+    expect(deps.probeJellyfinLogin).toHaveBeenCalledWith(expect.stringContaining('sb-ssoverify-'), expect.any(String));
+    const media = report.userDomains.find(d => d.domain === 'media.dopp.cloud')!;
+    expect(media.status).toBe('pass');
+  });
+
+  it('a BROKEN Jellyfin login (missing LDAP-Auth plugin) fails the run RED — the 2026-06-21 silent break', async () => {
+    const { deps } = happyDeps();
+    deps.probeJellyfinLogin = vi.fn(async (): Promise<JellyfinLoginProbe> => ({
+      ok: false, code: 401, detail: 'Jellyfin rejected the LLDAP login (HTTP 401) — LDAP-Auth plugin missing',
+    }));
+    const report = await verifySso({ deps });
+    const media = report.userDomains.find(d => d.domain === 'media.dopp.cloud')!;
+    expect(media.status).toBe('fail');
+    expect(report.ok).toBe(false); // a broken Jellyfin login is loud, not silent
+  });
+
+  it('does NOT probe Jellyfin when the media template is not installed', async () => {
+    const { deps } = happyDeps();
+    mockGetConfig.mockResolvedValue({ reverseProxy: { publicDomain: 'dopp.cloud' }, installedTemplates: tmpl('vaultwarden') });
+    await verifySso({ deps });
+    expect(deps.probeJellyfinLogin).not.toHaveBeenCalled();
+  });
+
+  it('classifyJellyfinLogin: pass on ok, fail on rejection, skip on transport error', () => {
+    expect(classifyJellyfinLogin('media.dopp.cloud', { ok: true, code: 200, detail: 'healthy' }).status).toBe('pass');
+    expect(classifyJellyfinLogin('media.dopp.cloud', { ok: false, code: 401, detail: 'plugin missing' }).status).toBe('fail');
+    expect(classifyJellyfinLogin('media.dopp.cloud', { ok: false, code: 0, detail: 'ECONNREFUSED' }).status).toBe('skip');
   });
 
   it('catches an invalid_client OIDC app RED even though its page loads 200 (#1559)', async () => {
