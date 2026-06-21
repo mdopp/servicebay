@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.130.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.129.3...servicebay-v4.130.0) (2026-06-21)
+
+
+### Features
+
+* **disk-import:** per-folder "base root" strip toggle ([#2006](https://github.com/mdopp/servicebay/issues/2006) follow-up) ([#2015](https://github.com/mdopp/servicebay/issues/2015)) ([d18ffbb](https://github.com/mdopp/servicebay/commit/d18ffbb717ba61add8035db48a3efff2979aecb6))
+* **disk-import:** per-folder routing-tree review UI — owner + target pickers, per-owner re-plan ([#2000](https://github.com/mdopp/servicebay/issues/2000)) ([ae2632d](https://github.com/mdopp/servicebay/commit/ae2632d556ad74a633dc7b1485e34a94bb82307b))
+* **disk-import:** per-folder routing-tree review UI — owner + target pickers, per-owner re-plan ([#2000](https://github.com/mdopp/servicebay/issues/2000)) ([c9b56bb](https://github.com/mdopp/servicebay/commit/c9b56bb7fb381c2956e6371be7130e2ab85cb1a2))
+* **disk-import:** review-tree data layer — folder tree + owners from plan.json ([#1915](https://github.com/mdopp/servicebay/issues/1915)) ([44c7af0](https://github.com/mdopp/servicebay/commit/44c7af0713df26c000c9821a198c9282c2aa7aa5))
+* **disk-import:** save & re-run the per-folder routing selection ([#2007](https://github.com/mdopp/servicebay/issues/2007)) ([#2013](https://github.com/mdopp/servicebay/issues/2013)) ([73333ed](https://github.com/mdopp/servicebay/commit/73333ed9031cf47bd819299c1bf243266e1c7a49))
+* **install:** prune orphaned installedTemplates entries (the un-removable Hermes ghost) ([#2020](https://github.com/mdopp/servicebay/issues/2020)) ([5af213c](https://github.com/mdopp/servicebay/commit/5af213c1aaf2c7c1d256386d028dab99052b55a6))
+* **media+diagnose:** rename Jellyfin subdomain to `media`; verify its LDAP login end-to-end ([#2026](https://github.com/mdopp/servicebay/issues/2026)) ([3967916](https://github.com/mdopp/servicebay/commit/396791660b0bd48589fb23beb2da178f977ce660))
+* **media:** auto-provision Jellyfin libraries (public + per-user private) with access ([#2027](https://github.com/mdopp/servicebay/issues/2027)) ([93662d8](https://github.com/mdopp/servicebay/commit/93662d82fbbbb42764c1b38a0dd2fe4ab3ece30c))
+
+
+### Bug Fixes
+
+* **diagnose:** admin-ACL check asks Authelia directly; ollama is admin-only ([#2022](https://github.com/mdopp/servicebay/issues/2022)) ([8c0de6c](https://github.com/mdopp/servicebay/commit/8c0de6cc9c672cd618e68cd795ed3ca449faaa7d))
+* **diagnose:** drop the flaky per-domain HTTP GET from external-reachability (stop the cry-wolf) ([#2024](https://github.com/mdopp/servicebay/issues/2024)) ([a097485](https://github.com/mdopp/servicebay/commit/a097485464a6ac5bd8be8d38959e4f5d2dc6eeb6))
+* **diagnose:** SSO consent-redirect is a healthy handshake (not "login broken") ([#2021](https://github.com/mdopp/servicebay/issues/2021)) ([a12ae9d](https://github.com/mdopp/servicebay/commit/a12ae9df4b2eb948645fdbe427772085c5130a50))
+* **diagnose:** two self-diagnose false positives (SSO redirect_uri + cumulative restart count) ([#2019](https://github.com/mdopp/servicebay/issues/2019)) ([cd0c3fb](https://github.com/mdopp/servicebay/commit/cd0c3fb994fd8d9db69abfed02a09c50f056268a))
+* **disk-import:** apply timeout default was clobbered by `{timeoutMs: undefined}` (re-broke at 30s) ([#2017](https://github.com/mdopp/servicebay/issues/2017)) ([cfb0a88](https://github.com/mdopp/servicebay/commit/cfb0a885350749014da51391fef09953133e03a5))
+* **disk-import:** buildFolderTree returns root node on an empty scan (no crash) ([8ae5f77](https://github.com/mdopp/servicebay/commit/8ae5f77a0f527ba700d34f817d86c4fda04fbc00))
+* **disk-import:** buildFolderTree returns root node on an empty scan (no crash) ([a35b243](https://github.com/mdopp/servicebay/commit/a35b243584612b76da037f8841a3c37fdc655980))
+* **disk-import:** chown the mkdir'd DIRECTORY chain to core, not just the files ([#2025](https://github.com/mdopp/servicebay/issues/2025)) ([b5a2da6](https://github.com/mdopp/servicebay/commit/b5a2da654b5591d10b05f1938ea6118d61403dd8))
+* **disk-import:** disable SELinux label confinement on the worker (/out EACCES) ([d67fcc2](https://github.com/mdopp/servicebay/commit/d67fcc2c42e84e519e1dcd119fdd84e10073d737))
+* **disk-import:** disable SELinux label confinement on the worker (/out EACCES) ([4c2e73d](https://github.com/mdopp/servicebay/commit/4c2e73d0433e2c03633ecdfa1956246abbd0102d))
+* **disk-import:** give the host-apply exec a generous timeout (30s default errored mid-copy) ([#2016](https://github.com/mdopp/servicebay/issues/2016)) ([e527b7c](https://github.com/mdopp/servicebay/commit/e527b7c64515d6f30699367b2bbd66318c61c279))
+* **disk-import:** give the re-plan exec a generous timeout (was 30s agent default) ([#2010](https://github.com/mdopp/servicebay/issues/2010)) ([4ebf615](https://github.com/mdopp/servicebay/commit/4ebf6155c39552830e9c5c04dd4af1e4b9c645f7))
+* **disk-import:** launchScan starts the worker scan walk (was stuck at 'Starting…') ([b537bc7](https://github.com/mdopp/servicebay/commit/b537bc7e5bbe0e0efe4bc14e351bfc34f21d1322))
+* **disk-import:** launchScan starts the worker's scan walk (was stuck at 'Starting…') ([343baa4](https://github.com/mdopp/servicebay/commit/343baa42b015dbeb83c1fd8b47d4c4e7a01ecf99))
+* **disk-import:** make re-plan + apply asynchronous ([#2009](https://github.com/mdopp/servicebay/issues/2009)) ([#2012](https://github.com/mdopp/servicebay/issues/2012)) ([7b4cbc8](https://github.com/mdopp/servicebay/commit/7b4cbc813446e679a77b7f2d96cadc8e374f3d6a))
+* **disk-import:** per-category layout + dedup identity (preserve folders, dedup right) ([#2006](https://github.com/mdopp/servicebay/issues/2006) redesign) ([#2014](https://github.com/mdopp/servicebay/issues/2014)) ([a4b1110](https://github.com/mdopp/servicebay/commit/a4b11104e3bf6f89ed5924e5e0f452279f20b84a))
+* **disk-import:** ReDoS-safe trailing-slash strip in replan/tree (CodeQL js/polynomial-redos) ([637c58b](https://github.com/mdopp/servicebay/commit/637c58be648370b2f82c933ba61a3b979cf0c728))
+* **disk-import:** rename in-tree name clashes instead of dropping them ([#2006](https://github.com/mdopp/servicebay/issues/2006)) ([#2011](https://github.com/mdopp/servicebay/issues/2011)) ([d3605f3](https://github.com/mdopp/servicebay/commit/d3605f39623791d2d7ebfb9924e71e05ebe8ceb4))
+* **disk-import:** render the plan/routing tree after scan (tile stuck on progress) ([1937528](https://github.com/mdopp/servicebay/commit/19375288d0373fac537f572b116e1986383addc7))
+* **disk-import:** replace dead /disk-import-app link with an in-page plan review ([7f22ae0](https://github.com/mdopp/servicebay/commit/7f22ae06d89066efedf5262a3f33346b375c1438))
+* **disk-import:** replace dead /disk-import-app link with in-page plan review ([5550a18](https://github.com/mdopp/servicebay/commit/5550a1845ecc3a2af1e8a2afa6b3854c7aebcf26))
+* **disk-import:** show the plan/routing tree after scan (tile stuck on progress) ([abfd4be](https://github.com/mdopp/servicebay/commit/abfd4be263736233e80499c501c9e21864b115b6))
+* **disk-import:** write replan-request inside the worker container (SELinux EACCES) ([a57713d](https://github.com/mdopp/servicebay/commit/a57713d365ebab85d52de498507ee123c38a6a44))
+* **disk-import:** write replan-request INSIDE the worker container (SELinux EACCES) ([a85e36a](https://github.com/mdopp/servicebay/commit/a85e36a77881757c42f48f1939e4fffa1c1d1954))
+* **health:** delete on a synthetic self-diagnose check no longer fake-succeeds ([#2018](https://github.com/mdopp/servicebay/issues/2018)) ([c1b6db0](https://github.com/mdopp/servicebay/commit/c1b6db0bef8d482cc4112c4fddf137693770cc44))
+* **nginx:** expand the forward-auth sentinel in the proxy-host API (not just the installer) ([#2023](https://github.com/mdopp/servicebay/issues/2023)) ([ce5b2aa](https://github.com/mdopp/servicebay/commit/ce5b2aa08b39e23ff8d3527bb4d89e5bd1d4227f))
+
 ## [4.129.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.129.2...servicebay-v4.129.3) (2026-06-18)
 
 
