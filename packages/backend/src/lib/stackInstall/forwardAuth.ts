@@ -169,3 +169,25 @@ export function expandForwardAuthSentinel(advancedConfig: string | undefined): s
   }
   return advancedConfig;
 }
+
+/**
+ * Fully render a forward-auth `advanced_config` for code paths that have NO
+ * Mustache step — chiefly the direct proxy-host API (`/api/system/nginx/
+ * proxy-hosts`), used by manual creates and diagnose/heal re-asserts. The stack
+ * INSTALLER expands the sentinel then Mustache-renders `{{AUTHELIA_PORT}}`; a
+ * direct API call does neither, so without this both the literal sentinel AND the
+ * `{{AUTHELIA_PORT}}` placeholder land verbatim in the .conf →
+ * `nginx: [emerg] unknown directive "__authelia_forward_auth__"` (and an invalid
+ * `proxy_pass …:{{AUTHELIA_PORT}}/…`), leaving the host permanently offline. This
+ * expands the sentinel AND substitutes the Authelia port, so the API path emits a
+ * valid block exactly like the installer. A config that carries neither token is
+ * returned unchanged. `port` defaults to {@link DEFAULT_AUTHELIA_PORT}.
+ */
+export function renderForwardAuthAdvancedConfig(
+  advancedConfig: string | undefined,
+  port: string = DEFAULT_AUTHELIA_PORT,
+): string | undefined {
+  const expanded = expandForwardAuthSentinel(advancedConfig);
+  if (expanded === undefined) return expanded;
+  return expanded.replace(/\{\{AUTHELIA_PORT\}\}/g, port);
+}

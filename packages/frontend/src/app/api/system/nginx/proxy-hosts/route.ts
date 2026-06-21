@@ -7,7 +7,7 @@ import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
 import { agentManager } from '@/lib/agent/manager';
 import { listNodes } from '@/lib/nodes';
-import { AUTHELIA_LOCATION_HEADERS, sanitizeForwardAuthPort } from '@/lib/stackInstall/forwardAuth';
+import { AUTHELIA_LOCATION_HEADERS, sanitizeForwardAuthPort, renderForwardAuthAdvancedConfig, DEFAULT_AUTHELIA_PORT } from '@/lib/stackInstall/forwardAuth';
 import { checkPublicARecord, missingARecordMessage } from '@/lib/reverseProxy/publicDnsCheck';
 import {
     withLanDeniedPage,
@@ -1005,7 +1005,24 @@ export const POST = withApiHandler({}, async ({ request }) => {
 
         const results: { domain: string; success: boolean; error?: string; certIssued?: boolean; certError?: string; lanRestricted?: boolean }[] = [];
 
+        // The `__authelia_forward_auth__` sentinel is normally expanded by the
+        // STACK INSTALLER (postInstall) right before Mustache renders. A DIRECT
+        // call to this endpoint (a manual create, or a diagnose/heal that re-asserts
+        // a host) has no installer/Mustache step — so without this, the literal
+        // sentinel (and the `{{AUTHELIA_PORT}}` placeholder inside the expanded
+        // snippet) get written verbatim into the .conf → `nginx: [emerg] unknown
+        // directive "__authelia_forward_auth__"` → the host never goes online and
+        // generates no conf (a broken host that this very create then "reconciles"
+        // forever). Expand the sentinel AND substitute the Authelia port here so the
+        // API path produces a valid forward-auth block, exactly like the installer.
+        const authPort = config.templateSettings?.AUTHELIA_PORT ?? DEFAULT_AUTHELIA_PORT;
         for (const host of hosts) {
+            if (host.proxyConfig?.advanced_config) {
+                host.proxyConfig = {
+                    ...host.proxyConfig,
+                    advanced_config: renderForwardAuthAdvancedConfig(host.proxyConfig.advanced_config, authPort),
+                };
+            }
             // Default forward host = node LAN IP (NPM is in a container,
             // 127.0.0.1 would only reach the NPM pod itself)
             if (!host.forwardHost) {
