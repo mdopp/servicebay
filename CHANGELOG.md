@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.132.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.131.0...servicebay-v4.132.0) (2026-06-21)
+
+
+### Features
+
+* **frontend:** add /status box-wide health route + nav entry ([89e54d8](https://github.com/mdopp/servicebay/commit/89e54d8b7674dbf838483d4868900de8e27c194b)), closes [#2030](https://github.com/mdopp/servicebay/issues/2030)
+
+
+### Bug Fixes
+
+* **claude-dev:** pin UIDs/GIDs so persisted homes survive image rebuilds ([63163e7](https://github.com/mdopp/servicebay/commit/63163e7a698c8c01c636c60e50c7e504a08e52b5)), closes [#2034](https://github.com/mdopp/servicebay/issues/2034)
+
 ## [4.131.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.130.0...servicebay-v4.131.0) (2026-06-21)
 
 
