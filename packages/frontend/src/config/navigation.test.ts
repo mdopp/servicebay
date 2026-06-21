@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isNavActive } from './navigation';
+import { isNavActive, NAVIGATION_ENTRIES } from './navigation';
 
 describe('isNavActive', () => {
   it('marks Home (root) active ONLY on the exact root path', () => {
@@ -18,5 +18,25 @@ describe('isNavActive', () => {
   it('does not match a different section sharing a prefix', () => {
     expect(isNavActive('/servicesX', '/services')).toBe(false);
     expect(isNavActive('/health', '/services')).toBe(false);
+  });
+});
+
+describe('mobile reachability (#1992)', () => {
+  // MobileNav renders the bottom bar from entries WITHOUT hiddenOnMobileBottom
+  // and the top-bar icon row from entries WITH it. Every entry must land in
+  // exactly one of those buckets, so nothing is unreachable on a phone.
+  it('keeps Backup top-level but off the bottom bar (surfaced in the top bar)', () => {
+    const backup = NAVIGATION_ENTRIES.find(e => e.id === 'backup');
+    expect(backup, 'Backup must stay a top-level nav entry (operator preference)').toBeDefined();
+    expect(backup?.hiddenOnMobileBottom).toBe(true);
+  });
+
+  it('every entry is reachable on mobile (bottom bar OR top-bar icon row)', () => {
+    const bottom = NAVIGATION_ENTRIES.filter(e => !e.hiddenOnMobileBottom);
+    const top = NAVIGATION_ENTRIES.filter(e => e.hiddenOnMobileBottom);
+    expect(bottom.length + top.length).toBe(NAVIGATION_ENTRIES.length);
+    // Bottom bar must stay small enough that a phone row doesn't overflow into
+    // a crush; the scroll fallback exists, but the default set should fit.
+    expect(bottom.length).toBeLessThanOrEqual(5);
   });
 });

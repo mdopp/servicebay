@@ -89,11 +89,19 @@ describe('Responsive layout guards (#806)', () => {
       expect(root?.className).toMatch(/\bmd:hidden\b/);
     });
 
-    it('exposes Settings via the touch-target row, never as a tappable label', () => {
+    it('exposes Settings via the touch-target icon row, never as a bottom-bar row', () => {
       withToast(<MobileTopBar />);
       // Settings reaches the mobile user via the icon button, not by
-      // adding clutter as a row in the bottom nav.
-      expect(screen.getByLabelText('Open settings')).toBeDefined();
+      // adding clutter as a row in the bottom nav. Schema-driven label
+      // is the entry's full `name` (#1992).
+      expect(screen.getByLabelText('Settings')).toBeDefined();
+    });
+
+    it('exposes Backup in the top-bar icon row so it stays reachable on mobile (#1992)', () => {
+      withToast(<MobileTopBar />);
+      // Backup is hiddenOnMobileBottom (operator keeps it top-level but it
+      // would crowd the bottom row), so it must surface in the top bar.
+      expect(screen.getByLabelText('Backup & restore')).toBeDefined();
     });
   });
 

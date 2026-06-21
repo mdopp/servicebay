@@ -232,6 +232,51 @@ describe('resolveTargetPath — layout is category-driven (#2006)', () => {
   });
 });
 
+describe('resolveTargetPath — audiobooks Bookshelf flatten (#2028)', () => {
+  const ab = (rel: string, anchor = '') =>
+    resolveTargetPath(rel, 'audiobooks', { owner: 'shared', anchor });
+
+  it('a plain Author/Book/track is kept unchanged', () => {
+    expect(ab('Author/Book/01.mp3')).toBe('audiobooks/Author/Book/01.mp3');
+  });
+
+  it('flattens a single disc folder into the book folder with a disc prefix', () => {
+    expect(ab('Author/Book/CD1/01.mp3')).toBe('audiobooks/Author/Book/d01-01.mp3');
+    expect(ab('Author/Book/CD2/01.mp3')).toBe('audiobooks/Author/Book/d02-01.mp3');
+  });
+
+  it('collapses a DOUBLE-nested disc folder (CD1/CD1) to one prefix from the outer disc', () => {
+    expect(ab('Bro.Code/CD1/CD1/01 Track 1.mp3')).toBe('audiobooks/Bro.Code/d01-01 Track 1.mp3');
+  });
+
+  it('two discs’ same-named tracks never collide in the flat book folder', () => {
+    expect(ab('Book/CD1/01.mp3')).toBe('audiobooks/Book/d01-01.mp3');
+    expect(ab('Book/CD2/01.mp3')).toBe('audiobooks/Book/d02-01.mp3');
+  });
+
+  it('recognises Disc/Disk/Part/Vol + German Teil/Folge disc wrappers', () => {
+    expect(ab('Book/Disc 3/t.mp3')).toBe('audiobooks/Book/d03-t.mp3');
+    expect(ab('Book/Disk1/t.mp3')).toBe('audiobooks/Book/d01-t.mp3');
+    expect(ab('Book/Part 2/t.mp3')).toBe('audiobooks/Book/d02-t.mp3');
+    expect(ab('Book/Vol. 4/t.mp3')).toBe('audiobooks/Book/d04-t.mp3');
+    expect(ab('Book/Teil 5/t.mp3')).toBe('audiobooks/Book/d05-t.mp3');
+  });
+
+  it('caps audio depth at Author/Book/ — extra-deep non-disc dirs are trimmed to the deepest two', () => {
+    expect(ab('a/b/Author/Book/01.mp3')).toBe('audiobooks/Author/Book/01.mp3');
+    expect(ab('a/b/Author/Book/CD1/01.mp3')).toBe('audiobooks/Author/Book/d01-01.mp3');
+  });
+
+  it('a bare disc wrapper with no number flattens without a prefix', () => {
+    expect(ab('Book/CD/01.mp3')).toBe('audiobooks/Book/01.mp3');
+  });
+
+  it('owner prefix + anchor still apply under the flatten', () => {
+    expect(resolveTargetPath('mdopp/Book/CD1/01.mp3', 'audiobooks', { owner: 'mdopp', anchor: 'mdopp' }))
+      .toBe('mdopp/audiobooks/Book/d01-01.mp3');
+  });
+});
+
 describe('buildFolderTree (#1915)', () => {
   const files = [
     { dir: '', category: 'documents' as const, size: 1 },

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { logger } from '@servicebay/api-client';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // V4 Hook
 import { useEscapeKey } from '@/hooks/useEscapeKey';
@@ -190,6 +190,20 @@ export default function ServicesDashboard() {
         closeOverlays,
         hasOpenOverlay
     } = useServiceActions({ onRefresh: fetchData });
+
+    const router = useRouter();
+
+    // IA slice 1 (#2029): a tile is a service is one page — opening/monitoring a
+    // managed service navigates to its per-service Operate page (status + health
+    // + settings + containers + actions) instead of a logs drawer. Gateway/link
+    // "services" have no Operate page, so they keep the monitor drawer.
+    const openServiceDetail = useCallback((service: ServiceViewModel) => {
+        if (service.type === 'gateway' || service.type === 'link') {
+            openMonitorDrawer(service);
+            return;
+        }
+        router.push(`/services/${encodeURIComponent(service.id || service.name)}`);
+    }, [router, openMonitorDrawer]);
 
     const {
         openActions: openContainerActions,
@@ -673,7 +687,7 @@ export default function ServicesDashboard() {
                                     attachNodeContext={attachNodeContext}
                                     httpsDomains={httpsDomains}
                                     imageUpdateAvailable={imageUpdateServices.has(entry.service.name.replace(/\.service$/, ''))}
-                                    onMonitor={openMonitorDrawer}
+                                    onMonitor={openServiceDetail}
                                     onEdit={openEditDrawer}
                                     onActions={openActions}
                                     onEditLink={handleEditLink}

@@ -308,6 +308,31 @@ def _jellyfin_create_library(base_url: str, token: str, name: str, collection_ty
     return "error"
 
 
+def ensure_jellyfin_bookshelf_plugin(base_url: str, token: str) -> bool:
+    """Install the official `jellyfin-plugin-bookshelf` so a `books`-type library
+    indexes AUDIOBOOKS (mp3/m4a/m4b/flac) as playable AudioBook items, not just
+    ebooks (#2028). Jellyfin's built-in Books collection type only handles
+    pdf/epub WITHOUT this plugin — the audiobooks library would show 0 playable
+    tracks. Must run BEFORE jellyfin_provision_libraries creates the `books`
+    library.
+
+    Best-effort + idempotent: Jellyfin no-ops a re-install of an already-present
+    plugin, so this is safe every deploy. A failure just logs a note (the
+    operator can install 'Bookshelf' from Dashboard → Plugins → Catalog) — it
+    never blocks the deploy."""
+    code, _ = request_json(
+        "POST", f"{base_url}/Packages/Installed/Bookshelf",
+        None,
+        extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'},
+    )
+    if code in (200, 204):
+        log("   ✅ Jellyfin Bookshelf plugin install requested (audiobooks → playable AudioBook items).")
+        return True
+    log(f"   (note) Could not request Bookshelf plugin install via API (HTTP {code}); "
+        "if audiobooks don't appear, install 'Bookshelf' from Dashboard → Plugins → Catalog.")
+    return False
+
+
 def jellyfin_provision_libraries(base_url: str, token: str, media_root: str) -> dict[str, object]:
     """Create PUBLIC libraries from the shared `file-share/data/<category>` dirs
     and PRIVATE per-user libraries from `data/<owner>/<category>` dirs, mirroring
@@ -632,6 +657,9 @@ def main() -> int:
                 # audiobooks now). Then grant each user the public libs + their own
                 # private libs. Music/Movies/Shows/Audiobooks; photos→Immich,
                 # documents→Filebrowser.
+                # Bookshelf MUST be installed before the `books`-type Audiobooks
+                # library so audiobooks index as playable AudioBook items (#2028).
+                ensure_jellyfin_bookshelf_plugin(jellyfin_base, jf_token)
                 libs = jellyfin_provision_libraries(
                     jellyfin_base, jf_token,
                     env("JELLYFIN_MEDIA_PATH", "/mnt/data/stacks/file-share/data"),

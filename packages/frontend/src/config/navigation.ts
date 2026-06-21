@@ -10,9 +10,10 @@
  *   1. Build a route at `/<path>`.
  *   2. Append a NavigationEntry below.
  *   3. (Optional) hide from the mobile bottom bar with
- *      `hiddenOnMobileBottom: true` — Settings does this so the
- *      bottom bar doesn't get cluttered (it's still in the top
- *      bar's icon row).
+ *      `hiddenOnMobileBottom: true` — Settings & Backup do this so the
+ *      bottom bar stays uncluttered (they surface in the mobile top
+ *      bar's icon row instead, so they're still reachable on a phone;
+ *      see MobileNav.tsx #1992).
  */
 import { Box, Terminal, Activity, Settings, Network, Home, DatabaseBackup } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -31,9 +32,10 @@ export interface NavigationEntry {
   /** Route path. The `usePathname().startsWith(path)` test marks an
    *  entry active, so prefer "/X" over "/X/" or "/X/index". */
   path: string;
-  /** When true, the mobile bottom bar omits this entry. The desktop
-   *  sidebar always renders every entry. Used today for Settings
-   *  (already in the mobile top bar's icon row). */
+  /** When true, the mobile bottom bar omits this entry; instead it is
+   *  rendered as an icon in the mobile top bar's right-hand row, so it
+   *  stays reachable on a phone (#1992). The desktop sidebar always
+   *  renders every entry. Used for Settings and Backup. */
   hiddenOnMobileBottom?: boolean;
 }
 

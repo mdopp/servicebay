@@ -14,7 +14,15 @@ import { useToast } from '@/providers/ToastProvider';
  * the service's Health and Settings: start / stop / restart / update, back up
  * config to NAS, and delete.
  */
-export default function OperateActionsTab({ service }: { service: ServiceViewModel }) {
+export default function OperateActionsTab({
+  service,
+  deletedHref = '/settings/services',
+}: {
+  service: ServiceViewModel;
+  /** Where to navigate after the service is deleted (defaults to the settings
+   *  services index; the primary `/services/[name]` Operate page passes `/services`). */
+  deletedHref?: string;
+}) {
   const router = useRouter();
   const { addToast, updateToast } = useToast();
   const serviceName = service.id || service.name;
@@ -88,7 +96,7 @@ export default function OperateActionsTab({ service }: { service: ServiceViewMod
       const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}${query}`, { method: 'DELETE' });
       if (res.ok) {
         updateToast(toastId, 'success', 'Service deleted', `${service.name} has been removed.`);
-        router.push('/settings/services');
+        router.push(deletedHref);
       } else {
         const data = await res.json().catch(() => ({}));
         updateToast(toastId, 'error', 'Delete failed', data.error);
@@ -99,7 +107,7 @@ export default function OperateActionsTab({ service }: { service: ServiceViewMod
       setDeleteInFlight(false);
       setDeleteOpen(false);
     }
-  }, [addToast, updateToast, deleteInFlight, router, service.name, serviceName, nodeParam]);
+  }, [addToast, updateToast, deleteInFlight, router, service.name, serviceName, nodeParam, deletedHref]);
 
   return (
     <div className="space-y-6 max-w-xl">
