@@ -31,6 +31,16 @@ describe('mobile reachability (#1992)', () => {
     expect(backup?.hiddenOnMobileBottom).toBe(true);
   });
 
+  it('has a Status entry linking to /status, kept off the bottom bar (#2030)', () => {
+    const status = NAVIGATION_ENTRIES.find(e => e.id === 'status');
+    expect(status, 'Status must be a top-level nav entry (IA slice 2)').toBeDefined();
+    expect(status?.path).toBe('/status');
+    expect(status?.name).toBe('Status');
+    // Bottom bar already holds 5 (home/services/network/health/terminal); Status
+    // surfaces in the mobile top-bar icon row instead, like Settings/Backup.
+    expect(status?.hiddenOnMobileBottom).toBe(true);
+  });
+
   it('every entry is reachable on mobile (bottom bar OR top-bar icon row)', () => {
     const bottom = NAVIGATION_ENTRIES.filter(e => !e.hiddenOnMobileBottom);
     const top = NAVIGATION_ENTRIES.filter(e => e.hiddenOnMobileBottom);
