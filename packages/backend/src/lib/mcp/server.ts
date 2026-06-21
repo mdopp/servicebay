@@ -32,7 +32,7 @@ import { recordAudit } from './audit';
 import { notifyDestructiveOp } from './notify';
 import { createPendingApproval } from './pendingApprovals';
 import { redactLogText, redactServiceFiles } from './redact';
-import type { ApiScope } from '@/lib/auth/apiScope';
+import { type ApiScope, scopeSatisfiedBy } from '@/lib/auth/apiScope';
 import { parseEfibootmgr, assessUsbBootReadiness } from './efibootmgr';
 import { performStackReset, StackResetError } from '@/lib/install/performStackReset';
 import { jailPath, realPathInJail, JAIL_ROOT } from './pathJail';
@@ -205,10 +205,9 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
  * spinning up the whole MCP server.
  */
 export function tokenHasScope(tokenScopes: readonly ApiScope[], required: ApiScope): boolean {
-  if (tokenScopes.includes(required)) return true;
-  if (required === 'exec' && tokenScopes.includes('destroy')) return true;
-  if (required === 'reboot' && tokenScopes.includes('destroy')) return true;
-  return false;
+  // Single-sourced scope-implication ladder lives in apiScope.ts (#2048) so
+  // the delegated-mint subset check and this MCP gate can't drift.
+  return scopeSatisfiedBy(tokenScopes, required);
 }
 
 /**

@@ -44,7 +44,7 @@ import { logger } from '@/lib/logger';
 // for everything they previously could — we additively add `exec`
 // without removing `destroy`'s grants.
 export { type ApiScope, ALL_SCOPES } from './apiScope';
-import { ALL_SCOPES, type ApiScope } from './apiScope';
+import { ALL_SCOPES, type ApiScope, scopesAreSubset } from './apiScope';
 
 export interface ApiToken {
   id: string;            // 8-hex public id
@@ -56,6 +56,20 @@ export interface ApiToken {
   expiresAt?: string;
   lastUsedAt?: string;
   createdBy: string;     // session.user at creation time
+  // Lineage (#2048): set when a token holder delegates a child token. The id
+  // of the parent token this one was minted from. Absent on directly-minted
+  // (session/admin) tokens — existing tokens have no parentId, which is fine;
+  // this is purely additive and never settable by an external caller.
+  parentId?: string;
+}
+
+/** Raised by createDelegatedToken when the parent credential or the requested
+ *  narrowing is invalid. The route maps `status` to the HTTP response. */
+export class DelegateError extends Error {
+  constructor(message: string, readonly status: 400 | 403) {
+    super(message);
+    this.name = 'DelegateError';
+  }
 }
 
 const TOKENS_FILE = path.join(DATA_DIR, 'api-tokens.json');
@@ -134,6 +148,9 @@ export async function createToken(input: {
   scopes: ApiScope[];
   expiresAt?: string;
   createdBy: string;
+  // Lineage marker (#2048). Set only by the delegated-mint path — the public
+  // mint route never passes it, so an external caller can't forge a parent.
+  parentId?: string;
 }): Promise<{ token: Omit<ApiToken, 'hash'>; secret: string }> {
   if (!input.name?.trim()) throw new Error('Token name is required');
   if (!input.scopes?.length) throw new Error('At least one scope is required');
@@ -152,10 +169,11 @@ export async function createToken(input: {
     createdAt: new Date().toISOString(),
     expiresAt: input.expiresAt,
     createdBy: input.createdBy,
+    ...(input.parentId ? { parentId: input.parentId } : {}),
   };
   data.tokens.push(token);
   await saveFile(data);
-  logger.info('auth:apiTokens', `Created API token ${id} ("${token.name}") scopes=[${token.scopes.join(',')}] by ${input.createdBy}`);
+  logger.info('auth:apiTokens', `Created API token ${id} ("${token.name}") scopes=[${token.scopes.join(',')}]${token.parentId ? ` parent=${token.parentId}` : ''} by ${input.createdBy}`);
 
   // The "first user-minted token revokes the bootstrap" rule (#322) used
   // to live here as a dynamic `await import('../mcp/bootstrapToken')` —
@@ -165,6 +183,65 @@ export async function createToken(input: {
 
   // The clear-text token is `sb_<id>_<secret>` — returned exactly once.
   return { token: publicView(token), secret: `sb_${id}_${secret}` };
+}
+
+/**
+ * Delegated child-mint (#2048) — the foundation of the token chain-of-trust
+ * (epic #2047). A *holder* of a raw parent token ("sb_<id>_<secret>") mints a
+ * child whose authority is strictly bounded by the parent:
+ *   - scopes ⊆ parent.scopes (implied scopes count — a `destroy` parent may
+ *     mint a `reboot`/`exec` child; see scopesAreSubset)
+ *   - expiresAt ≤ parent.expiresAt (TTL can only narrow, never extend; if the
+ *     parent never expires the child may set any expiry)
+ * The parent must be present, unexpired, and verify against its stored hash.
+ * The child records `parentId` = the parent's id.
+ *
+ * NOTE: this does NOT implement cascading revocation in verifyToken — that's
+ * #2049, which builds on the parentId chain landed here.
+ */
+export async function createDelegatedToken(input: {
+  parentRaw: string;
+  name: string;
+  scopes: ApiScope[];
+  expiresAt?: string;
+}): Promise<{ token: Omit<ApiToken, 'hash'>; secret: string }> {
+  if (!input.scopes?.length) throw new DelegateError('At least one scope is required', 400);
+  for (const s of input.scopes) {
+    if (!ALL_SCOPES.includes(s)) throw new DelegateError(`Unknown scope: ${s}`, 400);
+  }
+
+  // Resolve + authenticate the parent credential. verifyToken returns null for
+  // a malformed/unknown/expired token or a bad secret — all of which mean the
+  // caller doesn't hold a valid parent, so the delegation is forbidden.
+  const parent = await verifyToken(input.parentRaw);
+  if (!parent) throw new DelegateError('Invalid, expired, or revoked parent token', 403);
+
+  // Scope narrowing: every requested scope must be held (directly or implied)
+  // by the parent. A child can never widen beyond its parent's authority.
+  if (!scopesAreSubset(input.scopes, parent.scopes)) {
+    throw new DelegateError('Requested scopes exceed the parent token’s scopes', 403);
+  }
+
+  // TTL narrowing: a child may expire no later than its parent. An
+  // unbounded-lifetime parent imposes no upper bound on the child.
+  if (parent.expiresAt) {
+    const parentExp = Date.parse(parent.expiresAt);
+    if (!input.expiresAt) {
+      throw new DelegateError('Child token must expire no later than its parent (parent has an expiry)', 403);
+    }
+    const childExp = Date.parse(input.expiresAt);
+    if (!Number.isFinite(childExp) || childExp > parentExp) {
+      throw new DelegateError('Child token expiry exceeds the parent token’s expiry', 403);
+    }
+  }
+
+  return createToken({
+    name: input.name,
+    scopes: input.scopes,
+    expiresAt: input.expiresAt,
+    createdBy: `token:${parent.id}`,
+    parentId: parent.id,
+  });
 }
 
 export async function revokeToken(id: string): Promise<boolean> {

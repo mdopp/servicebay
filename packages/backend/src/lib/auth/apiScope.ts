@@ -24,3 +24,30 @@
  */
 export type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'reboot' | 'destroy' | 'exec';
 export const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'reboot', 'destroy', 'exec'];
+
+/**
+ * Whether a held scope set satisfies a single `required` scope, honoring the
+ * implication rules carved out of the original `destroy` tier:
+ *   - `destroy` implies `exec`  (the pre-#591 exec-via-destroy back-compat)
+ *   - `destroy` implies `reboot` (#1765 — reboot split out of destroy)
+ *
+ * Single source of truth for scope implication. `mcp/server.ts`'s
+ * `tokenHasScope` and the delegated-mint subset check (#2048) both route
+ * through this so the ladder stays consistent in one place.
+ */
+export function scopeSatisfiedBy(held: readonly ApiScope[], required: ApiScope): boolean {
+  if (held.includes(required)) return true;
+  if (required === 'exec' && held.includes('destroy')) return true;
+  if (required === 'reboot' && held.includes('destroy')) return true;
+  return false;
+}
+
+/**
+ * Whether `child` is a (possibly implied) subset of `parent` — every scope the
+ * child wants is held, directly or by implication, by the parent. Used to gate
+ * delegated child-token minting (#2048): a parent with `destroy` may mint a
+ * child with `reboot`/`exec`, but a child may never widen beyond its parent.
+ */
+export function scopesAreSubset(child: readonly ApiScope[], parent: readonly ApiScope[]): boolean {
+  return child.every(s => scopeSatisfiedBy(parent, s));
+}
