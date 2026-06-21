@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.131.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.130.0...servicebay-v4.131.0) (2026-06-21)
+
+
+### Features
+
+* **disk-import:** refresh worker image in background on startup ([050f637](https://github.com/mdopp/servicebay/commit/050f637de2420ad68e175bbea07351ce3256fb5c)), closes [#1995](https://github.com/mdopp/servicebay/issues/1995)
+* **frontend:** per-service Operate page + shared detail, reused in the network-map sidebar ([eab22b5](https://github.com/mdopp/servicebay/commit/eab22b54ccbb5a1468cf94c45fe341605458ee7f)), closes [#2029](https://github.com/mdopp/servicebay/issues/2029)
+* **media:** audiobooks → Jellyfin Bookshelf — install plugin + flatten disc layout on import ([93c522b](https://github.com/mdopp/servicebay/commit/93c522b7f28fae73acd52f8a732293aed8200d11)), closes [#2028](https://github.com/mdopp/servicebay/issues/2028)
+* mobile nav, disk-import worker refresh, audiobooks→Bookshelf, per-service Operate page ([385e5e4](https://github.com/mdopp/servicebay/commit/385e5e40e6950f9f9ec09056657cd749a4fb9ec2))
+
+
+### Bug Fixes
+
+* **frontend:** make top-level nav usable on phones, keep Backup reachable ([0f39152](https://github.com/mdopp/servicebay/commit/0f391520a761ec5ef466aa6554d28661bda13d64)), closes [#1992](https://github.com/mdopp/servicebay/issues/1992)
+
 ## [4.130.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.129.3...servicebay-v4.130.0) (2026-06-21)
 
 
