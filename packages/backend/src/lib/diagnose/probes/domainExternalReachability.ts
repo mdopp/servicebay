@@ -20,6 +20,15 @@
  * so the 4 h sweep 429'd in practice. This rewrite moves continuous
  * monitoring onto DoH and keeps letsdebug as the deep-diagnostic
  * affordance.
+ *
+ * It ALSO used to fold in a per-domain `https://<domain>/` GET from inside the
+ * container (#611). That was removed: from the box's vantage the fetch is a
+ * hairpin/self-resolution that times out under concurrent diagnose load even when
+ * the service is perfectly reachable — a chronic FALSE fatal that trains operators
+ * to ignore the dashboard. The upstream-health signal it was meant to provide
+ * ("DNS green but the backend 502s") is already covered, reliably, by the
+ * `domain_unreachable` probe's Host-header fetch straight to NPM on the LAN IP — so
+ * dropping it here loses no coverage and removes the cry-wolf.
  */
 
 import { getConfig } from '@/lib/config';
@@ -117,10 +126,6 @@ async function listPublicDomains(): Promise<string[]> {
   return Array.from(new Set(hosts.filter(isPublicEntry).map(h => h.domain)));
 }
 
-async function getPublicDomainSuffix(): Promise<string | null> {
-  const config = await getConfig();
-  return config.reverseProxy?.publicDomain ?? null;
-}
 
 function worst(a: 'ok' | 'warn' | 'fail', b: 'ok' | 'warn' | 'fail'): 'ok' | 'warn' | 'fail' {
   if (a === 'fail' || b === 'fail') return 'fail';
@@ -128,103 +133,6 @@ function worst(a: 'ok' | 'warn' | 'fail', b: 'ok' | 'warn' | 'fail'): 'ok' | 'wa
   return 'ok';
 }
 
-/** Outcome of one HTTP-status check (#611). */
-interface HttpStatusResult {
-  status: 'ok' | 'warn' | 'fail';
-  detail: string;
-}
-
-/**
- * HTTP-status check for a single public domain (#611).
- *
- * Probes `https://<domain>/` from inside the ServiceBay container.
- * Caught the v4.0.x outage where every proxied service was 502-ing
- * because Authelia was crash-looping but DNS still resolved fine.
- *
- * Classification:
- *   - 2xx → ok
- *   - 3xx → ok if Location is same-origin (a relative path, or an
- *     absolute URL whose host equals `domain`) — Navidrome's `/web/`,
- *     Radicale's `/.web`, Home Assistant's `/onboarding.html` are the
- *     normal "go to my UI" redirects from a healthy backend. Also ok
- *     when Location points at `auth.<publicDomain>` (Authelia
- *     forward-auth). Cross-origin redirects to anywhere else → warn.
- *   - 401 / 403 → ok (auth-gated endpoint serving an unauthenticated
- *     request; the proxy is healthy, the app just wants creds).
- *   - 5xx → fail with the status code in the detail.
- *   - 4xx other than 401/403 → warn (some apps 404 on `/` by design,
- *     which is normal — don't fail-fast on it).
- *   - Network error / timeout → fail.
- *
- * Internal probe by design — runs from inside the container, hits the
- * local NPM. Cheap, no third-party dep, no rate limits. Catches "NPM
- * up + backend down" which is the failure mode #611 was filed for.
- * The DNS layer (Cloudflare DoH) and letsdebug already cover the
- * external-reachability question for cases where the upstream firewall
- * itself is the problem.
- */
-/** True when `location` resolves under `domain`. Accepts either a
- *  relative path (no scheme → always same-origin) or an absolute URL
- *  whose hostname equals `domain` exactly. */
-function isSameOrigin(location: string, domain: string): boolean {
-  if (!location) return false;
-  // Relative — path-only redirect, always same-origin.
-  if (!/^https?:\/\//i.test(location)) return true;
-  try {
-    return new URL(location).hostname.toLowerCase() === domain.toLowerCase();
-  } catch {
-    return false;
-  }
-}
-
-export async function probeHttpStatus(
-  domain: string,
-  publicDomain: string | null,
-  fetchImpl: typeof fetch = fetch,
-  timeoutMs = 5_000,
-): Promise<HttpStatusResult> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetchImpl(`https://${domain}/`, {
-      method: 'GET',
-      redirect: 'manual',
-      headers: { 'Accept': 'text/html,*/*' },
-      signal: controller.signal,
-    });
-    const code = res.status;
-    if (code >= 200 && code < 300) return { status: 'ok', detail: `HTTP ${code}` };
-    if (code >= 300 && code < 400) {
-      const location = res.headers.get('location') || '';
-      const authHost = publicDomain ? `auth.${publicDomain}` : null;
-      if (authHost && location.includes(authHost)) {
-        return { status: 'ok', detail: `HTTP ${code} → ${authHost} (forward-auth)` };
-      }
-      // Same-origin redirects (relative path, or absolute URL whose host
-      // matches the probed domain) are how Navidrome / Radicale / Home
-      // Assistant tell a fresh client "go to my UI" — proxy + backend are
-      // healthy, not a misroute.
-      if (location && isSameOrigin(location, domain)) {
-        return { status: 'ok', detail: `HTTP ${code} → ${location} (same-origin)` };
-      }
-      return { status: 'warn', detail: `HTTP ${code} → ${location || 'no Location header'}` };
-    }
-    if (code === 401 || code === 403) {
-      return { status: 'ok', detail: `HTTP ${code} (auth-gated, proxy healthy)` };
-    }
-    if (code >= 500) return { status: 'fail', detail: `HTTP ${code}` };
-    // 400, 404, 405, 410, etc. — common on apps that don't serve `/`.
-    return { status: 'warn', detail: `HTTP ${code}` };
-  } catch (e) {
-    const aborted = e instanceof Error && e.name === 'AbortError';
-    return {
-      status: 'fail',
-      detail: aborted ? `timeout after ${timeoutMs}ms` : (e instanceof Error ? e.message : String(e)),
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 export async function checkDomainExternalReachability(): Promise<DomainExternalReachabilityResult> {
   const publicDomains = await listPublicDomains();
@@ -235,15 +143,6 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
     };
   }
 
-  // #611 — also issue an internal HTTPS GET per domain to catch the
-  // "DNS green but upstream returning 5xx" class that v4.0.x had
-  // silently. Run in parallel so the probe round-trip stays roughly
-  // the same wall-time as the existing DNS-only path.
-  const publicDomainSuffix = await getPublicDomainSuffix();
-  const httpResults: Map<string, HttpStatusResult> = new Map();
-  await Promise.all(publicDomains.map(async domain => {
-    httpResults.set(domain, await probeHttpStatus(domain, publicDomainSuffix));
-  }));
 
   let overall: 'ok' | 'warn' | 'fail' = 'ok';
   const items: ProbeItem[] = [];
@@ -335,24 +234,6 @@ export async function checkDomainExternalReachability(): Promise<DomainExternalR
       }
     }
 
-    // #611 — fold in the HTTP-status check. Worst-of aggregation
-    // matches the existing DNS+letsdebug pattern.
-    const httpResult = httpResults.get(domain);
-    if (httpResult) {
-      const httpLayerOk = httpResult.status === 'ok';
-      const dnsLayerOk = rowStatus === 'ok';
-      if (!httpLayerOk) {
-        // Spell out which layer the operator should investigate. A
-        // DNS-green + HTTP-fail row almost always means upstream
-        // crash (the v4.0.x Authelia case) — name it so the operator
-        // doesn't re-run `dig` on a row that's already DNS-correct.
-        const hint = dnsLayerOk
-          ? 'DNS layer OK — issue is in the upstream backend (NPM → service is failing).'
-          : 'DNS layer also has findings — fix that first; HTTP may resolve once DNS is correct.';
-        rowDetail += `\n${hint} HTTPS GET: ${httpResult.detail}`;
-        rowStatus = worst(rowStatus, httpResult.status);
-      }
-    }
 
     // Skip healthy rows from the items list so the probe collapses to a happy summary.
     if (rowStatus === 'ok' && dnsPayload.matched) continue;
