@@ -116,6 +116,16 @@ EOF
       else
         usermod -aG devshare "$u" 2>/dev/null || true
       fi
+      # Reconcile the persisted per-user home to the CURRENT uid/gid every
+      # boot. LDAP users get a runtime-assigned uid (the entrypoint can't pin
+      # it the way the Dockerfile pins `dev`), so a rebuild that shifts the uid
+      # would leave the old-uid-owned ~/.claude unreadable → silent re-login.
+      # These homes are small and mode-700 (the heavy shared checkouts live in
+      # /workspace itself, not here), so a recursive chown is cheap and safe.
+      user_home="$DEV_HOME/home/$u"
+      if [ -d "$user_home" ]; then
+        chown -R "$u":"$u" "$user_home" 2>/dev/null || true
+      fi
     done
     echo "claude-dev: LDAP login enabled — members of group '${CLAUDE_DEV_LDAP_GROUP}' sign in with their LLDAP password (bind ${ldap_uri}; ${provisioned} new local account(s) provisioned)."
   else

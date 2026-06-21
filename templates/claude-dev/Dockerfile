@@ -50,8 +50,20 @@ RUN npm install -g @anthropic-ai/claude-code && npm cache clean --force
 # user belong to it so they can collaborate on the same /workspace checkouts.
 # umask 002 (login shells) makes new files group-writable; paired with the
 # setgid bit the entrypoint puts on /workspace, new clones stay shared.
-RUN groupadd devshare \
- && useradd --create-home --home-dir /workspace --shell /bin/bash -G devshare dev \
+#
+# UIDs/GIDs are PINNED to their current deterministic values so the persistent
+# /workspace volume's host-mapped ownership (rootless keep-id) stays valid
+# across image rebuilds — otherwise a base-image bump or an extra system user
+# renumbers `dev` and the persisted ~/.claude login (owned by the old UID)
+# becomes unreadable. Pin order matters: devshare (gid 1001) before `dev` so it
+# keeps 1001; `dev` gets uid 1001 and its own `dev` primary group at gid 1002;
+# `ldapusers` (the runtime-provisioned LDAP login group) is pinned to gid 1003
+# here so the entrypoint's `groupadd -f ldapusers` is a no-op that reuses it.
+RUN groupadd --gid 1001 devshare \
+ && groupadd --gid 1002 dev \
+ && useradd --create-home --home-dir /workspace --shell /bin/bash \
+      --uid 1001 --gid 1002 -G devshare dev \
+ && groupadd --gid 1003 ldapusers \
  && printf '%s\n' 'umask 002' > /etc/profile.d/claude-dev-umask.sh
 
 # LDAP auth wiring (nss-pam-ldapd), baked deterministically at build time.
