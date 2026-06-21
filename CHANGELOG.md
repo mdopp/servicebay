@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.133.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.132.0...servicebay-v4.133.0) (2026-06-21)
+
+
+### Features
+
+* **diagnose:** on-demand re-sync of Jellyfin library access ([5b0567b](https://github.com/mdopp/servicebay/commit/5b0567b273d4ee2ce109a85a52425510ecf352f8)), closes [#2040](https://github.com/mdopp/servicebay/issues/2040)
+
+
+### Bug Fixes
+
+* **frontend:** redirect /settings/services/[name] to canonical /services/[name] ([0efe710](https://github.com/mdopp/servicebay/commit/0efe71097248ed18539c197330c69ddc0fc46fc8)), closes [#2039](https://github.com/mdopp/servicebay/issues/2039)
+* settings/services redirect + on-demand Jellyfin library re-sync ([1096a04](https://github.com/mdopp/servicebay/commit/1096a0423a419d4f508f9676cf87c15e2efc5d6c))
+
 ## [4.132.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.131.0...servicebay-v4.132.0) (2026-06-21)
 
 
