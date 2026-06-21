@@ -85,8 +85,8 @@
   },
   "MEDIA_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for Jellyfin (web UI + Symfonium/Findroid/Streamyfin endpoint). Quick Connect handles mobile-app pairing — the app shows a 6-digit code, you confirm it once in the web UI (which can be SSO'd via jellyfin-plugin-sso if installed) and the app is paired without a shared password.",
-    "default": "music",
+    "description": "Subdomain for Jellyfin — the general media server (music + audiobooks + video), so `media` fits better than the old per-content `music`/`books`. Web UI + Symfonium/Findroid/Streamyfin endpoint. Quick Connect handles mobile-app pairing — the app shows a 6-digit code, you confirm it once in the web UI and the app is paired without a shared password.",
+    "default": "media",
     "exposure": "public",
     "proxyPort": "JELLYFIN_PORT",
     "proxyConfig": {

@@ -29,7 +29,7 @@ Override `JELLYFIN_MEDIA_PATH` in the wizard's Configure step if your media live
 
 ## Subdomains
 
-* `https://music.<your-domain>` → Jellyfin (LLDAP login; mobile apps via Quick Connect)
+* `https://media.<your-domain>` → Jellyfin (LLDAP login; mobile apps via Quick Connect)
 
 ## Data Layout
 
