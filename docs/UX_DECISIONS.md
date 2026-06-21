@@ -54,6 +54,40 @@ moves heavy features (disk-import, backup) to their own apps + tiles.
 
 ---
 
+## Status is the box-wide health noun; Diagnostics/`/health` is its alias
+
+**What.** The IA redesign's four-noun nav (Services · **Status** · Settings ·
+Backup) names the box-wide "is it OK?" screen **Status** (spec §4.3). A
+top-level `Status` nav entry at `/status` renders the box-wide health
+view — health checks, diagnose `actions[]`, box-wide containers, and
+system info — i.e. the same `HealthDashboard` as the old `/health`. The
+`HealthDashboard` reads its active tab from the URL, so
+`/status?tab=containers` absorbs the old `/health?tab=containers`
+surface. The pre-existing `Diagnostics` entry at `/health` stays as a
+working alias rendering the same dashboard (rip-and-replace of the rest
+of the flat IA continues across the slices; the alias is not a permanent
+compat shim, it's the un-renamed remainder until the diagnostics surface
+is folded into Status).
+
+**Why.** Slice 2 of the IA redesign (#2030, epic #1950). The 3-tier
+disclosure, goal-based groups, and global search already shipped in
+slice 1 (#1956/#2029); the remaining slice-2 gap was the `Status` route
+and its nav entry so the box has **one** named health screen instead of
+the per-container health tab living under "Diagnostics". `Status` is
+marked `hiddenOnMobileBottom` so the phone bottom bar stays at five
+entries (it surfaces in the mobile top-bar icon row, like Settings and
+Backup).
+
+**Where enforced.**
+- Route: `packages/frontend/src/app/(dashboard)/status/page.tsx`
+  (renders `@/dashboards/HealthDashboard`, same as `/health`).
+- Nav entry: `packages/frontend/src/config/navigation.ts`
+  (`id: 'status'`, `path: '/status'`).
+- Test: `packages/frontend/src/config/navigation.test.ts`
+  ("has a Status entry linking to /status…").
+
+---
+
 ## Self-heal first, diagnose-with-actions second
 
 **What.** Every error path walks this hierarchy: (1) heal silently

@@ -15,7 +15,7 @@
  *      bar's icon row instead, so they're still reachable on a phone;
  *      see MobileNav.tsx #1992).
  */
-import { Box, Terminal, Activity, Settings, Network, Home, DatabaseBackup } from 'lucide-react';
+import { Box, Terminal, Activity, HeartPulse, Settings, Network, Home, DatabaseBackup } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavigationEntry {
@@ -62,6 +62,13 @@ export const NAVIGATION_ENTRIES: NavigationEntry[] = [
   { id: 'home', name: 'Home', shortLabel: 'Home', icon: Home, path: '/' },
   { id: 'services', name: 'Services', shortLabel: 'Services', icon: Box, path: '/services' },
   { id: 'network', name: 'Network Map', shortLabel: 'Network', icon: Network, path: '/network' },
+  // Status is the box-wide health noun in the IA redesign (slice 2, spec §4.3):
+  // the single "is the box OK?" screen (checks + diagnose actions + box-wide
+  // containers/system info), absorbing the old /health?tab=containers surface.
+  // hiddenOnMobileBottom keeps the phone bottom bar at 5 (it surfaces in the
+  // mobile top-bar icon row instead, like Settings/Backup). /health remains a
+  // working alias rendering the same dashboard.
+  { id: 'status', name: 'Status', shortLabel: 'Status', icon: HeartPulse, path: '/status', hiddenOnMobileBottom: true },
   { id: 'health', name: 'Diagnostics', shortLabel: 'Health', icon: Activity, path: '/health' },
   { id: 'terminal', name: 'SSH Terminal', shortLabel: 'Terminal', icon: Terminal, path: '/terminal' },
   // Disk import is NOT a primary nav entry — it's a one-or-twice-ever maintenance
