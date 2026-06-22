@@ -80,11 +80,18 @@ describe('ServicesDashboard', () => {
         currentMockData = defaultTwinData;
     });
 
+    // #2067: the Services overview now renders TWICE in jsdom — the desktop
+    // list (ServiceRow, `hidden md:block`) and the mobile card stack
+    // (ServiceCard, `md:hidden`). CSS hides one per breakpoint in a real
+    // browser, but jsdom applies no styles, so every service name/badge
+    // appears in both. Assertions that used `getBy*` (expects exactly one)
+    // now use `getAllBy*` + length checks.
+
     it('keeps ports off the lean list tile (they live on the Operate page)', async () => {
         render(<ServicesDashboard />);
 
-        // The service still renders in the list…
-        await waitFor(() => screen.getByTestId('service-name-redis'));
+        // The service still renders in the list (desktop row + mobile card)…
+        await waitFor(() => expect(screen.getAllByTestId('service-name-redis').length).toBeGreaterThan(0));
         // …but the lean list tile (IA spec §4.1: "one dot = one honest health
         // state") no longer crowds in per-port links — ports moved to the
         // per-service Operate page.
@@ -93,35 +100,31 @@ describe('ServicesDashboard', () => {
 
     it('displays verified domains', async () => {
         render(<ServicesDashboard />);
-        
-        // Find Nginx card (It is renamed to Reverse Proxy (Nginx) because of proxy provider mock)
-        await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
-        
+
+        // Find Nginx (renamed to Reverse Proxy (Nginx) because of proxy provider mock)
+        await waitFor(() => expect(screen.getAllByText('Reverse Proxy (Nginx)').length).toBeGreaterThan(0));
+
         // Check for Verified Domain badge or text
-        expect(screen.getByText('app.example.com')).toBeDefined();
+        expect(screen.getAllByText('app.example.com').length).toBeGreaterThan(0);
     });
 
     it('shows Internet Gateway as a service card', async () => {
         render(<ServicesDashboard />);
-        
+
         // Should find "FritzBox Gateway" or "Internet Gateway" (based on mock data provider=fritzbox)
-        await waitFor(() => screen.getByText('FritzBox Gateway'));
-        
+        await waitFor(() => expect(screen.getAllByText('FritzBox Gateway').length).toBeGreaterThan(0));
+
         // Check for specific Gateway badge
-        expect(screen.getByText('Gateway')).toBeDefined(); // Badge text
-        expect(screen.getByText('1.2.3.4')).toBeDefined(); // Public IP
+        expect(screen.getAllByText('Gateway').length).toBeGreaterThan(0); // Badge text
+        expect(screen.getAllByText('1.2.3.4').length).toBeGreaterThan(0); // Public IP
     });
 
     it('identifies ServiceBay special services', async () => {
         // Nginx is the proxy provider in mock, so 'nginx.service' should be identified as Reverse Proxy
         render(<ServicesDashboard />);
-        
-        await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
-        
-        // Check for "Reverse Proxy" badge
-        // Note: The logic in ServicesDashboard replaces the name "nginx" with "Reverse Proxy (Nginx)"
-        // And adds a "Reverse Proxy" badge.
-        
+
+        await waitFor(() => expect(screen.getAllByText('Reverse Proxy (Nginx)').length).toBeGreaterThan(0));
+
         // We look for the badge specifically
         const badges = screen.getAllByText('Reverse Proxy');
         expect(badges.length).toBeGreaterThan(0);
@@ -152,9 +155,9 @@ describe('ServicesDashboard', () => {
         };
 
         render(<ServicesDashboard />);
-        
+
         // Expect to see it
-        await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
+        await waitFor(() => expect(screen.getAllByText('Reverse Proxy (Nginx)').length).toBeGreaterThan(0));
     });
 
     it('shows Unmanaged ServiceBay service (Agent V4)', async () => {
@@ -180,12 +183,12 @@ describe('ServicesDashboard', () => {
         };
 
         render(<ServicesDashboard />);
-        
-        // Should show up even if unmanaged
-        await waitFor(() => screen.getByText('ServiceBay System'));
-        
+
+        // Should show up even if unmanaged (desktop row + mobile card)
+        await waitFor(() => expect(screen.getAllByText('ServiceBay System').length).toBeGreaterThan(0));
+
         // Check for System badge
-        await waitFor(() => screen.getByText('System'));
+        await waitFor(() => expect(screen.getAllByText('System').length).toBeGreaterThan(0));
     });
 
     it('keeps unmanaged kube-style service ports off the lean list tile (Agent V4)', async () => {
@@ -216,8 +219,8 @@ describe('ServicesDashboard', () => {
         };
 
         render(<ServicesDashboard />);
-        
-        await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
+
+        await waitFor(() => expect(screen.getAllByText('Reverse Proxy (Nginx)').length).toBeGreaterThan(0));
         // Lean list tile (spec §4.1): the service renders, but its container
         // ports are not shown here — they live on the Operate page.
         expect(screen.queryByText(':80')).toBeNull();
@@ -259,9 +262,9 @@ spec:
         };
 
         render(<ServicesDashboard />);
-        
-        await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
-        
+
+        await waitFor(() => expect(screen.getAllByText('Reverse Proxy (Nginx)').length).toBeGreaterThan(0));
+
         // Should find the Yaml link/badge (implicit check for Managed logic working)
         // Since we didn't mock the link behavior, we assume if no crash and rendering happens it worked.
     });
@@ -284,12 +287,15 @@ spec:
         };
 
         render(<ServicesDashboard />);
-        
-        await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
-        
-        // Check uniqueness using getAllByText matching the Header Title
+
+        await waitFor(() => expect(screen.getAllByText('Reverse Proxy (Nginx)').length).toBeGreaterThan(0));
+
+        // Dedup check: the two aliases collapse to ONE logical service. It now
+        // renders once per breakpoint layout (desktop ServiceRow + mobile
+        // ServiceCard, both present in jsdom), so the title appears exactly
+        // twice — not once per alias (which would be four).
         const headers = screen.getAllByTitle('Reverse Proxy (Nginx)');
-        expect(headers.length).toBe(1);
+        expect(headers.length).toBe(2);
     });
 
     it('renders the Fritzbox Gateway as a lean card (ports off the list)', async () => {
@@ -306,8 +312,8 @@ spec:
         };
 
         render(<ServicesDashboard />);
-        // The gateway still renders as its own card…
-        await waitFor(() => screen.getByText('FritzBox Gateway'));
+        // The gateway still renders as its own row/card…
+        await waitFor(() => expect(screen.getAllByText('FritzBox Gateway').length).toBeGreaterThan(0));
         // …but the lean tile (spec §4.1) doesn't crowd in port mappings.
         expect(screen.queryByText(':8080')).toBeNull();
     });

@@ -18,6 +18,7 @@ import ExternalLinkModal from '@/components/ExternalLinkModal';
 import FileViewerOverlay from '@/components/FileViewerOverlay';
 import RegistryDashboard from '@/dashboards/RegistryDashboard';
 import ServiceCard from '@/components/ServiceCard';
+import ServiceRow from '@/components/ServiceRow';
 import { useServiceActions } from '@/hooks/useServiceActions';
 import { useContainerActions } from '@/hooks/useContainerActions';
 import { buildServiceViewModel } from '@servicebay/api-client';
@@ -679,7 +680,31 @@ export default function ServicesDashboard() {
 
         return (
             <div className="space-y-4">
-                <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-6 auto-rows-fr">
+                {/* Desktop (md+): a dense list — one tight row per service, so
+                    the overview reads as a table with columns (status · name ·
+                    address · actions), not a sparse card grid (#2067 operator
+                    feedback). Bundles keep their card shape inline. */}
+                <div className="hidden md:block rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 divide-y divide-gray-100 dark:divide-gray-800 overflow-hidden">
+                    {combinedItems.map(entry => (
+                        entry.type === 'service'
+                            ? <ServiceRow
+                                    key={entry.id}
+                                    service={entry.service}
+                                    httpsDomains={httpsDomains}
+                                    imageUpdateAvailable={imageUpdateServices.has(entry.service.name.replace(/\.service$/, ''))}
+                                    onMonitor={openServiceDetail}
+                                    onEdit={openEditDrawer}
+                                    onActions={openActions}
+                                    onEditLink={handleEditLink}
+                                    onDelete={requestDelete}
+                                    onRestart={triggerRestart}
+                              />
+                            : <div key={entry.id} className="p-3"><BundleCard bundle={entry.bundle} /></div>
+                    ))}
+                </div>
+
+                {/* Mobile (below md): the existing single-column card stack. */}
+                <div className="md:hidden grid grid-cols-1 gap-6">
                     {combinedItems.map(entry => (
                         entry.type === 'service'
                             ? <ServiceCard
