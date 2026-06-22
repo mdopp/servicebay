@@ -15,6 +15,15 @@ export interface SessionPayload {
    * `requireSession` — see #1264.
    */
   scopes?: ApiScope[];
+  /**
+   * Set when this session was minted from a named API token via the
+   * token→session bridge (`POST /api/auth/session-from-token`). Holds the
+   * source token's id so `requireSession` can re-check the token is still live
+   * on every request — revoking (or expiring) the token instantly kills the
+   * bridged session, the same cascading-revocation that protects token chains
+   * (#2047). Absent on password-login / internal sessions.
+   */
+  viaToken?: string;
 }
 
 /**

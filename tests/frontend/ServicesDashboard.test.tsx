@@ -80,14 +80,15 @@ describe('ServicesDashboard', () => {
         currentMockData = defaultTwinData;
     });
 
-    it('displays services with ports', async () => {
+    it('keeps ports off the lean list tile (they live on the Operate page)', async () => {
         render(<ServicesDashboard />);
-        
-        // Find Redis card by test id
+
+        // The service still renders in the list…
         await waitFor(() => screen.getByTestId('service-name-redis'));
-        // Check for ports (Ports are rendered as ":HostPort" or "ContainerPort/tcp")
-        // In the mock, Redis has hostPort 6379, so we expect ":6379"
-        expect(screen.getByText(':6379')).toBeDefined();
+        // …but the lean list tile (IA spec §4.1: "one dot = one honest health
+        // state") no longer crowds in per-port links — ports moved to the
+        // per-service Operate page.
+        expect(screen.queryByText(':6379')).toBeNull();
     });
 
     it('displays verified domains', async () => {
@@ -187,7 +188,7 @@ describe('ServicesDashboard', () => {
         await waitFor(() => screen.getByText('System'));
     });
 
-    it('shows ports for Unmanaged Kube-style services (Agent V4)', async () => {
+    it('keeps unmanaged kube-style service ports off the lean list tile (Agent V4)', async () => {
         currentMockData = {
           nodes: {
             'Local': {
@@ -217,9 +218,10 @@ describe('ServicesDashboard', () => {
         render(<ServicesDashboard />);
         
         await waitFor(() => screen.getByText('Reverse Proxy (Nginx)'));
-        // Should show ports (rendered as :PORT)
-        await waitFor(() => screen.getByText(':80')); 
-        await waitFor(() => screen.getByText(':443')); 
+        // Lean list tile (spec §4.1): the service renders, but its container
+        // ports are not shown here — they live on the Operate page.
+        expect(screen.queryByText(':80')).toBeNull();
+        expect(screen.queryByText(':443')).toBeNull();
     });
 
     it('identifies Nginx as Managed when nginx.kube exists but service is nginx-web (Agent V4)', async () => {
@@ -290,7 +292,7 @@ spec:
         expect(headers.length).toBe(1);
     });
 
-    it('shows Fritzbox Gateway ports', async () => {
+    it('renders the Fritzbox Gateway as a lean card (ports off the list)', async () => {
          currentMockData = {
           nodes: {},
           proxyState: { provider: 'nginx' },
@@ -304,10 +306,9 @@ spec:
         };
 
         render(<ServicesDashboard />);
+        // The gateway still renders as its own card…
         await waitFor(() => screen.getByText('FritzBox Gateway'));
-        // Expect format :8080 or 80/tcp etc.
-        // Our updated code maps it to { host: '8080', container: '80' }
-        // Display logic: p.host ? `:${p.host}` ...
-        await waitFor(() => screen.getByText(':8080'));
+        // …but the lean tile (spec §4.1) doesn't crowd in port mappings.
+        expect(screen.queryByText(':8080')).toBeNull();
     });
 });

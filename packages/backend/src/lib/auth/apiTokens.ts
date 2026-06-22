@@ -271,6 +271,23 @@ export async function revokeToken(id: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Is the token with this id still live — present, unexpired, and with a live
+ * ancestor chain? Unlike verifyToken this takes only the id (no secret), so the
+ * token→session bridge's `requireSession` re-check can confirm a bridged
+ * session's source token hasn't been revoked/expired without holding the
+ * secret. Revoking the token (or any ancestor) → false → the bridged session
+ * dies on its next request (#2047 cascading revocation, extended to sessions).
+ */
+export async function tokenIsLive(id: string): Promise<boolean> {
+  if (!id) return false;
+  const data = await loadFile();
+  const token = data.tokens.find(t => t.id === id);
+  if (!token) return false;                                                   // revoked/absent
+  if (token.expiresAt && Date.parse(token.expiresAt) < Date.now()) return false; // expired
+  return ancestorChainIsLive(token, data.tokens);
+}
+
 // Max ancestor hops walked by verifyToken before treating the chain as
 // invalid (#2049). A real token store is root→leaf, depth ~2; the cap exists
 // only to bound a corrupt/cyclic parentId chain. An over-deep or cyclic chain
