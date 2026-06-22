@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.139.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.138.0...servicebay-v4.139.0) (2026-06-22)
+
+
+### Features
+
+* **frontend:** make Home overview cards clickable + restore overview tests ([451c39d](https://github.com/mdopp/servicebay/commit/451c39d4d448ba17e7a5728d1a3945e0614aca32))
+* **frontend:** Services overview is a list on desktop, cards on mobile ([0408e6c](https://github.com/mdopp/servicebay/commit/0408e6c4a2ccf513538cb980b4ebef403bd503f4))
+* **ux:** Services als Liste/Cards, Home klickbar, Coverage zurück ([ef29d74](https://github.com/mdopp/servicebay/commit/ef29d7404dd7e4019df7ecd2f983c365ca64a0e2))
+
 ## [4.138.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.137.0...servicebay-v4.138.0) (2026-06-22)
 
 
