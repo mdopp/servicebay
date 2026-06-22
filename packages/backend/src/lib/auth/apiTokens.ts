@@ -111,6 +111,18 @@ async function saveFile(data: TokensFile): Promise<void> {
   try { await fsp.chmod(TOKENS_FILE, 0o600); } catch { /* best-effort */ }
 }
 
+// Tracks verifyToken's most recent fire-and-forget lastUsedAt write. Auth never
+// awaits it inline (the stamp must not block auth), but the mutating ops
+// (createToken/revokeToken) await it before their own read-modify-write so a
+// stale stamp snapshot can't clobber a concurrent mint/revoke. Tests drain it
+// via flushPendingStamps() so a leaked write doesn't land mid-teardown.
+let pendingStamp: Promise<unknown> = Promise.resolve();
+
+/** Await the most recent lastUsedAt stamp write. Test/teardown helper only. */
+export async function flushPendingStamps(): Promise<void> {
+  await pendingStamp;
+}
+
 function genId(): string {
   return crypto.randomBytes(4).toString('hex');
 }
@@ -157,6 +169,7 @@ export async function createToken(input: {
   for (const s of input.scopes) {
     if (!ALL_SCOPES.includes(s)) throw new Error(`Unknown scope: ${s}`);
   }
+  await pendingStamp; // settle any in-flight lastUsedAt write so it can't clobber this append
   const data = await loadFile();
   const id = genId();
   const secret = genSecret();
@@ -215,6 +228,9 @@ export async function createDelegatedToken(input: {
   // caller doesn't hold a valid parent, so the delegation is forbidden.
   const parent = await verifyToken(input.parentRaw);
   if (!parent) throw new DelegateError('Invalid, expired, or revoked parent token', 403);
+  // Note: verifyToken stamped the parent's lastUsedAt via a detached write; the
+  // createToken below awaits that pending stamp before it appends, so the
+  // (childless) stamp snapshot can't land after the append and drop the child.
 
   // Scope narrowing: every requested scope must be held (directly or implied)
   // by the parent. A child can never widen beyond its parent's authority.
@@ -245,6 +261,7 @@ export async function createDelegatedToken(input: {
 }
 
 export async function revokeToken(id: string): Promise<boolean> {
+  await pendingStamp; // settle any in-flight lastUsedAt write so it can't resurrect this revoked token
   const data = await loadFile();
   const before = data.tokens.length;
   data.tokens = data.tokens.filter(t => t.id !== id);
@@ -322,9 +339,20 @@ export async function verifyToken(raw: string): Promise<Omit<ApiToken, 'hash'> |
   // still be live, else this token is effectively revoked.
   if (!ancestorChainIsLive(token, data.tokens)) return null;
 
-  // Stamp lastUsedAt — best-effort, doesn't block auth.
-  token.lastUsedAt = new Date().toISOString();
-  saveFile(data).catch(e => logger.warn('auth:apiTokens', `Could not update lastUsedAt for ${id}: ${e instanceof Error ? e.message : String(e)}`));
+  // Stamp lastUsedAt — best-effort, doesn't block auth. Re-read the file and
+  // patch only this token's lastUsedAt rather than writing back our (possibly
+  // stale) `data` snapshot: a fire-and-forget overwrite from a snapshot taken
+  // before a concurrent revoke / expiry change / sibling stamp would clobber
+  // that change (e.g. resurrect a just-revoked ancestor). Re-reading keeps the
+  // stamp from undoing another writer's work.
+  const stampedAt = new Date().toISOString();
+  pendingStamp = (async () => {
+    const fresh = await loadFile();
+    const t = fresh.tokens.find(tok => tok.id === id);
+    if (!t) return; // token revoked/removed in the meantime — nothing to stamp
+    t.lastUsedAt = stampedAt;
+    await saveFile(fresh);
+  })().catch(e => logger.warn('auth:apiTokens', `Could not update lastUsedAt for ${id}: ${e instanceof Error ? e.message : String(e)}`));
 
-  return publicView(token);
+  return publicView({ ...token, lastUsedAt: stampedAt });
 }

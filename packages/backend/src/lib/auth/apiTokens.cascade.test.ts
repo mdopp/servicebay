@@ -17,7 +17,10 @@ beforeEach(async () => {
   dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sb-cascade-'));
 });
 afterEach(async () => {
-  await fsp.rm(dataDir, { recursive: true, force: true });
+  // Drain verifyToken's fire-and-forget lastUsedAt write so it can't land in the
+  // next test's dataDir (DATA_DIR is a live getter) or race the rm (ENOTEMPTY).
+  await (await load()).flushPendingStamps();
+  await fsp.rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 const load = () => import('@/lib/auth/apiTokens');
@@ -64,6 +67,7 @@ describe('verifyToken cascading revocation (#2049)', () => {
     });
     // Child valid before revoke.
     expect(await verifyToken(childRaw)).not.toBeNull();
+    await (await load()).flushPendingStamps(); // settle the lastUsedAt write before mutating the store
 
     await revokeToken(parent.id);
     expect(await verifyToken(childRaw)).toBeNull();
@@ -81,6 +85,7 @@ describe('verifyToken cascading revocation (#2049)', () => {
       parentRaw: pRaw, name: 'grandchild', scopes: ['read'],
     });
     expect(await verifyToken(gcRaw)).not.toBeNull();
+    await (await load()).flushPendingStamps(); // settle the lastUsedAt write before mutating the store
 
     await revokeToken(gp.id);
     expect(await verifyToken(gcRaw)).toBeNull();
@@ -98,6 +103,7 @@ describe('verifyToken cascading revocation (#2049)', () => {
       parentRaw, name: 'child', scopes: ['read'], expiresAt: future,
     });
     expect(await verifyToken(childRaw)).not.toBeNull();
+    await (await load()).flushPendingStamps(); // settle the lastUsedAt write before mutating the store
 
     // Rewrite the parent's expiry into the past directly in the store; the
     // child itself is still unexpired, so only the cascade can reject it.
@@ -118,6 +124,8 @@ describe('verifyToken cascading revocation (#2049)', () => {
     const { secret: childRaw } = await createDelegatedToken({
       parentRaw, name: 'child', scopes: ['read'],
     });
+
+    await (await load()).flushPendingStamps(); // createDelegatedToken verified the parent → settle its stamp
 
     // Drop the parent record directly (not via revokeToken) to simulate a
     // store inconsistency; the child still points at a now-absent parentId.

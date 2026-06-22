@@ -22,7 +22,10 @@ beforeEach(async () => {
   dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'sb-apitokens-'));
 });
 afterEach(async () => {
-  await fsp.rm(dataDir, { recursive: true, force: true });
+  // Drain verifyToken's fire-and-forget lastUsedAt write so it can't land in the
+  // next test's dataDir (DATA_DIR is a live getter) or race the rm (ENOTEMPTY).
+  await (await load()).flushPendingStamps();
+  await fsp.rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 });
 
 const legacyPath = () => path.join(dataDir, 'mcp-tokens.json');
