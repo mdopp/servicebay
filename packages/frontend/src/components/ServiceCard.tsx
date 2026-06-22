@@ -60,7 +60,7 @@ export default function ServiceCard({
   onRestart,
 }: ServiceCardProps) {
   return (
-    <div className="group bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200 relative overflow-hidden flex flex-col h-full min-w-0">
+    <div className="group self-start bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200 relative overflow-hidden min-w-0">
       <div className="flex items-start gap-4 justify-between mb-3">
         <div className="flex items-start gap-3 flex-1 min-w-0">
           {(() => {
@@ -160,8 +160,10 @@ export default function ServiceCard({
       )}
 
       {/* Address — the one thing a tile needs beyond name + health: where the
-          service lives. Gateway/link carry their own "address" shape. */}
-      <div className="mt-auto pt-1">
+          service lives. Sits directly under the name (no mt-auto: the tile is
+          content-height, not stretched, so there's no empty gap). Gateway/link
+          carry their own "address" shape. */}
+      <div className="mt-2">
         {service.type === 'gateway' ? (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
             <span className="font-mono text-gray-600 dark:text-gray-300">{service.externalIP || 'N/A'}</span>
