@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.134.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.133.1...servicebay-v4.134.0) (2026-06-22)
+
+
+### Features
+
+* **auth:** parentId on ApiToken + subset-enforced delegated child-mint ([e172659](https://github.com/mdopp/servicebay/commit/e17265988a87fe0bff61d2a43048e71ce75fc50f)), closes [#2048](https://github.com/mdopp/servicebay/issues/2048)
+* **auth:** token chain-of-trust mint + per-capability scope audit ([5ee5a0b](https://github.com/mdopp/servicebay/commit/5ee5a0bfee57615fca909fe3c6ee94cef067820a))
+
 ## [4.133.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.133.0...servicebay-v4.133.1) (2026-06-21)
 
 
