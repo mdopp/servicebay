@@ -6,6 +6,8 @@ Read first: the orchestrator's shared rules in `.claude/skills/autoloop-issues/S
 
 Your prime goal: **the only thing a human should have to do is drain `needs_refinement[]`.** Every issue that's genuinely actionable, you make into a unit; every issue that needs a human decision, you turn into a *specific question* on `needs_refinement[]`. Don't guess your way past ambiguity — that's the failure mode this whole design exists to remove.
 
+**Acceptance gates close, "built" claims don't (memory `feedback_acceptance_criteria_must_gate_close`).** Never close an issue/slice/epic on a builder's "built" claim + green CI — CI proves "compiles + the written tests pass," not "the documented acceptance criteria are met." If a unit carries explicit acceptance criteria (a spec §N checklist or an issue acceptance section), the **acceptance check must pass criterion-by-criterion** (builder self-verify §3a + box-verify's on-box acceptance check for `gate=verify`) before it counts as done. An **epic closes only when EVERY child's acceptance check passes** — no "all slices shipped" on faith (#1950 closed on faith while #2030's headline nav never landed). When you **re-examine a closed feature, do not trust the closed status** — re-verify criterion-by-criterion against the actual code/browser before treating it as done. **Classify user-facing / frontend / visual units `gate=verify`** so they get the real browser/served-markup acceptance check, not just CI.
+
 ## Step 1 — Pull the backlog
 
 ```bash
@@ -28,12 +30,12 @@ gh issue list --state open --limit 100 --json number,title,labels,body
 - `"capability:browser-verify"` — needs the headless browser-verify harness; clears when **#1473 merges** (one check clears the whole class: #1288/#1252/#1253/#1218/#1233/#1423).
 - `"capability:real-box-verify"` — needs a human-driven real-box `/verify` session; clears only when a relevant merge/edit lands or a human runs it.
 - `"decomposition"` — too big for one unit, needs a decomposition ticket (e.g. lint-sweep size-guard); clears when a human/the planner files children.
-- `"epic:#<a> #<b>…"` — a tracking umbrella whose **children are the work-units** (e.g. #1190, decomposed into #1214–#1219). It **stays blocked while any listed child is open** and **keeps `autoloop:blocked`** — it's transitively blocked and the human should see that. The umbrella itself is **never unit-ized/built**; when all children close, the resolution is to **close the epic as complete** (Tier 1).
+- `"epic:#<a> #<b>…"` — a tracking umbrella whose **children are the work-units** (e.g. #1190, decomposed into #1214–#1219). It **stays blocked while any listed child is open** and **keeps `autoloop:blocked`** — it's transitively blocked and the human should see that. The umbrella itself is **never unit-ized/built**; when all children close, the resolution is to **close the epic as complete** (Tier 1) — but only once **every child's acceptance check passed**, never on "all children closed" alone if a child carries unverified acceptance criteria (memory `feedback_acceptance_criteria_must_gate_close`).
 
 **Tier 1 — cheap condition check, ALL blocked entries, every run** (just `gh`/`git` queries, no code reading):
 - `"#N"` → `gh issue view N --json state` ⇒ tripped if `CLOSED`.
 - `"capability:browser-verify"` → tripped if #1473 is `CLOSED`/merged (or the harness is present in-repo).
-- `"epic:#a #b…"` → check each child's state; when **all children are CLOSED**, the epic is done → **close it** (AI-marker comment) and drop from `blocked[]`. While any child is open it stays put (do *not* unit-ize the umbrella).
+- `"epic:#a #b…"` → check each child's state; when **all children are CLOSED *and* every child's acceptance check passed** (don't trust a bare CLOSED on a criteria-bearing child — `feedback_acceptance_criteria_must_gate_close`), the epic is done → **close it** (AI-marker comment) and drop from `blocked[]`. While any child is open, or any closed child has an unverified acceptance criterion, it stays put (do *not* unit-ize the umbrella; if a closed child's criteria are actually unmet, re-open it as a unit).
 - any entry whose issue was **edited since `since`** (`updatedAt > since`), or a **merge since `since` touched its named region/files** → tripped.
 - issue is itself `CLOSED` → drop from `blocked[]` (already done).
 - **Missing `blocked_by`** (legacy entry) → treat as **tripped** (migration: deep-examine once, then re-park *with* a structured `blocked_by`).
@@ -58,12 +60,13 @@ Break it into bite-size child issues, filed in the repo, so the pipeline ships i
 ### Classification of build-ready survivors
 - **Security/sensitive** (`security` label) → set `security: true` on the unit and gate it by path like anything else (`verify` if path-mandated, else `normal`). It runs the **full loop** — built, merged, verified, deployed — and is **flagged for post-deploy review** (lands in `review[]` at seal). It does **not** open as a draft and does **not** block the loop. Keep a security issue as its **own unit** (don't cluster it with unrelated work) so its deployed-review entry stays cleanly attributable.
 - **`oscar`-labelled** → triage first: if it's genuinely OSCAR-side (Hermes skills, `oscar-household` template, voice-gatekeeper), migrate it to `mdopp/oscar` and close it here (AI-marker comment). Keep only true ServiceBay glue (install path, asset-transport, MCP wiring SB owns) — then it's normal flow.
+- **User-facing / frontend / visual** (portal/`(dashboard)`/dashboards/nav/IA, or any unit whose acceptance is a rendered-UI/visual criterion) → `gate` is `"verify"` so it gets the real browser/served-markup acceptance check, not just CI (memory `feedback_acceptance_criteria_must_gate_close`) — even if its files aren't in the path-mandated list.
 - **Everything else** → `gate` is `"normal"`, unless its files are path-mandated (Step 3 of `builder.md` lists them) → `gate` is `"verify"`.
 
 ## Step 3 — Cluster build-ready survivors into units
 
 The payoff is collapsing N pipeline runs into one per cluster.
-- **Dedup / close-at-HEAD.** If the symptom file/line no longer matches or a merged PR already fixed it, close the issue with a one-line AI-marker comment linking the fix, and drop it. Only on clear evidence — don't guess.
+- **Dedup / close-at-HEAD.** If the symptom file/line no longer matches or a merged PR already fixed it, close the issue with a one-line AI-marker comment linking the fix, and drop it. Only on clear evidence — don't guess. If the issue carries explicit acceptance criteria, "clear evidence" means each criterion is actually met at HEAD (verify criterion-by-criterion, don't trust a merged-PR title — `feedback_acceptance_criteria_must_gate_close`); a criterion still unmet → keep it open as a unit.
 - **Cluster by code region / theme.** Group survivors touching the **same files or subsystem** (e.g. a frontend-layout cluster, an install/credential cluster, a diagnose-probe cluster). Cap at what stays reviewable: **≤4 issues / ≤~400 LOC net / one coherent theme**; beyond that, split into two clusters.
   - **Attribution must survive** — only cluster issues in-scope of each other, so a red CI points at one theme, not a random bisect. Don't cluster unrelated issues by default.
   - **Gate inheritance** — a cluster's `gate` is the *strongest* member: any `verify` member ⇒ the cluster is `verify` (one box flip covers it). A `security` issue is its own unit (not clustered), so security never propagates into a cluster.
@@ -147,6 +150,8 @@ A label and its work-queue array are never both edited by hand here — derive t
 One line, e.g.: `Planner: enqueued 3 units (fe-layout #1420+#1424, install-creds #1430, lint-sweep×12); refinement-bounced #1399 ("LAN or public default?"); parked #1311 awaiting-user.`
 
 ## Never
+- Never close an issue/slice/epic on a "built" claim + green CI — require the acceptance check to pass criterion-by-criterion first; epics close only when EVERY child's acceptance check passes (memory `feedback_acceptance_criteria_must_gate_close`).
+- Never trust a "closed" status when re-examining a feature — re-verify each criterion against the actual code/browser.
 - Never guess past an ambiguous requirement — bounce it to `needs_refinement[]` with a precise question.
 - Never reply to external human commenters; park on `awaiting_user[]`.
 - Never cluster a `security` issue with other work — keep it its own unit (clean post-deploy-review attribution), but it still runs the full loop (no draft, no block).

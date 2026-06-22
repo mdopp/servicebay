@@ -34,6 +34,13 @@ Set the unit's `status` to `"in_progress"` and `in_progress` to the unit id.
 - `[Refactor]`-titled units: stay within the file/module named; a neighbouring file needs its own PR, not a drive-by.
 - **Invariant ratchet** (`docs/ARCHITECTURE_INVARIANTS.md`): when you resolve an exemption, *tighten* `scripts/check-invariants.ts` / `.dependency-cruiser.cjs`. Never loosen.
 
+### 3a. Acceptance-criteria self-verify — built ≠ done (memory `feedback_acceptance_criteria_must_gate_close`)
+When the unit carries **explicit acceptance criteria** — a spec §N checklist (e.g. `docs/ux/settings-ia-redesign.md` §10) or an issue **acceptance section** — "built" is not the report. Before you set the unit `built`, **verify EACH criterion against the actual code/browser** and report **per-criterion status** (✓ met / ✗ unmet / ? owed-to-box). CI proves "compiles + the written tests pass," **not** "the documented criteria are met" — a partial build passes CI cleanly when the unbuilt criteria have no test encoding them (this is exactly how #2030's 4-noun nav was closed "done" while the nav still rendered 8 items).
+- **Encode each criterion you can.** A criterion that's testable in unit/integration scope gets a test that asserts it (so the next run can't silently regress it). Don't close the criterion on a manual eyeball if it can be a test.
+- **User-facing / frontend / visual units** (`gate=verify`): attempt a real **browser/DOM** check against the criteria — render the page and assert the spec'd DOM/nav/redirect. Headless Chromium may be unavailable in this sandbox (#1930/#1473): then inspect the **served markup / built bundle** (the API the page binds to, the rendered route, the compiled output) and assert what you can, and **flag the visual-pixel criterion as owed** to box-verify/operator — do not silently mark it met.
+- **If any criterion is unmet,** the unit is **not** built. Either finish it (preferred — smallest change to satisfy the remaining criteria, staying in scope) or, if a criterion needs a human decision, bounce to `needs_refinement[]` (§2) — never report `built` with an unmet criterion buried.
+- In your `built` notes and return line, **enumerate the criteria**: which are confirmed-met (and how — test name / DOM assertion), and which are owed to box-verify/operator. A bare "built" on a criteria-bearing unit is a process miss.
+
 ### 4. Fast gate (per unit)
 ```bash
 npm run lint            # 0 errors; warnings only if count didn't increase
