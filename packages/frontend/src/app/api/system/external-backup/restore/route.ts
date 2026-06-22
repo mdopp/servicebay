@@ -12,10 +12,14 @@ export const dynamic = 'force-dynamic';
  * on the NAS; this pulls one back. Restores the most-recent dated snapshot by
  * default; pass `tarName` to restore a specific one (#1865). Refuses a non-empty
  * data dir unless `force` is set, so it never clobbers a live service.
- * `tokenScope: 'lifecycle'` so the sb flow can trigger it with a scoped `sb_`
- * token.
+ *
+ * `tokenScope: 'destroy'` (#2050): with `force` this overwrites a live service's
+ * data dir — an irreversible state edit, the `destroy` tier — matching the sibling
+ * config-restore route and the MCP `restore_backup` tool. The only HTTP caller is
+ * the cookie-authenticated Backup page (cookies carry all scopes); the reinstall
+ * auto-restore path calls `restoreServiceBackup()` in-process, never via this guard.
  */
-export const POST = withApiHandler({ tokenScope: 'lifecycle' }, async ({ request }) => {
+export const POST = withApiHandler({ tokenScope: 'destroy' }, async ({ request }) => {
   try {
     const body = (await request.json().catch(() => ({}))) as { service?: unknown; force?: unknown; tarName?: unknown };
     if (typeof body.service !== 'string' || !body.service) {

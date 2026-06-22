@@ -72,7 +72,9 @@ Wire format `sb_<id>_<secret>` (Bearer). Stored in `api-tokens.json` as
 is for UI display. **One token authenticates both the MCP server and the REST API.**
 
 - **Scope ladder** (`ApiScope`, `packages/backend/src/lib/auth/apiScope.ts`):
-  `read` < `lifecycle` < `mutate` < `destroy` < `exec`.
+  `read` < `lifecycle` < `mutate` < `reboot` < `destroy` < `exec` (`destroy` implies
+  `reboot` and `exec`). The authoritative per-capability / per-route mapping —
+  *which scope gates which endpoint* — lives in [`SCOPE_AUDIT.md`](../SCOPE_AUDIT.md).
 - **Consumers:** the `sb` CLI, OSCAR/Hermes (`oscar-hermes`, `hermes-mcp`), scripts.
 - **Decision:** named scoped tokens are the **preferred** machine credential — least
   privilege, individually revocable, hash-at-rest. A consumer is granted only the scopes

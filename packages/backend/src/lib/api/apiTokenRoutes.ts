@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { listTokens, createToken, revokeToken, ALL_SCOPES, type ApiScope } from '@/lib/auth/apiTokens';
+import { listTokens, createToken, createDelegatedToken, DelegateError, revokeToken, ALL_SCOPES, type ApiScope } from '@/lib/auth/apiTokens';
 import { revokeBootstrapToken } from '@/lib/mcp/bootstrapToken';
 import { requireSession } from '@/lib/api/requireSession';
 import { apiError } from '@/lib/api/errors';
@@ -56,6 +56,47 @@ export async function createTokenHandler({ request }: { request: Request }) {
     return NextResponse.json({ token: result.token, secret: result.secret });
   } catch (e) {
     return apiError(e, { tag: 'api:system:api-tokens:post', status: 400 });
+  }
+}
+
+const DelegateBody = z.object({
+  name: z.string().min(1).max(100),
+  scopes: z.array(z.enum(ALL_SCOPES as [ApiScope, ...ApiScope[]])).min(1),
+  expiresAt: z.string().datetime().optional(),
+});
+
+/**
+ * Delegated child-mint (#2048): a *holder* of an existing API token mints a
+ * child whose scopes ⊆ parent and whose TTL ≤ parent. The parent token is the
+ * credential — presented as `Authorization: Bearer sb_…`, NOT a session cookie
+ * — so a non-interactive automation can self-delegate. The route is mounted
+ * with `skipAuth: true`: there is no fixed `tokenScope` to gate on (the parent
+ * may hold any scope), so authentication is the parent-token verification
+ * inside createDelegatedToken, which rejects an unknown/expired/bad parent 403.
+ *
+ * `parentId` is derived server-side from the verified parent — never accepted
+ * from the request body — so a caller can't forge a lineage.
+ */
+export async function delegateTokenHandler({ request }: { request: Request }) {
+  const authz = request.headers.get('authorization') ?? '';
+  const parentRaw = authz.startsWith('Bearer ') ? authz.slice(7).trim() : '';
+  if (!parentRaw) {
+    return NextResponse.json({ error: 'Bearer parent token required' }, { status: 401 });
+  }
+  try {
+    const body = DelegateBody.parse(await request.json());
+    const result = await createDelegatedToken({
+      parentRaw,
+      name: body.name,
+      scopes: body.scopes,
+      expiresAt: body.expiresAt,
+    });
+    return NextResponse.json({ token: result.token, secret: result.secret });
+  } catch (e) {
+    if (e instanceof DelegateError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    return apiError(e, { tag: 'api:system:api-tokens:delegate', status: 400 });
   }
 }
 
