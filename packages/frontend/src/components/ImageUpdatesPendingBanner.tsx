@@ -1,6 +1,7 @@
 'use client';
 
-import { Download } from 'lucide-react';
+import { useState } from 'react';
+import { Download, Loader2 } from 'lucide-react';
 import type { ServiceImageUpdate } from '@/hooks/useImageUpdates';
 
 /**
@@ -17,12 +18,36 @@ import type { ServiceImageUpdate } from '@/hooks/useImageUpdates';
  * compares *image digests*. They render independently; neither affects the
  * other.
  *
- * Stateless on purpose — the parent owns the fetch (`useImageUpdates`) so the
- * same data backs both this overview and the per-card badges without two
- * round-trips.
+ * Stateless on the data side (the parent owns the fetch via `useImageUpdates`
+ * so the same data backs both this overview and the per-card badges without two
+ * round-trips). When the parent passes `onUpdate`, the banner becomes
+ * actionable: a "Update now" button re-deploys every listed service (the same
+ * `update` action the actions menu uses → pulls each new image, then restarts).
+ * Without `onUpdate` it stays purely informational. The button owns only its
+ * own in-flight flag; success/error feedback comes from the parent's toast.
  */
-export default function ImageUpdatesPendingBanner({ updates }: { updates: ServiceImageUpdate[] }) {
+export default function ImageUpdatesPendingBanner({
+  updates,
+  onUpdate,
+}: {
+  updates: ServiceImageUpdate[];
+  /** Re-deploy every listed service to pull its latest image. Resolves when
+   *  all attempts have run; rejections are surfaced by the parent's toast. */
+  onUpdate?: (updates: ServiceImageUpdate[]) => Promise<void>;
+}) {
+  const [running, setRunning] = useState(false);
+
   if (updates.length === 0) return null;
+
+  const handleUpdate = async () => {
+    if (!onUpdate || running) return;
+    setRunning(true);
+    try {
+      await onUpdate(updates);
+    } finally {
+      setRunning(false);
+    }
+  };
 
   return (
     <div className="mb-4 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/70 dark:bg-blue-900/20">
@@ -31,13 +56,28 @@ export default function ImageUpdatesPendingBanner({ updates }: { updates: Servic
           <Download size={16} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="font-semibold text-sm text-gray-900 dark:text-white">
-            {updates.length} service image update{updates.length === 1 ? '' : 's'} available
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0">
+              <div className="font-semibold text-sm text-gray-900 dark:text-white">
+                {updates.length} service image update{updates.length === 1 ? '' : 's'} available
+              </div>
+              <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
+                The registry is serving a newer image than what these services are running.
+                Re-deploy a service to pull its latest image.
+              </p>
+            </div>
+            {onUpdate && (
+              <button
+                type="button"
+                onClick={handleUpdate}
+                disabled={running}
+                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              >
+                {running ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                {running ? 'Updating…' : 'Update now'}
+              </button>
+            )}
           </div>
-          <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
-            The registry is serving a newer image than what these services are running.
-            Re-deploy a service to pull its latest image.
-          </p>
           <ul className="mt-2 space-y-1.5 text-xs text-gray-700 dark:text-gray-300">
             {updates.map(u => (
               <li key={`${u.service}:${u.image}`} className="flex items-center gap-2 flex-wrap">

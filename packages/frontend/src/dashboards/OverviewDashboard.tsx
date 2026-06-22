@@ -1,10 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Activity, AlertCircle, CheckCircle2 } from 'lucide-react';
+import type { ServiceViewModel } from '@servicebay/api-client';
 import { useDigitalTwinContext } from '@/providers/DigitalTwinProvider';
 import { useCoreHealth } from '@/hooks/useCoreHealth';
+import { useImageUpdates, type ServiceImageUpdate } from '@/hooks/useImageUpdates';
+import { useServiceActions } from '@/hooks/useServiceActions';
+import ImageUpdatesPendingBanner from '@/components/ImageUpdatesPendingBanner';
 
 /**
  * Latest persisted diagnose breakdown for the Home card (#1873).
@@ -135,8 +139,12 @@ export default function OverviewDashboard() {
   // snapshot; `isConnected=false` is what we surface to the user.
   const hasFirstSnapshot = data !== null && data !== undefined;
 
-  const firstNode = data?.nodes ? Object.values(data.nodes)[0] : undefined;
-  const services = firstNode?.services || [];
+  const firstNodeEntry = data?.nodes ? Object.entries(data.nodes)[0] : undefined;
+  const firstNodeName = firstNodeEntry?.[0];
+  const firstNode = firstNodeEntry?.[1];
+  // Memoized so the update-action callback's dependency stays referentially
+  // stable across renders (otherwise the `|| []` literal is a fresh array each time).
+  const services = useMemo(() => firstNode?.services || [], [firstNode]);
   const managedServices = services.filter(s => s.activeState === 'active' || s.activeState === 'failed' || s.activeState === 'inactive');
   const activeCount = managedServices.filter(s => s.activeState === 'active').length;
   const failedCount = managedServices.filter(s => s.activeState === 'failed').length;
@@ -155,6 +163,32 @@ export default function OverviewDashboard() {
   const diagnose = useDiagnoseOverview();
   const diagnoseView = diagnoseCardView(diagnose);
 
+  // Pending service-image updates — box status, so it belongs on Home too
+  // (#1860). The banner's "Update now" re-deploys each listed service via the
+  // same `update` action the Services list uses (pull latest image → restart).
+  const { available: imageUpdates, refresh: refreshImageUpdates } = useImageUpdates();
+  const { updateServiceImage, overlays: serviceActionOverlays } = useServiceActions({ onRefresh: refreshImageUpdates });
+
+  // Resolve a bare service name from the image-update report to a minimal
+  // action target (name + node) the `update` action needs. The Home twin
+  // carries raw ServiceUnits keyed under the first node, so we look up the unit
+  // and tag it with that node name.
+  const handleUpdateAll = useCallback(async (updates: ServiceImageUpdate[]) => {
+    for (const update of updates) {
+      const bare = update.service.replace(/\.service$/, '');
+      const unit = services.find(s => s.name.replace(/\.service$/, '') === bare);
+      if (!unit) continue;
+      const target = {
+        id: unit.name,
+        name: unit.name,
+        displayName: unit.description || bare,
+        nodeName: firstNodeName,
+      } as unknown as ServiceViewModel;
+      await updateServiceImage(target);
+    }
+    await refreshImageUpdates();
+  }, [services, firstNodeName, updateServiceImage, refreshImageUpdates]);
+
   const healthHeadline = (() => {
     if (!hasFirstSnapshot) return { tone: 'neutral' as const, text: 'Reading status…' };
     if (coreUnhealthy) return { tone: 'bad' as const, text: 'Core services need attention' };
@@ -166,6 +200,7 @@ export default function OverviewDashboard() {
 
   return (
     <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6">
+      {serviceActionOverlays}
       <div className="max-w-5xl mx-auto space-y-6">
         <header>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Home</h1>
@@ -179,6 +214,10 @@ export default function OverviewDashboard() {
 
         {/* Headline status — the single sentence that answers "is everything OK?" */}
         <HealthHeadline tone={healthHeadline.tone} text={healthHeadline.text} />
+
+        {/* Pending image updates — box status, actionable right here (#1860).
+            Renders nothing when there are none. */}
+        <ImageUpdatesPendingBanner updates={imageUpdates} onUpdate={handleUpdateAll} />
 
         {/* Box-wide at-a-glance: services running + latest diagnose breakdown. */}
         <section className="grid grid-cols-1 sm:grid-cols-2 gap-4">
