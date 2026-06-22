@@ -120,6 +120,8 @@ Non-interactive box control (flags; add --json for machine output):
   sb boot usb-enable --yes                set one-shot USB boot + reboot
   sb nas register --host H --user U --pass P   register the FritzBox NAS source
   sb token mint --user U --pass P [--json]     sign in + mint/save a scoped token
+  sb token mint --parent T --scopes a,b --ttl 4h   delegate a scoped leaf child token
+  sb token delegate --parent T --scopes a,b --ttl 4h   (alias for mint --parent)
 
 Target + auth come from SB_HOST/SB_PORT (or build/fcos/install-settings.env)
 and a saved token (or SB_TOKEN). Mint one with: sb token mint
