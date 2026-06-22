@@ -43,9 +43,9 @@ describe('ErrorActions', () => {
     expect(reset).toHaveBeenCalledTimes(1);
   });
 
-  it('points "Run diagnostics" at /health', () => {
+  it('points "Run diagnostics" at /status (box-wide health, IA slice 2)', () => {
     render(<ErrorActions reset={reset} retryLabel="Try again" />);
-    expect(screen.getByRole('link', { name: 'Run diagnostics' }).getAttribute('href')).toBe('/health');
+    expect(screen.getByRole('link', { name: 'Run diagnostics' }).getAttribute('href')).toBe('/status');
   });
 
   it('exposes the consequence of each action via the title attribute (hover discoverability)', () => {

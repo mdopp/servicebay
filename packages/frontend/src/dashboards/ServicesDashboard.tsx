@@ -11,6 +11,7 @@ import DashboardHydrationGate, { type HydrationPhase } from '@/components/Dashbo
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import PageHeader from '@/components/PageHeader';
+import InstallProgressCard from '@/components/InstallProgressCard';
 import TemplateUpgradesPendingBanner from '@/components/TemplateUpgradesPendingBanner';
 import ImageUpdatesPendingBanner from '@/components/ImageUpdatesPendingBanner';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
@@ -958,6 +959,11 @@ export default function ServicesDashboard() {
       </PageHeader>
 
       <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6">
+          {/* Live install monitor — folded in from the retired Home hub (IA
+              slice 2): Services is now the landing page, so the install
+              progress that every web client should see surfaces here. Renders
+              nothing unless an install is actually running. */}
+          <InstallProgressCard />
           {renderServiceContent()}
       </div>
 
