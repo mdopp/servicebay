@@ -22,7 +22,6 @@
 
 import {
   Bell,
-  Boxes,
   Network,
   Server,
   Users,
@@ -61,22 +60,12 @@ export interface SettingsGroup {
   entries: SettingEntry[];
 }
 
+// Services are NOT a Settings concern (spec §4.4 / §8): a service lives on the
+// Services nav and its own Operate page, never in cross-cutting Settings. The
+// old `services` group (a duplicate service list that Settings even LANDED on)
+// is removed; `/settings/services` now redirects to `/services` for old
+// bookmarks. Settings carry only true cross-cutting concerns below.
 export const SETTINGS_GROUPS: SettingsGroup[] = [
-  {
-    // Per-service Operate pages (#1957 / slice 2 of #1950). This group is the
-    // entry point to one Operate page PER SERVICE (Health + Settings + Actions
-    // co-located — feedback_services_are_the_grouping_unit). Its `entries` are
-    // the dynamic list of installed services, resolved at render time from the
-    // digital twin (useOperateServices), so the static list here carries only
-    // the group itself as a searchable hit ("Services" jumps to the index).
-    id: 'services',
-    label: 'Services',
-    intent: 'Operate each service in one place — health, settings and actions.',
-    icon: Boxes,
-    entries: [
-      { id: '', label: 'Services', tier: 'essential', keywords: ['service', 'operate', 'immich', 'jellyfin', 'adguard', 'vaultwarden', 'home assistant', 'app', 'health', 'restart'] },
-    ],
-  },
   {
     id: 'network-domain',
     label: 'Network & Domain',
@@ -154,7 +143,9 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   },
 ];
 
-export const DEFAULT_GROUP = SETTINGS_GROUPS[0];
+// Settings lands on Network & Domain — the first cross-cutting group (services
+// no longer live in Settings, so they're no longer the landing).
+export const DEFAULT_GROUP = SETTINGS_GROUPS.find(g => g.id === 'network-domain') ?? SETTINGS_GROUPS[0];
 
 /** Flattened search index: every setting + its group, for the command palette. */
 export interface SearchHit {
