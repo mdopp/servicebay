@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.138.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.137.0...servicebay-v4.138.0) (2026-06-22)
+
+
+### Features
+
+* **frontend:** declutter Settings to cross-cutting only ([6756398](https://github.com/mdopp/servicebay/commit/67563989fa9b4b93844c93b7d99ac07ef0a1788c))
+* **frontend:** restore Home as a lean, status-led overview ([d50114c](https://github.com/mdopp/servicebay/commit/d50114c4c698d2f5db293eb70e9d831f2da37029))
+
+
+### Bug Fixes
+
+* **frontend:** compact Services tile — content-height, no empty gap ([77a5536](https://github.com/mdopp/servicebay/commit/77a55362b252be5ae11fa56004713c06207b4594))
+* **ux:** kompakte Kacheln, Home zurück (lean), Settings nur Quer-Themen ([5275783](https://github.com/mdopp/servicebay/commit/5275783b69a197cb30efabae00cd6cb067b49961))
+
 ## [4.137.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.136.0...servicebay-v4.137.0) (2026-06-22)
 
 
