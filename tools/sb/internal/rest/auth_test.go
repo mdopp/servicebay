@@ -74,6 +74,94 @@ func TestLoginRejected(t *testing.T) {
 	}
 }
 
+// TestDelegateSubset covers the happy path: a parent token is presented as a
+// Bearer credential to POST /api/system/api-tokens/delegate, requesting a scope
+// subset + a TTL (expiresAt), and the box returns the minted child secret.
+func TestDelegateSubset(t *testing.T) {
+	var gotBearer, gotExpiresAt string
+	var gotScopes []any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/system/api-tokens/delegate" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+			return
+		}
+		if o := r.Header.Get("Origin"); o != "http://"+r.Host {
+			t.Errorf("Origin = %q, want http://%s", o, r.Host)
+		}
+		gotBearer = r.Header.Get("Authorization")
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if s, ok := body["scopes"].([]any); ok {
+			gotScopes = s
+		}
+		if e, ok := body["expiresAt"].(string); ok {
+			gotExpiresAt = e
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"secret": "sb_child_xyz"})
+	}))
+	defer srv.Close()
+
+	host, port := hostPort(t, srv)
+	secret, err := Delegate(context.Background(), host, port, "sb_parent_123",
+		"sb-delegate", []string{"read", "lifecycle"}, "2026-06-22T12:00:00Z")
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+	if secret != "sb_child_xyz" {
+		t.Errorf("secret = %q, want sb_child_xyz", secret)
+	}
+	if gotBearer != "Bearer sb_parent_123" {
+		t.Errorf("Authorization = %q, want Bearer sb_parent_123", gotBearer)
+	}
+	if len(gotScopes) != 2 || gotScopes[0] != "read" || gotScopes[1] != "lifecycle" {
+		t.Errorf("scopes = %v, want [read lifecycle]", gotScopes)
+	}
+	if gotExpiresAt != "2026-06-22T12:00:00Z" {
+		t.Errorf("expiresAt = %q, want it forwarded verbatim", gotExpiresAt)
+	}
+}
+
+// TestDelegateRejected covers the box rejecting a request that exceeds the
+// parent's grant — a super-scope or longer-TTL ask comes back 403 with the
+// box's explanation, which Delegate must surface as a typed *APIError (not a
+// silent success).
+func TestDelegateRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error": "requested scopes exceed parent grant",
+		})
+	}))
+	defer srv.Close()
+
+	host, port := hostPort(t, srv)
+	_, err := Delegate(context.Background(), host, port, "sb_parent_123",
+		"sb-delegate", []string{"read", "exec", "destroy"}, "2027-01-01T00:00:00Z")
+	if err == nil {
+		t.Fatal("Delegate with super-scope request should error")
+	}
+	ae, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("error type = %T, want *APIError", err)
+	}
+	if ae.Status != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", ae.Status)
+	}
+	if !strings.Contains(ae.Message, "exceed parent grant") {
+		t.Errorf("message = %q, want the box's explanation", ae.Message)
+	}
+}
+
+// TestDelegateRequiresParent: an empty parent token fails fast before any
+// network call (no box needed).
+func TestDelegateRequiresParent(t *testing.T) {
+	_, err := Delegate(context.Background(), "127.0.0.1", "1", "  ",
+		"sb-delegate", []string{"read"}, "")
+	if err == nil {
+		t.Fatal("Delegate with empty parent should error")
+	}
+}
+
 // hostPort splits an httptest server URL (http://127.0.0.1:PORT) into host+port
 // so Login can rebuild it through its own base-URL formatting.
 func hostPort(t *testing.T, srv *httptest.Server) (string, string) {
