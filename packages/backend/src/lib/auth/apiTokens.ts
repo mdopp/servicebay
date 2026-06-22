@@ -254,6 +254,42 @@ export async function revokeToken(id: string): Promise<boolean> {
   return true;
 }
 
+// Max ancestor hops walked by verifyToken before treating the chain as
+// invalid (#2049). A real token store is root→leaf, depth ~2; the cap exists
+// only to bound a corrupt/cyclic parentId chain. An over-deep or cyclic chain
+// is treated as invalid (fail closed) rather than authenticating.
+const MAX_ANCESTOR_DEPTH = 16;
+
+/**
+ * Lazy cascading revocation (#2049). Given a verified leaf `token`, walk UP the
+ * `parentId` chain over the already-loaded in-memory `tokens` array. The chain
+ * is valid only if every ancestor is present, not expired, and not revoked
+ * (revocation = absence from the store, since revokeToken filters it out).
+ *
+ * Returns true when the whole chain up to the root is live; false when any
+ * ancestor is missing/expired, or the walk is over-deep or cyclic. This makes
+ * "revoke a parent → every descendant instantly invalid" free at mint time —
+ * no eager tree-walk, just an O(depth) lookup per verify.
+ *
+ * A root token (no parentId) trivially passes.
+ */
+function ancestorChainIsLive(token: ApiToken, tokens: ApiToken[]): boolean {
+  const now = Date.now();
+  const seen = new Set<string>([token.id]);
+  let parentId = token.parentId;
+  let depth = 0;
+  while (parentId) {
+    if (++depth > MAX_ANCESTOR_DEPTH) return false; // over-deep → fail closed
+    if (seen.has(parentId)) return false;           // cycle → fail closed
+    seen.add(parentId);
+    const parent = tokens.find(t => t.id === parentId);
+    if (!parent) return false;                       // missing/revoked ancestor
+    if (parent.expiresAt && Date.parse(parent.expiresAt) < now) return false; // expired ancestor
+    parentId = parent.parentId;
+  }
+  return true;
+}
+
 /**
  * Verify a Bearer-style raw token string ("sb_<id>_<secret>"). Returns the
  * token (without hash) on success, or null. Side effect: stamps lastUsedAt
@@ -262,6 +298,11 @@ export async function revokeToken(id: string): Promise<boolean> {
  *
  * Constant-time comparison via crypto.timingSafeEqual to avoid timing
  * oracles on the hash check (both sides are sha-256 of equal length).
+ *
+ * After the token's own hash/expiry check passes, the `parentId` chain is
+ * walked (#2049): a token is rejected if any ancestor is revoked, expired, or
+ * missing — lazy cascading revocation, so revoking a parent kills every
+ * descendant on their next verify.
  */
 export async function verifyToken(raw: string): Promise<Omit<ApiToken, 'hash'> | null> {
   const m = raw.match(/^sb_([0-9a-f]{8})_([A-Z2-9]+)$/);
@@ -276,6 +317,10 @@ export async function verifyToken(raw: string): Promise<Omit<ApiToken, 'hash'> |
   const storedHash = Buffer.from(token.hash, 'hex');
   if (incomingHash.length !== storedHash.length) return null;
   if (!crypto.timingSafeEqual(incomingHash, storedHash)) return null;
+
+  // Cascading revocation: a live secret is not enough — every ancestor must
+  // still be live, else this token is effectively revoked.
+  if (!ancestorChainIsLive(token, data.tokens)) return null;
 
   // Stamp lastUsedAt — best-effort, doesn't block auth.
   token.lastUsedAt = new Date().toISOString();
