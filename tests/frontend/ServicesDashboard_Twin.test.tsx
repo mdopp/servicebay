@@ -110,7 +110,9 @@ describe('ServicesDashboard E2E Data Rendering', () => {
 
         // 2. Assert Service Card Rendering — the systemd→container link still
         // flows into the view model, so the service renders in the list.
-        expect(await screen.findByText('Reverse Proxy (Nginx)')).toBeDefined();
+        // (#2067: it renders twice in jsdom — desktop ServiceRow + mobile
+        // ServiceCard, CSS hides one per breakpoint in a real browser.)
+        expect((await screen.findAllByText('Reverse Proxy (Nginx)')).length).toBeGreaterThan(0);
 
         // 3. The lean list tile (spec §4.1) no longer renders ports — they live
         // on the per-service Operate page — so :8080 must NOT appear in the list.
@@ -159,7 +161,7 @@ describe('ServicesDashboard E2E Data Rendering', () => {
 
         render(<ServicesDashboard />);
 
-        expect(await screen.findByText('broken-service')).toBeDefined();
+        expect((await screen.findAllByText('broken-service')).length).toBeGreaterThan(0);
         // Should not crash, maybe show "-" or empty space
         // We just ensure it renders.
     });
