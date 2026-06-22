@@ -47,7 +47,7 @@ describe('ServicesDashboard E2E Data Rendering', () => {
         vi.clearAllMocks();
     });
 
-    it('should render Ports from Systemd-Linked containers (Fix Verification)', async () => {
+    it('keeps systemd-linked container ports off the lean list tile (Fix Verification)', async () => {
         // 1. Data Contract: This mimics exactly the state of Digital Twin Store after my Backend Fix.
         // The Service "nginx-web" is linked to container "cid-generated" by Agent logic.
         // It has ports propagated.
@@ -108,15 +108,14 @@ describe('ServicesDashboard E2E Data Rendering', () => {
 
         render(<ServicesDashboard />);
 
-        // 2. Assert Service Card Rendering
-        // Check for Service Name
+        // 2. Assert Service Card Rendering — the systemd→container link still
+        // flows into the view model, so the service renders in the list.
         expect(await screen.findByText('Reverse Proxy (Nginx)')).toBeDefined();
 
-        // 3. Assert Port Existence (This proves Frontend receives and renders the fix)
-        // ServicesDashboard renders ports in the "Ports" column or chip.
-        // Usually formatted as "8080:80/tcp" or similar.
-        // Let's look for "8080".
-        expect(await screen.findByText(/8080/)).toBeDefined();
+        // 3. The lean list tile (spec §4.1) no longer renders ports — they live
+        // on the per-service Operate page — so :8080 must NOT appear in the list.
+        // (The port data-flow fix is exercised by the Operate-page container view.)
+        expect(screen.queryByText(/8080/)).toBeNull();
     });
 
     it('should handle Missing Ports gracefully (Regression Check)', async () => {

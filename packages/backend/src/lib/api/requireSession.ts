@@ -86,5 +86,16 @@ export async function requireSession(
   if (!session) {
     return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   }
+  // Token-bridged sessions (minted via /api/auth/session-from-token) live only
+  // as long as their source token: re-check it on every request so revoking or
+  // expiring the token instantly kills the session (#2047 cascading revocation,
+  // extended to the UI session). Password/internal sessions have no viaToken
+  // and skip this entirely.
+  if (session.viaToken) {
+    const { tokenIsLive } = await import('@/lib/auth/apiTokens');
+    if (!(await tokenIsLive(session.viaToken))) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
+  }
   return session;
 }
