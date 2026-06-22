@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.137.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.136.0...servicebay-v4.137.0) (2026-06-22)
+
+
+### Features
+
+* **auth:** token→session bridge + lean Services tile ([1765c7f](https://github.com/mdopp/servicebay/commit/1765c7f0a533fe1dfb436497edf96cdcf7edd5c1))
+
 ## [4.136.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.135.0...servicebay-v4.136.0) (2026-06-22)
 
 
