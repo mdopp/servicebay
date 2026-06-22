@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// IA redesign slice 2 (#2030/#1950): the collapsed top nav drops Home and
-// Diagnostics as nouns. `/` redirects to the Services landing, and `/health`
-// folds into `/status` (carrying its tab query so deep links survive).
+// IA redesign slice 2 (#2030/#1950) + Home restore: `/` now RENDERS the lean
+// Home overview (it no longer redirects to /services). `/health` still folds
+// into `/status` (carrying its tab query so deep links survive).
 //
 // We assert the redirect TARGET via a spy rather than the thrown control-flow:
 // Next's real redirect() throws to unwind, but the unit under test is purely
@@ -13,11 +13,11 @@ vi.mock('next/navigation', () => ({ redirect }));
 
 beforeEach(() => redirect.mockClear());
 
-describe('root page → Services landing', () => {
-  it('redirects / to /services', async () => {
+describe('root page → renders Home (no redirect)', () => {
+  it('does not redirect / — it renders the Home overview', async () => {
     const { default: HomePage } = await import('./page');
-    HomePage();
-    expect(redirect).toHaveBeenCalledWith('/services');
+    expect(typeof HomePage).toBe('function');
+    expect(redirect).not.toHaveBeenCalled();
   });
 });
 
