@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.136.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.135.0...servicebay-v4.136.0) (2026-06-22)
+
+
+### Features
+
+* **navigation:** collapse top nav to four nouns + Network Map (IA slice 2) ([f2d800b](https://github.com/mdopp/servicebay/commit/f2d800b5d84979445d3ef0a848c06f1f101dbe32))
+* **navigation:** collapse top nav to the four nouns + Network Map (IA slice 2) ([58cb9a7](https://github.com/mdopp/servicebay/commit/58cb9a75513eddc29c229d4b2699fe04995f0c20)), closes [#2030](https://github.com/mdopp/servicebay/issues/2030)
+
 ## [4.135.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.134.0...servicebay-v4.135.0) (2026-06-22)
 
 
