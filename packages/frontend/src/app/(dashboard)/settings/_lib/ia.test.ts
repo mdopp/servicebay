@@ -28,3 +28,23 @@ describe('settings IA — Maintenance launcher (#1958 follow-up)', () => {
     expect(updates?.href).toBe('/settings/system#updates');
   });
 });
+
+describe('settings IA — SSH Terminal relocated off the top nav (#2030, IA slice 2)', () => {
+  // The console is no longer a top-nav noun; it lives under System as an advanced
+  // launch card → /terminal, and must stay findable by name so the capability is
+  // never lost (spec §8: "don't mutilate — every knob stays reachable").
+  it('has an SSH Terminal launcher under the System group → /terminal', () => {
+    const system = SETTINGS_GROUPS.find(g => g.id === 'system');
+    expect(system).toBeDefined();
+    const terminal = system!.entries.find(e => e.id === 'terminal');
+    expect(terminal?.launchHref).toBe('/terminal');
+  });
+
+  it('searching "terminal" / "ssh" / "console" jumps straight to /terminal', () => {
+    for (const term of ['terminal', 'ssh', 'console', 'shell']) {
+      const hit = searchSettings(term).find(h => h.entry.id === 'terminal');
+      expect(hit, `"${term}" should find the SSH Terminal launcher`).toBeDefined();
+      expect(hit!.href).toBe('/terminal');
+    }
+  });
+});

@@ -267,7 +267,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
                         </a>
 
                         <a
-                            href="/health"
+                            href="/status"
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors border border-gray-300 dark:border-gray-700"
                         >
                             <Wrench size={14} />

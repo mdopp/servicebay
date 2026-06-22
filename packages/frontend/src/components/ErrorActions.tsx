@@ -27,7 +27,7 @@ export default function ErrorActions({ reset, retryLabel, includeGoHome }: Error
         Reload page
       </button>
       <Link
-        href="/health"
+        href="/status"
         className={SECONDARY_BTN}
         title="Run self-diagnostics to find the root cause"
       >

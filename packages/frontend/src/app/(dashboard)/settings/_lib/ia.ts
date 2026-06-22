@@ -128,6 +128,11 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'update-window', label: 'Update window', tier: 'advanced', keywords: ['schedule', 'maintenance', 'auto-update'] },
       { id: 'log-level', label: 'Log level', tier: 'advanced', keywords: ['log', 'debug', 'verbose'] },
       { id: 'stacks', label: 'Stacks & templates', tier: 'advanced', keywords: ['stack', 'template', 'registry', 'variable'] },
+      // SSH Terminal left the primary top nav in the IA redesign (slice 2): it is
+      // not one of the four nouns, just an expert escape hatch on the box. It
+      // lives here as an advanced launch card → the full console at /terminal,
+      // and stays findable via search ("terminal"/"ssh"/"console"/"shell").
+      { id: 'terminal', label: 'SSH Terminal', tier: 'advanced', launchHref: '/terminal', keywords: ['terminal', 'ssh', 'console', 'shell', 'cli', 'command line'] },
       // Disk import left Settings for its own app + launch tile (#1949 / #1953):
       // the heavy job runs in a resource-capped worker container reached via a
       // dashboard tile, so it is no longer a Settings entry here.
