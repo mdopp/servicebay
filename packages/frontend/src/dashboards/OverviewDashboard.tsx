@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Activity, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useDigitalTwinContext } from '@/providers/DigitalTwinProvider';
 import { useCoreHealth } from '@/hooks/useCoreHealth';
@@ -194,6 +195,7 @@ export default function OverviewDashboard() {
                     : `${totalCount - activeCount} service${totalCount - activeCount === 1 ? '' : 's'} stopped`
             }
             tone={failedCount > 0 ? 'bad' : totalCount === 0 ? 'neutral' : activeCount === totalCount ? 'good' : 'warn'}
+            href="/services"
           />
           <StatCard
             title="Diagnostics"
@@ -201,6 +203,7 @@ export default function OverviewDashboard() {
             description={diagnoseView.description}
             icon={Activity}
             tone={diagnoseView.tone}
+            href="/status"
           />
         </section>
       </div>
@@ -230,17 +233,21 @@ interface StatCardProps {
   description: string;
   icon?: typeof Activity;
   tone: 'good' | 'warn' | 'bad' | 'neutral';
+  /** Where clicking the card navigates (#2067 — the Home cards used to be
+   *  inert; the operator clicked them and nothing happened). When set, the
+   *  card renders as a Next <Link> with a clear hover affordance. */
+  href?: string;
 }
 
-function StatCard({ title, metric, description, icon: Icon, tone }: StatCardProps) {
+function StatCard({ title, metric, description, icon: Icon, tone, href }: StatCardProps) {
   const accentClasses: Record<typeof tone, string> = {
     good: 'text-emerald-600 dark:text-emerald-400',
     warn: 'text-amber-600 dark:text-amber-400',
     bad: 'text-red-600 dark:text-red-400',
     neutral: 'text-blue-600 dark:text-blue-400',
   };
-  return (
-    <div className="block rounded-xl p-5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800">
+  const inner = (
+    <>
       {Icon && (
         <div className="mb-3">
           <Icon size={20} className={accentClasses[tone]} />
@@ -249,6 +256,18 @@ function StatCard({ title, metric, description, icon: Icon, tone }: StatCardProp
       <h2 className="font-bold text-gray-900 dark:text-gray-100 tracking-wide text-base">{title}</h2>
       <p className={`text-sm font-semibold mt-1 ${accentClasses[tone]}`}>{metric}</p>
       <p className="text-xs text-gray-600 dark:text-gray-300 mt-2 font-medium leading-relaxed">{description}</p>
-    </div>
+    </>
   );
+  const baseClasses = 'block rounded-xl p-5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800';
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className={`${baseClasses} cursor-pointer transition-all hover:border-blue-400 dark:hover:border-blue-500 hover:shadow-md dark:hover:bg-gray-800/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
+      >
+        {inner}
+      </Link>
+    );
+  }
+  return <div className={baseClasses}>{inner}</div>;
 }
