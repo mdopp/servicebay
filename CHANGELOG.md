@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.135.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.134.0...servicebay-v4.135.0) (2026-06-22)
+
+
+### Features
+
+* **auth:** lazy cascading revocation in verifyToken (ancestor walk) ([9954fd1](https://github.com/mdopp/servicebay/commit/9954fd1dc0c16137d18e93ed51bfc5e2128b3ab8)), closes [#2049](https://github.com/mdopp/servicebay/issues/2049)
+* **auth:** token chain-of-trust — cascading revocation + sb token delegate CLI ([e7285cf](https://github.com/mdopp/servicebay/commit/e7285cf5316f709ff6a2c8243dff7e56f30baed8))
+* **sb-cli:** sb token delegate — mint a scoped, short-TTL child from a parent token ([e700127](https://github.com/mdopp/servicebay/commit/e700127f7db33b63f4fb0bab32ed0946279aa13f)), closes [#2051](https://github.com/mdopp/servicebay/issues/2051)
+
+
+### Bug Fixes
+
+* **auth:** sequence token-store writes so the lastUsedAt stamp can't clobber a mint/revoke ([50623d1](https://github.com/mdopp/servicebay/commit/50623d1098e5fbd6fce268ea633ca956f5e10aa2)), closes [#2049](https://github.com/mdopp/servicebay/issues/2049)
+
 ## [4.134.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.133.1...servicebay-v4.134.0) (2026-06-22)
 
 
