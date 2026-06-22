@@ -15,7 +15,7 @@
  *      bar's icon row instead, so they're still reachable on a phone;
  *      see MobileNav.tsx #1992).
  */
-import { Box, HeartPulse, Settings, Network, DatabaseBackup } from 'lucide-react';
+import { Home, Box, HeartPulse, Settings, Network, DatabaseBackup } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavigationEntry {
@@ -52,14 +52,15 @@ export function isNavActive(pathname: string, path: string): boolean {
 }
 
 /**
- * The four nouns + Network Map — the collapsed top nav of the IA redesign
- * (slice 2, spec §3/§4.1/§8). The flat 8-item list (Home, Services, Network
- * Map, Status, Diagnostics, SSH Terminal, Backup, Settings) is rip-and-
- * replaced by **Services · Status · Settings · Backup · Network Map**:
+ * The collapsed top nav of the IA redesign (slice 2, spec §3/§4.1/§8):
+ * **Home · Services · Status · Settings · Backup · Network Map**.
  *
- *   - Services is the home — "the list of services is the home" (spec §2/§4.1).
- *     `/` redirects to `/services`; the old Home hub's live install monitor is
- *     folded into the Services list so nothing is lost.
+ *   - Home is a lean, status-led landing (restored by operator request, spec
+ *     §4.3 spirit): the box-wide health headline + latest diagnose breakdown
+ *     ("is my box OK?"). It carries no navigation-shortcut cards (the old hub's
+ *     pure-nav grid is covered by this nav), and the live install-progress
+ *     monitor stays folded into the Services list, so nothing is duplicated.
+ *   - Services is the list of every app (spec §2/§4.1).
  *   - Status is the single box-wide health screen — it absorbs the old
  *     Diagnostics (`/health`), which now redirects to `/status` (spec §4.3/§8).
  *     Box-wide containers live here (and ONLY here); the per-container tab is
@@ -78,6 +79,7 @@ export function isNavActive(pathname: string, path: string): boolean {
  * surface in the mobile top-bar icon row instead).
  */
 export const NAVIGATION_ENTRIES: NavigationEntry[] = [
+  { id: 'home', name: 'Home', shortLabel: 'Home', icon: Home, path: '/' },
   { id: 'services', name: 'Services', shortLabel: 'Services', icon: Box, path: '/services' },
   { id: 'status', name: 'Status', shortLabel: 'Status', icon: HeartPulse, path: '/status', hiddenOnMobileBottom: true },
   { id: 'settings', name: 'Settings', shortLabel: 'Settings', icon: Settings, path: '/settings', hiddenOnMobileBottom: true },

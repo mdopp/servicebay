@@ -22,23 +22,29 @@ describe('isNavActive', () => {
   });
 });
 
-describe('top nav — the four nouns + Network Map (IA slice 2, #2030/#1950)', () => {
-  // Spec §3/§4.1/§8: the flat 8-item nav collapses to the four nouns
-  // (Services · Status · Settings · Backup) plus Network Map, kept top-level by
-  // operator preference. Home, Diagnostics and SSH Terminal leave the top nav.
+describe('top nav — Home + the four nouns + Network Map (IA slice 2, #2030/#1950)', () => {
+  // Spec §3/§4.1/§8: the four nouns (Services · Status · Settings · Backup) plus
+  // Network Map, kept top-level by operator preference. Home is restored by
+  // operator request as a lean, status-led landing (spec §4.3 spirit).
+  // Diagnostics and SSH Terminal stay off the top nav.
   const ids = NAVIGATION_ENTRIES.map(e => e.id);
 
-  it('is exactly Services · Status · Settings · Backup · Network Map', () => {
-    expect(ids).toEqual(['services', 'status', 'settings', 'backup', 'network']);
+  it('is exactly Home · Services · Status · Settings · Backup · Network Map', () => {
+    expect(ids).toEqual(['home', 'services', 'status', 'settings', 'backup', 'network']);
   });
 
-  it('drops Home, Diagnostics and SSH Terminal from the top nav', () => {
-    expect(ids).not.toContain('home');
+  it('Home is the first entry and renders at /', () => {
+    expect(ids[0]).toBe('home');
+    const home = NAVIGATION_ENTRIES.find(e => e.id === 'home');
+    expect(home?.path).toBe('/');
+  });
+
+  it('drops Diagnostics and SSH Terminal from the top nav', () => {
     expect(ids).not.toContain('health');
     expect(ids).not.toContain('terminal');
   });
 
-  it('Services is the landing noun (the list of services is the home)', () => {
+  it('Services links to /services (the list of every app)', () => {
     const services = NAVIGATION_ENTRIES.find(e => e.id === 'services');
     expect(services?.path).toBe('/services');
   });

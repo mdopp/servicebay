@@ -1,6 +1,31 @@
 import { describe, it, expect } from 'vitest';
 
-import { SETTINGS_GROUPS, SEARCH_INDEX, searchSettings } from './ia';
+import { SETTINGS_GROUPS, SEARCH_INDEX, DEFAULT_GROUP, searchSettings } from './ia';
+
+describe('settings IA — cross-cutting only, no Services group (spec §4.4 / §8)', () => {
+  it('has no Services group — services live on the Services nav + Operate page', () => {
+    expect(SETTINGS_GROUPS.find(g => g.id === 'services')).toBeUndefined();
+  });
+
+  it('exposes exactly the cross-cutting groups + Maintenance', () => {
+    expect(SETTINGS_GROUPS.map(g => g.id)).toEqual([
+      'network-domain',
+      'access',
+      'notifications',
+      'system',
+      'maintenance',
+    ]);
+  });
+
+  it('lands on Network & Domain, not Services', () => {
+    expect(DEFAULT_GROUP.id).toBe('network-domain');
+  });
+
+  it('drops the services search entry', () => {
+    expect(searchSettings('immich').some(h => h.group.id === 'services')).toBe(false);
+    expect(SEARCH_INDEX.some(h => h.group.id === 'services')).toBe(false);
+  });
+});
 
 describe('settings IA — Maintenance launcher (#1958 follow-up)', () => {
   it('has a Maintenance group with the disk-import launcher', () => {

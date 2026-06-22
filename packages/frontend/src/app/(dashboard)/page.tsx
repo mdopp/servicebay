@@ -1,13 +1,16 @@
-import { redirect } from 'next/navigation';
+'use client';
+
+import OverviewDashboard from '@/dashboards/OverviewDashboard';
 
 /**
- * Root → Services (IA redesign slice 2, spec §2/§4.1: "the list of services is
- * the home"). The old Home hub (OverviewDashboard) is retired from the top nav;
- * its one piece of unique live content — the install-progress monitor — is
- * folded into the Services list (ServicesDashboard), so nothing is lost. Every
- * other Home card (Services / Network / Diagnostics / SSH Terminal / Settings)
- * was a pure navigation shortcut now covered by the collapsed top nav.
+ * Home — the lean, status-led landing (IA redesign, spec §4.3 spirit).
+ *
+ * Restored by operator request as the first thing you see: a clean answer to
+ * "is my box OK?" (health headline + latest diagnose breakdown). The old
+ * navigation-shortcut grid is gone (covered by the top nav), and the live
+ * install-progress monitor stays folded into the Services list, so Home
+ * carries no duplicate nav.
  */
 export default function HomePage() {
-  redirect('/services');
+  return <OverviewDashboard />;
 }
