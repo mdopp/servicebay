@@ -21,6 +21,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, Loader2, Lock } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { Button, Card } from '@/components/ui';
 
 type Day = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
 
@@ -66,17 +67,17 @@ interface ApplyToCheckboxProps {
 
 function ApplyToCheckbox({ label, description, checked, onChange, disabled }: ApplyToCheckboxProps) {
   return (
-    <label className="flex items-start gap-2.5 cursor-pointer select-none p-2 rounded-md hover:bg-gray-50 dark:hover:bg-gray-900/40">
+    <label className="flex items-start gap-2.5 cursor-pointer select-none p-2 rounded-card hover:bg-surface-2">
       <input
         type="checkbox"
         checked={checked}
         onChange={e => onChange(e.target.checked)}
         disabled={disabled}
-        className="mt-0.5 h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-amber-600 focus:ring-amber-500"
+        className="mt-0.5 h-4 w-4 rounded border-border accent-status-warn focus:ring-status-warn"
       />
-      <span className="text-sm text-gray-700 dark:text-gray-200">
+      <span className="text-sm text-text-muted">
         {label}
-        <span className="block text-xs text-gray-500 dark:text-gray-400 leading-snug">{description}</span>
+        <span className="block text-xs text-text-subtle leading-snug">{description}</span>
       </span>
     </label>
   );
@@ -170,30 +171,30 @@ export default function UpdateWindowSection() {
   const groupDisabled = saving || !window.enabled;
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-        <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg text-amber-600 dark:text-amber-400">
+    <Card padding="none" className="w-full overflow-hidden">
+      <div className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border bg-surface-2">
+        <div className="p-2 rounded-card bg-status-warn/10 text-status-warn">
           <CalendarClock size={20} />
         </div>
         <div className="min-w-0">
-          <h3 className="font-bold text-gray-900 dark:text-white">Auto-update window</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <h3 className="font-semibold text-text">Auto-update window</h3>
+          <p className="text-xs text-text-muted">
             Decide when ServiceBay applies OS updates, container image refreshes, and its own updates. Until you save an enabled window, all auto-updates are locked.
           </p>
         </div>
       </div>
 
-      <div className="p-6 space-y-5">
+      <div className="p-space-5 space-y-5">
         {loading ? (
-          <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+          <div className="flex items-center gap-2 text-sm text-text-muted">
             <Loader2 size={14} className="animate-spin" /> Loading current setting…
           </div>
         ) : (
           <>
             {lockedNotice && (
-              <div className="p-3 rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-900/20 flex items-start gap-2.5">
-                <Lock size={16} className="mt-0.5 text-amber-600 dark:text-amber-400 shrink-0" />
-                <div className="text-xs text-amber-800 dark:text-amber-200 leading-snug">
+              <div className="p-3 rounded-card border border-status-warn/30 bg-status-warn/10 flex items-start gap-2.5">
+                <Lock size={16} className="mt-0.5 text-status-warn shrink-0" />
+                <div className="text-xs text-text leading-snug">
                   <strong>Auto-updates are currently locked.</strong>{' '}
                   Fedora CoreOS will not reboot for OS updates and container images will not auto-refresh until you save an enabled window below. Manual updates (Settings → Updates → Check now) are unaffected.
                 </div>
@@ -206,11 +207,11 @@ export default function UpdateWindowSection() {
                 checked={window.enabled}
                 onChange={e => setWindow(w => ({ ...w, enabled: e.target.checked }))}
                 disabled={saving}
-                className="mt-0.5 h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-amber-600 focus:ring-amber-500"
+                className="mt-0.5 h-4 w-4 rounded border-border accent-status-warn focus:ring-status-warn"
               />
-              <span className="text-sm text-gray-700 dark:text-gray-200">
+              <span className="text-sm text-text-muted">
                 Allow auto-updates inside a maintenance window
-                <span className="block text-xs text-gray-500 dark:text-gray-400">
+                <span className="block text-xs text-text-subtle">
                   When off, every auto-update source stays locked.
                 </span>
               </span>
@@ -218,7 +219,7 @@ export default function UpdateWindowSection() {
 
             <div className={`space-y-4 ${groupDisabled ? 'opacity-50 pointer-events-none' : ''}`}>
               <div>
-                <span className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1.5">Days (UTC)</span>
+                <span className="block text-xs font-medium text-text-muted mb-1.5">Days (UTC)</span>
                 <div className="flex flex-wrap gap-2">
                   {ORDERED_DAYS.map(day => {
                     const on = window.days.includes(day);
@@ -228,10 +229,10 @@ export default function UpdateWindowSection() {
                         type="button"
                         onClick={() => toggleDay(day)}
                         disabled={saving}
-                        className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
+                        className={`px-3 py-1.5 rounded-card text-xs font-medium border transition-colors ${
                           on
-                            ? 'bg-amber-100 dark:bg-amber-900/30 border-amber-500 text-amber-800 dark:text-amber-200'
-                            : 'bg-white dark:bg-gray-900 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
+                            ? 'bg-status-warn/10 border-status-warn text-status-warn'
+                            : 'bg-surface-2 border-border text-text-muted hover:bg-surface-muted'
                         }`}
                       >
                         {day}
@@ -243,18 +244,18 @@ export default function UpdateWindowSection() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <label className="block">
-                  <span className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1.5">Start (UTC)</span>
+                  <span className="block text-xs font-medium text-text-muted mb-1.5">Start (UTC)</span>
                   <input
                     type="time"
                     step={300}
                     value={window.startTime}
                     onChange={e => setWindow(w => ({ ...w, startTime: e.target.value }))}
                     disabled={saving}
-                    className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-amber-500 outline-none text-sm"
+                    className="w-full p-2 rounded-card border border-border bg-surface-2 text-text focus:ring-2 focus:ring-status-warn outline-none text-sm"
                   />
                 </label>
                 <label className="block">
-                  <span className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1.5">
+                  <span className="block text-xs font-medium text-text-muted mb-1.5">
                     Length: <span className="font-mono">{lengthHumanised(window.lengthMinutes)}</span>
                   </span>
                   <input
@@ -265,17 +266,17 @@ export default function UpdateWindowSection() {
                     value={window.lengthMinutes}
                     onChange={e => setWindow(w => ({ ...w, lengthMinutes: parseInt(e.target.value, 10) }))}
                     disabled={saving}
-                    className="w-full accent-amber-600"
+                    className="w-full accent-status-warn"
                   />
-                  <div className="flex justify-between text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
+                  <div className="flex justify-between text-[10px] text-text-subtle mt-0.5">
                     <span>30 min</span>
                     <span>8 h</span>
                   </div>
                 </label>
               </div>
 
-              <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
-                <span className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1.5">Apply window to</span>
+              <div className="pt-2 border-t border-border">
+                <span className="block text-xs font-medium text-text-muted mb-1.5">Apply window to</span>
                 <div className="space-y-0.5">
                   <ApplyToCheckbox
                     label="Fedora CoreOS reboots (Zincati)"
@@ -303,31 +304,31 @@ export default function UpdateWindowSection() {
             </div>
 
             {error && (
-              <div className="p-2 rounded-md bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-900 text-xs text-rose-700 dark:text-rose-200">
+              <div className="p-2 rounded-card bg-status-fail/10 border border-status-fail/30 text-xs text-status-fail">
                 {error}
               </div>
             )}
 
             <div className="flex items-center justify-between gap-3 pt-2">
-              <p className="text-xs text-gray-500 dark:text-gray-400">
+              <p className="text-xs text-text-muted">
                 {window.enabled
                   ? sortedDays.length > 0
                     ? <>Window: <span className="font-mono">{sortedDays.join(', ')}</span> at <span className="font-mono">{window.startTime} UTC</span> ({lengthHumanised(window.lengthMinutes)}).</>
                     : <>Pick at least one day to enable the window.</>
                   : <>Auto-updates locked. Manual updates still work.</>}
               </p>
-              <button
+              <Button
                 onClick={handleSave}
                 disabled={saving || loading || (window.enabled && window.days.length === 0)}
-                className="shrink-0 px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors text-sm font-medium inline-flex items-center gap-2"
+                className="shrink-0"
               >
                 {saving && <Loader2 size={14} className="animate-spin" />}
                 {saving ? 'Saving…' : 'Save & apply'}
-              </button>
+              </Button>
             </div>
           </>
         )}
       </div>
-    </div>
+    </Card>
   );
 }
