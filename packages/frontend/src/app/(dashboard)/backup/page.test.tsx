@@ -49,6 +49,29 @@ const renderPage = (enabled: boolean) => {
   return render(<ToastProvider><BackupPage /></ToastProvider>);
 };
 
+/** N synthetic NAS snapshots, newest-first by stamp index. */
+const nasBackups = (n: number) =>
+  Array.from({ length: n }, (_, i) => ({
+    service: `svc-${i}`,
+    tarName: `svc-${i}-2026-06-${String(20 - (i % 20)).padStart(2, '0')}.tar.gz`,
+    size: 1024,
+    createdAt: `2026-06-${String(20 - (i % 20)).padStart(2, '0')}T00:00:00.000Z`,
+  }));
+
+const renderWithNas = (count: number) => {
+  vi.stubGlobal('fetch', mockFetchByUrl({
+    '/api/settings/backup-sync': () => syncConfig(false),
+    '/api/settings/backups': () => [],
+    '/api/system/external-backup/list': () => ({
+      configured: true,
+      connection: { ok: true },
+      backups: nasBackups(count),
+    }),
+    'external-backup': () => ({}),
+  }));
+  return render(<ToastProvider><BackupPage /></ToastProvider>);
+};
+
 describe('BackupsSettingsPage — Backup Sync collapse', () => {
   beforeEach(() => {
     // jsdom lacks scrollIntoView etc.; nothing else to seed.
@@ -99,5 +122,39 @@ describe('BackupsSettingsPage — Backup Sync collapse', () => {
       String(c[1] && (c[1] as RequestInit).method).toUpperCase() === 'POST' ||
       String(c[1] && (c[1] as RequestInit).method).toUpperCase() === 'PUT');
     expect(writeCallsAfter.length).toBe(writeCallsBefore.length);
+  });
+});
+
+describe('BackupsSettingsPage — NAS snapshot list collapse (#2085)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('caps the NAS snapshot list to the newest 5 with a "show all" expander', async () => {
+    renderWithNas(12);
+
+    // The newest 5 services render; the older ones are hidden behind the cap.
+    expect(await screen.findByText('svc-0')).toBeDefined();
+    expect(screen.getByText('svc-4')).toBeDefined();
+    expect(screen.queryByText('svc-5')).toBeNull();
+    expect(screen.queryByText('svc-11')).toBeNull();
+
+    // Expander advertises the full count.
+    const expander = screen.getByText('Show all 12 snapshots');
+
+    // Expand → every snapshot is now in the DOM.
+    fireEvent.click(expander);
+    await waitFor(() => expect(screen.getByText('svc-11')).toBeDefined());
+    expect(screen.getByText('svc-5')).toBeDefined();
+
+    // Collapse again → back to the capped view, older rows gone.
+    fireEvent.click(screen.getByText('Show fewer (newest 5)'));
+    await waitFor(() => expect(screen.queryByText('svc-11')).toBeNull());
+  });
+
+  it('shows no expander when the NAS snapshot list fits within the cap', async () => {
+    renderWithNas(3);
+
+    expect(await screen.findByText('svc-0')).toBeDefined();
+    expect(screen.getByText('svc-2')).toBeDefined();
+    expect(screen.queryByText(/Show all/)).toBeNull();
   });
 });

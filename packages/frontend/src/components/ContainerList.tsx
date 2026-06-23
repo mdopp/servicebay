@@ -5,6 +5,7 @@ import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import { useEffect, useMemo, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { EnrichedContainer } from '@servicebay/api-client';
+import { Card, DataTable, type Column } from '@/components/ui';
 
 interface ContainerItem extends Partial<EnrichedContainer> {
   // Allow partial for legacy passed props, but prefer EnrichedContainer shape
@@ -16,6 +17,59 @@ interface ContainerListProps {
 }
 
 const CONNECT_TIMEOUT_MS = 15_000;
+
+function names(c: ContainerItem): string {
+  return Array.isArray(c.names) ? c.names.join(', ') : (c.names ?? '');
+}
+
+// Calm, consistent columns on the shared DataTable primitive (#2078). Replaces
+// the old "bunte Tabelle" — Node purple, ID blue, Image green, Names orange —
+// with one quiet surface; only the clickable Domains keep an accent colour.
+const columns: Column<ContainerItem>[] = [
+  { key: 'node', header: 'Node', cell: c => c.nodeName ?? '-' },
+  {
+    key: 'id',
+    header: 'ID',
+    className: 'font-mono text-text-muted',
+    cell: c => <span title={c.id}>{c.id?.substring(0, 12)}</span>,
+  },
+  {
+    key: 'image',
+    header: 'Image',
+    className: 'max-w-[200px]',
+    cell: c => <span className="block truncate" title={c.image}>{c.image}</span>,
+  },
+  { key: 'state', header: 'State', cell: c => c.state },
+  { key: 'status', header: 'Status', cell: c => c.status },
+  {
+    key: 'domains',
+    header: 'Domains',
+    cell: c =>
+      c.verifiedDomains && c.verifiedDomains.length > 0 ? (
+        <div className="flex flex-wrap gap-space-1">
+          {c.verifiedDomains.map(d => (
+            <a
+              key={d}
+              href={`https://${d}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-accent hover:underline"
+            >
+              {d}
+            </a>
+          ))}
+        </div>
+      ) : (
+        <span className="text-text-subtle">-</span>
+      ),
+  },
+  {
+    key: 'names',
+    header: 'Names',
+    className: 'max-w-[200px]',
+    cell: c => <span className="block truncate" title={names(c)}>{names(c)}</span>,
+  },
+];
 
 export default function ContainerList({ containers }: ContainerListProps = {}) {
   const { data: twin } = useDigitalTwin();
@@ -42,7 +96,7 @@ export default function ContainerList({ containers }: ContainerListProps = {}) {
   if (!allContainers || allContainers.length === 0) {
     const isLoading = !(containers || twin);
     return (
-        <div className="p-4 bg-[#2d2d2d] rounded-md text-gray-500 italic flex items-center justify-between gap-4">
+        <Card padding="md" className="text-text-muted italic flex items-center justify-between gap-4">
             <span>
               {!isLoading && "No running containers found."}
               {isLoading && !slowConnect && "Connecting to Digital Twin..."}
@@ -52,65 +106,21 @@ export default function ContainerList({ containers }: ContainerListProps = {}) {
                 <button
                     type="button"
                     onClick={() => { if (typeof window !== 'undefined') window.location.reload(); }}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors not-italic"
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-surface-2 hover:bg-surface-muted text-text rounded transition-colors not-italic"
                 >
                     <RefreshCw size={12} /> Refresh
                 </button>
             )}
-        </div>
+        </Card>
     );
   }
 
   return (
-    <div className="bg-[#2d2d2d] rounded-md overflow-hidden p-4 overflow-x-auto">
-      <table className="w-full text-left min-w-[800px]">
-        <thead>
-          <tr className="border-b border-gray-600 text-gray-400">
-            <th className="pb-2 pr-4">Node</th>
-            <th className="pb-2 pr-4">ID</th>
-            <th className="pb-2 pr-4">Image</th>
-            <th className="pb-2 pr-4">State</th>
-            <th className="pb-2 pr-4">Status</th>
-            <th className="pb-2 pr-4">Domains</th>
-            <th className="pb-2">Names</th>
-          </tr>
-        </thead>
-        <tbody>
-          {allContainers.map((container, index) => (
-            <tr key={`${container.nodeName || 'local'}-${container.id || `fallback-${index}`}`} className="border-b border-gray-700 last:border-0 hover:bg-gray-800">
-              <td className="py-2 pr-4 text-purple-400 font-bold">{container.nodeName}</td>
-              <td className="py-2 pr-4 text-blue-400 font-mono" title={container.id}>{container.id?.substring(0, 12)}</td>
-              <td className="py-2 pr-4 text-green-400 truncate max-w-[200px]" title={container.image}>{container.image}</td>
-              <td className="py-2 pr-4 text-gray-300">{container.state}</td>
-              <td className="py-2 pr-4 text-gray-300">{container.status}</td>
-              <td className="py-2 pr-4">
-                  {container.verifiedDomains && container.verifiedDomains.length > 0 ? (
-                      <div className="flex flex-wrap gap-1">
-                          {container.verifiedDomains.map((d: string) => (
-                              <a 
-                                  key={d} 
-                                  href={`https://${d}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-xs text-blue-400 hover:text-blue-300 hover:underline px-1 bg-blue-900/20 rounded"
-                              >
-                                  {d}
-                              </a>
-                          ))}
-                      </div>
-                  ) : <span className="text-gray-600">-</span>}
-              </td>
-              <td
-                className="py-2 text-yellow-400 truncate max-w-[200px]"
-                title={Array.isArray(container.names) ? container.names.join(', ') : container.names}
-              >
-                {Array.isArray(container.names) ? container.names.join(', ') : container.names}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={columns}
+      rows={allContainers}
+      rowKey={(c, index) => `${c.nodeName || 'local'}-${c.id || `fallback-${index}`}`}
+      minWidthClassName="min-w-[800px]"
+    />
   );
 }
-

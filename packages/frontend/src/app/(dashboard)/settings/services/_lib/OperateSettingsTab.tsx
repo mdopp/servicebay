@@ -5,6 +5,7 @@ import { RefreshCw } from 'lucide-react';
 import type { ServiceViewModel } from '@servicebay/api-client';
 import ServiceForm, { type ServiceFormInitialData } from '@/components/ServiceForm';
 import { useToast } from '@/providers/ToastProvider';
+import { Card, SectionHeading, Button } from '@/components/ui';
 
 /**
  * Settings tab of a service's Operate page (#1957). The service's own config
@@ -60,16 +61,16 @@ export default function OperateSettingsTab({ service }: { service: ServiceViewMo
 
   if (!editable) {
     return (
-      <div className="p-6 text-sm text-gray-600 dark:text-gray-400 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl max-w-2xl">
+      <Card padding="lg" className="text-sm text-text-muted max-w-2xl">
         This service is not managed via a Quadlet kube manifest, so its configuration
         cannot be edited here. Use the Actions tab for lifecycle controls.
-      </div>
+      </Card>
     );
   }
 
   if (loading || (!initialData && !error)) {
     return (
-      <div className="flex items-center justify-center gap-2 p-8 text-gray-500">
+      <div className="flex items-center justify-center gap-2 p-8 text-text-muted">
         <RefreshCw className="w-4 h-4 animate-spin" /> Loading configuration…
       </div>
     );
@@ -77,21 +78,28 @@ export default function OperateSettingsTab({ service }: { service: ServiceViewMo
 
   if (error || !initialData) {
     return (
-      <div className="p-6 text-sm text-red-600 dark:text-red-400 max-w-2xl">
-        {error || 'Configuration unavailable.'}
-        <button onClick={load} className="ml-2 underline">Retry</button>
-      </div>
+      <Card padding="lg" className="text-sm text-status-fail max-w-2xl flex items-center gap-2">
+        <span>{error || 'Configuration unavailable.'}</span>
+        <Button variant="secondary" size="sm" onClick={load}>Retry</Button>
+      </Card>
     );
   }
 
   return (
-    <ServiceForm
-      key={`${serviceName}-${service.nodeName || 'Local'}`}
-      initialData={initialData}
-      isEdit
-      defaultNode={service.nodeName && service.nodeName !== 'Local' ? service.nodeName : ''}
-      onClose={load}
-      variant="embedded"
-    />
+    <div className="space-y-4">
+      <SectionHeading description="Edit this service's Quadlet manifest in place">
+        Configuration
+      </SectionHeading>
+      <Card padding="lg">
+        <ServiceForm
+          key={`${serviceName}-${service.nodeName || 'Local'}`}
+          initialData={initialData}
+          isEdit
+          defaultNode={service.nodeName && service.nodeName !== 'Local' ? service.nodeName : ''}
+          onClose={load}
+          variant="embedded"
+        />
+      </Card>
+    </div>
   );
 }

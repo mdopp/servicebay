@@ -54,6 +54,37 @@ describe('settings IA — Maintenance launcher (#1958 follow-up)', () => {
   });
 });
 
+describe('settings IA — Portal access lives under Access & People (#2084)', () => {
+  // "Portal access" thematically belongs with who-can-get-in (Access & People),
+  // not the internet-reachability concern (Network & Domain).
+  it('has the portal-access entry under the access group, not network-domain', () => {
+    const access = SETTINGS_GROUPS.find(g => g.id === 'access')!;
+    const network = SETTINGS_GROUPS.find(g => g.id === 'network-domain')!;
+    expect(access.entries.some(e => e.id === 'portal-access')).toBe(true);
+    expect(network.entries.some(e => e.id === 'portal-access')).toBe(false);
+  });
+
+  it('keeps the portal-access tier (advanced) and keywords', () => {
+    const access = SETTINGS_GROUPS.find(g => g.id === 'access')!;
+    const portal = access.entries.find(e => e.id === 'portal-access')!;
+    expect(portal.tier).toBe('advanced');
+    expect(portal.keywords).toEqual(['portal', 'public page', 'landing']);
+  });
+
+  it('deep-links portal-access to the access group anchor', () => {
+    const hit = SEARCH_INDEX.find(h => h.entry.id === 'portal-access');
+    expect(hit).toBeDefined();
+    expect(hit!.group.id).toBe('access');
+    expect(hit!.href).toBe('/settings/access#portal-access');
+  });
+
+  it('stays findable by name from search', () => {
+    const hit = searchSettings('portal').find(h => h.entry.id === 'portal-access');
+    expect(hit).toBeDefined();
+    expect(hit!.group.id).toBe('access');
+  });
+});
+
 describe('settings IA — SSH Terminal relocated off the top nav (#2030, IA slice 2)', () => {
   // The console is no longer a top-nav noun; it lives under System as an advanced
   // launch card → /terminal, and must stay findable by name so the capability is

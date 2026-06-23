@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Bot, Check, ExternalLink, Globe, Loader2, Mail, Send, Trash2, UserCheck, UserPlus } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { Badge, Button, Card, SectionHeading, StatusDot } from '@/components/ui';
 
 interface AccessRequest {
   id: string;
@@ -34,6 +35,12 @@ interface AccessRequest {
  *
  * Plus a top-level link to LLDAP (when known) so the admin can jump
  * to the user-creation UI without hunting for the URL.
+ *
+ * #2086 — rebuilt on the #2073 design-system primitives (Card / Button /
+ * Badge / StatusDot / SectionHeading) + semantic tokens, replacing the
+ * ad-hoc rounded-xl/gray-800 card, raw blue/amber/emerald button chains
+ * and the mixed labelled-button + bare-icon action cluster with one
+ * consistent rhythm. Dark-mode-correct by construction.
  */
 export default function AccessRequestsSection() {
   const { addToast } = useToast();
@@ -131,54 +138,52 @@ export default function AccessRequestsSection() {
 
   if (busy === 'load') {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 text-sm text-gray-500 dark:text-gray-400">
+      <Card className="w-full p-space-5 text-sm text-text-muted">
         <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
         Loading access requests…
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full scroll-mt-24">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-        <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
+    <Card padding="none" className="w-full overflow-hidden scroll-mt-24">
+      <div className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border bg-surface-2">
+        <div className="p-2 rounded-card bg-accent/10 text-accent">
           <UserPlus size={20} />
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-gray-900 dark:text-white">
-            Access requests
+          <h3 className="flex items-center gap-space-2 font-semibold text-text">
+            People &amp; access requests
             {pending.length > 0 && (
-              <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold text-white bg-amber-500 rounded-full">
-                {pending.length}
-              </span>
+              <Badge variant="warn" aria-label={`${pending.length} pending`}>{pending.length}</Badge>
             )}
           </h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-text-muted">
             Family members on the LAN can submit a request from the portal at <span className="font-mono">/portal</span>. Click <span className="font-medium">Approve</span> to provision the user in LLDAP and open their group-assignment page.
           </p>
         </div>
         {lldapUrl && (
-          <a
-            href={lldapUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="shrink-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
+          <Button
+            variant="secondary"
+            size="sm"
+            className="shrink-0"
+            onClick={() => window.open(lldapUrl, '_blank', 'noopener,noreferrer')}
           >
             Open LLDAP <ExternalLink size={14} />
-          </a>
+          </Button>
         )}
       </div>
 
-      <div className="p-6 space-y-6">
+      <div className="p-space-5 space-y-6">
         {requests.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+          <p className="text-sm text-text-muted italic">
             No access requests yet. They appear here when a family member fills the form on the portal.
           </p>
         ) : (
           <>
             {pending.length > 0 && (
-              <div>
-                <h4 className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Pending</h4>
+              <div className="space-y-space-3">
+                <SectionHeading as="h4">Pending</SectionHeading>
                 <div className="space-y-2">
                   {pending.map(r => (
                     <RequestRow
@@ -195,8 +200,8 @@ export default function AccessRequestsSection() {
               </div>
             )}
             {resolved.length > 0 && (
-              <div>
-                <h4 className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Resolved</h4>
+              <div className="space-y-space-3">
+                <SectionHeading as="h4" tone="muted">Resolved</SectionHeading>
                 <div className="space-y-2">
                   {resolved.map(r => (
                     <RequestRow
@@ -216,8 +221,20 @@ export default function AccessRequestsSection() {
           </>
         )}
       </div>
-    </div>
+    </Card>
   );
+}
+
+/** Map an access-request status to a StatusDot state + accessible label. */
+function statusDotState(status: AccessRequest['status']): { state: 'ok' | 'warn' | 'fail'; label: string } {
+  switch (status) {
+    case 'pending':
+      return { state: 'warn', label: 'Pending' };
+    case 'denied':
+      return { state: 'fail', label: 'Denied' };
+    default:
+      return { state: 'ok', label: 'Approved' };
+  }
 }
 
 /**
@@ -228,21 +245,15 @@ export default function AccessRequestsSection() {
 function ProvenanceBadge({ requestedBy }: { requestedBy?: string }) {
   if (requestedBy) {
     return (
-      <span
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium rounded bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300"
-        title={`Filed via agent: ${requestedBy}`}
-      >
+      <Badge variant="info" title={`Filed via agent: ${requestedBy}`}>
         <Bot size={11} /> Via agent
-      </span>
+      </Badge>
     );
   }
   return (
-    <span
-      className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400"
-      title="Submitted from the family portal"
-    >
+    <Badge variant="neutral" title="Submitted from the family portal">
       <Globe size={11} /> Via portal
-    </span>
+    </Badge>
   );
 }
 
@@ -265,79 +276,84 @@ function RequestRow({
 }) {
   const canAutoApprove = Boolean(r.username);
   const canResendWelcome = Boolean(r.username);
+  const dot = statusDotState(r.status);
   return (
-    <div className={`p-3 rounded-lg border border-gray-200 dark:border-gray-700 ${muted ? 'opacity-60' : 'bg-white dark:bg-gray-900'}`}>
-      <div className="flex items-start gap-3">
+    <Card padding="sm" className={muted ? 'bg-surface-2 opacity-70' : 'bg-surface-2'}>
+      <div className="flex items-start gap-space-3">
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 text-sm flex-wrap">
-            <span className="font-medium text-gray-900 dark:text-white">{r.name}</span>
+          <div className="flex items-center gap-space-2 text-sm flex-wrap">
+            <StatusDot state={dot.state} label={dot.label} />
+            <span className="font-medium text-text">{r.name}</span>
             {r.username && (
-              <span className="inline-flex items-center px-1.5 py-0.5 text-[11px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded">
-                {r.username}
-              </span>
+              <Badge variant="neutral" className="font-mono">{r.username}</Badge>
             )}
             {r.kind && (
-              <span className="inline-flex items-center px-1.5 py-0.5 text-[11px] font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded capitalize">
-                {r.kind}
-              </span>
+              <Badge variant="accent" className="capitalize">{r.kind}</Badge>
             )}
             <ProvenanceBadge requestedBy={r.requestedBy} />
             {r.email && (
-              <a href={`mailto:${r.email}`} className="inline-flex items-center gap-1 text-blue-700 dark:text-blue-300 hover:underline text-xs">
+              <a href={`mailto:${r.email}`} className="inline-flex items-center gap-1 text-accent hover:underline text-xs">
                 <Mail size={12} /> {r.email}
               </a>
             )}
           </div>
-          <div className="text-[11px] text-gray-500 dark:text-gray-400">
+          <div className="text-[11px] text-text-subtle">
             Submitted {new Date(r.requestedAt).toLocaleString()}
             {r.requestedBy && ` · by ${r.requestedBy}`}
             {r.resolvedAt && ` · resolved ${new Date(r.resolvedAt).toLocaleString()}`}
           </div>
           {r.message && (
-            <p className="mt-1 text-xs text-gray-600 dark:text-gray-400 italic">&ldquo;{r.message}&rdquo;</p>
+            <p className="mt-1 text-xs text-text-muted italic">&ldquo;{r.message}&rdquo;</p>
           )}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-space-1 shrink-0">
           {r.status === 'pending' && canAutoApprove && (
-            <button
+            <Button
+              variant="primary"
+              size="sm"
               onClick={onApprove}
               disabled={busy}
-              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded disabled:opacity-50"
               title="Provision the user in LLDAP and open the group assignment page"
             >
               <UserCheck size={14} /> Approve
-            </button>
+            </Button>
           )}
           {r.status === 'pending' && (
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={onResolve}
               disabled={busy}
-              className="p-1.5 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded disabled:opacity-50"
+              aria-label="Mark resolved"
               title={canAutoApprove ? 'Mark resolved without creating the LLDAP user' : 'Mark resolved (after creating the LLDAP user)'}
             >
               <Check size={16} />
-            </button>
+            </Button>
           )}
           {r.status !== 'pending' && r.status !== 'denied' && canResendWelcome && (
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={onResendWelcome}
               disabled={busy}
-              className="p-1.5 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded disabled:opacity-50"
+              aria-label="Resend welcome email"
               title="Resend the welcome email to this family member"
             >
               <Send size={16} />
-            </button>
+            </Button>
           )}
-          <button
+          <Button
+            variant="danger"
+            size="sm"
             onClick={onDelete}
             disabled={busy}
-            className="p-1.5 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded disabled:opacity-50"
+            aria-label="Delete request"
             title="Delete this request"
           >
             <Trash2 size={16} />
-          </button>
+          </Button>
         </div>
       </div>
-    </div>
+    </Card>
   );
 }

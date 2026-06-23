@@ -7,6 +7,7 @@ import { logger, type ServiceViewModel } from '@servicebay/api-client';
 import ActionProgressModal from '@/components/ActionProgressModal';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
+import { Button, SectionHeading } from '@/components/ui';
 
 /**
  * Actions tab of a service's Operate page (#1957). The lifecycle controls that
@@ -110,32 +111,36 @@ export default function OperateActionsTab({
   }, [addToast, updateToast, deleteInFlight, router, service.name, serviceName, nodeParam, deletedHref]);
 
   return (
+    // Consistent layout (#2078): every action is the same <Button> primitive on a
+    // uniform 2-col grid, grouped under <SectionHeading> sections, so the controls
+    // share one size/rhythm instead of the old mixed 2-col/full-width/oversized mix
+    // that read 'deplaziert'.
     <div className="space-y-6 max-w-xl">
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-200">Lifecycle</h3>
-        <div className="grid grid-cols-2 gap-3">
-          <ActionButton onClick={() => openLifecycle('start')} icon={<PlayCircle size={18} className="text-green-500" />} label="Start" />
-          <ActionButton onClick={() => openLifecycle('stop')} icon={<Power size={18} className="text-red-500" />} label="Stop" />
+      <section className="space-y-3" aria-label="Lifecycle actions">
+        <SectionHeading as="h3">Lifecycle</SectionHeading>
+        <div className="grid grid-cols-2 gap-2">
+          <ActionButton onClick={() => openLifecycle('start')} icon={<PlayCircle size={16} />} label="Start" />
+          <ActionButton onClick={() => openLifecycle('stop')} icon={<Power size={16} />} label="Stop" />
+          <ActionButton onClick={() => openLifecycle('restart')} icon={<RotateCw size={16} />} label="Restart" />
+          <ActionButton onClick={runUpdate} running={runningAction === 'update'} icon={<RefreshCw size={16} />} label="Update & Restart" />
         </div>
-        <ActionButton onClick={() => openLifecycle('restart')} icon={<RotateCw size={18} className="text-blue-500" />} label="Restart" fullWidth />
-        <ActionButton onClick={runUpdate} running={runningAction === 'update'} icon={<RefreshCw size={18} className="text-orange-500" />} label="Update & Restart" fullWidth />
-      </div>
+      </section>
 
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-200">Data</h3>
-        <ActionButton onClick={handleBackup} running={backingUp} icon={<DatabaseBackup size={18} className="text-indigo-500" />} label="Back up config to NAS" fullWidth />
-      </div>
+      <section className="space-y-3" aria-label="Data actions">
+        <SectionHeading as="h3">Data</SectionHeading>
+        <div className="grid grid-cols-2 gap-2">
+          <ActionButton onClick={handleBackup} running={backingUp} icon={<DatabaseBackup size={16} />} label="Back up config to NAS" />
+        </div>
+      </section>
 
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-200">Danger zone</h3>
-        <button
-          onClick={() => setDeleteOpen(true)}
-          className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors text-red-600 dark:text-red-400"
-        >
-          <Trash2 size={18} />
-          <span className="font-medium">Delete service</span>
-        </button>
-      </div>
+      <section className="space-y-3" aria-label="Danger zone actions">
+        <SectionHeading as="h3" tone="danger">Danger zone</SectionHeading>
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="danger" onClick={() => setDeleteOpen(true)} className="w-full">
+            <Trash2 size={16} /> Delete service
+          </Button>
+        </div>
+      </section>
 
       <OperateActionModals
         service={service}
@@ -218,28 +223,23 @@ function OperateActionModals({
   );
 }
 
+/** A lifecycle/data action — the shared <Button secondary> primitive at a
+ *  uniform full-cell width, so every action in the grid has identical sizing. */
 function ActionButton({
   onClick,
   running,
   icon,
   label,
-  fullWidth,
 }: {
   onClick: () => void;
   running?: boolean;
   icon: React.ReactNode;
   label: string;
-  fullWidth?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={running}
-      className={`${fullWidth ? 'w-full ' : ''}flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed`}
-    >
-      {running ? <Loader2 size={18} className="animate-spin text-blue-500" /> : icon}
-      <span className="font-medium">{running ? 'Running…' : label}</span>
-    </button>
+    <Button variant="secondary" onClick={onClick} disabled={running} className="w-full">
+      {running ? <Loader2 size={16} className="animate-spin" /> : icon}
+      {running ? 'Running…' : label}
+    </Button>
   );
 }

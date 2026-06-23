@@ -87,6 +87,25 @@ describe('OverviewDashboard render', () => {
     expect(diagnosticsCard?.getAttribute('href')).toBe('/status');
   });
 
+  it('renders Home StatCards on the token Card surface, not raw gray literals (#2079)', () => {
+    render(
+      <ToastProvider>
+        <OverviewDashboard />
+      </ToastProvider>,
+    );
+    // The clickable StatCards render a <Card> (bg-surface) inside the <Link>.
+    // Scope the literal check to the cards themselves (the embedded updater /
+    // image banners are separate, out-of-scope components).
+    const servicesCardLink = screen.getByText('Services').closest('a');
+    expect(servicesCardLink).not.toBeNull();
+    const card = servicesCardLink!.querySelector('.bg-surface');
+    expect(card).not.toBeNull();
+    const cardHtml = (card as HTMLElement).outerHTML;
+    expect(cardHtml).not.toMatch(/bg-(white|gray-900|gray-50)/);
+    expect(cardHtml).not.toMatch(/text-gray-\d/);
+    expect(cardHtml).not.toMatch(/(border|text)-(emerald|amber|red|blue)-\d/);
+  });
+
   it('renders the image-updates banner on Home when the report has pending updates (#1860)', async () => {
     // image-updates report returns one pending service; everything else neutral.
     vi.stubGlobal('fetch', routedFetch(url => {

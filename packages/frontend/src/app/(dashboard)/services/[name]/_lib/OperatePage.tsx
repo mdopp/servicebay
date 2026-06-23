@@ -11,7 +11,7 @@ import OperateSettingsTab from '../../../settings/services/_lib/OperateSettingsT
 import OperateActionsTab from '../../../settings/services/_lib/OperateActionsTab';
 import OperateContainersTab from './OperateContainersTab';
 import ServiceDetailSummary from '@/components/serviceDetail/ServiceDetailSummary';
-import { PageScroll } from '@/components/ui';
+import { Card, PageScroll } from '@/components/ui';
 
 type OperateTab = 'health' | 'settings' | 'containers' | 'actions';
 
@@ -45,22 +45,22 @@ export default function OperatePage({ name }: { name: string }) {
     <PageScroll spacing="lg" className="pb-8">
       <Link
         href="/services"
-        className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"
+        className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text"
       >
         <ArrowLeft size={16} /> Services
       </Link>
 
       {loading ? (
-        <div className="flex items-center justify-center gap-2 p-8 text-gray-500">
+        <div className="flex items-center justify-center gap-2 p-8 text-text-muted">
           <RefreshCw className="w-4 h-4 animate-spin" /> Loading service…
         </div>
       ) : !service ? (
-        <div className="p-8 text-center text-gray-500 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl">
+        <Card padding="lg" className="text-center text-text-muted">
           <p>Service <strong>{name}</strong> was not found.</p>
-          <Link href="/services" className="text-blue-600 dark:text-blue-400 hover:underline text-sm mt-2 inline-block">
+          <Link href="/services" className="text-accent hover:underline text-sm mt-2 inline-block">
             Back to all services
           </Link>
-        </div>
+        </Card>
       ) : (
         <OperateBody service={service} />
       )}
@@ -77,19 +77,19 @@ function OperateBody({ service }: { service: ServiceViewModel }) {
     <>
       {/* The shared per-service detail — identical to the one shown in the
           network-map node sidebar, so the two never drift. */}
-      <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5">
+      <Card padding="lg">
         <ServiceDetailSummary service={service} showOperateLink={false} />
-      </div>
+      </Card>
 
-      <div className="flex border-b border-gray-200 dark:border-gray-700">
+      <div className="flex border-b border-border">
         {TABS.map(({ id, label, Icon }) => (
           <button
             key={id}
             onClick={() => setTab(id)}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
               tab === id
-                ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
-                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                ? 'border-accent text-accent'
+                : 'border-transparent text-text-muted hover:text-text'
             }`}
           >
             <Icon size={16} /> {label}

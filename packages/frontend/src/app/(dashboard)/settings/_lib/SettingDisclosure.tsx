@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Card } from '@/components/ui';
 import type { SettingTier } from './ia';
 
 interface SettingDisclosureProps {
@@ -53,24 +54,25 @@ export default function SettingDisclosure({ id, tier, label, children }: Setting
   }
 
   return (
-    <div
+    <Card
       ref={ref}
       id={id}
-      className="scroll-mt-24 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm overflow-hidden"
+      padding="none"
+      className="scroll-mt-24 overflow-hidden"
     >
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
         aria-expanded={open}
-        className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/40 transition-colors"
+        className="w-full flex items-center gap-2 px-4 py-3 text-left text-sm font-medium text-text-muted hover:bg-surface-2 hover:text-text transition-colors"
       >
         {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
         <span>{label}</span>
-        <span className="ml-2 text-[10px] uppercase font-semibold tracking-wide text-gray-400 dark:text-gray-500">
+        <span className="ml-2 text-[10px] uppercase font-semibold tracking-wide text-text-subtle">
           Advanced
         </span>
       </button>
-      {open && <div className="border-t border-gray-200 dark:border-gray-700 p-4 space-y-6">{children}</div>}
-    </div>
+      {open && <div className="border-t border-border p-4 space-y-6">{children}</div>}
+    </Card>
   );
 }

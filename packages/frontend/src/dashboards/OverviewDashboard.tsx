@@ -10,7 +10,8 @@ import { useImageUpdates, type ServiceImageUpdate } from '@/hooks/useImageUpdate
 import { useServiceActions } from '@/hooks/useServiceActions';
 import ImageUpdatesPendingBanner from '@/components/ImageUpdatesPendingBanner';
 import ServiceBayUpdateCard from '@/components/ServiceBayUpdateCard';
-import { SectionHeading } from '@/components/ui';
+import { Card, SectionHeading } from '@/components/ui';
+import { cn } from '@/components/ui';
 
 /**
  * Latest persisted diagnose breakdown for the Home card (#1873).
@@ -205,11 +206,11 @@ export default function OverviewDashboard() {
       {serviceActionOverlays}
       <div className="max-w-5xl mx-auto space-y-6">
         <header>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Home</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          <h1 className="text-2xl font-bold text-text">Home</h1>
+          <p className="text-sm text-text-muted mt-1">
             {data?.serverName || firstNode?.resources?.os?.hostname || 'ServiceBay'}
             {!isConnected && hasFirstSnapshot && (
-              <span className="ml-2 text-xs text-amber-600 dark:text-amber-400">· reconnecting…</span>
+              <span className="ml-2 text-xs text-status-warn">· reconnecting…</span>
             )}
           </p>
         </header>
@@ -260,16 +261,29 @@ export default function OverviewDashboard() {
   );
 }
 
+/** Tone → status/accent token classes, shared by HealthHeadline (tinted
+ *  surface) and StatCard (accent text). `good/warn/bad` map to the status
+ *  tokens; `neutral` to the accent (a "no issue / navigate here" hue). */
+const TONE_SURFACE: Record<'good' | 'warn' | 'bad' | 'neutral', string> = {
+  good: 'bg-status-ok/10 border-status-ok/20 text-status-ok',
+  warn: 'bg-status-warn/10 border-status-warn/20 text-status-warn',
+  bad: 'bg-status-fail/10 border-status-fail/20 text-status-fail',
+  neutral: 'bg-surface-2 border-border text-text-muted',
+};
+
+const TONE_ACCENT: Record<'good' | 'warn' | 'bad' | 'neutral', string> = {
+  good: 'text-status-ok',
+  warn: 'text-status-warn',
+  bad: 'text-status-fail',
+  neutral: 'text-accent',
+};
+
 function HealthHeadline({ tone, text }: { tone: 'good' | 'warn' | 'bad' | 'neutral'; text: string }) {
-  const toneClasses: Record<typeof tone, string> = {
-    good: 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/50 text-emerald-800 dark:text-emerald-300',
-    warn: 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900/50 text-amber-800 dark:text-amber-300',
-    bad: 'bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900/50 text-red-800 dark:text-red-300',
-    neutral: 'bg-gray-50 dark:bg-gray-900/40 border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-300',
-  };
   const Icon = tone === 'bad' || tone === 'warn' ? AlertCircle : CheckCircle2;
+  // Tinted status surface — not a <Card> (Card is a neutral bg-surface); the
+  // tone tokens here own both the fill and the border, fully token-driven.
   return (
-    <div className={`flex items-center gap-3 rounded-xl border px-4 py-3.5 transition-all duration-300 ${toneClasses[tone]}`}>
+    <div className={cn('flex items-center gap-3 rounded-card border px-4 py-3.5 transition-all duration-300', TONE_SURFACE[tone])}>
       <Icon size={20} className="shrink-0" />
       <span className="text-sm font-semibold tracking-wide">{text}</span>
     </div>
@@ -289,34 +303,30 @@ interface StatCardProps {
 }
 
 function StatCard({ title, metric, description, icon: Icon, tone, href }: StatCardProps) {
-  const accentClasses: Record<typeof tone, string> = {
-    good: 'text-emerald-600 dark:text-emerald-400',
-    warn: 'text-amber-600 dark:text-amber-400',
-    bad: 'text-red-600 dark:text-red-400',
-    neutral: 'text-blue-600 dark:text-blue-400',
-  };
+  const accent = TONE_ACCENT[tone];
   const inner = (
     <>
       {Icon && (
         <div className="mb-3">
-          <Icon size={20} className={accentClasses[tone]} />
+          <Icon size={20} className={accent} />
         </div>
       )}
-      <h2 className="font-bold text-gray-900 dark:text-gray-100 tracking-wide text-base">{title}</h2>
-      <p className={`text-sm font-semibold mt-1 ${accentClasses[tone]}`}>{metric}</p>
-      <p className="text-xs text-gray-600 dark:text-gray-300 mt-2 font-medium leading-relaxed">{description}</p>
+      <h2 className="font-bold text-text tracking-wide text-base">{title}</h2>
+      <p className={cn('text-sm font-semibold mt-1', accent)}>{metric}</p>
+      <p className="text-xs text-text-muted mt-2 font-medium leading-relaxed">{description}</p>
     </>
   );
-  const baseClasses = 'block rounded-xl p-5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800';
   if (href) {
+    // Clickable navigation card (#2067) — a Next <Link> (the real <a>, keeps
+    // the href) wrapping a <Card> surface, with a token-driven hover affordance
+    // (accent border + accent ring).
     return (
-      <Link
-        href={href}
-        className={`${baseClasses} cursor-pointer transition-all hover:border-blue-400 dark:hover:border-blue-500 hover:shadow-md dark:hover:bg-gray-800/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
-      >
-        {inner}
+      <Link href={href} className="block rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+        <Card padding="lg" className="cursor-pointer transition-all hover:border-accent hover:shadow-md">
+          {inner}
+        </Card>
       </Link>
     );
   }
-  return <div className={baseClasses}>{inner}</div>;
+  return <Card padding="lg">{inner}</Card>;
 }

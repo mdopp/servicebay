@@ -88,4 +88,21 @@ describe('OperateHealthTab (#2080 attribution)', () => {
     const boxWide = screen.getByLabelText('Box-wide health checks');
     expect(within(boxWide).getByText('Self-diagnose: TLS certificates')).toBeDefined();
   });
+
+  // #2078 migration: rows render via design-system primitives (StatusDot per
+  // check, no ad-hoc green-500/red-500 icon-box literals).
+  it('renders check status via the StatusDot primitive, not raw colour literals', async () => {
+    global.fetch = mockChecks([
+      row({ name: 'Service: jellyfin', type: 'service', target: 'jellyfin', status: 'ok' }),
+      row({ name: 'Service: jellyfin db', type: 'service', target: 'jellyfin', status: 'fail' }),
+    ]);
+    const { container } = render(<OperateHealthTab service={svc()} />);
+    await waitFor(() => expect(screen.getByText('Service: jellyfin')).toBeDefined());
+    // StatusDot renders role="status" per row
+    expect(container.querySelectorAll('[role="status"]').length).toBeGreaterThanOrEqual(2);
+    // old ad-hoc status-icon colour literals are gone
+    for (const banned of ['text-green-500', 'text-red-500', 'bg-green-50', 'bg-red-50']) {
+      expect(container.innerHTML).not.toContain(banned);
+    }
+  });
 });
