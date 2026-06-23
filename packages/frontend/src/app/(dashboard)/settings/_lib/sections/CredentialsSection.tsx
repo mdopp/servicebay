@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Download, ExternalLink, Eye, EyeOff, Key, Loader2, Trash2 } from 'lucide-react';
+import { Download, ExternalLink, Eye, EyeOff, Loader2, Trash2 } from 'lucide-react';
 import {
   buildBitwardenCsv,
   isHttpUrl,
@@ -119,29 +119,22 @@ export default function CredentialsSection() {
 
   if (busy === 'load') {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 text-sm text-gray-500 dark:text-gray-400">
+      <p className="text-sm text-gray-500 dark:text-gray-400">
         <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
         Loading credentials…
-      </div>
+      </p>
     );
   }
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-        <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
-          <Key size={20} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-gray-900 dark:text-white">Saved credentials</h3>
+    <>
+        {manifest && (
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            {manifest
-              ? `Persisted at ${new Date(manifest.savedAt).toLocaleString()} — encrypted at rest, visible to logged-in admins.`
-              : 'No credentials saved. Install a service via the wizard to populate this list.'}
+            Persisted at {new Date(manifest.savedAt).toLocaleString()} — encrypted at rest, visible to logged-in admins.
           </p>
-        </div>
+        )}
         {manifest && manifest.credentials.length > 0 && (
-          <div className="shrink-0 flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={downloadCsv}
               className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
@@ -173,9 +166,8 @@ export default function CredentialsSection() {
             </button>
           </div>
         )}
-      </div>
 
-      <div className="p-6">
+      <div>
         {!manifest || manifest.credentials.length === 0 ? (
           <p className="text-sm text-gray-500 dark:text-gray-400 italic">
             Nothing saved yet. The install wizard writes here at the end of every successful run.
@@ -244,6 +236,6 @@ export default function CredentialsSection() {
           </div>
         )}
       </div>
-    </div>
+    </>
   );
 }

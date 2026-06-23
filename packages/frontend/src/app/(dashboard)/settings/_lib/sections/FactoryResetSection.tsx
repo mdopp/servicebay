@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
+import { Loader2, Trash2 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 
 /**
@@ -60,18 +60,7 @@ export default function FactoryResetSection() {
   };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-red-200 dark:border-red-900/50 shadow-sm overflow-hidden w-full">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-red-50 dark:bg-red-950/30 flex items-center gap-3">
-        <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-lg text-red-600 dark:text-red-400">
-          <AlertTriangle size={20} />
-        </div>
-        <div>
-          <h3 className="font-bold text-gray-900 dark:text-white">Factory Reset</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">Wipe every service + clear saved credentials. Start from zero.</p>
-        </div>
-      </div>
-
-      <div className="p-6 space-y-4">
+    <div className="space-y-4">
         <div className="text-sm text-gray-700 dark:text-gray-300 space-y-2">
           <p>This deletes every installed service (photos, vault, identity, proxy, all of it) and clears the saved credentials in ServiceBay&apos;s config. The next wizard run goes through the full first-install flow with no pre-filled values.</p>
           <p className="font-medium text-red-700 dark:text-red-400">
@@ -120,7 +109,6 @@ export default function FactoryResetSection() {
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Open the install wizard to set up the server from scratch.</p>
           </div>
         )}
-      </div>
     </div>
   );
 }

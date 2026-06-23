@@ -29,12 +29,14 @@ function mockFetch(tokens: unknown[]) {
 describe('ApiTokensSection (#2100 settings migration)', () => {
   beforeEach(() => vi.unstubAllGlobals());
 
-  it('renders on a token Card surface with a Button-primitive revoke and no raw colour literals', async () => {
+  it('renders its controls with a Button-primitive revoke and no inner duplicate title (#2109)', async () => {
     mockFetch([TOKEN]);
     const { container } = render(<ApiTokensSection />);
     await waitFor(() => expect(screen.getByText('workstation')).toBeDefined());
 
-    expect(container.querySelector('.bg-surface')).not.toBeNull();
+    // The section no longer renders its own titled Card+header — that lives in
+    // the SettingDisclosure now (#2109). No "API tokens" h2/h3 title here.
+    expect(container.querySelector('h2, h3')).toBeNull();
     const revoke = screen.getByRole('button', { name: /revoke workstation/i });
     expect(revoke.getAttribute('data-variant')).toBe('danger');
     const html = container.innerHTML;

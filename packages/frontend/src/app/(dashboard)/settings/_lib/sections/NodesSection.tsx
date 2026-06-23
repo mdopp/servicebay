@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import {
-  Server,
   Key,
   Terminal,
   Plus,
@@ -16,7 +15,7 @@ import {
   ShieldAlert,
   WifiOff,
 } from 'lucide-react';
-import { Badge, Button, Card } from '@/components/ui';
+import { Badge, Button } from '@/components/ui';
 import { useSettings } from '../SettingsContext';
 import { PodmanConnection } from '@/lib/nodes';
 
@@ -99,24 +98,14 @@ export default function NodesSection() {
   };
 
   return (
-    <Card padding="none" className="w-full overflow-hidden">
-      <div className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border bg-surface-2">
-        <div className="p-2 rounded-card bg-accent/10 text-accent">
-          <Server size={20} />
-        </div>
-        <div>
-          <h3 className="font-semibold text-text">System Connections</h3>
-          <p className="text-xs text-text-muted">Manage remote Podman nodes</p>
-        </div>
-        <div className="ml-auto">
+    <>
+        <div className="flex justify-end">
           <Button variant="ghost" size="sm" onClick={() => openSSHModal()}>
             <Terminal size={14} />
             Setup SSH Keys
           </Button>
         </div>
-      </div>
 
-      <div className="p-space-5 space-y-6">
         <div className="bg-accent/10 border border-accent/20 rounded-card p-3 flex gap-3 items-start">
           <div className="mt-0.5 text-accent">
             <Key size={16} />
@@ -357,7 +346,6 @@ export default function NodesSection() {
             </div>
           )}
         </div>
-      </div>
-    </Card>
+    </>
   );
 }

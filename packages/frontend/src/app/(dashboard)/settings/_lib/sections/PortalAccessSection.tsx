@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Loader2, Save, Users } from 'lucide-react';
+import { Loader2, Save } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
-import { Button, Card } from '@/components/ui';
+import { Button } from '@/components/ui';
 
 /**
  * Settings section for the family-portal access limits (#1456):
@@ -69,28 +69,15 @@ export default function PortalAccessSection() {
 
   if (busy === 'load') {
     return (
-      <Card className="w-full p-space-5 text-sm text-text-muted">
+      <p className="text-sm text-text-muted">
         <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
         Loading portal settings…
-      </Card>
+      </p>
     );
   }
 
   return (
-    <Card id="portal-access" padding="none" className="w-full overflow-hidden scroll-mt-24">
-      <div className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border bg-surface-2">
-        <div className="p-2 rounded-card bg-accent/10 text-accent">
-          <Users size={20} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-text">Portal access</h3>
-          <p className="text-xs text-text-muted">
-            Limits for the family portal at <span className="font-mono">/portal</span>.
-          </p>
-        </div>
-      </div>
-
-      <div className="p-space-5 space-y-6">
+    <>
         <div>
           <label htmlFor="max-users" className="block text-sm font-medium text-text">
             Maximum users
@@ -139,7 +126,6 @@ export default function PortalAccessSection() {
             <span className={`inline-block h-4 w-4 transform rounded-chip bg-white transition-transform ${lanOnly ? 'translate-x-6' : 'translate-x-1'}`} />
           </button>
         </div>
-      </div>
-    </Card>
+    </>
   );
 }

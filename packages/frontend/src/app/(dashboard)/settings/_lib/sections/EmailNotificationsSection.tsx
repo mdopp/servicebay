@@ -1,8 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Mail, Plus, Trash2, Send, CheckCircle2, AlertCircle } from 'lucide-react';
-import { Button, Card } from '@/components/ui';
+import { Plus, Trash2, Send, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Button } from '@/components/ui';
 import { useSettings } from '../SettingsContext';
 
 // Shared token-based input chrome for this section's text fields.
@@ -79,31 +79,23 @@ export default function EmailNotificationsSection() {
   };
 
   return (
-    <Card padding="none" className="w-full overflow-hidden">
-      <div className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border bg-surface-2">
-        <div className="p-2 rounded-card bg-accent/10 text-accent">
-          <Mail size={20} />
-        </div>
-        <div>
-          <h3 className="font-semibold text-text">Email (SMTP)</h3>
-          <p className="text-xs text-text-muted">Configure SMTP settings for ServiceBay alerts</p>
-        </div>
-        <div className="ml-auto">
-          <button
-            role="switch"
-            aria-checked={emailEnabled}
-            aria-label="Enable email notifications"
-            onClick={() => handleEnabledToggle(!emailEnabled)}
-            disabled={saving}
-            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-chip transition-colors disabled:opacity-50 ${emailEnabled ? 'bg-accent' : 'bg-surface-muted border border-border'}`}
-          >
-            <span className={`inline-block h-4 w-4 transform rounded-chip bg-white transition-transform ${emailEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-          </button>
-        </div>
-      </div>
+    <>
+      <label className="flex items-center justify-between gap-space-3">
+        <span className="text-sm font-medium text-text">Enable email notifications</span>
+        <button
+          role="switch"
+          aria-checked={emailEnabled}
+          aria-label="Enable email notifications"
+          onClick={() => handleEnabledToggle(!emailEnabled)}
+          disabled={saving}
+          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-chip transition-colors disabled:opacity-50 ${emailEnabled ? 'bg-accent' : 'bg-surface-muted border border-border'}`}
+        >
+          <span className={`inline-block h-4 w-4 transform rounded-chip bg-white transition-transform ${emailEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+        </button>
+      </label>
 
       {emailEnabled && (
-        <div className="p-space-5 space-y-6">
+        <div className="space-y-6">
           <div className="rounded-card border border-status-info/30 bg-status-info/10 p-4 text-sm text-text">
             <p className="font-medium mb-1">Need help finding these settings?</p>
             <ul className="list-disc list-inside space-y-1 text-text-muted">
@@ -273,6 +265,6 @@ export default function EmailNotificationsSection() {
           </div>
         </div>
       )}
-    </Card>
+    </>
   );
 }

@@ -206,10 +206,10 @@ export default function PublicDomainSection() {
 
   if (phase === 'loading' || !info) {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 text-sm text-gray-500 dark:text-gray-400">
+      <p className="text-sm text-gray-500 dark:text-gray-400">
         <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
         Loading mode…
-      </div>
+      </p>
     );
   }
 
@@ -217,8 +217,8 @@ export default function PublicDomainSection() {
   const Icon = isLan ? Home : Globe;
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-      <PublicDomainHeader isLan={isLan} Icon={Icon} info={info} />
+    <>
+      <PublicDomainModeBanner isLan={isLan} Icon={Icon} info={info} />
       <PublicDomainBody
         phase={phase}
         info={info}
@@ -236,20 +236,21 @@ export default function PublicDomainSection() {
         setResult={setResult}
         setPreflight={setPreflight}
       />
-    </div>
+    </>
   );
 }
 
-function PublicDomainHeader({isLan, Icon, info}: {isLan: boolean; Icon: LucideIcon; info: ModeInfo}) {
+/** Compact in-body mode banner (#2109). Not a bordered box-in-box — the
+ *  disclosure header already carries the "Public domain" title; this conveys
+ *  the live LAN-vs-public state. */
+function PublicDomainModeBanner({isLan, Icon, info}: {isLan: boolean; Icon: LucideIcon; info: ModeInfo}) {
   return (
-    <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-      <div className={`p-2 rounded-lg ${isLan ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'}`}>
-        <Icon size={20} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <h3 className="font-bold text-gray-900 dark:text-white">
+    <div className={`flex items-start gap-3 rounded-card p-3 ${isLan ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800'}`}>
+      <Icon size={18} className={`shrink-0 mt-0.5 ${isLan ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`} />
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-gray-900 dark:text-white">
           {isLan ? 'Internal-only mode' : 'Public-domain mode'}
-        </h3>
+        </p>
         <p className="text-xs text-gray-500 dark:text-gray-400">
           {isLan
             ? `Services live on <sub>.${info.activeDomain} via AdGuard DNS rewrites. No HTTPS, no external access.`
@@ -271,7 +272,7 @@ function PublicDomainBody({
   setResult: (r: MigrationResult | null) => void; setPreflight: (p: PreflightStatus | null) => void;
 }) {
   return (
-    <div className="p-6 space-y-4">
+    <div className="space-y-4">
       {phase === 'public' && info.publicDomain && <PublicModeBody info={info} />}
       {phase === 'idle' && (
         <IdleForm

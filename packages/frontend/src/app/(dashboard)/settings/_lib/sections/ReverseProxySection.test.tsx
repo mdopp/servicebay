@@ -21,12 +21,14 @@ function mockFetch(status: string) {
 describe('ReverseProxySection (#2100 settings migration)', () => {
   beforeEach(() => vi.unstubAllGlobals());
 
-  it('renders on a token Card surface with a status Badge and no raw colour literals', async () => {
+  it('renders its controls with the status Badge and no inner duplicate title (#2109)', async () => {
     mockFetch('ok');
     const { container } = render(<ReverseProxySection />);
     await waitFor(() => expect(screen.getByText('Verified')).toBeDefined());
 
-    expect(container.querySelector('.bg-surface')).not.toBeNull();
+    // No "Reverse Proxy (NPM)" h3 inside the section — the SettingDisclosure
+    // header carries the icon+title+description now (#2109).
+    expect(container.querySelector('h3')).toBeNull();
     const html = container.innerHTML;
     expect(html).not.toMatch(/bg-(blue|amber|emerald|green|red|purple|indigo)-\d/);
     expect(html).not.toMatch(/text-(blue|emerald|red|purple|indigo|amber)-\d/);

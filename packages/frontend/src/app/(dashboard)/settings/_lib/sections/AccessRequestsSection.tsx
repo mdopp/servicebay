@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bot, Check, ExternalLink, Globe, Loader2, Mail, Send, Trash2, UserCheck, UserPlus } from 'lucide-react';
+import { Bot, Check, ExternalLink, Globe, Loader2, Mail, Send, Trash2, UserCheck } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { Badge, Button, Card, SectionHeading, StatusDot } from '@/components/ui';
 
@@ -138,43 +138,32 @@ export default function AccessRequestsSection() {
 
   if (busy === 'load') {
     return (
-      <Card className="w-full p-space-5 text-sm text-text-muted">
+      <p className="text-sm text-text-muted">
         <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
         Loading access requests…
-      </Card>
+      </p>
     );
   }
 
   return (
-    <Card padding="none" className="w-full overflow-hidden scroll-mt-24">
-      <div className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border bg-surface-2">
-        <div className="p-2 rounded-card bg-accent/10 text-accent">
-          <UserPlus size={20} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="flex items-center gap-space-2 font-semibold text-text">
-            People &amp; access requests
-            {pending.length > 0 && (
-              <Badge variant="warn" aria-label={`${pending.length} pending`}>{pending.length}</Badge>
+    <>
+        {(pending.length > 0 || lldapUrl) && (
+          <div className="flex items-center justify-between gap-space-3">
+            {pending.length > 0 ? (
+              <Badge variant="warn" aria-label={`${pending.length} pending`}>{pending.length} pending</Badge>
+            ) : <span />}
+            {lldapUrl && (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="shrink-0"
+                onClick={() => window.open(lldapUrl, '_blank', 'noopener,noreferrer')}
+              >
+                Open LLDAP <ExternalLink size={14} />
+              </Button>
             )}
-          </h3>
-          <p className="text-xs text-text-muted">
-            Family members on the LAN can submit a request from the portal at <span className="font-mono">/portal</span>. Click <span className="font-medium">Approve</span> to provision the user in LLDAP and open their group-assignment page.
-          </p>
-        </div>
-        {lldapUrl && (
-          <Button
-            variant="secondary"
-            size="sm"
-            className="shrink-0"
-            onClick={() => window.open(lldapUrl, '_blank', 'noopener,noreferrer')}
-          >
-            Open LLDAP <ExternalLink size={14} />
-          </Button>
+          </div>
         )}
-      </div>
-
-      <div className="p-space-5 space-y-6">
         {requests.length === 0 ? (
           <p className="text-sm text-text-muted italic">
             No access requests yet. They appear here when a family member fills the form on the portal.
@@ -220,8 +209,7 @@ export default function AccessRequestsSection() {
             )}
           </>
         )}
-      </div>
-    </Card>
+    </>
   );
 }
 

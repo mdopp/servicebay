@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Router, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 
 interface GatewayState {
@@ -89,37 +89,28 @@ export default function GatewaySection() {
 
   if (busy === 'load' || !state) {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 text-sm text-gray-500 dark:text-gray-400">
+      <p className="text-sm text-gray-500 dark:text-gray-400">
         <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
         Loading gateway settings…
-      </div>
+      </p>
     );
   }
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-        <div className="p-2 rounded-lg bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400">
-          <Router size={20} />
+    <>
+        <div className="flex justify-end">
+          {state.configured ? (
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+              <CheckCircle2 size={14} /> Configured
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+              <AlertCircle size={14} /> Not configured
+            </span>
+          )}
         </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-gray-900 dark:text-white">Internet Gateway (FritzBox)</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            Credentials for TR-064 access — used to read external IP, port-forward status, and (with the router-DNS probe) push DHCP-DNS settings.
-          </p>
-        </div>
-        {state.configured ? (
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-            <CheckCircle2 size={14} /> Configured
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
-            <AlertCircle size={14} /> Not configured
-          </span>
-        )}
-      </div>
 
-      <div className="p-6 space-y-4">
+      <div className="space-y-4">
         <div className="grid sm:grid-cols-2 gap-4">
           <label className="flex flex-col gap-1">
             <span className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Host</span>
@@ -190,6 +181,6 @@ export default function GatewaySection() {
           The TR-064 user needs the &quot;Smart Home&quot; permission in the FritzBox UI (System → FRITZ!Box-Benutzer). The password is stored encrypted at rest in <span className="font-mono">config.gateway.password</span>.
         </p>
       </div>
-    </div>
+    </>
   );
 }
