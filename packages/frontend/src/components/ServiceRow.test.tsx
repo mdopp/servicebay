@@ -9,6 +9,9 @@ import { render, screen } from '@testing-library/react';
 import type { ServiceViewModel } from '@servicebay/api-client';
 import ServiceRow, { serviceDotState } from './ServiceRow';
 
+const push = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
+
 vi.mock('@/components/DomainHealthDot', () => ({
   DomainHealthDot: () => null,
 }));
@@ -65,6 +68,20 @@ describe('ServiceRow (#2079 primitive migration)', () => {
     btn.click();
     expect(onUpdate).toHaveBeenCalledOnce();
     expect(btn.getAttribute('data-variant')).toBe('secondary');
+  });
+
+  it('#2108 renders the network-focus button and navigates to /network?focus=<name>', () => {
+    push.mockClear();
+    render(<ServiceRow service={svc()} httpsDomains={new Set()} {...handlers} />);
+    const btn = screen.getByRole('button', { name: 'Im Netzwerk anzeigen' });
+    expect(btn.getAttribute('data-variant')).toBe('ghost');
+    btn.click();
+    expect(push).toHaveBeenCalledWith('/network?focus=immich.service');
+  });
+
+  it('#2108 hides the network-focus button for external-link "services"', () => {
+    render(<ServiceRow service={svc({ type: 'link', url: 'http://x' })} httpsDomains={new Set()} {...handlers} />);
+    expect(screen.queryByRole('button', { name: 'Im Netzwerk anzeigen' })).toBeNull();
   });
 
   it('uses semantic tokens, not raw gray/blue/green colour literals', () => {

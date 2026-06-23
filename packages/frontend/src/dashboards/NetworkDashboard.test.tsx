@@ -18,6 +18,11 @@ import type { ReactNode } from 'react';
 
 const fetchGraph = vi.fn(() => Promise.resolve());
 
+// Mutable test doubles for the data + routing layers so individual cases can
+// drive a focus deep-link (#2108) without re-mocking per test.
+let topologyRawData: { nodes: unknown[]; edges: unknown[] } | null = null;
+let focusSearchParam: string | null = null;
+
 // @xyflow/react is heavy + canvas-bound; render Panel/ReactFlow children as
 // plain divs so the dashboard's surrounding chrome (toolbar, legend, shell)
 // mounts in jsdom. The graph itself isn't under test here.
@@ -43,7 +48,7 @@ vi.mock('@xyflow/react', () => {
 vi.mock('@xyflow/react/dist/style.css', () => ({}));
 
 vi.mock('@/hooks/useTopologyData', () => ({
-  useTopologyData: () => ({ rawData: null, fetchGraph, twin: null }),
+  useTopologyData: () => ({ rawData: topologyRawData, fetchGraph, twin: null }),
 }));
 vi.mock('@/hooks/useServiceActions', () => ({
   useServiceActions: () => ({ overlays: null }),
@@ -51,7 +56,10 @@ vi.mock('@/hooks/useServiceActions', () => ({
 vi.mock('@/providers/ToastProvider', () => ({
   useToast: () => ({ addToast: vi.fn(), updateToast: vi.fn(), removeToast: vi.fn() }),
 }));
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(focusSearchParam ? `focus=${focusSearchParam}` : ''),
+}));
 vi.mock('@/components/ExternalLinkModal', () => ({ __esModule: true, default: () => null }));
 vi.mock('@/components/serviceDetail/ServiceDetailSummary', () => ({
   __esModule: true,
@@ -64,6 +72,8 @@ import NetworkDashboard from './NetworkDashboard';
 describe('NetworkDashboard (#2100 dashboards migration)', () => {
   beforeEach(() => {
     fetchGraph.mockClear();
+    topologyRawData = null;
+    focusSearchParam = null;
     vi.stubGlobal('EventSource', class { close() {} } as unknown as typeof EventSource);
   });
 
@@ -96,5 +106,36 @@ describe('NetworkDashboard (#2100 dashboards migration)', () => {
     render(<NetworkDashboard />);
     // The map mounts the search toolbar regardless of graph state.
     expect(await screen.findByPlaceholderText('Search...')).toBeDefined();
+  });
+
+  it('#2108 applies the ?focus= deep-link → enters focus mode for the matching service node', async () => {
+    // Graph carries the immich service node the list links to.
+    topologyRawData = {
+      nodes: [
+        { id: 'internet', type: 'internet', label: 'Internet' },
+        { id: 'service-immich.service', type: 'service', label: 'immich' },
+      ],
+      edges: [],
+    };
+    focusSearchParam = 'immich.service';
+
+    render(<NetworkDashboard />);
+
+    // Focus mode is on ⇒ the "Full map" exit control renders (only present
+    // when focusNodeId is set). That proves the param was read + resolved to
+    // the matching node id and applied.
+    expect(await screen.findByTestId('focus-back')).toBeDefined();
+  });
+
+  it('#2108 does NOT enter focus mode when the focus param matches no node (stale link)', async () => {
+    topologyRawData = {
+      nodes: [{ id: 'service-other.service', type: 'service', label: 'other' }],
+      edges: [],
+    };
+    focusSearchParam = 'gone.service';
+
+    render(<NetworkDashboard />);
+    await screen.findByPlaceholderText('Search...');
+    expect(screen.queryByTestId('focus-back')).toBeNull();
   });
 });
