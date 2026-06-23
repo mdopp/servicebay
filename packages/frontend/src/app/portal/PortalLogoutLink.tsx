@@ -28,10 +28,10 @@ function derive(): string {
 export default function PortalLogoutLink() {
   const href = useSyncExternalStore(noopSubscribe, derive, () => '/portal');
   return (
-    <div className="mt-4">
+    <div className="mt-space-4">
       <a
         href={href}
-        className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+        className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text"
       >
         <LogOut size={14} />
         Log out

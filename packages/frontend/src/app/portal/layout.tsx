@@ -31,7 +31,7 @@ export const viewport: Viewport = {
 
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white dark:from-gray-900 dark:to-gray-950">
+    <div className="min-h-screen bg-gradient-to-b from-accent/5 to-surface-muted">
       {children}
     </div>
   );

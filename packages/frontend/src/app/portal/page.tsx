@@ -65,45 +65,45 @@ export default async function PortalPage() {
   const adminUrl = getAdminBaseUrl(config);
 
   return (
-    <main className="relative max-w-6xl mx-auto px-6 py-12">
+    <main className="relative max-w-6xl mx-auto px-space-5 py-space-7">
       {isLoggedIn && displayName && <PortalUserChip displayName={displayName} />}
-      <header className="mb-10 text-center">
-        <div className="flex items-center justify-center gap-3">
-          <ServiceBayLogo size={36} className="text-blue-600 dark:text-blue-400 shrink-0" />
-          <h1 className="text-4xl font-bold text-gray-900 dark:text-white">
-            Home <span className="text-gray-400 dark:text-gray-600 font-normal">— your family&apos;s private cloud</span>
+      <header className="mb-space-7 text-center">
+        <div className="flex items-center justify-center gap-space-3">
+          <ServiceBayLogo size={36} className="text-accent shrink-0" />
+          <h1 className="text-4xl font-bold text-text">
+            Home <span className="text-text-subtle font-normal">— your family&apos;s private cloud</span>
           </h1>
         </div>
-        <p className="mt-3 text-base text-gray-600 dark:text-gray-400">
+        <p className="mt-space-3 text-base text-text-muted">
           {isLoggedIn && firstName
             ? `Welcome back, ${firstName} — pick a service below to get started.`
             : 'Pick a service below to get started.'}
         </p>
         {isLoggedIn && <PortalLogoutLink />}
         {adminUrl && (
-          <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+          <p className="mt-space-4 text-sm text-text-subtle">
             <a
               href={adminUrl}
-              className="inline-flex items-center gap-1.5 text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 underline-offset-2 hover:underline"
+              className="inline-flex items-center gap-1.5 text-text-muted hover:text-text underline-offset-2 hover:underline"
             >
               <Settings size={14} />
               Admin dashboard
             </a>
-            <span className="ml-1.5 text-gray-400 dark:text-gray-500">(separate login)</span>
+            <span className="ml-1.5 text-text-subtle">(separate login)</span>
           </p>
         )}
       </header>
 
       {!isLoggedIn && (
-        <div className="mb-10">
+        <div className="mb-space-7">
           <AccessRequestStatusCTA fallback={<RequestAccessButton />} />
         </div>
       )}
 
       {cards.length === 0 ? (
-        <div className="text-center text-gray-500 dark:text-gray-400 py-16">
+        <div className="text-center text-text-muted py-space-8">
           <p className="text-lg">No services available yet.</p>
-          <p className="text-sm mt-2 italic">
+          <p className="text-sm mt-space-2 italic">
             (Services appear here once they&apos;re running and a user-guide is shipped with their template.)
           </p>
         </div>
@@ -118,15 +118,15 @@ export default async function PortalPage() {
  *  visitor isn't on the home network (#1456). */
 function PortalLanOnlyNotice() {
   return (
-    <main className="relative max-w-2xl mx-auto px-6 py-24 text-center">
-      <div className="flex items-center justify-center gap-3 mb-6">
-        <ServiceBayLogo size={36} className="text-blue-600 dark:text-blue-400 shrink-0" />
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Home</h1>
+    <main className="relative max-w-2xl mx-auto px-space-5 py-space-8 text-center">
+      <div className="flex items-center justify-center gap-space-3 mb-space-5">
+        <ServiceBayLogo size={36} className="text-accent shrink-0" />
+        <h1 className="text-3xl font-bold text-text">Home</h1>
       </div>
-      <p className="text-lg text-gray-700 dark:text-gray-300">
+      <p className="text-lg text-text">
         This page is available on the home network only.
       </p>
-      <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+      <p className="mt-space-3 text-sm text-text-muted">
         Connect to the home Wi-Fi (or its VPN) and reload to request access or open a service.
       </p>
     </main>

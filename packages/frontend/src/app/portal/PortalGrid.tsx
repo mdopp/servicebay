@@ -13,6 +13,7 @@ import {
   Sparkles, X,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { Card } from '@/components/ui';
 import type { PortalCard } from '@/lib/portal/services';
 import type { AppPlatform, PortalAction, PortalIconName, SetupAssetKind } from '@/lib/portal/userGuide';
 
@@ -29,6 +30,29 @@ const SIZE_TIER_SPAN: Record<PortalCard['sizeTier'], string> = {
   regular: 'md:col-span-4', // 3 per row
   feature: 'md:col-span-6', // 2 per row
 };
+
+/**
+ * Shared anchor/button class-chains on the design-system tokens (epic
+ * #2071). The portal's primary affordances are links (Open the service,
+ * download an asset) rather than <button>s, so they can't use the
+ * <Button> primitive directly — these mirror its primary/secondary
+ * padding/radius/hover story on the same `accent`/`surface` tokens so
+ * the portal stays coherent with the admin dashboard. The portal keeps a
+ * slightly friendlier full-width pill feel, but every colour resolves
+ * through a token (dark-mode-correct, no raw hex / blue-600 literals).
+ */
+const PORTAL_CTA_BUTTON =
+  'flex items-center justify-center gap-space-2 w-full rounded-card font-medium py-2.5 ' +
+  'bg-accent text-on-accent hover:bg-accent-strong transition-colors';
+/** Smaller full-width accent link for per-card setup-asset actions
+ *  (download / pair / install). Same accent token, compact height. */
+const PORTAL_LINK_BUTTON =
+  'flex items-center justify-center gap-space-2 w-full rounded-card text-sm font-medium py-2 ' +
+  'bg-accent text-on-accent hover:bg-accent-strong transition-colors';
+/** Neutral, bordered secondary action on surface tokens. */
+const PORTAL_SECONDARY_BUTTON =
+  'flex items-center justify-center gap-space-2 w-full rounded-card text-sm font-medium py-2 ' +
+  'bg-surface-2 text-text border border-border hover:bg-surface-muted hover:border-border-strong transition-colors';
 
 /** Maps the kebab-case Lucide names allowlisted in user-guide
  *  frontmatter to their imported components. Keep in sync with
@@ -174,38 +198,39 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
     <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
       {cards.map(card => {
         return (
-          <div
+          <Card
             key={card.id}
-            className={`bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden flex flex-col col-span-1 ${SIZE_TIER_SPAN[card.sizeTier]}`}
+            padding="none"
+            className={`overflow-hidden flex flex-col col-span-1 ${SIZE_TIER_SPAN[card.sizeTier]}`}
           >
             {/* Header — icon + title + tagline. The tagline is clamped
                 to 3 lines; height is content-driven now (#1700), so the
                 old `min-h` equal-Y filler is dropped — `items-start` on
                 the grid stops the row-stretch. */}
-            <div className="p-6 pb-3">
+            <div className="p-space-5 pb-space-3">
               <CardIcon card={card} />
-              <div className="flex items-center gap-2">
-                <h2 className="text-xl font-bold text-gray-900 dark:text-white">{card.label}</h2>
+              <div className="flex items-center gap-space-2">
+                <h2 className="text-xl font-bold text-text">{card.label}</h2>
                 <StatusBadge status={card.status} reason={card.statusReason} />
               </div>
-              <p className="mt-2 text-sm text-gray-600 dark:text-gray-400 line-clamp-3">
+              <p className="mt-space-2 text-sm text-text-muted line-clamp-3">
                 {card.tagline ?? ''}
               </p>
             </div>
 
             {/* CTA — at fixed offset from card top thanks to the
                 clamped header above. Consistent Y across cards. An
-                Open-URL card shows the blue "Open" button; a URL-less
+                Open-URL card shows the accent "Open" button; a URL-less
                 appless card (#1618) shows its primary action instead,
                 followed by any secondary action buttons. */}
-            <div className="px-6 space-y-2">
+            <div className="px-space-5 space-y-space-2">
               <CardCta card={card} isMobile={isMobile} />
             </div>
 
             {/* Variable content below. Height is content-driven (#1700) —
                 no `flex-1` filler; cards no longer stretch to a row's
                 tallest sibling. */}
-            <div className="px-6 pt-3 pb-6 space-y-3">
+            <div className="px-space-5 pt-space-3 pb-space-5 space-y-space-3">
 
               {card.setupAssets.length > 0 && (
                 <div className="space-y-1.5">
@@ -219,12 +244,12 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
                         <div key={asset.kind}>
                           <a
                             href={`/api/portal/asset/${card.name}/${asset.kind}?subdomain_var=${encodeURIComponent(card.subdomainVar)}`}
-                            className="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+                            className={PORTAL_LINK_BUTTON}
                           >
                             <Icon size={14} /> {label}
                           </a>
                           {asset.description && (
-                            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 leading-snug text-center">{asset.description}</p>
+                            <p className="text-[11px] text-text-subtle mt-space-1 leading-snug text-center">{asset.description}</p>
                           )}
                         </div>
                       );
@@ -254,8 +279,8 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
               )}
 
               {card.recommendedApps.length > 0 && (
-                <div className="pt-2 space-y-1.5">
-                  <div className="text-[11px] uppercase tracking-wide font-medium text-gray-500 dark:text-gray-400">
+                <div className="pt-space-2 space-y-1.5">
+                  <div className="text-[11px] uppercase tracking-wide font-medium text-text-muted">
                     <Sparkles size={11} className="inline align-middle -mt-0.5" /> Recommended apps
                   </div>
                   <ul className="space-y-1.5">
@@ -266,21 +291,21 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
                             href={app.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="font-medium text-blue-700 dark:text-blue-300 hover:underline"
+                            className="font-medium text-accent hover:underline"
                           >
                             {app.name}
                           </a>
                           {app.platforms?.map(p => (
                             <span
                               key={p}
-                              className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400"
+                              className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-chip bg-surface-2 text-text-muted"
                             >
                               {PLATFORM_LABELS[p]}
                             </span>
                           ))}
                         </div>
                         {app.note && (
-                          <p className="text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+                          <p className="text-text-subtle mt-0.5 leading-snug">
                             {app.note}
                           </p>
                         )}
@@ -294,7 +319,7 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
                 <div>
                   <button
                     onClick={() => setActiveCardId(card.id)}
-                    className="flex items-center gap-1 text-sm text-blue-700 dark:text-blue-300 hover:underline mt-2"
+                    className="flex items-center gap-1 text-sm text-accent hover:underline mt-space-2"
                     aria-haspopup="dialog"
                   >
                     How do I use this?
@@ -302,7 +327,7 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
                 </div>
               )}
             </div>
-          </div>
+          </Card>
         );
       })}
     </div>
@@ -331,22 +356,22 @@ function StatusBadge({ status, reason }: { status: PortalCard['status']; reason?
     return (
       <span
         title={reason ?? 'Online'}
-        className="inline-block w-2 h-2 rounded-full bg-emerald-500 shrink-0"
+        className="inline-block w-2 h-2 rounded-chip bg-status-ok shrink-0"
         aria-label="Online"
       />
     );
   }
   const isDown = status === 'down';
   const classes = isDown
-    ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
-    : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300';
-  const dot = isDown ? 'bg-red-500' : 'bg-amber-500';
+    ? 'bg-status-fail/15 text-status-fail'
+    : 'bg-status-warn/15 text-status-warn';
+  const dot = isDown ? 'bg-status-fail' : 'bg-status-warn';
   return (
     <span
       title={reason ?? (isDown ? 'Down' : 'Degraded')}
-      className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded shrink-0 ${classes}`}
+      className={`inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-chip shrink-0 ${classes}`}
     >
-      <span className={`inline-block w-1.5 h-1.5 rounded-full ${dot}`} />
+      <span className={`inline-block w-1.5 h-1.5 rounded-chip ${dot}`} />
       {isDown ? 'Down' : 'Degraded'}
     </span>
   );
@@ -370,7 +395,7 @@ function CardCta({ card, isMobile }: { card: PortalCard; isMobile: boolean }) {
         href={card.url}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors"
+        className={PORTAL_CTA_BUTTON}
       >
         Open <ExternalLink size={16} />
       </a>
@@ -384,7 +409,7 @@ function CardCta({ card, isMobile }: { card: PortalCard; isMobile: boolean }) {
         <ActionButton action={card.primaryAction} variant="primary" />
       )}
       {card.primaryAction && primaryHidden && (
-        <p className="text-[11px] text-gray-500 dark:text-gray-400 text-center leading-snug">
+        <p className="text-[11px] text-text-subtle text-center leading-snug">
           {card.primaryAction.label} is available on desktop.
         </p>
       )}
@@ -412,10 +437,7 @@ function ActionButton({
   variant: 'primary' | 'secondary';
 }) {
   const Icon = action.icon ? PORTAL_ICON_MAP[action.icon] : action.type === 'external_scheme' ? Code : TerminalSquare;
-  const className =
-    variant === 'primary'
-      ? 'flex items-center justify-center gap-2 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg transition-colors'
-      : 'flex items-center justify-center gap-2 w-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-100 text-sm font-medium py-2 rounded-lg transition-colors';
+  const className = variant === 'primary' ? PORTAL_CTA_BUTTON : PORTAL_SECONDARY_BUTTON;
   // in_app links stay in the tab (same-origin app surface); external
   // schemes open via the same anchor — the OS intercepts the scheme.
   const sameTab = action.type === 'in_app';
@@ -449,19 +471,20 @@ function CardHelpModal({ card, onClose }: { card: PortalCard; onClose: () => voi
       onClick={onClose}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 sm:p-8"
     >
-      <div
+      <Card
+        padding="none"
         onClick={e => e.stopPropagation()}
-        className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col"
+        className="shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col"
       >
-        <div className="flex items-start justify-between gap-4 p-5 border-b border-gray-100 dark:border-gray-800">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-start justify-between gap-space-4 p-space-4 border-b border-border">
+          <div className="flex items-center gap-space-3 min-w-0">
             <CardIcon card={card} compact />
             <div className="min-w-0">
-              <h2 id={`help-${card.id}-title`} className="text-lg font-bold text-gray-900 dark:text-white truncate">
+              <h2 id={`help-${card.id}-title`} className="text-lg font-bold text-text truncate">
                 {card.label}
               </h2>
               {card.tagline && (
-                <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{card.tagline}</p>
+                <p className="text-sm text-text-muted truncate">{card.tagline}</p>
               )}
             </div>
           </div>
@@ -469,17 +492,17 @@ function CardHelpModal({ card, onClose }: { card: PortalCard; onClose: () => voi
             type="button"
             aria-label="Close"
             onClick={onClose}
-            className="shrink-0 p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+            className="shrink-0 p-1 rounded-card text-text-subtle hover:text-text hover:bg-surface-2"
           >
             <X size={20} />
           </button>
         </div>
-        <div className="overflow-y-auto px-6 py-5">
-          <div className="prose prose-sm dark:prose-invert max-w-none text-gray-700 dark:text-gray-300">
+        <div className="overflow-y-auto px-space-5 py-space-4">
+          <div className="prose prose-sm dark:prose-invert max-w-none text-text-muted">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{card.body}</ReactMarkdown>
           </div>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }
@@ -494,15 +517,15 @@ function CardHelpModal({ card, onClose }: { card: PortalCard; onClose: () => voi
  */
 function ManualPairingPanel({ steps }: { steps: PortalCard['manualPairing'] }) {
   return (
-    <div className="pt-2 space-y-2 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 p-3">
-      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide font-semibold text-amber-700 dark:text-amber-300">
+    <div className="pt-space-2 space-y-space-2 rounded-card border border-status-warn/40 bg-status-warn/10 p-space-3">
+      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide font-semibold text-status-warn">
         <Terminal size={12} className="shrink-0" /> Manual setup needed
       </div>
       {steps.map(step => (
-        <div key={step.title} className="space-y-1">
-          <p className="text-xs font-medium text-amber-900 dark:text-amber-100">{step.title}</p>
+        <div key={step.title} className="space-y-space-1">
+          <p className="text-xs font-medium text-text">{step.title}</p>
           {step.why && (
-            <p className="text-[11px] text-amber-800/90 dark:text-amber-200/80 leading-snug">{step.why}</p>
+            <p className="text-[11px] text-text-muted leading-snug">{step.why}</p>
           )}
           <CommandBlock command={step.command} />
         </div>
@@ -533,14 +556,14 @@ function CommandBlock({ command }: { command: string }) {
   };
   return (
     <div className="flex items-stretch gap-1.5">
-      <code className="flex-1 min-w-0 overflow-x-auto rounded bg-amber-100/70 dark:bg-amber-950/40 px-2 py-1.5 text-[11px] font-mono text-amber-900 dark:text-amber-100 whitespace-pre">
+      <code className="flex-1 min-w-0 overflow-x-auto rounded-chip bg-surface-muted px-2 py-1.5 text-[11px] font-mono text-text whitespace-pre">
         {command}
       </code>
       <button
         type="button"
         onClick={onCopy}
         aria-label={copied ? 'Copied' : 'Copy command'}
-        className="shrink-0 inline-flex items-center justify-center w-8 rounded bg-amber-200/70 dark:bg-amber-800/40 text-amber-800 dark:text-amber-200 hover:bg-amber-300/70 dark:hover:bg-amber-700/50 transition-colors"
+        className="shrink-0 inline-flex items-center justify-center w-8 rounded-chip bg-surface-2 text-text-muted hover:bg-surface-muted hover:text-text transition-colors"
       >
         {copied ? <Check size={14} /> : <Copy size={14} />}
       </button>
@@ -606,15 +629,15 @@ function DeepLinkButton({
     <div>
       <button
         onClick={onClick}
-        className="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+        className={PORTAL_LINK_BUTTON}
       >
         <Icon size={14} /> {label}
       </button>
       {description && !error && (
-        <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 leading-snug text-center">{description}</p>
+        <p className="text-[11px] text-text-subtle mt-space-1 leading-snug text-center">{description}</p>
       )}
       {error && (
-        <p className="text-[11px] text-red-600 dark:text-red-400 mt-1 leading-snug text-center">{error}</p>
+        <p className="text-[11px] text-status-fail mt-space-1 leading-snug text-center">{error}</p>
       )}
     </div>
   );
@@ -653,12 +676,12 @@ function BasicSyncInstallQrButton({
       <div>
         <button
           onClick={() => setOpen(true)}
-          className="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+          className={PORTAL_LINK_BUTTON}
         >
           <Icon size={14} /> {label}
         </button>
         {description && (
-          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 leading-snug text-center">{description}</p>
+          <p className="text-[11px] text-text-subtle mt-space-1 leading-snug text-center">{description}</p>
         )}
       </div>
 
@@ -671,15 +694,17 @@ function BasicSyncInstallQrButton({
  *  to keep the button under the per-function line budget. */
 function BasicSyncInstallModal({ qrUrl, onClose }: { qrUrl: string; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl max-w-sm w-full p-6 text-center" onClick={e => e.stopPropagation()}>
-        <h2 className="text-lg font-bold text-gray-900 dark:text-white">Install BasicSync</h2>
-        <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-space-4 z-50" onClick={onClose}>
+      <Card className="shadow-xl max-w-sm w-full p-space-5 text-center" onClick={e => e.stopPropagation()}>
+        <h2 className="text-lg font-bold text-text">Install BasicSync</h2>
+        <p className="text-xs text-text-muted mt-space-1">
           Point your phone camera at this QR to download the BasicSync app — a trusted, open-source Syncthing client. Once it&apos;s installed, use the <strong>Pair this device</strong> button to connect.
         </p>
 
-        <div className="mt-5 flex justify-center">
-          <div className="bg-white p-4 rounded-lg">
+        <div className="mt-space-4 flex justify-center">
+          {/* QR stays on a literal white tile — scanners need maximum
+              contrast regardless of light/dark theme. */}
+          <div className="bg-white p-space-3 rounded-card">
             <QRCodeSVG value={qrUrl} size={192} level="M" />
           </div>
         </div>
@@ -688,11 +713,11 @@ function BasicSyncInstallModal({ qrUrl, onClose }: { qrUrl: string; onClose: () 
           href={BASICSYNC_INSTALL_URL}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-4 inline-block text-xs text-blue-700 dark:text-blue-300 hover:underline break-all"
+          className="mt-space-3 inline-block text-xs text-accent hover:underline break-all"
         >
           Or open the download link directly
         </a>
-      </div>
+      </Card>
     </div>
   );
 }
@@ -752,48 +777,49 @@ function SyncthingQrButton({
       <div>
         <button
           onClick={onOpen}
-          className="flex items-center justify-center gap-2 w-full bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-2 rounded-lg transition-colors"
+          className={PORTAL_LINK_BUTTON}
         >
           <Icon size={14} /> {label}
         </button>
         {description && (
-          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 leading-snug text-center">{description}</p>
+          <p className="text-[11px] text-text-subtle mt-space-1 leading-snug text-center">{description}</p>
         )}
       </div>
 
       {open && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50" onClick={() => setOpen(false)}>
-          <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-xl max-w-sm w-full p-6 text-center" onClick={e => e.stopPropagation()}>
-            <h2 className="text-lg font-bold text-gray-900 dark:text-white">Pair this device</h2>
-            <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-space-4 z-50" onClick={() => setOpen(false)}>
+          <Card className="shadow-xl max-w-sm w-full p-space-5 text-center" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-bold text-text">Pair this device</h2>
+            <p className="text-xs text-text-muted mt-space-1">
               In the Syncthing Android app, tap <strong>+</strong> → <strong>Add Device</strong> → <strong>Scan QR</strong>, then point your camera here.
             </p>
 
-            <div className="mt-5 flex justify-center min-h-[12rem] items-center">
-              {loading && <Loader2 className="animate-spin text-blue-500" size={32} />}
+            <div className="mt-space-4 flex justify-center min-h-[12rem] items-center">
+              {loading && <Loader2 className="animate-spin text-accent" size={32} />}
               {!loading && error && (
-                <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+                <p className="text-sm text-status-fail">{error}</p>
               )}
               {!loading && deviceId && (
-                <div className="bg-white p-4 rounded-lg">
+                /* QR stays on a literal white tile for scanner contrast. */
+                <div className="bg-white p-space-3 rounded-card">
                   <QRCodeSVG value={deviceId} size={192} level="M" />
                 </div>
               )}
             </div>
 
             {deviceId && (
-              <p className="mt-3 text-[10px] font-mono text-gray-500 dark:text-gray-400 break-all">
+              <p className="mt-space-3 text-[10px] font-mono text-text-subtle break-all">
                 {deviceId}
               </p>
             )}
 
             <button
               onClick={() => setOpen(false)}
-              className="mt-4 px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
+              className="mt-space-4 px-space-4 py-space-2 text-sm text-text-muted hover:text-text"
             >
               Close
             </button>
-          </div>
+          </Card>
         </div>
       )}
     </>
@@ -815,22 +841,22 @@ function CardIcon({ card, compact = false }: { card: PortalCard; compact?: boole
   // shrinks the chip + drops the trailing margin so the icon sits
   // flush with the title block. The card grid keeps the original size.
   const wrapper = compact
-    ? 'inline-flex items-center justify-center w-10 h-10 rounded-xl'
-    : 'mb-3 inline-flex items-center justify-center w-14 h-14 rounded-2xl';
+    ? 'inline-flex items-center justify-center w-10 h-10 rounded-card'
+    : 'mb-space-3 inline-flex items-center justify-center w-14 h-14 rounded-card';
   const iconSize = compact ? 22 : 28;
   if (card.lucideIcon) {
     const Icon = PORTAL_ICON_MAP[card.lucideIcon];
     return (
-      <div className={`${wrapper} bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400`}>
+      <div className={`${wrapper} bg-accent/15 text-accent`}>
         <Icon size={iconSize} strokeWidth={1.75} />
       </div>
     );
   }
   if (card.icon) {
-    return <div className={compact ? 'text-3xl' : 'text-5xl mb-3'} aria-hidden>{card.icon}</div>;
+    return <div className={compact ? 'text-3xl' : 'text-5xl mb-space-3'} aria-hidden>{card.icon}</div>;
   }
   return (
-    <div className={`${wrapper} bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400`}>
+    <div className={`${wrapper} bg-surface-2 text-text-muted`}>
       <Package size={iconSize} strokeWidth={1.75} />
     </div>
   );

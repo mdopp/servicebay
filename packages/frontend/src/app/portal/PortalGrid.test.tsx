@@ -237,11 +237,12 @@ describe('PortalGrid', () => {
 
   describe('sizeTier → column span (#1700)', () => {
     /** Walk up from the card heading to the grid-cell wrapper (the div
-     *  that carries the `col-span-*` class). The wrapper is the heading's
-     *  nearest ancestor div with `rounded-2xl` (the card chrome). */
+     *  that carries the `col-span-*` class). Post design-system migration
+     *  (#2107) the wrapper is the <Card> primitive — the heading's nearest
+     *  ancestor div with `rounded-card` (the token card chrome). */
     const cardWrapper = (label: string): HTMLElement => {
       const heading = screen.getByRole('heading', { name: label });
-      const wrapper = heading.closest('div.rounded-2xl');
+      const wrapper = heading.closest('div.rounded-card');
       expect(wrapper).not.toBeNull();
       return wrapper as HTMLElement;
     };
@@ -308,6 +309,93 @@ describe('PortalGrid', () => {
       const badge = screen.getByText('Degraded');
       expect(badge).toBeDefined();
       expect(badge.closest('span')?.getAttribute('title')).toBe('Partially unhealthy');
+    });
+  });
+
+  describe('design-system migration (#2107)', () => {
+    /** Nearest <Card> ancestor of the card heading. */
+    const wrapperOf = (label: string): HTMLElement => {
+      const w = screen.getByRole('heading', { name: label }).closest('div.rounded-card');
+      expect(w).not.toBeNull();
+      return w as HTMLElement;
+    };
+
+    it('renders the card surface on semantic tokens, not raw gray/white literals', () => {
+      render(<PortalGrid cards={[baseCard]} />);
+      const cls = wrapperOf('Photos').className;
+      expect(cls).toContain('bg-surface');
+      expect(cls).toContain('border-border');
+      // No bespoke raw-colour card chrome.
+      expect(cls).not.toContain('bg-white');
+      expect(cls).not.toContain('dark:bg-gray-800');
+      expect(cls).not.toContain('rounded-2xl');
+    });
+
+    it('renders the Open CTA on the accent token (no raw blue-600)', () => {
+      render(<PortalGrid cards={[baseCard]} />);
+      const open = screen.getByRole('link', { name: /^open$/i });
+      expect(open.className).toContain('bg-accent');
+      expect(open.className).not.toContain('bg-blue-600');
+    });
+
+    it('renders the appless primary action on the accent token', () => {
+      const applessCard: PortalCard = {
+        ...baseCard,
+        id: 'claude-dev:default',
+        name: 'claude-dev',
+        label: 'Claude Dev',
+        url: '',
+        primaryAction: {
+          type: 'in_app',
+          label: 'Open terminal',
+          href: '/terminal?node=Local&container=claude-dev',
+          desktop_only: false,
+        },
+      };
+      render(<PortalGrid cards={[applessCard]} />);
+      const cta = screen.getByRole('link', { name: /open terminal/i });
+      expect(cta.className).toContain('bg-accent');
+      expect(cta.className).not.toContain('bg-blue-600');
+    });
+
+    it('renders the card icon chip on the accent token', () => {
+      render(<PortalGrid cards={[baseCard]} />);
+      // The lucide icon chip wraps the svg in an accent-tinted div.
+      const heading = screen.getByRole('heading', { name: 'Photos' });
+      const header = heading.closest('div.rounded-card')!.querySelector('div.bg-accent\\/15');
+      expect(header).not.toBeNull();
+    });
+
+    it('renders the recommended-app link on the accent token (function preserved)', () => {
+      const card: PortalCard = {
+        ...baseCard,
+        recommendedApps: [{ name: 'Immich App', url: 'https://immich.app', platforms: ['ios'] }],
+      };
+      render(<PortalGrid cards={[card]} />);
+      const app = screen.getByRole('link', { name: 'Immich App' });
+      expect(app.getAttribute('href')).toBe('https://immich.app');
+      expect(app.className).toContain('text-accent');
+    });
+  });
+
+  describe('Syncthing pairing QR preserved through migration (#2107)', () => {
+    const syncCard: PortalCard = {
+      ...baseCard,
+      id: 'file-share:SYNCTHING_SUBDOMAIN',
+      name: 'file-share',
+      label: 'File Share',
+      setupAssets: [{ kind: 'syncthing_qr', description: 'Pair your phone.' }],
+    };
+
+    it('renders the pair button on tokens and keeps the fetch-on-click QR flow', () => {
+      render(<PortalGrid cards={[syncCard]} />);
+      const btn = screen.getByRole('button', { name: /pair/i });
+      expect(btn.className).toContain('bg-accent');
+      expect(btn.className).not.toContain('bg-emerald-600');
+      // Modal heading appears only after click (QR fetched lazily).
+      expect(screen.queryByRole('heading', { name: /pair this device/i })).toBeNull();
+      fireEvent.click(btn);
+      expect(screen.getByRole('heading', { name: /pair this device/i })).toBeDefined();
     });
   });
 });
