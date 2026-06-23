@@ -1,3 +1,4 @@
+import { forwardRef } from 'react';
 import { cn } from './cn';
 
 /**
@@ -24,9 +25,13 @@ export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   padding?: CardPadding;
 }
 
-export function Card({ padding = 'md', className, ...rest }: CardProps) {
+export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
+  { padding = 'md', className, ...rest },
+  ref,
+) {
   return (
     <div
+      ref={ref}
       className={cn(
         'bg-surface border border-border rounded-card',
         paddings[padding],
@@ -35,7 +40,7 @@ export function Card({ padding = 'md', className, ...rest }: CardProps) {
       {...rest}
     />
   );
-}
+});
 
 export interface PanelProps extends Omit<CardProps, 'title'> {
   /** Header title — string or any node. Omit for a header-less panel. */

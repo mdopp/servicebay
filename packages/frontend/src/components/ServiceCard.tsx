@@ -4,6 +4,8 @@ import { AlertCircle, Download, RotateCcw } from 'lucide-react';
 import type { EnrichedContainer, ServiceViewModel } from '@servicebay/api-client';
 import { ServiceActionBar } from '@/components/ServiceActionBar';
 import { DomainHealthDot } from '@/components/DomainHealthDot';
+import { serviceDotState } from '@/components/ServiceRow';
+import { Badge, Button, Card, StatusDot } from '@/components/ui';
 
 // #1072 Phase 1: ServiceCard extracted from ServicesDashboard.tsx as a
 // pure presentational component. The dashboard owns the action
@@ -63,78 +65,53 @@ export default function ServiceCard({
   onDelete,
   onRestart,
 }: ServiceCardProps) {
+  const dot = serviceDotState(service);
   return (
-    <div className="group self-start bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-4 hover:shadow-md transition-all duration-200 relative overflow-hidden min-w-0">
+    <Card padding="md" className="group self-start hover:shadow-md transition-all duration-200 relative overflow-hidden min-w-0">
       <div className="flex items-start gap-4 justify-between mb-3">
         <div className="flex items-start gap-3 flex-1 min-w-0">
-          {(() => {
-            // 3-state status indicator. systemd transitional states ("activating",
-            // "reloading", "deactivating") and crash-loop subState "auto-restart"
-            // mean the service isn't healthy *yet* but isn't a hard failure either.
-            const transitional = ['activating', 'reloading', 'deactivating'].includes(service.activeState ?? '') || service.subState === 'auto-restart';
-            const dotClass = transitional
-              ? 'bg-amber-500 animate-pulse'
-              : service.active
-                ? 'bg-green-500'
-                : 'bg-red-500';
-            const dotTitle = transitional
-              ? `${service.activeState ?? 'transitioning'}${service.subState ? ` (${service.subState})` : ''}`
-              : service.status;
-            return <div className={`mt-1.5 w-3 h-3 shrink-0 rounded-full ${dotClass}`} title={dotTitle} />;
-          })()}
+          <StatusDot
+            state={dot.state}
+            label={dot.title}
+            title={dot.title}
+            className={`mt-1.5 shrink-0 ${dot.pulse ? 'animate-pulse' : ''}`}
+          />
           <div className="flex-1 min-w-0">
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <h3
-                className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate"
+                className="font-bold text-lg text-text truncate"
                 title={service.name}
                 data-testid={`service-name-${service.displayName}`}
               >
                 {service.displayName}
               </h3>
               {service.nodeName && service.nodeName !== 'Local' && (
-                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 rounded">
-                  {service.nodeName}
-                </span>
+                <Badge variant="warn">{service.nodeName}</Badge>
               )}
-              {service.type === 'link' && (
-                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-800 rounded">
-                  External Link
-                </span>
-              )}
-              {service.type === 'gateway' && (
-                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800 rounded">
-                  Gateway
-                </span>
-              )}
+              {service.type === 'link' && <Badge variant="info">External Link</Badge>}
+              {service.type === 'gateway' && <Badge variant="warn">Gateway</Badge>}
               {service.labels && service.labels['servicebay.role'] === 'reverse-proxy' && (
-                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 rounded">
-                  Reverse Proxy
-                </span>
+                <Badge variant="ok">Reverse Proxy</Badge>
               )}
               {service.labels && service.labels['servicebay.role'] === 'system' && (
-                <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 rounded">
-                  System
-                </span>
+                <Badge variant="accent">System</Badge>
               )}
-              {imageUpdateAvailable && (
-                onUpdate ? (
-                  <button
-                    type="button"
+              {imageUpdateAvailable &&
+                (onUpdate ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     onClick={() => onUpdate(service)}
-                    className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded hover:bg-blue-200 dark:hover:bg-blue-900/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    className="h-auto py-0.5 text-xs"
                     title="A newer image is available in the registry. Click to re-deploy this service and pull it."
                   >
-                    <Download size={10} /> Update now
-                  </button>
+                    <Download size={12} /> Update now
+                  </Button>
                 ) : (
-                  <span
-                    className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded"
-                    title="A newer image is available in the registry. Re-deploy this service to pull it."
-                  >
+                  <Badge variant="info" title="A newer image is available in the registry. Re-deploy this service to pull it.">
                     <Download size={10} /> Update available
-                  </span>
-                )
-              )}
+                  </Badge>
+                ))}
             </div>
           </div>
         </div>
@@ -152,25 +129,15 @@ export default function ServiceCard({
           one-click restart + logs instead of forcing a dig through Actions.
           Hidden for gateway/link "services" (own lifecycle). */}
       {!service.active && service.type !== 'gateway' && service.type !== 'link' && (
-        <div className="mb-3 -mt-1 flex items-center gap-2 px-3 py-2 rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/60 text-sm text-red-800 dark:text-red-200">
+        <div className="mb-3 -mt-1 flex items-center gap-2 px-3 py-2 rounded-card bg-status-fail/10 border border-status-fail/20 text-sm text-status-fail">
           <AlertCircle size={14} className="shrink-0" />
           <span className="flex-1 truncate" title={service.status}>Service is {service.status || 'inactive'}.</span>
-          <button
-            type="button"
-            onClick={() => onRestart(service)}
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border border-red-300 dark:border-red-700 text-red-800 dark:text-red-100 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
-            title="Restart this service"
-          >
+          <Button variant="danger" size="sm" onClick={() => onRestart(service)} title="Restart this service">
             <RotateCcw size={12} /> Restart
-          </button>
-          <button
-            type="button"
-            onClick={() => onMonitor(service)}
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border border-red-300 dark:border-red-700 text-red-800 dark:text-red-100 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
-            title="View recent logs"
-          >
+          </Button>
+          <Button variant="danger" size="sm" onClick={() => onMonitor(service)} title="View recent logs">
             View logs
-          </button>
+          </Button>
         </div>
       )}
 
@@ -181,11 +148,11 @@ export default function ServiceCard({
       <div className="mt-2">
         {service.type === 'gateway' ? (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-            <span className="font-mono text-gray-600 dark:text-gray-300">{service.externalIP || 'N/A'}</span>
-            {service.internalIP && <span className="font-mono text-gray-400 dark:text-gray-500">· {service.internalIP}</span>}
+            <span className="font-mono text-text-muted">{service.externalIP || 'N/A'}</span>
+            {service.internalIP && <span className="font-mono text-text-subtle">· {service.internalIP}</span>}
           </div>
         ) : service.type === 'link' ? (
-          <a href={service.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline break-all">
+          <a href={service.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-accent hover:underline break-all">
             {service.url}
           </a>
         ) : (service.verifiedDomains && service.verifiedDomains.length > 0) ? (
@@ -199,7 +166,7 @@ export default function ServiceCard({
               const scheme = httpsDomains.has(bareDomain.toLowerCase()) ? 'https' : 'http';
               const href = d.startsWith('http') ? d : `${scheme}://${d}`;
               return (
-                <span key={d} className="inline-flex items-center gap-1.5 text-xs font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded">
+                <span key={d} className="inline-flex items-center gap-1.5 text-xs font-mono text-accent bg-accent/10 px-1.5 py-0.5 rounded-chip">
                   {looksLikeDomain && <DomainHealthDot domain={bareDomain} />}
                   <a href={href} target="_blank" rel="noopener noreferrer" className="hover:underline">{d}</a>
                 </span>
@@ -207,9 +174,9 @@ export default function ServiceCard({
             })}
           </div>
         ) : (
-          <span className="text-xs text-gray-400 dark:text-gray-500">No public address</span>
+          <span className="text-xs text-text-subtle">No public address</span>
         )}
       </div>
-    </div>
+    </Card>
   );
 }
