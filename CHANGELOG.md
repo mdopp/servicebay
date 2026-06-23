@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.146.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.145.1...servicebay-v4.146.0) (2026-06-23)
+
+
+### Features
+
+* **portal,dashboards:** portal bento grid + Network Map no-reset on poll ([107859f](https://github.com/mdopp/servicebay/commit/107859fd3cb70851bf3f2d3943c95f884171aa0c))
+* **portal:** bento/span grid with size-aware service cards ([1a05ddb](https://github.com/mdopp/servicebay/commit/1a05ddb00aad8e80fca1ca277d97c55e4977000b)), closes [#2120](https://github.com/mdopp/servicebay/issues/2120)
+
+
+### Bug Fixes
+
+* **dashboards:** stop Network Map re-layout + viewport reset on every poll ([8082d74](https://github.com/mdopp/servicebay/commit/8082d7487084f4e09acede1384342bf8284eda7c)), closes [#2119](https://github.com/mdopp/servicebay/issues/2119)
+
 ## [4.145.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.145.0...servicebay-v4.145.1) (2026-06-23)
 
 
