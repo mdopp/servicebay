@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.140.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.139.0...servicebay-v4.140.0) (2026-06-23)
+
+
+### Features
+
+* **frontend:** actionable service image updates — Update now button + Home banner ([d48da88](https://github.com/mdopp/servicebay/commit/d48da889fa76e33916d3993165fb03a57940cf5c))
+* **frontend:** actionable service image updates (Update-now button + Home banner) ([ea39829](https://github.com/mdopp/servicebay/commit/ea398293499dd1b240e3e869ff5bb7bfa822ebf4))
+
 ## [4.139.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.138.0...servicebay-v4.139.0) (2026-06-22)
 
 
