@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.147.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.147.1...servicebay-v4.147.2) (2026-06-23)
+
+
+### Bug Fixes
+
+* **portal:** show registry-installed services on /portal ([#2133](https://github.com/mdopp/servicebay/issues/2133)) ([f5b710f](https://github.com/mdopp/servicebay/commit/f5b710fc2696f60b3bf54f0576bc0e0a76473336))
+
 ## [4.147.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.147.0...servicebay-v4.147.1) (2026-06-23)
 
 
