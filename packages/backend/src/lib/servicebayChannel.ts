@@ -41,11 +41,22 @@ export async function getServicebayChannel(): Promise<string> {
 }
 
 /**
- * Re-point the quadlet to `:<channel>`, then pull + restart in the background.
+ * Re-point the quadlet to `:<channel>`, pull the new image (errors surfaced to
+ * the caller), then recreate + restart the container in the background.
  *
- * The tag swap is awaited (so a bad write surfaces synchronously); the slow
- * pull + the `--no-block` restart run detached so the caller's HTTP response
- * returns before the container is replaced (same pattern as `performUpdate`).
+ * The tag swap and the pull are **awaited** so a bad quadlet write or a pull
+ * failure (e.g. `:dev` not found / ghcr auth) surfaces synchronously — the
+ * caller must not get `ok:true` while the switch silently rolls back (#2064).
+ * Only the recreate + `--no-block` restart run detached, so the HTTP response
+ * returns before ServiceBay (which is serving it) goes down.
+ *
+ * Recreate, not a plain restart: `systemctl restart` reuses the *existing*
+ * container definition, so it keeps running the OLD image even after the new
+ * one is pulled — a same-tag (`:latest`→`:latest`) re-pull silently no-ops
+ * (#2063). `podman rm -f` forces the quadlet unit to recreate the container
+ * from the freshly-pulled, re-pointed image on the next start, so the switch
+ * actually lands. (rm runs detached with the restart because it tears down the
+ * very process serving this request.)
  */
 export async function setServicebayChannel(channel: Channel): Promise<void> {
   if (!isChannel(channel)) {
@@ -54,16 +65,20 @@ export async function setServicebayChannel(channel: Channel): Promise<void> {
   const executor = getExecutor('Local');
   // Swap `…/servicebay:<anything>` → `…/servicebay:<channel>` ($1 = channel).
   await executor.execArgv(['sh', '-c', SWAP_TAG_SH, 'sh', channel]);
-  // Pull the new tag, reload the unit, restart non-blocking. Detached so the
-  // request can return before ServiceBay (which is serving it) goes down.
+  // Pull the new tag and reload the unit up front, AWAITED — a missing/unauthed
+  // tag throws here and propagates to the caller instead of being swallowed in
+  // a detached async (which left the box reporting the old channel, #2064).
+  await executor.execArgv(['podman', 'pull', `${IMAGE}:${channel}`], { timeoutMs: 5 * 60 * 1000 });
+  await executor.execArgv(['systemctl', '--user', 'daemon-reload']);
+  // Recreate + restart, detached: rm -f tears down the running container (us)
+  // so the quadlet recreates it from the new image; the request returns first.
   void (async () => {
     try {
-      await executor.execArgv(['podman', 'pull', `${IMAGE}:${channel}`], { timeoutMs: 5 * 60 * 1000 });
-      await executor.execArgv(['systemctl', '--user', 'daemon-reload']);
+      await executor.execArgv(['podman', 'rm', '-f', 'servicebay']);
       await executor.execArgv(['systemctl', '--user', 'restart', '--no-block', 'servicebay.service']);
-      logger.info('channel', `Switched ServiceBay to '${channel}' and triggered restart.`);
+      logger.info('channel', `Switched ServiceBay to '${channel}' and triggered container recreate.`);
     } catch (e) {
-      logger.error('channel', `Channel switch to '${channel}' failed during pull/restart: ${e instanceof Error ? e.message : String(e)}`);
+      logger.error('channel', `Channel switch to '${channel}' failed during recreate/restart: ${e instanceof Error ? e.message : String(e)}`);
     }
   })();
 }
