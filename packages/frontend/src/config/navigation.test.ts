@@ -22,15 +22,17 @@ describe('isNavActive', () => {
   });
 });
 
-describe('top nav — Home + the four nouns + Network Map (IA slice 2, #2030/#1950)', () => {
+describe('top nav — Home + the four nouns + Network Map + Terminal (IA slice 2, #2030/#1950, #2083)', () => {
   // Spec §3/§4.1/§8: the four nouns (Services · Status · Settings · Backup) plus
   // Network Map, kept top-level by operator preference. Home is restored by
   // operator request as a lean, status-led landing (spec §4.3 spirit).
-  // Diagnostics and SSH Terminal stay off the top nav.
+  // Terminal is back in the sidebar by operator request (#2083): a host shell is
+  // a recovery tool and must not be buried in a Settings launch card.
+  // Diagnostics stays off the top nav (it lives under Status).
   const ids = NAVIGATION_ENTRIES.map(e => e.id);
 
-  it('is exactly Home · Services · Status · Settings · Backup · Network Map', () => {
-    expect(ids).toEqual(['home', 'services', 'status', 'settings', 'backup', 'network']);
+  it('is exactly Home · Services · Status · Settings · Backup · Network Map · Terminal', () => {
+    expect(ids).toEqual(['home', 'services', 'status', 'settings', 'backup', 'network', 'terminal']);
   });
 
   it('Home is the first entry and renders at /', () => {
@@ -39,9 +41,17 @@ describe('top nav — Home + the four nouns + Network Map (IA slice 2, #2030/#19
     expect(home?.path).toBe('/');
   });
 
-  it('drops Diagnostics and SSH Terminal from the top nav', () => {
+  it('drops Diagnostics from the top nav', () => {
     expect(ids).not.toContain('health');
-    expect(ids).not.toContain('terminal');
+  });
+
+  it('keeps Terminal in the sidebar as a recovery tool (#2083) → /terminal', () => {
+    const terminal = NAVIGATION_ENTRIES.find(e => e.id === 'terminal');
+    expect(terminal, 'Terminal must be a top-level nav entry (recovery tool, not buried)').toBeDefined();
+    expect(terminal?.path).toBe('/terminal');
+    expect(terminal?.name).toBe('Terminal');
+    // Expert/recovery tool — off the phone bottom bar, surfaced in the mobile top-bar row.
+    expect(terminal?.hiddenOnMobileBottom).toBe(true);
   });
 
   it('Services links to /services (the list of every app)', () => {

@@ -15,7 +15,7 @@
  *      bar's icon row instead, so they're still reachable on a phone;
  *      see MobileNav.tsx #1992).
  */
-import { Home, Box, HeartPulse, Settings, Network, DatabaseBackup } from 'lucide-react';
+import { Home, Box, HeartPulse, Settings, Network, DatabaseBackup, SquareTerminal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 export interface NavigationEntry {
@@ -67,11 +67,14 @@ export function isNavActive(pathname: string, path: string): boolean {
  *     gone from any per-service surface.
  *   - Network Map is kept top-level by operator preference (the one allowed
  *     addition beyond the spec's literal four nouns).
+ *   - Terminal is back in the sidebar by operator request (#2083): a host shell
+ *     is a recovery tool and must not be buried in a Settings launch card. It
+ *     renders in the desktop sidebar; `hiddenOnMobileBottom` keeps it out of the
+ *     phone bottom bar (expert/recovery tool, surfaced in the mobile top-bar
+ *     icon row instead). Route served at `/terminal`.
  *
  * Capabilities that left the top nav stay fully reachable (spec: "don't
  * mutilate — every knob stays reachable"):
- *   - SSH Terminal → Settings ▸ System launch card + global settings search
- *     ("terminal"/"ssh"/"console"), route still served at `/terminal`.
  *   - Diagnostics → Status.
  *   - Disk import / Backup heavy UI → their own apps (#1949/#1958).
  *
@@ -85,4 +88,5 @@ export const NAVIGATION_ENTRIES: NavigationEntry[] = [
   { id: 'settings', name: 'Settings', shortLabel: 'Settings', icon: Settings, path: '/settings', hiddenOnMobileBottom: true },
   { id: 'backup', name: 'Backup & restore', shortLabel: 'Backup', icon: DatabaseBackup, path: '/backup', hiddenOnMobileBottom: true },
   { id: 'network', name: 'Network Map', shortLabel: 'Network', icon: Network, path: '/network' },
+  { id: 'terminal', name: 'Terminal', shortLabel: 'Terminal', icon: SquareTerminal, path: '/terminal', hiddenOnMobileBottom: true },
 ];
