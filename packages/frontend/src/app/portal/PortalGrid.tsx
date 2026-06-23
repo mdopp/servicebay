@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  BookOpen, Bot, Calendar, CalendarDays, Camera, Check, Code, Copy,
+  BookOpen, Bot, Calendar, CalendarDays, Camera, Check, ChevronDown, Code, Copy,
   Download, ExternalLink, Files, Film, Folder, FolderOpen, Globe,
   Headphones, House, Image as ImageIcon, Images, KeyRound, Lightbulb,
   Lightbulb as LightbulbIcon, Loader2, Lock, Mail, MessageSquare,
@@ -195,18 +195,20 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
 
   return (
     <>
-    <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-start">
+    <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch">
       {cards.map(card => {
         return (
           <Card
             key={card.id}
             padding="none"
-            className={`overflow-hidden flex flex-col col-span-1 ${SIZE_TIER_SPAN[card.sizeTier]}`}
+            className={`overflow-hidden flex flex-col h-full col-span-1 ${SIZE_TIER_SPAN[card.sizeTier]}`}
           >
             {/* Header — icon + title + tagline. The tagline is clamped
-                to 3 lines; height is content-driven now (#1700), so the
-                old `min-h` equal-Y filler is dropped — `items-start` on
-                the grid stops the row-stretch. */}
+                to 3 lines so the header height is consistent across
+                cards; the grid stretches rows to equal height
+                (`items-stretch` + card `h-full`, #2116) and the
+                variable-content region below carries `flex-1` to absorb
+                the slack — cards in a row line up cleanly. */}
             <div className="p-space-5 pb-space-3">
               <CardIcon card={card} />
               <div className="flex items-center gap-space-2">
@@ -222,56 +224,19 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
                 clamped header above. Consistent Y across cards. An
                 Open-URL card shows the accent "Open" button; a URL-less
                 appless card (#1618) shows its primary action instead,
-                followed by any secondary action buttons. */}
+                followed by any secondary action buttons. Stays visible
+                like every other card's primary affordance (#2116). */}
             <div className="px-space-5 space-y-space-2">
               <CardCta card={card} isMobile={isMobile} />
             </div>
 
-            {/* Variable content below. Height is content-driven (#1700) —
-                no `flex-1` filler; cards no longer stretch to a row's
-                tallest sibling. */}
-            <div className="px-space-5 pt-space-3 pb-space-5 space-y-space-3">
+            {/* Variable content below. `flex-1` lets the card stretch to
+                the row's tallest sibling (#2116) so a row of cards lines
+                up; the footer "How do I use this?" sits at the bottom. */}
+            <div className="flex-1 px-space-5 pt-space-3 pb-space-5 space-y-space-3">
 
               {card.setupAssets.length > 0 && (
-                <div className="space-y-1.5">
-                  {card.setupAssets.map(asset => {
-                    if (!shouldShowAsset(asset.kind, isIOS, isMobile)) return null;
-                    const meta = ASSET_LABELS[asset.kind];
-                    const Icon = meta.icon;
-                    const label = assetLabel(asset.kind, asset.label, isIOS);
-                    if (asset.kind === 'ios_calendar_profile') {
-                      return (
-                        <div key={asset.kind}>
-                          <a
-                            href={`/api/portal/asset/${card.name}/${asset.kind}?subdomain_var=${encodeURIComponent(card.subdomainVar)}`}
-                            className={PORTAL_LINK_BUTTON}
-                          >
-                            <Icon size={14} /> {label}
-                          </a>
-                          {asset.description && (
-                            <p className="text-[11px] text-text-subtle mt-space-1 leading-snug text-center">{asset.description}</p>
-                          )}
-                        </div>
-                      );
-                    }
-                    if (asset.kind === 'audiobookshelf_deeplink') {
-                      return (
-                        <DeepLinkButton key={asset.kind} card={card} kind={asset.kind} label={label} description={asset.description} Icon={Icon} />
-                      );
-                    }
-                    if (asset.kind === 'syncthing_qr') {
-                      return (
-                        <SyncthingQrButton key={asset.kind} card={card} label={label} description={asset.description} Icon={Icon} />
-                      );
-                    }
-                    if (asset.kind === 'basicsync_install_qr') {
-                      return (
-                        <BasicSyncInstallQrButton key={asset.kind} label={label} description={asset.description} Icon={Icon} />
-                      );
-                    }
-                    return null;
-                  })}
-                </div>
+                <SetupAssets card={card} isIOS={isIOS} isMobile={isMobile} />
               )}
 
               {card.manualPairing.length > 0 && (
@@ -337,6 +302,108 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
     )}
     </>
   );
+}
+
+/**
+ * Setup-asset list, collapsed behind a "How to pair" / "So koppelst du"
+ * expander (#2116). Several services (notably file-share / Syncthing)
+ * ship a verbose pairing block — Install BasicSync, Pair this device,
+ * the storage-path note, two QR codes — that dwarfed the other service
+ * cards and left the grid ragged. We tuck the whole asset block behind a
+ * `<details>` (closed by default) so the card's resting size matches its
+ * peers; the primary "Open" CTA above stays visible like every other
+ * card. Opening the expander reveals the BasicSync-install QR + the
+ * pairing QR + the storage-path/description notes — every asset stays
+ * reachable, the QR fetch-on-click flows are unchanged.
+ *
+ * A single light-weight asset (e.g. an audiobookshelf deep-link on a
+ * card that's otherwise compact) doesn't need hiding — only collapse
+ * when the block is genuinely heavy (a QR-bearing asset, or 2+ assets).
+ */
+function SetupAssets({
+  card,
+  isIOS,
+  isMobile,
+}: {
+  card: PortalCard;
+  isIOS: boolean;
+  isMobile: boolean;
+}) {
+  const visible = card.setupAssets.filter(a => shouldShowAsset(a.kind, isIOS, isMobile));
+  if (visible.length === 0) return null;
+
+  const buttons = (
+    <div className="space-y-1.5">
+      {visible.map(asset => (
+        <SetupAssetButton key={asset.kind} card={card} asset={asset} isIOS={isIOS} />
+      ))}
+    </div>
+  );
+
+  // Heavy pairing block (a QR-bearing asset, or several assets) → tuck
+  // behind a collapsed expander so the card stays compact. A single
+  // light asset renders inline (no expander needed).
+  const isHeavy =
+    visible.some(a => a.kind === 'syncthing_qr' || a.kind === 'basicsync_install_qr') ||
+    visible.length > 1;
+  if (!isHeavy) return buttons;
+
+  return (
+    <details className="group rounded-card border border-border bg-surface-2/50">
+      <summary className="flex items-center justify-between gap-space-2 cursor-pointer select-none px-space-3 py-space-2 text-sm font-medium text-text marker:content-none [&::-webkit-details-marker]:hidden">
+        <span className="flex items-center gap-space-2">
+          <QrCode size={14} className="text-accent shrink-0" /> So koppelst du
+          <span className="text-text-subtle font-normal">/ How to pair</span>
+        </span>
+        <ChevronDown size={16} className="text-text-subtle shrink-0 transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="px-space-3 pb-space-3 pt-space-1">{buttons}</div>
+    </details>
+  );
+}
+
+/**
+ * Renders a single setup asset as its kind-specific button/link (#2116
+ * split out of {@link SetupAssets} to keep that under the per-function
+ * line budget). The QR-bearing kinds delegate to their own modal-owning
+ * components; the iOS calendar profile is a direct download link.
+ */
+function SetupAssetButton({
+  card,
+  asset,
+  isIOS,
+}: {
+  card: PortalCard;
+  asset: PortalCard['setupAssets'][number];
+  isIOS: boolean;
+}) {
+  const Icon = ASSET_LABELS[asset.kind].icon;
+  const label = assetLabel(asset.kind, asset.label, isIOS);
+  if (asset.kind === 'ios_calendar_profile') {
+    return (
+      <div>
+        <a
+          href={`/api/portal/asset/${card.name}/${asset.kind}?subdomain_var=${encodeURIComponent(card.subdomainVar)}`}
+          className={PORTAL_LINK_BUTTON}
+        >
+          <Icon size={14} /> {label}
+        </a>
+        {asset.description && (
+          <p className="text-[11px] text-text-subtle mt-space-1 leading-snug text-center">{asset.description}</p>
+        )}
+      </div>
+    );
+  }
+  if (asset.kind === 'audiobookshelf_deeplink') {
+    return <DeepLinkButton card={card} kind={asset.kind} label={label} description={asset.description} Icon={Icon} />;
+  }
+  if (asset.kind === 'syncthing_qr') {
+    return <SyncthingQrButton card={card} label={label} description={asset.description} Icon={Icon} />;
+  }
+  if (asset.kind === 'basicsync_install_qr') {
+    return <BasicSyncInstallQrButton label={label} description={asset.description} Icon={Icon} />;
+  }
+  return null;
 }
 
 /**
