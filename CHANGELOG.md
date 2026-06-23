@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.142.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.141.0...servicebay-v4.142.0) (2026-06-23)
+
+
+### Features
+
+* **backup:** collapse NAS snapshot list to newest 5 with show-all expander ([11df214](https://github.com/mdopp/servicebay/commit/11df214f5e59a465f625e8eb22c3a5a3a5a1c2ea)), closes [#2085](https://github.com/mdopp/servicebay/issues/2085)
+* **frontend:** design-system migration across visible surfaces + portal-access regroup + NAS snapshot collapse ([72c9528](https://github.com/mdopp/servicebay/commit/72c9528b92e0f278659f3f969ebee44122e1cc9e))
+* **settings:** rework user/people-access page onto design-system primitives ([9fd8a33](https://github.com/mdopp/servicebay/commit/9fd8a33718396655ecfde3c5a2c6dc1bf7c86f4f)), closes [#2086](https://github.com/mdopp/servicebay/issues/2086)
+
+
+### Bug Fixes
+
+* **frontend:** make batch branch tsc-clean (test ServiceType + spread casts) ([edd1a88](https://github.com/mdopp/servicebay/commit/edd1a8857d0fc1981ed53b2462ccd2665b0d622c))
+
 ## [4.141.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.140.0...servicebay-v4.141.0) (2026-06-23)
 
 
