@@ -19,7 +19,7 @@ function svc(over: Partial<ServiceViewModel> = {}): ServiceViewModel {
     yamlBasename: null,
     kubeBasename: null,
     active: true,
-    type: 'systemd',
+    type: 'container',
     ports: [],
     ...over,
   };
@@ -27,7 +27,7 @@ function svc(over: Partial<ServiceViewModel> = {}): ServiceViewModel {
 
 describe('OperateSettingsTab (#2078 migration)', () => {
   it('renders the non-editable notice on a token-styled Card (no dashed gray literal)', () => {
-    const { container } = render(<OperateSettingsTab service={svc({ type: 'systemd' })} />);
+    const { container } = render(<OperateSettingsTab service={svc({ type: 'container' })} />);
     expect(screen.getByText(/not managed via a Quadlet kube manifest/)).toBeDefined();
     expect(container.innerHTML).not.toContain('border-dashed');
     expect(container.innerHTML).not.toContain('text-gray-600');

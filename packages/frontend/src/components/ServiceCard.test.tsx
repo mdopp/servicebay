@@ -6,7 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import type { ServiceViewModel } from '@servicebay/api-client';
-import ServiceCard from './ServiceCard';
+import ServiceCard, { type ServiceCardProps } from './ServiceCard';
 
 vi.mock('@/components/DomainHealthDot', () => ({
   DomainHealthDot: () => null,
@@ -34,8 +34,8 @@ function svc(over: Partial<ServiceViewModel> = {}): ServiceViewModel {
 }
 
 const noop = () => {};
-const handlers = {
-  attachNodeContext: (c: never) => c,
+const handlers: Omit<ServiceCardProps, 'service' | 'httpsDomains'> = {
+  attachNodeContext: c => c,
   onMonitor: noop, onEdit: noop, onActions: noop, onEditLink: noop,
   onDelete: noop, onRestart: noop,
   onContainerLogs: noop, onContainerTerminal: noop, onContainerActions: noop,
@@ -43,7 +43,7 @@ const handlers = {
 
 describe('ServiceCard (#2079 primitive migration)', () => {
   it('renders the card on a token surface with a StatusDot', () => {
-    const { container } = render(<ServiceCard service={svc()} httpsDomains={new Set()} {...(handlers as never)} />);
+    const { container } = render(<ServiceCard service={svc()} httpsDomains={new Set()} {...handlers} />);
     expect(screen.getAllByRole('status').length).toBeGreaterThan(0);
     expect(container.querySelector('.bg-surface')).not.toBeNull();
   });
@@ -51,7 +51,7 @@ describe('ServiceCard (#2079 primitive migration)', () => {
   it('keeps the #2069 image-update action as a clickable Button', () => {
     const onUpdate = vi.fn();
     render(
-      <ServiceCard service={svc()} httpsDomains={new Set()} imageUpdateAvailable onUpdate={onUpdate} {...(handlers as never)} />,
+      <ServiceCard service={svc()} httpsDomains={new Set()} imageUpdateAvailable onUpdate={onUpdate} {...handlers} />,
     );
     screen.getByRole('button', { name: /update now/i }).click();
     expect(onUpdate).toHaveBeenCalledOnce();
@@ -60,7 +60,7 @@ describe('ServiceCard (#2079 primitive migration)', () => {
   it('surfaces the failed-state restart nudge (and uses no raw colour literals)', () => {
     const onRestart = vi.fn();
     const { container } = render(
-      <ServiceCard service={svc({ active: false, activeState: 'failed', status: 'failed' })} httpsDomains={new Set()} onRestart={onRestart} {...({ ...handlers, onRestart } as never)} />,
+      <ServiceCard service={svc({ active: false, activeState: 'failed', status: 'failed' })} httpsDomains={new Set()} {...handlers} onRestart={onRestart} />,
     );
     screen.getByRole('button', { name: /restart/i }).click();
     expect(onRestart).toHaveBeenCalledOnce();
