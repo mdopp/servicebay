@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.144.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.143.0...servicebay-v4.144.0) (2026-06-23)
+
+
+### Features
+
+* **dashboards:** Core services group + align Containers grouping optic ([4776590](https://github.com/mdopp/servicebay/commit/477659032b84affbb6b91416fb2f92e51bdb9de6)), closes [#2094](https://github.com/mdopp/servicebay/issues/2094) [#2095](https://github.com/mdopp/servicebay/issues/2095)
+
+
+### Bug Fixes
+
+* **updater:** recreate container on channel switch + update, fix false 'still building' ([e6cdba8](https://github.com/mdopp/servicebay/commit/e6cdba81571f69f31db682b6f144fdc6438e1ca6)), closes [#2062](https://github.com/mdopp/servicebay/issues/2062) [#2063](https://github.com/mdopp/servicebay/issues/2063) [#2064](https://github.com/mdopp/servicebay/issues/2064)
+
 ## [4.143.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.142.0...servicebay-v4.143.0) (2026-06-23)
 
 
