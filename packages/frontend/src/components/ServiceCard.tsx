@@ -1,8 +1,10 @@
 'use client';
 
-import { AlertCircle, Download, RotateCcw } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { AlertCircle, Crosshair, Download, RotateCcw } from 'lucide-react';
 import type { EnrichedContainer, ServiceViewModel } from '@servicebay/api-client';
 import { ServiceActionBar } from '@/components/ServiceActionBar';
+import { networkFocusHref } from '@/components/networkFocus';
 import { DomainHealthDot } from '@/components/DomainHealthDot';
 import { serviceDotState } from '@/components/ServiceRow';
 import { Badge, Button, Card, StatusDot } from '@/components/ui';
@@ -65,7 +67,10 @@ export default function ServiceCard({
   onDelete,
   onRestart,
 }: ServiceCardProps) {
+  const router = useRouter();
   const dot = serviceDotState(service);
+  // #2108: per-service "focus in network map" jump (managed services only).
+  const showNetworkFocus = service.type !== 'gateway' && service.type !== 'link';
   return (
     <Card padding="md" className="group self-start hover:shadow-md transition-all duration-200 relative overflow-hidden min-w-0">
       <div className="flex items-start gap-4 justify-between mb-3">
@@ -115,6 +120,19 @@ export default function ServiceCard({
             </div>
           </div>
         </div>
+        {showNetworkFocus && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push(networkFocusHref(service.name))}
+            aria-label="Im Netzwerk anzeigen"
+            title="Im Netzwerk anzeigen"
+            className="shrink-0 px-2"
+            data-testid={`network-focus-${service.displayName}`}
+          >
+            <Crosshair size={16} />
+          </Button>
+        )}
         <ServiceActionBar
           service={service}
           onMonitor={onMonitor}

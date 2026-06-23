@@ -2,9 +2,10 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 import { useTopologyData } from '@/hooks/useTopologyData';
+import { NETWORK_FOCUS_PARAM, planDeepLinkFocus } from '@/components/networkFocus';
 import type { PortMapping, ServiceUnit } from '@servicebay/api-client';
 import { buildServiceViewModel } from '@servicebay/api-client';
 import type { ServiceViewModel } from '@servicebay/api-client';
@@ -802,6 +803,14 @@ function NetworkLegend() {
 
 export default function NetworkDashboard() {
     const router = useRouter();
+    const searchParams = useSearchParams();
+    // #2108 — `?focus=<service-name>` from the Services list jumps here with a
+    // service to centre. We resolve it to a graph node id (handling the remote
+    // `<node>:` prefix) once the graph has loaded, and apply each distinct
+    // param value exactly once so a manual click / Back doesn't get clobbered
+    // on re-render.
+    const focusParam = searchParams.get(NETWORK_FOCUS_PARAM);
+    const appliedFocusParamRef = useRef<string | null>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1252,6 +1261,9 @@ export default function NetworkDashboard() {
       return { nodes: flowNodes, edges: flowEdges };
   }, [rawData, handleCreateExternalLink]);
 
+  // #2108 — apply the `?focus=` deep-link once the graph nodes exist. Resolving
+  // against the live node ids handles both local (`service-x`) and remote
+  // (`box2:service-x`) forms without the linking page reconstructing the prefix.
   const selectedNodeName = useMemo(() => deriveNodeNameFromGraph(selectedNodeData), [selectedNodeData]);
 
   const selectedServiceViewModel = useMemo<ServiceViewModel | null>(() => {
@@ -1279,6 +1291,10 @@ export default function NetworkDashboard() {
       if (!graphData) return;
 
       let currentCollapsed = collapsedGroups;
+      // The focus to lay out with this pass — the live state, unless we resolve
+      // a fresh `?focus=` deep-link below (whose setState won't be visible until
+      // the next render, so we feed the resolved id straight into this layout).
+      let currentFocus = focusNodeId;
       if (!rawGraphData.current && graphData.nodes.length > 0) {
                   const groups = graphData.nodes
                       .filter(n => ['group', 'service', 'pod', 'proxy', 'unmanaged-service'].includes(n.data.type as string))
@@ -1287,13 +1303,36 @@ export default function NetworkDashboard() {
               setCollapsedGroups(currentCollapsed);
       }
 
+      // #2108 — resolve the `?focus=<service-name>` deep-link from the Services
+      // list to a concrete graph node id (handles the remote `<node>:` prefix).
+      // Each distinct param value is applied exactly once (ref-guard) so a
+      // manual node click / Back control isn't clobbered when this layout effect
+      // re-runs. The setState is deferred into the async runLayout callback
+      // below (not the synchronous effect body) so the first focused layout uses
+      // `currentFocus` and the Back control reflects state on the next render.
+      const focusPlan = planDeepLinkFocus(
+          graphData.nodes.map(n => n.id),
+          focusParam,
+          appliedFocusParamRef.current,
+      );
+      if (focusPlan.clearApplied) appliedFocusParamRef.current = null;
+      if (focusPlan.nodeId) currentFocus = focusPlan.nodeId;
+
       rawGraphData.current = graphData;
       let cancelled = false;
 
       const runLayout = async () => {
           try {
-                await processAndLayout(graphData.nodes, graphData.edges, currentCollapsed, searchQuery, focusNodeId);
+                await processAndLayout(graphData.nodes, graphData.edges, currentCollapsed, searchQuery, currentFocus);
                 if (!cancelled) {
+                     // #2108 — commit the resolved deep-link focus to state from
+                     // the async callback (subscription-style), so the Back
+                     // control + Esc-exit reflect it without a synchronous
+                     // setState in the effect body.
+                     if (focusPlan.appliedParam && focusPlan.nodeId) {
+                         appliedFocusParamRef.current = focusPlan.appliedParam;
+                         setFocusNodeId(focusPlan.nodeId);
+                     }
                      resolveReloadToast('success', 'Latest network topology is ready');
                 }
           } catch {
@@ -1308,7 +1347,7 @@ export default function NetworkDashboard() {
       return () => {
           cancelled = true;
       };
-  }, [graphData, processAndLayout, collapsedGroups, searchQuery, focusNodeId, resolveReloadToast]);
+  }, [graphData, processAndLayout, collapsedGroups, searchQuery, focusNodeId, focusParam, resolveReloadToast]);
 
   useEffect(() => {
     // Setup SSE for progress updates

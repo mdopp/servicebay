@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, HelpCircle, KeyRound, Loader2, Shield, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, HelpCircle, KeyRound, Loader2, XCircle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
-import { Badge, Button, Card } from '@/components/ui';
+import { Badge, Button } from '@/components/ui';
 
 /**
  * Settings → Networking → Reverse Proxy (NPM) (#1530 — derive, don't ask).
@@ -76,18 +76,8 @@ export default function ReverseProxySection() {
   const diverged = status === 'rejected' || status === 'no-creds';
 
   return (
-    <Card padding="none" className="w-full overflow-hidden">
-      <div className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border bg-surface-2">
-        <div className="p-2 rounded-card bg-status-ok/10 text-status-ok">
-          <Shield size={20} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-text">Reverse Proxy (NPM)</h3>
-          <p className="text-xs text-text-muted">
-            ServiceBay owns the Nginx Proxy Manager admin credential automatically — it&apos;s read from NPM&apos;s own database, never typed in, so it can&apos;t silently drift out of sync.
-          </p>
-        </div>
-        <div className="shrink-0">
+    <>
+        <div className="flex justify-end">
           {busy === 'load' ? (
             <Badge variant="neutral"><Loader2 size={12} className="animate-spin" /> Checking</Badge>
           ) : verified ? (
@@ -98,9 +88,7 @@ export default function ReverseProxySection() {
             <Badge variant="neutral"><XCircle size={12} /> Unknown</Badge>
           )}
         </div>
-      </div>
 
-      <div className="p-space-5 space-y-4">
         <div>
           <label className="block text-sm font-medium text-text-muted mb-1">Admin identity (from NPM database)</label>
           <div className="flex items-center gap-2 w-full p-2 rounded-card border border-border bg-surface-2 text-text font-mono text-sm">
@@ -152,7 +140,6 @@ export default function ReverseProxySection() {
             </Button>
           )}
         </div>
-      </div>
-    </Card>
+    </>
   );
 }

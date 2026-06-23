@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Bot, Check, Copy, ShieldAlert, History, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Check, Copy, ShieldAlert, History, RefreshCw, ShieldCheck } from 'lucide-react';
 import SectionHelp from '@/components/SectionHelp';
-import { Button, Card } from '@/components/ui';
+import { Button } from '@/components/ui';
 import { copyToClipboard } from '../clipboard';
 
 interface AuditEntry {
@@ -308,19 +308,8 @@ export default function McpSection() {
   };
 
   return (
-    <Card padding="lg">
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-accent/10 rounded-card">
-            <Bot size={20} className="text-accent" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-text">MCP Server</h2>
-            <p className="text-sm text-text-muted">
-              Let an AI assistant (Claude Code, Claude Desktop, …) drive ServiceBay through the Model Context Protocol.
-            </p>
-          </div>
-        </div>
+    <>
+      <div className="flex justify-end">
         <SectionHelp
           helpId="mcp"
           title="Connecting an LLM via MCP"
@@ -328,7 +317,7 @@ export default function McpSection() {
         />
       </div>
 
-      <div className="mt-4">
+      <div>
         <label className="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1">
           MCP endpoint
         </label>
@@ -403,6 +392,6 @@ export default function McpSection() {
         </button>
         {auditOpen && <McpAuditFeed entries={audit} loading={auditLoading} onRefresh={loadAudit} />}
       </div>
-    </Card>
+    </>
   );
 }

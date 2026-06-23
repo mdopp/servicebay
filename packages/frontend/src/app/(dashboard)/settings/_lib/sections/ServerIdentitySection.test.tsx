@@ -15,9 +15,12 @@ vi.mock('../SettingsContext', () => ({
 }));
 
 describe('ServerIdentitySection (#2100 settings migration)', () => {
-  it('renders on a token Card surface with no raw colour literals', () => {
+  it('renders its control with no inner duplicate title and no raw colour literals (#2109)', () => {
     const { container } = render(<ServerIdentitySection />);
-    expect(container.querySelector('.bg-surface')).not.toBeNull();
+    // No "Server Identity" h3 inside the section — the SettingDisclosure header
+    // carries the icon+title+description now (#2109).
+    expect(container.querySelector('h3')).toBeNull();
+    expect(screen.getByRole('textbox')).toBeDefined();
     const html = container.innerHTML;
     expect(html).not.toMatch(/bg-(blue|amber|emerald|green|red|purple|indigo)-\d/);
     expect(html).not.toMatch(/text-(blue|emerald|red|purple|indigo)-\d/);

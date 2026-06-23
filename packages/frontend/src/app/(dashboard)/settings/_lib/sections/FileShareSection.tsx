@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Copy, KeyRound, Loader2, RefreshCw, Users } from 'lucide-react';
+import { Copy, KeyRound, Loader2, RefreshCw } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 
 interface SambaUser {
@@ -101,30 +101,21 @@ export default function FileShareSection() {
   }, [addToast]);
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-        <div className="p-2 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">
-          <Users size={20} />
+    <>
+        <div className="flex justify-end">
+          <button
+            onClick={loadUsers}
+            disabled={loading}
+            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded disabled:opacity-50"
+            type="button"
+            title="Re-run LLDAP → Samba sync"
+          >
+            {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            Sync
+          </button>
         </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-gray-900 dark:text-white">File Share — Samba accounts</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
-            Every LLDAP user mounts the Samba share with their own credentials. Samba can&apos;t speak OIDC, so the password lives in Samba&apos;s own DB — set it here.
-          </p>
-        </div>
-        <button
-          onClick={loadUsers}
-          disabled={loading}
-          className="inline-flex items-center gap-1 px-2 py-1 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded disabled:opacity-50"
-          type="button"
-          title="Re-run LLDAP → Samba sync"
-        >
-          {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-          Sync
-        </button>
-      </div>
 
-      <div className="p-6 space-y-3">
+      <div className="space-y-3">
         {error && (
           <div className="p-3 rounded-lg text-sm bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-800">
             {error}
@@ -187,6 +178,6 @@ export default function FileShareSection() {
           </ul>
         )}
       </div>
-    </div>
+    </>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Loader2, ShieldAlert, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Loader2, X } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { Badge, Button, Card } from '@/components/ui';
 
@@ -158,53 +158,33 @@ export default function ApprovalsSection() {
 
   if (busy === 'load') return <ApprovalsLoadingState />;
 
-  return (
-    <Card id="approvals" padding="none" className="w-full overflow-hidden scroll-mt-24">
-      <div className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border bg-surface-2">
-        <div className="p-2 rounded-card bg-status-warn/10 text-status-warn">
-          <ShieldAlert size={20} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="flex items-center gap-space-2 font-semibold text-text">
-            Approvals
-            {pending.length > 0 && (
-              <Badge variant="warn" aria-label={`${pending.length} pending`}>{pending.length}</Badge>
-            )}
-          </h3>
-          <p className="text-xs text-text-muted">
-            Requests that need your review before a service runs them. Inspect the details, then <span className="font-medium">Approve</span> to run the requested action or <span className="font-medium">Reject</span> to discard it.
-          </p>
-        </div>
-      </div>
-
-      <div className="p-space-5">
-        {pending.length === 0 ? (
-          <p className="text-sm text-text-muted italic">
-            No pending approvals. Requests will appear here when a service needs your sign-off.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {pending.map(request => (
-              <ApprovalCard
-                key={request.id}
-                request={request}
-                busy={busy}
-                onApprove={(id, title) => void resolveRequest(id, 'approve', title)}
-                onReject={(id, title) => void resolveRequest(id, 'reject', title)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </Card>
+  return pending.length === 0 ? (
+    <p className="text-sm text-text-muted italic">
+      No pending approvals. Requests will appear here when a service needs your sign-off.
+    </p>
+  ) : (
+    <div className="space-y-2">
+      {pending.length > 0 && (
+        <Badge variant="warn" aria-label={`${pending.length} pending`}>{pending.length} pending</Badge>
+      )}
+      {pending.map(request => (
+        <ApprovalCard
+          key={request.id}
+          request={request}
+          busy={busy}
+          onApprove={(id, title) => void resolveRequest(id, 'approve', title)}
+          onReject={(id, title) => void resolveRequest(id, 'reject', title)}
+        />
+      ))}
+    </div>
   );
 }
 
 function ApprovalsLoadingState() {
   return (
-    <Card className="w-full p-space-5 text-sm text-text-muted">
+    <p className="text-sm text-text-muted">
       <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
       Loading approvals…
-    </Card>
+    </p>
   );
 }

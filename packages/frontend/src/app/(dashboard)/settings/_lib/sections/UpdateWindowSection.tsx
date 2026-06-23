@@ -19,9 +19,9 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, Loader2, Lock } from 'lucide-react';
+import { Loader2, Lock } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
-import { Button, Card } from '@/components/ui';
+import { Button } from '@/components/ui';
 
 type Day = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
 
@@ -171,20 +171,7 @@ export default function UpdateWindowSection() {
   const groupDisabled = saving || !window.enabled;
 
   return (
-    <Card padding="none" className="w-full overflow-hidden">
-      <div className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border bg-surface-2">
-        <div className="p-2 rounded-card bg-status-warn/10 text-status-warn">
-          <CalendarClock size={20} />
-        </div>
-        <div className="min-w-0">
-          <h3 className="font-semibold text-text">Auto-update window</h3>
-          <p className="text-xs text-text-muted">
-            Decide when ServiceBay applies OS updates, container image refreshes, and its own updates. Until you save an enabled window, all auto-updates are locked.
-          </p>
-        </div>
-      </div>
-
-      <div className="p-space-5 space-y-5">
+    <div className="space-y-5">
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-text-muted">
             <Loader2 size={14} className="animate-spin" /> Loading current setting…
@@ -328,7 +315,6 @@ export default function UpdateWindowSection() {
             </div>
           </>
         )}
-      </div>
-    </Card>
+    </div>
   );
 }

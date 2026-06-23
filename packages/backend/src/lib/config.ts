@@ -200,6 +200,14 @@ export interface AppConfig {
      * not "available". Written after a successful pull; null until first seen.
      */
     appliedImageDigest?: string;
+    /**
+     * ISO-8601 timestamp of the last successful in-place ServiceBay image
+     * update (the moment `performUpdate` advanced `appliedImageDigest` to a
+     * newer image). Surfaced on Home as a "Last updated" freshness/security
+     * indicator (#2104) — recent = ok, long ago = warn. Undefined until the
+     * first applied update on this box.
+     */
+    appliedImageUpdatedAt?: string;
   };
   /**
    * Unified auto-update window. ServiceBay manages three independent

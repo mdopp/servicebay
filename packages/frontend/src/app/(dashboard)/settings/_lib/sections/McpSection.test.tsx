@@ -25,12 +25,14 @@ function mockFetch(allowMutations: boolean) {
 describe('McpSection (#2100 settings migration)', () => {
   beforeEach(() => vi.unstubAllGlobals());
 
-  it('renders on a token Card surface with no raw colour literals', async () => {
+  it('renders its controls with no inner duplicate title and no raw colour literals (#2109)', async () => {
     mockFetch(true);
     const { container } = render(<McpSection />);
-    await waitFor(() => expect(screen.getByText('MCP Server')).toBeDefined());
+    await waitFor(() => expect(screen.getByText('MCP endpoint')).toBeDefined());
 
-    expect(container.querySelector('.bg-surface')).not.toBeNull();
+    // No "MCP Server" h2/h3 title inside the section — the SettingDisclosure
+    // header carries the icon+title+description now (#2109).
+    expect(container.querySelector('h2, h3')).toBeNull();
     const html = container.innerHTML;
     expect(html).not.toMatch(/bg-(blue|amber|emerald|green|red|purple|indigo)-\d/);
     expect(html).not.toMatch(/text-(blue|emerald|red|purple|indigo|amber)-\d/);
@@ -40,7 +42,7 @@ describe('McpSection (#2100 settings migration)', () => {
   it('toggling mutations still POSTs to /api/settings (behaviour preserved)', async () => {
     mockFetch(true);
     render(<McpSection />);
-    await waitFor(() => expect(screen.getByText('MCP Server')).toBeDefined());
+    await waitFor(() => expect(screen.getByText('MCP endpoint')).toBeDefined());
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
     const switches = screen.getAllByRole('switch');
     fireEvent.click(switches[0]);

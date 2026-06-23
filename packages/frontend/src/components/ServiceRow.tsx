@@ -1,8 +1,10 @@
 'use client';
 
-import { AlertCircle, Download, RotateCcw } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { AlertCircle, Crosshair, Download, RotateCcw } from 'lucide-react';
 import type { ServiceViewModel } from '@servicebay/api-client';
 import { ServiceActionBar } from '@/components/ServiceActionBar';
+import { networkFocusHref } from '@/components/networkFocus';
 import { DomainHealthDot } from '@/components/DomainHealthDot';
 import { Badge, Button, StatusDot, type StatusState } from '@/components/ui';
 
@@ -68,8 +70,12 @@ export default function ServiceRow({
   onDelete,
   onRestart,
 }: ServiceRowProps) {
+  const router = useRouter();
   const dot = serviceDotState(service);
   const showFailedNudge = !service.active && service.type !== 'gateway' && service.type !== 'link';
+  // #2108: per-service "focus in network map" jump. Only managed services have
+  // a `service-<name>` node to centre on — gateway/link nodes are out of scope.
+  const showNetworkFocus = service.type !== 'gateway' && service.type !== 'link';
 
   return (
     <div className="group flex items-center gap-3 px-4 py-2.5 hover:bg-surface-2 transition-colors min-w-0">
@@ -166,6 +172,21 @@ export default function ServiceRow({
             <RotateCcw size={12} /> Restart
           </Button>
         </div>
+      )}
+
+      {/* #2108: focus this service in the Network Map. */}
+      {showNetworkFocus && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => router.push(networkFocusHref(service.name))}
+          aria-label="Im Netzwerk anzeigen"
+          title="Im Netzwerk anzeigen"
+          className="shrink-0 px-2"
+          data-testid={`network-focus-${service.displayName}`}
+        >
+          <Crosshair size={16} />
+        </Button>
       )}
 
       {/* Action bar */}

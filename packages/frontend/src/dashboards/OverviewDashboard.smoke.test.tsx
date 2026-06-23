@@ -10,7 +10,7 @@
  */
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import OverviewDashboard, { systemStatusView } from './OverviewDashboard';
+import OverviewDashboard, { systemStatusView, lastUpdatedView } from './OverviewDashboard';
 import { ToastProvider } from '@/providers/ToastProvider';
 
 // Mutable so individual tests can inject a `resources` slice for the System
@@ -222,8 +222,9 @@ describe('OverviewDashboard render', () => {
     expect(html).toMatch(/accent/);
   });
 
-  it('renders the System-status tile linking to Status→System (#2096)', () => {
-    // Inject a resources slice on the twin so the tile shows real metrics.
+  it('renders the System-status tile linking to Status→System (#2096) with split disk + Last updated (#2104)', () => {
+    // Inject a resources slice on the twin so the tile shows real metrics,
+    // including per-mount disks[] for the System/Data split (#2104).
     twinNode = {
       ...twinNode,
       resources: {
@@ -231,6 +232,10 @@ describe('OverviewDashboard render', () => {
         memoryUsage: 4 * 1024 * 1024 * 1024,
         totalMemory: 16 * 1024 * 1024 * 1024,
         diskUsage: 47,
+        disks: [
+          { mountpoint: '/', total: 100, used: 30 }, // System 30%
+          { mountpoint: '/var/mnt/data', total: 100, used: 78 }, // Data 78%
+        ],
         os: { uptime: 90000 },
       },
     };
@@ -242,16 +247,65 @@ describe('OverviewDashboard render', () => {
     );
 
     // The tile renders and is a clickable link to the Status→System view.
-    const systemLink = screen.getByText('System').closest('a');
+    // (Disambiguate: "System" is now both the tile <h2> AND a disk <dt> row.)
+    const systemLink = screen.getByText('System', { selector: 'h2' }).closest('a');
     expect(systemLink).not.toBeNull();
     expect(systemLink?.getAttribute('href')).toBe('/status?tab=system');
-    // CPU / RAM / Disk / Uptime rows are present.
+    // CPU / RAM rows present; Disk is split into System + Data; Uptime is gone,
+    // replaced by Last updated (#2104).
     expect(screen.getByText('CPU')).toBeDefined();
     expect(screen.getByText('RAM')).toBeDefined();
-    expect(screen.getByText('Disk')).toBeDefined();
-    expect(screen.getByText('Uptime')).toBeDefined();
+    expect(screen.getByText('System', { selector: 'dt' })).toBeDefined();
+    expect(screen.getByText('Data')).toBeDefined();
+    expect(screen.getByText('30%')).toBeDefined();
+    expect(screen.getByText('78%')).toBeDefined();
+    expect(screen.getByText('Last updated')).toBeDefined();
+    expect(screen.queryByText('Uptime')).toBeNull();
     expect(screen.getByText('12%')).toBeDefined();
-    expect(screen.getByText('1d 1h')).toBeDefined();
+  });
+
+  it('gives every Home tile an icon + title on one header row (#2103)', () => {
+    twinNode = {
+      ...twinNode,
+      resources: {
+        cpuUsage: 12,
+        memoryUsage: 4 * 1024 * 1024 * 1024,
+        totalMemory: 16 * 1024 * 1024 * 1024,
+        disks: [{ mountpoint: '/', total: 100, used: 30 }],
+        os: { uptime: 3600 },
+      },
+    };
+    render(
+      <ToastProvider>
+        <OverviewDashboard />
+      </ToastProvider>,
+    );
+    // Every tile's <h2> title sits in a flex row that also carries an <svg>
+    // icon as a sibling — icon + title inline, no tile missing its icon.
+    for (const title of ['Services', 'Diagnostics']) {
+      const heading = screen.getByText(title, { selector: 'h2' });
+      const header = heading.parentElement!;
+      expect(header.className).toContain('flex');
+      expect(header.querySelector('svg')).not.toBeNull();
+    }
+    // System tile header (its <h2> is "System", dt label is different).
+    const sysHeading = screen.getByText('System', { selector: 'h2' });
+    expect(sysHeading.parentElement!.className).toContain('flex');
+    expect(sysHeading.parentElement!.querySelector('svg')).not.toBeNull();
+  });
+
+  it('orders the Diagnostics tile last on mobile, natural order on desktop (#2105)', () => {
+    render(
+      <ToastProvider>
+        <OverviewDashboard />
+      </ToastProvider>,
+    );
+    // The Diagnostics tile link carries the responsive order utilities:
+    // order-last on mobile, reset to source order at ≥sm.
+    const diagnosticsLink = screen.getByText('Diagnostics', { selector: 'h2' }).closest('a');
+    expect(diagnosticsLink).not.toBeNull();
+    expect(diagnosticsLink!.className).toContain('order-last');
+    expect(diagnosticsLink!.className).toContain('sm:order-none');
   });
 
   it('renders the System tile in a neutral waiting state when no agent report is present', () => {
@@ -276,17 +330,50 @@ describe('systemStatusView (#2096)', () => {
     expect(systemStatusView({ cpuUsage: 10 })).toEqual({ loaded: false, tone: 'neutral', rows: [] });
   });
 
-  it('computes good tone for low usage and lists all four rows', () => {
-    const view = systemStatusView({
-      cpuUsage: 10,
-      memoryUsage: 2 * 1024 * 1024 * 1024,
-      totalMemory: 16 * 1024 * 1024 * 1024,
-      diskUsage: 30,
-      os: { uptime: 3600 },
-    });
+  it('splits Disk into System + Data and ends with Last updated (#2104)', () => {
+    const view = systemStatusView(
+      {
+        cpuUsage: 10,
+        memoryUsage: 2 * 1024 * 1024 * 1024,
+        totalMemory: 16 * 1024 * 1024 * 1024,
+        disks: [
+          { mountpoint: '/', total: 100, used: 30 },
+          { mountpoint: '/var/mnt/data', total: 100, used: 50 },
+        ],
+        os: { uptime: 3600 },
+      },
+      new Date().toISOString(),
+    );
     expect(view.loaded).toBe(true);
     expect(view.tone).toBe('good');
-    expect(view.rows.map(r => r.label)).toEqual(['CPU', 'RAM', 'Disk', 'Uptime']);
+    expect(view.rows.map(r => r.label)).toEqual(['CPU', 'RAM', 'System', 'Data', 'Last updated']);
+    expect(view.rows.find(r => r.label === 'System')?.value).toBe('30%');
+    expect(view.rows.find(r => r.label === 'Data')?.value).toBe('50%');
+    expect(view.rows.find(r => r.label === 'Last updated')?.value).toBe('Just now');
+  });
+
+  it('accepts /mnt/data (non-FCoS mount path) for the Data partition (#2104)', () => {
+    const view = systemStatusView({
+      disks: [
+        { mountpoint: '/', total: 100, used: 20 },
+        { mountpoint: '/mnt/data', total: 100, used: 60 },
+      ],
+      os: { uptime: 60 },
+    });
+    expect(view.rows.find(r => r.label === 'Data')?.value).toBe('60%');
+  });
+
+  it('falls back to the single Disk figure when no per-mount breakdown exists (#2104)', () => {
+    const view = systemStatusView({
+      diskUsage: 47,
+      os: { uptime: 60 },
+    });
+    // No disks[] → surface the one figure, do NOT fake a split.
+    const labels = view.rows.map(r => r.label);
+    expect(labels).toContain('Disk');
+    expect(labels).not.toContain('System');
+    expect(labels).not.toContain('Data');
+    expect(view.rows.find(r => r.label === 'Disk')?.value).toBe('47%');
   });
 
   it('escalates the tone to the worst metric (bad wins over warn/good)', () => {
@@ -294,10 +381,26 @@ describe('systemStatusView (#2096)', () => {
       cpuUsage: 85, // warn
       memoryUsage: 15.5 * 1024 * 1024 * 1024,
       totalMemory: 16 * 1024 * 1024 * 1024, // ~97% → bad
-      diskUsage: 10, // good
+      disks: [{ mountpoint: '/', total: 100, used: 10 }], // good
       os: { uptime: 120 },
     });
     expect(view.tone).toBe('bad');
+  });
+
+  it('Last updated tone does not escalate the worst-of system tone (#2104)', () => {
+    // A stale box (Last updated = warn) with all-good metrics stays good — a
+    // freshness warning is not a resource-pressure problem.
+    const old = new Date(Date.now() - 120 * 86400000).toISOString();
+    const view = systemStatusView(
+      {
+        cpuUsage: 10,
+        disks: [{ mountpoint: '/', total: 100, used: 10 }],
+        os: { uptime: 60 },
+      },
+      old,
+    );
+    expect(view.rows.find(r => r.label === 'Last updated')?.tone).toBe('warn');
+    expect(view.tone).toBe('good');
   });
 
   it('degrades gracefully to neutral rows when a metric is missing', () => {
@@ -306,5 +409,26 @@ describe('systemStatusView (#2096)', () => {
     // No usage figures → no escalation, neutral overall.
     expect(view.tone).toBe('neutral');
     expect(view.rows.find(r => r.label === 'CPU')?.value).toBe('—');
+  });
+});
+
+describe('lastUpdatedView (#2104)', () => {
+  const now = Date.parse('2026-06-23T12:00:00Z');
+
+  it('is neutral "Never" when there is no applied-update timestamp', () => {
+    expect(lastUpdatedView(undefined, now)).toEqual({ value: 'Never', tone: 'neutral' });
+    expect(lastUpdatedView(null, now)).toEqual({ value: 'Never', tone: 'neutral' });
+    expect(lastUpdatedView('not-a-date', now)).toEqual({ value: 'Never', tone: 'neutral' });
+  });
+
+  it('reports a recent update as good with a relative age', () => {
+    expect(lastUpdatedView('2026-06-23T11:30:00Z', now)).toEqual({ value: 'Just now', tone: 'good' });
+    expect(lastUpdatedView('2026-06-23T09:00:00Z', now)).toEqual({ value: '3h ago', tone: 'good' });
+    expect(lastUpdatedView('2026-06-20T12:00:00Z', now)).toEqual({ value: '3d ago', tone: 'good' });
+  });
+
+  it('warns once the last update is older than the freshness threshold', () => {
+    const old = new Date(now - 90 * 86400000).toISOString();
+    expect(lastUpdatedView(old, now)).toEqual({ value: '90d ago', tone: 'warn' });
   });
 });

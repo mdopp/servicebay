@@ -21,12 +21,14 @@ function mockFetch() {
 describe('UpdateWindowSection (#2100 settings migration)', () => {
   beforeEach(() => vi.unstubAllGlobals());
 
-  it('renders on a token Card surface with no raw colour literals', async () => {
+  it('renders its controls with no inner duplicate title and no raw colour literals (#2109)', async () => {
     mockFetch();
     const { container } = render(<UpdateWindowSection />);
-    await waitFor(() => expect(screen.getByText('Auto-update window')).toBeDefined());
+    await waitFor(() => expect(screen.getByRole('button', { name: /save & apply/i })).toBeDefined());
 
-    expect(container.querySelector('.bg-surface')).not.toBeNull();
+    // No "Auto-update window" h3 inside the section — the SettingDisclosure
+    // header carries the icon+title+description now (#2109).
+    expect(container.querySelector('h3')).toBeNull();
     const html = container.innerHTML;
     expect(html).not.toMatch(/bg-(blue|amber|emerald|green|red|rose|purple|indigo)-\d/);
     expect(html).not.toMatch(/text-(blue|emerald|red|rose|purple|indigo|amber)-\d/);
@@ -36,7 +38,7 @@ describe('UpdateWindowSection (#2100 settings migration)', () => {
   it('Save & apply still PUTs the window (behaviour preserved)', async () => {
     mockFetch();
     render(<UpdateWindowSection />);
-    await waitFor(() => expect(screen.getByText('Auto-update window')).toBeDefined());
+    await waitFor(() => expect(screen.getByRole('button', { name: /save & apply/i })).toBeDefined());
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
     fireEvent.click(screen.getByRole('button', { name: /save & apply/i }));
     await waitFor(() =>

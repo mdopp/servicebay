@@ -13,6 +13,14 @@ import { UserPlus, Loader2 } from 'lucide-react';
  * gather the profile data so approval is one click rather than a
  * round-trip to ask the requester for a username.
  */
+/** Shared token-wired classes for the request-access form controls so
+ *  the inputs/labels read as one consistent, design-system surface
+ *  (dark-mode-correct, no raw gray-300/blue-500 literals). */
+const FIELD_LABEL = 'block text-xs font-medium text-text-muted';
+const FIELD_INPUT =
+  'w-full px-space-3 py-space-2 text-sm rounded-card border border-border bg-surface-2 ' +
+  'text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-accent';
+
 export default function RequestAccessButton() {
   const [open, setOpen] = useState(false);
   const [firstName, setFirstName] = useState('');
@@ -89,10 +97,10 @@ export default function RequestAccessButton() {
 
   return (
     <>
-      <div className="mt-12 text-center">
+      <div className="mt-space-7 text-center">
         <button
           onClick={() => setOpen(true)}
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 hover:border-blue-500 hover:text-blue-700 dark:hover:text-blue-300 text-sm font-medium text-gray-700 dark:text-gray-300 rounded-full transition-colors"
+          className="inline-flex items-center gap-space-2 px-space-4 py-2.5 bg-surface border border-border hover:border-accent hover:text-accent text-sm font-medium text-text-muted rounded-full transition-colors"
         >
           <UserPlus size={16} />
           Don&apos;t have an account yet?
@@ -105,36 +113,36 @@ export default function RequestAccessButton() {
           onClick={onClose}
         >
           <div
-            className="glass-panel rounded-2xl shadow-2xl max-w-md w-full p-8 max-h-[90vh] overflow-y-auto border border-gray-200/50 dark:border-white/10"
+            className="glass-panel rounded-card shadow-2xl max-w-md w-full p-space-6 max-h-[90vh] overflow-y-auto border border-border"
             onClick={e => e.stopPropagation()}
           >
             {submitted ? (
-              <div className="text-center py-8 space-y-4">
+              <div className="text-center py-space-6 space-y-space-4">
                 <div className="text-5xl animate-bounce">✨</div>
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white tracking-wide">Request Sent Successfully!</h2>
-                <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed font-medium">
+                <h2 className="text-2xl font-bold text-text tracking-wide">Request Sent Successfully!</h2>
+                <p className="text-sm text-text-muted leading-relaxed font-medium">
                   The family administrator has been notified. They will create your account in the local identity pool and notify you when it is ready.
                 </p>
                 <button
                   onClick={onClose}
-                  className="mt-4 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow transition-colors"
+                  className="mt-space-4 px-space-5 py-2.5 bg-accent hover:bg-accent-strong text-on-accent text-sm font-semibold rounded-card shadow transition-colors"
                 >
                   Got it
                 </button>
               </div>
             ) : (
-              <form onSubmit={onSubmit} className="space-y-5">
+              <form onSubmit={onSubmit} className="space-y-space-5">
                 <div>
-                  <h2 className="text-2xl font-extrabold text-gray-900 dark:text-white tracking-wide">Request Access</h2>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1.5 font-medium leading-relaxed">
+                  <h2 className="text-2xl font-extrabold text-text tracking-wide">Request Access</h2>
+                  <p className="text-sm text-text-muted mt-1.5 font-medium leading-relaxed">
                     The administrator will create your personal account. Enter your details below to get started.
                   </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                      First name <span className="text-red-500">*</span>
+                <div className="grid grid-cols-2 gap-space-3">
+                  <div className="space-y-space-1">
+                    <label className={FIELD_LABEL}>
+                      First name <span className="text-status-fail">*</span>
                     </label>
                     <input
                       type="text"
@@ -143,12 +151,12 @@ export default function RequestAccessButton() {
                       required
                       maxLength={60}
                       autoComplete="given-name"
-                      className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={FIELD_INPUT}
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                      Last name <span className="text-red-500">*</span>
+                  <div className="space-y-space-1">
+                    <label className={FIELD_LABEL}>
+                      Last name <span className="text-status-fail">*</span>
                     </label>
                     <input
                       type="text"
@@ -157,14 +165,14 @@ export default function RequestAccessButton() {
                       required
                       maxLength={60}
                       autoComplete="family-name"
-                      className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={FIELD_INPUT}
                     />
                   </div>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                    Desired username <span className="text-red-500">*</span>
+                <div className="space-y-space-1">
+                  <label className={FIELD_LABEL}>
+                    Desired username <span className="text-status-fail">*</span>
                   </label>
                   <input
                     type="text"
@@ -176,16 +184,16 @@ export default function RequestAccessButton() {
                     pattern="[a-z0-9._\-]{1,60}"
                     autoComplete="username"
                     placeholder="e.g. max.mustermann"
-                    className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={FIELD_INPUT}
                   />
-                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                  <p className="text-[11px] text-text-subtle">
                     Your login — lowercase letters, digits, dots, underscores, and hyphens only. Can&apos;t be changed later.
                   </p>
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                    Your email <span className="text-red-500">*</span>
+                <div className="space-y-space-1">
+                  <label className={FIELD_LABEL}>
+                    Your email <span className="text-status-fail">*</span>
                   </label>
                   <input
                     type="email"
@@ -194,13 +202,13 @@ export default function RequestAccessButton() {
                     required
                     maxLength={200}
                     autoComplete="email"
-                    className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={FIELD_INPUT}
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                    Anything else? <span className="text-gray-400">(optional)</span>
+                <div className="space-y-space-1">
+                  <label className={FIELD_LABEL}>
+                    Anything else? <span className="text-text-subtle">(optional)</span>
                   </label>
                   <textarea
                     value={message}
@@ -208,28 +216,28 @@ export default function RequestAccessButton() {
                     maxLength={1000}
                     rows={3}
                     placeholder="e.g. which services you'd like access to"
-                    className="w-full px-3 py-2 text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={FIELD_INPUT}
                   />
                 </div>
 
                 {error && (
-                  <div className="px-3 py-2 text-xs text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/20 rounded">
+                  <div className="px-space-3 py-space-2 text-xs text-status-fail bg-status-fail/10 rounded-card">
                     {error}
                   </div>
                 )}
 
-                <div className="flex justify-end gap-2 pt-2">
+                <div className="flex justify-end gap-space-2 pt-space-2">
                   <button
                     type="button"
                     onClick={onClose}
-                    className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
+                    className="px-space-4 py-space-2 text-sm text-text-muted hover:text-text"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg disabled:opacity-50"
+                    className="inline-flex items-center gap-space-2 px-space-4 py-space-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded-card disabled:opacity-50"
                   >
                     {submitting && <Loader2 size={14} className="animate-spin" />}
                     Send request

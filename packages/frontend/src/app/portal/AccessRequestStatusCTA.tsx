@@ -91,12 +91,12 @@ export default function AccessRequestStatusCTA({ fallback }: { fallback: React.R
 
   if (fetched.status === 'pending') {
     return (
-      <div className="mt-12 max-w-md mx-auto text-center bg-amber-50/70 dark:bg-amber-900/10 border border-amber-200/60 dark:border-amber-800/40 rounded-2xl p-6">
-        <Clock size={28} className="mx-auto text-amber-600 dark:text-amber-400" />
-        <h2 className="mt-3 text-lg font-bold text-gray-900 dark:text-white">
+      <div className="mt-space-7 max-w-md mx-auto text-center bg-status-warn/10 border border-status-warn/40 rounded-card p-space-5">
+        <Clock size={28} className="mx-auto text-status-warn" />
+        <h2 className="mt-space-3 text-lg font-bold text-text">
           Your access request is being reviewed
         </h2>
-        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+        <p className="mt-space-2 text-sm text-text-muted leading-relaxed">
           {fetched.firstName ? `Hi ${fetched.firstName} — ` : ''}we&apos;ll email you as soon as the family admin sets your account up. No action needed from you right now.
         </p>
       </div>
@@ -104,19 +104,19 @@ export default function AccessRequestStatusCTA({ fallback }: { fallback: React.R
   }
 
   if (fetched.status === 'resolved') {
-    const buttonClasses = 'inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg transition-colors';
+    const buttonClasses = 'inline-flex items-center justify-center gap-space-2 px-space-4 py-2.5 bg-accent hover:bg-accent-strong text-on-accent text-sm font-semibold rounded-card transition-colors';
     return (
-      <div className="mt-12 max-w-md mx-auto text-center bg-emerald-50/70 dark:bg-emerald-900/10 border border-emerald-200/60 dark:border-emerald-800/40 rounded-2xl p-6">
-        <KeyRound size={28} className="mx-auto text-emerald-600 dark:text-emerald-400" />
-        <h2 className="mt-3 text-lg font-bold text-gray-900 dark:text-white">
+      <div className="mt-space-7 max-w-md mx-auto text-center bg-status-ok/10 border border-status-ok/40 rounded-card p-space-5">
+        <KeyRound size={28} className="mx-auto text-status-ok" />
+        <h2 className="mt-space-3 text-lg font-bold text-text">
           {fetched.firstName ? `Welcome, ${fetched.firstName}!` : 'Your account is ready'}
         </h2>
-        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+        <p className="mt-space-2 text-sm text-text-muted leading-relaxed">
           {fetched.username
             ? <>Your username is <span className="font-mono">{fetched.username}</span>. Set your password to sign in:</>
             : <>Set your password to sign in:</>}
         </p>
-        <div className="mt-4">
+        <div className="mt-space-4">
           {fetched.authUrl
             ? (
               <a href={fetched.authUrl} className={buttonClasses}>
@@ -124,7 +124,7 @@ export default function AccessRequestStatusCTA({ fallback }: { fallback: React.R
               </a>
             )
             : (
-              <p className="text-xs text-gray-500 dark:text-gray-400 italic">
+              <p className="text-xs text-text-subtle italic">
                 Open your welcome email — it includes the password-set link.
               </p>
             )}

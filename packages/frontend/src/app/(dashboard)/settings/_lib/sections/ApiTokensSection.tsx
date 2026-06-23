@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Copy, Key, Plus, Trash2 } from 'lucide-react';
-import { Button, Card } from '@/components/ui';
+import { Check, Copy, Plus, Trash2 } from 'lucide-react';
+import { Button } from '@/components/ui';
 import { copyToClipboard } from '../clipboard';
 
 type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'reboot' | 'destroy' | 'exec';
@@ -291,22 +291,10 @@ export default function ApiTokensSection() {
   };
 
   return (
-    <Card padding="lg">
-      <div className="flex items-center gap-3 mb-4">
-        <div className="p-2 bg-status-ok/10 rounded-card">
-          <Key size={20} className="text-status-ok" />
-        </div>
-        <div>
-          <h2 className="text-lg font-semibold text-text">API tokens</h2>
-          <p className="text-sm text-text-muted">
-            Named, revocable, scoped credentials. One token authenticates both the MCP server and opt-in REST API routes (e.g. the ServiceBay TUI or a script).
-          </p>
-        </div>
-      </div>
-
+    <>
       {bootstrap && <BootstrapBanner status={bootstrap} revoking={revokingBootstrap} reactivating={reactivatingBootstrap} onRevoke={revokeBootstrap} onReactivate={reactivateBootstrap} />}
 
-      <div className="mt-4 space-y-3">
+      <div className="space-y-3">
         <p className="text-xs text-text-muted">
           Pass as <span className="font-mono">Authorization: Bearer sb_…</span> on MCP requests and on opt-in REST API routes. Each token is revocable here without disturbing other clients, and appears as <span className="font-mono">caller</span> in the MCP audit log.
         </p>
@@ -347,6 +335,6 @@ export default function ApiTokensSection() {
           </Button>
         )}
       </div>
-    </Card>
+    </>
   );
 }

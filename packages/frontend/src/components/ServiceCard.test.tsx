@@ -8,6 +8,9 @@ import { render, screen } from '@testing-library/react';
 import type { ServiceViewModel } from '@servicebay/api-client';
 import ServiceCard, { type ServiceCardProps } from './ServiceCard';
 
+const push = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
+
 vi.mock('@/components/DomainHealthDot', () => ({
   DomainHealthDot: () => null,
 }));
@@ -55,6 +58,15 @@ describe('ServiceCard (#2079 primitive migration)', () => {
     );
     screen.getByRole('button', { name: /update now/i }).click();
     expect(onUpdate).toHaveBeenCalledOnce();
+  });
+
+  it('#2108 renders the network-focus button and navigates to /network?focus=<name>', () => {
+    push.mockClear();
+    render(<ServiceCard service={svc()} httpsDomains={new Set()} {...handlers} />);
+    const btn = screen.getByRole('button', { name: 'Im Netzwerk anzeigen' });
+    expect(btn.getAttribute('data-variant')).toBe('ghost');
+    btn.click();
+    expect(push).toHaveBeenCalledWith('/network?focus=immich.service');
   });
 
   it('surfaces the failed-state restart nudge (and uses no raw colour literals)', () => {

@@ -21,12 +21,14 @@ function mockFetch() {
 describe('PortalAccessSection (#2100 settings migration)', () => {
   beforeEach(() => vi.unstubAllGlobals());
 
-  it('renders on a token Card surface with no raw colour literals', async () => {
+  it('renders its controls with no inner duplicate title and no raw colour literals (#2109)', async () => {
     mockFetch();
     const { container } = render(<PortalAccessSection />);
-    await waitFor(() => expect(screen.getByText('Portal access')).toBeDefined());
+    await waitFor(() => expect(screen.getByText('Maximum users')).toBeDefined());
 
-    expect(container.querySelector('.bg-surface')).not.toBeNull();
+    // No "Portal access" h3 inside the section — the SettingDisclosure header
+    // carries the icon+title+description now (#2109).
+    expect(container.querySelector('h3')).toBeNull();
     const html = container.innerHTML;
     expect(html).not.toMatch(/bg-(blue|amber|emerald|green|red|purple|indigo)-\d/);
     expect(html).not.toMatch(/text-(blue|emerald|red|purple|indigo)-\d/);
@@ -36,7 +38,7 @@ describe('PortalAccessSection (#2100 settings migration)', () => {
   it('Save still PUTs the portal settings (behaviour preserved)', async () => {
     mockFetch();
     render(<PortalAccessSection />);
-    await waitFor(() => expect(screen.getByText('Portal access')).toBeDefined());
+    await waitFor(() => expect(screen.getByText('Maximum users')).toBeDefined());
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
     fireEvent.click(screen.getByRole('button', { name: /save/i }));
     await waitFor(() =>

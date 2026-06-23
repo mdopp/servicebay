@@ -49,7 +49,7 @@ const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: fa
 export default function ServicesDashboard() {
     const { data: twin, isConnected, lastUpdate, isNodeSynced } = useDigitalTwin();
     const { addToast, updateToast } = useToast();
-    const { available: imageUpdates, availableServices: imageUpdateServices, refresh: refreshImageUpdates } = useImageUpdates();
+    const { available: imageUpdates, availableServices: imageUpdateServices, verifyAfterUpdate } = useImageUpdates();
 
     const [filteredServices, setFilteredServices] = useState<ServiceViewModel[]>([]);
     const [filteredBundles, setFilteredBundles] = useState<ServiceBundle[]>([]);
@@ -417,8 +417,12 @@ export default function ServicesDashboard() {
 
     const handleUpdateService = useCallback(async (service: ServiceViewModel) => {
         await updateServiceImage(service);
-        await refreshImageUpdates();
-    }, [updateServiceImage, refreshImageUpdates]);
+        // Re-check on a short back-off: the registry report lags the
+        // pull/restart, so a single immediate refresh can still show the stale
+        // badge/banner (#2106). On a failed update updateServiceImage already
+        // surfaced its error toast and the report stays unchanged.
+        await verifyAfterUpdate();
+    }, [updateServiceImage, verifyAfterUpdate]);
 
     // Banner "Update now": re-deploy every listed service sequentially (no
     // single "update all" endpoint exists), then refresh the report once.
@@ -431,8 +435,8 @@ export default function ServicesDashboard() {
                 await updateServiceImage(service);
             }
         }
-        await refreshImageUpdates();
-    }, [resolveServiceByName, updateServiceImage, refreshImageUpdates]);
+        await verifyAfterUpdate();
+    }, [resolveServiceByName, updateServiceImage, verifyAfterUpdate]);
 
     useEffect(() => {
         if (!containerIdParam || !allContainers.length) return;
