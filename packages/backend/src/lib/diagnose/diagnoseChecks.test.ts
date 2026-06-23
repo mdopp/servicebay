@@ -145,6 +145,9 @@ describe('getDiagnoseChecksEnriched', () => {
     expect(row.name).toBe('Self-diagnose: Pods');
     expect(row.status).toBe('fail');
     expect(row.lastRun).not.toBeNull();
+    // #2080: every diagnose row is box-wide so the per-service Health tab files
+    // it under "Box-wide" instead of force-matching it onto a service.
+    expect(row.boxWide).toBe(true);
     // The four-way diagnose payload is preserved for the popup slice.
     expect(row.diagnose?.status).toBe('warn');
     expect(row.diagnose?.detail).toBe('one down');

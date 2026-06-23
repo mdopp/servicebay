@@ -118,6 +118,11 @@ export function getDiagnoseChecksEnriched() {
       // Surface the four-way diagnose status + self-repair payload for
       // the row's badge / popup (the popup slice consumes `diagnose`).
       diagnose: decoded ?? undefined,
+      // #2080: every diagnose probe is box-wide (it inspects the node — TLS,
+      // DNS, SSO, storage, the engine — not a single stack). Mark it so the
+      // per-service Health tab files it under "Box-wide" instead of trying to
+      // substring-match it onto a service (which always failed → empty tab).
+      boxWide: true,
       history,
     };
   });

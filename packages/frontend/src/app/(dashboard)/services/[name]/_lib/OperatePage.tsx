@@ -11,6 +11,7 @@ import OperateSettingsTab from '../../../settings/services/_lib/OperateSettingsT
 import OperateActionsTab from '../../../settings/services/_lib/OperateActionsTab';
 import OperateContainersTab from './OperateContainersTab';
 import ServiceDetailSummary from '@/components/serviceDetail/ServiceDetailSummary';
+import { PageScroll } from '@/components/ui';
 
 type OperateTab = 'health' | 'settings' | 'containers' | 'actions';
 
@@ -38,7 +39,10 @@ export default function OperatePage({ name }: { name: string }) {
   const { service, loading } = useOperateService(name);
 
   return (
-    <div className="space-y-6">
+    // Canonical scroll pattern (#2077): the dashboard <main> is overflow-hidden,
+    // so the page must own its own scroll region or overlong tabs (e.g. Settings)
+    // clip with no scrollbar. PageScroll = h-full min-h-0 overflow-y-auto.
+    <PageScroll spacing="lg" className="pb-8">
       <Link
         href="/services"
         className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"
@@ -60,7 +64,7 @@ export default function OperatePage({ name }: { name: string }) {
       ) : (
         <OperateBody service={service} />
       )}
-    </div>
+    </PageScroll>
   );
 }
 

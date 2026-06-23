@@ -20,7 +20,7 @@ const ROW_META: Record<RowStatus, { color: string; bg: string; Icon: typeof Chec
  * the per-service page rather than a global health dashboard.
  */
 export default function OperateHealthTab({ service }: { service: ServiceViewModel }) {
-  const { checks, counts, loading, reload: load } = useServiceHealth(service);
+  const { checks, boxWideChecks, counts, loading, reload: load } = useServiceHealth(service);
   const [running, setRunning] = useState<string | null>(null);
 
   const handleRun = useCallback(async (id: string) => {
@@ -64,22 +64,67 @@ export default function OperateHealthTab({ service }: { service: ServiceViewMode
       {checks.length === 0 ? (
         <div className="p-8 text-center text-gray-500 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl">
           <Activity className="w-10 h-10 mx-auto mb-3 opacity-20" />
-          <p>No health checks for this service yet.</p>
+          <p>No service-specific health checks yet.</p>
+          {boxWideChecks.length > 0 && (
+            <p className="text-xs mt-1">Box-wide diagnostics for this node are listed below.</p>
+          )}
         </div>
       ) : (
-        <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
-          {checks.map((check, i) => (
-            <CheckRow
-              key={check.id}
-              check={check}
-              last={i === checks.length - 1}
-              running={running === check.id}
-              onRun={() => handleRun(check.id)}
-            />
-          ))}
-        </div>
+        <CheckList checks={checks} running={running} onRun={handleRun} />
       )}
+
+      <BoxWideSection checks={boxWideChecks} serviceName={service.displayName} running={running} onRun={handleRun} />
     </div>
+  );
+}
+
+/** A bordered card listing a set of check rows. Shared by the service-specific
+ *  list and the box-wide section so both render identically (#2080). */
+function CheckList({ checks, running, onRun }: { checks: Check[]; running: string | null; onRun: (id: string) => void }) {
+  return (
+    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
+      {checks.map((check, i) => (
+        <CheckRow
+          key={check.id}
+          check={check}
+          last={i === checks.length - 1}
+          running={running === check.id}
+          onRun={() => onRun(check.id)}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Box-wide diagnostics (#2080) — diagnose probes + node singletons — in a
+ * clearly-labelled section rather than dropped. They used to silently vanish
+ * from every per-service tab because their `target` never substring-matched a
+ * service name (the "1 ok" symptom). They monitor the whole node, so they're
+ * separated from this service's own checks.
+ */
+function BoxWideSection({
+  checks,
+  serviceName,
+  running,
+  onRun,
+}: {
+  checks: Check[];
+  serviceName: string;
+  running: string | null;
+  onRun: (id: string) => void;
+}) {
+  if (checks.length === 0) return null;
+  return (
+    <section className="space-y-2" aria-label="Box-wide health checks">
+      <h2 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+        Box-wide checks
+        <span className="ml-2 text-xs font-normal text-gray-400 dark:text-gray-500">
+          monitor the whole node, not just {serviceName}
+        </span>
+      </h2>
+      <CheckList checks={checks} running={running} onRun={onRun} />
+    </section>
   );
 }
 

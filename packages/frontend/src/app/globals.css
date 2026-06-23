@@ -1,6 +1,18 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/*
+ * Design-system semantic token layer (#2072, epic #2071).
+ *
+ * Tokens are defined as raw CSS custom properties on :root (the DARK default —
+ * the app has no .dark toggle; :root IS dark, and prefers-color-scheme:light
+ * overrides below) and registered in @theme inline so Tailwind v4 generates
+ * semantic utilities: bg-surface, bg-surface-2, border-border, text-status-ok,
+ * text-accent, rounded (one radius), and the spacing scale (p-1..p-8 etc.).
+ *
+ * Primitives (#2073-#2076) and migrations (#2078/#2079) reference THESE — never
+ * raw Tailwind color literals for semantic values.
+ */
 :root {
   --background: #050505;
   --foreground: #f0f0f0;
@@ -12,6 +24,48 @@
   --success: #10b981;
   --error: #ef4444;
   --warning: #f59e0b;
+
+  /* --- Semantic surfaces (dark default) --- */
+  --surface: #111114;          /* base panel/card surface (≈ gray-900) */
+  --surface-2: #1c1c20;        /* raised surface: nested rows, inputs, hover (≈ gray-800) */
+  --surface-muted: #0a0a0c;    /* recessed wells, table-zebra, code blocks */
+
+  /* --- Borders --- */
+  --border: #2a2a30;           /* default hairline (≈ gray-700/800) */
+  --border-strong: #3a3a42;    /* emphasized divider / focused control */
+
+  /* --- Text on surfaces --- */
+  --text: #f0f0f0;             /* primary text */
+  --text-muted: #a1a1aa;       /* secondary/labels (≈ zinc-400) */
+  --text-subtle: #6b7280;      /* placeholders, disabled (≈ gray-500) */
+
+  /* --- Status (dark-tuned: legible on dark surfaces) --- */
+  --status-ok: #34d399;        /* emerald-400 */
+  --status-warn: #fbbf24;      /* amber-400 */
+  --status-fail: #f87171;      /* red-400 */
+  --status-info: #60a5fa;      /* blue-400 */
+
+  /* --- Accent (brand / primary action) --- */
+  --accent: #3b82f6;           /* blue-500 — matches --accent-primary */
+  --accent-strong: #2563eb;    /* blue-600 — hover/active */
+  --on-accent: #ffffff;        /* text/icon on an accent fill */
+
+  /* --- Radius: ONE canonical semantic scale (was rounded-lg vs -xl ad-hoc).
+     Named distinctly (chip/card/panel) so primitives standardize on these and
+     the existing numeric rounded-sm/-lg utilities keep their defaults. --- */
+  --r-chip: 0.375rem;          /* 6px — chips, badges, status dots */
+  --r-card: 0.625rem;          /* 10px — DEFAULT: cards, panels, buttons, inputs */
+  --r-panel: 0.875rem;         /* 14px — large containers/modals */
+
+  /* --- Spacing scale (4px base; the only step set primitives should use) --- */
+  --space-1: 0.25rem;          /* 4px */
+  --space-2: 0.5rem;           /* 8px */
+  --space-3: 0.75rem;          /* 12px */
+  --space-4: 1rem;             /* 16px */
+  --space-5: 1.5rem;           /* 24px */
+  --space-6: 2rem;             /* 32px */
+  --space-7: 3rem;             /* 48px */
+  --space-8: 4rem;             /* 64px */
 }
 
 @theme inline {
@@ -23,6 +77,43 @@
   --color-accent-secondary: var(--accent-secondary);
   --font-sans: var(--font-geist-sans), "Inter", "Outfit", sans-serif;
   --font-mono: var(--font-geist-mono), "Fira Code", monospace;
+
+  /* --- Semantic colors → bg-surface, border-border, text-status-ok, … --- */
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-subtle: var(--text-subtle);
+  --color-status-ok: var(--status-ok);
+  --color-status-warn: var(--status-warn);
+  --color-status-fail: var(--status-fail);
+  --color-status-info: var(--status-info);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-on-accent: var(--on-accent);
+
+  /* --- Radius scale → rounded-chip, rounded-card (the new default), rounded-panel.
+     Distinct from Tailwind's numeric rounded-sm/-lg so existing utilities are
+     untouched (acceptance: existing UI unchanged). --- */
+  --radius-chip: var(--r-chip);
+  --radius-card: var(--r-card);
+  --radius-panel: var(--r-panel);
+
+  /* --- Spacing scale → p-space-1..space-8, gap-space-*, m-space-*, etc. ---
+     Registered under a distinct `space-N` namespace, NOT the numeric Tailwind
+     scale, so existing p-5/gap-6 utilities keep their default values (the
+     acceptance: existing UI unchanged). Primitives opt in via p-space-4 etc. */
+  --spacing-space-1: var(--space-1);
+  --spacing-space-2: var(--space-2);
+  --spacing-space-3: var(--space-3);
+  --spacing-space-4: var(--space-4);
+  --spacing-space-5: var(--space-5);
+  --spacing-space-6: var(--space-6);
+  --spacing-space-7: var(--space-7);
+  --spacing-space-8: var(--space-8);
 }
 
 @media (prefers-color-scheme: light) {
@@ -32,6 +123,23 @@
     --card-bg: rgba(255, 255, 255, 0.6);
     --glass-bg: rgba(0, 0, 0, 0.02);
     --glass-border: rgba(15, 23, 42, 0.08);
+
+    /* Light-mode overrides for the semantic surfaces/borders/text.
+       Status & accent stay vivid but shift to the darker 500/600 ramps so
+       they read on light backgrounds. Radius/spacing are mode-independent. */
+    --surface: #ffffff;
+    --surface-2: #f1f5f9;       /* slate-100 */
+    --surface-muted: #f8fafc;   /* slate-50 */
+    --border: #e2e8f0;          /* slate-200 */
+    --border-strong: #cbd5e1;   /* slate-300 */
+    --text: #0f172a;            /* slate-900 */
+    --text-muted: #475569;      /* slate-600 */
+    --text-subtle: #94a3b8;     /* slate-400 */
+
+    --status-ok: #059669;       /* emerald-600 */
+    --status-warn: #d97706;     /* amber-600 */
+    --status-fail: #dc2626;     /* red-600 */
+    --status-info: #2563eb;     /* blue-600 */
   }
 }
 
