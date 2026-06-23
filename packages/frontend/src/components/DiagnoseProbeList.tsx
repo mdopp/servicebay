@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, History, Info, Loader2, Wrench, X } from 'lucide-react';
+import { Button } from '@/components/ui';
 
 /**
  * Shared probe-list renderer used by Settings → Self-Diagnose and by the
@@ -122,7 +123,7 @@ function ProbeHistoryBadge({ history, compact }: { history?: ProbeHistory; compa
   if (!history || history.trend.length === 0) return null;
   const trend = history.trend.slice(-20);
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500 dark:text-gray-400">
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
       <span
         className="inline-flex items-end gap-[1.5px] h-3.5"
         title={`Trend: ${trend.length} of ${history.total} recent checks (oldest → newest)`}
@@ -131,8 +132,8 @@ function ProbeHistoryBadge({ history, compact }: { history?: ProbeHistory; compa
         {trend.map((s, i) => (
           <span
             key={i}
-            className={`inline-block w-[3px] ${compact ? 'h-2.5' : 'h-3.5'} rounded-sm ${
-              s === 'ok' ? 'bg-emerald-400 dark:bg-emerald-600' : 'bg-red-400 dark:bg-red-600'
+            className={`inline-block w-[3px] ${compact ? 'h-2.5' : 'h-3.5'} rounded-chip ${
+              s === 'ok' ? 'bg-status-ok' : 'bg-status-fail'
             }`}
           />
         ))}
@@ -143,7 +144,7 @@ function ProbeHistoryBadge({ history, compact }: { history?: ProbeHistory; compa
       <span title={history.lastOk ? new Date(history.lastOk).toLocaleString() : 'No passing result on record'}>
         {history.lastOk
           ? <>last ok <span className="font-medium">{relTime(history.lastOk)}</span> ago</>
-          : <span className="text-red-500 dark:text-red-400">never ok</span>}
+          : <span className="text-status-fail">never ok</span>}
       </span>
     </div>
   );
@@ -210,11 +211,14 @@ async function runVerifyFromDeviceAction(): Promise<{ ok: boolean; message: stri
   }
 }
 
+/** Probe status → semantic status tokens (design-system #2100). One status
+ *  token per state drives the row text, the tinted surface and the border —
+ *  no raw emerald/amber/red/blue-200/300 literals. */
 const STATUS_META: Record<ProbeStatus, { color: string; bg: string; ring: string; Icon: React.ComponentType<{ size?: number; className?: string }> }> = {
-  ok: { color: 'text-emerald-700 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-900/20', ring: 'border-emerald-200 dark:border-emerald-800', Icon: CheckCircle2 },
-  warn: { color: 'text-amber-700 dark:text-amber-300', bg: 'bg-amber-50 dark:bg-amber-900/20', ring: 'border-amber-200 dark:border-amber-800', Icon: AlertTriangle },
-  fail: { color: 'text-red-700 dark:text-red-300', bg: 'bg-red-50 dark:bg-red-900/20', ring: 'border-red-200 dark:border-red-800', Icon: AlertCircle },
-  info: { color: 'text-blue-700 dark:text-blue-300', bg: 'bg-blue-50 dark:bg-blue-900/20', ring: 'border-blue-200 dark:border-blue-800', Icon: Info },
+  ok: { color: 'text-status-ok', bg: 'bg-status-ok/10', ring: 'border-status-ok/30', Icon: CheckCircle2 },
+  warn: { color: 'text-status-warn', bg: 'bg-status-warn/10', ring: 'border-status-warn/30', Icon: AlertTriangle },
+  fail: { color: 'text-status-fail', bg: 'bg-status-fail/10', ring: 'border-status-fail/30', Icon: AlertCircle },
+  info: { color: 'text-status-info', bg: 'bg-status-info/10', ring: 'border-status-info/30', Icon: Info },
 };
 
 interface DiagnoseProbeListProps {
@@ -329,12 +333,12 @@ export default function DiagnoseProbeList({
         const meta = STATUS_META[probe.status];
         const Icon = meta.Icon;
         return (
-          <div key={probe.id} className={`${compact ? 'p-2.5' : 'p-3'} rounded-lg border ${meta.ring} ${meta.bg}`}>
+          <div key={probe.id} className={`${compact ? 'p-2.5' : 'p-3'} rounded-card border ${meta.ring} ${meta.bg}`}>
             <div className="flex items-start gap-2">
               <Icon size={compact ? 14 : 16} className={`shrink-0 mt-0.5 ${meta.color}`} />
               <div className="flex-1 min-w-0">
                 <div className={`font-medium text-sm ${meta.color}`}>{probe.label}</div>
-                <pre className="text-xs text-gray-700 dark:text-gray-300 mt-1 whitespace-pre-wrap break-words font-mono">{probe.detail}</pre>
+                <pre className="text-xs text-text-muted mt-1 whitespace-pre-wrap break-words font-mono">{probe.detail}</pre>
                 {probe.hint && (
                   <p className={`text-xs mt-2 ${meta.color}`}>
                     <strong>Suggestion:</strong> {probe.hint}
@@ -348,7 +352,7 @@ export default function DiagnoseProbeList({
                       onClick={() => void handleViewHistory(probe)}
                       title="View history"
                       aria-label={`View history for ${probe.label}`}
-                      className="shrink-0 mt-1.5 p-1 rounded hover:bg-black/5 dark:hover:bg-white/10 text-gray-500 dark:text-gray-400 transition-colors"
+                      className="shrink-0 mt-1.5 p-1 rounded-card hover:bg-surface-2 text-text-muted transition-colors"
                     >
                       <History size={14} />
                     </button>
@@ -363,12 +367,11 @@ export default function DiagnoseProbeList({
                         const isRunning = state?.running;
                         const hasInputs = (action.inputs ?? []).length > 0;
                         const isExpanded = expandedForms[key];
-                        const baseStyle = action.destructive
-                          ? 'bg-red-600 hover:bg-red-700 text-white'
-                          : 'bg-violet-600 hover:bg-violet-700 text-white';
                         return (
                           <div key={action.id} className="flex items-center gap-2">
-                            <button
+                            <Button
+                              variant={action.destructive ? 'danger' : 'primary'}
+                              size="sm"
                               onClick={() => {
                                 if (hasInputs) {
                                   setExpandedForms(s => ({ ...s, [key]: !s[key] }));
@@ -378,14 +381,13 @@ export default function DiagnoseProbeList({
                               }}
                               disabled={isRunning || parentRunning}
                               title={action.description}
-                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors disabled:opacity-50 ${baseStyle}`}
                             >
                               {isRunning ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />}
                               {action.label}
                               {hasInputs && (isExpanded ? ' ▴' : ' ▾')}
-                            </button>
+                            </Button>
                             {state?.message && !isRunning && (
-                              <span className={`text-xs ${state.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                              <span className={`text-xs ${state.ok ? 'text-status-ok' : 'text-status-fail'}`}>
                                 {state.ok ? '✓' : '✗'} {state.message}
                               </span>
                             )}
@@ -400,7 +402,7 @@ export default function DiagnoseProbeList({
                       return (
                         <pre
                           key={`${key}-details`}
-                          className="text-xs text-gray-700 dark:text-gray-300 bg-white/60 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono"
+                          className="text-xs text-text-muted bg-surface-muted border border-border rounded-card p-space-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono"
                         >{state.details}</pre>
                       );
                     })}
@@ -422,13 +424,13 @@ export default function DiagnoseProbeList({
                             e.preventDefault();
                             void runAction(probe, action, values);
                           }}
-                          className="p-3 rounded-md bg-white/60 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 space-y-2"
+                          className="p-space-3 rounded-card bg-surface-muted border border-border space-y-space-2"
                         >
-                          <p className="text-xs text-gray-600 dark:text-gray-400">{action.description}</p>
+                          <p className="text-xs text-text-muted">{action.description}</p>
                           {inputs.map(input => (
                             <div key={input.name} className="space-y-1">
-                              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                                {input.label}{input.required !== false && <span className="text-red-500"> *</span>}
+                              <label className="block text-xs font-medium text-text-muted">
+                                {input.label}{input.required !== false && <span className="text-status-fail"> *</span>}
                               </label>
                               <input
                                 type={input.type}
@@ -441,30 +443,31 @@ export default function DiagnoseProbeList({
                                     [key]: { ...(s[key] ?? {}), [input.name]: e.target.value },
                                   }))
                                 }
-                                className="w-full px-2 py-1.5 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                                className="w-full px-space-2 py-1.5 text-sm rounded-card border border-border bg-surface-2 text-text focus:outline-none focus:ring-1 focus:ring-accent"
                                 autoComplete="off"
                               />
                               {input.hint && (
-                                <p className="text-xs text-gray-500 dark:text-gray-400">{input.hint}</p>
+                                <p className="text-xs text-text-muted">{input.hint}</p>
                               )}
                             </div>
                           ))}
                           <div className="flex items-center gap-2 pt-1">
-                            <button
+                            <Button
                               type="submit"
+                              size="sm"
                               disabled={!allRequiredFilled || isRunning || parentRunning}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50"
                             >
                               {isRunning ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />}
                               Submit
-                            </button>
-                            <button
+                            </Button>
+                            <Button
                               type="button"
+                              variant="ghost"
+                              size="sm"
                               onClick={() => setExpandedForms(s => ({ ...s, [key]: false }))}
-                              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                             >
                               Cancel
-                            </button>
+                            </Button>
                           </div>
                         </form>
                       );
@@ -478,34 +481,32 @@ export default function DiagnoseProbeList({
                       return (
                         <div
                           key={item.id}
-                          className={`flex flex-wrap items-center gap-2 px-2 py-1.5 rounded border ${itemMeta.ring} bg-white/60 dark:bg-gray-900/40`}
+                          className={`flex flex-wrap items-center gap-2 px-space-2 py-1.5 rounded-card border ${itemMeta.ring} bg-surface-muted`}
                         >
                           <div className="flex-1 min-w-0">
                             <div className={`text-xs font-mono ${itemMeta.color}`}>{item.label}</div>
                             {item.detail && (
-                              <div className="text-xs text-gray-600 dark:text-gray-400 font-mono">{item.detail}</div>
+                              <div className="text-xs text-text-muted font-mono">{item.detail}</div>
                             )}
                           </div>
                           {item.actions.map(action => {
                             const key = `${probe.id}:${action.id}:${item.id}`;
                             const state = actionState[key];
                             const isRunning = state?.running;
-                            const baseStyle = action.destructive
-                              ? 'bg-red-600 hover:bg-red-700 text-white'
-                              : 'bg-violet-600 hover:bg-violet-700 text-white';
                             return (
                               <div key={action.id} className="flex items-center gap-2">
-                                <button
+                                <Button
+                                  variant={action.destructive ? 'danger' : 'primary'}
+                                  size="sm"
                                   onClick={() => void runAction(probe, action, undefined, item.id)}
                                   disabled={isRunning || parentRunning}
                                   title={action.description}
-                                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-50 ${baseStyle}`}
                                 >
                                   {isRunning ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />}
                                   {action.label}
-                                </button>
+                                </Button>
                                 {state?.message && !isRunning && (
-                                  <span className={`text-xs ${state.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                                  <span className={`text-xs ${state.ok ? 'text-status-ok' : 'text-status-fail'}`}>
                                     {state.ok ? '✓' : '✗'} {state.message}
                                   </span>
                                 )}
@@ -519,7 +520,7 @@ export default function DiagnoseProbeList({
                             return (
                               <pre
                                 key={`${key}-details`}
-                                className="w-full text-xs text-gray-700 dark:text-gray-300 bg-white/80 dark:bg-gray-900/60 border border-gray-200 dark:border-gray-700 rounded p-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono"
+                                className="w-full text-xs text-text-muted bg-surface-muted border border-border rounded-card p-space-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono"
                               >{state.details}</pre>
                             );
                           })}
@@ -557,7 +558,7 @@ export default function DiagnoseProbeList({
   const renderCard = ([group, ps]: [ProbeGroup, DiagnoseProbe[]]) => {
     const cardMeta = STATUS_META[worstStatus(ps)];
     return (
-      <div key={group} className={`rounded-lg border ${cardMeta.ring} ${cardMeta.bg} ${compact ? 'p-2.5' : 'p-3'}`}>
+      <div key={group} className={`rounded-card border ${cardMeta.ring} ${cardMeta.bg} ${compact ? 'p-2.5' : 'p-3'}`}>
         <div className={`flex items-center gap-2 mb-2 text-sm font-semibold ${cardMeta.color}`}>
           <cardMeta.Icon size={compact ? 14 : 16} className="shrink-0" />
           {GROUP_META[group].label}
@@ -573,8 +574,8 @@ export default function DiagnoseProbeList({
     <div className={compact ? 'space-y-2' : 'space-y-3'}>
       {problemGroups.map(renderCard)}
       {infoGroups.map(([group, ps]) => (
-        <details key={group} className={`rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/40 ${compact ? 'p-2.5' : 'p-3'}`}>
-          <summary className="cursor-pointer text-sm font-semibold text-gray-600 dark:text-gray-300 select-none">
+        <details key={group} className={`rounded-card border border-border bg-surface-muted ${compact ? 'p-2.5' : 'p-3'}`}>
+          <summary className="cursor-pointer text-sm font-semibold text-text-muted select-none">
             {GROUP_META[group].label} ({ps.length})
           </summary>
           <div className={`mt-2 ${compact ? 'space-y-2' : 'space-y-3'}`}>
@@ -588,63 +589,63 @@ export default function DiagnoseProbeList({
           the Checks tab's history opener. */}
       {historyProbe && (
         <div
-          className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm"
           onClick={closeHistory}
         >
           <div
-            className="w-full sm:max-w-2xl h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col shadow-2xl"
+            className="w-full sm:max-w-2xl h-full bg-surface border-l border-border flex flex-col shadow-2xl"
             onClick={e => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between gap-4 p-5 border-b border-gray-200 dark:border-gray-800">
+            <div className="flex items-center justify-between gap-4 p-space-5 border-b border-border">
               <div className="min-w-0">
-                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">Probe history</p>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate">{historyProbe.label}</h3>
-                <p className="text-xs text-gray-500 dark:text-gray-400 font-mono truncate">diagnose:{historyProbe.id}</p>
+                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-text-subtle">Probe history</p>
+                <h3 className="text-lg font-bold text-text truncate">{historyProbe.label}</h3>
+                <p className="text-xs text-text-muted font-mono truncate">diagnose:{historyProbe.id}</p>
               </div>
               <button
                 type="button"
                 onClick={closeHistory}
                 aria-label="Close history"
-                className="shrink-0 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
+                className="shrink-0 p-2 rounded-card hover:bg-surface-2 text-text-muted"
               >
                 <X size={18} />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-5">
+            <div className="flex-1 overflow-y-auto p-space-5">
               {historyLoading && historyData.length === 0 ? (
-                <div className="flex h-full items-center justify-center gap-3 text-gray-500 dark:text-gray-300">
+                <div className="flex h-full items-center justify-center gap-3 text-text-muted">
                   <Loader2 className="w-5 h-5 animate-spin" />
                   <span>Loading history…</span>
                 </div>
               ) : historyData.length === 0 ? (
-                <div className="flex h-full items-center justify-center text-gray-400">
+                <div className="flex h-full items-center justify-center text-text-subtle">
                   No history recorded yet for this probe.
                 </div>
               ) : (
-                <table className="w-full text-left text-sm border border-slate-200 dark:border-gray-800 rounded-lg overflow-hidden">
-                  <thead className="bg-slate-100 dark:bg-gray-800/60 text-gray-600 dark:text-gray-300">
+                <table className="w-full text-left text-sm border border-border rounded-card overflow-hidden">
+                  <thead className="bg-surface-2 text-text-muted">
                     <tr>
                       <th className="p-3 font-semibold">Time</th>
                       <th className="p-3 font-semibold">Status</th>
                       <th className="p-3 font-semibold">Message</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                  <tbody className="divide-y divide-border">
                     {historyData.map((h, i) => (
-                      <tr key={i} className="hover:bg-slate-50 dark:hover:bg-gray-800/40 align-top">
-                        <td className="p-3 text-gray-900 dark:text-white whitespace-nowrap">
+                      <tr key={i} className="hover:bg-surface-2 align-top">
+                        <td className="p-3 text-text whitespace-nowrap">
                           {new Date(h.timestamp).toLocaleString()}
                         </td>
                         <td className="p-3">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                          <span className={`inline-flex items-center px-space-2 py-0.5 rounded-chip text-xs font-medium ${
                             h.status === 'ok'
-                              ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                              : 'bg-rose-100 dark:bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                              ? 'bg-status-ok/10 text-status-ok'
+                              : 'bg-status-fail/10 text-status-fail'
                           }`}>
                             {h.status.toUpperCase()}
                           </span>
                         </td>
-                        <td className="p-3 text-gray-500 dark:text-gray-400 whitespace-pre-wrap break-words font-mono text-xs">
+                        <td className="p-3 text-text-muted whitespace-pre-wrap break-words font-mono text-xs">
                           {h.message ?? ''}
                         </td>
                       </tr>
