@@ -272,6 +272,93 @@ export function computeEgoNodeIds(
 }
 
 // ────────────────────────────────────────────────────────────────────
+// #2119 — topology signature + in-place data merge.
+//
+// The map polls every 1–3s. Re-running the ELK layout (and resetting node
+// positions + the pan/zoom viewport) on every poll made the map impossible
+// to navigate. The fix is to only re-layout when the *topology* actually
+// changed — and otherwise merge the fresh status/health data onto the
+// already-laid-out nodes, keeping their `position`.
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * A stable signature of what would change the layout: the set of node ids,
+ * the set of edge ids (source→target pairs), plus the collapsed-group set and
+ * the active focus node. Order-independent (ids are sorted) so a poll that
+ * returns the same topology in a different array order yields the SAME
+ * signature → no re-layout. Status / health / label changes do NOT move a
+ * node, so they are deliberately excluded from the signature.
+ */
+export function topologyLayoutSignature(
+  nodes: Node[],
+  edges: Edge[],
+  collapsed?: Set<string> | null,
+  focus?: string | null,
+): string {
+  const nodeIds = nodes.map((n) => n.id).sort();
+  // Use source→target (not the volatile generated edge id) so a stable
+  // topology keeps a stable edge signature across polls.
+  const edgeKeys = edges.map((e) => `${e.source}->${e.target}`).sort();
+  const collapsedIds = collapsed ? Array.from(collapsed).sort() : [];
+  return JSON.stringify({
+    n: nodeIds,
+    e: edgeKeys,
+    c: collapsedIds,
+    f: focus ?? null,
+  });
+}
+
+/**
+ * Merge a freshly-fetched graph onto the currently-laid-out nodes WITHOUT
+ * re-running the layout: for every existing node, carry its `position` (and
+ * layout-affecting `style` width/height) forward while taking the new `data`
+ * (status / metadata / label). Nodes that vanished are dropped; nodes that
+ * appeared are kept at their incoming position (shouldn't happen when the
+ * topology signature is unchanged, but handled defensively). Edges adopt the
+ * fresh styling/label but are matched to the laid-out edge by source→target
+ * so the routed `points`/`hops`/positions survive the poll.
+ */
+export function mergeGraphPreservingPositions<TNode extends Node, TEdge extends Edge>(
+  laidOutNodes: TNode[],
+  laidOutEdges: TEdge[],
+  freshNodes: TNode[],
+  freshEdges: TEdge[],
+): { nodes: TNode[]; edges: TEdge[] } {
+  const laidOutById = new Map(laidOutNodes.map((n) => [n.id, n]));
+  const nodes = freshNodes.map((fresh) => {
+    const prev = laidOutById.get(fresh.id);
+    if (!prev) return fresh;
+    return {
+      ...prev,
+      data: fresh.data,
+      // Keep the laid-out position + layout-sized style; refresh everything
+      // else (className etc.) from the fresh node.
+      position: prev.position,
+      style: prev.style,
+    } as TNode;
+  });
+
+  const laidOutEdgeByPair = new Map(
+    laidOutEdges.map((e) => [`${e.source}->${e.target}`, e]),
+  );
+  const edges = freshEdges.map((fresh) => {
+    const prev = laidOutEdgeByPair.get(`${fresh.source}->${fresh.target}`);
+    if (!prev) return fresh;
+    // Keep the routed geometry (data.points / hops / lpos, the generated id,
+    // sourceHandle/targetHandle) from the laid-out edge; refresh styling.
+    return {
+      ...prev,
+      label: fresh.label,
+      style: fresh.style,
+      animated: fresh.animated,
+      data: { ...(prev.data ?? {}), ...(fresh.data ?? {}) },
+    } as TEdge;
+  });
+
+  return { nodes, edges };
+}
+
+// ────────────────────────────────────────────────────────────────────
 // Edge-kind styling (#813). The backend stamps each edge with `kind`
 // (gateway | proxy | observed | declared | manual). The map must
 // render "I just saw this TCP flow" (observed, solid blue) and "the
