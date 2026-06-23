@@ -244,7 +244,7 @@ export default function OverviewDashboard() {
   // Pending service-image updates — box status, so it belongs on Home too
   // (#1860). The banner's "Update now" re-deploys each listed service via the
   // same `update` action the Services list uses (pull latest image → restart).
-  const { available: imageUpdates, refresh: refreshImageUpdates } = useImageUpdates();
+  const { available: imageUpdates, refresh: refreshImageUpdates, verifyAfterUpdate } = useImageUpdates();
   const { updateServiceImage, overlays: serviceActionOverlays } = useServiceActions({ onRefresh: refreshImageUpdates });
 
   // Resolve a bare service name from the image-update report to a minimal
@@ -264,8 +264,10 @@ export default function OverviewDashboard() {
       } as unknown as ServiceViewModel;
       await updateServiceImage(target);
     }
-    await refreshImageUpdates();
-  }, [services, firstNodeName, updateServiceImage, refreshImageUpdates]);
+    // Re-check on a short back-off: the registry report lags the pull/restart,
+    // so a single immediate refresh can still show the stale entry (#2106).
+    await verifyAfterUpdate();
+  }, [services, firstNodeName, updateServiceImage, verifyAfterUpdate]);
 
   const healthHeadline = (() => {
     if (!hasFirstSnapshot) return { tone: 'neutral' as const, text: 'Reading status…' };
