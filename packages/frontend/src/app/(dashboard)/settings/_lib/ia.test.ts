@@ -25,6 +25,14 @@ describe('settings IA — cross-cutting only, no Services group (spec §4.4 / §
     expect(searchSettings('immich').some(h => h.group.id === 'services')).toBe(false);
     expect(SEARCH_INDEX.some(h => h.group.id === 'services')).toBe(false);
   });
+
+  it('drops the Stacks & templates entry — stack management moved to /services (#2081)', () => {
+    const system = SETTINGS_GROUPS.find(g => g.id === 'system')!;
+    expect(system.entries.find(e => e.id === 'stacks')).toBeUndefined();
+    expect(SEARCH_INDEX.some(h => h.entry.id === 'stacks')).toBe(false);
+    // The old "stack"/"template registry" keyword search no longer lands a hit.
+    expect(searchSettings('stack').some(h => h.entry.id === 'stacks')).toBe(false);
+  });
 });
 
 describe('settings IA — Maintenance launcher (#1958 follow-up)', () => {
@@ -85,22 +93,26 @@ describe('settings IA — Portal access lives under Access & People (#2084)', ()
   });
 });
 
-describe('settings IA — SSH Terminal relocated off the top nav (#2030, IA slice 2)', () => {
-  // The console is no longer a top-nav noun; it lives under System as an advanced
-  // launch card → /terminal, and must stay findable by name so the capability is
-  // never lost (spec §8: "don't mutilate — every knob stays reachable").
-  it('has an SSH Terminal launcher under the System group → /terminal', () => {
+describe('settings IA — Terminal returned to the sidebar nav (#2083)', () => {
+  // The console is back in the sidebar (config/navigation.ts) as a recovery tool,
+  // so the old Settings ▸ System launch card / search entry is gone — it must not
+  // be a Settings entry or a search hit any more (it would be a dead duplicate).
+  it('has no SSH Terminal entry under the System group', () => {
     const system = SETTINGS_GROUPS.find(g => g.id === 'system');
     expect(system).toBeDefined();
-    const terminal = system!.entries.find(e => e.id === 'terminal');
-    expect(terminal?.launchHref).toBe('/terminal');
+    expect(system!.entries.some(e => e.id === 'terminal')).toBe(false);
   });
 
-  it('searching "terminal" / "ssh" / "console" jumps straight to /terminal', () => {
+  it('drops the terminal entry from the search index', () => {
+    expect(SEARCH_INDEX.some(h => h.entry.id === 'terminal')).toBe(false);
+  });
+
+  it('searching "terminal" / "ssh" / "console" no longer lands a Settings hit', () => {
     for (const term of ['terminal', 'ssh', 'console', 'shell']) {
-      const hit = searchSettings(term).find(h => h.entry.id === 'terminal');
-      expect(hit, `"${term}" should find the SSH Terminal launcher`).toBeDefined();
-      expect(hit!.href).toBe('/terminal');
+      expect(
+        searchSettings(term).some(h => h.entry.id === 'terminal'),
+        `"${term}" must not surface a Settings terminal entry`,
+      ).toBe(false);
     }
   });
 });

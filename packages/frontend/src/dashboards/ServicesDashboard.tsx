@@ -19,6 +19,8 @@ import FileViewerOverlay from '@/components/FileViewerOverlay';
 import RegistryDashboard from '@/dashboards/RegistryDashboard';
 import ServiceCard from '@/components/ServiceCard';
 import ServiceRow from '@/components/ServiceRow';
+import StackGroupHeader from '@/components/StackGroupHeader';
+import { SectionHeading } from '@/components/ui';
 import { useServiceActions } from '@/hooks/useServiceActions';
 import { useContainerActions } from '@/hooks/useContainerActions';
 import { buildServiceViewModel } from '@servicebay/api-client';
@@ -33,10 +35,13 @@ import { Plus, RefreshCw, Trash2, Box, Search, X, AlertCircle, FileCode, Termina
 import { ServiceBundle, BundlePortSummary } from '@servicebay/api-client';
 import {
     bundleSeverityClasses,
+    groupServicesByStack,
+    UNGROUPED_STACK_ID,
     type ApiLinkPayload,
     type LinkFormState,
     type RawLinkPort,
     type RawLinkVolume,
+    type StackSummaryLite,
 } from './_lib/servicesDashboard';
 
 const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: false });
@@ -51,6 +56,7 @@ export default function ServicesDashboard() {
     const [searchQuery, setSearchQuery] = useState('');
     // Services are always sorted by name
     const [externalLinks, setExternalLinks] = useState<ServiceViewModel[]>([]);
+    const [stackSummaries, setStackSummaries] = useState<StackSummaryLite[]>([]);
     const [serviceBundles, setServiceBundles] = useState<ServiceBundle[]>([]);
     const [bundlePendingDelete, setBundlePendingDelete] = useState<ServiceBundle | null>(null);
     const [bundleDeleteLoading, setBundleDeleteLoading] = useState(false);
@@ -173,14 +179,34 @@ export default function ServicesDashboard() {
         }
     }, []);
 
+    // Stack membership for the /services grouping (#2081). The manifest list's
+    // `templates` arrays tell us which stack owns each service; we don't need
+    // health here, just the name→templates map. Failures are non-fatal — the
+    // overview falls back to a single "Ungrouped" bucket.
+    const loadStacks = useCallback(async () => {
+        try {
+            const res = await fetch('/api/system/stacks', { cache: 'no-store' });
+            if (!res.ok) throw new Error('Failed to load stacks');
+            const payload = await res.json();
+            const stacks: StackSummaryLite[] = Array.isArray(payload?.stacks)
+                ? payload.stacks.map((s: StackSummaryLite) => ({ name: s.name, manifest: s.manifest ?? null }))
+                : [];
+            setStackSummaries(stacks);
+        } catch (error) {
+            logger.error('ServicesDashboard', 'Failed to load stacks', error);
+        }
+    }, []);
+
     useEffect(() => {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- async external-links load on mount
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- async external-links + stacks load on mount
         loadExternalLinks();
-    }, [loadExternalLinks]);
+        loadStacks();
+    }, [loadExternalLinks, loadStacks]);
 
     const fetchData = useCallback(() => {
         loadExternalLinks();
-    }, [loadExternalLinks]);
+        loadStacks();
+    }, [loadExternalLinks, loadStacks]);
 
     const {
         openMonitorDrawer,
@@ -704,25 +730,29 @@ export default function ServicesDashboard() {
             );
         }
 
-        const combinedItems = [
-            ...filteredServices.map(service => ({ type: 'service' as const, id: `svc-${service.nodeName || 'local'}-${service.name}`, service })),
-            ...filteredBundles.map(bundle => ({ type: 'bundle' as const, id: `bundle-${bundle.id}`, bundle }))
-        ];
+        // Group services under their owning stack (#2081). Each group renders a
+        // SectionHeading + per-stack wipe action above its rows. Unmanaged
+        // bundles aren't stack-owned, so they trail the grouped services in
+        // their own labelled "Discovered bundles" section.
+        const stackGroups = groupServicesByStack(filteredServices, stackSummaries);
 
         return (
-            <div className="space-y-4">
-                {/* Desktop (md+): a dense list — one tight row per service, so
-                    the overview reads as a table with columns (status · name ·
-                    address · actions), not a sparse card grid (#2067 operator
-                    feedback). Bundles keep their card shape inline. */}
-                <div className="hidden md:block rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 divide-y divide-gray-100 dark:divide-gray-800 overflow-hidden">
-                    {combinedItems.map(entry => (
-                        entry.type === 'service'
-                            ? <ServiceRow
-                                    key={entry.id}
-                                    service={entry.service}
+            <div className="space-y-8" data-testid="services-stack-groups">
+                {stackGroups.map(group => (
+                    <section key={group.id} className="space-y-3" data-testid={`stack-group-${group.id}`}>
+                        <StackGroupHeader group={group} onWiped={fetchData} />
+
+                        {/* Desktop (md+): a dense list — one tight row per service, so
+                            the overview reads as a table with columns (status · name ·
+                            address · actions), not a sparse card grid (#2067 operator
+                            feedback). */}
+                        <div className="hidden md:block rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 divide-y divide-gray-100 dark:divide-gray-800 overflow-hidden">
+                            {group.services.map(service => (
+                                <ServiceRow
+                                    key={`svc-${service.nodeName || 'local'}-${service.name}`}
+                                    service={service}
                                     httpsDomains={httpsDomains}
-                                    imageUpdateAvailable={imageUpdateServices.has(entry.service.name.replace(/\.service$/, ''))}
+                                    imageUpdateAvailable={imageUpdateServices.has(service.name.replace(/\.service$/, ''))}
                                     onUpdate={handleUpdateService}
                                     onMonitor={openServiceDetail}
                                     onEdit={openEditDrawer}
@@ -730,21 +760,19 @@ export default function ServicesDashboard() {
                                     onEditLink={handleEditLink}
                                     onDelete={requestDelete}
                                     onRestart={triggerRestart}
-                              />
-                            : <div key={entry.id} className="p-3"><BundleCard bundle={entry.bundle} /></div>
-                    ))}
-                </div>
+                                />
+                            ))}
+                        </div>
 
-                {/* Mobile (below md): the existing single-column card stack. */}
-                <div className="md:hidden grid grid-cols-1 gap-6">
-                    {combinedItems.map(entry => (
-                        entry.type === 'service'
-                            ? <ServiceCard
-                                    key={entry.id}
-                                    service={entry.service}
+                        {/* Mobile (below md): the existing single-column card stack. */}
+                        <div className="md:hidden grid grid-cols-1 gap-6">
+                            {group.services.map(service => (
+                                <ServiceCard
+                                    key={`svc-${service.nodeName || 'local'}-${service.name}`}
+                                    service={service}
                                     attachNodeContext={attachNodeContext}
                                     httpsDomains={httpsDomains}
-                                    imageUpdateAvailable={imageUpdateServices.has(entry.service.name.replace(/\.service$/, ''))}
+                                    imageUpdateAvailable={imageUpdateServices.has(service.name.replace(/\.service$/, ''))}
                                     onUpdate={handleUpdateService}
                                     onMonitor={openServiceDetail}
                                     onEdit={openEditDrawer}
@@ -755,10 +783,27 @@ export default function ServicesDashboard() {
                                     onContainerLogs={openContainerLogs}
                                     onContainerTerminal={openContainerTerminal}
                                     onContainerActions={openAttachedContainerActions}
-                              />
-                            : <BundleCard key={entry.id} bundle={entry.bundle} />
-                    ))}
-                </div>
+                                />
+                            ))}
+                        </div>
+                    </section>
+                ))}
+
+                {filteredBundles.length > 0 && (
+                    <section className="space-y-3" data-testid={`stack-group-${UNGROUPED_STACK_ID}-bundles`}>
+                        <SectionHeading
+                            tone="muted"
+                            description={`${filteredBundles.length} discovered`}
+                        >
+                            Discovered bundles
+                        </SectionHeading>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {filteredBundles.map(bundle => (
+                                <BundleCard key={`bundle-${bundle.id}`} bundle={bundle} />
+                            ))}
+                        </div>
+                    </section>
+                )}
             </div>
         );
     };
