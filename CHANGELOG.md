@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.147.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.147.0...servicebay-v4.147.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **deps:** regenerate package-lock.json to restore npm ci sync ([912692e](https://github.com/mdopp/servicebay/commit/912692e1caec8fe504c111f0e76646e21d7c4042))
+* **deps:** regenerate package-lock.json to restore npm ci sync ([f71a2e9](https://github.com/mdopp/servicebay/commit/f71a2e9e86dbeb98d4d3587bc1e5302881c77588))
+
 ## [4.147.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.146.1...servicebay-v4.147.0) (2026-06-23)
 
 
