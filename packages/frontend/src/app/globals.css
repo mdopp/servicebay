@@ -143,6 +143,56 @@
   }
 }
 
+/*
+ * Per-service accent identity (#2126). The family portal scans like an
+ * app launcher: each service's icon-chip carries its own subtle tint so
+ * the grid is recognizable at a glance. These are an INTENTIONAL,
+ * named accent map — distinct from the semantic token layer above (those
+ * are for chrome; these are decorative per-service brand hues). Each
+ * `.svc-chip-*` utility sets only the icon-chip background + icon colour:
+ * a soft tinted fill + a saturated icon, never a full-card colour. Both
+ * dark (:root default) and light (prefers-color-scheme below) ramps are
+ * tuned so the chip reads on either surface. Driven from PortalGrid's
+ * SERVICE_ACCENT map → a literal class name (no interpolation).
+ */
+:root {
+  --svc-amber-bg: rgba(245, 158, 11, 0.16);  --svc-amber-fg: #fbbf24;  /* Smart Home */
+  --svc-blue-bg: rgba(59, 130, 246, 0.16);   --svc-blue-fg: #60a5fa;   /* Passwords */
+  --svc-teal-bg: rgba(20, 184, 166, 0.16);   --svc-teal-fg: #2dd4bf;   /* Photos */
+  --svc-orange-bg: rgba(249, 115, 22, 0.16); --svc-orange-fg: #fb923c; /* Files */
+  --svc-violet-bg: rgba(139, 92, 246, 0.16); --svc-violet-fg: #a78bfa; /* Audiobooks */
+  --svc-rose-bg: rgba(244, 63, 94, 0.16);    --svc-rose-fg: #fb7185;   /* Music */
+  --svc-red-bg: rgba(239, 68, 68, 0.16);     --svc-red-fg: #f87171;    /* Calendar */
+  --svc-indigo-bg: rgba(99, 102, 241, 0.16); --svc-indigo-fg: #818cf8; /* Claude Dev */
+  --svc-green-bg: rgba(34, 197, 94, 0.16);   --svc-green-fg: #4ade80;  /* Syncthing */
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    /* Lighter tinted fill + a darker 600-ramp icon so the chip reads on
+       white surfaces. */
+    --svc-amber-bg: rgba(245, 158, 11, 0.14);  --svc-amber-fg: #d97706;
+    --svc-blue-bg: rgba(59, 130, 246, 0.12);   --svc-blue-fg: #2563eb;
+    --svc-teal-bg: rgba(20, 184, 166, 0.14);   --svc-teal-fg: #0d9488;
+    --svc-orange-bg: rgba(249, 115, 22, 0.14); --svc-orange-fg: #ea580c;
+    --svc-violet-bg: rgba(139, 92, 246, 0.12); --svc-violet-fg: #7c3aed;
+    --svc-rose-bg: rgba(244, 63, 94, 0.12);    --svc-rose-fg: #e11d48;
+    --svc-red-bg: rgba(239, 68, 68, 0.12);     --svc-red-fg: #dc2626;
+    --svc-indigo-bg: rgba(99, 102, 241, 0.12); --svc-indigo-fg: #4f46e5;
+    --svc-green-bg: rgba(34, 197, 94, 0.12);   --svc-green-fg: #16a34a;
+  }
+}
+
+.svc-chip-amber  { background: var(--svc-amber-bg);  color: var(--svc-amber-fg); }
+.svc-chip-blue   { background: var(--svc-blue-bg);   color: var(--svc-blue-fg); }
+.svc-chip-teal   { background: var(--svc-teal-bg);   color: var(--svc-teal-fg); }
+.svc-chip-orange { background: var(--svc-orange-bg); color: var(--svc-orange-fg); }
+.svc-chip-violet { background: var(--svc-violet-bg); color: var(--svc-violet-fg); }
+.svc-chip-rose   { background: var(--svc-rose-bg);   color: var(--svc-rose-fg); }
+.svc-chip-red    { background: var(--svc-red-bg);    color: var(--svc-red-fg); }
+.svc-chip-indigo { background: var(--svc-indigo-bg); color: var(--svc-indigo-fg); }
+.svc-chip-green  { background: var(--svc-green-bg);  color: var(--svc-green-fg); }
+
 body {
   background: var(--background);
   color: var(--foreground);

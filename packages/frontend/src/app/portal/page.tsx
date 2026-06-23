@@ -67,32 +67,7 @@ export default async function PortalPage() {
   return (
     <main className="relative max-w-6xl mx-auto px-space-5 py-space-7">
       {isLoggedIn && displayName && <PortalUserChip displayName={displayName} />}
-      <header className="mb-space-7 text-center">
-        <div className="flex items-center justify-center gap-space-3">
-          <ServiceBayLogo size={36} className="text-accent shrink-0" />
-          <h1 className="text-4xl font-bold text-text">
-            Home <span className="text-text-subtle font-normal">— your family&apos;s private cloud</span>
-          </h1>
-        </div>
-        <p className="mt-space-3 text-base text-text-muted">
-          {isLoggedIn && firstName
-            ? `Welcome back, ${firstName} — pick a service below to get started.`
-            : 'Pick a service below to get started.'}
-        </p>
-        {isLoggedIn && <PortalLogoutLink />}
-        {adminUrl && (
-          <p className="mt-space-4 text-sm text-text-subtle">
-            <a
-              href={adminUrl}
-              className="inline-flex items-center gap-1.5 text-text-muted hover:text-text underline-offset-2 hover:underline"
-            >
-              <Settings size={14} />
-              Admin dashboard
-            </a>
-            <span className="ml-1.5 text-text-subtle">(separate login)</span>
-          </p>
-        )}
-      </header>
+      <PortalHero isLoggedIn={isLoggedIn} firstName={firstName} adminUrl={adminUrl} />
 
       {!isLoggedIn && (
         <div className="mb-space-7">
@@ -111,6 +86,58 @@ export default async function PortalPage() {
         <PortalGrid cards={cards} />
       )}
     </main>
+  );
+}
+
+/**
+ * Warmer portal hero (#2126): a soft token-driven accent gradient
+ * backdrop + a framed box icon + generous spacing so the landing feels
+ * inviting, not like a bare list. Carries the welcome line + the
+ * admin-dashboard link (separate login). Dark-mode-first, tasteful — no
+ * raw colour literals.
+ */
+function PortalHero({
+  isLoggedIn,
+  firstName,
+  adminUrl,
+}: {
+  isLoggedIn: boolean;
+  firstName: string | null;
+  adminUrl: string | null;
+}) {
+  return (
+    <header className="relative mb-space-7 overflow-hidden rounded-panel border border-border bg-gradient-to-b from-accent/10 via-surface to-surface px-space-5 py-space-7 text-center">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 -top-24 mx-auto h-48 w-48 rounded-full bg-accent/20 blur-3xl"
+      />
+      <div className="relative flex items-center justify-center gap-space-3">
+        <span className="inline-flex items-center justify-center w-14 h-14 rounded-card bg-accent/15 text-accent shrink-0">
+          <ServiceBayLogo size={32} className="shrink-0" />
+        </span>
+        <h1 className="text-3xl sm:text-4xl font-bold text-text">
+          Home <span className="text-text-subtle font-normal">— your family&apos;s private cloud</span>
+        </h1>
+      </div>
+      <p className="relative mt-space-4 text-base text-text-muted">
+        {isLoggedIn && firstName
+          ? `Welcome back, ${firstName} — pick a service below to get started.`
+          : 'Pick a service below to get started.'}
+      </p>
+      {isLoggedIn && <PortalLogoutLink />}
+      {adminUrl && (
+        <p className="relative mt-space-4 text-sm text-text-subtle">
+          <a
+            href={adminUrl}
+            className="inline-flex items-center gap-1.5 text-text-muted hover:text-text underline-offset-2 hover:underline"
+          >
+            <Settings size={14} />
+            Admin dashboard
+          </a>
+          <span className="ml-1.5 text-text-subtle">(separate login)</span>
+        </p>
+      )}
+    </header>
   );
 }
 

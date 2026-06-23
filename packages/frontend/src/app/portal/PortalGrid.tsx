@@ -12,71 +12,14 @@ import {
   Terminal, TerminalSquare, Video,
   Sparkles, X,
 } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Card } from '@/components/ui';
 import type { PortalCard } from '@/lib/portal/services';
 import type { AppPlatform, PortalAction, PortalIconName, SetupAssetKind } from '@/lib/portal/userGuide';
+import { ACCENT_CHIP_CLASS, serviceAccent, groupCardsBySection } from './portalAccent';
 
 type IconComponent = typeof Camera;
-
-/**
- * A card's grid footprint (#2120, portal-layout v2). The portal is a
- * deliberate **bento composition**, not a content-driven equal-height
- * grid: each card declares how much of the grid it occupies and its
- * content adapts to that slot.
- *   - `1x1`      — a standard service tile. One column on the bento
- *                  grid; on narrow screens it stacks to full width.
- *                  Text wraps/truncates to fit the tile.
- *   - `full-row` — a content-heavy card (today: Syncthing/file-share,
- *                  which carries the Install-BasicSync + Pair-device QRs
- *                  + storage-path note). Spans the entire grid width and
- *                  lays its sections out HORIZONTALLY side-by-side in one
- *                  row — compact, not a tall pile.
- */
-type CardFootprint = '1x1' | 'full-row';
-
-/**
- * Derive a card's bento {@link CardFootprint} (#2120) from what it
- * carries. The only full-row citizen today is the Syncthing/file-share
- * card — it ships the heavy pairing block (Install-BasicSync QR + Pair
- * QR + storage-path note) that dwarfed every 1×1 tile. We key off the
- * QR-bearing setup assets (`syncthing_qr` / `basicsync_install_qr`)
- * rather than the service name so the rule travels with the *content*:
- * any future card that grows the same heavy pairing block gets the wide
- * horizontal slot automatically, and a card that loses it drops back to
- * 1×1. Everything else is a standard 1×1 tile.
- */
-function cardFootprint(card: PortalCard): CardFootprint {
-  const hasPairingBlock = card.setupAssets.some(
-    a => a.kind === 'syncthing_qr' || a.kind === 'basicsync_install_qr',
-  );
-  return hasPairingBlock ? 'full-row' : '1x1';
-}
-
-/**
- * Order the cards for dense top-down packing (#2123). The bento grid
- * fills row-by-row in source order, so a `full-row` card placed amid the
- * 1×1 tiles forces a line break and strands the cells beside the last
- * tile of the row above it (the "Lücke mitten drin" next to the lone
- * Files card). Emitting all 1×1 tiles first and every full-row card last
- * packs the tiles tightly across the top and pushes any empty cells to
- * the very END. The key is binary (1×1 → 0, full-row → 1) and `.sort` is
- * stable, so cards keep their relative order within each group.
- */
-function orderForPacking(cards: PortalCard[]): PortalCard[] {
-  // stable sort: 1×1 (rank 0) before full-row (rank 1), order kept within group.
-  return [...cards].sort((a, b) => Number(cardFootprint(a) === 'full-row') - Number(cardFootprint(b) === 'full-row'));
-}
-
-/** Per-footprint grid-cell span (#2120). The bento grid is a fixed
- *  3-column composition on `md`+; a 1×1 tile takes one column, a
- *  full-row card spans every column. These MUST be literal Tailwind
- *  classes — Tailwind can't see an interpolated `col-span-${n}`, so an
- *  interpolated value would be purged. */
-const FOOTPRINT_SPAN: Record<CardFootprint, string> = {
-  '1x1': 'col-span-1',
-  'full-row': 'col-span-1 md:col-span-full',
-};
 
 /**
  * Shared anchor/button class-chains on the design-system tokens (epic
@@ -212,9 +155,19 @@ function assetLabel(kind: SetupAssetKind, override: string | undefined, isIOS: b
 }
 
 /**
- * Renders the portal card grid + per-card collapsible Getting-started
- * section. Server passes the per-card payload pre-built (incl. parsed
- * markdown body) — this component handles only the UI state.
+ * Renders the portal card grid (#2126). Cards are grouped into small
+ * labelled sections (Media / Productivity / Files & Sync / Smart Home &
+ * Dev) and laid out in ONE uniform responsive grid — every card is the
+ * same size (no bento / full-row special-casing; supersedes #2120/#2123).
+ * Each card's FRONT is calm: accent icon-chip + name + status dot + one
+ * descriptive line + a single "Open" CTA; everything secondary
+ * (recommended apps, setup steps, the Syncthing install + pairing QRs,
+ * the calendar one-tap setup, the how-to body) collapses behind a
+ * per-card "Apps & setup" disclosure, closed by default.
+ *
+ * The "How do I use this?" markdown body opens in a centered modal (the
+ * disclosure surfaces the trigger). Server passes the per-card payload
+ * pre-built; this component handles only the UI state.
  */
 export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
@@ -240,28 +193,34 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
     };
   }, [activeCard]);
 
-  // Packing order (#2123): 1×1 tiles first, full-row card(s) last, so
-  // empty cells accumulate at the END instead of stranding a hole
-  // mid-grid beside a lone tile. See orderForPacking.
-  const ordered = orderForPacking(cards);
+  // Light grouping (#2126): cards file under Media / Productivity / Files
+  // & Sync / Smart Home & Dev (+ a More catch-all), in a fixed order,
+  // empty sections dropped. Each section renders the SAME uniform grid.
+  const sections = groupCardsBySection(cards);
 
   return (
     <>
-    {/* Deliberate bento composition (#2120/#2123). A fixed 3-column grid
-        on `md`+: 1×1 service tiles tile evenly; a `full-row` card spans
-        every column and — packed last — sits at the bottom. `auto-rows`
-        keeps tile rows even; `items-start` lets a full-row card own its
-        own (shorter) height instead of stretching the whole row. On
-        narrow screens everything collapses to a single column. */}
-    <div className="grid grid-cols-1 md:grid-cols-3 auto-rows-auto gap-6 items-start">
-      {ordered.map(card => (
-        <BentoCard
-          key={card.id}
-          card={card}
-          isIOS={isIOS}
-          isMobile={isMobile}
-          onHelp={() => setActiveCardId(card.id)}
-        />
+    <div className="space-y-space-7">
+      {sections.map(({ section, cards: sectionCards }) => (
+        <section key={section} aria-label={section}>
+          <h2 className="mb-space-4 text-xs font-semibold uppercase tracking-wider text-text-subtle">
+            {section}
+          </h2>
+          {/* ONE uniform responsive grid (#2126) — 1 / 2 / 3 columns, even
+              gaps, every card equal-sized (`items-stretch` + `h-full`).
+              No col-span / full-row footprints. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-space-5 items-stretch">
+            {sectionCards.map(card => (
+              <ServiceCard
+                key={card.id}
+                card={card}
+                isIOS={isIOS}
+                isMobile={isMobile}
+                onHelp={() => setActiveCardId(card.id)}
+              />
+            ))}
+          </div>
+        </section>
       ))}
     </div>
 
@@ -272,30 +231,29 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
   );
 }
 
-/** Dispatch a card to its bento footprint renderer (#2120): a content-
- *  heavy `full-row` card to {@link FullRowCard}, everything else to the
- *  standard 1×1 {@link StandardCard}. */
-function BentoCard(props: {
-  card: PortalCard;
-  isIOS: boolean;
-  isMobile: boolean;
-  onHelp: () => void;
-}) {
-  return cardFootprint(props.card) === 'full-row' ? (
-    <FullRowCard {...props} />
-  ) : (
-    <StandardCard {...props} />
+/**
+ * Does this card carry any secondary content worth a disclosure (#2126)?
+ * Setup assets (QRs, calendar profile, deep-links), manual-pairing steps,
+ * recommended apps, or a how-to body all live behind the toggle. A bare
+ * Open-only card shows no disclosure — its front says everything.
+ */
+function hasSecondaryContent(card: PortalCard): boolean {
+  return (
+    card.setupAssets.length > 0 ||
+    card.manualPairing.length > 0 ||
+    card.recommendedApps.length > 0 ||
+    card.body.trim().length > 0
   );
 }
 
 /**
- * Standard 1×1 service tile (#2120). One column of the bento grid (full
- * width on narrow screens). Content adapts to the tile: the label
- * truncates and the tagline clamps to fit the fixed slot. Tiles in a row
- * share a height (`h-full`) so the bento composition reads as even and
- * intentional rather than ragged.
+ * One uniform service card (#2126). Front = accent icon-chip + name +
+ * status dot + one descriptive line + the single "Open" CTA pinned at the
+ * bottom. Everything secondary collapses behind the "Apps & setup"
+ * disclosure (closed by default). Every card is the same size — a clean
+ * launcher tile — so the grid scans evenly.
  */
-function StandardCard({
+function ServiceCard({
   card,
   isIOS,
   isMobile,
@@ -309,23 +267,71 @@ function StandardCard({
   return (
     <Card
       padding="none"
-      className={`overflow-hidden flex flex-col h-full ${FOOTPRINT_SPAN['1x1']}`}
+      data-testid="service-card"
+      className="overflow-hidden flex flex-col h-full"
     >
-      {/* Header — icon + title inline (#2103/#2123) + clamped tagline. */}
+      {/* Calm front — accent chip + title inline + one-line description. */}
       <div className="p-space-5 pb-space-3">
         <CardIcon card={card} />
         <div className="flex items-center gap-space-2 min-w-0">
-          <h2 className="text-xl font-bold text-text truncate min-w-0">{card.label}</h2>
+          <h3 className="text-xl font-bold text-text truncate min-w-0">{card.label}</h3>
           <StatusBadge status={card.status} reason={card.statusReason} />
         </div>
-        <p className="mt-space-2 text-sm text-text-muted line-clamp-3">
+        <p className="mt-space-2 text-sm text-text-muted line-clamp-2">
           {card.tagline ?? ''}
         </p>
       </div>
 
-      {/* Variable content — `flex-1` keeps the bento row even (#2120) and
-          pushes the CTA to a consistent bottom baseline (#2123). */}
-      <div className="flex-1 px-space-5 pt-space-3 space-y-space-3">
+      {/* Spacer keeps the CTA + disclosure pinned to a shared bottom
+          baseline so every card front reads uniform. */}
+      <div className="flex-1" />
+
+      {/* Primary CTA — the ONE front affordance (Open URL, or the appless
+          primary action — #1618). */}
+      <div data-testid="card-cta" className="px-space-5 pt-space-3 space-y-space-2">
+        <CardCta card={card} isMobile={isMobile} />
+      </div>
+
+      {/* Everything else collapses behind the per-card disclosure (#2126),
+          closed by default. Renders only when there's secondary content. */}
+      {hasSecondaryContent(card) && (
+        <CardDisclosure card={card} isIOS={isIOS} isMobile={isMobile} onHelp={onHelp} />
+      )}
+      <div className="pb-space-5" />
+    </Card>
+  );
+}
+
+/**
+ * Per-card "Apps & setup" disclosure (#2126). A native <details> (closed
+ * by default) that hides every secondary affordance behind a calm front:
+ * recommended apps, the manual-pairing steps, the setup assets (Syncthing
+ * install + pairing QRs, the calendar one-tap profile, audiobook
+ * deep-link), and the how-to-use markdown trigger. Native <details> keeps
+ * it keyboard-accessible + works without JS for the open/close itself
+ * (the QR/asset buttons inside still hydrate their own modals).
+ */
+function CardDisclosure({
+  card,
+  isIOS,
+  isMobile,
+  onHelp,
+}: {
+  card: PortalCard;
+  isIOS: boolean;
+  isMobile: boolean;
+  onHelp: () => void;
+}) {
+  return (
+    <details data-testid="card-disclosure" className="group mt-space-3 border-t border-border">
+      <summary className="flex items-center gap-space-2 px-space-5 py-space-3 cursor-pointer list-none select-none text-sm font-medium text-text-muted hover:text-text">
+        <ChevronRight
+          size={16}
+          className="shrink-0 transition-transform group-open:rotate-90"
+        />
+        Apps &amp; setup
+      </summary>
+      <div className="px-space-5 pb-space-2 pt-space-1 space-y-space-3">
         {card.setupAssets.length > 0 && (
           <SetupAssets card={card} isIOS={isIOS} isMobile={isMobile} />
         )}
@@ -337,110 +343,12 @@ function StandardCard({
         )}
         {card.body.trim().length > 0 && <HowToButton onClick={onHelp} />}
       </div>
-
-      {/* Primary CTA — bottom-pinned (#2123) so every card shares one CTA
-          baseline (Open URL, or the appless primary action — #1618). */}
-      <div data-testid="card-cta" className="mt-auto px-space-5 pt-space-3 pb-space-5 space-y-space-2">
-        <CardCta card={card} isMobile={isMobile} />
-      </div>
-    </Card>
+    </details>
   );
 }
 
-/**
- * Full-row bento card (#2120). A content-heavy card (Syncthing) that
- * spans the whole grid width and lays its sections out HORIZONTALLY
- * side-by-side — the "Open" CTA, the BasicSync-install QR, the Pair QR,
- * and the recommended-apps/storage-path note become adjacent columns
- * instead of a tall stack. On narrow screens the columns stack and the
- * card stays full width — keeping the verbose pairing block from
- * towering over the 1×1 tiles while every affordance stays directly
- * reachable (QRs inline, not collapsed).
- */
-function FullRowCard({
-  card,
-  isIOS,
-  isMobile,
-  onHelp,
-}: {
-  card: PortalCard;
-  isIOS: boolean;
-  isMobile: boolean;
-  onHelp: () => void;
-}) {
-  return (
-    <Card
-      padding="none"
-      data-footprint="full-row"
-      className={`overflow-hidden ${FOOTPRINT_SPAN['full-row']}`}
-    >
-      {/* `md:items-stretch` stretches the lead + section columns to one
-          height so their bottom-pinned CTAs/QRs land on ONE baseline
-          (#2123) — same header-top / CTA-bottom pattern as a 1×1, wider. */}
-      <div className="p-space-5 flex flex-col md:flex-row md:items-stretch gap-space-5">
-        <FullRowLeadColumn card={card} isMobile={isMobile} onHelp={onHelp} />
-
-        {/* Horizontal section columns — pairing block + extras flow
-            side-by-side on `md`+, stacking on narrow. Each stretches and
-            bottom-pins its action to the lead column's baseline (#2123). */}
-        <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-space-4 items-stretch">
-          {card.setupAssets.length > 0 && (
-            <FullRowSetupColumns card={card} isIOS={isIOS} isMobile={isMobile} />
-          )}
-          {card.manualPairing.length > 0 && (
-            <div className="min-w-0 flex flex-col">
-              <ManualPairingPanel steps={card.manualPairing} />
-            </div>
-          )}
-          {card.recommendedApps.length > 0 && (
-            <div className="min-w-0 flex flex-col">
-              <RecommendedApps apps={card.recommendedApps} />
-            </div>
-          )}
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-/** The full-row card's lead column (#2120): icon + title + status +
- *  tagline + the Open CTA + the help button. Fixed-ish width so the
- *  horizontal section columns get the remaining width. Split out to keep
- *  {@link FullRowCard} under the per-function line budget. */
-function FullRowLeadColumn({
-  card,
-  isMobile,
-  onHelp,
-}: {
-  card: PortalCard;
-  isMobile: boolean;
-  onHelp: () => void;
-}) {
-  return (
-    <div className="md:w-64 md:shrink-0 flex flex-col">
-      {/* Header — icon + title inline, then tagline (#2103/#2123). */}
-      <div className="space-y-space-3">
-        <CardIcon card={card} />
-        <div className="flex items-center gap-space-2 min-w-0">
-          <h2 className="text-xl font-bold text-text truncate min-w-0">{card.label}</h2>
-          <StatusBadge status={card.status} reason={card.statusReason} />
-        </div>
-        {card.tagline && (
-          <p className="text-sm text-text-muted leading-snug">{card.tagline}</p>
-        )}
-      </div>
-      {/* Primary CTA pinned at the BOTTOM (#2123) — same baseline as the
-          1×1 tiles and the bottom-aligned section columns. */}
-      <div data-testid="card-cta" className="mt-auto pt-space-3 space-y-space-2">
-        <CardCta card={card} isMobile={isMobile} />
-        {card.body.trim().length > 0 && <HowToButton onClick={onHelp} />}
-      </div>
-    </div>
-  );
-}
-
-/** "How do I use this?" footer button (#2120, extracted so the standard
- *  and full-row cards share it). Opens the markdown help modal. */
+/** "How do I use this?" button inside the disclosure (#2126). Opens the
+ *  markdown help modal. */
 function HowToButton({ onClick }: { onClick: () => void }) {
   return (
     <button
@@ -453,8 +361,8 @@ function HowToButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-/** Recommended-apps list (#2120, extracted to share between the 1×1 and
- *  full-row card layouts). Each app link keeps its href/target/rel. */
+/** Recommended-apps list (shown inside the per-card disclosure, #2126).
+ *  Each app link keeps its href/target/rel. */
 function RecommendedApps({ apps }: { apps: PortalCard['recommendedApps'] }) {
   return (
     <div className="pt-space-2 space-y-1.5">
@@ -493,46 +401,11 @@ function RecommendedApps({ apps }: { apps: PortalCard['recommendedApps'] }) {
 }
 
 /**
- * The full-row card's setup assets laid out as horizontal columns
- * (#2120). Each visible asset (Install-BasicSync, Pair-this-device, …)
- * becomes its own column cell in the full-row section grid — side-by-side
- * on `md`+, stacking on narrow screens. The wide-slot counterpart to
- * {@link SetupAssets}'s collapsed expander: here there's room to show
- * every QR/install action inline. Buttons + fetch-on-click QR modals are
- * unchanged — only the arrangement differs.
- */
-function FullRowSetupColumns({
-  card,
-  isIOS,
-  isMobile,
-}: {
-  card: PortalCard;
-  isIOS: boolean;
-  isMobile: boolean;
-}) {
-  const visible = card.setupAssets.filter(a => shouldShowAsset(a.kind, isIOS, isMobile));
-  if (visible.length === 0) return null;
-  return (
-    <>
-      {visible.map(asset => (
-        // `flex-col` + `justify-end` bottom-aligns each section's action
-        // button to the shared CTA baseline (#2123) — no top-floating.
-        <div key={asset.kind} className="min-w-0 flex flex-col justify-end">
-          <SetupAssetButton card={card} asset={asset} isIOS={isIOS} />
-        </div>
-      ))}
-    </>
-  );
-}
-
-/**
- * Setup-asset list for a 1×1 tile (#2116/#2120). The heavy QR pairing
- * block now lives in the `full-row` card ({@link FullRowSetupColumns}),
- * so in a 1×1 tile this only ever renders light assets (an iOS calendar
- * profile, an audiobookshelf deep-link). A single light asset renders
- * inline; if a tile happens to carry 2+ light assets we still tuck them
- * behind a collapsed "How to pair" / "So koppelst du" `<details>` so the
- * tile's resting size matches its peers — every asset stays reachable.
+ * Setup-asset list (#2126). Lives inside the per-card "Apps & setup"
+ * disclosure, so every visible asset — the Syncthing install + pairing
+ * QRs, the calendar one-tap profile, the audiobook deep-link — renders
+ * directly inline, no second nested collapse. Device-gated by
+ * {@link shouldShowAsset} (iOS-only assets hide on Android phones).
  */
 function SetupAssets({
   card,
@@ -546,9 +419,6 @@ function SetupAssets({
   const visible = card.setupAssets.filter(a => shouldShowAsset(a.kind, isIOS, isMobile));
   if (visible.length === 0) return null;
 
-  // In a 1×1 tile the assets are always light (the heavy QR pairing
-  // block forces a `full-row` card → FullRowSetupColumns), so they
-  // render inline directly — no collapse needed.
   return (
     <div className="space-y-1.5">
       {visible.map(asset => (
@@ -1090,14 +960,15 @@ function SyncthingQrButton({
 }
 
 /**
- * Card hero icon. Renders the Lucide line-art icon when the
- * frontmatter declares `lucide_icon`; falls back to the legacy
- * emoji for any user-guide that hasn't migrated; finally falls
- * back to a neutral Package icon for guides with neither.
+ * Card hero icon-chip (#2126). Renders the Lucide line-art icon tinted
+ * with the card's PER-SERVICE accent (Photos=teal, Passwords=blue,
+ * Files=orange, …) so the grid scans like an app launcher — a subtle
+ * tinted chip + a saturated icon, never a full-card colour. Falls back to
+ * the legacy emoji for any guide that hasn't migrated, then a neutral
+ * Package chip for guides with neither.
  *
- * The line-art rendering matches ServiceBay's dashboard chrome
- * (Sidebar, header logos) so the family portal feels like the
- * same product, not a separate emoji-themed surface.
+ * The line-art rendering matches ServiceBay's dashboard chrome (Sidebar,
+ * header logos) so the family portal feels like the same product.
  */
 function CardIcon({ card, compact = false }: { card: PortalCard; compact?: boolean }) {
   // The modal header reuses CardIcon at a smaller size — `compact`
@@ -1107,10 +978,13 @@ function CardIcon({ card, compact = false }: { card: PortalCard; compact?: boole
     ? 'inline-flex items-center justify-center w-10 h-10 rounded-card'
     : 'mb-space-3 inline-flex items-center justify-center w-14 h-14 rounded-card';
   const iconSize = compact ? 22 : 28;
+  // Per-service accent chip class (token-driven, dark-mode-correct) — a
+  // literal `.svc-chip-*` name from the accent map (no interpolation).
+  const accentClass = ACCENT_CHIP_CLASS[serviceAccent(card)];
   if (card.lucideIcon) {
     const Icon = PORTAL_ICON_MAP[card.lucideIcon];
     return (
-      <div className={`${wrapper} bg-accent/15 text-accent`}>
+      <div data-accent={serviceAccent(card)} className={`${wrapper} ${accentClass}`}>
         <Icon size={iconSize} strokeWidth={1.75} />
       </div>
     );
@@ -1119,7 +993,7 @@ function CardIcon({ card, compact = false }: { card: PortalCard; compact?: boole
     return <div className={compact ? 'text-3xl' : 'text-5xl mb-space-3'} aria-hidden>{card.icon}</div>;
   }
   return (
-    <div className={`${wrapper} bg-surface-2 text-text-muted`}>
+    <div data-accent={serviceAccent(card)} className={`${wrapper} ${accentClass}`}>
       <Package size={iconSize} strokeWidth={1.75} />
     </div>
   );
