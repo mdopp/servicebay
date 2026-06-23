@@ -93,14 +93,14 @@ export function Select({
   const renderIcon = (option: SelectOption) => {
     if (option.icon) {
       return (
-        <div className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-200 flex items-center justify-center">
+        <div className="w-8 h-8 rounded-full bg-surface-2 text-text-muted flex items-center justify-center">
           {option.icon}
         </div>
       );
     }
     const initial = option.label?.charAt(0).toUpperCase() || option.value.charAt(0).toUpperCase();
     return (
-      <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200 flex items-center justify-center text-sm font-semibold">
+      <div className="w-8 h-8 rounded-full bg-accent/10 text-accent flex items-center justify-center text-sm font-semibold">
         {initial}
       </div>
     );
@@ -111,40 +111,40 @@ export function Select({
       <button
         type="button"
         onClick={() => !disabled && setIsOpen(open => !open)}
-        className={`w-full ${compact ? 'min-w-0' : 'min-w-[220px]'} px-3 py-2 border rounded-lg bg-white dark:bg-gray-900 border-gray-300 dark:border-gray-700 flex items-center justify-between gap-2 transition focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed ${disabled ? 'cursor-not-allowed' : ''}`}
+        className={`w-full ${compact ? 'min-w-0' : 'min-w-[220px]'} px-3 py-2 border rounded-card bg-surface border-border flex items-center justify-between gap-2 transition focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed ${disabled ? 'cursor-not-allowed' : ''}`}
         disabled={disabled}
       >
         {selectedOption ? (
           <div className="flex items-center gap-2 text-left min-w-0">
             {!compact && renderIcon(selectedOption)}
-            <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{selectedOption.label}</span>
+            <span className="text-sm font-medium text-text truncate">{selectedOption.label}</span>
           </div>
         ) : (
-          <span className="text-sm text-gray-500">{placeholder}</span>
+          <span className="text-sm text-text-subtle">{placeholder}</span>
         )}
-        <ChevronDown size={16} className="text-gray-500 shrink-0" />
+        <ChevronDown size={16} className="text-text-muted shrink-0" />
       </button>
 
       {isOpen && (
-        <div className="absolute z-40 mt-2 w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl">
+        <div className="absolute z-40 mt-2 w-full rounded-card border border-border bg-surface shadow-xl">
           {searchable && (
-            <div className="p-3 border-b border-gray-100 dark:border-gray-800">
+            <div className="p-3 border-b border-border">
               <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-subtle" />
                 <input
                   ref={searchRef}
                   type="text"
                   value={query}
                   onChange={e => setQuery(e.target.value)}
                   placeholder="Search..."
-                  className="w-full pl-9 pr-3 py-2 text-sm rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full pl-9 pr-3 py-2 text-sm rounded-card bg-surface-2 text-text border border-border focus:outline-none focus:ring-2 focus:ring-accent"
                 />
               </div>
             </div>
           )}
           <ul className="max-h-64 overflow-y-auto py-1" role="listbox">
             {filteredOptions.length === 0 && (
-              <li className="py-4 px-3 text-sm text-gray-500 dark:text-gray-400 text-center">
+              <li className="py-4 px-3 text-sm text-text-muted text-center">
                 {emptyState}
               </li>
             )}
@@ -157,23 +157,23 @@ export function Select({
                   role="option"
                   aria-selected={isSelected}
                   aria-disabled={option.disabled || undefined}
-                  className={`flex items-center gap-3 px-3 py-2 cursor-pointer transition hover:bg-gray-50 dark:hover:bg-gray-800 ${option.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`flex items-center gap-3 px-3 py-2 cursor-pointer transition hover:bg-surface-2 ${option.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   {renderIcon(option)}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{option.label}</span>
+                      <span className="text-sm font-medium text-text truncate">{option.label}</span>
                       {option.badge && (
-                        <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-200">
+                        <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-chip bg-accent/10 text-accent">
                           {option.badge}
                         </span>
                       )}
                     </div>
                     {option.description && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{option.description}</p>
+                      <p className="text-xs text-text-muted truncate">{option.description}</p>
                     )}
                   </div>
-                  {isSelected && <Check size={16} className="text-indigo-600" />}
+                  {isSelected && <Check size={16} className="text-accent" />}
                 </li>
               );
             })}
