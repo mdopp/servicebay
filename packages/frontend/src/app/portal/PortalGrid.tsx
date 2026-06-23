@@ -53,6 +53,21 @@ function cardFootprint(card: PortalCard): CardFootprint {
   return hasPairingBlock ? 'full-row' : '1x1';
 }
 
+/**
+ * Order the cards for dense top-down packing (#2123). The bento grid
+ * fills row-by-row in source order, so a `full-row` card placed amid the
+ * 1×1 tiles forces a line break and strands the cells beside the last
+ * tile of the row above it (the "Lücke mitten drin" next to the lone
+ * Files card). Emitting all 1×1 tiles first and every full-row card last
+ * packs the tiles tightly across the top and pushes any empty cells to
+ * the very END. The key is binary (1×1 → 0, full-row → 1) and `.sort` is
+ * stable, so cards keep their relative order within each group.
+ */
+function orderForPacking(cards: PortalCard[]): PortalCard[] {
+  // stable sort: 1×1 (rank 0) before full-row (rank 1), order kept within group.
+  return [...cards].sort((a, b) => Number(cardFootprint(a) === 'full-row') - Number(cardFootprint(b) === 'full-row'));
+}
+
 /** Per-footprint grid-cell span (#2120). The bento grid is a fixed
  *  3-column composition on `md`+; a 1×1 tile takes one column, a
  *  full-row card spans every column. These MUST be literal Tailwind
@@ -225,16 +240,21 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
     };
   }, [activeCard]);
 
+  // Packing order (#2123): 1×1 tiles first, full-row card(s) last, so
+  // empty cells accumulate at the END instead of stranding a hole
+  // mid-grid beside a lone tile. See orderForPacking.
+  const ordered = orderForPacking(cards);
+
   return (
     <>
-    {/* Deliberate bento composition (#2120). A fixed 3-column grid on
-        `md`+: 1×1 service tiles tile evenly; a `full-row` card spans
-        every column and lays its sections out horizontally. `auto-rows`
+    {/* Deliberate bento composition (#2120/#2123). A fixed 3-column grid
+        on `md`+: 1×1 service tiles tile evenly; a `full-row` card spans
+        every column and — packed last — sits at the bottom. `auto-rows`
         keeps tile rows even; `items-start` lets a full-row card own its
         own (shorter) height instead of stretching the whole row. On
         narrow screens everything collapses to a single column. */}
     <div className="grid grid-cols-1 md:grid-cols-3 auto-rows-auto gap-6 items-start">
-      {cards.map(card => (
+      {ordered.map(card => (
         <BentoCard
           key={card.id}
           card={card}
@@ -291,8 +311,7 @@ function StandardCard({
       padding="none"
       className={`overflow-hidden flex flex-col h-full ${FOOTPRINT_SPAN['1x1']}`}
     >
-      {/* Header — icon + title + tagline. Title truncates and tagline
-          clamps so the tile content fits its 1×1 slot (#2120). */}
+      {/* Header — icon + title inline (#2103/#2123) + clamped tagline. */}
       <div className="p-space-5 pb-space-3">
         <CardIcon card={card} />
         <div className="flex items-center gap-space-2 min-w-0">
@@ -304,15 +323,9 @@ function StandardCard({
         </p>
       </div>
 
-      {/* CTA — Open-URL card shows the accent "Open" button; a URL-less
-          appless card (#1618) shows its primary action instead. */}
-      <div className="px-space-5 space-y-space-2">
-        <CardCta card={card} isMobile={isMobile} />
-      </div>
-
-      {/* Variable content. `flex-1` lets the tile stretch to its row's
-          tallest sibling so the bento row stays even (#2120). */}
-      <div className="flex-1 px-space-5 pt-space-3 pb-space-5 space-y-space-3">
+      {/* Variable content — `flex-1` keeps the bento row even (#2120) and
+          pushes the CTA to a consistent bottom baseline (#2123). */}
+      <div className="flex-1 px-space-5 pt-space-3 space-y-space-3">
         {card.setupAssets.length > 0 && (
           <SetupAssets card={card} isIOS={isIOS} isMobile={isMobile} />
         )}
@@ -323,6 +336,12 @@ function StandardCard({
           <RecommendedApps apps={card.recommendedApps} />
         )}
         {card.body.trim().length > 0 && <HowToButton onClick={onHelp} />}
+      </div>
+
+      {/* Primary CTA — bottom-pinned (#2123) so every card shares one CTA
+          baseline (Open URL, or the appless primary action — #1618). */}
+      <div data-testid="card-cta" className="mt-auto px-space-5 pt-space-3 pb-space-5 space-y-space-2">
+        <CardCta card={card} isMobile={isMobile} />
       </div>
     </Card>
   );
@@ -355,22 +374,26 @@ function FullRowCard({
       data-footprint="full-row"
       className={`overflow-hidden ${FOOTPRINT_SPAN['full-row']}`}
     >
-      <div className="p-space-5 flex flex-col md:flex-row md:items-start gap-space-5">
+      {/* `md:items-stretch` stretches the lead + section columns to one
+          height so their bottom-pinned CTAs/QRs land on ONE baseline
+          (#2123) — same header-top / CTA-bottom pattern as a 1×1, wider. */}
+      <div className="p-space-5 flex flex-col md:flex-row md:items-stretch gap-space-5">
         <FullRowLeadColumn card={card} isMobile={isMobile} onHelp={onHelp} />
 
-        {/* Horizontal section columns — the pairing block + extras flow
-            side-by-side on `md`+, stacking on narrow screens. */}
-        <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-space-4 items-start">
+        {/* Horizontal section columns — pairing block + extras flow
+            side-by-side on `md`+, stacking on narrow. Each stretches and
+            bottom-pins its action to the lead column's baseline (#2123). */}
+        <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-space-4 items-stretch">
           {card.setupAssets.length > 0 && (
             <FullRowSetupColumns card={card} isIOS={isIOS} isMobile={isMobile} />
           )}
           {card.manualPairing.length > 0 && (
-            <div className="min-w-0">
+            <div className="min-w-0 flex flex-col">
               <ManualPairingPanel steps={card.manualPairing} />
             </div>
           )}
           {card.recommendedApps.length > 0 && (
-            <div className="min-w-0">
+            <div className="min-w-0 flex flex-col">
               <RecommendedApps apps={card.recommendedApps} />
             </div>
           )}
@@ -394,19 +417,24 @@ function FullRowLeadColumn({
   onHelp: () => void;
 }) {
   return (
-    <div className="md:w-64 md:shrink-0 space-y-space-3">
-      <CardIcon card={card} />
-      <div className="flex items-center gap-space-2 min-w-0">
-        <h2 className="text-xl font-bold text-text truncate min-w-0">{card.label}</h2>
-        <StatusBadge status={card.status} reason={card.statusReason} />
+    <div className="md:w-64 md:shrink-0 flex flex-col">
+      {/* Header — icon + title inline, then tagline (#2103/#2123). */}
+      <div className="space-y-space-3">
+        <CardIcon card={card} />
+        <div className="flex items-center gap-space-2 min-w-0">
+          <h2 className="text-xl font-bold text-text truncate min-w-0">{card.label}</h2>
+          <StatusBadge status={card.status} reason={card.statusReason} />
+        </div>
+        {card.tagline && (
+          <p className="text-sm text-text-muted leading-snug">{card.tagline}</p>
+        )}
       </div>
-      {card.tagline && (
-        <p className="text-sm text-text-muted leading-snug">{card.tagline}</p>
-      )}
-      <div className="space-y-space-2">
+      {/* Primary CTA pinned at the BOTTOM (#2123) — same baseline as the
+          1×1 tiles and the bottom-aligned section columns. */}
+      <div data-testid="card-cta" className="mt-auto pt-space-3 space-y-space-2">
         <CardCta card={card} isMobile={isMobile} />
+        {card.body.trim().length > 0 && <HowToButton onClick={onHelp} />}
       </div>
-      {card.body.trim().length > 0 && <HowToButton onClick={onHelp} />}
     </div>
   );
 }
@@ -487,7 +515,9 @@ function FullRowSetupColumns({
   return (
     <>
       {visible.map(asset => (
-        <div key={asset.kind} className="min-w-0">
+        // `flex-col` + `justify-end` bottom-aligns each section's action
+        // button to the shared CTA baseline (#2123) — no top-floating.
+        <div key={asset.kind} className="min-w-0 flex flex-col justify-end">
           <SetupAssetButton card={card} asset={asset} isIOS={isIOS} />
         </div>
       ))}

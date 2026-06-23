@@ -537,4 +537,127 @@ describe('PortalGrid', () => {
       expect(screen.getByRole('button', { name: /open in audiobookshelf app/i })).toBeDefined();
     });
   });
+
+  describe('bento packing — empty space accumulates at the bottom (#2123)', () => {
+    /** A full-row Syncthing card (heavy pairing block → full-row). */
+    const syncthingCard: PortalCard = {
+      ...baseCard,
+      id: 'file-share:SYNCTHING_SUBDOMAIN',
+      name: 'file-share',
+      label: 'Syncthing',
+      setupAssets: [
+        { kind: 'basicsync_install_qr', label: 'Install BasicSync on your phone' },
+        { kind: 'syncthing_qr', label: 'Pair this device' },
+      ],
+    };
+
+    /** The shared bento grid container. */
+    const grid = (): HTMLElement =>
+      screen.getAllByRole('heading')[0].closest('div.grid') as HTMLElement;
+
+    /** Ordered list of the direct grid-cell <Card>s (each carries
+     *  `col-span-*`), top-to-bottom in render order. */
+    const gridCells = (): HTMLElement[] =>
+      Array.from(grid().children).filter(
+        c => c.className.includes('col-span'),
+      ) as HTMLElement[];
+
+    it('renders the full-row card LAST even when declared mid-list (no mid-grid hole)', () => {
+      // Source order interleaves the full-row card between 1×1 tiles —
+      // the exact case that stranded the cell beside the lone Files tile.
+      const a: PortalCard = { ...baseCard, id: 'a:x', label: 'Alpha' };
+      const b: PortalCard = { ...baseCard, id: 'b:y', label: 'Beta' };
+      const files: PortalCard = { ...baseCard, id: 'f:z', label: 'Files' };
+      render(<PortalGrid cards={[a, syncthingCard, b, files]} />);
+
+      const cells = gridCells();
+      // The full-row card is the LAST grid cell; every 1×1 tile precedes it.
+      const last = cells[cells.length - 1];
+      expect(last.getAttribute('data-footprint')).toBe('full-row');
+      const fullRowCount = cells.filter(
+        c => c.getAttribute('data-footprint') === 'full-row',
+      ).length;
+      expect(fullRowCount).toBe(1);
+      // No 1×1 tile renders after the full-row card → empty cells (if any)
+      // land at the very end, not mid-grid.
+      const fullRowIndex = cells.findIndex(
+        c => c.getAttribute('data-footprint') === 'full-row',
+      );
+      const tilesAfter = cells
+        .slice(fullRowIndex + 1)
+        .filter(c => c.getAttribute('data-footprint') !== 'full-row');
+      expect(tilesAfter).toHaveLength(0);
+    });
+
+    it('preserves the relative order of the 1×1 tiles (stable sort)', () => {
+      const a: PortalCard = { ...baseCard, id: 'a:x', label: 'Alpha' };
+      const b: PortalCard = { ...baseCard, id: 'b:y', label: 'Beta' };
+      const c: PortalCard = { ...baseCard, id: 'c:w', label: 'Gamma' };
+      render(<PortalGrid cards={[a, syncthingCard, b, c]} />);
+      const labels = gridCells().map(
+        cell => cell.querySelector('h2')?.textContent,
+      );
+      // Tiles keep A, B, Gamma order; Syncthing trails at the end.
+      expect(labels).toEqual(['Alpha', 'Beta', 'Gamma', 'Syncthing']);
+    });
+  });
+
+  describe('uniform CTA-bottom pattern across card variants (#2123)', () => {
+    const cardOf = (label: string): HTMLElement =>
+      screen.getByRole('heading', { name: label }).closest('div.rounded-card') as HTMLElement;
+
+    const syncthingCard: PortalCard = {
+      ...baseCard,
+      id: 'file-share:SYNCTHING_SUBDOMAIN',
+      name: 'file-share',
+      label: 'Syncthing',
+      url: 'https://files.home.arpa',
+      setupAssets: [
+        { kind: 'basicsync_install_qr', label: 'Install BasicSync on your phone' },
+        { kind: 'syncthing_qr', label: 'Pair this device' },
+      ],
+    };
+
+    it('pins the 1×1 tile primary CTA at the bottom (mt-auto) below the content', () => {
+      render(<PortalGrid cards={[baseCard]} />);
+      const cta = cardOf('Photos').querySelector('[data-testid="card-cta"]') as HTMLElement;
+      expect(cta).not.toBeNull();
+      // mt-auto = pushed to the bottom of the flex column.
+      expect(cta.className).toContain('mt-auto');
+      // The Open link lives inside the bottom-pinned CTA block, not above it.
+      expect(cta.querySelector('a')?.textContent?.toLowerCase()).toContain('open');
+    });
+
+    it('pins the full-row lead-column CTA at the bottom too (same pattern, wider)', () => {
+      render(<PortalGrid cards={[syncthingCard]} />);
+      const cta = cardOf('Syncthing').querySelector('[data-testid="card-cta"]') as HTMLElement;
+      expect(cta).not.toBeNull();
+      expect(cta.className).toContain('mt-auto');
+      expect(cta.querySelector('a')?.getAttribute('href')).toBe('https://files.home.arpa');
+    });
+
+    it('bottom-aligns the full-row section CTAs (Syncthing buttons NOT top-floating)', () => {
+      render(<PortalGrid cards={[syncthingCard]} />);
+      const wrapper = cardOf('Syncthing');
+      // Each setup-asset section column bottom-aligns its action button
+      // (flex-col + justify-end) so the Install/Pair buttons sit on the
+      // shared baseline, not floating at the top of the card.
+      const install = screen.getByRole('button', { name: /install basicsync on your phone/i });
+      const pair = screen.getByRole('button', { name: /pair this device/i });
+      for (const btn of [install, pair]) {
+        const column = btn.closest('div.justify-end');
+        expect(column).not.toBeNull();
+        expect((column as HTMLElement).className).toContain('flex-col');
+      }
+      // The horizontal section row stretches its columns so the baselines
+      // align (items-stretch, not items-start which would top-float them).
+      const sectionGrid = wrapper.querySelector('div.md\\:grid-cols-2') as HTMLElement;
+      expect(sectionGrid.className).toContain('items-stretch');
+      expect(sectionGrid.className).not.toContain('items-start');
+      // The top-level full-row row also stretches lead + sections to a
+      // shared height so every CTA shares one baseline.
+      const row = wrapper.querySelector('div.md\\:flex-row') as HTMLElement;
+      expect(row.className).toContain('md:items-stretch');
+    });
+  });
 });
