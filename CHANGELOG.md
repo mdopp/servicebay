@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.144.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.144.0...servicebay-v4.144.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **frontend:** restyle toast notifications on design-system tokens + move to top-right ([fbdb14b](https://github.com/mdopp/servicebay/commit/fbdb14b5d3692e4cd97bab8e5d767261d03ee7ab)), closes [#2099](https://github.com/mdopp/servicebay/issues/2099)
+
 ## [4.144.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.143.0...servicebay-v4.144.0) (2026-06-23)
 
 
