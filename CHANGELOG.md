@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.147.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.146.1...servicebay-v4.147.0) (2026-06-23)
+
+
+### Features
+
+* **portal:** redesign /portal as a uniform accented launcher grid ([999b363](https://github.com/mdopp/servicebay/commit/999b3634538edb5989be8a1e7421610aa56775b5))
+* **portal:** redesign /portal as a uniform accented launcher grid ([c761e0d](https://github.com/mdopp/servicebay/commit/c761e0d6933b37a71573c6092ad39511da738ce4)), closes [#2126](https://github.com/mdopp/servicebay/issues/2126)
+
 ## [4.146.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.146.0...servicebay-v4.146.1) (2026-06-23)
 
 
