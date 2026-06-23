@@ -47,6 +47,17 @@ vi.mock('@xyflow/react', () => {
 });
 vi.mock('@xyflow/react/dist/style.css', () => ({}));
 
+// #2119 — spy on the ELK layout so a test can assert an identical-topology
+// poll does NOT re-run it. getLayoutedElements just echoes its input here.
+// Hoisted so the (hoisted) vi.mock factory can reference it safely.
+const { getLayoutedElements } = vi.hoisted(() => ({
+  getLayoutedElements: vi.fn(async (nodes: unknown[], edges: unknown[]) => ({ nodes, edges })),
+}));
+vi.mock('@servicebay/api-client', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, getLayoutedElements };
+});
+
 vi.mock('@/hooks/useTopologyData', () => ({
   useTopologyData: () => ({ rawData: topologyRawData, fetchGraph, twin: null }),
 }));
@@ -125,6 +136,61 @@ describe('NetworkDashboard (#2100 dashboards migration)', () => {
     // when focusNodeId is set). That proves the param was read + resolved to
     // the matching node id and applied.
     expect(await screen.findByTestId('focus-back')).toBeDefined();
+  });
+
+  it('#2119 does NOT re-run the ELK layout when a poll returns an identical topology', async () => {
+    getLayoutedElements.mockClear();
+    topologyRawData = {
+      nodes: [
+        { id: 'internet', type: 'internet', label: 'Internet' },
+        { id: 'service-immich.service', type: 'service', label: 'immich', status: 'up' },
+      ],
+      edges: [{ id: 'e1', source: 'internet', target: 'service-immich.service' }],
+    };
+
+    const { rerender } = render(<NetworkDashboard />);
+    await waitFor(() => expect(getLayoutedElements).toHaveBeenCalled());
+    // Let the initial layout (+ the initial-collapse re-render) settle.
+    await new Promise((r) => setTimeout(r, 20));
+    const layoutCallsAfterInitialLoad = getLayoutedElements.mock.calls.length;
+
+    // A poll: same node + edge ids, only the status flips. New object identity
+    // (as a real fetch produces) but an identical topology signature.
+    topologyRawData = {
+      nodes: [
+        { id: 'internet', type: 'internet', label: 'Internet' },
+        { id: 'service-immich.service', type: 'service', label: 'immich', status: 'down' },
+      ],
+      edges: [{ id: 'e1', source: 'internet', target: 'service-immich.service' }],
+    };
+    rerender(<NetworkDashboard />);
+
+    // No further ELK pass — the status update merges onto the existing positions.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(getLayoutedElements.mock.calls.length).toBe(layoutCallsAfterInitialLoad);
+  });
+
+  it('#2119 re-runs the ELK layout when the topology actually changes (node added)', async () => {
+    getLayoutedElements.mockClear();
+    topologyRawData = {
+      nodes: [{ id: 'service-a.service', type: 'service', label: 'a' }],
+      edges: [],
+    };
+    const { rerender } = render(<NetworkDashboard />);
+    await waitFor(() => expect(getLayoutedElements).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+    const before = getLayoutedElements.mock.calls.length;
+
+    topologyRawData = {
+      nodes: [
+        { id: 'service-a.service', type: 'service', label: 'a' },
+        { id: 'service-b.service', type: 'service', label: 'b' },
+      ],
+      edges: [],
+    };
+    rerender(<NetworkDashboard />);
+    // Topology changed → a fresh ELK pass runs.
+    await waitFor(() => expect(getLayoutedElements.mock.calls.length).toBeGreaterThan(before));
   });
 
   it('#2108 does NOT enter focus mode when the focus param matches no node (stale link)', async () => {

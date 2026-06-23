@@ -51,7 +51,9 @@ import {
   DOWN_EDGE_DASHES,
   deriveNodeNameFromGraph,
   labelForEdgeKind,
+  mergeGraphPreservingPositions,
   styleForEdgeKind,
+  topologyLayoutSignature,
   type GraphNodeData,
   type HealthData,
   type LegacyPortMapping,
@@ -823,6 +825,15 @@ export default function NetworkDashboard() {
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const rawGraphData = React.useRef<{ nodes: Node[], edges: Edge[] } | null>(null);
+  // #2119 — the topology signature (node ids + edge ids + collapsed set +
+  // focus) of the currently laid-out graph, and a snapshot of that laid-out
+  // graph. A poll whose signature is unchanged does NOT re-run ELK or reset the
+  // viewport — it merges fresh status/health onto the existing positions. We
+  // fitView only on the FIRST layout and on a focus change (intentional camera
+  // moves), never on a steady-state refresh.
+  const layoutSignatureRef = React.useRef<string | null>(null);
+  const laidOutGraphRef = React.useRef<{ nodes: Node<GraphNodeData>[]; edges: Edge[] } | null>(null);
+  const hasFitViewRef = React.useRef(false);
     const activeToastRef = React.useRef<string | null>(null);
     const { addToast, updateToast, removeToast } = useToast();
 
@@ -1119,16 +1130,81 @@ export default function NetworkDashboard() {
 
     // 4. Layout
     const layouted = await getLayoutedElements(layoutNodes, layoutEdges);
-    setNodes(applyFilter(layouted.nodes as Node<GraphNodeData>[], search));
-    setEdges(layouted.edges);
+    const filteredNodes = applyFilter(layouted.nodes as Node<GraphNodeData>[], search);
+    const layoutedEdges = layouted.edges;
+    setNodes(filteredNodes);
+    setEdges(layoutedEdges);
+    // #2119 — snapshot the laid-out graph so a subsequent identical-topology
+    // poll can merge fresh status/health onto these positions in-place
+    // (no ELK, no viewport reset).
+    laidOutGraphRef.current = { nodes: filteredNodes, edges: layoutedEdges };
 
-    // After a focus re-layout, zoom the viewport to the reduced subgraph.
+    // #2119 — fit the viewport only on the FIRST layout (empty → first data)
+    // and on a focus change (the #2108 ego-action is an intentional camera
+    // move). Steady-state polls never reach here, so the pan/zoom is preserved.
     if (focus) {
         requestAnimationFrame(() => {
             reactFlowInstance.current?.fitView({ padding: 0.2, duration: 400 });
         });
+    } else if (!hasFitViewRef.current) {
+        hasFitViewRef.current = true;
+        requestAnimationFrame(() => {
+            reactFlowInstance.current?.fitView({ padding: 0.18, minZoom: 0.7, maxZoom: 1.2 });
+        });
     }
   }, [setNodes, setEdges, applyFilter]);
+
+  // #2119 — identical-topology poll path: merge the fresh status/health data
+  // onto the already-laid-out positions and re-apply the search filter, without
+  // running ELK or touching the viewport. Requires a prior laid-out snapshot.
+  const mergeInPlace = useCallback((freshNodes: Node<GraphNodeData>[], freshEdges: Edge[], search: string) => {
+      const prev = laidOutGraphRef.current;
+      if (!prev) return;
+      const merged = mergeGraphPreservingPositions(prev.nodes, prev.edges, freshNodes, freshEdges);
+      const filtered = applyFilter(merged.nodes, search);
+      laidOutGraphRef.current = { nodes: filtered, edges: merged.edges };
+      setNodes(filtered);
+      setEdges(merged.edges);
+  }, [applyFilter, setNodes, setEdges]);
+
+  // #2119 — run-generation guard: each layout effect bumps this; an async
+  // pass only commits its focus/toast if it's still the latest run.
+  const layoutRunRef = React.useRef(0);
+
+  // #2119 — apply a fresh topology: merge in place when the signature is
+  // unchanged (no ELK, no viewport reset), else re-layout. #2108 — commit the
+  // resolved deep-link focus to state from the async callback so Back/Esc
+  // reflect it. Extracted from the effect to keep both under the size budget.
+  const applyTopology = useCallback(async (
+      gd: { nodes: Node<GraphNodeData>[]; edges: Edge[] },
+      currentCollapsed: Set<string>,
+      currentFocus: string | null,
+      signature: string,
+      focusPlan: ReturnType<typeof planDeepLinkFocus>,
+      runId: number,
+  ) => {
+      const topologyUnchanged =
+          layoutSignatureRef.current === signature && laidOutGraphRef.current !== null;
+      const hasFreshDeepLinkFocus = Boolean(focusPlan.appliedParam && focusPlan.nodeId);
+      const isStale = () => layoutRunRef.current !== runId;
+      try {
+          if (topologyUnchanged && !hasFreshDeepLinkFocus) {
+              mergeInPlace(gd.nodes, gd.edges, searchQuery);
+              if (!isStale()) resolveReloadToast('success', 'Latest network topology is ready');
+              return;
+          }
+          await processAndLayout(gd.nodes, gd.edges, currentCollapsed, searchQuery, currentFocus);
+          layoutSignatureRef.current = signature;
+          if (isStale()) return;
+          if (focusPlan.appliedParam && focusPlan.nodeId) {
+              appliedFocusParamRef.current = focusPlan.appliedParam;
+              setFocusNodeId(focusPlan.nodeId);
+          }
+          resolveReloadToast('success', 'Latest network topology is ready');
+      } catch {
+          if (!isStale()) resolveReloadToast('error', 'Unable to render network map');
+      }
+  }, [mergeInPlace, processAndLayout, searchQuery, resolveReloadToast, setFocusNodeId]);
 
   // #1071 phase 1: data layer (graph fetch + twin-driven auto-refresh
   // + the two effects that drive them) is in useTopologyData. Toast
@@ -1290,10 +1366,9 @@ export default function NetworkDashboard() {
   useEffect(() => {
       if (!graphData) return;
 
+      // currentFocus = the live focus state unless a fresh `?focus=` deep-link
+      // resolves below (its setState isn't visible until the next render).
       let currentCollapsed = collapsedGroups;
-      // The focus to lay out with this pass — the live state, unless we resolve
-      // a fresh `?focus=` deep-link below (whose setState won't be visible until
-      // the next render, so we feed the resolved id straight into this layout).
       let currentFocus = focusNodeId;
       if (!rawGraphData.current && graphData.nodes.length > 0) {
                   const groups = graphData.nodes
@@ -1303,13 +1378,9 @@ export default function NetworkDashboard() {
               setCollapsedGroups(currentCollapsed);
       }
 
-      // #2108 — resolve the `?focus=<service-name>` deep-link from the Services
-      // list to a concrete graph node id (handles the remote `<node>:` prefix).
-      // Each distinct param value is applied exactly once (ref-guard) so a
-      // manual node click / Back control isn't clobbered when this layout effect
-      // re-runs. The setState is deferred into the async runLayout callback
-      // below (not the synchronous effect body) so the first focused layout uses
-      // `currentFocus` and the Back control reflects state on the next render.
+      // #2108 — resolve the `?focus=` deep-link to a concrete node id, applied
+      // once per distinct param (ref-guard) so a manual click / Back isn't
+      // clobbered when this effect re-runs.
       const focusPlan = planDeepLinkFocus(
           graphData.nodes.map(n => n.id),
           focusParam,
@@ -1319,35 +1390,19 @@ export default function NetworkDashboard() {
       if (focusPlan.nodeId) currentFocus = focusPlan.nodeId;
 
       rawGraphData.current = graphData;
-      let cancelled = false;
 
-      const runLayout = async () => {
-          try {
-                await processAndLayout(graphData.nodes, graphData.edges, currentCollapsed, searchQuery, currentFocus);
-                if (!cancelled) {
-                     // #2108 — commit the resolved deep-link focus to state from
-                     // the async callback (subscription-style), so the Back
-                     // control + Esc-exit reflect it without a synchronous
-                     // setState in the effect body.
-                     if (focusPlan.appliedParam && focusPlan.nodeId) {
-                         appliedFocusParamRef.current = focusPlan.appliedParam;
-                         setFocusNodeId(focusPlan.nodeId);
-                     }
-                     resolveReloadToast('success', 'Latest network topology is ready');
-                }
-          } catch {
-                if (!cancelled) {
-                     resolveReloadToast('error', 'Unable to render network map');
-                }
-          }
-      };
-
-      runLayout();
-
-      return () => {
-          cancelled = true;
-      };
-  }, [graphData, processAndLayout, collapsedGroups, searchQuery, focusNodeId, focusParam, resolveReloadToast]);
+      // #2119 — signature folds the node/edge ids + collapsed set + focus
+      // (everything that moves POSITIONS); status/health/label are excluded, so
+      // a steady-state poll keeps the same signature → merge in place.
+      const signature = topologyLayoutSignature(
+          graphData.nodes,
+          graphData.edges,
+          currentCollapsed,
+          currentFocus,
+      );
+      const runId = ++layoutRunRef.current;
+      applyTopology(graphData, currentCollapsed, currentFocus, signature, focusPlan, runId);
+  }, [graphData, applyTopology, collapsedGroups, focusNodeId, focusParam]);
 
   useEffect(() => {
     // Setup SSE for progress updates
@@ -1524,7 +1579,9 @@ export default function NetworkDashboard() {
             onConnect={onConnect}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            fitView
+            // #2119 — fitView is driven imperatively (first layout + #2108 focus
+            // only). The declarative `fitView` prop refits whenever the node set
+            // changes, which would reset the viewport on every poll.
             fitViewOptions={{ padding: 0.18, minZoom: 0.7, maxZoom: 1.2 }}
             minZoom={0.1}
             maxZoom={2}

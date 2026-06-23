@@ -134,10 +134,9 @@ describe('PortalGrid', () => {
       setupAssets: [{ kind: 'basicsync_install_qr', description: 'Open-source Syncthing client.' }],
     };
 
-    it('renders the install button (closed by default, no modal)', () => {
+    it('renders the install button inline (full-row card, no expander), no modal yet', () => {
       render(<PortalGrid cards={[basicSyncCard]} />);
-      // QR-bearing assets sit behind the "How to pair" expander (#2116).
-      fireEvent.click(screen.getByText(/so koppelst du/i));
+      // QR-bearing assets are inline columns in the full-row card (#2120).
       expect(screen.getByRole('button', { name: /install basicsync on your phone/i })).toBeDefined();
       expect(screen.getByText('Open-source Syncthing client.')).toBeDefined();
       // Modal heading is not present until the button is clicked.
@@ -146,7 +145,6 @@ describe('PortalGrid', () => {
 
     it('opens the QR modal on click and closes it on backdrop click', () => {
       render(<PortalGrid cards={[basicSyncCard]} />);
-      fireEvent.click(screen.getByText(/so koppelst du/i));
       fireEvent.click(screen.getByRole('button', { name: /install basicsync on your phone/i }));
       // Modal now shows: heading + the direct-download link.
       expect(screen.getByRole('heading', { name: /install basicsync/i })).toBeDefined();
@@ -238,11 +236,10 @@ describe('PortalGrid', () => {
     });
   });
 
-  describe('sizeTier → column span (#1700)', () => {
-    /** Walk up from the card heading to the grid-cell wrapper (the div
-     *  that carries the `col-span-*` class). Post design-system migration
-     *  (#2107) the wrapper is the <Card> primitive — the heading's nearest
-     *  ancestor div with `rounded-card` (the token card chrome). */
+  describe('bento footprint → grid span (#2120)', () => {
+    /** Walk up from the card heading to the grid-cell wrapper (the <Card>
+     *  primitive — the heading's nearest ancestor div with `rounded-card`,
+     *  which carries the `col-span-*` footprint class). */
     const cardWrapper = (label: string): HTMLElement => {
       const heading = screen.getByRole('heading', { name: label });
       const wrapper = heading.closest('div.rounded-card');
@@ -250,29 +247,111 @@ describe('PortalGrid', () => {
       return wrapper as HTMLElement;
     };
 
-    it('gives a compact card md:col-span-3', () => {
-      render(<PortalGrid cards={[{ ...baseCard, sizeTier: 'compact' }]} />);
+    /** A file-share card carrying the heavy Syncthing pairing block →
+     *  derives the `full-row` footprint. */
+    const syncthingCard: PortalCard = {
+      ...baseCard,
+      id: 'file-share:SYNCTHING_SUBDOMAIN',
+      name: 'file-share',
+      label: 'Syncthing',
+      setupAssets: [
+        { kind: 'basicsync_install_qr', label: 'Install BasicSync on your phone' },
+        { kind: 'syncthing_qr', label: 'Pair this device' },
+      ],
+    };
+
+    it('renders an ordinary service card as a 1×1 tile (single column)', () => {
+      render(<PortalGrid cards={[baseCard]} />);
       const cls = cardWrapper('Photos').className;
-      expect(cls).toContain('md:col-span-3');
-      expect(cls).toContain('col-span-1'); // mobile stays 1 col
+      expect(cls).toContain('col-span-1');
+      expect(cls).not.toContain('md:col-span-full'); // not full-row
     });
 
-    it('gives a regular card md:col-span-4', () => {
-      render(<PortalGrid cards={[{ ...baseCard, sizeTier: 'regular' }]} />);
-      expect(cardWrapper('Photos').className).toContain('md:col-span-4');
+    it('gives the Syncthing pairing card the full-row footprint (spans the grid width)', () => {
+      render(<PortalGrid cards={[syncthingCard]} />);
+      const cls = cardWrapper('Syncthing').className;
+      expect(cls).toContain('md:col-span-full');
+      expect(cls).toContain('col-span-1'); // narrow screens stay full-width single column
     });
 
-    it('gives a feature card md:col-span-6 (action-rich → wider)', () => {
-      render(<PortalGrid cards={[{ ...baseCard, sizeTier: 'feature' }]} />);
-      expect(cardWrapper('Photos').className).toContain('md:col-span-6');
+    it('marks the full-row card with a data-footprint hook', () => {
+      render(<PortalGrid cards={[syncthingCard]} />);
+      const wrapper = cardWrapper('Syncthing');
+      expect(wrapper.getAttribute('data-footprint')).toBe('full-row');
     });
 
-    it('renders a feature (action-rich) card wider than a compact one', () => {
-      const compact: PortalCard = { ...baseCard, id: 'a:x', label: 'Bare', sizeTier: 'compact' };
-      const feature: PortalCard = { ...baseCard, id: 'b:y', label: 'Files', sizeTier: 'feature' };
-      render(<PortalGrid cards={[compact, feature]} />);
-      expect(cardWrapper('Bare').className).toContain('md:col-span-3');
-      expect(cardWrapper('Files').className).toContain('md:col-span-6');
+    it('renders the bento grid as a fixed multi-column composition (3-col md, 1-col mobile)', () => {
+      render(<PortalGrid cards={[baseCard]} />);
+      const grid = screen.getByRole('heading', { name: 'Photos' }).closest('div.grid')!;
+      expect(grid.className).toContain('grid-cols-1');
+      expect(grid.className).toContain('md:grid-cols-3');
+      // Intentional bento, not content-driven equal-height stretch.
+      expect(grid.className).not.toContain('items-stretch');
+      expect(grid.className).toContain('items-start');
+    });
+
+    it('keeps a 1×1 tile equal-height with its peers (h-full) for an even bento row', () => {
+      render(<PortalGrid cards={[baseCard]} />);
+      expect(cardWrapper('Photos').className).toContain('h-full');
+    });
+  });
+
+  describe('full-row card horizontal layout (#2120)', () => {
+    const syncthingCard: PortalCard = {
+      ...baseCard,
+      id: 'file-share:SYNCTHING_SUBDOMAIN',
+      name: 'file-share',
+      label: 'Syncthing',
+      url: 'https://files.home.arpa',
+      setupAssets: [
+        { kind: 'basicsync_install_qr', label: 'Install BasicSync on your phone', description: 'Install the app first.' },
+        { kind: 'syncthing_qr', label: 'Pair this device', description: 'Use /var/syncthing/Sync/<name> for the shared drive.' },
+      ],
+      recommendedApps: [{ name: 'Syncthing', url: 'https://syncthing.net', platforms: ['android'] }],
+    };
+
+    const cardWrapper = (label: string): HTMLElement =>
+      screen.getByRole('heading', { name: label }).closest('div.rounded-card') as HTMLElement;
+
+    it('lays the full-row card sections out horizontally side-by-side (md:flex-row + section column grid)', () => {
+      render(<PortalGrid cards={[syncthingCard]} />);
+      const wrapper = cardWrapper('Syncthing');
+      // Top-level row container goes horizontal on md+.
+      const row = wrapper.querySelector('div.md\\:flex-row');
+      expect(row).not.toBeNull();
+      // The section block is a horizontal column grid (not a tall stack).
+      const sectionGrid = wrapper.querySelector('div.md\\:grid-cols-2');
+      expect(sectionGrid).not.toBeNull();
+    });
+
+    it('shows the BasicSync install + Pair QRs inline (NOT collapsed behind an expander)', () => {
+      render(<PortalGrid cards={[syncthingCard]} />);
+      // No "How to pair" expander in the full-row layout — buttons are
+      // directly reachable as side-by-side columns.
+      expect(screen.queryByText(/so koppelst du/i)).toBeNull();
+      expect(screen.getByRole('button', { name: /install basicsync on your phone/i })).toBeDefined();
+      expect(screen.getByRole('button', { name: /pair this device/i })).toBeDefined();
+    });
+
+    it('keeps the Open CTA + storage-path note + recommended apps in the full-row card', () => {
+      render(<PortalGrid cards={[syncthingCard]} />);
+      const open = screen.getByRole('link', { name: /^open$/i });
+      expect(open.getAttribute('href')).toBe('https://files.home.arpa');
+      expect(screen.getByText(/\/var\/syncthing\/sync/i)).toBeDefined();
+      expect(screen.getByRole('link', { name: 'Syncthing' }).getAttribute('href')).toBe('https://syncthing.net');
+    });
+
+    it('still opens the pairing QR modal from the inline button (function preserved)', () => {
+      render(<PortalGrid cards={[syncthingCard]} />);
+      expect(screen.queryByRole('heading', { name: /pair this device/i })).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: /pair this device/i }));
+      expect(screen.getByRole('heading', { name: /pair this device/i })).toBeDefined();
+    });
+
+    it('stacks the full-row card columns on narrow screens (flex-col base, md:flex-row)', () => {
+      render(<PortalGrid cards={[syncthingCard]} />);
+      const row = cardWrapper('Syncthing').querySelector('div.flex-col.md\\:flex-row');
+      expect(row).not.toBeNull();
     });
   });
 
@@ -392,9 +471,8 @@ describe('PortalGrid', () => {
 
     it('renders the pair button on tokens and keeps the fetch-on-click QR flow', () => {
       render(<PortalGrid cards={[syncCard]} />);
-      // The pairing block is now behind a "How to pair" expander (#2116);
-      // open it first, then the pair button is reachable.
-      fireEvent.click(screen.getByText(/so koppelst du/i));
+      // The pairing block is an inline column in the full-row card (#2120) —
+      // the pair button is directly reachable, no expander.
       const btn = screen.getByRole('button', { name: /pair/i });
       expect(btn.className).toContain('bg-accent');
       expect(btn.className).not.toContain('bg-emerald-600');
@@ -405,7 +483,7 @@ describe('PortalGrid', () => {
     });
   });
 
-  describe('balanced equal-height card grid (#2116)', () => {
+  describe('even bento tile composition (#2120)', () => {
     /** The grid container is the heading's nearest ancestor div carrying
      *  the `grid` class. */
     const gridOf = (label: string): HTMLElement => {
@@ -416,82 +494,36 @@ describe('PortalGrid', () => {
     const cardOf = (label: string): HTMLElement =>
       screen.getByRole('heading', { name: label }).closest('div.rounded-card') as HTMLElement;
 
-    it('stretches grid rows so same-row cards share a height (items-stretch + h-full)', () => {
+    it('renders a fixed bento composition (md:grid-cols-3, items-start, not stretch)', () => {
       render(<PortalGrid cards={[baseCard]} />);
       const grid = gridOf('Photos');
-      expect(grid.className).toContain('items-stretch');
-      expect(grid.className).not.toContain('items-start');
-      // Each card fills the stretched row.
-      expect(cardOf('Photos').className).toContain('h-full');
+      expect(grid.className).toContain('md:grid-cols-3');
+      expect(grid.className).toContain('items-start');
+      expect(grid.className).not.toContain('items-stretch');
     });
 
-    it('keeps a responsive 1 / multi-col layout (1 col mobile, 12-col md track)', () => {
+    it('keeps a responsive 1 / multi-col layout (1 col mobile, 3-col md track)', () => {
       render(<PortalGrid cards={[baseCard]} />);
       const grid = gridOf('Photos');
       expect(grid.className).toContain('grid-cols-1');
-      expect(grid.className).toContain('md:grid-cols-12');
+      expect(grid.className).toContain('md:grid-cols-3');
       expect(grid.className).toContain('gap-6');
     });
 
-    it('renders an even row of three regular cards that each fill the row height', () => {
-      const a: PortalCard = { ...baseCard, id: 'a:x', label: 'Alpha', sizeTier: 'regular' };
-      const b: PortalCard = { ...baseCard, id: 'b:y', label: 'Beta', sizeTier: 'regular' };
-      const c: PortalCard = { ...baseCard, id: 'c:z', label: 'Gamma', sizeTier: 'regular' };
+    it('renders an even row of three 1×1 tiles that each fill the row height', () => {
+      const a: PortalCard = { ...baseCard, id: 'a:x', label: 'Alpha' };
+      const b: PortalCard = { ...baseCard, id: 'b:y', label: 'Beta' };
+      const c: PortalCard = { ...baseCard, id: 'c:z', label: 'Gamma' };
       render(<PortalGrid cards={[a, b, c]} />);
       for (const label of ['Alpha', 'Beta', 'Gamma']) {
         expect(cardOf(label).className).toContain('h-full');
-        expect(cardOf(label).className).toContain('md:col-span-4');
+        expect(cardOf(label).className).toContain('col-span-1');
       }
     });
   });
 
-  describe('Syncthing pairing block collapsed behind expander (#2116)', () => {
-    const syncCard: PortalCard = {
-      ...baseCard,
-      id: 'file-share:SYNCTHING_SUBDOMAIN',
-      name: 'file-share',
-      label: 'Syncthing',
-      setupAssets: [
-        { kind: 'basicsync_install_qr', label: 'Install BasicSync on your phone', description: 'Install the app first.' },
-        { kind: 'syncthing_qr', label: 'Pair this device', description: 'Use /var/syncthing/Sync/<name> for the shared drive.' },
-      ],
-    };
-
-    it('keeps the primary Open CTA visible at rest, like other cards', () => {
-      render(<PortalGrid cards={[syncCard]} />);
-      expect(screen.getByRole('link', { name: /^open$/i })).toBeDefined();
-    });
-
-    it('hides the pairing buttons behind a collapsed "How to pair" expander by default', () => {
-      render(<PortalGrid cards={[syncCard]} />);
-      // The summary is present...
-      const summary = screen.getByText(/so koppelst du/i);
-      expect(summary).toBeDefined();
-      // ...and its <details> is closed by default → buttons not actionable yet.
-      const details = summary.closest('details');
-      expect(details).not.toBeNull();
-      expect((details as HTMLDetailsElement).open).toBe(false);
-    });
-
-    it('reveals the BasicSync install QR + pairing QR + storage-path note when opened', () => {
-      render(<PortalGrid cards={[syncCard]} />);
-      fireEvent.click(screen.getByText(/so koppelst du/i));
-      // Both QR-launching buttons are now reachable.
-      expect(screen.getByRole('button', { name: /install basicsync on your phone/i })).toBeDefined();
-      expect(screen.getByRole('button', { name: /pair this device/i })).toBeDefined();
-      // The storage-path note (asset description) is revealed.
-      expect(screen.getByText(/\/var\/syncthing\/sync/i)).toBeDefined();
-    });
-
-    it('still opens the pairing QR modal from inside the expander (function preserved)', () => {
-      render(<PortalGrid cards={[syncCard]} />);
-      fireEvent.click(screen.getByText(/so koppelst du/i));
-      expect(screen.queryByRole('heading', { name: /pair this device/i })).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: /pair this device/i }));
-      expect(screen.getByRole('heading', { name: /pair this device/i })).toBeDefined();
-    });
-
-    it('renders a single light asset inline (no expander) — only heavy blocks collapse', () => {
+  describe('1×1 tile keeps light setup assets inline (#2120)', () => {
+    it('renders a single light asset inline (no expander) — 1×1 tiles never grow a heavy block', () => {
       const absCard: PortalCard = {
         ...baseCard,
         id: 'abs:ABS_SUBDOMAIN',

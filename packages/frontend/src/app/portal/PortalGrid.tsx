@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
-  BookOpen, Bot, Calendar, CalendarDays, Camera, Check, ChevronDown, Code, Copy,
+  BookOpen, Bot, Calendar, CalendarDays, Camera, Check, Code, Copy,
   Download, ExternalLink, Files, Film, Folder, FolderOpen, Globe,
   Headphones, House, Image as ImageIcon, Images, KeyRound, Lightbulb,
   Lightbulb as LightbulbIcon, Loader2, Lock, Mail, MessageSquare,
@@ -19,16 +19,48 @@ import type { AppPlatform, PortalAction, PortalIconName, SetupAssetKind } from '
 
 type IconComponent = typeof Camera;
 
-/** Per-tier column span on the 12-col `md` grid (#1700). Action-rich
- *  cards get more width; light cards get less; height stays
- *  content-driven (the grid uses `items-start`, not stretch). These MUST
- *  be literal Tailwind classes — Tailwind can't see an interpolated
- *  `col-span-${n}`, so they'd get purged. Keyed by the server-derived
- *  `sizeTier` (`packages/backend/src/lib/portal/services.ts`). */
-const SIZE_TIER_SPAN: Record<PortalCard['sizeTier'], string> = {
-  compact: 'md:col-span-3', // 4 per row
-  regular: 'md:col-span-4', // 3 per row
-  feature: 'md:col-span-6', // 2 per row
+/**
+ * A card's grid footprint (#2120, portal-layout v2). The portal is a
+ * deliberate **bento composition**, not a content-driven equal-height
+ * grid: each card declares how much of the grid it occupies and its
+ * content adapts to that slot.
+ *   - `1x1`      — a standard service tile. One column on the bento
+ *                  grid; on narrow screens it stacks to full width.
+ *                  Text wraps/truncates to fit the tile.
+ *   - `full-row` — a content-heavy card (today: Syncthing/file-share,
+ *                  which carries the Install-BasicSync + Pair-device QRs
+ *                  + storage-path note). Spans the entire grid width and
+ *                  lays its sections out HORIZONTALLY side-by-side in one
+ *                  row — compact, not a tall pile.
+ */
+type CardFootprint = '1x1' | 'full-row';
+
+/**
+ * Derive a card's bento {@link CardFootprint} (#2120) from what it
+ * carries. The only full-row citizen today is the Syncthing/file-share
+ * card — it ships the heavy pairing block (Install-BasicSync QR + Pair
+ * QR + storage-path note) that dwarfed every 1×1 tile. We key off the
+ * QR-bearing setup assets (`syncthing_qr` / `basicsync_install_qr`)
+ * rather than the service name so the rule travels with the *content*:
+ * any future card that grows the same heavy pairing block gets the wide
+ * horizontal slot automatically, and a card that loses it drops back to
+ * 1×1. Everything else is a standard 1×1 tile.
+ */
+function cardFootprint(card: PortalCard): CardFootprint {
+  const hasPairingBlock = card.setupAssets.some(
+    a => a.kind === 'syncthing_qr' || a.kind === 'basicsync_install_qr',
+  );
+  return hasPairingBlock ? 'full-row' : '1x1';
+}
+
+/** Per-footprint grid-cell span (#2120). The bento grid is a fixed
+ *  3-column composition on `md`+; a 1×1 tile takes one column, a
+ *  full-row card spans every column. These MUST be literal Tailwind
+ *  classes — Tailwind can't see an interpolated `col-span-${n}`, so an
+ *  interpolated value would be purged. */
+const FOOTPRINT_SPAN: Record<CardFootprint, string> = {
+  '1x1': 'col-span-1',
+  'full-row': 'col-span-1 md:col-span-full',
 };
 
 /**
@@ -195,106 +227,22 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
 
   return (
     <>
-    <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch">
-      {cards.map(card => {
-        return (
-          <Card
-            key={card.id}
-            padding="none"
-            className={`overflow-hidden flex flex-col h-full col-span-1 ${SIZE_TIER_SPAN[card.sizeTier]}`}
-          >
-            {/* Header — icon + title + tagline. The tagline is clamped
-                to 3 lines so the header height is consistent across
-                cards; the grid stretches rows to equal height
-                (`items-stretch` + card `h-full`, #2116) and the
-                variable-content region below carries `flex-1` to absorb
-                the slack — cards in a row line up cleanly. */}
-            <div className="p-space-5 pb-space-3">
-              <CardIcon card={card} />
-              <div className="flex items-center gap-space-2">
-                <h2 className="text-xl font-bold text-text">{card.label}</h2>
-                <StatusBadge status={card.status} reason={card.statusReason} />
-              </div>
-              <p className="mt-space-2 text-sm text-text-muted line-clamp-3">
-                {card.tagline ?? ''}
-              </p>
-            </div>
-
-            {/* CTA — at fixed offset from card top thanks to the
-                clamped header above. Consistent Y across cards. An
-                Open-URL card shows the accent "Open" button; a URL-less
-                appless card (#1618) shows its primary action instead,
-                followed by any secondary action buttons. Stays visible
-                like every other card's primary affordance (#2116). */}
-            <div className="px-space-5 space-y-space-2">
-              <CardCta card={card} isMobile={isMobile} />
-            </div>
-
-            {/* Variable content below. `flex-1` lets the card stretch to
-                the row's tallest sibling (#2116) so a row of cards lines
-                up; the footer "How do I use this?" sits at the bottom. */}
-            <div className="flex-1 px-space-5 pt-space-3 pb-space-5 space-y-space-3">
-
-              {card.setupAssets.length > 0 && (
-                <SetupAssets card={card} isIOS={isIOS} isMobile={isMobile} />
-              )}
-
-              {card.manualPairing.length > 0 && (
-                <ManualPairingPanel steps={card.manualPairing} />
-              )}
-
-              {card.recommendedApps.length > 0 && (
-                <div className="pt-space-2 space-y-1.5">
-                  <div className="text-[11px] uppercase tracking-wide font-medium text-text-muted">
-                    <Sparkles size={11} className="inline align-middle -mt-0.5" /> Recommended apps
-                  </div>
-                  <ul className="space-y-1.5">
-                    {card.recommendedApps.map(app => (
-                      <li key={app.url} className="text-xs">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                          <a
-                            href={app.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="font-medium text-accent hover:underline"
-                          >
-                            {app.name}
-                          </a>
-                          {app.platforms?.map(p => (
-                            <span
-                              key={p}
-                              className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-chip bg-surface-2 text-text-muted"
-                            >
-                              {PLATFORM_LABELS[p]}
-                            </span>
-                          ))}
-                        </div>
-                        {app.note && (
-                          <p className="text-text-subtle mt-0.5 leading-snug">
-                            {app.note}
-                          </p>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {card.body.trim().length > 0 && (
-                <div>
-                  <button
-                    onClick={() => setActiveCardId(card.id)}
-                    className="flex items-center gap-1 text-sm text-accent hover:underline mt-space-2"
-                    aria-haspopup="dialog"
-                  >
-                    How do I use this?
-                  </button>
-                </div>
-              )}
-            </div>
-          </Card>
-        );
-      })}
+    {/* Deliberate bento composition (#2120). A fixed 3-column grid on
+        `md`+: 1×1 service tiles tile evenly; a `full-row` card spans
+        every column and lays its sections out horizontally. `auto-rows`
+        keeps tile rows even; `items-start` lets a full-row card own its
+        own (shorter) height instead of stretching the whole row. On
+        narrow screens everything collapses to a single column. */}
+    <div className="grid grid-cols-1 md:grid-cols-3 auto-rows-auto gap-6 items-start">
+      {cards.map(card => (
+        <BentoCard
+          key={card.id}
+          card={card}
+          isIOS={isIOS}
+          isMobile={isMobile}
+          onHelp={() => setActiveCardId(card.id)}
+        />
+      ))}
     </div>
 
     {activeCard && (
@@ -304,21 +252,257 @@ export default function PortalGrid({ cards }: { cards: PortalCard[] }) {
   );
 }
 
+/** Dispatch a card to its bento footprint renderer (#2120): a content-
+ *  heavy `full-row` card to {@link FullRowCard}, everything else to the
+ *  standard 1×1 {@link StandardCard}. */
+function BentoCard(props: {
+  card: PortalCard;
+  isIOS: boolean;
+  isMobile: boolean;
+  onHelp: () => void;
+}) {
+  return cardFootprint(props.card) === 'full-row' ? (
+    <FullRowCard {...props} />
+  ) : (
+    <StandardCard {...props} />
+  );
+}
+
 /**
- * Setup-asset list, collapsed behind a "How to pair" / "So koppelst du"
- * expander (#2116). Several services (notably file-share / Syncthing)
- * ship a verbose pairing block — Install BasicSync, Pair this device,
- * the storage-path note, two QR codes — that dwarfed the other service
- * cards and left the grid ragged. We tuck the whole asset block behind a
- * `<details>` (closed by default) so the card's resting size matches its
- * peers; the primary "Open" CTA above stays visible like every other
- * card. Opening the expander reveals the BasicSync-install QR + the
- * pairing QR + the storage-path/description notes — every asset stays
- * reachable, the QR fetch-on-click flows are unchanged.
- *
- * A single light-weight asset (e.g. an audiobookshelf deep-link on a
- * card that's otherwise compact) doesn't need hiding — only collapse
- * when the block is genuinely heavy (a QR-bearing asset, or 2+ assets).
+ * Standard 1×1 service tile (#2120). One column of the bento grid (full
+ * width on narrow screens). Content adapts to the tile: the label
+ * truncates and the tagline clamps to fit the fixed slot. Tiles in a row
+ * share a height (`h-full`) so the bento composition reads as even and
+ * intentional rather than ragged.
+ */
+function StandardCard({
+  card,
+  isIOS,
+  isMobile,
+  onHelp,
+}: {
+  card: PortalCard;
+  isIOS: boolean;
+  isMobile: boolean;
+  onHelp: () => void;
+}) {
+  return (
+    <Card
+      padding="none"
+      className={`overflow-hidden flex flex-col h-full ${FOOTPRINT_SPAN['1x1']}`}
+    >
+      {/* Header — icon + title + tagline. Title truncates and tagline
+          clamps so the tile content fits its 1×1 slot (#2120). */}
+      <div className="p-space-5 pb-space-3">
+        <CardIcon card={card} />
+        <div className="flex items-center gap-space-2 min-w-0">
+          <h2 className="text-xl font-bold text-text truncate min-w-0">{card.label}</h2>
+          <StatusBadge status={card.status} reason={card.statusReason} />
+        </div>
+        <p className="mt-space-2 text-sm text-text-muted line-clamp-3">
+          {card.tagline ?? ''}
+        </p>
+      </div>
+
+      {/* CTA — Open-URL card shows the accent "Open" button; a URL-less
+          appless card (#1618) shows its primary action instead. */}
+      <div className="px-space-5 space-y-space-2">
+        <CardCta card={card} isMobile={isMobile} />
+      </div>
+
+      {/* Variable content. `flex-1` lets the tile stretch to its row's
+          tallest sibling so the bento row stays even (#2120). */}
+      <div className="flex-1 px-space-5 pt-space-3 pb-space-5 space-y-space-3">
+        {card.setupAssets.length > 0 && (
+          <SetupAssets card={card} isIOS={isIOS} isMobile={isMobile} />
+        )}
+        {card.manualPairing.length > 0 && (
+          <ManualPairingPanel steps={card.manualPairing} />
+        )}
+        {card.recommendedApps.length > 0 && (
+          <RecommendedApps apps={card.recommendedApps} />
+        )}
+        {card.body.trim().length > 0 && <HowToButton onClick={onHelp} />}
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Full-row bento card (#2120). A content-heavy card (Syncthing) that
+ * spans the whole grid width and lays its sections out HORIZONTALLY
+ * side-by-side — the "Open" CTA, the BasicSync-install QR, the Pair QR,
+ * and the recommended-apps/storage-path note become adjacent columns
+ * instead of a tall stack. On narrow screens the columns stack and the
+ * card stays full width — keeping the verbose pairing block from
+ * towering over the 1×1 tiles while every affordance stays directly
+ * reachable (QRs inline, not collapsed).
+ */
+function FullRowCard({
+  card,
+  isIOS,
+  isMobile,
+  onHelp,
+}: {
+  card: PortalCard;
+  isIOS: boolean;
+  isMobile: boolean;
+  onHelp: () => void;
+}) {
+  return (
+    <Card
+      padding="none"
+      data-footprint="full-row"
+      className={`overflow-hidden ${FOOTPRINT_SPAN['full-row']}`}
+    >
+      <div className="p-space-5 flex flex-col md:flex-row md:items-start gap-space-5">
+        <FullRowLeadColumn card={card} isMobile={isMobile} onHelp={onHelp} />
+
+        {/* Horizontal section columns — the pairing block + extras flow
+            side-by-side on `md`+, stacking on narrow screens. */}
+        <div className="flex-1 min-w-0 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-space-4 items-start">
+          {card.setupAssets.length > 0 && (
+            <FullRowSetupColumns card={card} isIOS={isIOS} isMobile={isMobile} />
+          )}
+          {card.manualPairing.length > 0 && (
+            <div className="min-w-0">
+              <ManualPairingPanel steps={card.manualPairing} />
+            </div>
+          )}
+          {card.recommendedApps.length > 0 && (
+            <div className="min-w-0">
+              <RecommendedApps apps={card.recommendedApps} />
+            </div>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/** The full-row card's lead column (#2120): icon + title + status +
+ *  tagline + the Open CTA + the help button. Fixed-ish width so the
+ *  horizontal section columns get the remaining width. Split out to keep
+ *  {@link FullRowCard} under the per-function line budget. */
+function FullRowLeadColumn({
+  card,
+  isMobile,
+  onHelp,
+}: {
+  card: PortalCard;
+  isMobile: boolean;
+  onHelp: () => void;
+}) {
+  return (
+    <div className="md:w-64 md:shrink-0 space-y-space-3">
+      <CardIcon card={card} />
+      <div className="flex items-center gap-space-2 min-w-0">
+        <h2 className="text-xl font-bold text-text truncate min-w-0">{card.label}</h2>
+        <StatusBadge status={card.status} reason={card.statusReason} />
+      </div>
+      {card.tagline && (
+        <p className="text-sm text-text-muted leading-snug">{card.tagline}</p>
+      )}
+      <div className="space-y-space-2">
+        <CardCta card={card} isMobile={isMobile} />
+      </div>
+      {card.body.trim().length > 0 && <HowToButton onClick={onHelp} />}
+    </div>
+  );
+}
+
+/** "How do I use this?" footer button (#2120, extracted so the standard
+ *  and full-row cards share it). Opens the markdown help modal. */
+function HowToButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1 text-sm text-accent hover:underline mt-space-2"
+      aria-haspopup="dialog"
+    >
+      How do I use this?
+    </button>
+  );
+}
+
+/** Recommended-apps list (#2120, extracted to share between the 1×1 and
+ *  full-row card layouts). Each app link keeps its href/target/rel. */
+function RecommendedApps({ apps }: { apps: PortalCard['recommendedApps'] }) {
+  return (
+    <div className="pt-space-2 space-y-1.5">
+      <div className="text-[11px] uppercase tracking-wide font-medium text-text-muted">
+        <Sparkles size={11} className="inline align-middle -mt-0.5" /> Recommended apps
+      </div>
+      <ul className="space-y-1.5">
+        {apps.map(app => (
+          <li key={app.url} className="text-xs">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <a
+                href={app.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-accent hover:underline"
+              >
+                {app.name}
+              </a>
+              {app.platforms?.map(p => (
+                <span
+                  key={p}
+                  className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-chip bg-surface-2 text-text-muted"
+                >
+                  {PLATFORM_LABELS[p]}
+                </span>
+              ))}
+            </div>
+            {app.note && (
+              <p className="text-text-subtle mt-0.5 leading-snug">{app.note}</p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The full-row card's setup assets laid out as horizontal columns
+ * (#2120). Each visible asset (Install-BasicSync, Pair-this-device, …)
+ * becomes its own column cell in the full-row section grid — side-by-side
+ * on `md`+, stacking on narrow screens. The wide-slot counterpart to
+ * {@link SetupAssets}'s collapsed expander: here there's room to show
+ * every QR/install action inline. Buttons + fetch-on-click QR modals are
+ * unchanged — only the arrangement differs.
+ */
+function FullRowSetupColumns({
+  card,
+  isIOS,
+  isMobile,
+}: {
+  card: PortalCard;
+  isIOS: boolean;
+  isMobile: boolean;
+}) {
+  const visible = card.setupAssets.filter(a => shouldShowAsset(a.kind, isIOS, isMobile));
+  if (visible.length === 0) return null;
+  return (
+    <>
+      {visible.map(asset => (
+        <div key={asset.kind} className="min-w-0">
+          <SetupAssetButton card={card} asset={asset} isIOS={isIOS} />
+        </div>
+      ))}
+    </>
+  );
+}
+
+/**
+ * Setup-asset list for a 1×1 tile (#2116/#2120). The heavy QR pairing
+ * block now lives in the `full-row` card ({@link FullRowSetupColumns}),
+ * so in a 1×1 tile this only ever renders light assets (an iOS calendar
+ * profile, an audiobookshelf deep-link). A single light asset renders
+ * inline; if a tile happens to carry 2+ light assets we still tuck them
+ * behind a collapsed "How to pair" / "So koppelst du" `<details>` so the
+ * tile's resting size matches its peers — every asset stays reachable.
  */
 function SetupAssets({
   card,
@@ -332,33 +516,15 @@ function SetupAssets({
   const visible = card.setupAssets.filter(a => shouldShowAsset(a.kind, isIOS, isMobile));
   if (visible.length === 0) return null;
 
-  const buttons = (
+  // In a 1×1 tile the assets are always light (the heavy QR pairing
+  // block forces a `full-row` card → FullRowSetupColumns), so they
+  // render inline directly — no collapse needed.
+  return (
     <div className="space-y-1.5">
       {visible.map(asset => (
         <SetupAssetButton key={asset.kind} card={card} asset={asset} isIOS={isIOS} />
       ))}
     </div>
-  );
-
-  // Heavy pairing block (a QR-bearing asset, or several assets) → tuck
-  // behind a collapsed expander so the card stays compact. A single
-  // light asset renders inline (no expander needed).
-  const isHeavy =
-    visible.some(a => a.kind === 'syncthing_qr' || a.kind === 'basicsync_install_qr') ||
-    visible.length > 1;
-  if (!isHeavy) return buttons;
-
-  return (
-    <details className="group rounded-card border border-border bg-surface-2/50">
-      <summary className="flex items-center justify-between gap-space-2 cursor-pointer select-none px-space-3 py-space-2 text-sm font-medium text-text marker:content-none [&::-webkit-details-marker]:hidden">
-        <span className="flex items-center gap-space-2">
-          <QrCode size={14} className="text-accent shrink-0" /> So koppelst du
-          <span className="text-text-subtle font-normal">/ How to pair</span>
-        </span>
-        <ChevronDown size={16} className="text-text-subtle shrink-0 transition-transform group-open:rotate-180" />
-      </summary>
-      <div className="px-space-3 pb-space-3 pt-space-1">{buttons}</div>
-    </details>
   );
 }
 

@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import type { Node, Edge } from '@xyflow/react';
-import { computeEgoNodeIds, buildOrthogonalPath } from './networkDashboard';
+import {
+  computeEgoNodeIds,
+  buildOrthogonalPath,
+  topologyLayoutSignature,
+  mergeGraphPreservingPositions,
+} from './networkDashboard';
 
 // Minimal graph mirroring the map's shape:
 //   internet → router → nginx → {hermes, auth, immich}
@@ -195,5 +200,90 @@ describe('buildOrthogonalPath — line-hops (#1784)', () => {
       [{ x: 100, y: 999 }],
     );
     expect(path).not.toContain(' A ');
+  });
+});
+
+describe('#2119 topologyLayoutSignature', () => {
+  const n = (id: string, status?: string): Node =>
+    ({ id, type: 'custom', position: { x: 0, y: 0 }, data: { type: 'service', label: id, status } });
+  const e = (s: string, t: string): Edge => ({ id: `e-${s}-${t}`, source: s, target: t });
+
+  it('is identical when only node STATUS changes (no re-layout on a status poll)', () => {
+    const a = topologyLayoutSignature([n('s1', 'up'), n('s2', 'up')], [e('s1', 's2')]);
+    const b = topologyLayoutSignature([n('s1', 'down'), n('s2', 'up')], [e('s1', 's2')]);
+    expect(a).toBe(b);
+  });
+
+  it('is order-independent (same ids in a different array order match)', () => {
+    const a = topologyLayoutSignature([n('s1'), n('s2')], [e('s1', 's2')]);
+    const b = topologyLayoutSignature([n('s2'), n('s1')], [e('s1', 's2')]);
+    expect(a).toBe(b);
+  });
+
+  it('changes when a node is added', () => {
+    const a = topologyLayoutSignature([n('s1')], []);
+    const b = topologyLayoutSignature([n('s1'), n('s2')], []);
+    expect(a).not.toBe(b);
+  });
+
+  it('changes when an edge is added', () => {
+    const a = topologyLayoutSignature([n('s1'), n('s2')], []);
+    const b = topologyLayoutSignature([n('s1'), n('s2')], [e('s1', 's2')]);
+    expect(a).not.toBe(b);
+  });
+
+  it('changes when the collapsed set or focus changes', () => {
+    const base = topologyLayoutSignature([n('s1'), n('s2')], [e('s1', 's2')]);
+    expect(base).not.toBe(
+      topologyLayoutSignature([n('s1'), n('s2')], [e('s1', 's2')], new Set(['s1'])),
+    );
+    expect(base).not.toBe(
+      topologyLayoutSignature([n('s1'), n('s2')], [e('s1', 's2')], null, 's1'),
+    );
+  });
+});
+
+describe('#2119 mergeGraphPreservingPositions', () => {
+  const laid = (id: string, x: number, status?: string): Node =>
+    ({ id, type: 'custom', position: { x, y: x }, data: { type: 'service', label: id, status }, style: { width: 320 } });
+  const fresh = (id: string, status?: string): Node =>
+    ({ id, type: 'custom', position: { x: 0, y: 0 }, data: { type: 'service', label: id, status } });
+
+  it('carries the laid-out position forward while taking the fresh data', () => {
+    const { nodes } = mergeGraphPreservingPositions(
+      [laid('s1', 100, 'up'), laid('s2', 200, 'up')],
+      [],
+      [fresh('s1', 'down'), fresh('s2', 'up')],
+      [],
+    );
+    // positions preserved (NOT reset to the fresh {0,0})
+    expect(nodes.find((x) => x.id === 's1')!.position).toEqual({ x: 100, y: 100 });
+    expect(nodes.find((x) => x.id === 's2')!.position).toEqual({ x: 200, y: 200 });
+    // fresh status flows through
+    expect((nodes.find((x) => x.id === 's1')!.data as { status?: string }).status).toBe('down');
+    // layout-sized style preserved
+    expect(nodes.find((x) => x.id === 's1')!.style).toEqual({ width: 320 });
+  });
+
+  it('keeps the laid-out routed edge geometry, refreshing only styling/label', () => {
+    const laidEdge: Edge = {
+      id: 'e-s1-s2', source: 's1', target: 's2',
+      data: { points: [{ x: 1, y: 2 }], originalId: 'orig' },
+      style: { stroke: 'old' }, label: 'old',
+    };
+    const freshEdge: Edge = {
+      id: 'different', source: 's1', target: 's2',
+      data: { kind: 'observed' }, style: { stroke: 'new' }, label: 'new', animated: true,
+    };
+    const { edges } = mergeGraphPreservingPositions(
+      [laid('s1', 1), laid('s2', 2)], [laidEdge],
+      [fresh('s1'), fresh('s2')], [freshEdge],
+    );
+    const m = edges[0];
+    expect(m.id).toBe('e-s1-s2'); // routed/generated id preserved
+    expect((m.data as { points?: unknown }).points).toEqual([{ x: 1, y: 2 }]); // geometry preserved
+    expect((m.data as { kind?: string }).kind).toBe('observed'); // fresh provenance merged
+    expect(m.style).toEqual({ stroke: 'new' }); // styling refreshed
+    expect(m.label).toBe('new');
   });
 });
