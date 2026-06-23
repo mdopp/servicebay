@@ -9,6 +9,8 @@ import { useCoreHealth } from '@/hooks/useCoreHealth';
 import { useImageUpdates, type ServiceImageUpdate } from '@/hooks/useImageUpdates';
 import { useServiceActions } from '@/hooks/useServiceActions';
 import ImageUpdatesPendingBanner from '@/components/ImageUpdatesPendingBanner';
+import ServiceBayUpdateCard from '@/components/ServiceBayUpdateCard';
+import { SectionHeading } from '@/components/ui';
 
 /**
  * Latest persisted diagnose breakdown for the Home card (#1873).
@@ -215,9 +217,17 @@ export default function OverviewDashboard() {
         {/* Headline status — the single sentence that answers "is everything OK?" */}
         <HealthHeadline tone={healthHeadline.tone} text={healthHeadline.text} />
 
-        {/* Pending image updates — box status, actionable right here (#1860).
-            Renders nothing when there are none. */}
-        <ImageUpdatesPendingBanner updates={imageUpdates} onUpdate={handleUpdateAll} />
+        {/* Updates — one coherent area (#2082): the ServiceBay self-updater
+            (version status + "Update now", GET/POST /api/system/update) and the
+            per-service image updates (#1860/#2069) together, each with its own
+            trigger. The image banner renders nothing when no images are pending,
+            but the SB updater card always shows current version + Check Now, so
+            the section is never empty. */}
+        <section className="space-y-3">
+          <SectionHeading description="Keep ServiceBay and your services up to date">Updates</SectionHeading>
+          <ServiceBayUpdateCard />
+          <ImageUpdatesPendingBanner updates={imageUpdates} onUpdate={handleUpdateAll} />
+        </section>
 
         {/* Box-wide at-a-glance: services running + latest diagnose breakdown. */}
         <section className="grid grid-cols-1 sm:grid-cols-2 gap-4">

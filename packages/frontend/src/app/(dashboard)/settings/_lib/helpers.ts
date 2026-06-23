@@ -15,28 +15,10 @@ export const DEFAULT_TEMPLATE_SCHEMA: Record<string, TemplateSettingsSchemaEntry
   },
 };
 
-export interface AppUpdateStatus {
-  hasUpdate: boolean;
-  current: string;
-  /**
-   * Release tag is ahead but the `:latest` image hasn't been published yet
-   * (release-please cuts the tag before the Release workflow pushes the image).
-   * Shown as "new version building" rather than an actionable update.
-   */
-  imageBuilding?: boolean;
-  latest: {
-    version: string;
-    url: string;
-    date: string;
-    notes: string;
-  } | null;
-  config: {
-    autoUpdate: {
-      enabled: boolean;
-      schedule: string;
-    };
-  };
-}
+// The self-update status shape now lives with the shared updater card so both
+// Settings and Home can use it (#2082). Re-exported here for back-compat with
+// existing settings importers.
+export type { AppUpdateStatus } from '@/components/ServiceBayUpdateCard';
 
 export type SettingsOverrides = Partial<{
   templateValues: Record<string, string>;
