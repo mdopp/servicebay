@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { logger } from '@servicebay/api-client';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // V4 Hook
 import { useEscapeKey } from '@/hooks/useEscapeKey';
-import { useImageUpdates } from '@/hooks/useImageUpdates';
+import { useImageUpdates, type ServiceImageUpdate } from '@/hooks/useImageUpdates';
 import DashboardHydrationGate, { type HydrationPhase } from '@/components/DashboardHydrationGate';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
@@ -44,7 +44,7 @@ const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: fa
 export default function ServicesDashboard() {
     const { data: twin, isConnected, lastUpdate, isNodeSynced } = useDigitalTwin();
     const { addToast, updateToast } = useToast();
-    const { available: imageUpdates, availableServices: imageUpdateServices } = useImageUpdates();
+    const { available: imageUpdates, availableServices: imageUpdateServices, refresh: refreshImageUpdates } = useImageUpdates();
 
     const [filteredServices, setFilteredServices] = useState<ServiceViewModel[]>([]);
     const [filteredBundles, setFilteredBundles] = useState<ServiceBundle[]>([]);
@@ -187,6 +187,7 @@ export default function ServicesDashboard() {
         openEditDrawer,
         openActions,
         triggerRestart,
+        updateServiceImage,
         requestDelete,
         overlays: serviceActionOverlays,
         closeOverlays,
@@ -376,6 +377,36 @@ export default function ServicesDashboard() {
     const allContainers = useMemo(() => {
         return services.flatMap(s => s.attachedContainers || []);
     }, [services]);
+
+    // Image-update actions (#1860): re-deploy a service to pull its newest image.
+    // `updateServiceImage` POSTs the `update` action (= the actions menu's
+    // "Update & Restart"), which pulls each image in the service YAML then
+    // restarts the unit. We resolve the bare service name from the image-update
+    // report back to its live ServiceViewModel so the action can target the
+    // right node. After the run we re-poll the report so the cleared badge/banner
+    // disappears.
+    const resolveServiceByName = useCallback((name: string): ServiceViewModel | undefined => {
+        return services.find(s => s.name.replace(/\.service$/, '') === name.replace(/\.service$/, ''));
+    }, [services]);
+
+    const handleUpdateService = useCallback(async (service: ServiceViewModel) => {
+        await updateServiceImage(service);
+        await refreshImageUpdates();
+    }, [updateServiceImage, refreshImageUpdates]);
+
+    // Banner "Update now": re-deploy every listed service sequentially (no
+    // single "update all" endpoint exists), then refresh the report once.
+    // Failures surface their own error toast per service and don't abort the
+    // remaining updates.
+    const handleUpdateAll = useCallback(async (updates: ServiceImageUpdate[]) => {
+        for (const update of updates) {
+            const service = resolveServiceByName(update.service);
+            if (service) {
+                await updateServiceImage(service);
+            }
+        }
+        await refreshImageUpdates();
+    }, [resolveServiceByName, updateServiceImage, refreshImageUpdates]);
 
     useEffect(() => {
         if (!containerIdParam || !allContainers.length) return;
@@ -692,6 +723,7 @@ export default function ServicesDashboard() {
                                     service={entry.service}
                                     httpsDomains={httpsDomains}
                                     imageUpdateAvailable={imageUpdateServices.has(entry.service.name.replace(/\.service$/, ''))}
+                                    onUpdate={handleUpdateService}
                                     onMonitor={openServiceDetail}
                                     onEdit={openEditDrawer}
                                     onActions={openActions}
@@ -713,6 +745,7 @@ export default function ServicesDashboard() {
                                     attachNodeContext={attachNodeContext}
                                     httpsDomains={httpsDomains}
                                     imageUpdateAvailable={imageUpdateServices.has(entry.service.name.replace(/\.service$/, ''))}
+                                    onUpdate={handleUpdateService}
                                     onMonitor={openServiceDetail}
                                     onEdit={openEditDrawer}
                                     onActions={openActions}
@@ -954,7 +987,7 @@ export default function ServicesDashboard() {
             />
 
       <TemplateUpgradesPendingBanner />
-      <ImageUpdatesPendingBanner updates={imageUpdates} />
+      <ImageUpdatesPendingBanner updates={imageUpdates} onUpdate={handleUpdateAll} />
       <PageHeader
         title="Services"
         showBack={false} 

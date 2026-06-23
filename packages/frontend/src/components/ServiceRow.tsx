@@ -20,6 +20,9 @@ export interface ServiceRowProps {
   httpsDomains: Set<string>;
   /** Registry has a newer image digest than the running one (#1860). */
   imageUpdateAvailable?: boolean;
+  /** When provided, the "Update available" badge becomes a button that
+   *  re-deploys this one service to pull its latest image (#1860). */
+  onUpdate?: (service: ServiceViewModel) => void;
   onMonitor: (service: ServiceViewModel) => void;
   onEdit: (service: ServiceViewModel) => void;
   onActions: (service: ServiceViewModel) => void;
@@ -34,6 +37,7 @@ export default function ServiceRow({
   service,
   httpsDomains,
   imageUpdateAvailable,
+  onUpdate,
   onMonitor,
   onEdit,
   onActions,
@@ -93,12 +97,23 @@ export default function ServiceRow({
           </span>
         )}
         {imageUpdateAvailable && (
-          <span
-            className={`inline-flex items-center gap-1 ${badgeBase} bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800`}
-            title="A newer image is available in the registry. Re-deploy this service to pull it."
-          >
-            <Download size={10} /> Update available
-          </span>
+          onUpdate ? (
+            <button
+              type="button"
+              onClick={() => onUpdate(service)}
+              className={`inline-flex items-center gap-1 ${badgeBase} bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800 hover:bg-blue-200 dark:hover:bg-blue-900/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
+              title="A newer image is available in the registry. Click to re-deploy this service and pull it."
+            >
+              <Download size={10} /> Update now
+            </button>
+          ) : (
+            <span
+              className={`inline-flex items-center gap-1 ${badgeBase} bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800`}
+              title="A newer image is available in the registry. Re-deploy this service to pull it."
+            >
+              <Download size={10} /> Update available
+            </span>
+          )
         )}
       </div>
 

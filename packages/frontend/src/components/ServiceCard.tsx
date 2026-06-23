@@ -33,6 +33,9 @@ export interface ServiceCardProps {
    *  service is running (from `/api/system/stacks/image-updates`, #1860).
    *  Renders an "Update available" badge. */
   imageUpdateAvailable?: boolean;
+  /** When provided, the "Update available" badge becomes a button that
+   *  re-deploys this one service to pull its latest image (#1860). */
+  onUpdate?: (service: ServiceViewModel) => void;
   // Service-row actions (ServiceActionBar + failed-state nudge).
   onMonitor: (service: ServiceViewModel) => void;
   onEdit: (service: ServiceViewModel) => void;
@@ -52,6 +55,7 @@ export default function ServiceCard({
   service,
   httpsDomains,
   imageUpdateAvailable,
+  onUpdate,
   onMonitor,
   onEdit,
   onActions,
@@ -113,12 +117,23 @@ export default function ServiceCard({
                 </span>
               )}
               {imageUpdateAvailable && (
-                <span
-                  className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded"
-                  title="A newer image is available in the registry. Re-deploy this service to pull it."
-                >
-                  <Download size={10} /> Update available
-                </span>
+                onUpdate ? (
+                  <button
+                    type="button"
+                    onClick={() => onUpdate(service)}
+                    className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded hover:bg-blue-200 dark:hover:bg-blue-900/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    title="A newer image is available in the registry. Click to re-deploy this service and pull it."
+                  >
+                    <Download size={10} /> Update now
+                  </button>
+                ) : (
+                  <span
+                    className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded"
+                    title="A newer image is available in the registry. Re-deploy this service to pull it."
+                  >
+                    <Download size={10} /> Update available
+                  </span>
+                )
               )}
             </div>
           </div>

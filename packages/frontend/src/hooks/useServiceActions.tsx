@@ -156,6 +156,53 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     }
   }, [addToast, deleteInFlight, onRefresh, serviceToDelete, updateToast]);
 
+  // Pull-the-latest-image action for the "Update available" surfaces (the
+  // ImageUpdatesPendingBanner button + the per-card/row badge, #1860). This is
+  // the SAME mechanism the actions menu's "Update & Restart" uses — POST the
+  // `update` action, which re-deploys the service: `updateAndRestartService`
+  // pulls each image referenced in the service YAML, then stop/starts the unit.
+  // We expose it as a direct callback (not via the actions modal) so the badge
+  // and banner can trigger it inline. Returns true on success so a caller
+  // updating several services can stop the loop or skip the refresh on failure.
+  //
+  // Honesty (feedback_dont_mask_failures): a non-ok response or a thrown error
+  // surfaces a real error toast — we never reclassify a failed pull as success.
+  const updateServiceImage = useCallback(async (service: ServiceViewModel): Promise<boolean> => {
+    const serviceName = service.id || service.name;
+    const nodeName = service.nodeName === 'Local' ? '' : service.nodeName;
+    const query = nodeName ? `?node=${nodeName}` : '';
+    const toastId = addToast('loading', 'Updating service', `Pulling the latest image for ${service.displayName || service.name}…`, 0);
+
+    try {
+      const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}/action${query}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update' }),
+      });
+
+      const traceId = res.headers.get('x-trace-id');
+      const traceMsg = traceId ? ` [Trace: ${traceId}]` : '';
+
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const data = await res.json();
+          if (data?.error) detail = data.error;
+        } catch { /* non-JSON error body */ }
+        updateToast(toastId, 'error', 'Update failed', `${detail}${traceMsg}`);
+        return false;
+      }
+
+      updateToast(toastId, 'success', 'Service updated', `${service.displayName || service.name} re-deployed with its latest image.`);
+      onRefresh?.();
+      return true;
+    } catch (error) {
+      logger.error('useServiceActions', 'Image update failed', error);
+      updateToast(toastId, 'error', 'Update failed', 'An unexpected connection error occurred.');
+      return false;
+    }
+  }, [addToast, onRefresh, updateToast]);
+
   const handleAction = useCallback(async (action: string) => {
     if (!selectedService) return;
 
@@ -237,6 +284,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     openEditDrawer,
     openActions,
     triggerRestart,
+    updateServiceImage,
     requestDelete,
     actionLoading,
     overlays: actionOverlays,
