@@ -5,6 +5,7 @@ import { CheckCircle2, Clock, Download, Loader2, RefreshCw, XCircle } from 'luci
 import ReactMarkdown from 'react-markdown';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
+import { Button, Card, StatusDot } from '@/components/ui';
 
 /**
  * ServiceBay self-update status.
@@ -49,6 +50,11 @@ export interface AppUpdateStatus {
  * Self-contained: owns its own status fetch (on mount + on "Check Now") and
  * the update progress/confirm modals. Renders nothing destructive — the
  * OS-reinstall block stays in `UpdatesSection` (settings only).
+ *
+ * Migrated onto the design-system primitives (#2093): the surface is a `Card`,
+ * the actions are `Button`s, the version state uses `StatusDot` + status/accent
+ * tokens (no raw purple/green/amber literals). Dark-mode-correct by
+ * construction — every colour resolves through a semantic CSS variable.
  */
 export default function ServiceBayUpdateCard() {
   const { addToast } = useToast();
@@ -184,142 +190,141 @@ export default function ServiceBayUpdateCard() {
 
   if (!appUpdate) {
     return (
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 text-sm text-gray-500 dark:text-gray-400">
-        <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
+      <Card padding="md" className="flex items-center gap-space-2 text-sm text-text-muted">
+        <Loader2 className="h-4 w-4 animate-spin" />
         Loading update status…
-      </div>
+      </Card>
     );
   }
 
+  const updateAvailable = appUpdate.hasUpdate && appUpdate.latest;
+
   return (
     <>
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-          <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg text-purple-600 dark:text-purple-400">
+      <Card padding="none" className={updateAvailable ? 'border-accent/40' : undefined}>
+        <div className="flex items-center gap-space-3 border-b border-border bg-surface-2 px-space-4 py-space-3">
+          <div className="rounded-card bg-accent/10 p-2 text-accent">
             <RefreshCw size={20} className={updateStatus === 'updating' || checkingUpdate ? 'animate-spin' : ''} />
           </div>
           <div>
-            <h3 className="font-bold text-gray-900 dark:text-white">ServiceBay Updates</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400">Manage application updates</p>
+            <h3 className="font-bold text-text">ServiceBay Updates</h3>
+            <p className="text-xs text-text-muted">Manage application updates</p>
           </div>
-          <div className="ml-auto flex items-center gap-4">
-            <button
+          <div className="ml-auto flex items-center gap-space-3">
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={handleCheckUpdate}
               disabled={checkingUpdate || updateStatus === 'updating'}
-              className="text-xs text-purple-600 dark:text-purple-400 hover:underline disabled:opacity-50"
             >
               {checkingUpdate ? 'Checking...' : 'Check Now'}
-            </button>
-            <div className="h-4 w-px bg-gray-300 dark:bg-gray-600"></div>
-            <label className="relative inline-flex items-center cursor-pointer" title="Enable Auto-Updates">
+            </Button>
+            <div className="h-4 w-px bg-border"></div>
+            <label className="relative inline-flex cursor-pointer items-center" title="Enable Auto-Updates">
               <input
                 type="checkbox"
-                className="sr-only peer"
+                className="peer sr-only"
                 checked={appUpdate.config.autoUpdate.enabled}
                 onChange={toggleAutoUpdate}
               />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 dark:peer-focus:ring-purple-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-purple-600"></div>
+              <div className="peer h-6 w-11 rounded-full bg-surface-muted after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-border after:bg-surface after:transition-all after:content-[''] peer-checked:bg-accent peer-checked:after:translate-x-full peer-checked:after:border-on-accent peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-accent"></div>
             </label>
           </div>
         </div>
-        <div className="p-6">
-          <div className="flex flex-col md:flex-row gap-6 items-start md:items-center justify-between">
+        <div className="p-space-5">
+          <div className="flex flex-col items-start justify-between gap-space-5 md:flex-row md:items-center">
             <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-500 dark:text-gray-400">Current Version:</span>
-                <span className="font-mono font-medium text-gray-900 dark:text-white">{appUpdate.current}</span>
+              <div className="flex items-center gap-space-2">
+                <span className="text-sm text-text-muted">Current Version:</span>
+                <span className="font-mono font-medium text-text">{appUpdate.current}</span>
               </div>
-              {appUpdate.hasUpdate && appUpdate.latest ? (
-                <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+              {updateAvailable ? (
+                <div className="flex items-center gap-space-2 text-status-ok">
+                  <StatusDot state="ok" label="Update available" />
                   <Download size={16} />
-                  <span className="text-sm font-medium">New version available: {appUpdate.latest.version}</span>
+                  <span className="text-sm font-medium">New version available: {appUpdate.latest!.version}</span>
                 </div>
               ) : appUpdate.imageBuilding && appUpdate.latest ? (
-                <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+                <div className="flex items-center gap-space-2 text-status-warn">
+                  <StatusDot state="warn" label="Image building" />
                   <Clock size={16} />
                   <span className="text-sm font-medium">Version {appUpdate.latest.version} released — image still building, try again shortly</span>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
+                <div className="flex items-center gap-space-2 text-text-muted">
+                  <StatusDot state="ok" label="Up to date" />
                   <Clock size={16} />
                   <span className="text-sm">You are on the latest version</span>
                 </div>
               )}
             </div>
 
-            {appUpdate.hasUpdate && appUpdate.latest && (
-              <button
-                onClick={handleAppUpdate}
-                disabled={updateStatus === 'updating'}
-                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
+            {updateAvailable && (
+              <Button onClick={handleAppUpdate} disabled={updateStatus === 'updating'}>
                 <Download size={18} />
                 {updateStatus === 'updating' ? 'Updating...' : 'Update Now'}
-              </button>
+              </Button>
             )}
           </div>
 
-          {appUpdate.hasUpdate && appUpdate.latest && appUpdate.latest.notes && (
-            <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-200 dark:border-gray-700">
-              <h4 className="text-sm font-bold text-gray-900 dark:text-white mb-2">Release Notes</h4>
-              <div className="prose prose-sm dark:prose-invert max-w-none text-gray-600 dark:text-gray-300">
-                <ReactMarkdown>{appUpdate.latest.notes}</ReactMarkdown>
+          {updateAvailable && appUpdate.latest!.notes && (
+            <Card padding="md" className="mt-space-4 bg-surface-muted">
+              <h4 className="mb-2 text-sm font-bold text-text">Release Notes</h4>
+              <div className="prose prose-sm dark:prose-invert max-w-none text-text-muted">
+                <ReactMarkdown>{appUpdate.latest!.notes}</ReactMarkdown>
               </div>
-            </div>
+            </Card>
           )}
         </div>
-      </div>
+      </Card>
 
       {updateStatus !== 'idle' && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl max-w-md w-full border border-gray-200 dark:border-gray-800 overflow-hidden">
-            <div className="p-6 text-center space-y-6">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <Card padding="none" className="w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="space-y-6 p-space-5 text-center">
               {updateStatus === 'error' ? (
-                <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-full flex items-center justify-center mx-auto">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-status-fail/10 text-status-fail">
                   <XCircle size={32} />
                 </div>
               ) : updateStatus === 'building' ? (
-                <div className="w-16 h-16 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-full flex items-center justify-center mx-auto">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-status-warn/10 text-status-warn">
                   <Clock size={32} />
                 </div>
               ) : updateStatus === 'restarting' ? (
-                <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 rounded-full flex items-center justify-center mx-auto animate-pulse">
+                <div className="mx-auto flex h-16 w-16 animate-pulse items-center justify-center rounded-full bg-status-ok/10 text-status-ok">
                   <CheckCircle2 size={32} />
                 </div>
               ) : (
-                <div className="w-16 h-16 bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 rounded-full flex items-center justify-center mx-auto">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-accent/10 text-accent">
                   <Loader2 size={32} className="animate-spin" />
                 </div>
               )}
 
               <div>
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+                <h3 className="mb-2 text-xl font-bold text-text">
                   {updateStatus === 'error' ? 'Update Failed' :
                     updateStatus === 'building' ? 'New Version Still Building' :
                       updateStatus === 'restarting' ? 'Update Complete' :
                         'Updating ServiceBay'}
                 </h3>
-                <p className="text-gray-500 dark:text-gray-400 text-sm">
+                <p className="text-sm text-text-muted">
                   {updateStatus === 'error' ? updateError : updateMessage}
                 </p>
               </div>
 
               {updateStatus === 'updating' && (
-                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 overflow-hidden">
-                  <div className="bg-purple-600 h-2.5 rounded-full transition-all duration-300 ease-out" style={{ width: `${updateProgress}%` }}></div>
+                <div className="h-2.5 w-full overflow-hidden rounded-full bg-surface-2">
+                  <div className="h-2.5 rounded-full bg-accent transition-all duration-300 ease-out" style={{ width: `${updateProgress}%` }}></div>
                 </div>
               )}
 
               {(updateStatus === 'error' || updateStatus === 'building') && (
-                <button
-                  onClick={() => setUpdateStatus('idle')}
-                  className="px-4 py-2 bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors font-medium text-sm"
-                >
+                <Button variant="secondary" size="sm" onClick={() => setUpdateStatus('idle')}>
                   Close
-                </button>
+                </Button>
               )}
             </div>
-          </div>
+          </Card>
         </div>
       )}
 

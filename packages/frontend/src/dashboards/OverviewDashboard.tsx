@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Activity, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Activity, AlertCircle, CheckCircle2, Server } from 'lucide-react';
 import type { ServiceViewModel } from '@servicebay/api-client';
 import { useDigitalTwinContext } from '@/providers/DigitalTwinProvider';
 import { useCoreHealth } from '@/hooks/useCoreHealth';
@@ -10,7 +10,7 @@ import { useImageUpdates, type ServiceImageUpdate } from '@/hooks/useImageUpdate
 import { useServiceActions } from '@/hooks/useServiceActions';
 import ImageUpdatesPendingBanner from '@/components/ImageUpdatesPendingBanner';
 import ServiceBayUpdateCard from '@/components/ServiceBayUpdateCard';
-import { Card, SectionHeading } from '@/components/ui';
+import { Card, SectionHeading, StatusDot } from '@/components/ui';
 import { cn } from '@/components/ui';
 
 /**
@@ -166,6 +166,11 @@ export default function OverviewDashboard() {
   const diagnose = useDiagnoseOverview();
   const diagnoseView = diagnoseCardView(diagnose);
 
+  // Compact System-status tile (#2096) — sourced from the SAME twin snapshot
+  // Status→System reads (firstNode.resources). No new polling: the twin is
+  // already in context. Unavailable (no agent report yet) → neutral, no crash.
+  const systemView = systemStatusView(firstNode?.resources);
+
   // Pending service-image updates — box status, so it belongs on Home too
   // (#1860). The banner's "Update now" re-deploys each listed service via the
   // same `update` action the Services list uses (pull latest image → restart).
@@ -230,8 +235,9 @@ export default function OverviewDashboard() {
           <ImageUpdatesPendingBanner updates={imageUpdates} onUpdate={handleUpdateAll} />
         </section>
 
-        {/* Box-wide at-a-glance: services running + latest diagnose breakdown. */}
-        <section className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Box-wide at-a-glance: services running + latest diagnose breakdown
+            + a compact System-status tile (CPU/RAM/Disk/Uptime, #2096). */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <StatCard
             title="Services"
             metric={hasFirstSnapshot ? `${activeCount} of ${totalCount} running` : '…'}
@@ -255,6 +261,7 @@ export default function OverviewDashboard() {
             tone={diagnoseView.tone}
             href="/status"
           />
+          <SystemStatusCard view={systemView} />
         </section>
       </div>
     </div>
@@ -329,4 +336,147 @@ function StatCard({ title, metric, description, icon: Icon, tone, href }: StatCa
     );
   }
   return <Card padding="lg">{inner}</Card>;
+}
+
+/** Shape of the resources slice the System tile reads off the twin — a subset
+ *  of the agent's `SystemResources` (the same object Status→System binds to). */
+interface SystemResourcesLike {
+  cpuUsage?: number;
+  memoryUsage?: number;
+  totalMemory?: number;
+  diskUsage?: number;
+  os?: { uptime?: number };
+}
+
+interface SystemRow {
+  label: string;
+  value: string;
+  /** Per-metric tone so the worst metric drives the dot, but each row keeps
+   *  its own colour. Undefined → neutral (no usage figure available). */
+  tone: 'good' | 'warn' | 'bad' | 'neutral';
+}
+
+export interface SystemStatusView {
+  loaded: boolean;
+  /** Worst-of tone across the metrics — drives the StatusDot. */
+  tone: 'good' | 'warn' | 'bad' | 'neutral';
+  rows: SystemRow[];
+}
+
+function formatBytesShort(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+  return `${(bytes / Math.pow(k, i)).toFixed(i === 0 ? 0 : 1)} ${sizes[i]}`;
+}
+
+function formatUptime(seconds: number): string {
+  if (!seconds || seconds <= 0) return '—';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  if (days > 0) return `${days}d ${hours}h`;
+  const mins = Math.floor((seconds % 3600) / 60);
+  return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+}
+
+/** A usage percentage → tone, matching the Status→System thresholds
+ *  (>90 fail, >80 warn, else ok). */
+function usageTone(percent: number): 'good' | 'warn' | 'bad' {
+  if (percent > 90) return 'bad';
+  if (percent > 80) return 'warn';
+  return 'good';
+}
+
+/** Build the compact System-status view from the twin's resources slice.
+ *  Read-only, no fetch — the parent already holds the snapshot. Missing /
+ *  partial data degrades gracefully to neutral rows rather than crashing. */
+export function systemStatusView(resources: SystemResourcesLike | null | undefined): SystemStatusView {
+  if (!resources || resources.os === undefined) {
+    return { loaded: false, tone: 'neutral', rows: [] };
+  }
+
+  const rows: SystemRow[] = [];
+  const tones: ('good' | 'warn' | 'bad')[] = [];
+
+  if (typeof resources.cpuUsage === 'number') {
+    const t = usageTone(resources.cpuUsage);
+    tones.push(t);
+    rows.push({ label: 'CPU', value: `${Math.round(resources.cpuUsage)}%`, tone: t });
+  } else {
+    rows.push({ label: 'CPU', value: '—', tone: 'neutral' });
+  }
+
+  if (typeof resources.memoryUsage === 'number' && typeof resources.totalMemory === 'number' && resources.totalMemory > 0) {
+    const pct = (resources.memoryUsage / resources.totalMemory) * 100;
+    const t = usageTone(pct);
+    tones.push(t);
+    rows.push({
+      label: 'RAM',
+      value: `${formatBytesShort(resources.memoryUsage)} / ${formatBytesShort(resources.totalMemory)}`,
+      tone: t,
+    });
+  } else {
+    rows.push({ label: 'RAM', value: '—', tone: 'neutral' });
+  }
+
+  if (typeof resources.diskUsage === 'number') {
+    const t = usageTone(resources.diskUsage);
+    tones.push(t);
+    rows.push({ label: 'Disk', value: `${Math.round(resources.diskUsage)}%`, tone: t });
+  } else {
+    rows.push({ label: 'Disk', value: '—', tone: 'neutral' });
+  }
+
+  rows.push({ label: 'Uptime', value: formatUptime(resources.os?.uptime ?? 0), tone: 'neutral' });
+
+  const tone: 'good' | 'warn' | 'bad' | 'neutral' = tones.includes('bad')
+    ? 'bad'
+    : tones.includes('warn')
+      ? 'warn'
+      : tones.length > 0
+        ? 'good'
+        : 'neutral';
+
+  return { loaded: true, tone, rows };
+}
+
+const TONE_TO_DOT: Record<'good' | 'warn' | 'bad' | 'neutral', 'ok' | 'warn' | 'fail' | 'unknown'> = {
+  good: 'ok',
+  warn: 'warn',
+  bad: 'fail',
+  neutral: 'unknown',
+};
+
+/** Compact System-status tile (#2096) — CPU / RAM / Disk / Uptime at a glance,
+ *  clickable → Status→System (`/status?tab=system`). Reads off the twin
+ *  resources the parent already holds (no new heavy polling); a box with no
+ *  agent report yet renders a neutral "Waiting" state, never a crash. */
+function SystemStatusCard({ view }: { view: SystemStatusView }) {
+  return (
+    <Link
+      href="/status?tab=system"
+      className="block rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+    >
+      <Card padding="lg" className="cursor-pointer transition-all hover:border-accent hover:shadow-md">
+        <div className="mb-3 flex items-center justify-between">
+          <Server size={20} className={TONE_ACCENT[view.tone]} />
+          <StatusDot state={TONE_TO_DOT[view.tone]} />
+        </div>
+        <h2 className="font-bold text-text tracking-wide text-base">System</h2>
+        {view.loaded ? (
+          <dl className="mt-2 space-y-1.5">
+            {view.rows.map(row => (
+              <div key={row.label} className="flex items-center justify-between gap-2 text-xs">
+                <dt className="text-text-muted font-medium">{row.label}</dt>
+                <dd className={cn('font-semibold tabular-nums', TONE_ACCENT[row.tone])}>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="text-xs text-text-muted mt-2 font-medium leading-relaxed">Waiting for system report…</p>
+        )}
+      </Card>
+    </Link>
+  );
 }

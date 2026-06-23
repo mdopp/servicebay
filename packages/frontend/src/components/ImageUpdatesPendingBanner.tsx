@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import type { ServiceImageUpdate } from '@/hooks/useImageUpdates';
+import { Button, Card, StatusDot } from '@/components/ui';
 
 /**
  * Pending-updates overview for managed stacks (#1860, child 2 of #1858).
@@ -25,6 +26,11 @@ import type { ServiceImageUpdate } from '@/hooks/useImageUpdates';
  * `update` action the actions menu uses → pulls each new image, then restarts).
  * Without `onUpdate` it stays purely informational. The button owns only its
  * own in-flight flag; success/error feedback comes from the parent's toast.
+ *
+ * Migrated onto the design-system primitives (#2093): a `Card` with a
+ * token-driven accent (an "update available" tint via the `accent` token, no
+ * raw blue literals) + the shared `Button`/`StatusDot`. Dark-mode-correct by
+ * construction — every colour resolves through a semantic CSS variable.
  */
 export default function ImageUpdatesPendingBanner({
   updates,
@@ -50,44 +56,40 @@ export default function ImageUpdatesPendingBanner({
   };
 
   return (
-    <div className="mb-4 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/70 dark:bg-blue-900/20">
-      <div className="p-4 flex items-start gap-3">
-        <div className="shrink-0 p-1.5 rounded bg-blue-100 dark:bg-blue-800/30 text-blue-700 dark:text-blue-300">
+    <Card padding="md" className="border-accent/40 bg-accent/5">
+      <div className="flex items-start gap-space-3">
+        <div className="shrink-0 rounded-card bg-accent/10 p-1.5 text-accent">
           <Download size={16} />
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-start justify-between gap-space-3">
             <div className="min-w-0">
-              <div className="font-semibold text-sm text-gray-900 dark:text-white">
+              <div className="flex items-center gap-space-2 text-sm font-semibold text-text">
+                <StatusDot state="warn" label="Update available" />
                 {updates.length} service image update{updates.length === 1 ? '' : 's'} available
               </div>
-              <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
+              <p className="mt-0.5 text-xs text-text-muted">
                 The registry is serving a newer image than what these services are running.
                 Re-deploy a service to pull its latest image.
               </p>
             </div>
             {onUpdate && (
-              <button
-                type="button"
-                onClick={handleUpdate}
-                disabled={running}
-                className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              >
+              <Button size="sm" onClick={handleUpdate} disabled={running}>
                 {running ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                 {running ? 'Updating…' : 'Update now'}
-              </button>
+              </Button>
             )}
           </div>
-          <ul className="mt-2 space-y-1.5 text-xs text-gray-700 dark:text-gray-300">
+          <ul className="mt-space-2 space-y-1.5 text-xs text-text-muted">
             {updates.map(u => (
-              <li key={`${u.service}:${u.image}`} className="flex items-center gap-2 flex-wrap">
-                <span className="font-mono font-medium">{u.service}</span>
-                <span className="text-gray-500 dark:text-gray-400 font-mono break-all">{u.image}</span>
+              <li key={`${u.service}:${u.image}`} className="flex flex-wrap items-center gap-space-2">
+                <span className="font-mono font-medium text-text">{u.service}</span>
+                <span className="break-all font-mono text-text-subtle">{u.image}</span>
               </li>
             ))}
           </ul>
         </div>
       </div>
-    </div>
+    </Card>
   );
 }
