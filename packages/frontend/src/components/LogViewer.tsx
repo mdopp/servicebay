@@ -28,26 +28,32 @@ interface LogFilter {
   limit: number;
 }
 
+/**
+ * Log level → semantic status tokens (design-system #2100). The severity ramp
+ * maps onto the status palette — debug/info read as the calm info/muted tones,
+ * warn → status-warn, error → status-fail — so there are no raw emerald/slate
+ * literals and the colour resolves correctly in dark mode via the tokens.
+ */
 const LEVEL_STYLES: Record<LogLevel, { label: string; accent: string; runId: string }> = {
   debug: {
-    label: 'text-slate-400',
-    accent: 'border-l-4 border-emerald-200',
-    runId: 'bg-slate-200/80 dark:bg-slate-800/80 text-slate-500 dark:text-slate-200'
+    label: 'text-text-subtle',
+    accent: 'border-l-4 border-l-border',
+    runId: 'bg-surface-2 text-text-muted'
   },
   info: {
-    label: 'text-emerald-400',
-    accent: 'border-l-4 border-emerald-300',
-    runId: 'bg-slate-200/80 dark:bg-slate-800/80 text-slate-600 dark:text-slate-200'
+    label: 'text-status-info',
+    accent: 'border-l-4 border-l-status-info',
+    runId: 'bg-surface-2 text-text-muted'
   },
   warn: {
-    label: 'text-emerald-500',
-    accent: 'border-l-4 border-emerald-500',
-    runId: 'bg-slate-200/70 dark:bg-slate-800/70 text-slate-700 dark:text-slate-100'
+    label: 'text-status-warn',
+    accent: 'border-l-4 border-l-status-warn',
+    runId: 'bg-surface-2 text-text'
   },
   error: {
-    label: 'text-emerald-700',
-    accent: 'border-l-4 border-emerald-700',
-    runId: 'bg-slate-200/70 dark:bg-slate-800/70 text-slate-800 dark:text-white'
+    label: 'text-status-fail',
+    accent: 'border-l-4 border-l-status-fail',
+    runId: 'bg-surface-2 text-text'
   }
 };
 
@@ -124,10 +130,10 @@ const CollapsibleJsonBlock = ({ data, sizeBytes, buttonLabel }: { data: unknown;
     <>
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors select-none"
+        className="flex items-center gap-1 text-xs text-text-muted hover:text-text transition-colors select-none"
       >
         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <span className="font-mono">{buttonLabel} <span className="text-slate-400">({formatBytes(sizeBytes)})</span> {expanded ? '' : '(click to expand)'}</span>
+        <span className="font-mono">{buttonLabel} <span className="text-text-subtle">({formatBytes(sizeBytes)})</span> {expanded ? '' : '(click to expand)'}</span>
       </button>
       <div
         ref={contentRef}
@@ -138,7 +144,7 @@ const CollapsibleJsonBlock = ({ data, sizeBytes, buttonLabel }: { data: unknown;
           transition: 'max-height 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 250ms cubic-bezier(0.16, 1, 0.3, 1)'
         }}
       >
-        <pre className="mt-1 p-2 bg-slate-100 dark:bg-slate-900 rounded overflow-x-auto text-xs border border-slate-200 dark:border-slate-700">
+        <pre className="mt-1 p-space-2 bg-surface-muted rounded-card overflow-x-auto text-xs border border-border">
           <code>{JSON.stringify(data, null, 2)}</code>
         </pre>
       </div>
@@ -202,7 +208,7 @@ const LogMessage = ({ message }: { message: string }) => {
       : 'Structured JSON payload';
     return (
       <div className="mt-1 space-y-1">
-        <span className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-tight">{summaryLabel}</span>
+        <span className="text-xs text-text-muted font-medium tracking-tight">{summaryLabel}</span>
         <CollapsibleJsonBlock data={scan.data} sizeBytes={scan.sizeBytes} buttonLabel="JSON Payload" />
       </div>
     );
@@ -427,17 +433,17 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
     return match ? match[1] : timestamp;
   };
 
-  const controlInputClass = 'w-full h-10 px-3 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-colors';
-  const baseButtonClass = 'h-10 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-300 hover:border-blue-300 dark:hover:border-blue-500 transition-colors disabled:opacity-50';
+  const controlInputClass = 'w-full h-10 px-space-3 text-sm border border-border rounded-card bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none transition-colors';
+  const baseButtonClass = 'h-10 rounded-card border border-border bg-surface-2 text-text-muted hover:text-accent hover:border-accent/40 transition-colors disabled:opacity-50';
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800">
+    <div className="flex flex-col h-full bg-surface rounded-card border border-border">
       {/* Toolbar */}
-      <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-inherit">
+      <div className="p-space-4 border-b border-border bg-inherit">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[180px_120px_minmax(0,1fr)_110px_auto] items-end">
           {/* Date Selection */}
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+            <label className="text-xs font-medium text-text-muted">
               Date
             </label>
             <select
@@ -456,7 +462,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
 
           {/* Level Filter */}
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+            <label className="text-xs font-medium text-text-muted">
               Level
             </label>
             <select
@@ -474,7 +480,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
 
           {/* Tag Filter */}
           <div className="flex flex-col gap-1 min-w-0">
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+            <label className="text-xs font-medium text-text-muted">
               Tag
             </label>
             <MultiSelect
@@ -488,7 +494,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
 
           {/* Limit */}
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+            <label className="text-xs font-medium text-text-muted">
               Limit
             </label>
             <input
@@ -501,7 +507,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
 
           {/* Actions */}
           <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+            <span className="text-xs font-medium text-text-muted">
               Actions
             </span>
             <div className="flex flex-wrap items-center gap-2">
@@ -516,8 +522,8 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
 
               <button
                 onClick={() => setSummaryMode(s => !s)}
-                className={`inline-flex items-center gap-2 px-3 text-xs ${baseButtonClass} ${
-                  summaryMode ? 'border-blue-500 text-blue-600 dark:text-blue-300' : ''
+                className={`inline-flex items-center gap-2 px-space-3 text-xs ${baseButtonClass} ${
+                  summaryMode ? 'border-accent text-accent' : ''
                 }`}
                 title={summaryMode
                   ? 'Summary mode: showing lifecycle events + warnings/errors only. Click to see raw logs.'
@@ -581,12 +587,13 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
         </div>
       </div>
 
-      {/* Log Container */}
+      {/* Log Container — stays the monospace console scroll region (terminal feel
+          preserved): a flat overflow-auto well, with each entry as a status-accented row. */}
       <div
-        className="flex-1 overflow-auto p-4 space-y-1 font-mono text-sm"
+        className="flex-1 overflow-auto p-space-4 space-y-1 font-mono text-sm"
       >
         {logs.length === 0 && !loading && (
-          <div className="flex items-center justify-center h-full text-slate-500 dark:text-slate-400">
+          <div className="flex items-center justify-center h-full text-text-muted">
             <div className="text-center">
               <Info className="w-8 h-8 mx-auto mb-2 opacity-50" />
               <p>No logs to display</p>
@@ -596,7 +603,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
         )}
 
         {loading && logs.length === 0 && (
-          <div className="flex items-center justify-center h-full text-slate-500 dark:text-slate-400">
+          <div className="flex items-center justify-center h-full text-text-muted">
             <RefreshCw className="w-4 h-4 animate-spin mr-2" />
             <span>Loading logs...</span>
           </div>
@@ -619,23 +626,23 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
           return (
             <div
               key={log.id || log.timestamp}
-              className={`px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30 shadow-sm transition-colors hover:border-emerald-400/60 ${levelStyle.accent}`}
+              className={`px-space-3 py-2 rounded-card border border-border bg-surface-2 transition-colors hover:border-border-strong ${levelStyle.accent}`}
             >
               <div className="flex flex-col md:flex-row md:items-baseline gap-3 text-xs leading-relaxed">
                 <div className="flex gap-3 items-start flex-shrink-0">
-                  <span className="font-mono text-slate-500 dark:text-slate-400 w-24">
+                  <span className="font-mono text-text-muted w-24">
                     {extractTime(log.timestamp)}
                   </span>
                   <span className={`font-semibold tracking-wide uppercase w-12 ${levelStyle.label}`}>
                     {log.level}
                   </span>
-                  <div className="flex flex-col flex-shrink-0 w-48 text-slate-700 dark:text-slate-200">
+                  <div className="flex flex-col flex-shrink-0 w-48 text-text">
                     <span className="font-semibold truncate" title={log.tag}>
                       [{log.tag}]
                     </span>
                     {effectiveRunId && (
                       <span
-                        className={`mt-0.5 px-2 py-0.5 rounded-full text-[10px] font-mono break-all ${levelStyle.runId}`}
+                        className={`mt-0.5 px-space-2 py-0.5 rounded-chip text-[10px] font-mono break-all ${levelStyle.runId}`}
                         title={effectiveRunId}
                       >
                         {effectiveRunId}
@@ -648,7 +655,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
                           setFilter(f => ({ ...f, search: log.traceId }));
                           addToast('success', 'Trace ID Filtered', `Isolating transaction: ${log.traceId}`);
                         }}
-                        className="mt-1 inline-flex items-center justify-center px-2 py-0.5 rounded-full text-[9px] font-mono break-all bg-blue-500/10 border border-blue-500/20 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-all select-all text-left"
+                        className="mt-1 inline-flex items-center justify-center px-space-2 py-0.5 rounded-chip text-[9px] font-mono break-all bg-accent/10 border border-accent/20 text-accent hover:bg-accent/20 transition-all select-all text-left"
                         title={`Click to filter logs by Trace ID: ${log.traceId}`}
                       >
                         trace: {log.traceId.slice(0, 8)}...
@@ -656,12 +663,12 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
                     )}
                   </div>
                 </div>
-                <div className="flex-1 text-slate-800 dark:text-slate-50 break-words min-w-0">
+                <div className="flex-1 text-text break-words min-w-0">
                   <LogMessage message={displayMessage} />
                 </div>
               </div>
               {log.args && Object.keys(log.args).length > 0 && (
-                <div className="text-[10px] mt-2 font-mono text-slate-500 dark:text-slate-400">
+                <div className="text-[10px] mt-2 font-mono text-text-muted">
                   {JSON.stringify(log.args)}
                 </div>
               )}
@@ -672,7 +679,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-2 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400 flex justify-between">
+      <div className="px-space-4 py-2 border-t border-border text-xs text-text-muted flex justify-between">
         <span>Showing {logs.length} logs</span>
         <span>
           {selectedDate === 'live'

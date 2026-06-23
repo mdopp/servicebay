@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Mail, CheckCircle, AlertCircle, ShieldCheck, Loader2 } from 'lucide-react';
 import { Input, Button } from '../WizardUI';
+import { Card } from '@/components/ui';
 import { saveEmailConfig } from '@/app/actions/onboarding';
 
 interface EmailConfig {
@@ -69,16 +70,16 @@ export function EmailStep({ emailConfig, setEmailConfig }: EmailStepProps) {
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20">
-                    <Mail className="w-5 h-5 text-red-500"/>
+                <div className="p-2.5 rounded-card bg-status-fail/10 border border-status-fail/20">
+                    <Mail className="w-5 h-5 text-status-fail"/>
                 </div>
                 <div>
-                    <h3 className="font-bold text-lg leading-none">Email Notifications</h3>
-                    <p className="text-xs text-gray-500 mt-1">Configure SMTP settings for system alerts</p>
+                    <h3 className="font-bold text-lg leading-none text-text">Email Notifications</h3>
+                    <p className="text-xs text-text-muted mt-1">Configure SMTP settings for system alerts</p>
                 </div>
             </div>
 
-            <div className="p-5 rounded-2xl bg-gray-50/50 dark:bg-white/5 border border-gray-200 dark:border-white/5 space-y-5">
+            <Card padding="lg" className="space-y-5">
                  <div className="grid grid-cols-3 gap-4">
                       <div className="col-span-2">
                         <Input label="SMTP Host" value={emailConfig.host} onChange={(v: string) => setEmailConfig(c => ({...c, host: v}))} placeholder="smtp.gmail.com" />
@@ -98,15 +99,15 @@ export function EmailStep({ emailConfig, setEmailConfig }: EmailStepProps) {
                         error={emailConfig.from && !emailConfig.from.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/) ? 'Invalid format' : undefined}
                       />
                       <div className="pb-1.5">
-                        <label className="flex items-center gap-3 p-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-white/5 cursor-pointer transition-colors">
-                            <input type="checkbox" checked={emailConfig.secure} onChange={e => setEmailConfig(c => ({...c, secure: e.target.checked}))} className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Use SSL/TLS</span>
+                        <label className="flex items-center gap-3 p-2.5 rounded-card border border-border hover:bg-surface-2 cursor-pointer transition-colors">
+                            <input type="checkbox" checked={emailConfig.secure} onChange={e => setEmailConfig(c => ({...c, secure: e.target.checked}))} className="w-4 h-4 rounded border-border text-accent focus:ring-accent" />
+                            <span className="text-sm font-medium text-text-muted">Use SSL/TLS</span>
                         </label>
                       </div>
                  </div>
                  <Input label="Recipients (comma separated)" value={emailConfig.recipients} onChange={(v: string) => setEmailConfig(c => ({...c, recipients: v}))} placeholder="admin@example.com" />
 
-                 <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-gray-150 dark:border-white/5">
+                 <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-border">
                      <Button
                          type="button"
                          onClick={handleTestEmail}
@@ -120,18 +121,18 @@ export function EmailStep({ emailConfig, setEmailConfig }: EmailStepProps) {
                          Verify SMTP & Send Test Alert
                      </Button>
                      {testResult?.ok && (
-                         <span className="flex items-center gap-2 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-xl border border-emerald-500/20">
+                         <span className="flex items-center gap-2 text-xs font-medium text-status-ok bg-status-ok/10 px-3 py-1.5 rounded-card border border-status-ok/20">
                              <CheckCircle className="w-4 h-4" /> {testResult.message}
                          </span>
                      )}
                      {testResult && !testResult.ok && (
-                         <span className="flex items-start gap-2 text-xs font-medium text-red-600 dark:text-red-400 bg-red-500/10 px-3 py-1.5 rounded-xl border border-red-500/20 max-w-lg">
+                         <span className="flex items-start gap-2 text-xs font-medium text-status-fail bg-status-fail/10 px-3 py-1.5 rounded-card border border-status-fail/20 max-w-lg">
                              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                              <span>{testResult.message}</span>
                          </span>
                      )}
                  </div>
-            </div>
+            </Card>
         </div>
     );
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Box, RefreshCw, X, Copy, Check } from 'lucide-react';
 import { logger } from '@servicebay/api-client';
+import { Badge, Button, SectionHeading } from '@/components/ui';
 
 type ContainerMount = string | { Source?: string; Destination?: string; Type?: string };
 
@@ -102,50 +103,46 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 px-6 py-4 bg-white dark:bg-gray-950">
+      <div className="flex items-center justify-between border-b border-border px-6 py-space-4 bg-surface">
         <div className="flex flex-col">
-          <div className="flex items-center gap-3 text-gray-900 dark:text-gray-100">
+          <div className="flex items-center gap-space-3 text-text">
             <Box size={22} />
             <span className="font-semibold text-lg">{container.name}</span>
             {!container.hideMeta && (
-              <span className="text-xs font-mono text-gray-500">{container.id.slice(0, 12)}</span>
+              <span className="text-xs font-mono text-text-subtle">{container.id.slice(0, 12)}</span>
             )}
           </div>
           {container.status && (
-            <p className="text-xs text-gray-500 mt-1">{container.status}</p>
+            <p className="text-xs text-text-muted mt-1">{container.status}</p>
           )}
         </div>
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={onClose}
-          className="p-2 rounded-full text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800"
+          className="!h-auto !px-0 p-2 rounded-chip"
           aria-label="Close logs"
         >
           <X size={18} />
-        </button>
+        </Button>
       </div>
 
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
-        <div className="w-full lg:w-1/3 border-b lg:border-b-0 lg:border-r border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 p-4 overflow-y-auto">
-          <h4 className="text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 font-semibold mb-3">Container Info</h4>
-          <div className="space-y-3 text-sm text-gray-800 dark:text-gray-100">
+        <div className="w-full lg:w-1/3 border-b lg:border-b-0 lg:border-r border-border bg-surface-muted p-space-4 overflow-y-auto">
+          <SectionHeading as="h4" tone="muted" className="mb-space-3">Container Info</SectionHeading>
+          <div className="space-y-space-3 text-sm text-text">
             <div>
-              <span className="block text-xs text-gray-500">Image</span>
-              <span className="break-all text-gray-900 dark:text-gray-50">{container.image || 'Unknown'}</span>
+              <span className="block text-xs text-text-muted">Image</span>
+              <span className="break-all text-text">{container.image || 'Unknown'}</span>
             </div>
             <div>
-              <span className="block text-xs text-gray-500">State</span>
-              <span
-                className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium mt-1 ${
-                  container.state === 'running'
-                    ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300'
-                    : 'bg-gray-200 dark:bg-gray-800 text-gray-700 dark:text-gray-200'
-                }`}
-              >
+              <span className="block text-xs text-text-muted">State</span>
+              <Badge variant={container.state === 'running' ? 'ok' : 'neutral'} className="mt-1">
                 {container.state || 'unknown'}
-              </span>
+              </Badge>
             </div>
             <div>
-              <span className="block text-xs text-gray-500">Created</span>
+              <span className="block text-xs text-text-muted">Created</span>
               <span>
                 {container.created
                   ? new Date(container.created * 1000).toLocaleString()
@@ -156,12 +153,12 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
             {/* Details such as env vars */}
             {filteredEnvEntries.length > 0 && (
               <div>
-                <span className="block text-xs text-gray-500">Environment</span>
+                <span className="block text-xs text-text-muted">Environment</span>
                 <div className="space-y-1 mt-1">
                   {filteredEnvEntries.map((entry, index) => (
                     <div
                       key={`${entry}-${index}`}
-                      className="font-mono text-xs bg-gray-200 dark:bg-gray-800 px-2 py-1 rounded break-all"
+                      className="font-mono text-xs bg-surface-2 px-space-2 py-1 rounded-card break-all"
                     >
                       {entry}
                     </div>
@@ -172,12 +169,12 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
 
             {container.ports && container.ports.length > 0 && (
               <div>
-                <span className="block text-xs text-gray-500">Ports</span>
+                <span className="block text-xs text-text-muted">Ports</span>
                 <div className="space-y-1 mt-1">
                   {container.ports.map((port, index) => (
                     <div
                       key={`${port.containerPort}-${index}`}
-                      className="font-mono text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded"
+                      className="font-mono text-xs bg-surface-2 px-space-2 py-1 rounded-card"
                     >
                       {port.hostPort ? `${port.hostPort}:` : ''}
                       {port.containerPort}/{(port.protocol || 'tcp').toLowerCase()}
@@ -189,12 +186,12 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
 
             {container.mounts && container.mounts.length > 0 && (
               <div>
-                <span className="block text-xs text-gray-500">Mounts</span>
+                <span className="block text-xs text-text-muted">Mounts</span>
                 <div className="space-y-1 mt-1">
                   {container.mounts.map((mount, index) => (
                     <div
                       key={index}
-                      className="text-xs bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded break-all"
+                      className="text-xs bg-surface-2 px-space-2 py-1 rounded-card break-all"
                     >
                       {typeof mount === 'string'
                         ? mount
@@ -207,20 +204,21 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
           </div>
         </div>
 
+        {/* Log body stays a monospace terminal console — a dark well, not a Card. */}
         <div className="flex-1 flex flex-col bg-gray-950 text-gray-200">
-          <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800 text-xs text-gray-400 uppercase tracking-wide">
+          <div className="flex items-center justify-between px-space-4 py-2 border-b border-gray-800 text-xs text-gray-400 uppercase tracking-wide">
             <span>Live Logs</span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-space-2">
               {logs && (
-                <button onClick={handleCopyLogs} className="flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-800 transition-colors normal-case" title="Copy logs">
-                  {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
+                <button onClick={handleCopyLogs} className="flex items-center gap-1 px-space-2 py-1 rounded-card hover:bg-gray-800 transition-colors normal-case" title="Copy logs">
+                  {copied ? <Check size={12} className="text-status-ok" /> : <Copy size={12} />}
                   <span className="text-[10px]">{copied ? 'Copied' : 'Copy'}</span>
                 </button>
               )}
               {logsLoading && <RefreshCw size={14} className="animate-spin" />}
             </div>
           </div>
-          <div className="flex-1 overflow-auto p-4 whitespace-pre-wrap font-mono text-xs">
+          <div className="flex-1 overflow-auto p-space-4 whitespace-pre-wrap font-mono text-xs">
             {logs ? logs : logsLoading ? 'Connecting to log stream...' : 'No logs available yet.'}
           </div>
         </div>

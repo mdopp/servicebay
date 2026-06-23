@@ -158,3 +158,40 @@ describe('BackupsSettingsPage — NAS snapshot list collapse (#2085)', () => {
     expect(screen.queryByText(/Show all/)).toBeNull();
   });
 });
+
+describe('BackupsSettingsPage — design-system migration (#2100 ds-migrate-shell)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('section cards use token surfaces — no raw bg-white/dark:bg-gray-800 chrome', async () => {
+    renderPage(false);
+    // The System Snapshot section card is a token surface.
+    const heading = await screen.findByText('System Snapshot');
+    const card = heading.closest('.bg-surface');
+    expect(card).not.toBeNull();
+    expect(card!.className).toContain('border-border');
+    expect(card!.className).not.toMatch(/bg-white|dark:bg-gray-800/);
+  });
+
+  it('action buttons render via the Button primitive (data-variant present)', async () => {
+    renderPage(false);
+    const create = await screen.findByText('Create Snapshot');
+    const btn = create.closest('button')!;
+    // The migrated Create Snapshot is a <Button> (carries data-variant).
+    expect(btn.getAttribute('data-variant')).toBeTruthy();
+  });
+
+  it('Create Snapshot still streams a backup (behavior preserved)', async () => {
+    renderPage(false);
+    const create = await screen.findByText('Create Snapshot');
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fireEvent.click(create.closest('button')!);
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          c => String(c[0]).includes('/api/settings/backups') &&
+            String((c[1] as RequestInit)?.method).toUpperCase() === 'POST',
+        ),
+      ).toBe(true),
+    );
+  });
+});

@@ -28,6 +28,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckCircle2, AlertTriangle, Loader2, KeyRound, Maximize2, ChevronDown, ChevronRight, Download } from 'lucide-react';
 import { completeStackSetup } from '@/app/actions/onboarding';
+import { Card, Button } from '@/components/ui';
 import type { JobPhase, JobState } from '@/lib/install/jobStore';
 import type { Credential } from '@/lib/stackInstall/credentialsManifest';
 import { DoneStepDnsCheck } from '@/components/DoneStepDnsCheck';
@@ -57,10 +58,10 @@ function phaseChrome(phase: JobPhase): { label: string; tone: 'info' | 'warn' | 
 }
 
 const TONE_CLASSES: Record<'info' | 'warn' | 'success' | 'error', string> = {
-  info:    'text-blue-700 bg-blue-100 dark:text-blue-200 dark:bg-blue-900/40',
-  warn:    'text-amber-700 bg-amber-100 dark:text-amber-200 dark:bg-amber-900/40',
-  success: 'text-emerald-700 bg-emerald-100 dark:text-emerald-200 dark:bg-emerald-900/40',
-  error:   'text-rose-700 bg-rose-100 dark:text-rose-200 dark:bg-rose-900/40',
+  info:    'text-status-info bg-status-info/10',
+  warn:    'text-status-warn bg-status-warn/10',
+  success: 'text-status-ok bg-status-ok/10',
+  error:   'text-status-fail bg-status-fail/10',
 };
 
 /**
@@ -81,10 +82,10 @@ function itemStatus(
 }
 
 const DOT_CLASS: Record<'pending' | 'installing' | 'deployed' | 'failed', string> = {
-  pending:    'bg-gray-300 dark:bg-gray-600',
-  installing: 'bg-blue-500 animate-pulse',
-  deployed:   'bg-emerald-500',
-  failed:     'bg-red-500',
+  pending:    'bg-text-subtle',
+  installing: 'bg-status-info animate-pulse',
+  deployed:   'bg-status-ok',
+  failed:     'bg-status-fail',
 };
 
 function ServiceStatusStrip({ job }: { job: JobState }) {
@@ -96,10 +97,10 @@ function ServiceStatusStrip({ job }: { job: JobState }) {
     return a;
   }, {});
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-900/40 p-3">
+    <Card padding="sm" className="bg-surface-2">
       <div className="flex items-center justify-between mb-2">
-        <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Service status</p>
-        <p className="text-[11px] text-gray-500 dark:text-gray-400">
+        <p className="text-xs font-semibold uppercase tracking-wider text-text-muted">Service status</p>
+        <p className="text-[11px] text-text-muted">
           {counts.deployed ?? 0}/{items.length} deployed
           {counts.failed ? ` · ${counts.failed} failed` : ''}
         </p>
@@ -110,11 +111,11 @@ function ServiceStatusStrip({ job }: { job: JobState }) {
           return (
             <span
               key={item.name}
-              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs border ${
-                s === 'pending'    ? 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 opacity-70' :
-                s === 'failed'     ? 'border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300' :
-                s === 'deployed'   ? 'border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' :
-                                     'border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300'
+              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-card text-xs border ${
+                s === 'pending'    ? 'border-border text-text-muted opacity-70' :
+                s === 'failed'     ? 'border-status-fail/20 bg-status-fail/10 text-status-fail' :
+                s === 'deployed'   ? 'border-status-ok/20 bg-status-ok/10 text-status-ok' :
+                                     'border-status-info/20 bg-status-info/10 text-status-info'
               }`}
               title={`${item.name}: ${s}`}
             >
@@ -124,7 +125,7 @@ function ServiceStatusStrip({ job }: { job: JobState }) {
           );
         })}
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -147,43 +148,43 @@ function CredentialsPanel({ manifest }: { manifest: Credential[] }) {
     URL.revokeObjectURL(a.href);
   };
   return (
-    <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-900/20 p-3 text-sm">
+    <Card padding="sm" className="bg-status-fail/10 border-status-fail/20 text-sm">
       <div className="flex items-center justify-between mb-2">
-        <p className="font-medium text-rose-800 dark:text-rose-200">🔑 Credentials — save now</p>
-        <button
-          type="button"
+        <p className="font-medium text-status-fail">🔑 Credentials — save now</p>
+        <Button
+          size="sm"
           onClick={handleDownload}
-          className="inline-flex items-center gap-1.5 text-xs px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded"
+          className="gap-1.5"
           title="Download as Bitwarden / Vaultwarden CSV"
         >
           <Download size={12} /> CSV
-        </button>
+        </Button>
       </div>
-      <p className="text-xs text-rose-700 dark:text-rose-300 mb-2">
+      <p className="text-xs text-status-fail mb-2">
         Won&apos;t be shown again. Copy to your password manager now or use the CSV button: Vaultwarden → Tools → Import → Bitwarden (csv).
       </p>
       <div className="space-y-1.5 font-mono text-xs">
         {critical.map(c => (
-          <div key={c.service} className="border-l-2 border-rose-300 dark:border-rose-700 pl-2">
-            <div className="font-sans font-medium text-rose-900 dark:text-rose-100">{c.service}</div>
-            <div className="text-rose-700 dark:text-rose-300 break-all">{c.url}</div>
-            <div className="text-rose-600 dark:text-rose-400">{c.username} / {c.password}</div>
+          <div key={c.service} className="border-l-2 border-status-fail/40 pl-2">
+            <div className="font-sans font-medium text-text">{c.service}</div>
+            <div className="text-status-fail break-all">{c.url}</div>
+            <div className="text-status-fail">{c.username} / {c.password}</div>
           </div>
         ))}
       </div>
       {system.length > 0 && (
         <details className="mt-2 text-xs">
-          <summary className="cursor-pointer text-rose-700 dark:text-rose-300">System / disaster-recovery secrets ({system.length})</summary>
+          <summary className="cursor-pointer text-status-fail">System / disaster-recovery secrets ({system.length})</summary>
           <div className="mt-1 space-y-1 font-mono">
             {system.map(c => (
-              <div key={c.service} className="text-rose-600 dark:text-rose-400 pl-2">
+              <div key={c.service} className="text-status-fail pl-2">
                 <span className="font-sans">{c.service}:</span> {c.password}
               </div>
             ))}
           </div>
         </details>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -204,12 +205,12 @@ function DnsPanel({ job }: { job: JobState }) {
   });
   if (!domain || subdomains.length === 0) return null;
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-800/50 p-1.5">
+    <Card padding="none" className="p-1.5">
       <DoneStepDnsCheck
         domain={domain}
         subdomains={subdomains.map(sv => `${sv.value}.${domain}`)}
       />
-    </div>
+    </Card>
   );
 }
 
@@ -232,12 +233,12 @@ function classifyProbes(probes: DiagnoseProbe[]): Exclude<SelfTestState['status'
 }
 
 const VERDICT_STYLE: Record<Exclude<SelfTestState['status'], 'idle'>, { bg: string; border: string; text: string; label: string; emoji: string }> = {
-  running: { bg: 'bg-gray-50 dark:bg-gray-900/40',       border: 'border-gray-200 dark:border-gray-800', text: 'text-gray-700 dark:text-gray-200',       label: 'Running self-test…',          emoji: '⏳' },
-  ok:      { bg: 'bg-emerald-50 dark:bg-emerald-900/20', border: 'border-emerald-200 dark:border-emerald-800', text: 'text-emerald-800 dark:text-emerald-200', label: 'Self-test passed',           emoji: '✅' },
-  warn:    { bg: 'bg-amber-50 dark:bg-amber-900/20',     border: 'border-amber-200 dark:border-amber-800',     text: 'text-amber-800 dark:text-amber-200',     label: 'Self-test: warnings',        emoji: '⚠️' },
-  fail:    { bg: 'bg-red-50 dark:bg-red-900/20',         border: 'border-red-200 dark:border-red-800',         text: 'text-red-800 dark:text-red-200',         label: 'Self-test: failures',        emoji: '❌' },
-  info:    { bg: 'bg-gray-50 dark:bg-gray-900/40',       border: 'border-gray-200 dark:border-gray-800',       text: 'text-gray-700 dark:text-gray-200',       label: 'Self-test: indeterminate',   emoji: 'ℹ️' },
-  error:   { bg: 'bg-red-50 dark:bg-red-900/20',         border: 'border-red-200 dark:border-red-800',         text: 'text-red-800 dark:text-red-200',         label: 'Self-test failed to run',    emoji: '⚠️' },
+  running: { bg: 'bg-surface-2',        border: 'border-border',          text: 'text-text-muted',  label: 'Running self-test…',        emoji: '⏳' },
+  ok:      { bg: 'bg-status-ok/10',     border: 'border-status-ok/20',    text: 'text-status-ok',   label: 'Self-test passed',          emoji: '✅' },
+  warn:    { bg: 'bg-status-warn/10',   border: 'border-status-warn/20',  text: 'text-status-warn', label: 'Self-test: warnings',       emoji: '⚠️' },
+  fail:    { bg: 'bg-status-fail/10',   border: 'border-status-fail/20',  text: 'text-status-fail', label: 'Self-test: failures',       emoji: '❌' },
+  info:    { bg: 'bg-surface-2',        border: 'border-border',          text: 'text-text-muted',  label: 'Self-test: indeterminate',  emoji: 'ℹ️' },
+  error:   { bg: 'bg-status-fail/10',   border: 'border-status-fail/20',  text: 'text-status-fail', label: 'Self-test failed to run',   emoji: '⚠️' },
 };
 
 function SelfTestPanel({ job }: { job: JobState }) {
@@ -283,22 +284,22 @@ function SelfTestPanel({ job }: { job: JobState }) {
   const issues = counts ? counts.warn + counts.fail : 0;
 
   return (
-    <div className={`rounded-lg border p-3 text-sm ${style.bg} ${style.border}`}>
+    <div className={`rounded-card border p-3 text-sm ${style.bg} ${style.border}`}>
       <div className="flex items-center justify-between mb-1.5 gap-2">
         <p className={`font-medium ${style.text}`}>
           {style.emoji} {style.label}
           {counts && ` — ${counts.ok} ok · ${counts.warn} warn · ${counts.fail} fail`}
         </p>
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={run}
           disabled={state.status === 'running'}
-          className="text-xs px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
         >
           {state.status === 'running' ? 'Running…' : 'Run again'}
-        </button>
+        </Button>
       </div>
-      {state.error && <p className="text-xs text-red-700 dark:text-red-300">{state.error}</p>}
+      {state.error && <p className="text-xs text-status-fail">{state.error}</p>}
       {state.probes && issues > 0 && (
         <details className="mt-2 text-xs" open>
           <summary className={`cursor-pointer ${style.text} mb-2`}>
@@ -313,7 +314,7 @@ function SelfTestPanel({ job }: { job: JobState }) {
           />
         </details>
       )}
-      <p className={`text-xs mt-1 ${style.text} opacity-70`}>
+      <p className={`text-xs mt-1 ${style.text} opacity-80`}>
         Re-run any time at <span className="font-mono">Health → Self-Diagnose</span>.
       </p>
     </div>
@@ -404,7 +405,7 @@ export default function SetupPage() {
 
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-500 dark:text-gray-400">
+      <div className="flex-1 flex items-center justify-center text-text-muted">
         <Loader2 className="animate-spin mr-2" size={20} /> Loading install status…
       </div>
     );
@@ -412,9 +413,9 @@ export default function SetupPage() {
   if (!job) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-        <CheckCircle2 className="text-emerald-500 mb-3" size={36} />
-        <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">No install in progress</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 max-w-md">
+        <CheckCircle2 className="text-status-ok mb-3" size={36} />
+        <h2 className="text-lg font-semibold text-text">No install in progress</h2>
+        <p className="text-sm text-text-muted mt-2 max-w-md">
           Open Services to manage what&apos;s deployed, or start a new install from the wizard.
         </p>
       </div>
@@ -429,45 +430,46 @@ export default function SetupPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <header className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between gap-4 shrink-0">
+      <header className="px-6 py-4 border-b border-border flex items-center justify-between gap-4 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium ${TONE_CLASSES[tone]}`}>
             <Icon size={14} className={job.phase === 'running' ? 'animate-spin' : ''} />
             {label}
           </span>
           <div className="min-w-0">
-            <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100 truncate">Install in progress</h1>
+            <h1 className="text-lg font-bold text-text truncate">Install in progress</h1>
             {itemsLine && (
-              <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{itemsLine}</p>
+              <p className="text-xs text-text-muted truncate">{itemsLine}</p>
             )}
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={reopenWizard}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-200"
+            className="gap-1.5"
             title="Re-open the install wizard"
           >
             <Maximize2 size={13} /> Open wizard
-          </button>
+          </Button>
           {isTerminal && (
-            <button
-              type="button"
+            <Button
+              size="sm"
               onClick={handleFinish}
               disabled={finishing}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-50"
+              className="gap-1.5"
             >
               {finishing ? <Loader2 className="animate-spin" size={13} /> : <CheckCircle2 size={13} />}
               Finish
-            </button>
+            </Button>
           )}
         </div>
       </header>
 
       <div className="flex-1 overflow-auto p-6 space-y-4">
         {job.error && (
-          <div className="p-3 rounded-md border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-900/20 text-sm text-rose-800 dark:text-rose-200">
+          <div className="p-3 rounded-card border border-status-fail/20 bg-status-fail/10 text-sm text-status-fail">
             {job.error}
           </div>
         )}
@@ -481,17 +483,17 @@ export default function SetupPage() {
         {isTerminal && <DnsPanel job={job} />}
         <SelfTestPanel job={job} />
 
-        <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-800/50">
+        <Card padding="none">
           <button
             type="button"
             onClick={() => setLogsCollapsed(c => !c)}
-            className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-900/40"
+            className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wider text-text-muted hover:bg-surface-2"
           >
             <span className="inline-flex items-center gap-1.5">
               {logsCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
               Install log
             </span>
-            <span className="text-[10px] normal-case font-normal text-gray-400">
+            <span className="text-[10px] normal-case font-normal text-text-subtle">
               {logs ? `${logs.split('\n').length} lines` : 'no output yet'}
             </span>
           </button>
@@ -499,12 +501,12 @@ export default function SetupPage() {
             <pre
               ref={logViewRef}
               onScroll={handleScroll}
-              className="overflow-auto max-h-[40vh] p-3 text-xs font-mono text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed border-t border-gray-200 dark:border-gray-800"
+              className="overflow-auto max-h-[40vh] p-3 text-xs font-mono text-text-muted whitespace-pre-wrap leading-relaxed border-t border-border bg-surface-muted"
             >
               {logs || (job.phase === 'running' ? 'Waiting for log output…' : 'No log output captured.')}
             </pre>
           )}
-        </div>
+        </Card>
       </div>
     </div>
   );

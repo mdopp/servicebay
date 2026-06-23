@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Bot, Check, Copy, ShieldAlert, History, RefreshCw, ShieldCheck } from 'lucide-react';
 import SectionHelp from '@/components/SectionHelp';
+import { Button, Card } from '@/components/ui';
 import { copyToClipboard } from '../clipboard';
 
 interface AuditEntry {
@@ -16,18 +17,18 @@ interface AuditEntry {
 
 function AuditEntryRow({ entry }: { entry: AuditEntry }) {
   const outcomeStyle = entry.outcome === 'ok'
-    ? 'text-emerald-600 dark:text-emerald-400'
+    ? 'text-status-ok'
     : entry.outcome === 'blocked'
-      ? 'text-amber-600 dark:text-amber-400'
-      : 'text-red-600 dark:text-red-400';
+      ? 'text-status-warn'
+      : 'text-status-fail';
   const outcomeIcon = entry.outcome === 'ok' ? '✓' : entry.outcome === 'blocked' ? '⛔' : '✗';
   return (
-    <li className="text-xs border-l-2 border-gray-200 dark:border-gray-700 pl-2 py-0.5">
+    <li className="text-xs border-l-2 border-border pl-2 py-0.5">
       <div className="flex items-center gap-2">
         <span className={`font-mono ${outcomeStyle}`}>{outcomeIcon}</span>
-        <span className="font-mono text-gray-900 dark:text-gray-100">{entry.tool}</span>
-        <span className="text-gray-400">{entry.durationMs}ms</span>
-        <span className="text-gray-400 ml-auto">{new Date(entry.ts).toLocaleTimeString()}</span>
+        <span className="font-mono text-text">{entry.tool}</span>
+        <span className="text-text-subtle">{entry.durationMs}ms</span>
+        <span className="text-text-subtle ml-auto">{new Date(entry.ts).toLocaleTimeString()}</span>
       </div>
       {entry.errorMessage && (
         <div className={`pl-4 mt-0.5 ${outcomeStyle} opacity-80 break-words`}>{entry.errorMessage}</div>
@@ -42,11 +43,11 @@ function ToggleSwitch({ on, disabled, onColor, ariaChecked, onClick }: { on: boo
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`shrink-0 mt-1 relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${on ? onColor : 'bg-gray-300 dark:bg-gray-600'}`}
+      className={`shrink-0 mt-1 relative inline-flex h-6 w-11 items-center rounded-chip transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${on ? onColor : 'bg-surface-muted border border-border'}`}
       role="switch"
       aria-checked={ariaChecked}
     >
-      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${on ? 'translate-x-6' : 'translate-x-1'}`} />
+      <span className={`inline-block h-4 w-4 transform rounded-chip bg-white transition-transform ${on ? 'translate-x-6' : 'translate-x-1'}`} />
     </button>
   );
 }
@@ -63,18 +64,18 @@ interface SafetyTogglesProps {
 function McpSafetyToggles(props: SafetyTogglesProps) {
   const { allowMutations, allowDangerousExec, saving, saveError } = props;
   return (
-    <div className="mt-5 pt-4 border-t border-gray-100 dark:border-gray-800 space-y-3">
+    <div className="mt-5 pt-4 border-t border-border space-y-3">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Allow MCP clients to mutate state</p>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+          <p className="text-sm font-medium text-text">Allow MCP clients to mutate state</p>
+          <p className="text-xs text-text-muted mt-0.5">
             When off, MCP can <span className="font-medium">read</span> services, logs, health, and config but cannot <span className="font-medium">start/stop/deploy/delete/exec</span>. Recommended baseline; flip on only for trusted clients.
           </p>
         </div>
         <ToggleSwitch
           on={allowMutations}
           disabled={saving || allowMutations === null}
-          onColor="bg-blue-600"
+          onColor="bg-accent"
           ariaChecked={allowMutations === true}
           onClick={props.onToggleMutations}
         />
@@ -82,28 +83,28 @@ function McpSafetyToggles(props: SafetyTogglesProps) {
 
       <div className={`flex items-start justify-between gap-4 ${!allowMutations ? 'opacity-50' : ''}`}>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
-            <ShieldAlert size={14} className="text-amber-500 shrink-0" />
+          <p className="text-sm font-medium text-text flex items-center gap-1.5">
+            <ShieldAlert size={14} className="text-status-warn shrink-0" />
             Allow dangerous <span className="font-mono">exec_command</span> patterns
           </p>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+          <p className="text-xs text-text-muted mt-0.5">
             Advisory tripwire — <span className="font-mono">exec_command</span> refuses cliché-class foot-guns (<span className="font-mono">rm -rf /</span>, <span className="font-mono">mkfs</span>, <span className="font-mono">dd of=/dev/sd*</span>, fork bombs, …) to catch typo-class mistakes. Not a security boundary; trivial quoting bypasses it. The real boundaries are the mutations switch above, per-tool token scopes, the pre-exec snapshot, and the audit log.
           </p>
         </div>
         <ToggleSwitch
           on={allowDangerousExec}
           disabled={saving || !allowMutations || allowDangerousExec === null}
-          onColor="bg-amber-600"
+          onColor="bg-status-warn"
           ariaChecked={allowDangerousExec === true}
           onClick={props.onToggleDangerous}
         />
       </div>
 
       {saveError && (
-        <p className="text-xs text-red-600 dark:text-red-400">Save failed: {saveError}</p>
+        <p className="text-xs text-status-fail">Save failed: {saveError}</p>
       )}
 
-      <p className="text-[11px] text-gray-400 dark:text-gray-500 italic">
+      <p className="text-[11px] text-text-subtle italic">
         When mutations are enabled, every destructive call (delete/update/exec/restore) takes a labelled system-config snapshot first. Find them in <span className="font-mono">Settings → Backups</span> with a <span className="font-mono">pre-mutation</span> timestamp.
       </p>
     </div>
@@ -123,23 +124,23 @@ function PendingApprovalRow({ entry, busy, onApprove }: { entry: PendingApproval
   // pure; the 15s poll drops expired entries off the list anyway.
   const expiresAtLabel = new Date(entry.expiresAt).toLocaleTimeString();
   return (
-    <li className="text-xs rounded-md border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-900/20 p-2">
+    <li className="text-xs rounded-card border border-status-warn/40 bg-status-warn/10 p-2">
       <div className="flex items-center gap-2">
-        <span className="font-mono font-semibold text-amber-700 dark:text-amber-300">{entry.toolName}</span>
-        {entry.caller && <span className="text-gray-500">from {entry.caller}</span>}
-        <span className="text-gray-400 ml-auto">expires {expiresAtLabel}</span>
+        <span className="font-mono font-semibold text-status-warn">{entry.toolName}</span>
+        {entry.caller && <span className="text-text-subtle">from {entry.caller}</span>}
+        <span className="text-text-subtle ml-auto">expires {expiresAtLabel}</span>
       </div>
-      <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] text-gray-600 dark:text-gray-300 font-mono">{JSON.stringify(entry.args, null, 2)}</pre>
+      <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] text-text-muted font-mono">{JSON.stringify(entry.args, null, 2)}</pre>
       <div className="mt-1.5 flex justify-end">
-        <button
+        <Button
           type="button"
+          size="sm"
           disabled={busy}
           onClick={() => onApprove(entry.pendingId)}
-          className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50 flex items-center gap-1"
         >
           <ShieldCheck size={12} />
           {busy ? 'Approving…' : 'Approve & run'}
-        </button>
+        </Button>
       </div>
     </li>
   );
@@ -154,25 +155,21 @@ function McpPendingApprovals({ pending, busyId, error, onRefresh, onApprove }: {
 }) {
   if (!pending || pending.length === 0) return null;
   return (
-    <div className="mt-5 pt-4 border-t border-gray-100 dark:border-gray-800">
+    <div className="mt-5 pt-4 border-t border-border">
       <div className="flex items-center justify-between mb-2">
-        <p className="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
-          <ShieldAlert size={14} className="text-amber-500 shrink-0" />
+        <p className="text-sm font-medium text-text flex items-center gap-1.5">
+          <ShieldAlert size={14} className="text-status-warn shrink-0" />
           Pending destructive approvals
-          <span className="text-xs font-normal text-gray-500">({pending.length})</span>
+          <span className="text-xs font-normal text-text-subtle">({pending.length})</span>
         </p>
-        <button
-          type="button"
-          onClick={onRefresh}
-          className="text-xs flex items-center gap-1 px-2 py-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
-        >
+        <Button type="button" variant="secondary" size="sm" onClick={onRefresh}>
           <RefreshCw size={12} /> Refresh
-        </button>
+        </Button>
       </div>
-      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+      <p className="text-xs text-text-muted mb-2">
         An MCP agent proposed these destructive tool calls. They run only after you approve them here — the agent cannot approve its own request.
       </p>
-      {error && <p className="text-xs text-red-600 dark:text-red-400 mb-2">{error}</p>}
+      {error && <p className="text-xs text-status-fail mb-2">{error}</p>}
       <ul className="space-y-2">
         {pending.map(p => (
           <PendingApprovalRow key={p.pendingId} entry={p} busy={busyId === p.pendingId} onApprove={onApprove} />
@@ -185,20 +182,21 @@ function McpPendingApprovals({ pending, busyId, error, onRefresh, onApprove }: {
 function McpAuditFeed({ entries, loading, onRefresh }: { entries: AuditEntry[] | null; loading: boolean; onRefresh: () => void }) {
   return (
     <div className="mt-3 space-y-2">
-      <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+      <div className="flex items-center justify-between text-xs text-text-muted">
         <span>Newest first. Older entries roll over after 5 MB; full log persists in <span className="font-mono">DATA_DIR/mcp-audit.log</span>.</span>
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="sm"
           onClick={onRefresh}
           disabled={loading}
-          className="flex items-center gap-1 px-2 py-1 rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
         >
           <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
           {loading ? 'Loading…' : 'Refresh'}
-        </button>
+        </Button>
       </div>
       {entries && entries.length === 0 && (
-        <p className="text-xs text-gray-500 italic">No MCP activity recorded yet.</p>
+        <p className="text-xs text-text-subtle italic">No MCP activity recorded yet.</p>
       )}
       {entries && entries.length > 0 && (
         <ul className="space-y-1.5 max-h-64 overflow-y-auto">
@@ -310,15 +308,15 @@ export default function McpSection() {
   };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 shadow-sm">
+    <Card padding="lg">
       <div className="flex items-start justify-between gap-4 mb-4">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg">
-            <Bot size={20} className="text-purple-600 dark:text-purple-400" />
+          <div className="p-2 bg-accent/10 rounded-card">
+            <Bot size={20} className="text-accent" />
           </div>
           <div>
-            <h2 className="text-lg font-bold text-gray-900 dark:text-white">MCP Server</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+            <h2 className="text-lg font-semibold text-text">MCP Server</h2>
+            <p className="text-sm text-text-muted">
               Let an AI assistant (Claude Code, Claude Desktop, …) drive ServiceBay through the Model Context Protocol.
             </p>
           </div>
@@ -331,7 +329,7 @@ export default function McpSection() {
       </div>
 
       <div className="mt-4">
-        <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">
+        <label className="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1">
           MCP endpoint
         </label>
         <div className="flex items-stretch gap-2">
@@ -340,19 +338,19 @@ export default function McpSection() {
             readOnly
             value={mcpUrl}
             onFocus={(e) => e.currentTarget.select()}
-            className="flex-1 font-mono text-sm px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100"
+            className="flex-1 font-mono text-sm px-3 py-2 rounded-card border border-border bg-surface-2 text-text"
           />
-          <button
+          <Button
             type="button"
+            variant="secondary"
             onClick={handleCopy}
-            className="px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 text-sm"
             title="Copy URL"
           >
-            {copied ? <Check size={16} className="text-green-500" /> : <Copy size={16} />}
+            {copied ? <Check size={16} className="text-status-ok" /> : <Copy size={16} />}
             {copied ? 'Copied' : 'Copy'}
-          </button>
+          </Button>
         </div>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+        <p className="text-xs text-text-muted mt-2">
           Authenticate with a scoped <span className="font-medium">API token</span> (see the API tokens section) or the same session cookie as this UI. Click <span className="font-medium">How to connect</span> for the full setup walk-through.
         </p>
       </div>
@@ -384,7 +382,7 @@ export default function McpSection() {
       {/* Recent MCP activity. Toggleable so the section stays compact for
           operators who don't care about the audit feed. Lazy-loads on
           open so a heavy log doesn't slow down the rest of Settings. */}
-      <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+      <div className="mt-4 pt-4 border-t border-border">
         <button
           type="button"
           onClick={() => {
@@ -392,19 +390,19 @@ export default function McpSection() {
             setAuditOpen(next);
             if (next && audit === null) loadAudit();
           }}
-          className="w-full flex items-center justify-between text-sm font-medium text-gray-900 dark:text-gray-100 hover:text-blue-600 dark:hover:text-blue-400"
+          className="w-full flex items-center justify-between text-sm font-medium text-text hover:text-accent"
         >
           <span className="flex items-center gap-2">
             <History size={14} />
             Recent MCP activity
             {audit && (
-              <span className="text-xs font-normal text-gray-500">({audit.length} entr{audit.length === 1 ? 'y' : 'ies'})</span>
+              <span className="text-xs font-normal text-text-subtle">({audit.length} entr{audit.length === 1 ? 'y' : 'ies'})</span>
             )}
           </span>
-          <span className="text-xs text-gray-400">{auditOpen ? '▾' : '▸'}</span>
+          <span className="text-xs text-text-subtle">{auditOpen ? '▾' : '▸'}</span>
         </button>
         {auditOpen && <McpAuditFeed entries={audit} loading={auditLoading} onRefresh={loadAudit} />}
       </div>
-    </div>
+    </Card>
   );
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, HelpCircle, KeyRound, Loader2, Shield, XCircle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { Badge, Button, Card } from '@/components/ui';
 
 /**
  * Settings → Networking → Reverse Proxy (NPM) (#1530 — derive, don't ask).
@@ -75,43 +76,35 @@ export default function ReverseProxySection() {
   const diverged = status === 'rejected' || status === 'no-creds';
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-        <div className="p-2 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg text-emerald-600 dark:text-emerald-400">
+    <Card padding="none" className="w-full overflow-hidden">
+      <div className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border bg-surface-2">
+        <div className="p-2 rounded-card bg-status-ok/10 text-status-ok">
           <Shield size={20} />
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-gray-900 dark:text-white">Reverse Proxy (NPM)</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <h3 className="font-semibold text-text">Reverse Proxy (NPM)</h3>
+          <p className="text-xs text-text-muted">
             ServiceBay owns the Nginx Proxy Manager admin credential automatically — it&apos;s read from NPM&apos;s own database, never typed in, so it can&apos;t silently drift out of sync.
           </p>
         </div>
         <div className="shrink-0">
           {busy === 'load' ? (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
-              <Loader2 size={12} className="animate-spin" /> Checking
-            </span>
+            <Badge variant="neutral"><Loader2 size={12} className="animate-spin" /> Checking</Badge>
           ) : verified ? (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/40 px-2 py-1 rounded">
-              <CheckCircle2 size={12} /> Verified
-            </span>
+            <Badge variant="ok"><CheckCircle2 size={12} /> Verified</Badge>
           ) : diverged ? (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 px-2 py-1 rounded">
-              <AlertTriangle size={12} /> {status === 'no-creds' ? 'Not set' : 'Out of sync'}
-            </span>
+            <Badge variant="warn"><AlertTriangle size={12} /> {status === 'no-creds' ? 'Not set' : 'Out of sync'}</Badge>
           ) : (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
-              <XCircle size={12} /> Unknown
-            </span>
+            <Badge variant="neutral"><XCircle size={12} /> Unknown</Badge>
           )}
         </div>
       </div>
 
-      <div className="p-6 space-y-4">
+      <div className="p-space-5 space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Admin identity (from NPM database)</label>
-          <div className="flex items-center gap-2 w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 text-gray-900 dark:text-white font-mono text-sm">
-            <KeyRound size={14} className="text-gray-400 shrink-0" />
+          <label className="block text-sm font-medium text-text-muted mb-1">Admin identity (from NPM database)</label>
+          <div className="flex items-center gap-2 w-full p-2 rounded-card border border-border bg-surface-2 text-text font-mono text-sm">
+            <KeyRound size={14} className="text-text-subtle shrink-0" />
             <span className="truncate">
               {state?.email || (status === 'unknown' ? 'NPM not detected on this node' : 'No credential stored yet')}
             </span>
@@ -119,48 +112,47 @@ export default function ReverseProxySection() {
         </div>
 
         {status === 'unknown' && (
-          <div className="flex items-start gap-2 text-xs text-gray-500 dark:text-gray-400">
+          <div className="flex items-start gap-2 text-xs text-text-muted">
             <HelpCircle size={14} className="shrink-0 mt-0.5" />
             <p>Nginx Proxy Manager isn&apos;t deployed or reachable on this node, so the admin credential can&apos;t be checked. Install NPM, then re-key.</p>
           </div>
         )}
         {status === 'ok' && (
-          <p className="text-xs text-emerald-700 dark:text-emerald-300">
+          <p className="text-xs text-status-ok">
             ServiceBay can manage NPM — the stored credential authenticates against NPM&apos;s admin API.
           </p>
         )}
         {status === 'rejected' && (
-          <p className="text-xs text-amber-700 dark:text-amber-300">
+          <p className="text-xs text-status-warn">
             NPM is rejecting the stored credential (it diverged — common after a reinstall over preserved data). Re-key to write a fresh admin password straight into NPM, keeping every proxy route.
           </p>
         )}
         {status === 'no-creds' && (
-          <p className="text-xs text-amber-700 dark:text-amber-300">
+          <p className="text-xs text-status-warn">
             NPM is up but ServiceBay has no admin credential stored. Re-key to generate and verify one — no proxy routes are touched.
           </p>
         )}
 
         <div className="flex items-center gap-2 pt-2">
-          <button
+          <Button
             onClick={handleRekey}
             disabled={busy !== null || status === 'unknown'}
-            className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors text-sm font-medium inline-flex items-center gap-2"
           >
             {busy === 'rekey' ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
             {verified ? 'Re-key admin' : 'Re-key NPM admin'}
-          </button>
+          </Button>
           {state?.configured && (
-            <button
+            <Button
+              variant="danger"
               onClick={handleForget}
               disabled={busy !== null}
-              className="px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors disabled:opacity-50"
             >
-              {busy === 'forget' && <Loader2 className="w-4 h-4 animate-spin inline mr-1" />}
+              {busy === 'forget' && <Loader2 className="w-4 h-4 animate-spin" />}
               Forget credential
-            </button>
+            </Button>
           )}
         </div>
       </div>
-    </div>
+    </Card>
   );
 }

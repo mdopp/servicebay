@@ -30,6 +30,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { Button } from '@/components/ui';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
 import FileViewer from '@/components/FileViewer';
@@ -742,71 +743,71 @@ export default function BackupPage() {
       {/* Primary CTA: one-click restore from latest snapshot. The selective
           flow stays available behind "Selective restore…" / per-row Restore. */}
       {backups.length > 0 && (
-        <div className="bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800 rounded-xl shadow-sm overflow-hidden w-full">
+        <div className="bg-status-ok/10 border border-status-ok/30 rounded-card shadow-sm overflow-hidden w-full">
           <div className="p-5 flex flex-col md:flex-row md:items-center gap-4">
-            <div className="p-3 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg text-emerald-700 dark:text-emerald-200 shrink-0">
+            <div className="p-3 bg-status-ok/15 rounded-card text-status-ok shrink-0">
               <RotateCcw size={24} />
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="font-bold text-gray-900 dark:text-white">Restore latest snapshot</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-300 break-all">
+              <h3 className="font-bold text-text">Restore latest snapshot</h3>
+              <p className="text-sm text-text-muted break-all">
                 One-click restore of <span className="font-mono">{backups[0].fileName}</span>{' '}
-                <span className="text-gray-500 dark:text-gray-400">
+                <span className="text-text-subtle">
                   ({new Date(backups[0].createdAt).toLocaleString()}, {formatBytes(backups[0].size)})
                 </span>
               </p>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              <p className="text-xs text-text-subtle mt-1">
                 Need granular control?{' '}
                 <button
                   type="button"
                   onClick={() => openRestoreOverlay(true)}
-                  className="text-emerald-700 dark:text-emerald-300 underline"
+                  className="text-status-ok underline"
                 >
                   Selective restore…
                 </button>
               </p>
             </div>
-            <button
+            <Button
               onClick={() => setConfirmRestoreLatestOpen(true)}
               disabled={restoringLatest}
-              className="shrink-0 inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white font-medium rounded-lg shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+              className="shrink-0 bg-status-ok text-on-accent hover:bg-status-ok/90"
             >
               {restoringLatest ? <Loader2 className="animate-spin" size={18} /> : <RotateCcw size={18} />}
               {restoringLatest ? 'Restoring…' : 'Restore'}
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
       {/* System Snapshot — config/setup; downloadable + NAS-pushed + auto-restored. */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex flex-col gap-3 md:flex-row md:items-center">
+      <div className="bg-surface rounded-card border border-border shadow-sm overflow-hidden w-full">
+        <div className="p-4 border-b border-border bg-surface-2 flex flex-col gap-3 md:flex-row md:items-center">
           <div className="flex items-center gap-3 flex-1">
-            <div className="p-2 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg text-emerald-600 dark:text-emerald-300">
+            <div className="p-2 bg-status-ok/15 rounded-card text-status-ok">
               <HardDrive size={20} />
             </div>
             <div>
-              <h3 className="font-bold text-gray-900 dark:text-white">System Snapshot</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Your setup and per-service config (settings, not bulk data). Download it on demand; it&apos;s pushed to the NAS on a schedule and auto-restored on reinstall.</p>
+              <h3 className="font-bold text-text">System Snapshot</h3>
+              <p className="text-xs text-text-muted">Your setup and per-service config (settings, not bulk data). Download it on demand; it&apos;s pushed to the NAS on a schedule and auto-restored on reinstall.</p>
               {scheduleLine && (
-                <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
+                <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-text-muted">
                   <Clock size={12} /> {scheduleLine}
                 </p>
               )}
               {backupStatus !== 'idle' && (
-                <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-600 dark:text-gray-300">
+                <div className="mt-1 flex items-center gap-2 text-[11px] text-text-muted">
                   {backupStatus === 'running' && (
-                    <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-300">
+                    <span className="inline-flex items-center gap-1 text-status-ok">
                       <Loader2 className="w-3 h-3 animate-spin" /> Backup in progress
                     </span>
                   )}
                   {backupStatus === 'success' && (
-                    <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-300">
+                    <span className="inline-flex items-center gap-1 text-status-ok">
                       <CheckCircle2 className="w-3 h-3" /> Latest run completed
                     </span>
                   )}
                   {backupStatus === 'error' && (
-                    <span className="inline-flex items-center gap-1 text-red-600 dark:text-red-300">
+                    <span className="inline-flex items-center gap-1 text-status-fail">
                       <XCircle className="w-3 h-3" /> Last run failed
                     </span>
                   )}
@@ -815,61 +816,58 @@ export default function BackupPage() {
             </div>
           </div>
           <div className="flex flex-col md:flex-row md:items-center gap-3">
-            <p className="text-[11px] text-gray-500 dark:text-gray-400 bg-white/60 dark:bg-gray-900/40 px-3 py-1 rounded-md border border-gray-200 dark:border-gray-800">
+            <p className="text-[11px] text-text-muted bg-surface-muted px-3 py-1 rounded-card border border-border">
               Archives stored under <span className="font-mono">~/.config/containers/systemd/backups</span>
             </p>
-            <button
-              onClick={() => openRestoreOverlay(true)}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm rounded-lg border border-gray-300 dark:border-gray-700 shadow-sm hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-            >
+            <Button variant="secondary" onClick={() => openRestoreOverlay(true)}>
               <UploadCloud size={16} /> Selective restore…
-            </button>
-            <button
+            </Button>
+            <Button
               onClick={handleCreateBackup}
               disabled={creatingBackup}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg shadow-sm hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-status-ok text-on-accent hover:bg-status-ok/90"
             >
               {creatingBackup ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
               {creatingBackup ? 'Creating snapshot...' : 'Create Snapshot'}
-            </button>
+            </Button>
           </div>
         </div>
         <div className="p-6">
           {backupsLoading ? (
-            <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
+            <div className="flex items-center gap-3 text-sm text-text-muted">
               <Loader2 className="animate-spin" size={18} />
               Loading backups...
             </div>
           ) : backups.length === 0 ? (
-            <div className="text-sm text-gray-500 dark:text-gray-400 italic">No snapshots yet. Create one to capture your setup and per-service config.</div>
+            <div className="text-sm text-text-muted italic">No snapshots yet. Create one to capture your setup and per-service config.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
-                  <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
+                  <tr className="text-left text-text-muted border-b border-border">
                     <th className="py-2 font-medium">Archive</th>
                     <th className="py-2 font-medium">Created</th>
                     <th className="py-2 font-medium">Size</th>
                     <th className="py-2 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                <tbody className="divide-y divide-border">
                   {(showAllBackups ? backups : backups.slice(0, BACKUP_PREVIEW_COUNT)).map(backup => (
                     <tr key={backup.fileName}>
-                      <td className="py-3 font-mono text-xs text-blue-600 dark:text-blue-300 break-all">{backup.fileName}</td>
-                      <td className="py-3 text-gray-700 dark:text-gray-300">{new Date(backup.createdAt).toLocaleString()}</td>
-                      <td className="py-3 text-gray-700 dark:text-gray-300">{formatBytes(backup.size)}</td>
+                      <td className="py-3 font-mono text-xs text-accent break-all">{backup.fileName}</td>
+                      <td className="py-3 text-text-muted">{new Date(backup.createdAt).toLocaleString()}</td>
+                      <td className="py-3 text-text-muted">{formatBytes(backup.size)}</td>
                       <td className="py-3">
                         <div className="flex justify-end gap-2">
-                          <button onClick={() => handleDownloadBackup(backup.fileName)} className="text-xs px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center gap-1">
+                          <Button size="sm" variant="secondary" onClick={() => handleDownloadBackup(backup.fileName)}>
                             <Download size={14} /> Download
-                          </button>
-                          <button onClick={() => handleRestoreRequest(backup)} className="text-xs px-3 py-1.5 rounded-md border border-amber-300 text-amber-700 dark:text-amber-300 dark:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors flex items-center gap-1">
+                          </Button>
+                          <Button size="sm" variant="secondary" onClick={() => handleRestoreRequest(backup)} className="text-status-warn border-status-warn/40 hover:bg-status-warn/10">
                             <RotateCcw size={14} /> Restore
-                          </button>
-                          <button onClick={() => setDeleteTarget(backup)} disabled={deletingBackup} className="text-xs px-3 py-1.5 rounded-md border border-red-200 text-red-600 dark:text-red-400 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-1 disabled:opacity-60">
+                          </Button>
+                          <Button size="sm" variant="danger" onClick={() => setDeleteTarget(backup)} disabled={deletingBackup}>
                             <Trash2 size={14} /> Delete
-                          </button>
+                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -880,7 +878,7 @@ export default function BackupPage() {
                 <button
                   type="button"
                   onClick={() => setShowAllBackups(v => !v)}
-                  className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+                  className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text transition-colors"
                 >
                   {showAllBackups ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   {showAllBackups
@@ -892,40 +890,40 @@ export default function BackupPage() {
           )}
 
           {(backupLog.length > 0 || backupStatus === 'running' || backupStatus === 'error') && (
-            <div className="mt-6 border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-gray-50/60 dark:bg-gray-900/40">
+            <div className="mt-6 border border-border rounded-card p-4 bg-surface-muted">
               <div className="flex items-center justify-between mb-3">
-                <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">Backup Activity</span>
+                <span className="text-sm font-semibold text-text">Backup Activity</span>
                 {backupStatus === 'running' && (
-                  <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-300">
+                  <span className="inline-flex items-center gap-1 text-xs text-status-ok">
                     <Loader2 className="w-3 h-3 animate-spin" /> Streaming logs
                   </span>
                 )}
                 {backupStatus === 'error' && (
-                  <span className="inline-flex items-center gap-1 text-xs text-red-600 dark:text-red-300">
+                  <span className="inline-flex items-center gap-1 text-xs text-status-fail">
                     <XCircle className="w-3 h-3" /> Check details below
                   </span>
                 )}
                 {backupStatus === 'success' && backupLog.length > 0 && (
-                  <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-300">
+                  <span className="inline-flex items-center gap-1 text-xs text-status-ok">
                     <CheckCircle2 className="w-3 h-3" /> Completed
                   </span>
                 )}
               </div>
               <div className="max-h-48 overflow-y-auto pr-1 space-y-3">
                 {backupLog.length === 0 ? (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 italic">Waiting for backup updates…</p>
+                  <p className="text-xs text-text-muted italic">Waiting for backup updates…</p>
                 ) : (
                   backupLog.map((entry, idx) => (
                     <div key={`${entry.timestamp}-${idx}`} className="flex gap-3 text-xs">
                       <span className={`mt-1 h-2 w-2 rounded-full ${LOG_STATUS_DOTS[entry.status] ?? LOG_STATUS_DOTS.info}`}></span>
                       <div className="flex-1">
-                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
                           <span className="font-mono">{new Date(entry.timestamp).toLocaleTimeString()}</span>
-                          {entry.node && <span className="uppercase tracking-wide text-gray-600 dark:text-gray-300">{entry.node}</span>}
+                          {entry.node && <span className="uppercase tracking-wide text-text-muted">{entry.node}</span>}
                           <span className={`px-2 py-0.5 rounded ${LOG_STATUS_BADGES[entry.status] ?? LOG_STATUS_BADGES.info}`}>{entry.status.toUpperCase()}</span>
                         </div>
-                        <p className="text-gray-700 dark:text-gray-200">{entry.message}</p>
-                        {entry.target && <p className="text-[10px] font-mono text-gray-500 dark:text-gray-400 break-all">{entry.target}</p>}
+                        <p className="text-text">{entry.message}</p>
+                        {entry.target && <p className="text-[10px] font-mono text-text-muted break-all">{entry.target}</p>}
                       </div>
                     </div>
                   ))
@@ -940,39 +938,34 @@ export default function BackupPage() {
           config atoms the snapshot above carries, staged under sb-backup/ so a
           fresh install auto-restores them (#1440). Not a separate backup —
           this is where the snapshot lives off-box and how reinstall finds it. */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex flex-col gap-3 md:flex-row md:items-center">
+      <div className="bg-surface rounded-card border border-border shadow-sm overflow-hidden w-full">
+        <div className="p-4 border-b border-border bg-surface-2 flex flex-col gap-3 md:flex-row md:items-center">
           <div className="flex items-center gap-3 flex-1">
-            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-300">
+            <div className="p-2 bg-accent/10 rounded-card text-accent">
               <Network size={20} />
             </div>
             <div>
-              <h3 className="font-bold text-gray-900 dark:text-white">Snapshot on NAS</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Where the System Snapshot is pushed off-box so a fresh install can auto-restore it — the FritzBox USB NAS by default, or a separate FTP/SSH destination you set below.</p>
+              <h3 className="font-bold text-text">Snapshot on NAS</h3>
+              <p className="text-xs text-text-muted">Where the System Snapshot is pushed off-box so a fresh install can auto-restore it — the FritzBox USB NAS by default, or a separate FTP/SSH destination you set below.</p>
               {scheduleLine && (
-                <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
+                <p className="mt-1 inline-flex items-center gap-1 text-[11px] text-text-muted">
                   <Clock size={12} /> {scheduleLine}
                 </p>
               )}
             </div>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-            <button
+            <Button
               onClick={handleNasBackupNow}
               disabled={nasBackingUp || !nasOverview?.configured}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg shadow-sm hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title={!nasOverview?.configured ? 'Configure a NAS destination below first' : undefined}
             >
               {nasBackingUp ? <Loader2 className="animate-spin" size={16} /> : <UploadCloud size={16} />}
               {nasBackingUp ? 'Backing up…' : 'Back up now'}
-            </button>
-            <button
-              onClick={() => void fetchNasOverview()}
-              disabled={nasLoading}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 text-sm rounded-lg border border-gray-300 dark:border-gray-700 shadow-sm hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-50"
-            >
+            </Button>
+            <Button variant="secondary" onClick={() => void fetchNasOverview()} disabled={nasLoading}>
               {nasLoading ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />} Verify connection
-            </button>
+            </Button>
           </div>
         </div>
         <div className="p-6 space-y-6">
@@ -982,27 +975,27 @@ export default function BackupPage() {
             <ExternalBackupDestinationSection onSaved={() => void fetchNasOverview()} />
           </div>
 
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+          <div className="border-t border-border pt-4">
           {nasLoading ? (
-            <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
+            <div className="flex items-center gap-3 text-sm text-text-muted">
               <Loader2 className="animate-spin" size={18} /> Checking NAS…
             </div>
           ) : !nasOverview?.configured ? (
-            <div className="text-sm text-gray-500 dark:text-gray-400">
+            <div className="text-sm text-text-muted">
               No NAS destination configured yet. Set one above (it defaults to the FritzBox gateway credentials), and the box will push the System Snapshot there and list it for a fresh install to auto-restore.
             </div>
           ) : nasOverview.connection && !nasOverview.connection.ok ? (
-            <div className="flex items-start gap-2 text-sm text-red-600 dark:text-red-300">
+            <div className="flex items-start gap-2 text-sm text-status-fail">
               <XCircle size={16} className="mt-0.5 shrink-0" />
               <span>Could not reach the NAS: <span className="font-mono break-all">{nasOverview.connection.error}</span></span>
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-300 mb-3">
+              <div className="flex items-center gap-2 text-xs text-status-ok mb-3">
                 <CheckCircle2 size={14} /> Connected to the FritzBox NAS.
               </div>
               {nasOverview.backups.length === 0 ? (
-                <div className="text-sm text-gray-500 dark:text-gray-400 italic">No snapshot staged on the NAS yet.</div>
+                <div className="text-sm text-text-muted italic">No snapshot staged on the NAS yet.</div>
               ) : (() => {
                 // Newest-first: `createdAt`/`stamp` desc, undated legacy slots
                 // (null) sort last. The list is already grouped per-service
@@ -1019,7 +1012,7 @@ export default function BackupPage() {
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
                     <thead>
-                      <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
+                      <tr className="text-left text-text-muted border-b border-border">
                         <th className="py-2 font-medium">Service</th>
                         <th className="py-2 font-medium">File</th>
                         <th className="py-2 font-medium">Created</th>
@@ -1027,31 +1020,34 @@ export default function BackupPage() {
                         <th className="py-2 font-medium text-right">Actions</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                    <tbody className="divide-y divide-border">
                       {visibleNasBackups.map(b => (
                         <tr key={b.tarName}>
-                          <td className="py-3 text-gray-700 dark:text-gray-200">{b.service}</td>
-                          <td className="py-3 font-mono text-xs text-blue-600 dark:text-blue-300 break-all">{b.tarName}</td>
-                          <td className="py-3 text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                          <td className="py-3 text-text-muted">{b.service}</td>
+                          <td className="py-3 font-mono text-xs text-accent break-all">{b.tarName}</td>
+                          <td className="py-3 text-text-muted whitespace-nowrap">
                             {b.createdAt ? new Date(b.createdAt).toLocaleString() : '—'}
                           </td>
-                          <td className="py-3 text-gray-700 dark:text-gray-300">{formatBytes(b.size)}</td>
+                          <td className="py-3 text-text-muted">{formatBytes(b.size)}</td>
                           <td className="py-3">
                             <div className="flex justify-end gap-2">
-                              <button
+                              <Button
+                                size="sm"
+                                variant="secondary"
                                 onClick={() => setNasRestoreTarget({ service: b.service, tarName: b.tarName })}
                                 disabled={nasRestoring !== null}
-                                className="text-xs px-3 py-1.5 rounded-md border border-amber-300 text-amber-700 dark:text-amber-300 dark:border-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors flex items-center gap-1 disabled:opacity-60"
+                                className="text-status-warn border-status-warn/40 hover:bg-status-warn/10"
                               >
                                 {nasRestoring === b.service ? <Loader2 className="animate-spin" size={14} /> : <RotateCcw size={14} />} Restore
-                              </button>
-                              <button
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="danger"
                                 onClick={() => setNasDeleteTarget({ service: b.service, tarName: b.tarName })}
                                 disabled={nasDeleting}
-                                className="text-xs px-3 py-1.5 rounded-md border border-red-200 text-red-600 dark:text-red-400 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-1 disabled:opacity-60"
                               >
                                 <Trash2 size={14} /> Delete
-                              </button>
+                              </Button>
                             </div>
                           </td>
                         </tr>
@@ -1062,7 +1058,7 @@ export default function BackupPage() {
                     <button
                       type="button"
                       onClick={() => setShowAllNasBackups(v => !v)}
-                      className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+                      className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text transition-colors"
                     >
                       {showAllNasBackups ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                       {showAllNasBackups
@@ -1080,29 +1076,29 @@ export default function BackupPage() {
       </div>
 
       {/* Backup Sync */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+      <div className="bg-surface rounded-card border border-border shadow-sm overflow-hidden w-full">
+        <div className="p-4 border-b border-border bg-surface-2">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-300">
+            <div className="p-2 bg-accent/10 rounded-card text-accent">
               <UploadCloud size={20} />
             </div>
             <div className="flex-1">
-              <h3 className="font-bold text-gray-900 dark:text-white">Backup Sync</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">Your bulk data (the photo library, recorder history, the Z-Wave mesh DB) — rsynced from <span className="font-mono">/mnt/data</span> to an external drive or NAS share. The System Snapshot above covers config; this covers data.</p>
+              <h3 className="font-bold text-text">Backup Sync</h3>
+              <p className="text-xs text-text-muted">Your bulk data (the photo library, recorder history, the Z-Wave mesh DB) — rsynced from <span className="font-mono">/mnt/data</span> to an external drive or NAS share. The System Snapshot above covers config; this covers data.</p>
             </div>
             <label className="flex items-center gap-2 cursor-pointer">
-              <span className="text-xs text-gray-500 dark:text-gray-400">{backupSync.enabled ? 'Enabled' : 'Disabled'}</span>
+              <span className="text-xs text-text-muted">{backupSync.enabled ? 'Enabled' : 'Disabled'}</span>
               <div className="relative">
                 <input type="checkbox" className="sr-only peer" checked={backupSync.enabled} onChange={e => setBackupSync(prev => ({ ...prev, enabled: e.target.checked }))} />
-                <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                <div className="w-9 h-5 bg-surface-muted peer-focus:outline-none rounded-full peer border border-border peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-surface after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
               </div>
             </label>
           </div>
           {backupSync.lastRun && (
-            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
+            <div className="mt-2 text-xs text-text-muted flex items-center gap-2">
               <Clock size={12} /> Last run: {new Date(backupSync.lastRun).toLocaleString()}
-              {backupSync.lastStatus === 'success' && <span className="text-emerald-600"><CheckCircle2 size={12} className="inline" /></span>}
-              {backupSync.lastStatus === 'error' && <span className="text-red-500"><XCircle size={12} className="inline" /></span>}
+              {backupSync.lastStatus === 'success' && <span className="text-status-ok"><CheckCircle2 size={12} className="inline" /></span>}
+              {backupSync.lastStatus === 'error' && <span className="text-status-fail"><XCircle size={12} className="inline" /></span>}
               {backupSync.lastDuration != null && <span>({backupSync.lastDuration}s)</span>}
             </div>
           )}
@@ -1115,38 +1111,39 @@ export default function BackupPage() {
               its own subfolder under the target. */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">Source Directories</label>
-              <button type="button" onClick={addBackupSource} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 dark:text-blue-300 hover:text-blue-700 dark:hover:text-blue-200">
+              <label className="block text-xs font-medium text-text-muted">Source Directories</label>
+              <button type="button" onClick={addBackupSource} className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:text-accent-strong">
                 <Plus size={14} /> Add source
               </button>
             </div>
             <div className="space-y-3">
               {backupSync.sources.length === 0 && (
-                <p className="text-[11px] text-gray-500 dark:text-gray-400 italic">No sources configured. Add at least one directory to sync.</p>
+                <p className="text-[11px] text-text-muted italic">No sources configured. Add at least one directory to sync.</p>
               )}
               {backupSync.sources.map((src, i) => (
-                <div key={i} className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 p-3 space-y-2">
+                <div key={i} className="rounded-card border border-border bg-surface-muted p-3 space-y-2">
                   <div className="flex items-center gap-2">
                     <input
                       type="text"
-                      className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                      className="flex-1 px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text"
                       value={src.path}
                       onChange={e => updateBackupSource(i, { path: e.target.value })}
                       placeholder="/mnt/data"
                     />
-                    <button
-                      type="button"
+                    <Button
+                      variant="danger"
+                      size="sm"
                       onClick={() => removeBackupSource(i)}
                       aria-label="Remove source"
-                      className="p-2 rounded-lg border border-red-200 text-red-600 dark:text-red-400 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                      className="px-2"
                     >
                       <Trash2 size={14} />
-                    </button>
+                    </Button>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-500 dark:text-gray-400 mb-1">Exclude patterns (one per line)</label>
+                    <label className="block text-[11px] font-medium text-text-muted mb-1">Exclude patterns (one per line)</label>
                     <textarea
-                      className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white font-mono"
+                      className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text font-mono"
                       rows={2}
                       value={src.excludePatterns}
                       onChange={e => updateBackupSource(i, { excludePatterns: e.target.value })}
@@ -1165,7 +1162,7 @@ export default function BackupPage() {
               relationship obvious and bring this control in line with how
               the rest of ServiceBay presents primary choices. */}
           <div>
-            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Where should backups go?</label>
+            <label className="block text-xs font-medium text-text-muted mb-2">Where should backups go?</label>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
               {([
                 { val: 'local', label: 'Local / USB',  hint: 'Mounted disk on this server',  Icon: Usb },
@@ -1180,12 +1177,12 @@ export default function BackupPage() {
                     type="button"
                     onClick={() => setBackupSync(prev => ({ ...prev, targetType: val }))}
                     aria-pressed={active}
-                    className={`flex items-start gap-2 px-3 py-2 text-left rounded-lg border-2 transition-colors ${active ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-500 dark:border-blue-400' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 hover:border-gray-300 dark:hover:border-gray-600'}`}
+                    className={`flex items-start gap-2 px-3 py-2 text-left rounded-card border-2 transition-colors ${active ? 'bg-accent/10 border-accent' : 'border-border hover:bg-surface-2 hover:border-border-strong'}`}
                   >
-                    <Icon size={16} className={`mt-0.5 flex-shrink-0 ${active ? 'text-blue-600 dark:text-blue-300' : 'text-gray-400'}`} />
+                    <Icon size={16} className={`mt-0.5 flex-shrink-0 ${active ? 'text-accent' : 'text-text-subtle'}`} />
                     <div className="min-w-0">
-                      <div className={`text-xs font-semibold ${active ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-gray-200'}`}>{label}</div>
-                      <div className={`text-[11px] leading-tight ${active ? 'text-blue-600/70 dark:text-blue-200/70' : 'text-gray-500 dark:text-gray-400'}`}>{hint}</div>
+                      <div className={`text-xs font-semibold ${active ? 'text-accent' : 'text-text'}`}>{label}</div>
+                      <div className={`text-[11px] leading-tight ${active ? 'text-accent/70' : 'text-text-muted'}`}>{hint}</div>
                     </div>
                   </button>
                 );
@@ -1196,8 +1193,8 @@ export default function BackupPage() {
           {/* Connection-details panel — the same fields as before, but wrapped
               in a labelled container so it's visually clear these inputs
               belong to the chosen target type. */}
-          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 p-3 space-y-3">
-            <div className="text-[11px] uppercase tracking-wider font-semibold text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+          <div className="rounded-card border border-border bg-surface-muted p-3 space-y-3">
+            <div className="text-[11px] uppercase tracking-wider font-semibold text-text-muted flex items-center gap-1.5">
               <ChevronRight size={12} />
               {backupSync.targetType === 'local' ? 'Local target details' :
                backupSync.targetType === 'ssh'   ? 'SSH connection details' :
@@ -1215,51 +1212,51 @@ export default function BackupPage() {
           {backupSync.targetType === 'ssh' && (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Host</label>
-                <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sshHost} onChange={e => setBackupSync(prev => ({ ...prev, sshHost: e.target.value }))} placeholder="192.168.1.100" />
+                <label className="block text-xs font-medium text-text-muted mb-1">Host</label>
+                <input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshHost} onChange={e => setBackupSync(prev => ({ ...prev, sshHost: e.target.value }))} placeholder="192.168.1.100" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Port</label>
-                <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sshPort} onChange={e => setBackupSync(prev => ({ ...prev, sshPort: e.target.value }))} placeholder="22" />
+                <label className="block text-xs font-medium text-text-muted mb-1">Port</label>
+                <input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshPort} onChange={e => setBackupSync(prev => ({ ...prev, sshPort: e.target.value }))} placeholder="22" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">User</label>
-                <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sshUser} onChange={e => setBackupSync(prev => ({ ...prev, sshUser: e.target.value }))} />
+                <label className="block text-xs font-medium text-text-muted mb-1">User</label>
+                <input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshUser} onChange={e => setBackupSync(prev => ({ ...prev, sshUser: e.target.value }))} />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Remote Path</label>
-                <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sshPath} onChange={e => setBackupSync(prev => ({ ...prev, sshPath: e.target.value }))} placeholder="/backup" />
+                <label className="block text-xs font-medium text-text-muted mb-1">Remote Path</label>
+                <input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshPath} onChange={e => setBackupSync(prev => ({ ...prev, sshPath: e.target.value }))} placeholder="/backup" />
               </div>
               <div className="col-span-2">
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Identity File</label>
-                <input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.sshIdentityFile} onChange={e => setBackupSync(prev => ({ ...prev, sshIdentityFile: e.target.value }))} />
+                <label className="block text-xs font-medium text-text-muted mb-1">Identity File</label>
+                <input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshIdentityFile} onChange={e => setBackupSync(prev => ({ ...prev, sshIdentityFile: e.target.value }))} />
               </div>
             </div>
           )}
 
           {backupSync.targetType === 'smb' && (
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Host</label><input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.smbHost} onChange={e => setBackupSync(prev => ({ ...prev, smbHost: e.target.value }))} placeholder="nas.local" /></div>
-              <div><label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Share Name</label><input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.smbShare} onChange={e => setBackupSync(prev => ({ ...prev, smbShare: e.target.value }))} placeholder="backup" /></div>
-              <div><label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Subfolder (optional)</label><input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.smbPath} onChange={e => setBackupSync(prev => ({ ...prev, smbPath: e.target.value }))} /></div>
-              <div><label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Username</label><input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.smbUsername} onChange={e => setBackupSync(prev => ({ ...prev, smbUsername: e.target.value }))} /></div>
-              <div className="col-span-2"><label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Password</label><input type="password" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.smbPassword} onChange={e => setBackupSync(prev => ({ ...prev, smbPassword: e.target.value }))} /></div>
+              <div><label className="block text-xs font-medium text-text-muted mb-1">Host</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbHost} onChange={e => setBackupSync(prev => ({ ...prev, smbHost: e.target.value }))} placeholder="nas.local" /></div>
+              <div><label className="block text-xs font-medium text-text-muted mb-1">Share Name</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbShare} onChange={e => setBackupSync(prev => ({ ...prev, smbShare: e.target.value }))} placeholder="backup" /></div>
+              <div><label className="block text-xs font-medium text-text-muted mb-1">Subfolder (optional)</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbPath} onChange={e => setBackupSync(prev => ({ ...prev, smbPath: e.target.value }))} /></div>
+              <div><label className="block text-xs font-medium text-text-muted mb-1">Username</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbUsername} onChange={e => setBackupSync(prev => ({ ...prev, smbUsername: e.target.value }))} /></div>
+              <div className="col-span-2"><label className="block text-xs font-medium text-text-muted mb-1">Password</label><input type="password" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbPassword} onChange={e => setBackupSync(prev => ({ ...prev, smbPassword: e.target.value }))} /></div>
             </div>
           )}
 
           {backupSync.targetType === 'nfs' && (
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Host</label><input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.nfsHost} onChange={e => setBackupSync(prev => ({ ...prev, nfsHost: e.target.value }))} placeholder="nas.local" /></div>
-              <div><label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Export Path</label><input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.nfsExport} onChange={e => setBackupSync(prev => ({ ...prev, nfsExport: e.target.value }))} placeholder="/volume1/backup" /></div>
-              <div className="col-span-2"><label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Subfolder (optional)</label><input type="text" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.nfsPath} onChange={e => setBackupSync(prev => ({ ...prev, nfsPath: e.target.value }))} /></div>
+              <div><label className="block text-xs font-medium text-text-muted mb-1">Host</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.nfsHost} onChange={e => setBackupSync(prev => ({ ...prev, nfsHost: e.target.value }))} placeholder="nas.local" /></div>
+              <div><label className="block text-xs font-medium text-text-muted mb-1">Export Path</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.nfsExport} onChange={e => setBackupSync(prev => ({ ...prev, nfsExport: e.target.value }))} placeholder="/volume1/backup" /></div>
+              <div className="col-span-2"><label className="block text-xs font-medium text-text-muted mb-1">Subfolder (optional)</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.nfsPath} onChange={e => setBackupSync(prev => ({ ...prev, nfsPath: e.target.value }))} /></div>
             </div>
           )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Schedule</label>
-              <select className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.schedule} onChange={e => setBackupSync(prev => ({ ...prev, schedule: e.target.value as 'hourly' | 'daily' | 'weekly' | 'monthly' }))}>
+              <label className="block text-xs font-medium text-text-muted mb-1">Schedule</label>
+              <select className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.schedule} onChange={e => setBackupSync(prev => ({ ...prev, schedule: e.target.value as 'hourly' | 'daily' | 'weekly' | 'monthly' }))}>
                 <option value="hourly">Hourly</option>
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
@@ -1267,13 +1264,13 @@ export default function BackupPage() {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Time (UTC)</label>
-              <input type="time" className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.time} onChange={e => setBackupSync(prev => ({ ...prev, time: e.target.value }))} />
+              <label className="block text-xs font-medium text-text-muted mb-1">Time (UTC)</label>
+              <input type="time" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.time} onChange={e => setBackupSync(prev => ({ ...prev, time: e.target.value }))} />
             </div>
             {backupSync.schedule === 'weekly' && (
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Day of Week</label>
-                <select className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.dayOfWeek ?? 0} onChange={e => setBackupSync(prev => ({ ...prev, dayOfWeek: parseInt(e.target.value) }))}>
+                <label className="block text-xs font-medium text-text-muted mb-1">Day of Week</label>
+                <select className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.dayOfWeek ?? 0} onChange={e => setBackupSync(prev => ({ ...prev, dayOfWeek: parseInt(e.target.value) }))}>
                   {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => (
                     <option key={i} value={i}>{d}</option>
                   ))}
@@ -1282,39 +1279,39 @@ export default function BackupPage() {
             )}
             {backupSync.schedule === 'monthly' && (
               <div>
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Day of Month</label>
-                <input type="number" min={1} max={28} className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" value={backupSync.dayOfMonth ?? 1} onChange={e => setBackupSync(prev => ({ ...prev, dayOfMonth: parseInt(e.target.value) || 1 }))} />
+                <label className="block text-xs font-medium text-text-muted mb-1">Day of Month</label>
+                <input type="number" min={1} max={28} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.dayOfMonth ?? 1} onChange={e => setBackupSync(prev => ({ ...prev, dayOfMonth: parseInt(e.target.value) || 1 }))} />
               </div>
             )}
           </div>
 
           {backupSyncTestResult && (
-            <div className={`p-3 text-sm rounded-lg ${backupSyncTestResult.success ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300' : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'}`}>
+            <div className={`p-3 text-sm rounded-card ${backupSyncTestResult.success ? 'bg-status-ok/10 text-status-ok' : 'bg-status-fail/10 text-status-fail'}`}>
               {backupSyncTestResult.success ? <CheckCircle2 size={14} className="inline mr-1" /> : <XCircle size={14} className="inline mr-1" />}
               {backupSyncTestResult.message}
             </div>
           )}
 
-          <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-            <button onClick={handleSaveBackupSync} disabled={backupSyncSaving} className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50">
+          <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
+            <Button onClick={handleSaveBackupSync} disabled={backupSyncSaving}>
               {backupSyncSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
-            </button>
-            <button onClick={handleTestBackupSync} disabled={backupSyncTesting} className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-50">
+            </Button>
+            <Button variant="secondary" onClick={handleTestBackupSync} disabled={backupSyncTesting}>
               {backupSyncTesting ? <Loader2 size={14} className="animate-spin" /> : <Activity size={14} />} Test Connection
-            </button>
-            <button onClick={handleRunBackupSync} disabled={backupSyncRunning} className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 disabled:opacity-50">
+            </Button>
+            <Button onClick={handleRunBackupSync} disabled={backupSyncRunning} className="bg-status-ok text-on-accent hover:bg-status-ok/90">
               {backupSyncRunning ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
               {backupSyncRunning ? 'Running...' : 'Run Now'}
-            </button>
+            </Button>
           </div>
 
           {backupSyncHistory.length > 0 && (
-            <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
-              <h4 className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Recent Runs</h4>
+            <div className="pt-3 border-t border-border">
+              <h4 className="text-xs font-medium text-text-muted mb-2">Recent Runs</h4>
               <div className="space-y-1 max-h-40 overflow-y-auto">
                 {backupSyncHistory.slice(0, 10).map((h, i) => (
-                  <div key={i} className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                    {h.success ? <CheckCircle2 size={12} className="text-emerald-500 flex-shrink-0" /> : <XCircle size={12} className="text-red-500 flex-shrink-0" />}
+                  <div key={i} className="flex items-center gap-2 text-xs text-text-muted">
+                    {h.success ? <CheckCircle2 size={12} className="text-status-ok flex-shrink-0" /> : <XCircle size={12} className="text-status-fail flex-shrink-0" />}
                     <span className="font-mono">{new Date(h.startedAt).toLocaleString()}</span>
                     <span>({h.duration}s)</span>
                     {h.filesTransferred != null && <span>{h.filesTransferred} files</span>}
@@ -1373,63 +1370,63 @@ export default function BackupPage() {
       {restoreOverlayOpen && (
         <div className="fixed inset-0 z-[90] flex items-stretch justify-end" onMouseDown={stopRestoreEvent} onClick={stopRestoreEvent}>
           <div className="absolute inset-0 bg-gray-950/70 backdrop-blur-sm" onClick={handleRestoreBackdrop} />
-          <aside className="relative z-10 w-full max-w-3xl h-full bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-800 shadow-2xl flex flex-col">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800">
+          <aside className="relative z-10 w-full max-w-3xl h-full bg-surface border-l border-border shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Restore from Backup</h3>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Select what to restore before applying changes.</p>
+                <h3 className="text-lg font-semibold text-text">Restore from Backup</h3>
+                <p className="text-xs text-text-muted">Select what to restore before applying changes.</p>
               </div>
-              <button type="button" onClick={closeRestoreOverlay} className="rounded-full p-2 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800" aria-label="Close restore panel">
+              <button type="button" onClick={closeRestoreOverlay} className="rounded-full p-2 text-text-muted hover:text-text hover:bg-surface-2" aria-label="Close restore panel">
                 <X size={18} />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
               {!restorePreview ? (
-                <div className="border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-8 text-center bg-gray-50 dark:bg-gray-900/40" onDrop={handleRestoreDrop} onDragOver={handleRestoreDragOver}>
-                  <UploadCloud className="mx-auto text-gray-400" size={28} />
-                  <p className="mt-3 text-sm font-medium text-gray-700 dark:text-gray-200">Drop a backup archive here</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">Supports .tar.gz exports from ServiceBay.</p>
+                <div className="border-2 border-dashed border-border rounded-card p-8 text-center bg-surface-muted" onDrop={handleRestoreDrop} onDragOver={handleRestoreDragOver}>
+                  <UploadCloud className="mx-auto text-text-subtle" size={28} />
+                  <p className="mt-3 text-sm font-medium text-text">Drop a backup archive here</p>
+                  <p className="text-xs text-text-muted">Supports .tar.gz exports from ServiceBay.</p>
                   <div className="mt-4">
-                    <label htmlFor="restore-backup-file" className="inline-flex items-center gap-2 px-4 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer">
+                    <label htmlFor="restore-backup-file" className="inline-flex items-center gap-2 px-4 py-2 bg-surface-2 border border-border rounded-card text-sm text-text hover:bg-surface-muted cursor-pointer">
                       <UploadCloud size={16} /> Select file
                     </label>
                     <input id="restore-backup-file" type="file" accept=".tar.gz" className="hidden" onChange={(event) => handleRestoreFromFile(event.target.files?.[0] || null)} />
                   </div>
-                  {restoreUploadError && (<p className="mt-3 text-xs text-red-600 dark:text-red-400">{restoreUploadError}</p>)}
+                  {restoreUploadError && (<p className="mt-3 text-xs text-status-fail">{restoreUploadError}</p>)}
                 </div>
               ) : restoreSelectionState ? (
                 <div className="space-y-3">
                   {/* Source & Summary */}
-                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-4 bg-gray-50 dark:bg-gray-900/40 flex flex-wrap items-center justify-between gap-3">
+                  <div className="rounded-card border border-border p-4 bg-surface-muted flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="text-xs text-gray-500 dark:text-gray-400">Backup Source</p>
-                      <p className="text-sm font-mono text-gray-800 dark:text-gray-200 truncate">
+                      <p className="text-xs text-text-muted">Backup Source</p>
+                      <p className="text-sm font-mono text-text truncate">
                         {restoreSource?.type === 'stored' ? restoreSource.fileName : 'Uploaded archive'}
                       </p>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="text-xs text-gray-500 dark:text-gray-400">{getRestoreSelectionSummary()}</span>
-                      <button type="button" onClick={() => { selectAllRestoreItems(); void confirmRestoreBackup(); }} disabled={restoringBackup} className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg border border-emerald-500 text-emerald-700 dark:text-emerald-300 dark:border-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors">
+                      <span className="text-xs text-text-muted">{getRestoreSelectionSummary()}</span>
+                      <Button size="sm" variant="secondary" onClick={() => { selectAllRestoreItems(); void confirmRestoreBackup(); }} disabled={restoringBackup} className="border-status-ok/40 text-status-ok hover:bg-status-ok/10">
                         <RotateCcw size={14} /> Restore all
-                      </button>
+                      </Button>
                     </div>
                   </div>
 
                   {/* Settings */}
-                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
-                    <button type="button" onClick={() => toggleRestoreSection('settings')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-900/40 transition-colors">
-                      {restoreExpandedSections.settings ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
-                      <Settings size={16} className="text-gray-400 shrink-0" />
+                  <div className="rounded-card border border-border overflow-hidden">
+                    <button type="button" onClick={() => toggleRestoreSection('settings')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors">
+                      {restoreExpandedSections.settings ? <ChevronDown size={16} className="text-text-subtle shrink-0" /> : <ChevronRight size={16} className="text-text-subtle shrink-0" />}
+                      <Settings size={16} className="text-text-subtle shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Settings</span>
-                        <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                        <span className="text-sm font-medium text-text">Settings</span>
+                        <span className="ml-2 text-xs text-text-muted">
                           {Object.values(restoreSelectionState.configFlags).filter(Boolean).length} of {Object.keys(restoreSelectionState.configFlags).length} selected
                         </span>
                       </div>
                     </button>
                     {restoreExpandedSections.settings && (
-                      <div className="px-4 pb-4 pt-1 border-t border-gray-100 dark:border-gray-800/50 grid gap-2.5">
+                      <div className="px-4 pb-4 pt-1 border-t border-border grid gap-2.5">
                         {([
                           { key: 'externalLinks' as const, label: 'External links', summary: restorePreview.config.externalLinks.length === 0 ? 'None' : `${restorePreview.config.externalLinks.length} link${restorePreview.config.externalLinks.length !== 1 ? 's' : ''}` },
                           { key: 'registries' as const, label: 'Registries', summary: restorePreview.config.registries.length === 0 ? 'None' : restorePreview.config.registries.map(r => r.name).join(', ') },
@@ -1439,10 +1436,10 @@ export default function BackupPage() {
                           { key: 'logLevel' as const, label: 'Log level', summary: restorePreview.config.logLevel || 'default' },
                           { key: 'update' as const, label: 'Auto-update', summary: restorePreview.config.update ? (restorePreview.config.update.enabled === false ? 'Disabled' : 'Enabled') : 'Not configured' },
                         ]).map(item => (
-                          <label key={item.key} className="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200 py-1">
+                          <label key={item.key} className="flex items-center gap-3 text-sm text-text py-1">
                             <input type="checkbox" className="rounded" checked={restoreSelectionState.configFlags[item.key]} onChange={() => toggleRestoreConfigFlag(item.key)} />
                             <span className="font-medium min-w-[120px]">{item.label}</span>
-                            <span className="text-xs text-gray-500 dark:text-gray-400 truncate">{item.summary}</span>
+                            <span className="text-xs text-text-muted truncate">{item.summary}</span>
                           </label>
                         ))}
                       </div>
@@ -1450,30 +1447,30 @@ export default function BackupPage() {
                   </div>
 
                   {/* Nodes & Checks */}
-                  <div className="rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
-                    <button type="button" onClick={() => toggleRestoreSection('infrastructure')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-900/40 transition-colors">
-                      {restoreExpandedSections.infrastructure ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
-                      <Activity size={16} className="text-gray-400 shrink-0" />
+                  <div className="rounded-card border border-border overflow-hidden">
+                    <button type="button" onClick={() => toggleRestoreSection('infrastructure')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors">
+                      {restoreExpandedSections.infrastructure ? <ChevronDown size={16} className="text-text-subtle shrink-0" /> : <ChevronRight size={16} className="text-text-subtle shrink-0" />}
+                      <Activity size={16} className="text-text-subtle shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Nodes & Health</span>
-                        <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                        <span className="text-sm font-medium text-text">Nodes & Health</span>
+                        <span className="ml-2 text-xs text-text-muted">
                           {Object.values(restoreSelectionState.nodes).filter(Boolean).length} node{Object.values(restoreSelectionState.nodes).filter(Boolean).length !== 1 ? 's' : ''},
                           {' '}{Object.values(restoreSelectionState.checks).filter(Boolean).length} check{Object.values(restoreSelectionState.checks).filter(Boolean).length !== 1 ? 's' : ''}
                         </span>
                       </div>
                     </button>
                     {restoreExpandedSections.infrastructure && (
-                      <div className="px-4 pb-4 pt-1 border-t border-gray-100 dark:border-gray-800/50 space-y-4">
+                      <div className="px-4 pb-4 pt-1 border-t border-border space-y-4">
                         {restorePreview.config.nodes.length > 0 && (
                           <div>
-                            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Nodes</p>
+                            <p className="text-xs font-medium text-text-muted uppercase tracking-wide mb-2">Nodes</p>
                             <div className="grid gap-2">
                               {restorePreview.config.nodes.map(node => (
-                                <label key={node.name} className="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200">
+                                <label key={node.name} className="flex items-center gap-3 text-sm text-text">
                                   <input type="checkbox" className="rounded" checked={restoreSelectionState.nodes[node.name]} onChange={() => toggleRestoreNode(node.name)} />
-                                  <Server size={14} className="text-gray-400 shrink-0" />
+                                  <Server size={14} className="text-text-subtle shrink-0" />
                                   <span className="font-medium">{node.name}</span>
-                                  <span className="text-xs text-gray-500 dark:text-gray-400">{node.uri}{node.default ? ' · Default' : ''}</span>
+                                  <span className="text-xs text-text-muted">{node.uri}{node.default ? ' · Default' : ''}</span>
                                 </label>
                               ))}
                             </div>
@@ -1481,21 +1478,21 @@ export default function BackupPage() {
                         )}
                         {restorePreview.config.checks.length > 0 && (
                           <div>
-                            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Health Checks</p>
+                            <p className="text-xs font-medium text-text-muted uppercase tracking-wide mb-2">Health Checks</p>
                             <div className="grid gap-2">
                               {restorePreview.config.checks.map(check => (
-                                <label key={check.id} className="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200">
+                                <label key={check.id} className="flex items-center gap-3 text-sm text-text">
                                   <input type="checkbox" className="rounded" checked={restoreSelectionState.checks[check.id]} onChange={() => toggleRestoreCheck(check.id)} />
                                   <span className="font-medium">{check.name}</span>
-                                  {check.type && <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">{check.type}</span>}
-                                  {check.target && <span className="text-xs text-gray-500 dark:text-gray-400">{check.target}</span>}
+                                  {check.type && <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-surface-2 text-text-muted">{check.type}</span>}
+                                  {check.target && <span className="text-xs text-text-muted">{check.target}</span>}
                                 </label>
                               ))}
                             </div>
                           </div>
                         )}
                         {restorePreview.config.nodes.length === 0 && restorePreview.config.checks.length === 0 && (
-                          <p className="text-xs text-gray-500 dark:text-gray-400 italic">No nodes or checks in this backup.</p>
+                          <p className="text-xs text-text-muted italic">No nodes or checks in this backup.</p>
                         )}
                       </div>
                     )}
@@ -1503,34 +1500,34 @@ export default function BackupPage() {
 
                   {/* Systemd Files */}
                   {restorePreview.nodeFiles.length > 0 && (
-                    <div className="rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
-                      <button type="button" onClick={() => toggleRestoreSection('files')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-900/40 transition-colors">
-                        {restoreExpandedSections.files ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
-                        <FolderOpen size={16} className="text-gray-400 shrink-0" />
+                    <div className="rounded-card border border-border overflow-hidden">
+                      <button type="button" onClick={() => toggleRestoreSection('files')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors">
+                        {restoreExpandedSections.files ? <ChevronDown size={16} className="text-text-subtle shrink-0" /> : <ChevronRight size={16} className="text-text-subtle shrink-0" />}
+                        <FolderOpen size={16} className="text-text-subtle shrink-0" />
                         <div className="flex-1 min-w-0">
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Systemd Files</span>
-                          <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                          <span className="text-sm font-medium text-text">Systemd Files</span>
+                          <span className="ml-2 text-xs text-text-muted">
                             {Object.values(restoreSelectionState.nodeFiles).reduce((sum, files) => sum + Object.values(files).filter(Boolean).length, 0)} of {restorePreview.nodeFiles.reduce((sum, g) => sum + g.files.length, 0)} files selected
                           </span>
                         </div>
                       </button>
                       {restoreExpandedSections.files && (
-                        <div className="border-t border-gray-100 dark:border-gray-800/50">
+                        <div className="border-t border-border">
                           {restorePreview.nodeFiles.map(group => {
                             const selectedCount = Object.values(restoreSelectionState.nodeFiles[group.nodeName] || {}).filter(Boolean).length;
                             const allSelected = selectedCount === group.files.length;
                             const serviceGroups = groupFilesByService(group.files);
                             return (
-                              <div key={group.nodeName} className="border-b border-gray-100 dark:border-gray-800/50 last:border-b-0">
-                                <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-gray-50/50 dark:bg-gray-900/20">
+                              <div key={group.nodeName} className="border-b border-border last:border-b-0">
+                                <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-surface-muted">
                                   <div className="flex items-center gap-3">
                                     <input type="checkbox" className="rounded" checked={allSelected} onChange={() => toggleAllNodeFiles(group.nodeName, !allSelected)} />
-                                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{group.nodeName}</span>
-                                    <span className="text-xs text-gray-500 dark:text-gray-400">{selectedCount}/{group.files.length} files</span>
+                                    <span className="text-sm font-medium text-text">{group.nodeName}</span>
+                                    <span className="text-xs text-text-muted">{selectedCount}/{group.files.length} files</span>
                                   </div>
-                                  <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                                  <div className="flex items-center gap-2 text-xs text-text-muted">
                                     <span>Target:</span>
-                                    <select value={restoreSelectionState.targetNodes[group.nodeName]} onChange={(event) => updateRestoreTargetNode(group.nodeName, event.target.value)} className="bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded px-2 py-1 text-xs">
+                                    <select value={restoreSelectionState.targetNodes[group.nodeName]} onChange={(event) => updateRestoreTargetNode(group.nodeName, event.target.value)} className="bg-surface-2 border border-border text-text rounded px-2 py-1 text-xs">
                                       {availableRestoreTargets.map(target => (<option key={target} value={target}>{target}</option>))}
                                     </select>
                                   </div>
@@ -1543,22 +1540,22 @@ export default function BackupPage() {
                                     const sgExpanded = restoreExpandedSections[sgKey];
                                     const displayName = sg.service === '_other' ? 'Other files' : sg.service;
                                     return (
-                                      <div key={sg.service} className="border-b border-gray-50 dark:border-gray-800/30 last:border-b-0">
-                                        <div className="flex items-center gap-2 px-4 py-2 hover:bg-gray-50 dark:hover:bg-gray-900/30">
+                                      <div key={sg.service} className="border-b border-border last:border-b-0">
+                                        <div className="flex items-center gap-2 px-4 py-2 hover:bg-surface-2">
                                           <input type="checkbox" className="rounded" checked={sgAllSelected} onChange={() => toggleServiceGroupFiles(group.nodeName, sg.files, !sgAllSelected)} />
                                           <button type="button" onClick={() => toggleRestoreSection(sgKey)} className="flex items-center gap-1.5 flex-1 min-w-0 text-left">
-                                            {sgExpanded ? <ChevronDown size={12} className="text-gray-400 shrink-0" /> : <ChevronRight size={12} className="text-gray-400 shrink-0" />}
-                                            <span className="text-xs font-medium text-gray-800 dark:text-gray-200 capitalize">{displayName}</span>
-                                            <span className="text-[10px] text-gray-400 dark:text-gray-500">{sgSelectedCount}/{sg.files.length}</span>
+                                            {sgExpanded ? <ChevronDown size={12} className="text-text-subtle shrink-0" /> : <ChevronRight size={12} className="text-text-subtle shrink-0" />}
+                                            <span className="text-xs font-medium text-text capitalize">{displayName}</span>
+                                            <span className="text-[10px] text-text-subtle">{sgSelectedCount}/{sg.files.length}</span>
                                           </button>
                                         </div>
                                         {sgExpanded && (
                                           <div className="pl-10 pr-4 pb-1">
                                             {sg.files.map(file => (
-                                              <div key={file.relativePath} className="flex items-center gap-3 py-1 text-xs text-gray-600 dark:text-gray-300">
+                                              <div key={file.relativePath} className="flex items-center gap-3 py-1 text-xs text-text-muted">
                                                 <input type="checkbox" className="rounded" checked={Boolean(restoreSelectionState.nodeFiles[group.nodeName]?.[file.relativePath])} onChange={() => toggleRestoreFile(group.nodeName, file.relativePath)} />
                                                 <span className="flex-1 font-mono truncate">{file.fileName}</span>
-                                                <button type="button" onClick={() => handleRestoreFilePreview(group.nodeName, file.relativePath)} className="shrink-0 p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800" title="Preview file">
+                                                <button type="button" onClick={() => handleRestoreFilePreview(group.nodeName, file.relativePath)} className="shrink-0 p-1 rounded text-text-subtle hover:text-text hover:bg-surface-2" title="Preview file">
                                                   <Eye size={14} />
                                                 </button>
                                               </div>
@@ -1579,20 +1576,20 @@ export default function BackupPage() {
 
                   {/* Service Data */}
                   {restorePreview.serviceData && restorePreview.serviceData.length > 0 && (
-                    <div className="rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
-                      <button type="button" onClick={() => toggleRestoreSection('serviceData')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-900/40 transition-colors">
-                        {restoreExpandedSections.serviceData ? <ChevronDown size={16} className="text-gray-400 shrink-0" /> : <ChevronRight size={16} className="text-gray-400 shrink-0" />}
-                        <Database size={16} className="text-gray-400 shrink-0" />
+                    <div className="rounded-card border border-border overflow-hidden">
+                      <button type="button" onClick={() => toggleRestoreSection('serviceData')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors">
+                        {restoreExpandedSections.serviceData ? <ChevronDown size={16} className="text-text-subtle shrink-0" /> : <ChevronRight size={16} className="text-text-subtle shrink-0" />}
+                        <Database size={16} className="text-text-subtle shrink-0" />
                         <div className="flex-1 min-w-0">
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Service Config</span>
-                          <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                          <span className="text-sm font-medium text-text">Service Config</span>
+                          <span className="ml-2 text-xs text-text-muted">
                             {Object.values(restoreSelectionState.serviceData).reduce((sum, fm) => sum + Object.values(fm).filter(Boolean).length, 0)} file{Object.values(restoreSelectionState.serviceData).reduce((sum, fm) => sum + Object.values(fm).filter(Boolean).length, 0) !== 1 ? 's' : ''} selected
                           </span>
                         </div>
                       </button>
                       {restoreExpandedSections.serviceData && (
-                        <div className="px-4 pb-4 pt-1 border-t border-gray-100 dark:border-gray-800/50 space-y-3">
-                          <p className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md px-3 py-2">
+                        <div className="px-4 pb-4 pt-1 border-t border-border space-y-3">
+                          <p className="text-xs text-status-warn bg-status-warn/10 border border-status-warn/30 rounded-card px-3 py-2">
                             This is each service&apos;s <span className="font-semibold">config</span> — Home Assistant&apos;s automations and <span className="font-mono">.storage</span> registries, the Z-Wave network keys, AdGuard / Authelia / Syncthing / nginx settings, and so on. It is <span className="font-semibold">not</span> bulk data (the Immich photo library, the recorder history DB, the Z-Wave mesh DB) — that stays on disk on a wipe-configs reinstall and is Backup Sync&apos;s job. A wipe-configs reinstall does <span className="font-semibold">not</span> pull this config back automatically; select it here to recover it, or services come up with default settings.
                           </p>
                           {restorePreview.serviceData.map(sd => {
@@ -1606,7 +1603,7 @@ export default function BackupPage() {
                             const allSelected = selectedCount === sd.files.length;
 
                             return (
-                              <div key={sd.name} className="rounded border border-gray-100 dark:border-gray-800/50">
+                              <div key={sd.name} className="rounded border border-border">
                                 <div className="flex items-center gap-2 px-3 py-2">
                                   <input type="checkbox" className="rounded" checked={allSelected} onChange={() => setRestoreSelectionState(prev => {
                                     if (!prev) return prev;
@@ -1614,15 +1611,15 @@ export default function BackupPage() {
                                     return { ...prev, serviceData: { ...prev.serviceData, [sd.name]: Object.fromEntries(sd.files.map(f => [f, newVal])) } };
                                   })} />
                                   <button type="button" onClick={() => toggleRestoreSection(sdKey)} className="flex items-center gap-2 flex-1 min-w-0">
-                                    {sdExpanded ? <ChevronDown size={14} className="text-gray-400 shrink-0" /> : <ChevronRight size={14} className="text-gray-400 shrink-0" />}
-                                    <HardDrive size={14} className="text-gray-400 shrink-0" />
+                                    {sdExpanded ? <ChevronDown size={14} className="text-text-subtle shrink-0" /> : <ChevronRight size={14} className="text-text-subtle shrink-0" />}
+                                    <HardDrive size={14} className="text-text-subtle shrink-0" />
                                     <div className="flex flex-col items-start min-w-0">
                                       <div className="flex items-center gap-2">
-                                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{label}</span>
-                                        <span className="text-xs text-gray-500 dark:text-gray-400">{selectedCount}/{sd.files.length}</span>
+                                        <span className="text-sm font-medium text-text">{label}</span>
+                                        <span className="text-xs text-text-muted">{selectedCount}/{sd.files.length}</span>
                                       </div>
                                       {(sd.sourcePath || sd.nodeName) && (
-                                        <span className="text-[11px] text-gray-400 dark:text-gray-500 font-mono truncate max-w-full">
+                                        <span className="text-[11px] text-text-subtle font-mono truncate max-w-full">
                                           → {sd.nodeName ? `${sd.nodeName}:` : ''}{sd.sourcePath}
                                         </span>
                                       )}
@@ -1636,7 +1633,7 @@ export default function BackupPage() {
                                         for (const f of sd.files) newFiles[f] = false;
                                         for (const f of cat.files) newFiles[f] = true;
                                         return { ...prev, serviceData: { ...prev.serviceData, [sd.name]: newFiles } };
-                                      })} className="px-1.5 py-0.5 text-xs rounded border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                                      })} className="px-1.5 py-0.5 text-xs rounded border border-border hover:bg-surface-2 transition-colors">
                                         {SERVICE_DATA_CATEGORY_ICONS[cat.category]}
                                       </button>
                                     ))}
@@ -1644,7 +1641,7 @@ export default function BackupPage() {
                                 </div>
 
                                 {sdExpanded && (
-                                  <div className="px-3 pb-3 pt-1 border-t border-gray-100 dark:border-gray-800/50 space-y-2">
+                                  <div className="px-3 pb-3 pt-1 border-t border-border space-y-2">
                                     {fileCategories.map(cat => {
                                       const catKey = `sd-${sd.name}-${cat.category}`;
                                       const catExpanded = restoreExpandedSections[catKey];
@@ -1661,16 +1658,16 @@ export default function BackupPage() {
                                               return { ...prev, serviceData: { ...prev.serviceData, [sd.name]: updated } };
                                             })} />
                                             <button type="button" onClick={() => toggleRestoreSection(catKey)} className="flex items-center gap-1.5 flex-1 min-w-0">
-                                              {catExpanded ? <ChevronDown size={12} className="text-gray-400 shrink-0" /> : <ChevronRight size={12} className="text-gray-400 shrink-0" />}
+                                              {catExpanded ? <ChevronDown size={12} className="text-text-subtle shrink-0" /> : <ChevronRight size={12} className="text-text-subtle shrink-0" />}
                                               <span className="text-xs">{SERVICE_DATA_CATEGORY_ICONS[cat.category]}</span>
-                                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">{SERVICE_DATA_CATEGORY_LABELS[cat.category]}</span>
-                                              <span className="text-xs text-gray-500 dark:text-gray-400">{catSelectedCount}/{cat.files.length}</span>
+                                              <span className="text-xs font-medium text-text-muted">{SERVICE_DATA_CATEGORY_LABELS[cat.category]}</span>
+                                              <span className="text-xs text-text-muted">{catSelectedCount}/{cat.files.length}</span>
                                             </button>
                                           </div>
                                           {catExpanded && (
                                             <div className="ml-6 mt-1 space-y-0.5">
                                               {cat.files.map(file => (
-                                                <label key={file} className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 py-0.5">
+                                                <label key={file} className="flex items-center gap-2 text-xs text-text-muted py-0.5">
                                                   <input type="checkbox" className="rounded" checked={Boolean(restoreSelectionState.serviceData[sd.name]?.[file])} onChange={() => setRestoreSelectionState(prev => {
                                                     if (!prev) return prev;
                                                     const updated = { ...prev.serviceData[sd.name] };
@@ -1699,12 +1696,12 @@ export default function BackupPage() {
             </div>
 
             {restorePreview && restoreSelectionState && (
-              <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between">
-                <p className="text-xs text-gray-500 dark:text-gray-400">{getRestoreSelectionSummary()}</p>
-                <button onClick={confirmRestoreBackup} disabled={restoringBackup} className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-sm rounded-lg shadow-sm hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              <div className="px-6 py-4 border-t border-border flex items-center justify-between">
+                <p className="text-xs text-text-muted">{getRestoreSelectionSummary()}</p>
+                <Button onClick={confirmRestoreBackup} disabled={restoringBackup} className="bg-status-ok text-on-accent hover:bg-status-ok/90">
                   {restoringBackup ? <Loader2 className="animate-spin" size={16} /> : <RotateCcw size={16} />}
                   {restoringBackup ? 'Restoring...' : 'Restore Selected'}
-                </button>
+                </Button>
               </div>
             )}
           </aside>
@@ -1714,25 +1711,25 @@ export default function BackupPage() {
       {restoreFilePreview && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center" onMouseDown={stopRestoreEvent} onClick={stopRestoreEvent}>
           <div className="absolute inset-0 bg-gray-950/70 backdrop-blur-sm" onClick={() => setRestoreFilePreview(null)} />
-          <div className="relative z-10 w-full max-w-5xl max-h-[85vh] bg-white dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-xl shadow-2xl overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-800">
+          <div className="relative z-10 w-full max-w-5xl max-h-[85vh] bg-surface border border-border rounded-card shadow-2xl overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border">
               <div>
-                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Backup File Preview</p>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
+                <p className="text-sm font-semibold text-text">Backup File Preview</p>
+                <p className="text-xs text-text-muted">
                   {restoreFilePreview.nodeName} · <span className="font-mono">{restoreFilePreview.relativePath}</span>
                 </p>
               </div>
-              <button type="button" onClick={() => setRestoreFilePreview(null)} className="rounded-full p-2 text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800" aria-label="Close file preview">
+              <button type="button" onClick={() => setRestoreFilePreview(null)} className="rounded-full p-2 text-text-muted hover:text-text hover:bg-surface-2" aria-label="Close file preview">
                 <X size={18} />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900/40 p-4">
+            <div className="flex-1 overflow-y-auto bg-surface-muted p-4">
               {restoreFilePreview.loading ? (
-                <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                <div className="flex items-center gap-2 text-sm text-text-muted">
                   <Loader2 size={16} className="animate-spin" /> Loading file...
                 </div>
               ) : restoreFilePreviewError ? (
-                <p className="text-sm text-red-600 dark:text-red-400">{restoreFilePreviewError}</p>
+                <p className="text-sm text-status-fail">{restoreFilePreviewError}</p>
               ) : (
                 <FileViewer content={restoreFilePreview.content} language={resolveFilePreviewLanguage(restoreFilePreview.relativePath)} />
               )}

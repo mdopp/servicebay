@@ -1,4 +1,5 @@
 import { X, AlertCircle } from 'lucide-react';
+import { Card, Button } from '@/components/ui';
 
 interface LinkForm {
     name: string;
@@ -27,6 +28,11 @@ function isValidHttpUrl(value: string): boolean {
     }
 }
 
+const labelCls = 'block text-xs font-medium text-text-muted mb-space-1';
+const inputCls =
+    'w-full px-space-3 py-space-2 rounded-card border border-border bg-surface-2 text-text ' +
+    'placeholder:text-text-subtle focus:outline-none focus:ring-2 focus:ring-accent';
+
 export default function ExternalLinkModal({ isOpen, onClose, onSave, isEditing, form, setForm }: ExternalLinkModalProps) {
     if (!isOpen) return null;
     const nameMissing = !form.name.trim();
@@ -34,95 +40,85 @@ export default function ExternalLinkModal({ isOpen, onClose, onSave, isEditing, 
     const canSave = !nameMissing && !urlInvalid;
 
     return (
-        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-gray-900 rounded-xl shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800">
-                <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800">
-                    <h3 className="text-lg font-bold">{isEditing ? 'Edit External Link' : 'Add External Link'}</h3>
-                    <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-space-4">
+            <Card padding="none" className="shadow-xl w-full max-w-md overflow-hidden">
+                <div className="flex justify-between items-center p-space-4 border-b border-border">
+                    <h3 className="text-lg font-bold text-text">{isEditing ? 'Edit External Link' : 'Add External Link'}</h3>
+                    <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close">
                         <X size={20} />
-                    </button>
+                    </Button>
                 </div>
-                <div className="p-4 space-y-4">
+                <div className="p-space-4 space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
-                        <input 
-                            type="text" 
+                        <label className={labelCls}>Name</label>
+                        <input
+                            type="text"
                             value={form.name}
-                            onChange={e => setForm({...form, name: e.target.value})}
-                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                            onChange={e => setForm({ ...form, name: e.target.value })}
+                            className={inputCls}
                             placeholder="e.g. Home Assistant"
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">URL</label>
+                        <label className={labelCls}>URL</label>
                         <input
                             type="url"
                             value={form.url}
-                            onChange={e => setForm({...form, url: e.target.value})}
-                            className={`w-full p-2 rounded-lg border bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 outline-none ${
+                            onChange={e => setForm({ ...form, url: e.target.value })}
+                            className={`w-full px-space-3 py-space-2 rounded-card border bg-surface-2 text-text placeholder:text-text-subtle focus:outline-none focus:ring-2 ${
                                 form.url && urlInvalid
-                                    ? 'border-red-400 dark:border-red-500 focus:ring-red-500'
-                                    : 'border-gray-300 dark:border-gray-700 focus:ring-blue-500'
+                                    ? 'border-status-fail focus:ring-status-fail'
+                                    : 'border-border focus:ring-accent'
                             }`}
                             placeholder="http://192.168.1.10:8123"
                             aria-invalid={form.url ? urlInvalid : undefined}
                         />
                         {form.url && urlInvalid && (
-                            <p className="mt-1 flex items-center gap-1 text-xs text-red-600 dark:text-red-400" role="alert">
+                            <p className="mt-space-1 flex items-center gap-space-1 text-xs text-status-fail" role="alert">
                                 <AlertCircle size={12} /> URL must start with http:// or https://
                             </p>
                         )}
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description (Optional)</label>
-                        <input 
-                            type="text" 
+                        <label className={labelCls}>Description (Optional)</label>
+                        <input
+                            type="text"
                             value={form.description}
-                            onChange={e => setForm({...form, description: e.target.value})}
-                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                            onChange={e => setForm({ ...form, description: e.target.value })}
+                            className={inputCls}
                             placeholder="Smart Home Control"
                         />
                     </div>
-                    <div className="flex items-center gap-2">
-                        <input 
-                            type="checkbox" 
-                            id="monitor"
+                    <label className="flex items-center gap-space-2 text-sm text-text-muted">
+                        <input
+                            type="checkbox"
                             checked={form.monitor}
-                            onChange={e => setForm({...form, monitor: e.target.checked})}
-                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            onChange={e => setForm({ ...form, monitor: e.target.checked })}
+                            className="rounded border-border text-accent focus:ring-accent"
                         />
-                        <label htmlFor="monitor" className="text-sm text-gray-700 dark:text-gray-300">
-                            Monitor this service (HTTP Check)
-                        </label>
-                    </div>
+                        Monitor this service (HTTP Check)
+                    </label>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target IPs/Ports (Optional)</label>
-                        <input 
-                            type="text" 
+                        <label className={labelCls}>Target IPs/Ports (Optional)</label>
+                        <input
+                            type="text"
                             value={form.ipTargetsText || ''}
-                            onChange={e => setForm({...form, ipTargetsText: e.target.value})}
-                            className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                            onChange={e => setForm({ ...form, ipTargetsText: e.target.value })}
+                            className={inputCls}
                             placeholder="e.g. 192.168.1.10:8123, 10.0.0.5:80 (comma separated)"
                         />
-                        <span className="text-xs text-gray-500">Allows Nginx Reverse Proxy to detect edges to this external service.</span>
+                        <span className="text-xs text-text-subtle">Allows Nginx Reverse Proxy to detect edges to this external service.</span>
                     </div>
                 </div>
-                <div className="flex justify-end gap-2 p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 rounded-b-xl">
-                    <button 
-                        onClick={onClose}
-                        className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors"
-                    >
+                <div className="flex justify-end gap-space-2 p-space-4 border-t border-border bg-surface-2">
+                    <Button variant="ghost" onClick={onClose}>
                         Cancel
-                    </button>
-                    <button
-                        onClick={onSave}
-                        disabled={!canSave}
-                        className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
+                    </Button>
+                    <Button onClick={onSave} disabled={!canSave}>
                         {isEditing ? 'Save Changes' : 'Add Link'}
-                    </button>
+                    </Button>
                 </div>
-            </div>
+            </Card>
         </div>
     );
 }

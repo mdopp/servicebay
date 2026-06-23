@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Settings, AlertCircle, Loader2 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { humanizeError } from '@servicebay/api-client';
+import { Field } from '@/components/ui';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -65,18 +66,18 @@ export default function LogLevelControl() {
   };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-slate-100 dark:bg-slate-900/40 rounded-lg text-slate-700 dark:text-slate-200">
+    <div className="bg-surface border border-border rounded-card overflow-hidden w-full">
+      <div className="p-space-4 border-b border-border bg-surface-2 flex items-center justify-between gap-space-3">
+        <div className="flex items-center gap-space-3">
+          <div className="p-space-2 bg-surface-muted rounded-card text-text-muted">
             <Settings className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="font-bold text-gray-900 dark:text-white">Log Level</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400">Control how verbose ServiceBay logging should be.</p>
+            <h3 className="font-bold text-text">Log Level</h3>
+            <p className="text-xs text-text-muted">Control how verbose ServiceBay logging should be.</p>
           </div>
         </div>
-        <span className="text-xs text-gray-500 dark:text-gray-400 inline-flex items-center gap-1">
+        <span className="text-xs text-text-muted inline-flex items-center gap-space-1">
           {saving ? (
             <>
               <Loader2 className="w-3 h-3 animate-spin" />
@@ -88,30 +89,31 @@ export default function LogLevelControl() {
         </span>
       </div>
 
-      <div className="p-6 space-y-4">
-        <div className="flex gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-sm text-blue-900 dark:text-blue-300">
+      <div className="p-space-5 space-y-space-4">
+        <div className="flex gap-space-2 p-space-3 bg-status-info/10 border border-status-info/20 rounded-card text-sm text-status-info">
           <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
           <p>
             Lower levels include all higher levels. Debug is the noisiest, Error only shows critical issues.
           </p>
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-            Verbosity Level
-          </label>
-          <select
-            value={logLevel}
-            onChange={e => handleLevelChange(e.target.value as LogLevel)}
-            disabled={loading || saving}
-            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <option value="debug">Debug - All messages including verbose logs</option>
-            <option value="info">Info - Normal operation messages (default)</option>
-            <option value="warn">Warn - Warnings and errors only</option>
-            <option value="error">Error - Errors only</option>
-          </select>
-        </div>
+        <Field label="Verbosity Level">
+          {({ id, ...aria }) => (
+            <select
+              id={id}
+              {...aria}
+              value={logLevel}
+              onChange={e => handleLevelChange(e.target.value as LogLevel)}
+              disabled={loading || saving}
+              className="w-full px-space-3 py-2 border border-border rounded-card bg-surface-2 text-text font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="debug">Debug - All messages including verbose logs</option>
+              <option value="info">Info - Normal operation messages (default)</option>
+              <option value="warn">Warn - Warnings and errors only</option>
+              <option value="error">Error - Errors only</option>
+            </select>
+          )}
+        </Field>
       </div>
     </div>
   );

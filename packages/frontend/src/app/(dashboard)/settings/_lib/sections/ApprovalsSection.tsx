@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, Loader2, ShieldAlert, X } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { Badge, Button, Card } from '@/components/ui';
 
 /** Mirrors the backend `ApprovalRequest` shape (see lib/approvals, #1843).
  *  Only the reviewer-facing fields are needed here. */
@@ -75,16 +76,14 @@ function ApprovalCardHeader({ request }: { request: ApprovalRequest }) {
   return (
     <div className="flex-1 min-w-0">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-sm font-medium text-gray-900 dark:text-white">{request.title}</span>
-        <span className="inline-flex items-center px-1.5 py-0.5 text-[11px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded">
-          {request.service}
-        </span>
-        <span className="text-[11px] text-gray-500 dark:text-gray-400">
+        <span className="text-sm font-medium text-text">{request.title}</span>
+        <Badge variant="neutral" className="font-mono">{request.service}</Badge>
+        <span className="text-[11px] text-text-subtle">
           · {new Date(request.created_at).toLocaleString()}
         </span>
       </div>
       {request.description && (
-        <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">{request.description}</p>
+        <p className="mt-1 text-xs text-text-muted">{request.description}</p>
       )}
     </div>
   );
@@ -95,45 +94,47 @@ function ApprovalCard({ request, busy, onApprove, onReject }: ApprovalCardProps)
   const hasPayload = Object.keys(request.payload).length > 0;
 
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 transition-colors">
+    <Card padding="none" className="transition-colors">
       <div className="p-3 flex items-start gap-3">
         <button
           onClick={() => setIsOpen(!isOpen)}
           disabled={!hasPayload}
-          className="p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors disabled:opacity-30 disabled:cursor-default"
+          className="p-1 text-text-subtle hover:bg-surface-2 rounded-card transition-colors disabled:opacity-30 disabled:cursor-default"
           title={hasPayload ? (isOpen ? 'Collapse details' : 'Show details') : 'No additional details'}
         >
           {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
         </button>
         <ApprovalCardHeader request={request} />
         <div className="flex items-center gap-1 shrink-0">
-          <button
+          <Button
+            variant="primary"
+            size="sm"
             onClick={() => onApprove(request.id, request.title)}
             disabled={busy === 'action'}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg disabled:opacity-50 transition-colors"
             title="Approve this request"
           >
             <Check size={14} /> Approve
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
             onClick={() => onReject(request.id, request.title)}
             disabled={busy === 'action'}
-            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg disabled:opacity-50 transition-colors"
             title="Reject this request"
           >
             <X size={14} /> Reject
-          </button>
+          </Button>
         </div>
       </div>
 
       {hasPayload && isOpen && (
-        <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-gray-50 dark:bg-gray-950/80 max-h-[420px] overflow-y-auto">
-          <pre className="text-[11px] font-mono text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words">
+        <div className="border-t border-border p-4 bg-surface-muted max-h-[420px] overflow-y-auto">
+          <pre className="text-[11px] font-mono text-text-muted whitespace-pre-wrap break-words">
             {JSON.stringify(request.payload, null, 2)}
           </pre>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -158,29 +159,27 @@ export default function ApprovalsSection() {
   if (busy === 'load') return <ApprovalsLoadingState />;
 
   return (
-    <div id="approvals" className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full scroll-mt-24">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-        <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg text-amber-600 dark:text-amber-400">
+    <Card id="approvals" padding="none" className="w-full overflow-hidden scroll-mt-24">
+      <div className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border bg-surface-2">
+        <div className="p-2 rounded-card bg-status-warn/10 text-status-warn">
           <ShieldAlert size={20} />
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="font-bold text-gray-900 dark:text-white">
+          <h3 className="flex items-center gap-space-2 font-semibold text-text">
             Approvals
             {pending.length > 0 && (
-              <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold text-white bg-amber-500 rounded-full">
-                {pending.length}
-              </span>
+              <Badge variant="warn" aria-label={`${pending.length} pending`}>{pending.length}</Badge>
             )}
           </h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-text-muted">
             Requests that need your review before a service runs them. Inspect the details, then <span className="font-medium">Approve</span> to run the requested action or <span className="font-medium">Reject</span> to discard it.
           </p>
         </div>
       </div>
 
-      <div className="p-6">
+      <div className="p-space-5">
         {pending.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+          <p className="text-sm text-text-muted italic">
             No pending approvals. Requests will appear here when a service needs your sign-off.
           </p>
         ) : (
@@ -197,15 +196,15 @@ export default function ApprovalsSection() {
           </div>
         )}
       </div>
-    </div>
+    </Card>
   );
 }
 
 function ApprovalsLoadingState() {
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 text-sm text-gray-500 dark:text-gray-400">
+    <Card className="w-full p-space-5 text-sm text-text-muted">
       <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
       Loading approvals…
-    </div>
+    </Card>
   );
 }

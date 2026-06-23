@@ -16,13 +16,14 @@ import {
 import { logger, type Check, type ServiceViewModel } from '@servicebay/api-client';
 import type { RowStatus } from '@/components/HealthChecks';
 import { useToast } from '@/providers/ToastProvider';
+import { Card, StatusDot, type StatusState } from '@/components/ui';
 import { useServiceHealth, overallHealth, serviceBaseName } from './serviceHealth';
 
-const DOT_META: Record<RowStatus, { dot: string; label: string; text: string }> = {
-  ok: { dot: 'bg-green-500', label: 'Healthy', text: 'text-green-600 dark:text-green-400' },
-  warn: { dot: 'bg-amber-500', label: 'Warning', text: 'text-amber-600 dark:text-amber-400' },
-  fail: { dot: 'bg-red-500', label: 'Failing', text: 'text-red-600 dark:text-red-400' },
-  unknown: { dot: 'bg-gray-400', label: 'Unknown', text: 'text-gray-500' },
+const DOT_META: Record<RowStatus, { state: StatusState; label: string; text: string }> = {
+  ok: { state: 'ok', label: 'Healthy', text: 'text-status-ok' },
+  warn: { state: 'warn', label: 'Warning', text: 'text-status-warn' },
+  fail: { state: 'fail', label: 'Failing', text: 'text-status-fail' },
+  unknown: { state: 'unknown', label: 'Unknown', text: 'text-text-subtle' },
 };
 
 const CHECK_ICON: Record<RowStatus, typeof CheckCircle> = {
@@ -92,7 +93,7 @@ export default function ServiceDetailSummary({
       {showOperateLink && (
         <Link
           href={operateHref}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-accent hover:underline"
           data-service-base={serviceBaseName(service)}
         >
           Open full Operate page <ArrowRight size={14} />
@@ -154,25 +155,25 @@ function SummaryHeader({
 }: {
   displayName: string;
   active: boolean;
-  meta: { dot: string; label: string; text: string };
+  meta: { state: StatusState; label: string; text: string };
   subtitle: string;
 }) {
   return (
     <div className="min-w-0">
       <div className="flex items-center gap-2">
-        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${meta.dot}`} aria-hidden />
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate" title={displayName}>
+        <StatusDot state={active ? meta.state : 'unknown'} label={`Service status: ${active ? meta.label : 'Stopped'}`} />
+        <h3 className="text-lg font-semibold text-text truncate" title={displayName}>
           {displayName}
         </h3>
         <span className={`text-xs font-medium ${meta.text}`}>{active ? meta.label : 'Stopped'}</span>
       </div>
-      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">{subtitle}</p>
+      <p className="text-xs text-text-muted mt-0.5 truncate">{subtitle}</p>
     </div>
   );
 }
 
 const ACTION_CLS =
-  'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors';
+  'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-card border border-border text-text hover:bg-surface-2 transition-colors';
 
 function SummaryActions({
   openUrl,
@@ -214,23 +215,23 @@ function HealthRollup({
 }) {
   const topChecks = [...checks].sort((a, b) => failRank(a.status) - failRank(b.status)).slice(0, 4);
   return (
-    <div className="rounded-lg border border-gray-100 dark:border-gray-800 p-3">
+    <Card padding="sm">
       <div className="flex gap-3 text-xs mb-2">
-        <span className="text-green-600 dark:text-green-400 font-medium">{counts.ok} ok</span>
-        {counts.warn > 0 && <span className="text-amber-600 dark:text-amber-400 font-medium">{counts.warn} warning</span>}
-        {counts.fail > 0 && <span className="text-red-600 dark:text-red-400 font-medium">{counts.fail} failing</span>}
+        <span className="text-status-ok font-medium">{counts.ok} ok</span>
+        {counts.warn > 0 && <span className="text-status-warn font-medium">{counts.warn} warning</span>}
+        {counts.fail > 0 && <span className="text-status-fail font-medium">{counts.fail} failing</span>}
       </div>
       {loading ? (
-        <p className="text-xs text-gray-400">Loading health…</p>
+        <p className="text-xs text-text-subtle">Loading health…</p>
       ) : topChecks.length === 0 ? (
-        <p className="text-xs text-gray-400">No health checks for this service.</p>
+        <p className="text-xs text-text-subtle">No health checks for this service.</p>
       ) : (
         <ul className="space-y-1">
           {topChecks.map(check => {
             const rs = (check.status as RowStatus) in CHECK_ICON ? (check.status as RowStatus) : 'unknown';
             const Icon = CHECK_ICON[rs];
             return (
-              <li key={check.id} className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 min-w-0">
+              <li key={check.id} className="flex items-center gap-2 text-xs text-text-muted min-w-0">
                 <Icon size={13} className={DOT_META[rs].text + ' shrink-0'} />
                 <span className="truncate" title={check.name}>{check.name}</span>
               </li>
@@ -238,7 +239,7 @@ function HealthRollup({
           })}
         </ul>
       )}
-    </div>
+    </Card>
   );
 }
 

@@ -74,13 +74,35 @@ describe('Sidebar', () => {
         });
     });
 
-    it('renders active state', () => {
+    it('renders active state on accent tokens (design-system migration #2100)', () => {
         render(<Sidebar />);
 
         const text = screen.getByText('Services');
         const button = text.closest('button');
         expect(button).toBeDefined();
-        expect(button?.className).toContain('text-blue-600');
+        // Active nav chrome now resolves through semantic accent tokens
+        // (dark-mode-correct), not a raw blue-600 literal.
+        expect(button?.className).toContain('bg-accent/10');
+        expect(button?.className).toContain('text-accent');
+        expect(button?.className).not.toMatch(/blue-\d|dark:bg-blue/);
+    });
+
+    it('idle nav rows hover on surface tokens, no raw gray literals (#2100)', () => {
+        render(<Sidebar />);
+        const idle = screen.getByText('Status').closest('button');
+        expect(idle?.className).toContain('hover:bg-surface-2');
+        expect(idle?.className).toContain('text-text-muted');
+        expect(idle?.className).not.toMatch(/gray-\d|dark:hover:bg-white/);
+    });
+
+    it('preserves EVERY navigation entry incl. the restored Terminal (#2083)', async () => {
+        const { NAVIGATION_ENTRIES } = await import('@/config/navigation');
+        render(<Sidebar />);
+        for (const entry of NAVIGATION_ENTRIES) {
+            expect(screen.getByText(entry.name)).toBeDefined();
+        }
+        // Terminal must not be buried (memory: don't drop recovery tools).
+        expect(screen.getByText('Terminal')).toBeDefined();
     });
 
     it('navigates on click', () => {

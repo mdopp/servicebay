@@ -2,7 +2,13 @@
 
 import { useState } from 'react';
 import { Mail, Plus, Trash2, Send, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Button, Card } from '@/components/ui';
 import { useSettings } from '../SettingsContext';
+
+// Shared token-based input chrome for this section's text fields.
+const INPUT_CLASS =
+  'w-full p-2 rounded-card border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none';
+const LABEL_CLASS = 'block text-sm font-medium text-text-muted mb-1';
 
 export default function EmailNotificationsSection() {
   const {
@@ -73,35 +79,35 @@ export default function EmailNotificationsSection() {
   };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-        <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
+    <Card padding="none" className="w-full overflow-hidden">
+      <div className="flex items-center gap-space-3 px-space-4 py-space-3 border-b border-border bg-surface-2">
+        <div className="p-2 rounded-card bg-accent/10 text-accent">
           <Mail size={20} />
         </div>
         <div>
-          <h3 className="font-bold text-gray-900 dark:text-white">Email (SMTP)</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400">Configure SMTP settings for ServiceBay alerts</p>
+          <h3 className="font-semibold text-text">Email (SMTP)</h3>
+          <p className="text-xs text-text-muted">Configure SMTP settings for ServiceBay alerts</p>
         </div>
         <div className="ml-auto">
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              className="sr-only peer"
-              checked={emailEnabled}
-              onChange={e => handleEnabledToggle(e.target.checked)}
-              disabled={saving}
-            />
-            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-          </label>
+          <button
+            role="switch"
+            aria-checked={emailEnabled}
+            aria-label="Enable email notifications"
+            onClick={() => handleEnabledToggle(!emailEnabled)}
+            disabled={saving}
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-chip transition-colors disabled:opacity-50 ${emailEnabled ? 'bg-accent' : 'bg-surface-muted border border-border'}`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-chip bg-white transition-transform ${emailEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
         </div>
       </div>
 
       {emailEnabled && (
-        <div className="p-6 space-y-6">
-          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 text-sm text-blue-800 dark:text-blue-200">
+        <div className="p-space-5 space-y-6">
+          <div className="rounded-card border border-status-info/30 bg-status-info/10 p-4 text-sm text-text">
             <p className="font-medium mb-1">Need help finding these settings?</p>
-            <ul className="list-disc list-inside space-y-1 opacity-90">
-              <li><strong>Gmail:</strong> Host: <code>smtp.gmail.com</code>, Port: <code>587</code>. Use an <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-600">App Password</a> if 2FA is enabled.</li>
+            <ul className="list-disc list-inside space-y-1 text-text-muted">
+              <li><strong>Gmail:</strong> Host: <code>smtp.gmail.com</code>, Port: <code>587</code>. Use an <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener noreferrer" className="underline text-accent hover:text-accent-strong">App Password</a> if 2FA is enabled.</li>
               <li><strong>Outlook:</strong> Host: <code>smtp.office365.com</code>, Port: <code>587</code>.</li>
               <li><strong>GMX:</strong> Host: <code>mail.gmx.net</code>, Port: <code>587</code>.</li>
             </ul>
@@ -109,62 +115,62 @@ export default function EmailNotificationsSection() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">SMTP Host</label>
+              <label className={LABEL_CLASS}>SMTP Host</label>
               <input
                 type="text"
                 value={emailHost}
                 onChange={e => setEmailHost(e.target.value)}
                 onBlur={() => persistSettings()}
                 disabled={saving}
-                className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                className={INPUT_CLASS}
                 placeholder="smtp.gmail.com"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">SMTP Port</label>
+              <label className={LABEL_CLASS}>SMTP Port</label>
               <input
                 type="number"
                 value={emailPort}
                 onChange={e => setEmailPort(parseInt(e.target.value) || 0)}
                 onBlur={() => persistSettings()}
                 disabled={saving}
-                className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                className={INPUT_CLASS}
                 placeholder="587"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Username</label>
+              <label className={LABEL_CLASS}>Username</label>
               <input
                 type="text"
                 value={emailUser}
                 onChange={e => setEmailUser(e.target.value)}
                 onBlur={() => persistSettings()}
                 disabled={saving}
-                className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                className={INPUT_CLASS}
                 placeholder="user@example.com"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Password</label>
+              <label className={LABEL_CLASS}>Password</label>
               <input
                 type="password"
                 value={emailPass}
                 onChange={e => setEmailPass(e.target.value)}
                 onBlur={() => persistSettings()}
                 disabled={saving}
-                className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                className={INPUT_CLASS}
                 placeholder="••••••••"
               />
             </div>
             <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">From Address</label>
+              <label className={LABEL_CLASS}>From Address</label>
               <input
                 type="text"
                 value={emailFrom}
                 onChange={e => setEmailFrom(e.target.value)}
                 onBlur={() => persistSettings()}
                 disabled={saving}
-                className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                className={INPUT_CLASS}
                 placeholder="ServiceBay <alerts@example.com>"
               />
             </div>
@@ -175,16 +181,16 @@ export default function EmailNotificationsSection() {
                   checked={emailSecure}
                   onChange={e => handleSecureToggle(e.target.checked)}
                   disabled={saving}
-                  className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                  className="w-4 h-4 accent-accent rounded border-border focus:ring-2 focus:ring-accent"
                 />
-                <span className="text-sm text-gray-700 dark:text-gray-300">Use Secure Connection (TLS/SSL)</span>
+                <span className="text-sm text-text-muted">Use Secure Connection (TLS/SSL)</span>
               </label>
             </div>
           </div>
 
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Send test email</label>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+          <div className="border-t border-border pt-6">
+            <label className="block text-sm font-medium text-text-muted mb-2">Send test email</label>
+            <p className="text-xs text-text-muted mb-3">
               Verifies the SMTP settings above by sending one canned message to the address you enter. Works even when the master toggle is off — useful before enabling alerts.
             </p>
             <div className="flex gap-2">
@@ -194,26 +200,26 @@ export default function EmailNotificationsSection() {
                 onChange={e => setTestRecipient(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && testRecipient && testStatus.kind !== 'sending' && handleSendTest()}
                 disabled={saving || testStatus.kind === 'sending'}
-                className="flex-1 p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                className={`flex-1 ${INPUT_CLASS}`}
                 placeholder="recipient@example.com"
               />
-              <button
+              <Button
                 onClick={handleSendTest}
                 disabled={saving || !testRecipient || testStatus.kind === 'sending'}
-                className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium shrink-0"
+                className="shrink-0"
               >
                 <Send size={16} />
                 {testStatus.kind === 'sending' ? 'Sending…' : 'Send test'}
-              </button>
+              </Button>
             </div>
             {testStatus.kind === 'ok' && (
-              <div className="mt-3 flex items-start gap-2 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-sm text-emerald-800 dark:text-emerald-200">
+              <div className="mt-3 flex items-start gap-2 p-3 rounded-card bg-status-ok/10 border border-status-ok/30 text-sm text-status-ok">
                 <CheckCircle2 size={16} className="shrink-0 mt-0.5" />
                 <span>{testStatus.message}</span>
               </div>
             )}
             {testStatus.kind === 'fail' && (
-              <div className="mt-3 flex items-start gap-2 p-3 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-sm text-rose-800 dark:text-rose-200">
+              <div className="mt-3 flex items-start gap-2 p-3 rounded-card bg-status-fail/10 border border-status-fail/30 text-sm text-status-fail">
                 <AlertCircle size={16} className="shrink-0 mt-0.5" />
                 <div>
                   <p className="font-medium mb-0.5">SMTP rejected the test:</p>
@@ -223,8 +229,8 @@ export default function EmailNotificationsSection() {
             )}
           </div>
 
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-6">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Recipients</label>
+          <div className="border-t border-border pt-6">
+            <label className="block text-sm font-medium text-text-muted mb-2">Recipients</label>
             <div className="flex gap-2 mb-3">
               <input
                 type="email"
@@ -232,37 +238,41 @@ export default function EmailNotificationsSection() {
                 onChange={e => setNewRecipient(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleAddRecipient()}
                 disabled={saving}
-                className="flex-1 p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                className={`flex-1 ${INPUT_CLASS}`}
                 placeholder="Add email address..."
               />
-              <button
+              <Button
+                variant="secondary"
                 onClick={handleAddRecipient}
                 disabled={saving || !newRecipient}
-                className="p-2 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label="Add recipient"
+                className="shrink-0"
               >
                 <Plus size={20} />
-              </button>
+              </Button>
             </div>
             <div className="space-y-2">
               {emailRecipients.map(email => (
-                <div key={email} className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                  <span className="text-sm text-gray-700 dark:text-gray-300">{email}</span>
-                  <button
+                <div key={email} className="flex items-center justify-between p-2 bg-surface-2 rounded-card border border-border">
+                  <span className="text-sm text-text-muted">{email}</span>
+                  <Button
+                    variant="danger"
+                    size="sm"
                     onClick={() => handleRemoveRecipient(email)}
                     disabled={saving}
-                    className="text-gray-400 hover:text-red-500 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    aria-label={`Remove ${email}`}
                   >
                     <Trash2 size={16} />
-                  </button>
+                  </Button>
                 </div>
               ))}
               {emailRecipients.length === 0 && (
-                <p className="text-sm text-gray-500 italic">No recipients added.</p>
+                <p className="text-sm text-text-subtle italic">No recipients added.</p>
               )}
             </div>
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

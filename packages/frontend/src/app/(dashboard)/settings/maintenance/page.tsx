@@ -27,18 +27,18 @@ export default function MaintenanceSettingsPage() {
             href={entry.launchHref!}
             id={entry.id}
             data-testid={`maintenance-launch-${entry.id}`}
-            className="flex items-center gap-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 hover:border-blue-400 dark:hover:border-blue-500 hover:shadow-sm transition-colors"
+            className="flex items-center gap-4 rounded-card border border-border bg-surface p-4 hover:border-accent hover:shadow-sm transition-colors"
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-card bg-accent/10 text-accent">
               <Download className="h-5 w-5" />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block font-medium text-gray-900 dark:text-gray-100">{entry.label}</span>
-              <span className="block text-sm text-gray-500 dark:text-gray-400">
+              <span className="block font-medium text-text">{entry.label}</span>
+              <span className="block text-sm text-text-muted">
                 Sort a USB disk or drive into the box (photos, music, documents…). Runs in a one-shot worker — opens the importer.
               </span>
             </span>
-            <ChevronRight className="h-5 w-5 shrink-0 text-gray-400" />
+            <ChevronRight className="h-5 w-5 shrink-0 text-text-subtle" />
           </Link>
         ))}
       </div>
