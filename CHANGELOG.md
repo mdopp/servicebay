@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.145.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.144.1...servicebay-v4.145.0) (2026-06-23)
+
+
+### Features
+
+* **dashboards:** consistent Home tile headers, System/Data disk split + Last updated, mobile reorder ([ad93080](https://github.com/mdopp/servicebay/commit/ad930805fe604aee9edd20dc3a3e31db13becfae)), closes [#2103](https://github.com/mdopp/servicebay/issues/2103) [#2104](https://github.com/mdopp/servicebay/issues/2104) [#2105](https://github.com/mdopp/servicebay/issues/2105)
+* **frontend:** focus a service in the Network Map from the service list ([83c2db2](https://github.com/mdopp/servicebay/commit/83c2db263250513130ea16483079c4d65185aae2)), closes [#2108](https://github.com/mdopp/servicebay/issues/2108)
+* **frontend:** Home tiles v2, image-update banner refresh, portal design migration, service focus, settings flatten ([9b3f9fc](https://github.com/mdopp/servicebay/commit/9b3f9fcec693c62de66348023094bd18e15be069))
+* **portal:** migrate public /portal to design-system primitives + tokens ([bf5856a](https://github.com/mdopp/servicebay/commit/bf5856ac21774998a808e6482615a4d0d892e594)), closes [#2107](https://github.com/mdopp/servicebay/issues/2107)
+
+
+### Bug Fixes
+
+* **frontend:** refresh image-update banner after a successful update ([dcbab4e](https://github.com/mdopp/servicebay/commit/dcbab4ea4d0f8e8f1312e7b295da1a31fc5470ce)), closes [#2106](https://github.com/mdopp/servicebay/issues/2106)
+
 ## [4.144.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.144.0...servicebay-v4.144.1) (2026-06-23)
 
 
