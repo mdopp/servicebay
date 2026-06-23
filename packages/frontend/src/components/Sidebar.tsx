@@ -18,6 +18,16 @@ export const dashboards = NAVIGATION_ENTRIES;
 // tidied footer's inline secondary-link row.
 const NoIcon = () => null;
 
+// Shared nav-item chrome on semantic tokens (#2100 ds-migrate-shell). Active
+// rows take the accent surface/border/text; idle rows are transparent with a
+// surface-2 hover. One source of truth so the four link variants stay in sync.
+const navItemClass = (active: boolean, collapsed: boolean) =>
+  `w-full text-left px-3.5 py-3 rounded-card flex items-center transition-all border ${
+    active
+      ? 'bg-accent/10 border-accent/20 text-accent font-bold shadow-sm shadow-accent/5'
+      : 'border-transparent hover:bg-surface-2 text-text-muted hover:text-text'
+  } ${collapsed ? 'justify-center' : 'gap-3.5'}`;
+
 export default function Sidebar() {
     const pathname = usePathname() || '';
   const searchParams = useSearchParams();
@@ -119,14 +129,14 @@ export default function Sidebar() {
         <div className="h-16 flex items-center justify-between px-4">
             {!isCollapsed && (
                 <div className="flex items-center gap-3.5 overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">
-                    <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 shadow-inner shrink-0">
-                        <ServiceBayLogo size={22} className="text-blue-600 dark:text-blue-400 shrink-0" />
+                    <div className="p-2.5 rounded-card bg-accent/10 border border-accent/20 shadow-inner shrink-0">
+                        <ServiceBayLogo size={22} className="text-accent shrink-0" />
                     </div>
                     <div className="flex flex-col overflow-hidden">
-                        <h3 className="font-extrabold text-gray-800 dark:text-gray-100 leading-none whitespace-nowrap tracking-tight text-sm">
+                        <h3 className="font-extrabold text-text leading-none whitespace-nowrap tracking-tight text-sm">
                             ServiceBay
                         </h3>
-                        <span className="text-[9px] uppercase font-black text-gray-500 dark:text-gray-500 tracking-[0.15em] mt-1.5 whitespace-nowrap">
+                        <span className="text-[9px] uppercase font-black text-text-subtle tracking-[0.15em] mt-1.5 whitespace-nowrap">
                             SYSTEM{appVersion ? ` - v${appVersion}` : ''}
                         </span>
                     </div>
@@ -134,16 +144,16 @@ export default function Sidebar() {
             )}
             <button
                 onClick={() => setIsCollapsed(!isCollapsed)}
-                className={`p-1.5 rounded-xl border border-transparent hover:bg-gray-200/60 dark:hover:bg-white/[0.02] text-gray-500 ${isCollapsed ? 'mx-auto' : ''}`}
+                className={`p-1.5 rounded-card border border-transparent hover:bg-surface-2 text-text-muted ${isCollapsed ? 'mx-auto' : ''}`}
                 title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
             >
                 {isCollapsed ? <ServiceBayLogo size={20} /> : <ChevronLeft size={18} />}
             </button>
         </div>
         {node && !isCollapsed && (
-            <div className="mx-2 mb-1 px-3 py-1.5 bg-amber-50 dark:bg-amber-900/10 border border-amber-200/50 dark:border-amber-800/40 rounded-xl flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 truncate">{node}</span>
+            <div className="mx-2 mb-1 px-3 py-1.5 bg-status-warn/10 border border-status-warn/30 rounded-card flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-status-warn animate-pulse" />
+                <span className="text-xs font-semibold text-status-warn truncate">{node}</span>
             </div>
         )}
         {node && isCollapsed && (
@@ -154,9 +164,9 @@ export default function Sidebar() {
                 aria-label={`Active node: ${node}. Tap for details.`}
                 className="mx-auto mb-1 flex flex-col items-center gap-0.5 focus:outline-none"
             >
-                <span className="w-3 h-3 rounded-full bg-amber-500 animate-pulse" />
+                <span className="w-3 h-3 rounded-full bg-status-warn animate-pulse" />
                 {showCollapsedNodeLabel && (
-                    <span className="text-[9px] font-mono text-amber-600 dark:text-amber-400 max-w-[3.5rem] truncate">{node}</span>
+                    <span className="text-[9px] font-mono text-status-warn max-w-[3.5rem] truncate">{node}</span>
                 )}
             </button>
         )}
@@ -168,14 +178,10 @@ export default function Sidebar() {
                     <button
                         key={p.id}
                         onClick={() => router.push(`${p.path}${node ? `?node=${node}` : ''}`)}
-                        className={`w-full text-left px-3.5 py-3 rounded-xl flex items-center transition-all border ${
-                            isActive
-                            ? 'bg-blue-50 dark:bg-blue-600/10 border-blue-100 dark:border-blue-500/20 text-blue-600 dark:text-blue-400 font-bold shadow-sm shadow-blue-500/5'
-                            : 'border-transparent hover:bg-gray-200/60 dark:hover:bg-white/[0.02] text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-                        } ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
+                        className={navItemClass(isActive, isCollapsed)}
                         title={isCollapsed ? p.name : ''}
                     >
-                        <Icon size={20} className={`shrink-0 ${isActive ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-500'}`} />
+                        <Icon size={20} className={`shrink-0 ${isActive ? 'text-accent' : 'text-text-subtle'}`} />
                         {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">{p.name}</span>}
                     </button>
                 );
@@ -183,14 +189,10 @@ export default function Sidebar() {
             {chatInstalled && (
                 <button
                     onClick={() => router.push(`/chat${node ? `?node=${node}` : ''}`)}
-                    className={`w-full text-left px-3.5 py-3 rounded-xl flex items-center transition-all border ${
-                        isNavActive(pathname, '/chat')
-                        ? 'bg-blue-50 dark:bg-blue-600/10 border-blue-100 dark:border-blue-500/20 text-blue-600 dark:text-blue-400 font-bold shadow-sm shadow-blue-500/5'
-                        : 'border-transparent hover:bg-gray-200/60 dark:hover:bg-white/[0.02] text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-                    } ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
+                    className={navItemClass(isNavActive(pathname, '/chat'), isCollapsed)}
                     title={isCollapsed ? 'Maintenance Chat' : ''}
                 >
-                    <MessageCircle size={20} className={`shrink-0 ${isNavActive(pathname, '/chat') ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-500'}`} />
+                    <MessageCircle size={20} className={`shrink-0 ${isNavActive(pathname, '/chat') ? 'text-accent' : 'text-text-subtle'}`} />
                     {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">Maintenance Chat</span>}
                 </button>
             )}
@@ -199,14 +201,14 @@ export default function Sidebar() {
                     href={lldapUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={`w-full text-left px-3.5 py-3 rounded-xl flex items-center transition-all border border-transparent hover:bg-gray-200/60 dark:hover:bg-white/[0.02] text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
+                    className={navItemClass(false, isCollapsed)}
                     title={isCollapsed ? 'Users & Groups (LLDAP)' : ''}
                 >
-                    <Users size={20} className="shrink-0 text-gray-500 dark:text-gray-500" />
+                    <Users size={20} className="shrink-0 text-text-subtle" />
                     {!isCollapsed && (
                         <span className="font-semibold whitespace-nowrap overflow-hidden flex items-center gap-1.5 animate-in fade-in slide-in-from-left-2 duration-300">
                             Users & Groups
-                            <ExternalLink size={12} className="text-gray-400" />
+                            <ExternalLink size={12} className="text-text-subtle" />
                         </span>
                     )}
                 </a>
@@ -215,33 +217,33 @@ export default function Sidebar() {
                 href="/portal"
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`w-full text-left px-3.5 py-3 rounded-xl flex items-center transition-all border border-transparent hover:bg-gray-200/60 dark:hover:bg-white/[0.02] text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 ${isCollapsed ? 'justify-center' : 'gap-3.5'}`}
+                className={navItemClass(false, isCollapsed)}
                 title={isCollapsed ? 'View as user' : ''}
             >
-                <Home size={20} className="shrink-0 text-gray-500 dark:text-gray-500" />
+                <Home size={20} className="shrink-0 text-text-subtle" />
                 {!isCollapsed && (
                     <span className="font-semibold whitespace-nowrap overflow-hidden flex items-center gap-1.5 animate-in fade-in slide-in-from-left-2 duration-300">
                         View as user
-                        <ExternalLink size={12} className="text-gray-400" />
+                        <ExternalLink size={12} className="text-text-subtle" />
                     </span>
                 )}
             </a>
         </div>
 
-        <div className="p-2 space-y-1 border-t border-gray-200/40 dark:border-white/5 pt-3 mt-auto">
+        <div className="p-2 space-y-1 border-t border-border pt-3 mt-auto">
             {/* #1001 — Signed-in user chip + Logout. Falls back to a
                 quiet "Not signed in" hint when the forward-auth
                 headers are absent (direct LAN access). */}
             {currentUser && (
-                <div className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-gray-100/60 dark:bg-white/[0.03] ${isCollapsed ? 'justify-center' : ''}`}
+                <div className={`flex items-center gap-2.5 px-3.5 py-2 rounded-card bg-surface-2 ${isCollapsed ? 'justify-center' : ''}`}
                      title={isCollapsed ? `${currentUser.displayName} (${currentUser.groups.join(', ') || 'no groups'})` : ''}>
-                    <div className="shrink-0 w-7 h-7 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-700 dark:text-blue-300 font-bold text-xs">
+                    <div className="shrink-0 w-7 h-7 rounded-full bg-accent/10 flex items-center justify-center text-accent font-bold text-xs">
                         {currentUser.displayName.charAt(0).toUpperCase() || <UserIcon size={14} />}
                     </div>
                     {!isCollapsed && (
                         <div className="flex flex-col min-w-0 flex-1">
-                            <span className="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate">{currentUser.displayName}</span>
-                            <span className="text-xs text-gray-500 dark:text-gray-500 truncate">
+                            <span className="text-sm font-semibold text-text truncate">{currentUser.displayName}</span>
+                            <span className="text-xs text-text-subtle truncate">
                                 {currentUser.source === 'session'
                                     ? 'ServiceBay admin'
                                     : (currentUser.groups.join(', ') || 'no groups')}
@@ -260,30 +262,30 @@ export default function Sidebar() {
             {/* Secondary links. Expanded: one compact inline text row (tidy,
                 Solilos-style). Collapsed: the icon buttons, stacked. (#sidebar-footer) */}
             {!isCollapsed ? (
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3.5 pt-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3.5 pt-1.5 text-xs font-medium text-text-muted">
                     <SectionHelp
                         helpId="changelog"
                         title="What's new in ServiceBay"
                         icon={NoIcon}
                         label="What's new"
-                        className="!p-0 !bg-transparent !border-0 !rounded-none !gap-0 text-xs font-medium text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:!no-underline hover:!opacity-100"
+                        className="!p-0 !bg-transparent !border-0 !rounded-none !gap-0 text-xs font-medium text-text-muted hover:text-text hover:!no-underline hover:!opacity-100"
                     />
-                    <span className="text-gray-300 dark:text-gray-700 select-none" aria-hidden>·</span>
+                    <span className="text-text-subtle select-none" aria-hidden>·</span>
                     <a
                         href="https://github.com/mdopp/servicebay"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+                        className="hover:text-text transition-colors"
                     >
                         GitHub
                     </a>
                     {currentUser && (
                         <>
-                            <span className="text-gray-300 dark:text-gray-700 select-none" aria-hidden>·</span>
+                            <span className="text-text-subtle select-none" aria-hidden>·</span>
                             <button
                                 type="button"
                                 onClick={handleLogout}
-                                className="hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+                                className="hover:text-text transition-colors"
                                 title={currentUser.source === 'session' ? 'Log out of ServiceBay' : 'Log out — drops the Authelia session'}
                             >
                                 Log out
@@ -297,7 +299,7 @@ export default function Sidebar() {
                         <button
                             type="button"
                             onClick={handleLogout}
-                            className="w-full flex items-center justify-center px-3.5 py-2.5 rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] transition-all border border-transparent"
+                            className="w-full flex items-center justify-center px-3.5 py-2.5 rounded-card text-text-muted hover:text-text hover:bg-surface-2 transition-all border border-transparent"
                             title={currentUser.source === 'session' ? 'Log out of ServiceBay' : 'Log out — drops the Authelia session'}
                         >
                             <LogOut size={18} className="shrink-0" />
@@ -308,14 +310,14 @@ export default function Sidebar() {
                             helpId="changelog"
                             title="What's new in ServiceBay"
                             icon={Sparkles}
-                            className="p-2 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
+                            className="p-2 hover:bg-surface-2 rounded-card text-text-muted hover:text-text"
                         />
                     </div>
                     <a
                         href="https://github.com/mdopp/servicebay"
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="w-full flex items-center justify-center px-3.5 py-3 rounded-xl text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-200/60 dark:hover:bg-white/[0.02] transition-all border border-transparent"
+                        className="w-full flex items-center justify-center px-3.5 py-3 rounded-card text-text-muted hover:text-text hover:bg-surface-2 transition-all border border-transparent"
                         title="View on GitHub"
                     >
                         <Code size={20} className="shrink-0" />

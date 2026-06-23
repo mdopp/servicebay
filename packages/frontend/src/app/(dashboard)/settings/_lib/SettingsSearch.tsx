@@ -57,9 +57,9 @@ function SearchResults({
   onPick: (hit: SearchHit) => void;
 }) {
   return (
-    <div className="absolute z-30 mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg overflow-hidden">
+    <div className="absolute z-30 mt-1 w-full rounded-card border border-border bg-surface shadow-lg overflow-hidden">
       {hits.length === 0 ? (
-        <div className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">No settings match “{query}”.</div>
+        <div className="px-4 py-3 text-sm text-text-muted">No settings match “{query}”.</div>
       ) : (
         hits.map((hit, i) => (
           <button
@@ -69,12 +69,12 @@ function SearchResults({
             onClick={() => onPick(hit)}
             className={`w-full flex items-center justify-between gap-3 px-4 py-2.5 text-left text-sm transition-colors ${
               i === activeIndex
-                ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-                : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/40'
+                ? 'bg-accent/10 text-accent'
+                : 'text-text hover:bg-surface-2'
             }`}
           >
             <span className="font-medium">{hit.entry.label}</span>
-            <span className="text-xs text-gray-400 dark:text-gray-500">{hit.group.label}</span>
+            <span className="text-xs text-text-subtle">{hit.group.label}</span>
           </button>
         ))
       )}
@@ -116,7 +116,7 @@ export default function SettingsSearch() {
   return (
     <div ref={containerRef} className="relative w-full max-w-md">
       <div className="relative">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-subtle pointer-events-none" />
         <input
           type="text"
           value={query}
@@ -129,7 +129,7 @@ export default function SettingsSearch() {
           onKeyDown={onKeyDown}
           placeholder="Search settings…"
           aria-label="Search settings"
-          className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+          className="w-full pl-9 pr-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none"
         />
       </div>
 
