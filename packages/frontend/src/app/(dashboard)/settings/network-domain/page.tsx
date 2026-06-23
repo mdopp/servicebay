@@ -6,7 +6,6 @@ import { SETTINGS_GROUPS } from '../_lib/ia';
 import PublicDomainSection from '../_lib/sections/PublicDomainSection';
 import ReverseProxySection from '../_lib/sections/ReverseProxySection';
 import GatewaySection from '../_lib/sections/GatewaySection';
-import PortalAccessSection from '../_lib/sections/PortalAccessSection';
 import NodesSection from '../_lib/sections/NodesSection';
 
 const GROUP = SETTINGS_GROUPS.find(g => g.id === 'network-domain')!;
@@ -23,9 +22,6 @@ export default function NetworkDomainSettingsPage() {
       </SettingDisclosure>
       <SettingDisclosure id="gateway" tier="advanced" label="Router / gateway">
         <GatewaySection />
-      </SettingDisclosure>
-      <SettingDisclosure id="portal-access" tier="advanced" label="Portal access">
-        <PortalAccessSection />
       </SettingDisclosure>
       <SettingDisclosure id="nodes" tier="advanced" label="Nodes & connections">
         <NodesSection />

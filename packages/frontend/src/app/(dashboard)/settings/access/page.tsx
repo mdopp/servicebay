@@ -7,6 +7,7 @@ import AccessRequestsSection from '../_lib/sections/AccessRequestsSection';
 import CredentialsSection from '../_lib/sections/CredentialsSection';
 import ApiTokensSection from '../_lib/sections/ApiTokensSection';
 import McpSection from '../_lib/sections/McpSection';
+import PortalAccessSection from '../_lib/sections/PortalAccessSection';
 import ApprovalsSection from '../_lib/sections/ApprovalsSection';
 import FileShareSection from '../_lib/sections/FileShareSection';
 
@@ -27,6 +28,9 @@ export default function AccessSettingsPage() {
       </SettingDisclosure>
       <SettingDisclosure id="mcp" tier="advanced" label="MCP access">
         <McpSection />
+      </SettingDisclosure>
+      <SettingDisclosure id="portal-access" tier="advanced" label="Portal access">
+        <PortalAccessSection />
       </SettingDisclosure>
       <SettingDisclosure id="approvals" tier="advanced" label="Action approvals">
         <ApprovalsSection />
