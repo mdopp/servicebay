@@ -1,16 +1,18 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { Activity, CheckCircle, XCircle, AlertTriangle, AlertCircle, Play, RefreshCw } from 'lucide-react';
+import { Activity, Play, RefreshCw } from 'lucide-react';
 import { logger, type Check, type ServiceViewModel } from '@servicebay/api-client';
 import { rowStatus, lastCheckedLabel, type RowStatus } from '@/components/HealthChecks';
 import { useServiceHealth } from '@/components/serviceDetail/serviceHealth';
+import { Badge, Button, Card, SectionHeading, StatusDot, type StatusState } from '@/components/ui';
 
-const ROW_META: Record<RowStatus, { color: string; bg: string; Icon: typeof CheckCircle }> = {
-  ok: { color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-900/20', Icon: CheckCircle },
-  warn: { color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20', Icon: AlertTriangle },
-  fail: { color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-900/20', Icon: XCircle },
-  unknown: { color: 'text-gray-400', bg: 'bg-gray-50 dark:bg-gray-800', Icon: AlertCircle },
+// rowStatus already yields ok | warn | fail | unknown — the StatusDot state set.
+const STATUS_STATE: Record<RowStatus, StatusState> = {
+  ok: 'ok',
+  warn: 'warn',
+  fail: 'fail',
+  unknown: 'unknown',
 };
 
 /**
@@ -37,7 +39,7 @@ export default function OperateHealthTab({ service }: { service: ServiceViewMode
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center gap-2 p-8 text-gray-500">
+      <div className="flex items-center justify-center gap-2 p-8 text-text-muted">
         <RefreshCw className="w-4 h-4 animate-spin" /> Loading health…
       </div>
     );
@@ -45,30 +47,26 @@ export default function OperateHealthTab({ service }: { service: ServiceViewMode
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex gap-4 text-sm">
-          <span className="text-green-600 dark:text-green-400 font-medium">{counts.ok} healthy</span>
-          {counts.warn > 0 && <span className="text-amber-600 dark:text-amber-400 font-medium">{counts.warn} warning</span>}
-          {counts.fail > 0 && <span className="text-red-600 dark:text-red-400 font-medium">{counts.fail} failing</span>}
-          {counts.unknown > 0 && <span className="text-gray-500 font-medium">{counts.unknown} unknown</span>}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="ok">{counts.ok} healthy</Badge>
+          {counts.warn > 0 && <Badge variant="warn">{counts.warn} warning</Badge>}
+          {counts.fail > 0 && <Badge variant="fail">{counts.fail} failing</Badge>}
+          {counts.unknown > 0 && <Badge variant="neutral">{counts.unknown} unknown</Badge>}
         </div>
-        <button
-          onClick={load}
-          className="inline-flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100"
-          title="Refresh health"
-        >
+        <Button variant="ghost" size="sm" onClick={load} title="Refresh health">
           <RefreshCw className="w-4 h-4" /> Refresh
-        </button>
+        </Button>
       </div>
 
       {checks.length === 0 ? (
-        <div className="p-8 text-center text-gray-500 border border-dashed border-gray-200 dark:border-gray-700 rounded-xl">
+        <Card padding="lg" className="text-center text-text-muted">
           <Activity className="w-10 h-10 mx-auto mb-3 opacity-20" />
           <p>No service-specific health checks yet.</p>
           {boxWideChecks.length > 0 && (
             <p className="text-xs mt-1">Box-wide diagnostics for this node are listed below.</p>
           )}
-        </div>
+        </Card>
       ) : (
         <CheckList checks={checks} running={running} onRun={handleRun} />
       )}
@@ -82,7 +80,7 @@ export default function OperateHealthTab({ service }: { service: ServiceViewMode
  *  list and the box-wide section so both render identically (#2080). */
 function CheckList({ checks, running, onRun }: { checks: Check[]; running: string | null; onRun: (id: string) => void }) {
   return (
-    <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden">
+    <Card padding="none" className="overflow-hidden">
       {checks.map((check, i) => (
         <CheckRow
           key={check.id}
@@ -92,7 +90,7 @@ function CheckList({ checks, running, onRun }: { checks: Check[]; running: strin
           onRun={() => onRun(check.id)}
         />
       ))}
-    </div>
+    </Card>
   );
 }
 
@@ -117,46 +115,34 @@ function BoxWideSection({
   if (checks.length === 0) return null;
   return (
     <section className="space-y-2" aria-label="Box-wide health checks">
-      <h2 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+      <SectionHeading description={`Monitor the whole node, not just ${serviceName}`}>
         Box-wide checks
-        <span className="ml-2 text-xs font-normal text-gray-400 dark:text-gray-500">
-          monitor the whole node, not just {serviceName}
-        </span>
-      </h2>
+      </SectionHeading>
       <CheckList checks={checks} running={running} onRun={onRun} />
     </section>
   );
 }
 
 function CheckRow({ check, last, running, onRun }: { check: Check; last: boolean; running: boolean; onRun: () => void }) {
-  const { color, bg, Icon } = ROW_META[rowStatus(check)];
+  const state = STATUS_STATE[rowStatus(check)];
   return (
-    <div className={`p-4 flex items-start justify-between gap-3 ${last ? '' : 'border-b border-gray-200 dark:border-gray-800'}`}>
+    <div className={`p-space-4 flex items-start justify-between gap-3 ${last ? '' : 'border-b border-border'}`}>
       <div className="flex items-start gap-3 flex-1 min-w-0">
-        <div className={`p-2 rounded-lg ${bg} ${color}`}>
-          <Icon className="w-4 h-4" />
-        </div>
+        <StatusDot state={state} className="mt-1.5" />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="font-medium text-gray-900 dark:text-white truncate">{check.name}</h3>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
-              {check.type.toUpperCase()}
-            </span>
+            <h3 className="font-medium text-text truncate">{check.name}</h3>
+            <Badge variant="neutral">{check.type.toUpperCase()}</Badge>
           </div>
-          {check.message && <p className="text-xs text-gray-500 dark:text-gray-500 mt-1 line-clamp-2">{check.message}</p>}
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Last checked: {lastCheckedLabel(check)}</p>
+          {check.message && <p className="text-xs text-text-muted mt-1 line-clamp-2">{check.message}</p>}
+          <p className="text-xs text-text-subtle mt-1">Last checked: {lastCheckedLabel(check)}</p>
         </div>
       </div>
-      <button
-        onClick={onRun}
-        disabled={running}
-        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50"
-        title="Run check now"
-      >
+      <Button variant="ghost" size="sm" onClick={onRun} disabled={running} title="Run check now" aria-label="Run check now">
         {running
-          ? <RefreshCw className="w-4 h-4 text-blue-500 animate-spin" />
-          : <Play className="w-4 h-4 text-gray-600 dark:text-gray-400" />}
-      </button>
+          ? <RefreshCw className="w-4 h-4 animate-spin" />
+          : <Play className="w-4 h-4" />}
+      </Button>
     </div>
   );
 }
