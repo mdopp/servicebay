@@ -186,4 +186,17 @@ export interface Check extends CheckConfig {
   history: { status: 'ok' | 'fail'; latency: number; timestamp: string }[];
   /** Present only on synthetic diagnose rows (#1423). */
   diagnose?: DiagnoseCheckPayload;
+  /**
+   * The check is box-wide (#2080) — it monitors the node as a whole rather
+   * than a single service, so it must NOT be force-attributed to one service
+   * in the per-service Health tab. Set on the synthetic `diagnose:<probeId>`
+   * rows (cert/dns/sso/storage/… diagnostics target the box, not one stack)
+   * and on the node-scoped singleton checks (agent, gateway, the Phase-3b
+   * `cert_expiry`/`lan_ip_drift`/`npm_auth`/… rows that target `Local`/a
+   * domain). The Operate Health tab shows these in a clearly-labelled
+   * "Box-wide" section instead of dropping them — they used to silently
+   * vanish from every service because their `target` never substring-matched
+   * a service base name, leaving the tab reading "1 ok".
+   */
+  boxWide?: boolean;
 }
