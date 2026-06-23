@@ -55,22 +55,18 @@ actions:
 body
 `;
 
+// claude-dev has no subdomain var; its variables.json carries CLAUDE_DEV_SSH_PORT.
+// readTemplateFile is the source-chain reader the portal uses for
+// template.yml + variables.json.
 vi.mock('@/lib/registry', () => ({
   getTemplateUserGuide: vi.fn(async () => CLAUDE_DEV_GUIDE),
-}));
-
-// claude-dev has no subdomain var; its variables.json carries CLAUDE_DEV_SSH_PORT.
-vi.mock('fs/promises', () => ({
-  default: {
-    readFile: vi.fn(async (p: string) => {
-      if (p.endsWith('variables.json')) {
-        return JSON.stringify({
-          CLAUDE_DEV_SSH_PORT: { type: 'text', default: '2222' },
-        });
-      }
-      return 'apiVersion: v1\n'; // template.yml
-    }),
-  },
+  readTemplateFile: vi.fn(async (_name: string, filename: string) => {
+    if (filename === 'variables.json') {
+      return JSON.stringify({ CLAUDE_DEV_SSH_PORT: { type: 'text', default: '2222' } });
+    }
+    if (filename === 'template.yml') return 'apiVersion: v1\n';
+    return null;
+  }),
 }));
 
 import { buildPortalCards, interpolateActionHref } from './services';

@@ -26,28 +26,24 @@ vi.mock('@/lib/store/repository', () => ({
 vi.mock('@/lib/health/store', () => ({
   HealthStore: { getLastResult: (id: string) => getLastResult(id) },
 }));
+// readTemplateFile is the source-chain reader behind template.yml +
+// variables.json (and user-guide.md). The portal calls it per service,
+// so a registry-installed service is read just like a built-in one.
 vi.mock('@/lib/registry', () => ({
   getTemplateUserGuide: vi.fn(async () => '# guide\nbody'),
+  readTemplateFile: vi.fn(async (_name: string, filename: string) => {
+    if (filename === 'variables.json') {
+      return JSON.stringify({ IMMICH_SUBDOMAIN: { type: 'subdomain', default: 'photos' } });
+    }
+    if (filename === 'template.yml') return 'apiVersion: v1\n';
+    return null;
+  }),
 }));
 vi.mock('@/lib/templateTier', () => ({ parseTemplateTier: () => 'app' }));
 vi.mock('@/lib/templateLabel', () => ({ parseTemplateLabel: () => 'Immich' }));
 vi.mock('./userGuide', () => ({
   parseUserGuide: () => ({ frontmatter: {}, body: 'body' }),
   DEFAULT_PORTAL_CATEGORY: 'System',
-}));
-
-// fs reads: template.yml (any non-null string) + variables.json (a subdomain var).
-vi.mock('fs/promises', () => ({
-  default: {
-    readFile: vi.fn(async (p: string) => {
-      if (p.endsWith('variables.json')) {
-        return JSON.stringify({
-          IMMICH_SUBDOMAIN: { type: 'subdomain', default: 'photos' },
-        });
-      }
-      return 'apiVersion: v1\n'; // template.yml
-    }),
-  },
 }));
 
 import { buildPortalCards } from './services';

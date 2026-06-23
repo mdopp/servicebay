@@ -18,8 +18,6 @@
  * persist resolved subdomain values into config.
  */
 
-import path from 'path';
-import fs from 'fs/promises';
 import { getConfig, type AppConfig } from '@/lib/config';
 import { getActiveDomain, getMode } from '@/lib/mode';
 import { ServiceManager } from '@/lib/services/ServiceManager';
@@ -27,11 +25,9 @@ import { getServices } from '@/lib/store/repository';
 import { HealthStore } from '@/lib/health/store';
 import { parseTemplateTier } from '@/lib/templateTier';
 import { parseTemplateLabel } from '@/lib/templateLabel';
-import { getTemplateUserGuide } from '@/lib/registry';
+import { getTemplateUserGuide, readTemplateFile } from '@/lib/registry';
 import { logger } from '@/lib/logger';
 import { parseUserGuide, DEFAULT_PORTAL_CATEGORY, type PortalIconName, type RecommendedApp, type SetupAsset, type ManualPairing, type PortalAction, type PortalCategory } from './userGuide';
-
-const TEMPLATES_PATH = path.join(process.cwd(), 'templates');
 
 export interface PortalCard {
   /** Stable id, e.g. "media:ABS_SUBDOMAIN" or "immich:IMMICH_SUBDOMAIN".
@@ -269,16 +265,18 @@ function resolveVarValue(
  *  ambiguous. See `resolveServiceUrl` for the lookup. */
 async function readVariables(templateName: string): Promise<Record<string, { type?: string; default?: string; proxyPort?: string }>> {
   try {
-    const content = await fs.readFile(path.join(TEMPLATES_PATH, templateName, 'variables.json'), 'utf-8');
-    return JSON.parse(content);
+    const content = await readTemplateFile(templateName, 'variables.json');
+    return content ? JSON.parse(content) : {};
   } catch { return {}; }
 }
 
-/** Read a template's template.yml (best-effort). */
+/** Read a template's template.yml (best-effort). Resolves through the
+ *  full template source chain (local → registries → built-in) so a
+ *  registry-installed service (e.g. `solaris` from the `solbay`
+ *  registry) is read just like a bundled one — otherwise it never
+ *  passes the tier filter and silently drops off /portal. */
 async function readTemplateYaml(templateName: string): Promise<string | null> {
-  try {
-    return await fs.readFile(path.join(TEMPLATES_PATH, templateName, 'template.yml'), 'utf-8');
-  } catch { return null; }
+  return readTemplateFile(templateName, 'template.yml');
 }
 
 /**
