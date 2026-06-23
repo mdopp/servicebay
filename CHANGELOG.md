@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.143.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.142.0...servicebay-v4.143.0) (2026-06-23)
+
+
+### Features
+
+* **dashboards:** group /services by stack + scoped per-stack wipe; drop StacksSection ([0bbf37c](https://github.com/mdopp/servicebay/commit/0bbf37ccd5e29f38dff4672e1716ca31f00760e9)), closes [#2081](https://github.com/mdopp/servicebay/issues/2081)
+* **frontend:** group /services by stack with scoped per-stack wipe; Terminal back in sidebar nav ([e2e34be](https://github.com/mdopp/servicebay/commit/e2e34be93053e0253059e389ad1abecd92eb5720))
+* **frontend:** return Terminal to sidebar nav; drop Settings ▸ System launch card ([3142834](https://github.com/mdopp/servicebay/commit/314283446e6573f38bf16c1e839915932d04a805)), closes [#2083](https://github.com/mdopp/servicebay/issues/2083)
+
 ## [4.142.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.141.0...servicebay-v4.142.0) (2026-06-23)
 
 
