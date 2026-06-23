@@ -61,6 +61,10 @@ export default function BackupPage() {
     void getNodes().then(setNodes).catch(() => {});
   }, []);
   const BACKUP_PREVIEW_COUNT = 5;
+  // NAS snapshot list can grow long (per-service, every push) and flood the
+  // panel — collapse to the newest N with a "show all" expander (#2085).
+  const NAS_PREVIEW_COUNT = 5;
+  const [showAllNasBackups, setShowAllNasBackups] = useState(false);
 
   const {
     backups,
@@ -999,7 +1003,19 @@ export default function BackupPage() {
               </div>
               {nasOverview.backups.length === 0 ? (
                 <div className="text-sm text-gray-500 dark:text-gray-400 italic">No snapshot staged on the NAS yet.</div>
-              ) : (
+              ) : (() => {
+                // Newest-first: `createdAt`/`stamp` desc, undated legacy slots
+                // (null) sort last. The list is already grouped per-service
+                // newest-first; this flattens to a global newest-first order for
+                // the table (#1890). Collapse to the newest N so a long history
+                // doesn't flood the panel — expand to show all (#2085).
+                const sortedNasBackups = [...nasOverview.backups].sort(
+                  (a, b) => (b.createdAt ?? b.stamp ?? '').localeCompare(a.createdAt ?? a.stamp ?? ''),
+                );
+                const visibleNasBackups = showAllNasBackups
+                  ? sortedNasBackups
+                  : sortedNasBackups.slice(0, NAS_PREVIEW_COUNT);
+                return (
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
                     <thead>
@@ -1012,13 +1028,7 @@ export default function BackupPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                      {/* Newest-first: `createdAt`/`stamp` desc, undated legacy
-                          slots (null) sort last. The list is already grouped
-                          per-service newest-first; this flattens to a global
-                          newest-first order for the table (#1890). */}
-                      {[...nasOverview.backups]
-                        .sort((a, b) => (b.createdAt ?? b.stamp ?? '').localeCompare(a.createdAt ?? a.stamp ?? ''))
-                        .map(b => (
+                      {visibleNasBackups.map(b => (
                         <tr key={b.tarName}>
                           <td className="py-3 text-gray-700 dark:text-gray-200">{b.service}</td>
                           <td className="py-3 font-mono text-xs text-blue-600 dark:text-blue-300 break-all">{b.tarName}</td>
@@ -1048,8 +1058,21 @@ export default function BackupPage() {
                       ))}
                     </tbody>
                   </table>
+                  {sortedNasBackups.length > NAS_PREVIEW_COUNT && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllNasBackups(v => !v)}
+                      className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+                    >
+                      {showAllNasBackups ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      {showAllNasBackups
+                        ? `Show fewer (newest ${NAS_PREVIEW_COUNT})`
+                        : `Show all ${sortedNasBackups.length} snapshots`}
+                    </button>
+                  )}
                 </div>
-              )}
+                );
+              })()}
             </>
           )}
           </div>
