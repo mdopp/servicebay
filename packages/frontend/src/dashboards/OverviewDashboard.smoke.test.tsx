@@ -10,8 +10,17 @@
  */
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import OverviewDashboard from './OverviewDashboard';
+import OverviewDashboard, { systemStatusView } from './OverviewDashboard';
 import { ToastProvider } from '@/providers/ToastProvider';
+
+// Mutable so individual tests can inject a `resources` slice for the System
+// tile (#2096) without re-mocking the whole module.
+let twinNode: Record<string, unknown> = {
+  services: [
+    { name: 'a.service', activeState: 'active' },
+    { name: 'b.service', activeState: 'active' },
+  ],
+};
 
 // Next <Link> renders a plain <a> in jsdom; no router needed for href checks.
 vi.mock('@/providers/DigitalTwinProvider', () => ({
@@ -20,12 +29,7 @@ vi.mock('@/providers/DigitalTwinProvider', () => ({
       serverName: 'test-box',
       gateway: { upstreamStatus: 'up' },
       nodes: {
-        Local: {
-          services: [
-            { name: 'a.service', activeState: 'active' },
-            { name: 'b.service', activeState: 'active' },
-          ],
-        },
+        Local: twinNode,
       },
     },
     isConnected: true,
@@ -62,6 +66,13 @@ function routedFetch(extra: (url: string) => unknown | undefined) {
 describe('OverviewDashboard render', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset the twin node to the default (no resources slice) before each test.
+    twinNode = {
+      services: [
+        { name: 'a.service', activeState: 'active' },
+        { name: 'b.service', activeState: 'active' },
+      ],
+    };
     // Default: /api/health/checks → zero diagnose rows; /api/system/update →
     // up-to-date; everything else → [].
     vi.stubGlobal('fetch', routedFetch(() => undefined));
@@ -177,5 +188,123 @@ describe('OverviewDashboard render', () => {
     // Two distinct "Update Now/now" triggers (SB updater + image banner).
     const triggers = await screen.findAllByRole('button', { name: /update now/i });
     expect(triggers.length).toBe(2);
+  });
+
+  it('renders the Updates section image banner on the token Card surface, not the old ad-hoc blue literals (#2093)', async () => {
+    vi.stubGlobal('fetch', routedFetch(url => {
+      if (url.includes('/api/system/stacks/image-updates')) {
+        return {
+          ok: true,
+          json: async () => ({
+            services: [
+              { service: 'a', image: 'ghcr.io/a:latest', runningDigest: 'sha256:old', registryDigest: 'sha256:new', updateAvailable: true },
+            ],
+          }),
+        };
+      }
+      return undefined;
+    }));
+
+    render(
+      <ToastProvider>
+        <OverviewDashboard />
+      </ToastProvider>,
+    );
+
+    // The migrated banner sits on a <Card> (bg-surface) with a token accent —
+    // no raw blue literals (border-blue-200 / bg-blue-50 / bg-blue-600) anymore.
+    const bannerText = await screen.findByText(/1 service image update available/i);
+    const card = bannerText.closest('.bg-surface');
+    expect(card).not.toBeNull();
+    const html = (card as HTMLElement).outerHTML;
+    expect(html).not.toMatch(/(border|bg|text)-blue-\d/);
+    // Token accent present for the "update available" state.
+    expect(html).toMatch(/accent/);
+  });
+
+  it('renders the System-status tile linking to Status→System (#2096)', () => {
+    // Inject a resources slice on the twin so the tile shows real metrics.
+    twinNode = {
+      ...twinNode,
+      resources: {
+        cpuUsage: 12,
+        memoryUsage: 4 * 1024 * 1024 * 1024,
+        totalMemory: 16 * 1024 * 1024 * 1024,
+        diskUsage: 47,
+        os: { uptime: 90000 },
+      },
+    };
+
+    render(
+      <ToastProvider>
+        <OverviewDashboard />
+      </ToastProvider>,
+    );
+
+    // The tile renders and is a clickable link to the Status→System view.
+    const systemLink = screen.getByText('System').closest('a');
+    expect(systemLink).not.toBeNull();
+    expect(systemLink?.getAttribute('href')).toBe('/status?tab=system');
+    // CPU / RAM / Disk / Uptime rows are present.
+    expect(screen.getByText('CPU')).toBeDefined();
+    expect(screen.getByText('RAM')).toBeDefined();
+    expect(screen.getByText('Disk')).toBeDefined();
+    expect(screen.getByText('Uptime')).toBeDefined();
+    expect(screen.getByText('12%')).toBeDefined();
+    expect(screen.getByText('1d 1h')).toBeDefined();
+  });
+
+  it('renders the System tile in a neutral waiting state when no agent report is present', () => {
+    // Default twinNode has no `resources` slice.
+    render(
+      <ToastProvider>
+        <OverviewDashboard />
+      </ToastProvider>,
+    );
+    const systemLink = screen.getByText('System').closest('a');
+    expect(systemLink).not.toBeNull();
+    expect(systemLink?.getAttribute('href')).toBe('/status?tab=system');
+    expect(screen.getByText(/Waiting for system report/i)).toBeDefined();
+  });
+});
+
+describe('systemStatusView (#2096)', () => {
+  it('returns a neutral unloaded view when resources are absent', () => {
+    expect(systemStatusView(undefined)).toEqual({ loaded: false, tone: 'neutral', rows: [] });
+    expect(systemStatusView(null)).toEqual({ loaded: false, tone: 'neutral', rows: [] });
+    // No os slice yet (agent hasn't reported) → still unloaded.
+    expect(systemStatusView({ cpuUsage: 10 })).toEqual({ loaded: false, tone: 'neutral', rows: [] });
+  });
+
+  it('computes good tone for low usage and lists all four rows', () => {
+    const view = systemStatusView({
+      cpuUsage: 10,
+      memoryUsage: 2 * 1024 * 1024 * 1024,
+      totalMemory: 16 * 1024 * 1024 * 1024,
+      diskUsage: 30,
+      os: { uptime: 3600 },
+    });
+    expect(view.loaded).toBe(true);
+    expect(view.tone).toBe('good');
+    expect(view.rows.map(r => r.label)).toEqual(['CPU', 'RAM', 'Disk', 'Uptime']);
+  });
+
+  it('escalates the tone to the worst metric (bad wins over warn/good)', () => {
+    const view = systemStatusView({
+      cpuUsage: 85, // warn
+      memoryUsage: 15.5 * 1024 * 1024 * 1024,
+      totalMemory: 16 * 1024 * 1024 * 1024, // ~97% → bad
+      diskUsage: 10, // good
+      os: { uptime: 120 },
+    });
+    expect(view.tone).toBe('bad');
+  });
+
+  it('degrades gracefully to neutral rows when a metric is missing', () => {
+    const view = systemStatusView({ os: { uptime: 60 } });
+    expect(view.loaded).toBe(true);
+    // No usage figures → no escalation, neutral overall.
+    expect(view.tone).toBe('neutral');
+    expect(view.rows.find(r => r.label === 'CPU')?.value).toBe('—');
   });
 });

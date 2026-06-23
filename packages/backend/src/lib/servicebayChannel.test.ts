@@ -29,15 +29,33 @@ describe('servicebayChannel', () => {
     expect(await getServicebayChannel()).toBe('dev');
   });
 
-  it('re-points the quadlet tag (channel as $1, not interpolated), then pulls + reloads + restarts', async () => {
+  it('re-points the quadlet tag (channel as $1, not interpolated), then pulls + reloads + recreates + restarts', async () => {
     await setServicebayChannel('dev');
-    await flush(); // let the detached pull/restart run
+    await flush(); // let the detached recreate/restart run
     const flat = calls.map(c => c.join(' '));
     const sed = calls.find(c => c.join(' ').includes('sed'));
     expect(sed?.includes('dev')).toBe(true); // channel passed as a positional arg
     expect(flat.some(c => c.includes('podman pull') && c.includes('servicebay:dev'))).toBe(true);
     expect(flat.some(c => c.includes('daemon-reload'))).toBe(true);
+    // #2063: a plain restart reuses the old container — force a recreate so the
+    // freshly-pulled image actually lands (rm -f before the restart).
+    expect(flat.some(c => c.includes('rm -f servicebay'))).toBe(true);
     expect(flat.some(c => c.includes('restart --no-block servicebay.service'))).toBe(true);
+  });
+
+  it('surfaces a pull failure to the caller instead of swallowing it (#2064)', async () => {
+    // The :dev tag is missing / ghcr auth fails → the pull rejects. The switch
+    // must NOT resolve ok while silently rolling back; the error propagates.
+    execMock.mockImplementation(async (argv: string[]) => {
+      calls.push(argv);
+      if (argv.includes('pull')) throw new Error('manifest unknown: :dev not found');
+      return { stdout: '', stderr: '' };
+    });
+    await expect(setServicebayChannel('dev')).rejects.toThrow(/:dev not found/);
+    // We never reached the recreate/restart since the pull failed up front.
+    const flat = calls.map(c => c.join(' '));
+    expect(flat.some(c => c.includes('rm -f servicebay'))).toBe(false);
+    expect(flat.some(c => c.includes('restart --no-block'))).toBe(false);
   });
 
   it('refuses an unknown channel before touching the box', async () => {

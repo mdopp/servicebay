@@ -17,6 +17,18 @@ describe('ImageUpdatesPendingBanner', () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it('renders on the token Card surface, not the old ad-hoc blue literals (#2093)', () => {
+    const { container } = render(
+      <ImageUpdatesPendingBanner updates={[update('immich', 'ghcr.io/immich/server:latest')]} />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    // The migrated banner is a <Card> (bg-surface) with a token accent.
+    expect(root.className).toMatch(/bg-surface|border-accent|bg-accent/);
+    const html = root.outerHTML;
+    expect(html).not.toMatch(/(border|bg|text)-blue-\d/);
+    expect(html).not.toMatch(/text-gray-\d/);
+  });
+
   it('lists every affected service with its image', () => {
     render(
       <ImageUpdatesPendingBanner

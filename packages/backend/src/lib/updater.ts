@@ -84,6 +84,32 @@ async function getRemoteImageDigest(): Promise<string | null> {
   }
 }
 
+/**
+ * Resolve the image digest the **running** `servicebay` container was actually
+ * created from — the ground truth for "what are we running right now", as
+ * opposed to `appliedImageDigest` in config (which can drift: `performUpdate`
+ * used to persist the registry digest even when the restart no-op'd and kept
+ * the old image, leaving every later check falsely reporting "still building",
+ * #2062). `podman inspect … {{.Image}}` returns the image ID; we map it to the
+ * registry-style manifest digest via the image's RepoDigests so it's
+ * comparable to `getRemoteImageDigest()`. Returns null on any failure — callers
+ * treat null as "unknown" and fall back to the config baseline.
+ */
+async function getRunningImageDigest(): Promise<string | null> {
+  try {
+    const executor = getExecutor('Local');
+    const { stdout } = await executor.execArgv(
+      ['podman', 'inspect', 'servicebay', '--format', '{{.ImageDigest}}'],
+      { timeoutMs: 30 * 1000 },
+    );
+    const digest = stdout.trim();
+    return /^sha256:[0-9a-f]+$/.test(digest) ? digest : null;
+  } catch (e) {
+    logger.warn('Updater', `getRunningImageDigest failed: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+}
+
 async function getCurrentVersion(): Promise<string> {
   try {
     const pkgPath = path.join(process.cwd(), 'package.json');
@@ -184,24 +210,29 @@ export async function checkForUpdates(): Promise<UpdateCheckResult> {
 
   // The release tag is ahead. Reconcile against the *actual* image so we don't
   // advertise an update that would pull an unchanged image (the tag→image
-  // window). Compare the registry's current `:latest` digest to the digest we
-  // last applied. Equal → the new image isn't published yet → "building".
+  // window). Prefer the digest the RUNNING container was created from — it's
+  // ground truth. `appliedImageDigest` in config is only a fallback: it could
+  // have drifted ahead of reality if a past restart no-op'd while config
+  // recorded the registry digest, which is exactly what made a genuinely-new
+  // `:latest` look "still building" forever (#2062).
   const remoteDigest = await getRemoteImageDigest();
-  const appliedDigest = config.autoUpdate.appliedImageDigest;
+  const baselineDigest = (await getRunningImageDigest()) ?? config.autoUpdate.appliedImageDigest;
 
-  // If we can't resolve the remote digest (registry unreachable / no podman),
-  // fall back to the tag check alone — never block a genuine update on a
-  // transient digest-lookup failure, and never claim "building" on unknown.
-  if (!remoteDigest || !appliedDigest) {
+  // If we can't resolve the remote digest (registry unreachable / no podman) or
+  // have no baseline at all, fall back to the tag check alone — never block a
+  // genuine update on a transient digest-lookup failure, and never claim
+  // "building" on unknown.
+  if (!remoteDigest || !baselineDigest) {
     return { hasUpdate: true, current, latest: latestInfo };
   }
 
-  if (remoteDigest === appliedDigest) {
-    // Tag advanced but the image we're running is still what the registry
-    // serves — the new image is still building. Not actionable yet.
+  if (remoteDigest === baselineDigest) {
+    // Tag advanced but the image we're running is genuinely the one the
+    // registry serves — the new image is still building. Not actionable yet.
     return { hasUpdate: false, imageBuilding: true, current, latest: latestInfo };
   }
 
+  // Registry `:latest` differs from what we're actually running → real update.
   return { hasUpdate: true, current, latest: latestInfo };
 }
 
@@ -323,11 +354,24 @@ export async function performUpdate(version: string): Promise<PerformUpdateResul
       });
     }
 
-    // 2. Restart via systemd instead of auto-update to ensure deterministic restart
-    logger.info('updater', 'Restarting service...');
-    emitProgress('restart', 0, 'Restarting service via systemctl --user restart --no-block servicebay.service');
-    await executor.exec('systemctl --user restart --no-block servicebay.service');
-    emitProgress('restart', 100, 'Restart triggered. ServiceBay will restart with the new image.');
+    // 2. Recreate + restart. A plain `systemctl restart` reuses the existing
+    // container definition and keeps running the OLD image even after the pull
+    // (#2063), so a fresh image silently never lands. Force a recreate by
+    // removing the container first; the quadlet unit then rebuilds it from the
+    // freshly-pulled image on start. `--no-block` so this request can return
+    // before ServiceBay (which is serving it) is torn down.
+    logger.info('updater', 'Recreating service container with the new image...');
+    emitProgress('restart', 0, 'Recreating container via podman rm -f + systemctl --user restart --no-block servicebay.service');
+    void (async () => {
+      try {
+        await executor.exec('podman rm -f servicebay');
+        await executor.exec('systemctl --user restart --no-block servicebay.service');
+        logger.info('updater', 'Container recreate + restart triggered.');
+      } catch (e) {
+        logger.error('updater', 'Recreate/restart failed:', e);
+      }
+    })();
+    emitProgress('restart', 100, 'Recreate triggered. ServiceBay will restart with the new image.');
 
     return { success: true, updated: true, message: 'Update applied. Service is restarting with the new image.' };
   } catch (e) {

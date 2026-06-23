@@ -23,24 +23,26 @@ describe('performUpdate', () => {
     vi.clearAllMocks();
   });
 
-  it('pulls image, emits pull output, and restarts service via systemctl', async () => {
-    execMock
-      .mockResolvedValueOnce({ stdout: 'pull ok\nstatus: done', stderr: '' })
-      .mockResolvedValueOnce({ stdout: '', stderr: '' });
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it('pulls image, emits pull output, and recreates + restarts service', async () => {
+    execMock.mockResolvedValue({ stdout: 'pull ok\nstatus: done', stderr: '' });
 
     const { performUpdate } = await import('@/lib/updater');
 
     await performUpdate('v1.2.3');
+    await flush(); // let the detached recreate/restart run
 
     expect(execMock).toHaveBeenNthCalledWith(
       1,
       'podman pull ghcr.io/mdopp/servicebay:latest',
       { timeoutMs: 5 * 60 * 1000 }
     );
-    expect(execMock).toHaveBeenNthCalledWith(
-      2,
-      'systemctl --user restart --no-block servicebay.service'
-    );
+    // #2063: recreate the container (rm -f) so the freshly-pulled image lands,
+    // then restart via systemd.
+    const cmds = execMock.mock.calls.map((c) => String(c[0]));
+    expect(cmds).toContain('podman rm -f servicebay');
+    expect(cmds).toContain('systemctl --user restart --no-block servicebay.service');
 
     const progressEvents = emitMock.mock.calls
       .filter(([event]) => event === 'update:progress')
