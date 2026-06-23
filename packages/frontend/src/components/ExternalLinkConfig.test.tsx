@@ -36,7 +36,7 @@ describe('ExternalLinkConfig — design-system tokens (#2100)', () => {
   });
 
   it('POSTs the link with type=link and redirects on success (behaviour preserved)', async () => {
-    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _opts?: RequestInit) => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     renderConfig();
     fireEvent.change(screen.getByPlaceholderText('e.g. Home Assistant'), { target: { value: 'HA' } });
@@ -51,7 +51,7 @@ describe('ExternalLinkConfig — design-system tokens (#2100)', () => {
   });
 
   it('blocks save when name or URL missing (no fetch)', async () => {
-    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _opts?: RequestInit) => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     renderConfig();
     fireEvent.click(screen.getByText('Save Link'));

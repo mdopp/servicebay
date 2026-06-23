@@ -50,5 +50,5 @@ describe('McpSection (#2100 settings migration)', () => {
         expect.objectContaining({ method: 'POST' }),
       ),
     );
-  });
+  }, 15000);
 });

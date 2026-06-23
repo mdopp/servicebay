@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 import { EmailStep } from './EmailStep';
 
-const saveEmailConfig = vi.fn(async () => undefined);
+const saveEmailConfig = vi.fn(async (...a: unknown[]) => { void a; return undefined; });
 vi.mock('@/app/actions/onboarding', () => ({
   saveEmailConfig: (...a: unknown[]) => saveEmailConfig(...a),
 }));
@@ -32,7 +32,7 @@ describe('EmailStep — design-system tokens (#2100)', () => {
   });
 
   it('saves SMTP config and sends a test to the first recipient (behaviour preserved)', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } }));
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _opts?: RequestInit) => new Response(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetchMock);
     render(<EmailStep emailConfig={cfg({ host: 'smtp.x', user: 'u@x', recipients: 'a@x, b@x' })} setEmailConfig={() => {}} />);
     fireEvent.click(screen.getByText(/Verify SMTP/));

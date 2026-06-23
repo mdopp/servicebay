@@ -38,7 +38,7 @@ describe('GatewayConfig — design-system tokens (#2100)', () => {
   });
 
   it('POSTs gateway settings with ssl:true on save (behaviour preserved)', async () => {
-    const fetchMock = vi.fn(async (u: RequestInfo | URL) => {
+    const fetchMock = vi.fn(async (u: RequestInfo | URL, _opts?: RequestInit) => {
       if (String(u) === '/api/settings' && true) {
         return new Response(JSON.stringify({ gateway: { type: 'fritzbox', host: 'fritz.box', username: '', password: '' } }), {
           headers: { 'Content-Type': 'application/json' },
