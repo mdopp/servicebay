@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.141.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.140.0...servicebay-v4.141.0) (2026-06-23)
+
+
+### Features
+
+* **frontend:** canonical PageScroll pattern + fix Operate tab clipping ([36c4298](https://github.com/mdopp/servicebay/commit/36c4298e23cf25d8b8c4ff8c61abe30ecf2f95aa)), closes [#2077](https://github.com/mdopp/servicebay/issues/2077)
+* **frontend:** consolidate ServiceBay updater + service image-updates on Home ([5c551d8](https://github.com/mdopp/servicebay/commit/5c551d8c9bc88de292047fb66a82b8526e6e75ed)), closes [#2082](https://github.com/mdopp/servicebay/issues/2082)
+* **frontend:** design-system foundation + Operate scroll, health mapping, Home Updates ([0e457a1](https://github.com/mdopp/servicebay/commit/0e457a1f73c7f1ebe81af667d48155c8a277b6c5))
+* **frontend:** design-system ui primitives — Button/Card/DataTable/Badge/StatusDot/SectionHeading/Field ([be77875](https://github.com/mdopp/servicebay/commit/be7787580fa945225d622159dc97ee6a8bf6e89c)), closes [#2073](https://github.com/mdopp/servicebay/issues/2073) [#2074](https://github.com/mdopp/servicebay/issues/2074) [#2075](https://github.com/mdopp/servicebay/issues/2075) [#2076](https://github.com/mdopp/servicebay/issues/2076)
+* **frontend:** semantic design tokens — surface/border/status/accent/radius/spacing ([8d9c0d1](https://github.com/mdopp/servicebay/commit/8d9c0d19da0661ff396d484226913dbec03c4926)), closes [#2072](https://github.com/mdopp/servicebay/issues/2072)
+
+
+### Bug Fixes
+
+* **health:** attribute per-service health checks, surface box-wide ones ([ff47abd](https://github.com/mdopp/servicebay/commit/ff47abd337ff58979a98ae69c1605aa6857cbac0)), closes [#2080](https://github.com/mdopp/servicebay/issues/2080)
+
 ## [4.140.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.139.0...servicebay-v4.140.0) (2026-06-23)
 
 
