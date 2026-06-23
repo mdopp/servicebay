@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.145.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.145.0...servicebay-v4.145.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **portal:** balanced equal-height card grid + collapse Syncthing pairing block ([8287188](https://github.com/mdopp/servicebay/commit/8287188831b44897b7a073aa2af4cb3228771115)), closes [#2116](https://github.com/mdopp/servicebay/issues/2116)
+* **portal:** equal-height card grid + collapse Syncthing pairing block ([e8b3a8b](https://github.com/mdopp/servicebay/commit/e8b3a8bcca217cf64f938bc54a2bde470d0e1397))
+
 ## [4.145.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.144.1...servicebay-v4.145.0) (2026-06-23)
 
 
