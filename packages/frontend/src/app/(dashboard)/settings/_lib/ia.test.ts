@@ -25,6 +25,14 @@ describe('settings IA — cross-cutting only, no Services group (spec §4.4 / §
     expect(searchSettings('immich').some(h => h.group.id === 'services')).toBe(false);
     expect(SEARCH_INDEX.some(h => h.group.id === 'services')).toBe(false);
   });
+
+  it('drops the Stacks & templates entry — stack management moved to /services (#2081)', () => {
+    const system = SETTINGS_GROUPS.find(g => g.id === 'system')!;
+    expect(system.entries.find(e => e.id === 'stacks')).toBeUndefined();
+    expect(SEARCH_INDEX.some(h => h.entry.id === 'stacks')).toBe(false);
+    // The old "stack"/"template registry" keyword search no longer lands a hit.
+    expect(searchSettings('stack').some(h => h.entry.id === 'stacks')).toBe(false);
+  });
 });
 
 describe('settings IA — Maintenance launcher (#1958 follow-up)', () => {

@@ -10,7 +10,6 @@ import ServerIdentitySection from '../_lib/sections/ServerIdentitySection';
 import UpdatesSection from '../_lib/sections/UpdatesSection';
 import UpdateWindowSection from '../_lib/sections/UpdateWindowSection';
 import FactoryResetSection from '../_lib/sections/FactoryResetSection';
-import StacksSection from '../_lib/sections/StacksSection';
 
 const GROUP = SETTINGS_GROUPS.find(g => g.id === 'system')!;
 
@@ -30,9 +29,9 @@ export default function SystemSettingsPage() {
       <SettingDisclosure id="log-level" tier="advanced" label="Log level">
         <LogLevelControl />
       </SettingDisclosure>
-      <SettingDisclosure id="stacks" tier="advanced" label="Stacks & templates">
-        <StacksSection />
-      </SettingDisclosure>
+      {/* Stacks & templates left Settings (#2081): stack management now lives on
+          the /services overview, grouped under each stack header with a scoped
+          per-stack wipe — no separate Settings subsection. */}
       {/* SSH Terminal launch card — the console left the top nav in the IA
           redesign (slice 2), but stays one click away here (and via search).
           Launches the full terminal route; advanced tier keeps it tucked. */}

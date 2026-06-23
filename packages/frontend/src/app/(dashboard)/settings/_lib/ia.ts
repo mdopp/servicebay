@@ -116,7 +116,9 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'updates', label: 'Updates', tier: 'essential', keywords: ['update', 'upgrade', 'version'] },
       { id: 'update-window', label: 'Update window', tier: 'advanced', keywords: ['schedule', 'maintenance', 'auto-update'] },
       { id: 'log-level', label: 'Log level', tier: 'advanced', keywords: ['log', 'debug', 'verbose'] },
-      { id: 'stacks', label: 'Stacks & templates', tier: 'advanced', keywords: ['stack', 'template', 'registry', 'variable'] },
+      // Stacks & templates left Settings (#2081): stack management moved to the
+      // /services overview (grouped by stack + scoped per-stack wipe), so it is
+      // no longer a Settings entry or a search hit here.
       // SSH Terminal left the primary top nav in the IA redesign (slice 2): it is
       // not one of the four nouns, just an expert escape hatch on the box. It
       // lives here as an advanced launch card → the full console at /terminal,
