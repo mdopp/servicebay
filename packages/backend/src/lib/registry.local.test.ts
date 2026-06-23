@@ -41,6 +41,8 @@ import {
   getTemplateYaml,
   getTemplateVariables,
   getStackManifest,
+  readTemplateFile,
+  getTemplateUserGuide,
 } from './registry';
 
 const LOCAL_DIR = path.join(ROOTS.dataRoot, 'local-templates');
@@ -149,6 +151,34 @@ describe('local persistent source (#1919)', () => {
     expect(broken).toBeDefined();
     expect(broken!.tier).toBe('feature'); // readTemplateMeta default on parse failure
     warn.mockRestore();
+  });
+
+  it('readTemplateFile resolves arbitrary files for a non-built-in template (portal regression)', async () => {
+    // A template that exists ONLY in a non-built-in source (here: local;
+    // a registry resolves the same way). The portal reads template.yml +
+    // variables.json + user-guide.md through readTemplateFile — before the
+    // fix the portal read template.yml/variables.json from the built-in
+    // dir only, so such a service never rendered a card.
+    await seedLocal({
+      'templates/solaris/template.yml': tmplYaml('solaris', 'AI Assistant (Solaris)'),
+      'templates/solaris/variables.json': JSON.stringify({
+        CHAT_SUBDOMAIN: { type: 'subdomain', default: 'chat' },
+      }),
+      'templates/solaris/user-guide.md': '---\nlucide_icon: "bot"\ncategory: "Productivity"\n---\nSolaris',
+    });
+
+    const yaml = await readTemplateFile('solaris', 'template.yml');
+    expect(yaml).toContain('name: solaris');
+
+    const vars = await readTemplateFile('solaris', 'variables.json');
+    expect(JSON.parse(vars!).CHAT_SUBDOMAIN.default).toBe('chat');
+
+    // getTemplateUserGuide now delegates to readTemplateFile.
+    const guide = await getTemplateUserGuide('solaris');
+    expect(guide).toContain('category: "Productivity"');
+
+    // A file the template doesn't ship resolves to null, not a throw.
+    expect(await readTemplateFile('solaris', 'does-not-exist.md')).toBeNull();
   });
 
   it('returns no local items when the local dir is absent', async () => {

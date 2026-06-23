@@ -1022,9 +1022,34 @@ export async function getTemplateAssetFiles(
  * or null if the template ships no post-deploy script.
  */
 export async function getTemplatePostDeployScript(name: string, source?: string): Promise<string | null> {
+  return readTemplateFile(name, 'post-deploy.py', source);
+}
+
+/**
+ * Read one file out of a template's directory, walking the same
+ * source-resolution chain every template lookup uses:
+ *
+ *   source === 'Local'        → only the persisted local-templates dir
+ *   source (a registry name)  → only that registry
+ *   no source                 → local → every configured registry →
+ *                               bundled built-in templates
+ *
+ * Returns the raw file content, or `null` when the file isn't present in
+ * the resolved location(s). This is the single primitive behind
+ * `getTemplateUserGuide`, `getTemplateChangelog`,
+ * `getTemplatePostDeployScript` and the portal's `template.yml` /
+ * `variables.json` readers — so a registry-installed service (e.g.
+ * `solaris` from the `solbay` registry) is found exactly like a
+ * built-in one rather than silently dropping out of `/portal`.
+ */
+export async function readTemplateFile(
+  name: string,
+  filename: string,
+  source?: string,
+): Promise<string | null> {
   const tryRead = async (dir: string): Promise<string | null> => {
     try {
-      return await fs.readFile(path.join(dir, 'post-deploy.py'), 'utf-8');
+      return await fs.readFile(path.join(dir, filename), 'utf-8');
     } catch { return null; }
   };
 
@@ -1061,32 +1086,7 @@ export async function getTemplatePostDeployScript(name: string, source?: string)
  * no guide is found.
  */
 export async function getTemplateUserGuide(name: string, source?: string): Promise<string | null> {
-  const tryRead = async (dir: string): Promise<string | null> => {
-    try {
-      return await fs.readFile(path.join(dir, 'user-guide.md'), 'utf-8');
-    } catch { return null; }
-  };
-
-  if (source === 'Local') {
-    return tryRead(localItemPath('template', name));
-  }
-
-  if (source && source !== 'Built-in') {
-    return tryRead(await resolveRegistryItemPath(source, 'template', name));
-  }
-
-  if (!source) {
-    const local = await tryRead(localItemPath('template', name));
-    if (local !== null) return local;
-    const config = await getConfig();
-    const registries = getRegistries(config);
-    for (const reg of registries) {
-      const found = await tryRead(await resolveRegistryItemPath(reg.name, 'template', name));
-      if (found !== null) return found;
-    }
-  }
-
-  return tryRead(path.join(TEMPLATES_PATH, name));
+  return readTemplateFile(name, 'user-guide.md', source);
 }
 
 /**
@@ -1095,32 +1095,7 @@ export async function getTemplateUserGuide(name: string, source?: string): Promi
  * markdown text or null when missing. See #353.
  */
 export async function getTemplateChangelog(name: string, source?: string): Promise<string | null> {
-  const tryRead = async (dir: string): Promise<string | null> => {
-    try {
-      return await fs.readFile(path.join(dir, 'CHANGELOG.md'), 'utf-8');
-    } catch { return null; }
-  };
-
-  if (source === 'Local') {
-    return tryRead(localItemPath('template', name));
-  }
-
-  if (source && source !== 'Built-in') {
-    return tryRead(await resolveRegistryItemPath(source, 'template', name));
-  }
-
-  if (!source) {
-    const local = await tryRead(localItemPath('template', name));
-    if (local !== null) return local;
-    const config = await getConfig();
-    const registries = getRegistries(config);
-    for (const reg of registries) {
-      const found = await tryRead(await resolveRegistryItemPath(reg.name, 'template', name));
-      if (found !== null) return found;
-    }
-  }
-
-  return tryRead(path.join(TEMPLATES_PATH, name));
+  return readTemplateFile(name, 'CHANGELOG.md', source);
 }
 
 /**
