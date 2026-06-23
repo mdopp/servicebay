@@ -204,6 +204,9 @@ describe('performUpdate — honest pull result', () => {
     expect(res.success).toBe(true);
     expect(res.updated).toBe(true);
     expect(mockConfig.current.autoUpdate.appliedImageDigest).toBe('sha256:NEW');
+    // #2104: stamp the moment of the applied update so Home can show "Last updated".
+    expect(typeof mockConfig.current.autoUpdate.appliedImageUpdatedAt).toBe('string');
+    expect(Number.isNaN(Date.parse(mockConfig.current.autoUpdate.appliedImageUpdatedAt as string))).toBe(false);
     // #2063: a plain restart keeps the old container — recreate with rm -f first.
     const recreated = mockExec.exec.mock.calls.some((c) => String(c[0]).includes('rm -f servicebay'));
     const restarted = mockExec.exec.mock.calls.some((c) => String(c[0]).includes('systemctl'));

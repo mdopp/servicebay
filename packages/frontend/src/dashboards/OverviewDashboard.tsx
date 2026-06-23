@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Activity, AlertCircle, CheckCircle2, Server } from 'lucide-react';
+import { Activity, AlertCircle, Boxes, CheckCircle2, Server } from 'lucide-react';
 import type { ServiceViewModel } from '@servicebay/api-client';
 import { useDigitalTwinContext } from '@/providers/DigitalTwinProvider';
 import { useCoreHealth } from '@/hooks/useCoreHealth';
@@ -119,6 +119,70 @@ export function diagnoseCardView(b: DiagnoseBreakdown): {
 }
 
 /**
+ * "Last updated" freshness/security view (#2104).
+ *
+ * Reads the applied-update timestamp the updater stamps into config
+ * (`autoUpdate.appliedImageUpdatedAt`, surfaced by GET /api/system/update which
+ * returns the full config). Renders a human-relative value with an ok/warn
+ * tone: a box updated recently is current/secure (ok); one that hasn't seen an
+ * update in a long time is a freshness risk (warn). Never-updated (fresh
+ * install, no applied update yet) is neutral, not a warning — there may simply
+ * be nothing newer than the shipped image.
+ */
+export interface LastUpdatedView {
+  value: string;
+  tone: 'good' | 'warn' | 'neutral';
+}
+
+/** Warn once the last applied update is older than this (days). 60d ≈ several
+ *  release cycles for this repo — long enough to flag a stale box without
+ *  nagging a current one. */
+const LAST_UPDATE_WARN_DAYS = 60;
+
+export function lastUpdatedView(
+  appliedAt: string | null | undefined,
+  now: number = Date.now(),
+): LastUpdatedView {
+  if (!appliedAt) return { value: 'Never', tone: 'neutral' };
+  const then = Date.parse(appliedAt);
+  if (Number.isNaN(then)) return { value: 'Never', tone: 'neutral' };
+  const ageMs = Math.max(0, now - then);
+  const days = Math.floor(ageMs / 86400000);
+  const hours = Math.floor(ageMs / 3600000);
+  const value =
+    days >= 1 ? `${days}d ago` : hours >= 1 ? `${hours}h ago` : 'Just now';
+  const tone: 'good' | 'warn' = days >= LAST_UPDATE_WARN_DAYS ? 'warn' : 'good';
+  return { value, tone };
+}
+
+/** Read the applied-update timestamp off GET /api/system/update (same endpoint
+ *  the ServiceBay updater card uses). Read-only background fetch; failure keeps
+ *  the value neutral ("Never") rather than surfacing a transient blip. */
+function useLastUpdated(): string | null {
+  const [appliedAt, setAppliedAt] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/system/update');
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          config?: { autoUpdate?: { appliedImageUpdatedAt?: string } };
+        };
+        if (cancelled) return;
+        setAppliedAt(data.config?.autoUpdate?.appliedImageUpdatedAt ?? null);
+      } catch (error) {
+        console.error('[OverviewDashboard] Failed to read last-update time', error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return appliedAt;
+}
+
+/**
  * Home — the lean, status-led landing (IA redesign, spec §4.3 spirit).
  *
  * Restored from the old OverviewDashboard but lightened to answer ONE
@@ -166,10 +230,16 @@ export default function OverviewDashboard() {
   const diagnose = useDiagnoseOverview();
   const diagnoseView = diagnoseCardView(diagnose);
 
+  // "Last updated" freshness indicator (#2104) — applied-update timestamp from
+  // config via GET /api/system/update. Read-only background fetch.
+  const lastUpdatedAt = useLastUpdated();
+
   // Compact System-status tile (#2096) — sourced from the SAME twin snapshot
   // Status→System reads (firstNode.resources). No new polling: the twin is
   // already in context. Unavailable (no agent report yet) → neutral, no crash.
-  const systemView = systemStatusView(firstNode?.resources);
+  // Disk is split into System (/) + Data (/mnt/data) from resources.disks[];
+  // Uptime is replaced by "Last updated" (#2104).
+  const systemView = systemStatusView(firstNode?.resources, lastUpdatedAt);
 
   // Pending service-image updates — box status, so it belongs on Home too
   // (#1860). The banner's "Update now" re-deploys each listed service via the
@@ -236,10 +306,15 @@ export default function OverviewDashboard() {
         </section>
 
         {/* Box-wide at-a-glance: services running + latest diagnose breakdown
-            + a compact System-status tile (CPU/RAM/Disk/Uptime, #2096). */}
+            + a compact System-status tile (#2096). Every tile shares ONE header
+            layout — icon + title on a single row (#2103). On narrow screens the
+            Diagnostics/Health tile drops to the bottom (#2105): the more
+            important Services + System tiles come first; desktop order (grid
+            source order) is unchanged. */}
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <StatCard
             title="Services"
+            icon={Boxes}
             metric={hasFirstSnapshot ? `${activeCount} of ${totalCount} running` : '…'}
             description={
               failedCount > 0
@@ -260,6 +335,8 @@ export default function OverviewDashboard() {
             icon={Activity}
             tone={diagnoseView.tone}
             href="/status"
+            /* Mobile: push to bottom; ≥sm: back to natural source order (2nd). */
+            className="order-last sm:order-none"
           />
           <SystemStatusCard view={systemView} />
         </section>
@@ -297,29 +374,53 @@ function HealthHeadline({ tone, text }: { tone: 'good' | 'warn' | 'bad' | 'neutr
   );
 }
 
+/**
+ * Shared Home-tile header (#2103) — icon + title on ONE row, icon left, title
+ * beside it. The single source of truth for every Home tile's heading so they
+ * can't drift apart again (the bug: Services had no icon, Diagnostics/System
+ * stacked the icon ABOVE the title). `accent` colours the icon to the tile's
+ * tone; an optional `trailing` slot carries the System tile's StatusDot.
+ */
+function TileHeader({
+  title,
+  icon: Icon,
+  accent,
+  trailing,
+}: {
+  title: string;
+  icon: typeof Activity;
+  accent: string;
+  trailing?: React.ReactNode;
+}) {
+  return (
+    <div className="mb-3 flex items-center gap-2">
+      <Icon size={20} className={cn('shrink-0', accent)} />
+      <h2 className="font-bold text-text tracking-wide text-base">{title}</h2>
+      {trailing && <div className="ml-auto">{trailing}</div>}
+    </div>
+  );
+}
+
 interface StatCardProps {
   title: string;
   metric: string;
   description: string;
-  icon?: typeof Activity;
+  icon: typeof Activity;
   tone: 'good' | 'warn' | 'bad' | 'neutral';
   /** Where clicking the card navigates (#2067 — the Home cards used to be
    *  inert; the operator clicked them and nothing happened). When set, the
    *  card renders as a Next <Link> with a clear hover affordance. */
   href?: string;
+  /** Extra wrapper classes — e.g. responsive `order-*` for mobile reordering. */
+  className?: string;
 }
 
-function StatCard({ title, metric, description, icon: Icon, tone, href }: StatCardProps) {
+function StatCard({ title, metric, description, icon: Icon, tone, href, className }: StatCardProps) {
   const accent = TONE_ACCENT[tone];
   const inner = (
     <>
-      {Icon && (
-        <div className="mb-3">
-          <Icon size={20} className={accent} />
-        </div>
-      )}
-      <h2 className="font-bold text-text tracking-wide text-base">{title}</h2>
-      <p className={cn('text-sm font-semibold mt-1', accent)}>{metric}</p>
+      <TileHeader title={title} icon={Icon} accent={accent} />
+      <p className={cn('text-sm font-semibold', accent)}>{metric}</p>
       <p className="text-xs text-text-muted mt-2 font-medium leading-relaxed">{description}</p>
     </>
   );
@@ -328,23 +429,32 @@ function StatCard({ title, metric, description, icon: Icon, tone, href }: StatCa
     // the href) wrapping a <Card> surface, with a token-driven hover affordance
     // (accent border + accent ring).
     return (
-      <Link href={href} className="block rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
+      <Link href={href} className={cn('block rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent', className)}>
         <Card padding="lg" className="cursor-pointer transition-all hover:border-accent hover:shadow-md">
           {inner}
         </Card>
       </Link>
     );
   }
-  return <Card padding="lg">{inner}</Card>;
+  return <Card padding="lg" className={className}>{inner}</Card>;
 }
 
 /** Shape of the resources slice the System tile reads off the twin — a subset
- *  of the agent's `SystemResources` (the same object Status→System binds to). */
+ *  of the agent's `SystemResources` (the same object Status→System binds to).
+ *  `disks[]` is the per-mount partition breakdown the System report carries
+ *  (same source SystemInfoDashboard reads); used to split System (/) vs Data
+ *  (/mnt/data) usage (#2104). `diskUsage` is the single fallback figure. */
+interface DiskLike {
+  mountpoint?: string;
+  total?: number;
+  used?: number;
+}
 interface SystemResourcesLike {
   cpuUsage?: number;
   memoryUsage?: number;
   totalMemory?: number;
   diskUsage?: number;
+  disks?: DiskLike[];
   os?: { uptime?: number };
 }
 
@@ -371,15 +481,6 @@ function formatBytesShort(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(i === 0 ? 0 : 1)} ${sizes[i]}`;
 }
 
-function formatUptime(seconds: number): string {
-  if (!seconds || seconds <= 0) return '—';
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  if (days > 0) return `${days}d ${hours}h`;
-  const mins = Math.floor((seconds % 3600) / 60);
-  return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-}
-
 /** A usage percentage → tone, matching the Status→System thresholds
  *  (>90 fail, >80 warn, else ok). */
 function usageTone(percent: number): 'good' | 'warn' | 'bad' {
@@ -388,10 +489,66 @@ function usageTone(percent: number): 'good' | 'warn' | 'bad' {
   return 'good';
 }
 
-/** Build the compact System-status view from the twin's resources slice.
- *  Read-only, no fetch — the parent already holds the snapshot. Missing /
- *  partial data degrades gracefully to neutral rows rather than crashing. */
-export function systemStatusView(resources: SystemResourcesLike | null | undefined): SystemStatusView {
+/** The mountpoints that identify the two partitions the box runs on. The OS
+ *  root and the /mnt/data RAID (FCoS mounts it under /var/mnt/data; pre-FCoS or
+ *  bind setups use /mnt/data — accept both). Mirrors SystemInfoDashboard's
+ *  `describeMountRole`. */
+const SYSTEM_MOUNTS = ['/', '/sysroot'];
+const DATA_MOUNTS = ['/var/mnt/data', '/mnt/data'];
+
+function findDisk(disks: DiskLike[] | undefined, mounts: string[]): DiskLike | undefined {
+  if (!disks) return undefined;
+  for (const m of mounts) {
+    const hit = disks.find(d => d.mountpoint === m);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/** A disk mount → a usage row (used%/tone). Returns null when the figure can't
+ *  be computed (mount absent / no total) so the caller can render an em-dash. */
+function diskRow(label: string, disk: DiskLike | undefined): { row: SystemRow; tone: 'good' | 'warn' | 'bad' } | { row: SystemRow; tone: null } {
+  if (disk && typeof disk.used === 'number' && typeof disk.total === 'number' && disk.total > 0) {
+    const pct = (disk.used / disk.total) * 100;
+    const t = usageTone(pct);
+    return { row: { label, value: `${Math.round(pct)}%`, tone: t }, tone: t };
+  }
+  return { row: { label, value: '—', tone: 'neutral' }, tone: null };
+}
+
+/** The disk section (#2104): System (/) + Data (/mnt/data) split from the
+ *  report's per-mount `disks[]`. Falls back to the single `diskUsage` figure
+ *  (one "Disk" row) when the agent carries no per-mount breakdown — rather than
+ *  fabricate a split. Returns the rows + the tones that should escalate the
+ *  worst-of system tone. */
+function diskSection(resources: SystemResourcesLike): { rows: SystemRow[]; tones: ('good' | 'warn' | 'bad')[] } {
+  if (Array.isArray(resources.disks) && resources.disks.length > 0) {
+    const sys = diskRow('System', findDisk(resources.disks, SYSTEM_MOUNTS));
+    const dat = diskRow('Data', findDisk(resources.disks, DATA_MOUNTS));
+    const tones = [sys.tone, dat.tone].filter((t): t is 'good' | 'warn' | 'bad' => t !== null);
+    return { rows: [sys.row, dat.row], tones };
+  }
+  if (typeof resources.diskUsage === 'number') {
+    const t = usageTone(resources.diskUsage);
+    return { rows: [{ label: 'Disk', value: `${Math.round(resources.diskUsage)}%`, tone: t }], tones: [t] };
+  }
+  return { rows: [{ label: 'Disk', value: '—', tone: 'neutral' }], tones: [] };
+}
+
+/** Build the compact System-status view from the twin's resources slice +
+ *  the last-applied-update timestamp. Read-only, no fetch — the parent already
+ *  holds the snapshot. Missing / partial data degrades gracefully to neutral
+ *  rows rather than crashing.
+ *
+ *  #2104: Disk is split into System (/) and Data (/mnt/data) from the report's
+ *  per-mount `disks[]` (the same source SystemInfoDashboard uses). When the
+ *  agent only carries the single `diskUsage` figure (older report, no
+ *  per-mount breakdown), we surface that one "Disk" row rather than fake a
+ *  split. Uptime is replaced by "Last updated" (update freshness/security). */
+export function systemStatusView(
+  resources: SystemResourcesLike | null | undefined,
+  lastUpdatedAt?: string | null,
+): SystemStatusView {
   if (!resources || resources.os === undefined) {
     return { loaded: false, tone: 'neutral', rows: [] };
   }
@@ -420,15 +577,16 @@ export function systemStatusView(resources: SystemResourcesLike | null | undefin
     rows.push({ label: 'RAM', value: '—', tone: 'neutral' });
   }
 
-  if (typeof resources.diskUsage === 'number') {
-    const t = usageTone(resources.diskUsage);
-    tones.push(t);
-    rows.push({ label: 'Disk', value: `${Math.round(resources.diskUsage)}%`, tone: t });
-  } else {
-    rows.push({ label: 'Disk', value: '—', tone: 'neutral' });
-  }
+  // Disk split (#2104): System (/) + Data (/mnt/data), or a single fallback.
+  const disk = diskSection(resources);
+  rows.push(...disk.rows);
+  tones.push(...disk.tones);
 
-  rows.push({ label: 'Uptime', value: formatUptime(resources.os?.uptime ?? 0), tone: 'neutral' });
+  // Last updated (#2104) — replaces Uptime. Update freshness/security; its own
+  // ok/warn tone does NOT escalate the worst-of system tone (a stale box isn't
+  // a CPU/RAM/disk pressure problem), so it's pushed as a row only.
+  const lu = lastUpdatedView(lastUpdatedAt);
+  rows.push({ label: 'Last updated', value: lu.value, tone: lu.tone });
 
   const tone: 'good' | 'warn' | 'bad' | 'neutral' = tones.includes('bad')
     ? 'bad'
@@ -459,11 +617,12 @@ function SystemStatusCard({ view }: { view: SystemStatusView }) {
       className="block rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
     >
       <Card padding="lg" className="cursor-pointer transition-all hover:border-accent hover:shadow-md">
-        <div className="mb-3 flex items-center justify-between">
-          <Server size={20} className={TONE_ACCENT[view.tone]} />
-          <StatusDot state={TONE_TO_DOT[view.tone]} />
-        </div>
-        <h2 className="font-bold text-text tracking-wide text-base">System</h2>
+        <TileHeader
+          title="System"
+          icon={Server}
+          accent={TONE_ACCENT[view.tone]}
+          trailing={<StatusDot state={TONE_TO_DOT[view.tone]} />}
+        />
         {view.loaded ? (
           <dl className="mt-2 space-y-1.5">
             {view.rows.map(row => (

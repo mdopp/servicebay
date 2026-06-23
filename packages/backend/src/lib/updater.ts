@@ -348,9 +348,11 @@ export async function performUpdate(version: string): Promise<PerformUpdateResul
 
     // Persist the digest we advanced to so the next availability check knows
     // what we're actually running (closes the tag→image false-positive window).
+    // Stamp the moment too (#2104) — Home surfaces it as "Last updated" so the
+    // operator can see how fresh/secure the box is.
     if (afterDigest) {
       await updateConfig({
-        autoUpdate: { ...config.autoUpdate, appliedImageDigest: afterDigest },
+        autoUpdate: { ...config.autoUpdate, appliedImageDigest: afterDigest, appliedImageUpdatedAt: new Date().toISOString() },
       });
     }
 
