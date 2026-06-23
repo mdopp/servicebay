@@ -40,6 +40,7 @@ import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkI
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
+import { Button, Badge, StatusDot } from '@/components/ui';
 import {
   buildOrthogonalPath,
   buildServiceEditHref,
@@ -122,10 +123,10 @@ const CustomEdge = ({
             transform: `translate(-50%, -50%) translate(${chipX}px,${chipY}px)`,
             pointerEvents: 'all',
           }}
-          className="nodrag nopan bg-white dark:bg-gray-800 px-2 py-1 rounded border border-gray-200 dark:border-gray-700 shadow-sm text-[10px] font-mono text-gray-600 dark:text-gray-400 text-center z-10"
+          className="nodrag nopan bg-surface px-2 py-1 rounded-chip border border-border shadow-sm text-[10px] font-mono text-text-muted text-center z-10"
         >
           {String(label).split('\n').map((line: string, i: number) => (
-            <div key={i} className={i === 0 && String(label).includes('\n') ? "font-bold border-b border-gray-100 dark:border-gray-700/50 mb-0.5 pb-0.5" : ""}>
+            <div key={i} className={i === 0 && String(label).includes('\n') ? "font-bold border-b border-border mb-0.5 pb-0.5" : ""}>
                 {line}
             </div>
           ))}
@@ -743,17 +744,17 @@ function getMiniMapStrokeColor(type: string): string {
 // the max-lines-per-function budget after the #1785 badge rows landed.
 function LegendBody() {
     return (
-        <div className="px-3 pb-2 space-y-1.5 border-t border-gray-100 dark:border-gray-800 pt-2">
+        <div className="px-3 pb-2 space-y-1.5 border-t border-border pt-2">
             <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-500" /><span>Service / Pod</span></div>
             <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-500" /><span>Container</span></div>
             <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-500" /><span>Gateway</span></div>
             <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-500" /><span>External Link</span></div>
             <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-gray-400" /><span>Group / Node</span></div>
-            <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5">
+            <div className="border-t border-border pt-1.5 mt-1.5">
                 <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500" /><span>Active / Running</span></div>
                 <div className="flex items-center gap-2 mt-1"><div className="w-2.5 h-2.5 rounded-full bg-red-500" /><span>Stopped / Error</span></div>
             </div>
-            <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5 space-y-1">
+            <div className="border-t border-border pt-1.5 mt-1.5 space-y-1">
                 <div className="flex items-center gap-2">
                     <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#0ea5e9" strokeWidth="2" /></svg>
                     <span>Observed TCP flow</span>
@@ -766,7 +767,7 @@ function LegendBody() {
             {/* Ubiquitous-dependency badges (#1785). Hub-spoke edges to
                 auth/LLDAP and AdGuard DNS are collapsed into these node
                 badges to keep the map planar. */}
-            <div className="border-t border-gray-100 dark:border-gray-800 pt-1.5 mt-1.5 space-y-1">
+            <div className="border-t border-border pt-1.5 mt-1.5 space-y-1">
                 <div className="flex items-center gap-2">
                     <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"><Lock size={9} /> SSO</span>
                     <span>Hinter Authelia/LLDAP</span>
@@ -784,10 +785,10 @@ function NetworkLegend() {
     const [isOpen, setIsOpen] = useState(false);
     return (
         <Panel position="bottom-left">
-            <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm text-xs">
+            <div className="bg-surface border border-border rounded-card shadow-sm text-xs">
                 <button
                     onClick={() => setIsOpen(!isOpen)}
-                    className="px-3 py-1.5 flex items-center gap-1.5 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white font-medium w-full"
+                    className="px-3 py-1.5 flex items-center gap-1.5 text-text-muted hover:text-text font-medium w-full"
                 >
                     <Info size={12} />
                     Legend
@@ -1464,18 +1465,18 @@ export default function NetworkDashboard() {
         helpId="network"
       >
         <div className="relative flex-1 max-w-md min-w-[100px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input 
-                type="text" 
-                placeholder="Search..." 
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-subtle" />
+            <input
+                type="text"
+                placeholder="Search..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                className="w-full pl-9 pr-4 py-2 rounded-card border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none text-sm"
             />
         </div>
       </PageHeader>
-      
-      <div className="flex-1 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 relative overflow-hidden">
+
+      <div className="flex-1 bg-surface-muted border-t border-border relative overflow-hidden">
         <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -1512,25 +1513,27 @@ export default function NetworkDashboard() {
         >
             {focusNodeId && (
                 <Panel position="top-left">
-                    <button
+                    <Button
+                        variant="secondary"
+                        size="sm"
                         onClick={exitFocus}
                         data-testid="focus-back"
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                        className="shadow-sm"
                         title="Back to full map (Esc)"
                     >
                         <ArrowLeft size={14} />
                         Full map
-                    </button>
+                    </Button>
                 </Panel>
             )}
             <NetworkLegend />
             <Background color="#999" gap={16} size={1} className="opacity-10" />
-            <Controls 
-                showInteractive={false} 
-                className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-lg [&>button]:!bg-white dark:[&>button]:!bg-gray-800 [&>button]:!border-gray-100 dark:[&>button]:!border-gray-700 [&>button]:!text-gray-900 dark:[&>button]:!text-gray-100 [&>button:hover]:!bg-gray-100 dark:[&>button:hover]:!bg-gray-700 [&>button>svg]:!fill-current"
+            <Controls
+                showInteractive={false}
+                className="!bg-surface !border-border shadow-lg [&>button]:!bg-surface [&>button]:!border-border [&>button]:!text-text [&>button:hover]:!bg-surface-2 [&>button>svg]:!fill-current"
             />
             <MiniMap
-                className="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-lg scale-50 origin-bottom-right md:scale-100"
+                className="!bg-surface !border-border shadow-lg scale-50 origin-bottom-right md:scale-100"
                 maskColor="transparent"
                 nodeStrokeColor={(n) => getMiniMapStrokeColor(n.data?.type as string)}
                 nodeColor={(n) => getMiniMapNodeColor(n.data?.type as string)}
@@ -1545,37 +1548,37 @@ export default function NetworkDashboard() {
       {/* Health Modal */}
       {showHealthModal && healthData && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
-                <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
+            <div className="bg-surface border border-border rounded-panel shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+                <div className="flex justify-between items-center p-4 border-b border-border">
                     <div className="flex items-center gap-3">
-                        <Activity className="text-blue-500" />
+                        <Activity className="text-accent" />
                         <div>
-                            <h3 className="text-lg font-bold">Device Health</h3>
-                            <div className="text-xs text-gray-500">Fritz!Box Gateway</div>
+                            <h3 className="text-lg font-bold text-text">Device Health</h3>
+                            <div className="text-xs text-text-muted">Fritz!Box Gateway</div>
                         </div>
                     </div>
-                    <button onClick={() => setShowHealthModal(false)} className="text-gray-500 hover:text-gray-700">
+                    <Button variant="ghost" size="sm" onClick={() => setShowHealthModal(false)} aria-label="Close" className="px-2">
                         <X size={20} />
-                    </button>
+                    </Button>
                 </div>
-                
+
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
                     {/* Status Cards */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
-                            <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1">Connection</div>
+                        <div className="p-4 rounded-card bg-surface-2 border border-border">
+                            <div className="text-xs text-text-muted uppercase tracking-wider font-semibold mb-1">Connection</div>
                             <div className="flex items-center gap-2">
-                                <div className={`w-2.5 h-2.5 rounded-full ${healthData.connected ? 'bg-green-500' : 'bg-red-500'}`} />
-                                <span className="font-bold text-lg">{healthData.connected ? 'Connected' : 'Disconnected'}</span>
+                                <StatusDot state={healthData.connected ? 'ok' : 'fail'} />
+                                <span className="font-bold text-lg text-text">{healthData.connected ? 'Connected' : 'Disconnected'}</span>
                             </div>
                         </div>
-                        <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
-                            <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1">External IP</div>
-                            <div className="font-mono text-lg">{healthData.externalIP || 'N/A'}</div>
+                        <div className="p-4 rounded-card bg-surface-2 border border-border">
+                            <div className="text-xs text-text-muted uppercase tracking-wider font-semibold mb-1">External IP</div>
+                            <div className="font-mono text-lg text-text">{healthData.externalIP || 'N/A'}</div>
                         </div>
-                        <div className="p-4 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
-                            <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1">Uptime</div>
-                            <div className="font-mono text-lg">
+                        <div className="p-4 rounded-card bg-surface-2 border border-border">
+                            <div className="text-xs text-text-muted uppercase tracking-wider font-semibold mb-1">Uptime</div>
+                            <div className="font-mono text-lg text-text">
                                 {healthData.uptime ? `${Math.floor(healthData.uptime / 3600)}h ${Math.floor((healthData.uptime % 3600) / 60)}m` : 'N/A'}
                             </div>
                         </div>
@@ -1583,47 +1586,49 @@ export default function NetworkDashboard() {
 
                     {/* DNS Info */}
                     <div className="space-y-2">
-                        <h4 className="font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                        <h4 className="font-bold text-text-muted flex items-center gap-2">
                             <Globe size={16} />
                             DNS Configuration
                         </h4>
-                        <div className="bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                        <div className="bg-surface-2 rounded-card border border-border overflow-hidden">
                             {healthData.dnsServers && healthData.dnsServers.length > 0 ? (
-                                <div className="divide-y divide-gray-200 dark:divide-gray-800">
+                                <div className="divide-y divide-border">
                                     {healthData.dnsServers.map((dns: string, i: number) => {
                                         const isInternal = dns.startsWith('192.168.') || dns.startsWith('10.') || dns.startsWith('127.');
                                         return (
                                             <div key={i} className="p-3 flex items-center justify-between">
                                                 <div className="flex items-center gap-3">
-                                                    <span className="font-mono text-sm">{dns}</span>
+                                                    <span className="font-mono text-sm text-text">{dns}</span>
                                                     {isInternal ? (
-                                                        <span className="px-2 py-0.5 rounded text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                                                        <Badge variant="warn" className="text-[10px]">
                                                             Internal (Pi-hole/AdGuard)
-                                                        </span>
+                                                        </Badge>
                                                     ) : (
-                                                        <span className="px-2 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                                                        <Badge variant="info" className="text-[10px]">
                                                             External (ISP/Google)
-                                                        </span>
+                                                        </Badge>
                                                     )}
                                                 </div>
-                                                {i === 0 && <span className="text-xs text-gray-400 italic">Primary</span>}
+                                                {i === 0 && <span className="text-xs text-text-subtle italic">Primary</span>}
                                             </div>
                                         );
                                     })}
                                 </div>
                             ) : (
-                                <div className="p-4 text-sm text-gray-500 italic">No DNS servers detected</div>
+                                <div className="p-4 text-sm text-text-subtle italic">No DNS servers detected</div>
                             )}
                         </div>
                     </div>
 
-                    {/* Device Logs */}
+                    {/* Device Logs — intentional dark terminal console (raw
+                        literal kept by design, consistent with the logs cluster
+                        ContainerLogsPanel body). */}
                     <div className="space-y-2 flex-1 min-h-0 flex flex-col">
-                        <h4 className="font-bold text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                        <h4 className="font-bold text-text-muted flex items-center gap-2">
                             <FileText size={16} />
                             Device Logs
                         </h4>
-                        <div className="bg-gray-900 text-gray-300 rounded-lg border border-gray-700 p-4 font-mono text-xs overflow-auto max-h-[400px] whitespace-pre-wrap">
+                        <div className="bg-gray-950 text-gray-300 rounded-card border border-gray-800 p-4 font-mono text-xs overflow-auto max-h-[400px] whitespace-pre-wrap">
                             {healthData.deviceLog || 'No logs available.'}
                         </div>
                     </div>
@@ -1645,45 +1650,45 @@ export default function NetworkDashboard() {
       {/* Connection Modal */}
       {showConnectionModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-6 w-96 max-w-full m-4">
+            <div className="bg-surface border border-border rounded-panel shadow-xl p-6 w-96 max-w-full m-4">
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-bold">Create Connection</h3>
-                    <button onClick={() => setShowConnectionModal(false)} className="text-gray-500 hover:text-gray-700">
+                    <h3 className="text-lg font-bold text-text">Create Connection</h3>
+                    <Button variant="ghost" size="sm" onClick={() => setShowConnectionModal(false)} aria-label="Close" className="px-2">
                         <X size={20} />
-                    </button>
+                    </Button>
                 </div>
-                
+
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        <label className="block text-sm font-medium text-text-muted mb-2">
                             Target Port
                         </label>
-                        
+
                         {availablePorts.length > 0 && (
                             <div className="space-y-2 mb-3">
                                 {availablePorts.map(port => (
-                                    <label key={port} className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 border border-transparent hover:border-gray-200 dark:hover:border-gray-700">
+                                    <label key={port} className="flex items-center gap-2 cursor-pointer p-2 rounded-card hover:bg-surface-2 border border-transparent hover:border-border">
                                         <input
                                             type="radio"
                                             name="targetPort"
                                             value={port}
                                             checked={connectionPort === port.toString()}
                                             onChange={(e) => setConnectionPort(e.target.value)}
-                                            className="text-blue-600 focus:ring-blue-500"
+                                            className="text-accent focus:ring-accent"
                                         />
-                                        <span className="text-sm font-mono">:{port}</span>
+                                        <span className="text-sm font-mono text-text">:{port}</span>
                                     </label>
                                 ))}
-                                <label className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 border border-transparent hover:border-gray-200 dark:hover:border-gray-700">
+                                <label className="flex items-center gap-2 cursor-pointer p-2 rounded-card hover:bg-surface-2 border border-transparent hover:border-border">
                                     <input
                                         type="radio"
                                         name="targetPort"
                                         value="custom"
                                         checked={!availablePorts.includes(parseInt(connectionPort))}
                                         onChange={() => setConnectionPort('')}
-                                        className="text-blue-600 focus:ring-blue-500"
+                                        className="text-accent focus:ring-accent"
                                     />
-                                    <span className="text-sm">Other</span>
+                                    <span className="text-sm text-text">Other</span>
                                 </label>
                             </div>
                         )}
@@ -1694,32 +1699,26 @@ export default function NetworkDashboard() {
                                 value={connectionPort}
                                 onChange={(e) => setConnectionPort(e.target.value)}
                                 placeholder="e.g. 8080"
-                                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:ring-2 focus:ring-blue-500 outline-none"
+                                className="w-full px-3 py-2 border border-border rounded-card bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none"
                                 autoFocus={!availablePorts.length}
                                 onKeyDown={(e) => {
                                     if (e.key === 'Enter') handleSaveConnection();
                                 }}
                             />
                         )}
-                       
-                        <p className="text-xs text-gray-500 mt-1">
+
+                        <p className="text-xs text-text-subtle mt-1">
                             {availablePorts.length > 0 ? 'Select a known port or enter a custom one.' : 'Enter the target port for this connection.'}
                         </p>
                     </div>
 
                     <div className="flex justify-end gap-2 pt-2">
-                        <button
-                            onClick={() => setShowConnectionModal(false)}
-                            className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                        >
+                        <Button variant="ghost" onClick={() => setShowConnectionModal(false)}>
                             Cancel
-                        </button>
-                        <button
-                            onClick={handleSaveConnection}
-                            className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors"
-                        >
+                        </Button>
+                        <Button onClick={handleSaveConnection}>
                             Create Link
-                        </button>
+                        </Button>
                     </div>
                 </div>
             </div>
@@ -1737,46 +1736,44 @@ export default function NetworkDashboard() {
       {/* Context Menu / Details Panel */}
       {selectedNodeData && (
           <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
-              <div className="w-full sm:max-w-md h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 shadow-2xl flex flex-col animate-in slide-in-from-right-10">
-                  <div className="flex items-start justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800 gap-3">
+              <div className="w-full sm:max-w-md h-full bg-surface border-l border-border shadow-2xl flex flex-col animate-in slide-in-from-right-10">
+                  <div className="flex items-start justify-between px-5 py-4 border-b border-border gap-3">
                       <div className="min-w-0 flex-1">
-                          <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">Node Details</p>
-                          <h3 className="font-bold text-xl truncate" title={selectedNodeData.label}>{selectedNodeData.label}</h3>
-                          <div className="text-xs text-gray-500 font-mono truncate" title={selectedNodeData.id}>{selectedNodeData.id}</div>
+                          <p className="text-xs uppercase font-semibold tracking-[0.2em] text-text-subtle">Node Details</p>
+                          <h3 className="font-bold text-xl truncate text-text" title={selectedNodeData.label}>{selectedNodeData.label}</h3>
+                          <div className="text-xs text-text-muted font-mono truncate" title={selectedNodeData.id}>{selectedNodeData.id}</div>
                       </div>
-                      <button onClick={() => setSelectedNodeData(null)} className="text-gray-400 hover:text-gray-600 shrink-0 rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-gray-800">
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedNodeData(null)} aria-label="Close" className="px-2 shrink-0">
                           <X size={16} />
-                      </button>
+                      </Button>
                   </div>
                   <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-                      <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
-                          <span className="text-sm text-gray-500">Status</span>
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                              selectedNodeData.status === 'up' 
-                                  ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' 
-                                  : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                          }`}>
+                      <div className="flex items-center justify-between p-3 bg-surface-2 rounded-card">
+                          <span className="text-sm text-text-muted">Status</span>
+                          <Badge variant={selectedNodeData.status === 'up' ? 'ok' : 'fail'}>
                               {selectedNodeData.status?.toUpperCase() || 'UNKNOWN'}
-                          </span>
+                          </Badge>
                       </div>
 
                       {/* Actions */}
                       <div className="grid grid-cols-1 gap-2">
                         {selectedNodeData.type === 'router' && (
-                            <button 
+                            <Button
+                                variant="secondary"
                                 onClick={() => {
                                     setHealthData((selectedNodeData.rawData as HealthData) || null);
                                     setShowHealthModal(true);
                                 }}
-                                className="w-full flex items-center justify-center gap-2 p-2 bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 rounded-lg transition-colors text-sm font-medium"
+                                className="w-full"
                             >
                                 <Activity size={14} />
                                 Device Health
-                            </button>
+                            </Button>
                         )}
 
                         {selectedNodeData.type === 'device' && (
-                            <button 
+                            <Button
+                                variant="secondary"
                                 onClick={() => {
                                     const url = selectedNodeData.metadata?.verifiedDomains?.[0] || selectedNodeData.metadata?.link || '';
                                     setLinkForm({
@@ -1787,37 +1784,39 @@ export default function NetworkDashboard() {
                                     });
                                     setShowLinkModal(true);
                                 }}
-                                className="w-full flex items-center justify-center gap-2 p-2 bg-cyan-50 text-cyan-600 hover:bg-cyan-100 rounded-lg transition-colors text-sm font-medium"
+                                className="w-full"
                             >
                                 <LinkIcon size={14} />
                                 Create External Link
-                            </button>
+                            </Button>
                         )}
 
                         {selectedNodeData.type === 'unmanaged-service' && (
-                            <button
+                            <Button
+                                variant="secondary"
                                 onClick={() => handleNavigateToBundleMigration(selectedNodeData)}
-                                className="w-full flex items-center justify-center gap-2 p-2 bg-purple-50 text-purple-600 hover:bg-purple-100 dark:bg-purple-900/30 dark:text-purple-200 dark:hover:bg-purple-900/50 rounded-lg transition-colors text-sm font-medium"
+                                className="w-full"
                             >
                                 <ArrowRight size={14} />
                                 Migrate Bundle
-                            </button>
+                            </Button>
                         )}
 
                         {selectedNodeData.type === 'link' && (
-                            <button 
+                            <Button
+                                variant="secondary"
                                 onClick={handleEditLink}
-                                className="w-full flex items-center justify-center gap-2 p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
+                                className="w-full"
                             >
                                 <Edit size={14} />
                                 Edit Link
-                            </button>
+                            </Button>
                         )}
 
                         {selectedNodeData.type === 'container' && selectedNodeData.rawData?.Id && (
-                            <Link 
+                            <Link
                                 href={`/status?tab=containers&containerId=${selectedNodeData.rawData.Id}`}
-                                className="w-full flex items-center justify-center gap-2 p-2 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors text-sm font-medium"
+                                className="w-full flex items-center justify-center gap-2 h-10 px-space-4 bg-surface-2 text-text border border-border hover:bg-surface-muted hover:border-border-strong rounded-card transition-colors text-sm font-medium"
                             >
                                 <Info size={14} />
                                 Inspect Container
@@ -1827,7 +1826,7 @@ export default function NetworkDashboard() {
                         {selectedNodeData && selectedNodeData.type === 'service' && typeof selectedNodeData.rawData?.name === 'string' && !selectedNodeData.metadata?.isMissingService && (
                             <Link
                                 href={buildServiceEditHref(selectedNodeData)}
-                                className="w-full flex items-center justify-center gap-2 p-2 bg-purple-50 text-purple-600 hover:bg-purple-100 rounded-lg transition-colors text-sm font-medium"
+                                className="w-full flex items-center justify-center gap-2 h-10 px-space-4 bg-surface-2 text-text border border-border hover:bg-surface-muted hover:border-border-strong rounded-card transition-colors text-sm font-medium"
                             >
                                 <Edit size={14} />
                                 Edit Service
@@ -1835,7 +1834,7 @@ export default function NetworkDashboard() {
                         )}
 
                         {selectedNodeData?.metadata?.isMissingService && (
-                            <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/60 text-xs text-amber-800 dark:text-amber-200 space-y-1">
+                            <div className="p-3 rounded-card bg-status-warn/10 border border-status-warn/20 text-xs text-status-warn space-y-1">
                                 <div className="font-semibold">No matching service found</div>
                                 <div>
                                     Nginx forwards traffic to <span className="font-mono">{(selectedNodeData.metadata.targetUrl as string) || selectedNodeData.label}</span>, but no managed container or service is listening on that port. The most common causes: a stale proxy route from a removed/renamed service, or a service that crashed before it could bind.
@@ -1847,9 +1846,9 @@ export default function NetworkDashboard() {
                         )}
 
                         {selectedNodeData.type === 'proxy' && (
-                            <Link 
+                            <Link
                                 href="/proxy"
-                                className="w-full flex items-center justify-center gap-2 p-2 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 rounded-lg transition-colors text-sm font-medium"
+                                className="w-full flex items-center justify-center gap-2 h-10 px-space-4 bg-surface-2 text-text border border-border hover:bg-surface-muted hover:border-border-strong rounded-card transition-colors text-sm font-medium"
                             >
                                 <Edit size={14} />
                                 Configure Proxy
@@ -1857,10 +1856,10 @@ export default function NetworkDashboard() {
                         )}
 
                         {selectedNodeData.rawData?.metadata?.link && (
-                            <Link 
+                            <Link
                                 href={selectedNodeData.rawData?.metadata?.link || '#'}
                                 target="_blank"
-                                className="block w-full text-center p-2 bg-gray-900 text-white hover:bg-gray-800 rounded-lg transition-colors text-sm font-medium"
+                                className="flex items-center justify-center w-full text-center h-10 px-space-4 bg-accent text-on-accent hover:bg-accent-strong rounded-card transition-colors text-sm font-medium"
                             >
                                 Open Service ↗
                             </Link>
@@ -1876,32 +1875,32 @@ export default function NetworkDashboard() {
                           linked Operate page (status + health + settings +
                           containers + actions). */}
                       {selectedServiceViewModel && (
-                          <div className="border border-gray-100 dark:border-gray-800 rounded-lg p-3">
+                          <div className="border border-border rounded-card p-3">
                               <ServiceDetailSummary service={selectedServiceViewModel} />
                           </div>
                       )}
 
                       {/* Network Info */}
-                      <div className="border-t border-gray-100 dark:border-gray-800 pt-3">
-                          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Network Details</h4>
+                      <div className="border-t border-border pt-3">
+                          <h4 className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Network Details</h4>
                           <div className="space-y-1 text-sm">
                               {selectedNodeData.ip && (
                                   <div className="flex justify-between">
-                                      <span className="text-gray-500">IP Address</span>
-                                      <span className="font-mono">{selectedNodeData.ip}</span>
+                                      <span className="text-text-muted">IP Address</span>
+                                      <span className="font-mono text-text">{selectedNodeData.ip}</span>
                                   </div>
                               )}
                               {/* Host Network Flag */}
                               {selectedNodeData.rawData?.hostNetwork && (
                                   <div className="flex justify-between">
-                                      <span className="text-gray-500">Mode</span>
-                                      <span className="font-mono text-amber-600 dark:text-amber-400 font-bold">Host Network</span>
+                                      <span className="text-text-muted">Mode</span>
+                                      <span className="font-mono text-status-warn font-bold">Host Network</span>
                                   </div>
                               )}
                               {selectedNodeData.rawData?.ports && selectedNodeData.rawData.ports.length > 0 && (
                                   <div className="flex justify-between">
-                                      <span className="text-gray-500">Ports</span>
-                                      <span className="font-mono">
+                                      <span className="text-text-muted">Ports</span>
+                                      <span className="font-mono text-text">
                                         {(selectedNodeData.rawData.ports as unknown[]).map((p) => {
                                             if (typeof p === 'object' && p !== null) {
                                                 const port = p as LegacyPortMapping;
@@ -1916,17 +1915,17 @@ export default function NetworkDashboard() {
                               )}
                               {selectedNodeData.rawData?.MacAddress && (
                                   <div className="flex justify-between">
-                                      <span className="text-gray-500">MAC</span>
-                                      <span className="font-mono">{selectedNodeData.rawData.MacAddress}</span>
+                                      <span className="text-text-muted">MAC</span>
+                                      <span className="font-mono text-text">{selectedNodeData.rawData.MacAddress}</span>
                                   </div>
                               )}
                           </div>
                       </div>
 
                       {/* Debug Info */}
-                      <div className="border-t border-gray-100 dark:border-gray-800 pt-3">
-                          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Debug Info</h4>
-                          <div className="space-y-1 text-xs font-mono text-gray-600 dark:text-gray-400">
+                      <div className="border-t border-border pt-3">
+                          <h4 className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Debug Info</h4>
+                          <div className="space-y-1 text-xs font-mono text-text-muted">
                               <div className="flex justify-between">
                                   <span>Node ID</span>
                                   <span>{selectedNodeData.id}</span>
@@ -1945,10 +1944,10 @@ export default function NetworkDashboard() {
                       </div>
 
                       {/* Raw Data */}
-                      <div className="border-t border-gray-100 dark:border-gray-800 pt-3 pb-2">
-                          <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Raw Data</h4>
-                          <div className="bg-gray-50 dark:bg-gray-900 p-2 rounded-lg overflow-x-auto">
-                              <pre className="text-[10px] font-mono text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-all">
+                      <div className="border-t border-border pt-3 pb-2">
+                          <h4 className="text-xs font-bold text-text-muted uppercase tracking-wider mb-2">Raw Data</h4>
+                          <div className="bg-surface-muted p-2 rounded-card overflow-x-auto">
+                              <pre className="text-[10px] font-mono text-text-muted whitespace-pre-wrap break-all">
                                   {JSON.stringify(selectedNodeData.rawData, null, 2)}
                               </pre>
                           </div>
@@ -1960,23 +1959,23 @@ export default function NetworkDashboard() {
 
       {selectedEdge && (
           <div className="fixed inset-0 z-40 flex justify-end bg-gray-950/60 backdrop-blur-sm">
-              <div className="w-full sm:max-w-sm h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 shadow-2xl flex flex-col animate-in slide-in-from-right-10">
-                  <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+              <div className="w-full sm:max-w-sm h-full bg-surface border-l border-border shadow-2xl flex flex-col animate-in slide-in-from-right-10">
+                  <div className="flex items-center justify-between px-5 py-4 border-b border-border">
                       <div>
-                          <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">Connection</p>
-                          <h3 className="font-bold">Link Details</h3>
+                          <p className="text-xs uppercase font-semibold tracking-[0.2em] text-text-subtle">Connection</p>
+                          <h3 className="font-bold text-text">Link Details</h3>
                       </div>
-                      <button onClick={() => setSelectedEdge(null)} className="text-gray-400 hover:text-gray-600 rounded-lg p-2 hover:bg-gray-100 dark:hover:bg-gray-800">
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedEdge(null)} aria-label="Close" className="px-2">
                           <X size={16} />
-                      </button>
+                      </Button>
                   </div>
                   <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-                      <p className="text-sm text-gray-500">
+                      <p className="text-sm text-text-muted">
                           {selectedEdgeMeta?.isManual
                               ? 'Manual connection between nodes.'
                               : 'Auto-discovered link inferred from real traffic.'}
                       </p>
-                      <div className="space-y-2 text-xs font-mono text-gray-600 dark:text-gray-400">
+                      <div className="space-y-2 text-xs font-mono text-text-muted">
                           <div className="flex justify-between">
                               <span>Port</span>
                               <span>{selectedEdgeMeta?.port ? `:${selectedEdgeMeta.port}` : 'unassigned'}</span>
@@ -1987,15 +1986,16 @@ export default function NetworkDashboard() {
                           </div>
                       </div>
                       {selectedEdgeMeta?.isManual ? (
-                          <button 
+                          <Button
+                              variant="danger"
                               onClick={handleDeleteEdge}
-                              className="w-full flex items-center justify-center gap-2 p-2 bg-red-50 text-red-600 hover:bg-red-100 rounded-lg transition-colors text-sm font-medium"
+                              className="w-full"
                           >
                               <Trash2 size={14} />
                               Remove Connection
-                          </button>
+                          </Button>
                       ) : (
-                          <p className="text-xs text-gray-500">
+                          <p className="text-xs text-text-muted">
                               Auto-discovered edges cannot be removed manually.
                           </p>
                       )}

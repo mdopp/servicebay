@@ -17,6 +17,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
 import DiagnoseProbeList, { type DiagnoseProbe } from '@/components/DiagnoseProbeList';
 import ContainersDashboard from '@/dashboards/ContainersDashboard';
+import { Button, Badge } from '@/components/ui';
 
 interface Container {
   Id: string;
@@ -377,25 +378,21 @@ export default function HealthDashboard() {
         helpId="health"
         actions={activeTab === 'checks' ? (
             <div className="flex gap-2 shrink-0">
-                <button
-                    onClick={() => handleOpenModal()}
-                    className="flex items-center gap-2 p-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow-sm transition-colors font-medium"
-                    title="Add Check"
-                >
+                <Button size="sm" onClick={() => handleOpenModal()} title="Add Check" aria-label="Add Check">
                     <Plus className="w-4 h-4" />
-                </button>
+                </Button>
             </div>
         ) : undefined}
       >
         {activeTab !== 'system' && (
         <div className="relative flex-1 max-w-md min-w-[100px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-subtle" />
             <input
                 type="text"
                 placeholder="Search..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                className="w-full pl-9 pr-4 py-2 rounded-card border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none text-sm"
             />
         </div>
         )}
@@ -403,7 +400,7 @@ export default function HealthDashboard() {
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex gap-1 border-b border-gray-200 dark:border-gray-700 px-2 shrink-0 overflow-x-auto">
+      <div className="flex gap-1 border-b border-border px-2 shrink-0 overflow-x-auto">
         {([
           { id: 'checks' as const, label: 'Checks' },
           { id: 'containers' as const, label: 'Containers' },
@@ -415,8 +412,8 @@ export default function HealthDashboard() {
             onClick={() => handleTabChange(tab.id)}
             className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
               activeTab === tab.id
-                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                ? 'border-accent text-accent'
+                : 'border-transparent text-text-muted hover:text-text'
             }`}
           >
             {tab.label}
@@ -465,59 +462,65 @@ export default function HealthDashboard() {
       {/* History Modal */}
       {historyCheck && (
         <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
-          <div className="w-full sm:max-w-3xl h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col shadow-2xl animate-in slide-in-from-right-10">
-            <div className="flex flex-col gap-4 p-5 border-b border-gray-200 dark:border-gray-800 sm:flex-row sm:items-center sm:justify-between">
+          <div className="w-full sm:max-w-3xl h-full bg-surface border-l border-border flex flex-col shadow-2xl animate-in slide-in-from-right-10">
+            <div className="flex flex-col gap-4 p-5 border-b border-border sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
-                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">History Drawer</p>
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white truncate">{historyCheck.name}</h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400 font-mono truncate">{historyCheck.target}</p>
+                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-text-subtle">History Drawer</p>
+                <h3 className="text-xl font-bold text-text truncate">{historyCheck.name}</h3>
+                <p className="text-sm text-text-muted font-mono truncate">{historyCheck.target}</p>
               </div>
               <div className="flex items-center gap-2">
-                <div className="flex bg-slate-100 dark:bg-gray-800 rounded-lg p-1">
+                <div className="flex bg-surface-2 rounded-card p-1">
                     {(['1h', '24h', '3d', '2w'] as const).map(range => (
                         <button
                             key={range}
                             onClick={() => setTimeRange(range)}
-                            className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors ${
-                                timeRange === range 
-                                    ? 'bg-white dark:bg-gray-700 text-emerald-600 dark:text-emerald-300 shadow-sm' 
-                                    : 'text-gray-500 dark:text-gray-400 hover:text-emerald-500 dark:hover:text-emerald-300'
+                            className={`px-3 py-1 text-xs font-semibold rounded-chip transition-colors ${
+                                timeRange === range
+                                    ? 'bg-surface text-accent shadow-sm'
+                                    : 'text-text-muted hover:text-accent'
                             }`}
                         >
                             {range}
                         </button>
                     ))}
                 </div>
-                <button 
+                <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => historyCheck && handleShowHistory(historyCheck)}
-                    className="p-2 text-gray-500 hover:text-emerald-500 dark:text-gray-300 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors"
                     title="Refresh history"
+                    aria-label="Refresh history"
+                    className="px-2"
                 >
                     <RefreshCw size={18} className={historyLoading ? 'animate-spin' : ''} />
-                </button>
-                <button 
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => {
                     setHistoryCheck(null);
                     setHistoryData([]);
                     setHistoryLoading(false);
-                  }} 
-                  className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors"
+                  }}
                   title="Close drawer"
+                  aria-label="Close drawer"
+                  className="px-2"
                 >
                     <X size={18} />
-                </button>
+                </Button>
               </div>
             </div>
 
             <div className="flex-1 overflow-y-auto p-5">
                 {historyLoading && historyData.length === 0 ? (
-                    <div className="flex h-full items-center justify-center text-slate-500 dark:text-slate-300 gap-3">
+                    <div className="flex h-full items-center justify-center text-text-muted gap-3">
                         <RefreshCw className="w-5 h-5 animate-spin" />
                         <span>Loading history…</span>
                     </div>
                 ) : (
                 <div className="space-y-6">
-                <div className="h-64 bg-slate-50 dark:bg-gray-900/40 rounded-xl p-4 border border-slate-200 dark:border-gray-800 shadow-inner">
+                <div className="h-64 bg-surface-muted rounded-card p-4 border border-border shadow-inner">
                     {historyData.length > 0 ? (
                         (() => {
                             const now = new Date().getTime();
@@ -583,9 +586,9 @@ export default function HealthDashboard() {
                             return (
                                 <div className="w-full h-full flex flex-row">
                                     {/* Y-Axis */}
-                                    <div className="flex flex-col justify-between text-[10px] text-gray-400 py-1 pr-2 text-right h-full pb-6 border-r border-gray-200 dark:border-gray-700 min-w-[50px]">
+                                    <div className="flex flex-col justify-between text-[10px] text-text-subtle py-1 pr-2 text-right h-full pb-6 border-r border-border min-w-[50px]">
                                         <div className="flex flex-col items-end">
-                                            <span className="font-medium text-gray-500 dark:text-gray-300 mb-1">Latency</span>
+                                            <span className="font-medium text-text-muted mb-1">Latency</span>
                                             <span>{maxLatency}ms</span>
                                         </div>
                                         <span>0ms</span>
@@ -598,12 +601,12 @@ export default function HealthDashboard() {
                                                     key={i}
                                                     className={`flex-1 min-w-[2px] rounded-t-sm hover:opacity-80 transition-opacity relative group ${
                                                       !h.hasData ? 'bg-transparent' :
-                                                      h.status === 'ok' ? 'bg-emerald-500 dark:bg-emerald-400' : 'bg-rose-500 dark:bg-rose-400'
+                                                      h.status === 'ok' ? 'bg-status-ok' : 'bg-status-fail'
                                                     }`}
                                                     style={{ height: h.hasData ? `${Math.max(5, ((h.latency || 0) / maxLatency) * 100)}%` : '0%' }}
                                                 >
                                                     {h.hasData && (
-                                                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-gray-900 text-white text-xs p-2 rounded whitespace-nowrap z-10 shadow-lg">
+                                                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-surface-2 text-text text-xs p-2 rounded-card border border-border whitespace-nowrap z-10 shadow-lg">
                                                             {new Date(h.timestamp).toLocaleString()}<br/>
                                                             Avg Latency: {h.latency}ms<br/>
                                                             Status: {h.status}
@@ -614,7 +617,7 @@ export default function HealthDashboard() {
                                         </div>
                                         
                                         {/* X-Axis Labels */}
-                                        <div className="flex justify-between text-[10px] text-gray-500 dark:text-gray-400 pt-2 border-t border-gray-200 dark:border-gray-700">
+                                        <div className="flex justify-between text-[10px] text-text-muted pt-2 border-t border-border">
                                             <span>{formatLabel(cutoff)}</span>
                                             <span>{formatLabel(alignedEndTime)}</span>
                                         </div>
@@ -623,15 +626,15 @@ export default function HealthDashboard() {
                             );
                         })()
                     ) : (
-                                <div className="w-full h-full flex items-center justify-center text-gray-400">
+                                <div className="w-full h-full flex items-center justify-center text-text-subtle">
                             No history data available
                         </div>
                     )}
                 </div>
 
                 {/* Table */}
-                            <table className="w-full text-left text-sm border border-slate-200 dark:border-gray-800 rounded-xl overflow-hidden">
-                              <thead className="bg-slate-100 dark:bg-gray-800/60 text-gray-600 dark:text-gray-300">
+                            <table className="w-full text-left text-sm border border-border rounded-card overflow-hidden">
+                              <thead className="bg-surface-2 text-text-muted">
                         <tr>
                                   <th className="p-3 font-semibold">Time</th>
                                   <th className="p-3 font-semibold">Status</th>
@@ -639,25 +642,21 @@ export default function HealthDashboard() {
                                   <th className="p-3 font-semibold">Message</th>
                         </tr>
                     </thead>
-                              <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                              <tbody className="divide-y divide-border">
                         {historyData.map((h, i) => (
-                                  <tr key={i} className="hover:bg-slate-50 dark:hover:bg-gray-800/40">
-                                    <td className="p-3 text-gray-900 dark:text-white whitespace-nowrap">
+                                  <tr key={i} className="hover:bg-surface-2">
+                                    <td className="p-3 text-text whitespace-nowrap">
                                     {new Date(h.timestamp).toLocaleString()}
                                 </td>
                                 <td className="p-3">
-                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                                        h.status === 'ok'
-                                            ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                                            : 'bg-rose-100 dark:bg-rose-500/10 text-rose-700 dark:text-rose-300'
-                                    }`}>
+                                    <Badge variant={h.status === 'ok' ? 'ok' : 'fail'}>
                                         {h.status.toUpperCase()}
-                                    </span>
+                                    </Badge>
                                 </td>
-                                    <td className="p-3 text-gray-600 dark:text-gray-300 font-mono">
+                                    <td className="p-3 text-text-muted font-mono">
                                     {h.latency}ms
                                 </td>
-                                    <td className="p-3 text-gray-500 dark:text-gray-400 align-top">
+                                    <td className="p-3 text-text-muted align-top">
                                         {h.message
                                             ? (h.message.length > 140
                                                 ? (
@@ -665,8 +664,8 @@ export default function HealthDashboard() {
                                                         <summary className="cursor-pointer list-none break-words whitespace-pre-wrap">
                                                             <span className="group-open:hidden">{h.message.slice(0, 140)}…</span>
                                                             <span className="hidden group-open:inline whitespace-pre-wrap break-words">{h.message}</span>
-                                                            <span className="ml-1 text-[10px] uppercase tracking-wide text-blue-600 dark:text-blue-400 group-open:hidden">show more</span>
-                                                            <span className="ml-1 text-[10px] uppercase tracking-wide text-blue-600 dark:text-blue-400 hidden group-open:inline">show less</span>
+                                                            <span className="ml-1 text-[10px] uppercase tracking-wide text-accent group-open:hidden">show more</span>
+                                                            <span className="ml-1 text-[10px] uppercase tracking-wide text-accent hidden group-open:inline">show less</span>
                                                         </summary>
                                                     </details>
                                                 )
@@ -689,19 +688,22 @@ export default function HealthDashboard() {
           path doesn't drift from Settings / the wizard. */}
       {repairCheck && repairProbe && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-2xl max-h-[85vh] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl flex flex-col shadow-2xl">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+          <div className="w-full max-w-2xl max-h-[85vh] bg-surface border border-border rounded-panel flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <div className="min-w-0">
-                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">Self-Repair</p>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white truncate">{repairProbe.label}</h3>
+                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-text-subtle">Self-Repair</p>
+                <h3 className="text-lg font-bold text-text truncate">{repairProbe.label}</h3>
               </div>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setRepairCheck(null)}
-                className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors"
                 title="Close"
+                aria-label="Close"
+                className="px-2"
               >
                 <X size={18} />
-              </button>
+              </Button>
             </div>
             <div className="flex-1 overflow-y-auto p-5">
               <DiagnoseProbeList
@@ -717,37 +719,37 @@ export default function HealthDashboard() {
       {/* Edit/Create Drawer */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
-          <div className="w-full sm:max-w-xl h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col shadow-2xl animate-in slide-in-from-right-10">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-800">
+          <div className="w-full sm:max-w-xl h-full bg-surface border-l border-border flex flex-col shadow-2xl animate-in slide-in-from-right-10">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <div>
-                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-gray-400 dark:text-gray-500">{editingCheck ? (isSystemCheck() ? 'View Check' : 'Edit Check') : 'New Check'}</p>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                <p className="text-xs uppercase font-semibold tracking-[0.2em] text-text-subtle">{editingCheck ? (isSystemCheck() ? 'View Check' : 'Edit Check') : 'New Check'}</p>
+                <h3 className="text-lg font-bold text-text">
                   {editingCheck ? editingCheck.name : 'Create Health Check'}
                 </h3>
               </div>
-              <button onClick={() => setIsModalOpen(false)} className="p-2 text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors">
+              <Button variant="ghost" size="sm" onClick={() => setIsModalOpen(false)} aria-label="Close" className="px-2">
                 <X size={18} />
-              </button>
+              </Button>
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
+                <label className="block text-sm font-medium text-text-muted mb-1">Name</label>
                 <input 
                   type="text" 
                   value={formData.name}
                   onChange={e => setFormData({...formData, name: e.target.value})}
                   disabled={isSystemCheck()}
-                  className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  className={`w-full p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                   placeholder="e.g. Production API"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Type</label>
+                <label className="block text-sm font-medium text-text-muted mb-1">Type</label>
                 <select 
                   value={formData.type}
                   onChange={e => setFormData({...formData, type: e.target.value as CheckType})}
                   disabled={isSystemCheck()}
-                  className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  className={`w-full p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                 >
                   <option value="http">HTTP Request</option>
                   <option value="ping">Ping</option>
@@ -760,7 +762,7 @@ export default function HealthDashboard() {
                 </select>
                 
                 {/* Type Hint */}
-                <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 p-2 rounded border border-gray-200 dark:border-gray-700">
+                <div className="mt-2 text-xs text-text-muted bg-surface-2 p-2 rounded-card border border-border">
                     {formData.type === 'http' && (
                         <p>Checks an HTTP/HTTPS endpoint. Verifies the status code (default 200) and optionally the response body. Fails if the request times out or returns an unexpected status.</p>
                     )}
@@ -788,22 +790,22 @@ export default function HealthDashboard() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target Node</label>
+                <label className="block text-sm font-medium text-text-muted mb-1">Target Node</label>
                 <select 
                   value={formData.nodeName || ''}
                   onChange={e => setFormData({...formData, nodeName: e.target.value})}
                   disabled={isSystemCheck()}
-                  className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  className={`w-full p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                 >
                   <option value="">Local (ServiceBay Host)</option>
                   {nodes.map(node => (
                     <option key={node.Name} value={node.Name}>{node.Name}</option>
                   ))}
                 </select>
-                <p className="text-xs text-gray-500 mt-1">Select the node where this check should run.</p>
+                <p className="text-xs text-text-subtle mt-1">Select the node where this check should run.</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-text-muted mb-1">
                     {formData.type === 'script' ? 'Script Content' : formData.type === 'fritzbox' ? 'Fritz!Box Hostname / IP' : 'Target'}
                 </label>
                 {formData.type === 'script' ? (
@@ -811,7 +813,7 @@ export default function HealthDashboard() {
                         value={formData.target}
                         onChange={e => setFormData({...formData, target: e.target.value})}
                         disabled={isSystemCheck()}
-                        className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm h-32 ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                        className={`w-full p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none font-mono text-sm h-32 ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                         placeholder="if (1 !== 1) throw new Error('Math broken')"
                     />
                 ) : formData.type === 'podman' ? (
@@ -820,7 +822,7 @@ export default function HealthDashboard() {
                             value={formData.target}
                             onChange={e => setFormData({...formData, target: e.target.value})}
                             disabled={resourcesLoading || isSystemCheck()}
-                            className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${resourcesLoading || isSystemCheck() ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            className={`w-full p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none ${resourcesLoading || isSystemCheck() ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
                             <option value="">{resourcesLoading ? 'Loading containers...' : 'Select a container...'}</option>
                             {!resourcesLoading && containers.map((c) => (
@@ -831,7 +833,7 @@ export default function HealthDashboard() {
                         </select>
                         {resourcesLoading && (
                             <div className="absolute right-8 top-2.5">
-                                <div className="animate-spin h-5 w-5 border-2 border-blue-500 rounded-full border-t-transparent"></div>
+                                <div className="animate-spin h-5 w-5 border-2 border-accent rounded-full border-t-transparent"></div>
                             </div>
                         )}
                     </div>
@@ -859,7 +861,7 @@ export default function HealthDashboard() {
                       value={formData.target}
                       onChange={e => setFormData({...formData, target: e.target.value})}
                       disabled={isSystemCheck()}
-                      className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      className={`w-full p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                       placeholder={
                         formData.type === 'http' ? 'https://example.com' : 
                         formData.type === 'fritzbox' ? 'fritz.box' :
@@ -870,17 +872,17 @@ export default function HealthDashboard() {
               </div>
 
               {formData.type === 'fritzbox' && (
-                <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 text-sm text-blue-800 dark:text-blue-200">
+                <div className="p-4 bg-status-info/10 rounded-card border border-status-info/20 text-sm text-status-info">
                     <p className="font-medium mb-1">Configuration Note</p>
                     <p className="text-xs opacity-80">Ensure &quot;Status information over UPnP&quot; is enabled in your Fritz!Box settings (Home Network &gt; Network &gt; Network Settings).</p>
                 </div>
               )}
 
               {formData.type === 'http' && (
-                <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
-                    <h4 className="text-sm font-medium text-gray-900 dark:text-white">HTTP Options</h4>
+                <div className="space-y-4 p-4 bg-surface-2 rounded-card border border-border">
+                    <h4 className="text-sm font-medium text-text">HTTP Options</h4>
                     <div>
-                        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Expected Status Code</label>
+                        <label className="block text-xs font-medium text-text-muted mb-1">Expected Status Code</label>
                         <input 
                             type="number" 
                             value={formData.httpConfig?.expectedStatus || 200}
@@ -889,11 +891,11 @@ export default function HealthDashboard() {
                                 httpConfig: { ...formData.httpConfig, expectedStatus: parseInt(e.target.value) }
                             })}
                             disabled={isSystemCheck()}
-                            className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                            className={`w-full p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none text-sm ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                         />
                     </div>
                     <div>
-                        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Body Match (Optional)</label>
+                        <label className="block text-xs font-medium text-text-muted mb-1">Body Match (Optional)</label>
                         <div className="flex gap-2 mb-2">
                             <select
                                 value={formData.httpConfig?.bodyMatchType || 'contains'}
@@ -902,7 +904,7 @@ export default function HealthDashboard() {
                                     httpConfig: { ...formData.httpConfig, bodyMatchType: e.target.value as 'contains' | 'regex' }
                                 })}
                                 disabled={isSystemCheck()}
-                                className={`p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                className={`p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none text-sm ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                             >
                                 <option value="contains">Contains</option>
                                 <option value="regex">Regex</option>
@@ -915,7 +917,7 @@ export default function HealthDashboard() {
                                     httpConfig: { ...formData.httpConfig, bodyMatch: e.target.value }
                                 })}
                                 disabled={isSystemCheck()}
-                                className={`flex-1 p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                className={`flex-1 p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none text-sm ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                                 placeholder={formData.httpConfig?.bodyMatchType === 'regex' ? '^Hello.*World$' : 'Success'}
                             />
                         </div>
@@ -924,31 +926,25 @@ export default function HealthDashboard() {
               )}
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Interval (seconds)</label>
+                <label className="block text-sm font-medium text-text-muted mb-1">Interval (seconds)</label>
                 <input 
                   type="number" 
                   value={formData.interval}
                   onChange={e => setFormData({...formData, interval: parseInt(e.target.value)})}
                   disabled={isSystemCheck()}
-                  className={`w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  className={`w-full p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                   min="10"
                 />
               </div>
             </div>
-            <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
-              <button 
-                onClick={() => setIsModalOpen(false)}
-                className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors"
-              >
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-border bg-surface-2">
+              <Button variant="ghost" onClick={() => setIsModalOpen(false)}>
                 {isSystemCheck() ? 'Close' : 'Cancel'}
-              </button>
+              </Button>
               {!isSystemCheck() && (
-              <button 
-                onClick={handleSave}
-                className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors font-medium"
-              >
+              <Button onClick={handleSave}>
                 Save Check
-              </button>
+              </Button>
               )}
             </div>
           </div>
