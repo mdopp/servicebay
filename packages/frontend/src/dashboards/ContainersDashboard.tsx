@@ -3,13 +3,18 @@ import dynamic from 'next/dynamic';
 import { useSearchParams } from 'next/navigation';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import DashboardHydrationGate, { type HydrationPhase } from '@/components/DashboardHydrationGate';
-import { Box, Terminal as TerminalIcon, MoreVertical, X, Activity, Search, RefreshCw, Eraser } from 'lucide-react';
+import { Terminal as TerminalIcon, MoreVertical, X, Activity, Search, RefreshCw, Eraser } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useContainerActions } from '@/hooks/useContainerActions';
 import ContainerLogsPanel, { ContainerLogsPanelData } from '@/components/ContainerLogsPanel';
 import type { TerminalRef } from '@/components/Terminal';
-import type { ServiceBundle } from '@servicebay/api-client';
+import { logger, type ServiceBundle } from '@servicebay/api-client';
+import { Card, SectionHeading, StatusDot } from '@/components/ui';
+import {
+    groupContainersByStack,
+    type StackSummaryLite,
+} from './_lib/servicesDashboard';
 
 const DynamicTerminal = dynamic(() => import('@/components/Terminal'), {
     ssr: false,
@@ -53,7 +58,29 @@ export default function ContainersDashboard() {
     const [showInfra, setShowInfra] = useState(false);
     const [drawerMode, setDrawerMode] = useState<'logs' | 'terminal' | null>(null);
     const [drawerContainer, setDrawerContainer] = useState<Container | null>(null);
+    const [stackSummaries, setStackSummaries] = useState<StackSummaryLite[]>([]);
         const terminalRef = useRef<TerminalRef>(null);
+
+    // Stack membership so Status→Containers groups mirror the /services
+    // stack-grouping (#2095). Non-fatal: on failure the grouper falls back to
+    // per-service / "Other containers" buckets.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await fetch('/api/system/stacks', { cache: 'no-store' });
+                if (!res.ok) throw new Error('Failed to load stacks');
+                const payload = await res.json();
+                const stacks: StackSummaryLite[] = Array.isArray(payload?.stacks)
+                    ? payload.stacks.map((s: StackSummaryLite) => ({ name: s.name, manifest: s.manifest ?? null }))
+                    : [];
+                if (!cancelled) setStackSummaries(stacks);
+            } catch (error) {
+                logger.error('ContainersDashboard', 'Failed to load stacks', error);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, []);
 
     const closeDrawer = useCallback(() => {
         setDrawerMode(null);
@@ -205,34 +232,25 @@ export default function ContainersDashboard() {
         });
     }, [openContainerActions]);
 
-  const getGroupName = (c: Container) => {
-    if (c.PodName) return `Pod: ${c.PodName}`;
-    if (c.Labels) {
-        if (c.Labels['io.kubernetes.pod.name']) return `Pod: ${c.Labels['io.kubernetes.pod.name']}`;
-        if (c.Labels['io.podman.pod.name']) return `Pod: ${c.Labels['io.podman.pod.name']}`;
-        if (c.Labels['com.docker.compose.project']) return `Compose: ${c.Labels['com.docker.compose.project']}`;
-    }
-    return 'Standalone Containers';
-  };
-
     const getVisiblePorts = (container: Container) => {
         if (!container.Ports || container.Ports.length === 0) return [];
         if (container.PodName && !container.isInfra) return [];
         return container.Ports;
     };
 
-  const groupedContainers = filteredContainers.reduce((acc, c) => {
-    const group = getGroupName(c);
-    if (!acc[group]) acc[group] = [];
-    acc[group].push(c);
-    return acc;
-  }, {} as Record<string, Container[]>);
-
-  const sortedGroups = Object.keys(groupedContainers).sort((a, b) => {
-    if (a === 'Standalone Containers') return 1;
-    if (b === 'Standalone Containers') return -1;
-    return a.localeCompare(b);
-  });
+  // Group containers under the same stack identity the /services view uses
+  // (#2095): each container's parent service maps to its owning stack, with a
+  // Core services group for infra/system containers and an "Other containers"
+  // bucket for everything stack-less. Mirrors groupServicesByStack's optic.
+  const containerGroups = useMemo(
+    () =>
+      groupContainersByStack(
+        filteredContainers,
+        c => ({ serviceName: c.parent?.type === 'service' ? c.parent.name : null, isInfra: c.isInfra }),
+        stackSummaries,
+      ),
+    [filteredContainers, stackSummaries],
+  );
 
     const drawerNode = drawerContainer?.nodeName && drawerContainer.nodeName !== 'Local'
         ? drawerContainer.nodeName
@@ -296,24 +314,25 @@ export default function ContainersDashboard() {
                             {containers.length > 0 ? 'No containers match your filters.' : 'No active containers found.'}
                         </div>
                     ) : (
-                        <div className="space-y-6">
-                            {sortedGroups.map(group => (
-                                <div key={group} className="bg-gray-50/60 dark:bg-gray-900/30 border border-gray-200 dark:border-gray-800 rounded-xl p-4">
-                                    <div className="flex items-center gap-2 mb-4 pb-2 border-b border-gray-200 dark:border-gray-800">
-                                        <Box className="text-indigo-500" size={18} />
-                                        <h3 className="text-xs font-bold uppercase tracking-wider text-gray-600 dark:text-gray-300">{group}</h3>
-                                        <span className="ml-auto text-[11px] font-mono bg-gray-200 dark:bg-gray-800 px-2 py-0.5 rounded-full text-gray-600 dark:text-gray-400">
-                                            {groupedContainers[group].length} containers
-                                        </span>
-                                    </div>
-                                    <div className="grid gap-3">
-                                        {groupedContainers[group].map((c) => {
+                        <div className="space-y-8" data-testid="containers-stack-groups">
+                            {containerGroups.map(group => (
+                                <section key={group.id} className="space-y-3" data-testid={`container-group-${group.id}`}>
+                                    <SectionHeading
+                                        description={`${group.containers.length} container${group.containers.length === 1 ? '' : 's'}`}
+                                    >
+                                        {group.label}
+                                    </SectionHeading>
+                                    <Card padding="none" className="divide-y divide-border overflow-hidden">
+                                        {group.containers.map((c) => {
                                             const ports = getVisiblePorts(c);
                                             return (
-                                                <div key={c.Id} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg p-3 hover:border-blue-200 dark:hover:border-blue-700 transition-colors">
+                                                <div key={c.Id} className="p-space-3 hover:bg-surface-2 transition-colors">
                                                     <div className="flex flex-col md:flex-row md:items-center gap-3 justify-between">
                                                         <div className="flex items-center gap-3">
-                                                            <span className={`w-2.5 h-2.5 rounded-full ${c.State === 'running' ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                                                            <StatusDot
+                                                                state={c.State === 'running' ? 'ok' : 'unknown'}
+                                                                label={c.State === 'running' ? 'Running' : c.State}
+                                                            />
                                                             <div>
                                                                 <div className="flex flex-wrap items-center gap-2 text-base font-semibold text-gray-900 dark:text-gray-100">
                                                                     {c.Names[0].replace(/^\//, '')}
@@ -404,8 +423,8 @@ export default function ContainersDashboard() {
                                                 </div>
                                             );
                                         })}
-                                    </div>
-                                </div>
+                                    </Card>
+                                </section>
                             ))}
                         </div>
                     )}
