@@ -26,5 +26,8 @@ export type { SectionHeadingProps, SectionHeadingTone } from './SectionHeading';
 export { Field } from './Field';
 export type { FieldProps } from './Field';
 
+export { PageScroll, PageShell, PageScrollRegion } from './PageScroll';
+export type { PageScrollProps } from './PageScroll';
+
 export { cn } from './cn';
 export type { ClassValue } from './cn';
