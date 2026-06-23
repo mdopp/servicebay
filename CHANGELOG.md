@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.146.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.146.0...servicebay-v4.146.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **portal:** pack bento empty space to bottom + uniform CTA pattern ([28c68a4](https://github.com/mdopp/servicebay/commit/28c68a4e2c1e6d21ffd5550263d3434e5ef0dd0f))
+* **portal:** pack bento empty space to bottom + uniform CTA-bottom pattern ([8d2931b](https://github.com/mdopp/servicebay/commit/8d2931b67954262829b5b8a1a452f0b4df13a040)), closes [#2123](https://github.com/mdopp/servicebay/issues/2123)
+
 ## [4.146.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.145.1...servicebay-v4.146.0) (2026-06-23)
 
 
