@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.147.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.147.2...servicebay-v4.147.3) (2026-06-24)
+
+
+### Bug Fixes
+
+* **media:** single Jellyfin Media card on the portal ([#2135](https://github.com/mdopp/servicebay/issues/2135)) ([134f31f](https://github.com/mdopp/servicebay/commit/134f31f693406c5493b2217bcb808f489f0adebb))
+
 ## [4.147.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.147.1...servicebay-v4.147.2) (2026-06-23)
 
 
