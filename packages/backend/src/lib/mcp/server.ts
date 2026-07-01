@@ -13,6 +13,7 @@ import {
 } from '@/lib/manager';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getTemplates, getReadme, getTemplateYaml, getTemplateVariables } from '@/lib/registry';
+import { listAssists, getAssist, ASSIST_KINDS } from '@/lib/assists/catalog';
 import { listNodes, getNodeConnection } from '@/lib/nodes';
 import { verifyNodeConnection } from '@/lib/nodes/verify';
 import { agentManager } from '@/lib/agent/manager';
@@ -188,6 +189,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   get_service_logs: 'read', get_container_logs: 'read', get_service_files: 'read',
   list_templates: 'read', get_template_readme: 'read', get_template_yaml: 'read',
   get_template_variables: 'read',
+  list_assists: 'read', get_assist: 'read',
   get_system_info: 'read', get_network_graph: 'read', get_health_checks: 'read',
   get_gateway_status: 'read', get_proxy_routes: 'read', get_config: 'read',
   get_podman_logs: 'read', list_system_services: 'read',
@@ -901,6 +903,38 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         updatedAt: job.updatedAt,
         endedAt: job.endedAt,
       });
+    },
+  );
+
+  // --- List Assists (#2146) ---
+  // Discover task-help entries (guides, ordered recipes, checklists, footguns,
+  // snippets) from the extensible catalog. Pass a free-text `query` describing
+  // the task to rank matches; each entry's `whenToUse` lets you self-select the
+  // right one, then fetch its full content with `get_assist`.
+  server.tool(
+    'list_assists',
+    'Discover task-help entries (guides, recipes, checklists, footguns, snippets) from the ServiceBay assist catalog. Pass a free-text `query` describing your task to rank relevant entries; read the returned `whenToUse` to pick one, then fetch it with get_assist. Use this before authoring/deploying a new service or when unsure how to perform a ServiceBay task.',
+    {
+      query: z.string().optional().describe('Free-text task description to rank matching entries (e.g. "deploy a new service behind SSO"). Omit to list everything.'),
+      kind: z.enum(ASSIST_KINDS).optional().describe('Restrict to one kind: guide | recipe | template | checklist | footgun | snippet.'),
+    },
+    async ({ query, kind }) => {
+      const assists = await listAssists({ query, kind });
+      return textResult(assists);
+    },
+  );
+
+  // --- Get Assist (#2146) ---
+  server.tool(
+    'get_assist',
+    'Fetch the full content (markdown: frontmatter + body) of one assist catalog entry by id. Use list_assists first to find the id.',
+    {
+      id: z.string().describe('Assist id (the entry id returned by list_assists).'),
+    },
+    async ({ id }) => {
+      const body = await getAssist(id);
+      if (!body) return errorResult(`No assist found with id "${id}". Use list_assists to see available entries.`);
+      return textResult(body);
     },
   );
 
