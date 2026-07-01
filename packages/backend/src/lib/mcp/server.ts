@@ -913,10 +913,10 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   // right one, then fetch its full content with `get_assist`.
   server.tool(
     'list_assists',
-    'Discover task-help entries (guides, recipes, checklists, footguns, snippets) from the ServiceBay assist catalog. Pass a free-text `query` describing your task to rank relevant entries; read the returned `whenToUse` to pick one, then fetch it with get_assist. Use this before authoring/deploying a new service or when unsure how to perform a ServiceBay task.',
+    'Discover task-help entries (guides, recipes, ADR-style architecture recommendations, checklists, footguns, snippets) from the ServiceBay assist catalog. Pass a free-text `query` describing your task to rank relevant entries; read the returned `whenToUse` to pick one, then fetch it with get_assist. Use this FIRST when authoring/deploying a new service, when you need an overview of ServiceBay or Solaris, or when unsure how to perform a ServiceBay task — so you don\'t re-derive knowledge that already exists.',
     {
       query: z.string().optional().describe('Free-text task description to rank matching entries (e.g. "deploy a new service behind SSO"). Omit to list everything.'),
-      kind: z.enum(ASSIST_KINDS).optional().describe('Restrict to one kind: guide | recipe | template | checklist | footgun | snippet.'),
+      kind: z.enum(ASSIST_KINDS).optional().describe('Restrict to one kind: guide | recipe | adr | template | checklist | footgun | snippet.'),
     },
     async ({ query, kind }) => {
       const assists = await listAssists({ query, kind });

@@ -81,5 +81,8 @@ WAL and shows a stale snapshot). A public host with no rendered `.conf` answers
 with an SSL connect error (000).
 
 ## Reference material
+- Assist `new-service-architecture` — recommended language/structure/libraries/
+  tests/storage/secrets before you design. Assists `servicebay-overview` +
+  `solaris-overview` — what the platforms are.
 - `docs/TEMPLATE_AUTHORING.md`, `templates/CLAUDE.md` — the full template contract.
 - Worked examples in-repo: `templates/file-share/` (forward-auth), `templates/vaultwarden/` (OIDC).

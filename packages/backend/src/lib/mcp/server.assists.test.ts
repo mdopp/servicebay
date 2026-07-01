@@ -8,7 +8,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 const listAssists = vi.fn();
 const getAssist = vi.fn();
 vi.mock('@/lib/assists/catalog', () => ({
-  ASSIST_KINDS: ['guide', 'recipe', 'template', 'checklist', 'footgun', 'snippet'],
+  ASSIST_KINDS: ['guide', 'recipe', 'adr', 'template', 'checklist', 'footgun', 'snippet'],
   listAssists: (...a: unknown[]) => listAssists(...a),
   getAssist: (...a: unknown[]) => getAssist(...a),
 }));

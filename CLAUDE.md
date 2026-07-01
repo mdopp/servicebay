@@ -22,8 +22,11 @@ the next agent/operator finds it via the `list_assists` / `get_assist` MCP tools
   under `DATA_DIR/local-assists/` (no release needed). Loader:
   `packages/backend/src/lib/assists/catalog.ts`.
 - Each is markdown with frontmatter: `title`, `whenToUse` (one line — this drives
-  self-selection), `kind` (`guide | recipe | template | checklist | footgun |
-  snippet`), `tags`.
+  self-selection), `kind` (`guide | recipe | adr | template | checklist | footgun
+  | snippet`), `tags`.
+- Overviews of the platform itself are assists too — see `servicebay-overview`
+  and `solaris-overview`, and the `new-service-architecture` ADR-style
+  recommendations. A client should read those instead of re-deriving structure.
 - **Abstract, don't transcribe.** Turn "how I fixed tor.dopp.cloud today" into
   "how to add a public SSO subdomain, and the acme footgun to avoid." Reference
   files/functions by path, not by a specific deployment's values.

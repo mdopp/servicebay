@@ -35,6 +35,7 @@ import { logger } from '@/lib/logger';
 export const ASSIST_KINDS = [
   'guide',
   'recipe',
+  'adr',
   'template',
   'checklist',
   'footgun',

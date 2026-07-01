@@ -150,6 +150,17 @@ per service. The diagnose page surfaces failures.
    `*.mustache`; `{{VAR}}` placeholders only. A build-time scan
    (`tests/backend/assist_consistency.test.ts`) fails on known secret shapes.
 
+## Architecture recommendations for a new service
+
+Before designing a new service, read the ADR-style recommendations assist
+**`new-service-architecture`** (via `list_assists` / `get_assist`, or
+`assists/new-service-architecture.md`): recommended language, basic structure,
+libraries, tests, data storage, and secrets — plus the platform ADRs in
+`docs/adr/` a new service must respect (SSO, non-destructive installs,
+reconciliation, network isolation, backup tiering, service tokens). Orientation
+on the platforms themselves is in the `servicebay-overview` and `solaris-overview`
+assists.
+
 ## Reusable know-how → assists
 
 If, while authoring a template, you work out a non-trivial recipe or hit a
