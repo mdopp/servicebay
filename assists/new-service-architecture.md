@@ -19,7 +19,7 @@ A new need is usually solved as one of these — pick deliberately:
 
 - **A capability in Solaris** — when it's about *this household*: identity,
   memory, conversation, per-resident privacy, or a home-control behavior driven
-  through the assistant. Lives in `mdopp/solbay` (the Solaris Engine / tools).
+  through the assistant. Lives in `mdopp/solarisbay` (the Solaris Engine / tools).
   Example: "remember the family's book list and answer questions about it."
 - **A service in ServiceBay** — when it's a *generic, installable capability* any
   box could want, standing on its own (a web app, an API, a data store, a device

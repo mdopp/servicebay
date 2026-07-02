@@ -1,13 +1,13 @@
 ---
 title: Solaris — structure & capabilities (orientation)
-whenToUse: You need to understand what Solaris (the household AI assistant, aka OSCAR) is, how it's structured, and how it relates to ServiceBay — before working on it or answering questions about it.
+whenToUse: You need to understand what Solaris (the household AI assistant) is, how it's structured, and how it relates to ServiceBay — before working on it or answering questions about it.
 kind: guide
-tags: [solaris, oscar, solbay, household-ai, voice, ollama, home-assistant, overview, orientation]
+tags: [solaris, solarisbay, household-ai, voice, ollama, home-assistant, overview, orientation]
 ---
 
 # Solaris — what it is and what it can do
 
-Solaris (repo `mdopp/solbay`) is a **private household AI assistant** that
+Solaris (repo `mdopp/solarisbay`) is a **private household AI assistant** that
 ServiceBay deploys as a one-click tier. It runs entirely on the box — voice at
 home, chat in the browser, one agent with long memory, per-resident privacy,
 and real control of the house through Home Assistant. Nothing leaves the house
@@ -15,10 +15,10 @@ without an explicit, audited opt-in.
 
 > Note: `solbay-architecture.md` in the ServiceBay repo is **stale** (a pre-v0.10
 > design that mentioned an external agent gateway — no longer used). The current
-> architecture is the native **Solaris Engine**; see `mdopp/solbay` `README.md` /
+> architecture is the native **Solaris Engine**; see `mdopp/solarisbay` `README.md` /
 > `solaris-architecture.md` for the canonical picture.
 
-## Structure (repo `mdopp/solbay`)
+## Structure (repo `mdopp/solarisbay`)
 - **`solaris-chat/`** — the Solaris Engine: one process owning the agent loop
   (direct Ollama `/api/chat`, per-turn model + reasoning), the session store
   (`solaris.db`, SQLite/WAL), tracing, timer scheduler, tool registry, and the
