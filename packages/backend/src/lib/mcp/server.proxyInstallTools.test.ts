@@ -61,7 +61,7 @@ vi.mock('@/lib/install/manifestAssembler', () => ({
 const createJob = vi.fn(async () => ({ id: 'job-123', phase: 'running' }));
 const getJob = vi.fn();
 const readLog = vi.fn(async () => ({ content: 'deploying…', nextOffset: 42 }));
-const getCurrentJob = vi.fn(async () => null);
+const getCurrentJob = vi.fn(async (): Promise<{ id: string; phase: string } | null> => null);
 const startJob = vi.fn();
 class InstallInProgressError extends Error {
   existingJobId: string;
