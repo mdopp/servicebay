@@ -290,3 +290,29 @@ jobs:
         run: go build ./...
       - name: go test
         run: go test ./...
+
+  # Lockfile-in-sync gate (#2131). The PR install steps above use `npm ci`
+  # only on a cache MISS, and the setup-node cache is keyed on the lockfile
+  # hash — so a `package-lock.json` that has drifted from package.json can
+  # sail through every PR job (cache hit → install skipped, or a lenient
+  # local `npm install` that regenerated the lock differently than the
+  # registry resolves). The RELEASE image build (release.yml → Dockerfile)
+  # runs strict `npm ci`, which hard-fails on that drift AFTER a green PR
+  # merges — and because `:latest` then never builds, the box can't update
+  # (memory: feedback_lockfile_desync_breaks_release_build). This job runs
+  # the same strictness at PR time so drift is caught before merge, not at
+  # release-image time.
+  lockfile:
+    runs-on: ubuntu-latest
+    if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      # `npm ci --dry-run` reproduces the Dockerfile's strict resolution
+      # without a full install: it fails when package-lock.json is missing,
+      # out of sync with package.json (workspaces included), or otherwise
+      # unusable — the exact failure that would break the release build.
+      - name: package-lock.json in sync with manifests (strict, matches Docker npm ci)
+        run: npm ci --dry-run --no-audit --no-fund
