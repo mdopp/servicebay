@@ -929,7 +929,7 @@ async function requestPublicCert(
  *
  * If forwardHost is not set, it defaults to the node's LAN IP.
  */
-export const POST = withApiHandler({}, async ({ request }) => {
+export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request }) => {
     try {
         const { hosts, node, publicDomain, npmCredentials } = await request.json() as {
             hosts: ProxyHostRequest[];
@@ -1246,7 +1246,13 @@ export const POST = withApiHandler({}, async ({ request }) => {
  * cert_request_failure diagnose probe surfaces stale certs separately.
  */
 export const DELETE = withApiHandler<undefined, z.infer<typeof DeleteQuery>>(
-  { query: DeleteQuery },
+  // #2142 — accept a scoped `sb_` bearer token (destroy scope) so token-driven
+  // flows can remove a route symmetrically with create (POST=mutate). Removing
+  // an NPM proxy host is a state-destroying op → `destroy`, matching the MCP
+  // `remove_proxy_route` tier. Without this the DELETE was cookie-only (a
+  // MUTATING verb with no tokenScope → requireSession rejects the Bearer and
+  // 401s), so an agent could create a route with a token but not delete it.
+  { query: DeleteQuery, tokenScope: 'destroy' },
   async ({ query }) => {
     try {
         const domain = query.domain;
@@ -1311,5 +1317,73 @@ export const DELETE = withApiHandler<undefined, z.infer<typeof DeleteQuery>>(
     } catch (error) {
         logger.error('api:nginx:proxy-hosts:delete', 'Failed to delete proxy host', error);
         return NextResponse.json({ error: 'Failed to delete proxy host' }, { status: 500 });
+    }
+});
+
+const GetQuery = z.object({
+    node: z.string().optional(),
+});
+
+/**
+ * GET /api/system/nginx/proxy-hosts[?node=<n>]
+ *
+ * #2140 — Return NPM's LIVE per-host status so a broken conf is visible
+ * without reading NPM's sqlite by hand. NPM tracks each host's
+ * `enabled` flag plus a `meta.nginx_online` boolean and `meta.nginx_err`
+ * string it sets after every `nginx -t`/reload — when a bad advanced_config
+ * makes nginx revert the conf, `nginx_online` flips false and `nginx_err`
+ * carries the `[emerg]` reason. The MCP `get_proxy_routes` tool folds this
+ * into its output so an agent sees "route created but nginx_online=false:
+ * duplicate location …" instead of a silent failure.
+ *
+ * Cookie- or scoped-token-gated (read scope) like its siblings.
+ */
+export const GET = withApiHandler<undefined, z.infer<typeof GetQuery>>(
+  { query: GetQuery, tokenScope: 'read' },
+  async ({ query }) => {
+    try {
+        const npm = await resolveNpm(query.node);
+        if (!npm) {
+            return NextResponse.json({ error: 'Nginx Proxy Manager not found or not running' }, { status: 404 });
+        }
+        const token = await getNpmToken(npm.apiUrl);
+        if (!token) {
+            return NextResponse.json({
+                error: 'Could not authenticate with NPM.',
+                adminUrl: npm.apiUrl,
+                needsCredentials: true,
+            }, { status: 401 });
+        }
+        const res = await fetch(`${npm.apiUrl}/api/nginx/proxy-hosts?expand=certificate`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) {
+            return NextResponse.json({ error: `NPM API returned ${res.status}` }, { status: 502 });
+        }
+        const list = (await res.json()) as Array<{
+            id: number;
+            domain_names?: string[];
+            forward_host?: string;
+            forward_port?: number;
+            enabled?: boolean | number;
+            certificate_id?: number;
+            meta?: { nginx_online?: boolean; nginx_err?: string | null };
+        }>;
+        const hosts = (Array.isArray(list) ? list : []).map(h => ({
+            id: h.id,
+            domain: h.domain_names?.[0] ?? '',
+            forwardHost: h.forward_host,
+            forwardPort: h.forward_port,
+            enabled: h.enabled === true || h.enabled === 1,
+            certBound: typeof h.certificate_id === 'number' && h.certificate_id > 0,
+            nginx_online: h.meta?.nginx_online ?? null,
+            nginx_err: h.meta?.nginx_err ?? null,
+        }));
+        return NextResponse.json({ node: npm.nodeName, hosts });
+    } catch (error) {
+        logger.error('api:nginx:proxy-hosts:get', 'Failed to read proxy hosts', error);
+        return NextResponse.json({ error: 'Failed to read proxy hosts' }, { status: 500 });
     }
 });

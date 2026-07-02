@@ -47,6 +47,35 @@ import { jailPath, realPathInJail, JAIL_ROOT } from './pathJail';
 import { largestDirsUnderDataDir } from '@/lib/diagnose/probes/disk';
 import { AgentExecutor } from '@/lib/agent/executor';
 import { shellQuote } from '@/lib/util/shellQuote';
+import { getInternalApiToken } from '@/lib/auth/internalToken';
+import { AUTHELIA_FORWARD_AUTH_SENTINEL } from '@/lib/stackInstall/forwardAuth';
+import { assembleManifest, applyVariableDefaults } from '@/lib/install/manifestAssembler';
+import {
+  createJob,
+  getJob,
+  readLog,
+  getCurrentJob,
+  InstallInProgressError,
+  type JobInput,
+  type WipeMode,
+} from '@/lib/install/jobStore';
+import { startJob } from '@/lib/install/runner';
+
+/**
+ * Loopback fetch to this process's own Next API, carrying the internal
+ * API token so proxy.ts's CSRF/session gate accepts the state-changing
+ * call (no cookie, no Origin). Same pattern as the install runner's
+ * `apiFetch` (postInstallDispatcher.ts) — used by the MCP proxy/install
+ * tools that reuse the install-runner HTTP wiring (#2140/#2141).
+ */
+function loopbackFetch(path: string, init?: RequestInit): Promise<Response> {
+  const port = process.env.PORT || '3000';
+  const headers = new Headers(init?.headers);
+  if (!headers.has('x-sb-internal-token')) {
+    headers.set('x-sb-internal-token', getInternalApiToken());
+  }
+  return fetch(`http://127.0.0.1:${port}${path}`, { ...init, headers });
+}
 
 interface McpAuthContext {
   user: string;
@@ -129,7 +158,8 @@ const MUTATING_TOOLS = new Set([
   'start_service', 'stop_service', 'restart_service',
   'deploy_service', 'delete_service', 'rename_service', 'update_service_yaml',
   'restore_trashed_service', 'purge_trashed_service',
-  'add_proxy_route', 'remove_proxy_route',
+  'add_proxy_route', 'create_proxy_route', 'remove_proxy_route',
+  'write_file', 'install_template',
   'file_access_request',
   'create_health_check', 'delete_health_check', 'run_check_now',
   'run_backup', 'restore_backup',
@@ -177,6 +207,8 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   request_token: 'read', poll_token_request: 'read', list_token_requests: 'read',
   // read-oriented file/disk tools (#1872) — jailed reads, no mutation
   read_file: 'read', list_dir: 'read', disk_usage: 'read',
+  // install progress is a read-only poll of a job's state (#2141)
+  get_install_progress: 'read',
   // lifecycle
   start_service: 'lifecycle', stop_service: 'lifecycle', restart_service: 'lifecycle',
   run_check_now: 'lifecycle', refresh_agent: 'lifecycle',
@@ -185,6 +217,10 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   // mutate
   deploy_service: 'mutate', update_service_yaml: 'mutate', rename_service: 'mutate',
   add_proxy_route: 'mutate', create_health_check: 'mutate',
+  // #2140 create_proxy_route (full NPM host: exposure + forward-auth + cert)
+  // and #2141 install_template (assemble→start a wizard install) and #2142
+  // write_file are all additive provisioning ops → `mutate`, NOT `destroy`.
+  create_proxy_route: 'mutate', install_template: 'mutate', write_file: 'mutate',
   restore_trashed_service: 'mutate',
   file_access_request: 'mutate',
   // mutate (config writes, allow-listed to safe keys — see update_config tool)
@@ -783,6 +819,91 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     },
   );
 
+  // --- Install Template (#2141) ---
+  // Wraps the wizard's server-side flow — assembleManifest → createJob →
+  // startJob — so an MCP client gets the FULL template deploy (variable
+  // assembly, global injection, secret gen, subdomain→NPM proxy host, Authelia
+  // wiring, dependency ordering, migrations), not the raw-YAML deploy_service
+  // shortcut. Returns a jobId; poll get_install_progress for phase + logs +
+  // deployed names. Mirrors POST /api/install/assemble + /api/install/start
+  // by calling the same lib functions directly (no HTTP hop).
+  server.tool(
+    'install_template',
+    'Install one or more templates the way the setup wizard does: assembles the manifest (variable defaults, global injection, secret generation), then starts the deploy job (subdomain→NPM proxy host, Authelia wiring, dependency ordering, migrations all included). Returns a jobId — poll get_install_progress to watch phase/logs and read the deployed service names. Use this instead of deploy_service when you want the full template flow (SSO/cert/proxy wiring), not a raw-YAML deploy.',
+    {
+      names: z.array(z.string().min(1)).min(1).describe('Template/stack name(s) to install, e.g. ["vaultwarden"].'),
+      templateSource: z.string().optional().describe('Where to resolve the templates from: "Built-in", "Local", a registry name, or omit to walk all sources.'),
+      variables: z.record(z.string(), z.string()).optional().describe('Variable overrides (name→value); win over template defaults. e.g. { SUBDOMAIN_TOR: "tor" }.'),
+      wipeMode: z.enum(['install', 'wipe-config', 'wipe-all']).optional().describe('install (default, keep data) | wipe-config | wipe-all (destructive).'),
+      node: nodeParam,
+    },
+    async ({ names, templateSource, variables, wipeMode, node }) => {
+      try {
+        const active = await getCurrentJob();
+        if (active) {
+          return errorResult(`An install job is already in progress (jobId=${active.id}, phase=${active.phase}). Wait for it to finish (poll get_install_progress) or abort it before starting another.`);
+        }
+        const assembled = await assembleManifest({
+          items: names.map((name: string) => ({ name, checked: true })),
+          prefilled: variables,
+          templateSource,
+        });
+        const input: JobInput = {
+          items: assembled.items,
+          variables: assembled.variables,
+          templateSource: templateSource ?? 'Built-in',
+          host: 'localhost',
+          wipeMode: (wipeMode as WipeMode | undefined) ?? 'install',
+          ...(node ? { node } : {}),
+        };
+        const withDefaults = await applyVariableDefaults(input, templateSource);
+        const job = await createJob({ source: 'mcp', input: withDefaults });
+        startJob(job.id);
+        return textResult({
+          jobId: job.id,
+          phase: job.phase,
+          note: `Install started. Poll get_install_progress(jobId="${job.id}") for phase, logs, and deployed service names.`,
+        });
+      } catch (e) {
+        if (e instanceof InstallInProgressError) {
+          return errorResult(`An install job is already in progress (jobId=${e.existingJobId}). Poll get_install_progress or abort it first.`);
+        }
+        return errorResult(`Error starting install: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  // --- Get Install Progress (#2141) ---
+  server.tool(
+    'get_install_progress',
+    'Poll an install job (started via install_template) by jobId. Returns phase (running | needs_credentials | done | error | aborted | crashed), whether it is still active, the deployed service names so far, any error, and new log lines. Pass logsSince (the previous call\'s logsOffset) to fetch only newer lines.',
+    {
+      jobId: z.string().min(1).describe('The jobId returned by install_template.'),
+      logsSince: z.number().int().min(0).optional().describe('Byte offset from a previous call (logsOffset) — returns only log lines added since then.'),
+    },
+    async ({ jobId, logsSince }) => {
+      const job = await getJob(jobId);
+      if (!job) return errorResult(`No install job found with id "${jobId}".`);
+      const { content, nextOffset } = await readLog(jobId, logsSince);
+      const active = job.phase === 'running' || job.phase === 'needs_credentials';
+      return textResult({
+        jobId: job.id,
+        phase: job.phase,
+        active,
+        currentItem: job.progress.currentItem,
+        deployedNames: job.progress.deployedNames,
+        totalCount: job.progress.totalCount,
+        needsCredentials: job.phase === 'needs_credentials',
+        error: job.error,
+        logs: redactLogText(content),
+        logsOffset: nextOffset,
+        startedAt: job.startedAt,
+        updatedAt: job.updatedAt,
+        endedAt: job.endedAt,
+      });
+    },
+  );
+
   // --- Get Network Graph ---
   server.tool('get_network_graph', 'Get network topology: nodes, edges, port mappings', {}, async () => {
     const snapshot = getStoreSnapshot();
@@ -857,8 +978,24 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   });
 
   // --- Get Proxy Routes ---
-  server.tool('get_proxy_routes', 'Get reverse proxy routes configuration', {}, async () => {
-    return textResult(getStoreSnapshot().proxyState);
+  // #2140 — Returns the aggregated proxy state AND, best-effort, NPM's LIVE
+  // per-host status (enabled + nginx_online/nginx_err from NPM's DB). A host
+  // whose conf nginx reverted shows nginx_online=false + the [emerg] reason,
+  // so a broken route is visible from the MCP instead of only via NPM's sqlite.
+  server.tool('get_proxy_routes', 'Get reverse proxy routes configuration, including each NPM host\'s live nginx status (nginx_online / nginx_err) when reachable — a broken conf shows nginx_online=false with the error.', { node: nodeParam }, async ({ node }) => {
+    const proxyState = getStoreSnapshot().proxyState;
+    let liveHosts: unknown = null;
+    let liveError: string | undefined;
+    try {
+      const qs = node ? `?node=${encodeURIComponent(node)}` : '';
+      const res = await loopbackFetch(`/api/system/nginx/proxy-hosts${qs}`, { method: 'GET' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) liveHosts = (data as { hosts?: unknown }).hosts ?? [];
+      else liveError = (data as { error?: string }).error ?? `HTTP ${res.status}`;
+    } catch (e) {
+      liveError = e instanceof Error ? e.message : String(e);
+    }
+    return textResult({ proxyState, liveHosts, ...(liveError ? { liveStatusError: liveError } : {}) });
   });
 
   // --- Exec Command ---
@@ -1053,6 +1190,88 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         entry,
         note: 'Config updated. Push to NPM via Settings → Reverse Proxy → Sync.',
       });
+    },
+  );
+
+  // #2140 — Create a COMPLETE NPM proxy host in one MCP call, reusing the
+  // install-runner's proxy-host wiring (POST /api/system/nginx/proxy-hosts):
+  // exposure tier (cert + LAN allow-list), Authelia forward-auth, optional
+  // custom advanced_config / forwardHost / ssl, best-effort LE cert. Unlike
+  // add_proxy_route (which only records a config entry for a later manual
+  // sync), this pushes to NPM immediately and returns the per-host result
+  // (created, certIssued/certError, lanRestricted). The forward-auth snippet
+  // is expanded server-side by the route with the correct acme-bypass handling
+  // per exposure (#2143 — no duplicate acme location on LE hosts).
+  server.tool(
+    'create_proxy_route',
+    'Create a complete NPM reverse-proxy host in one call: pick an exposure tier (public|internal|lan), optionally gate it behind Authelia forward-auth SSO, and (for public/internal) request a Let\'s Encrypt cert — matching what a template install produces. Pushes to NPM immediately (unlike add_proxy_route, which only records a config entry). Returns the create + cert outcome per host; check get_proxy_routes for live nginx_online status afterward.',
+    {
+      domain: z.string().regex(/^[a-zA-Z0-9.-]+$/, 'invalid domain').describe('Full public hostname, e.g. "tor.dopp.cloud".'),
+      forwardPort: z.number().int().min(1).max(65535).describe('Internal port the upstream service listens on.'),
+      forwardHost: z.string().optional().describe('Upstream host/IP (default: the node\'s LAN IP — correct for services on the box).'),
+      exposure: z.enum(['public', 'internal', 'lan']).optional().default('public').describe('public = LE cert + open; internal = LE cert + LAN-only allow-list; lan = no cert, LAN-only (forward-auth does NOT work on lan — Authelia needs https). Default: public.'),
+      forwardAuth: z.boolean().optional().default(false).describe('Gate the route behind Authelia forward-auth SSO. Requires exposure public|internal (needs https). Expands the same nginx snippet a template install uses so Remote-User reaches the upstream.'),
+      sslForced: z.boolean().optional().describe('Force HTTPS redirect (default true for public/internal once a cert binds).'),
+      websocket: z.boolean().optional().describe('Enable WebSocket upgrade on the host.'),
+      advancedConfig: z.string().optional().describe('Custom nginx directives to inject into the server block (appended after any forward-auth snippet).'),
+      service: z.string().optional().describe('Logical service name (default: first label of the domain).'),
+      node: nodeParam,
+    },
+    async ({ domain, forwardPort, forwardHost, exposure, forwardAuth, sslForced, websocket, advancedConfig, service, node }) => {
+      if (forwardAuth && exposure === 'lan') {
+        return errorResult('forwardAuth requires exposure "public" or "internal": Authelia forward-auth needs an https (cert-bound) host, and a "lan" host serves plain HTTP. Use exposure "internal" for a LAN-only SSO-gated service.');
+      }
+      // Compose the advanced_config: forward-auth sentinel first (the route
+      // expands + port-substitutes it with the correct acme-bypass for the
+      // exposure, #2143), then any custom directives the caller supplied.
+      let composedAdvanced: string | undefined;
+      if (forwardAuth) {
+        composedAdvanced = advancedConfig
+          ? `${AUTHELIA_FORWARD_AUTH_SENTINEL}\n${advancedConfig}`
+          : AUTHELIA_FORWARD_AUTH_SENTINEL;
+      } else if (advancedConfig) {
+        composedAdvanced = advancedConfig;
+      }
+      const host = {
+        domain,
+        forwardPort,
+        ...(forwardHost ? { forwardHost } : {}),
+        service: service ?? domain.split('.')[0],
+        exposure,
+        proxyConfig: {
+          ...(websocket !== undefined ? { allow_websocket_upgrade: websocket } : {}),
+          ...(sslForced !== undefined ? { ssl_forced: sslForced } : {}),
+          ...(composedAdvanced ? { advanced_config: composedAdvanced } : {}),
+        },
+      };
+      try {
+        const res = await loopbackFetch('/api/system/nginx/proxy-hosts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ hosts: [host], node }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const msg = (data as { error?: string }).error ?? `HTTP ${res.status}`;
+          return errorResult(`Failed to create proxy route for ${domain}: ${msg}`);
+        }
+        const d = data as { created?: string[]; failed?: { domain: string; error?: string }[]; certs?: { domain: string; issued: boolean; error?: string }[]; lanRestricted?: string[] };
+        const failedHere = (d.failed ?? []).find(f => f.domain === domain);
+        if (failedHere) {
+          return errorResult(`NPM rejected the proxy host for ${domain}: ${failedHere.error ?? 'unknown error'}`);
+        }
+        return textResult({
+          created: (d.created ?? []).includes(domain),
+          domain,
+          exposure,
+          forwardAuth: !!forwardAuth,
+          cert: (d.certs ?? []).find(c => c.domain === domain) ?? null,
+          lanRestricted: (d.lanRestricted ?? []).includes(domain),
+          note: 'Route pushed to NPM. Poll get_proxy_routes to confirm nginx_online=true (a bad conf reverts silently otherwise).',
+        });
+      } catch (e) {
+        return errorResult(`Error creating proxy route: ${e instanceof Error ? e.message : String(e)}`);
+      }
     },
   );
 
@@ -1470,6 +1689,58 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         return textResult({ path: jailed.path, bytes: content.length, content: redactLogText(content) });
       } catch (err) {
         return errorResult(`Error reading file: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+  );
+
+  // #2142 — jailed write_file. Symmetric with read_file (same JAIL_ROOT +
+  // realpath escape guard), but WRITING: it creates the parent directory,
+  // writes the content, and sets core:core ownership so the file is owned by
+  // the box's service user (not root) — matching what the install runner
+  // produces. Mutating (scope=mutate), so it rides the allowMutations gate;
+  // NOT in DESTRUCTIVE_TOOLS (writing a data-dir file is additive, not a
+  // data-losing wipe — no pre-mutation snapshot). The escape guard runs on the
+  // PARENT dir (`realpath -m` on the file's own path resolves fine even when
+  // the file doesn't exist yet, and rejects a parent symlink pointing out).
+  server.tool(
+    'write_file',
+    `Write a UTF-8 text file on a node, jailed to ${JAIL_ROOT} (service data dirs live here). Use this instead of base64-piping content through \`exec_command\`. Creates the parent directory if missing and sets core:core ownership. The path is resolved and rejected if it escapes the jail (\`..\`, an absolute path outside it, or a symlink pointing out).`,
+    {
+      path: z.string().min(1).describe(`File path; relative paths are anchored at ${JAIL_ROOT}. Must resolve inside ${JAIL_ROOT}.`),
+      content: z.string().describe('Full UTF-8 file content to write (overwrites any existing file).'),
+      node: nodeParam,
+    },
+    async ({ path: reqPath, content, node }) => {
+      const jailed = jailPath(reqPath);
+      if (!jailed.ok) return errorResult(jailed.error);
+      const nodeName = await resolveNode(node);
+      try {
+        const exec = new AgentExecutor(nodeName);
+        // Symlink-escape guard on the target itself. `realpath -m` resolves
+        // even a not-yet-existing file (it resolves the existing prefix),
+        // so a parent symlink that points out of the jail is still caught.
+        const escape = await assertRealpathInJail(exec, jailed.path, reqPath);
+        if (escape) return errorResult(escape);
+        // Parent-dir create (idempotent). Derive the parent lexically from the
+        // already-jailed absolute path.
+        const parent = jailed.path.slice(0, jailed.path.lastIndexOf('/')) || JAIL_ROOT;
+        const mk = await exec.execSafe(['mkdir', '-p', '--', parent], { sudo: true });
+        if (mk.code !== 0) {
+          return errorResult(`Could not create parent directory "${parent}": ${(mk.stderr ?? '').trim() || `exit ${mk.code}`}`);
+        }
+        // Write the content via the agent's write_file (handles the transfer),
+        // then set core:core ownership so the box's service user owns it.
+        await exec.writeFile(jailed.path, content);
+        const chown = await exec.execSafe(['chown', 'core:core', '--', jailed.path], { sudo: true });
+        const ownershipSet = chown.code === 0;
+        return textResult({
+          path: jailed.path,
+          bytes: Buffer.byteLength(content, 'utf8'),
+          ownershipSet,
+          ...(ownershipSet ? {} : { ownershipWarning: `File written but chown core:core failed: ${(chown.stderr ?? '').trim() || `exit ${chown.code}`}` }),
+        });
+      } catch (err) {
+        return errorResult(`Error writing file: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
   );

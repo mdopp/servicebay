@@ -44,7 +44,7 @@ export const PATCH = withApiHandlerParams<z.infer<typeof PatchBody>, undefined, 
         return { request: view };
       }
       const view = await approveTokenRequest(params.id, {
-        scopes: body.scopes as Parameters<typeof approveTokenRequest>[1]['scopes'],
+        scopes: body.scopes as NonNullable<Parameters<typeof approveTokenRequest>[1]>['scopes'],
         ttlSecs: body.ttl_seconds,
         approvedBy: auth?.user,
       });
