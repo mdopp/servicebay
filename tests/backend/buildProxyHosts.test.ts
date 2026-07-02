@@ -216,6 +216,40 @@ describe('buildProxyHosts', () => {
     expect(cfg).toContain('proxy_pass http://127.0.0.1:9095/api/authz/auth-request;');
   });
 
+  // #2143 — the forward-auth snippet's acme-challenge bypass duplicates NPM's
+  // own on LE (public/internal) hosts → `nginx: [emerg] duplicate location`.
+  it('omits the acme-challenge bypass for public/internal (LE) forward-auth hosts (#2143)', () => {
+    const { hosts } = buildProxyHosts([
+      v('PUBLIC_DOMAIN', 'example.com'),
+      v('AUTHELIA_PORT', '9091'),
+      v('PUB_SUBDOMAIN', 'pub', subdomain('public', '8000', {
+        proxyConfig: { advanced_config: '__authelia_forward_auth__' },
+      })),
+      v('INT_SUBDOMAIN', 'int', subdomain('internal', '8001', {
+        proxyConfig: { advanced_config: '__authelia_forward_auth__' },
+      })),
+    ]);
+    for (const h of hosts) {
+      const cfg = h.proxyConfig?.advanced_config ?? '';
+      expect(cfg).not.toContain('acme-challenge');
+      // still gated
+      expect(cfg).toContain('auth_request /authelia;');
+    }
+  });
+
+  it('keeps the acme-challenge bypass for cert-less lan forward-auth hosts (#2143)', () => {
+    const { hosts } = buildProxyHosts([
+      v('PUBLIC_DOMAIN', 'example.com'),
+      v('AUTHELIA_PORT', '9091'),
+      v('LAN_SUBDOMAIN', 'lan', subdomain('lan', '8000', {
+        proxyConfig: { advanced_config: '__authelia_forward_auth__' },
+      })),
+    ]);
+    const cfg = hosts[0].proxyConfig?.advanced_config ?? '';
+    expect(cfg).toContain('location /.well-known/acme-challenge/');
+    expect(cfg).toContain('auth_request /authelia;');
+  });
+
   it('routes loopback-only services through 127.0.0.1 (#880)', () => {
     const { hosts } = buildProxyHosts([
       v('PUBLIC_DOMAIN', 'example.com'),

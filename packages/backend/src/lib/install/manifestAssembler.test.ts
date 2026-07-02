@@ -185,6 +185,39 @@ describe('assembleManifest', () => {
     expect((r.variables.find(x => x.name === 'PUBLIC_DOMAIN')?.meta as VariableMeta | undefined)?.description).toBe('Template-specific help');
   });
 
+  it('auto-injects PUBLIC_DOMAIN when a template has a subdomain var but never references {{PUBLIC_DOMAIN}} (#2144)', async () => {
+    // The YAML deliberately references NO {{PUBLIC_DOMAIN}} — only a
+    // type:subdomain variable declared in meta. Before the fix,
+    // PUBLIC_DOMAIN was absent from the manifest, buildProxyHosts got
+    // domain=undefined, and the proxy host was silently dropped.
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', [], '    # {{SVC_SUBDOMAIN}}'));
+    getTemplateVariables.mockResolvedValue({
+      SVC_SUBDOMAIN: { type: 'subdomain', default: 'svc', exposure: 'public', proxyPort: '8080' },
+    });
+    getConfig.mockResolvedValue({ templateSettings: {}, reverseProxy: { publicDomain: 'dopp.cloud' } });
+
+    const r = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      templateSource: 'Built-in',
+    });
+    const v = r.variables.find(x => x.name === 'PUBLIC_DOMAIN')!;
+    expect(v).toBeDefined();
+    expect(v.value).toBe('dopp.cloud');
+    expect(v.global).toBe(true);
+  });
+
+  it('does not add PUBLIC_DOMAIN when there is no subdomain var and no reference (#2144)', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', []));
+    getTemplateVariables.mockResolvedValue({ SVC_PORT: { type: 'text', default: '8080' } });
+    getConfig.mockResolvedValue({ templateSettings: {}, reverseProxy: { publicDomain: 'dopp.cloud' } });
+
+    const r = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      templateSource: 'Built-in',
+    });
+    expect(r.variables.find(x => x.name === 'PUBLIC_DOMAIN')).toBeUndefined();
+  });
+
   it('generates and persists a fresh secret when none is saved', async () => {
     getTemplateYaml.mockResolvedValue(tmplYaml('svc', []));
     getTemplateVariables.mockResolvedValue({

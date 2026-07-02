@@ -65,15 +65,21 @@ import type { StackVariable } from './types';
 function renderProxyConfig(
   proxyConfig: VariableMeta['proxyConfig'] | undefined,
   view: Record<string, string>,
+  exposure: 'public' | 'internal' | 'lan',
 ): VariableMeta['proxyConfig'] | undefined {
   if (!proxyConfig) return proxyConfig;
   // strictUpstreamHost is a pass-through boolean — no Mustache expansion needed
   if (!proxyConfig.advanced_config) return proxyConfig;
+  // #2143 — `public`/`internal` hosts get a Let's Encrypt cert, and NPM
+  // injects its own `location /.well-known/acme-challenge/` for the challenge.
+  // Emitting our own bypass too crashes nginx with `[emerg] duplicate
+  // location`, so drop it for LE hosts (keep it only for cert-less `lan`).
+  const omitAcmeBypass = exposure === 'public' || exposure === 'internal';
   // Expand the `__authelia_forward_auth__` sentinel into the shared
   // nginx snippet before the Mustache pass so the snippet's own
   // {{PUBLIC_DOMAIN}} / {{AUTHELIA_PORT}} placeholders still get
   // substituted from `view`.
-  const expanded = expandForwardAuthSentinel(proxyConfig.advanced_config) ?? proxyConfig.advanced_config;
+  const expanded = expandForwardAuthSentinel(proxyConfig.advanced_config, { omitAcmeBypass }) ?? proxyConfig.advanced_config;
   // #1677 — A forward-auth snippet that renders `{{AUTHELIA_PORT}}` to
   // an empty string emits `proxy_pass http://127.0.0.1:/api/authz/...`,
   // which nginx rejects with `[emerg] invalid port` — and one such bad
@@ -173,7 +179,7 @@ export function buildProxyHosts(variables: StackVariable[]): {
       service: deriveService(sv),
       templateName: sv.meta?.templateName,
       exposure,
-      proxyConfig: renderProxyConfig(sv.meta?.proxyConfig, view),
+      proxyConfig: renderProxyConfig(sv.meta?.proxyConfig, view, exposure),
       // Loopback-bound services (Syncthing GUI etc.) bind to the host's
       // 127.0.0.1. NPM today runs `hostNetwork: true` so it shares the
       // host netns and `127.0.0.1` IS the right forward target. When

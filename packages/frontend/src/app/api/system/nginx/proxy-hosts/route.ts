@@ -1018,9 +1018,13 @@ export const POST = withApiHandler({}, async ({ request }) => {
         const authPort = config.templateSettings?.AUTHELIA_PORT ?? DEFAULT_AUTHELIA_PORT;
         for (const host of hosts) {
             if (host.proxyConfig?.advanced_config) {
+                // #2143 — public/internal hosts get an LE cert; NPM injects its
+                // own acme-challenge location, so omit ours to avoid the
+                // `[emerg] duplicate location` crash that reverts the conf.
+                const omitAcmeBypass = host.exposure === 'public' || host.exposure === 'internal';
                 host.proxyConfig = {
                     ...host.proxyConfig,
-                    advanced_config: renderForwardAuthAdvancedConfig(host.proxyConfig.advanced_config, authPort),
+                    advanced_config: renderForwardAuthAdvancedConfig(host.proxyConfig.advanced_config, authPort, { omitAcmeBypass }),
                 };
             }
             // Default forward host = node LAN IP (NPM is in a container,
