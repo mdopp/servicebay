@@ -33,10 +33,10 @@ A new need is usually solved as one of these — pick deliberately:
   API), and Solaris consumes it as a tool. Prefer this over duplicating logic:
   generic mechanism in ServiceBay, household-specific behavior in Solaris.
 
-Rule of thumb (the "three projects, three jobs" boundary): **generic → ServiceBay
-or upstream; household-specific → Solaris.** If you'd want it on someone else's
-box unchanged, it's a service; if it only makes sense for *this* family, it's a
-Solaris capability. State this choice explicitly in the design.
+Rule of thumb (the ServiceBay ↔ Solaris boundary): **generic → ServiceBay (or an
+upstream project); household-specific → Solaris.** If you'd want it on someone
+else's box unchanged, it's a service; if it only makes sense for *this* family,
+it's a Solaris capability. State this choice explicitly in the design.
 
 ## Language & runtime
 - **Any language works** — a service is just a container. Pick the smallest,
