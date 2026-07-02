@@ -25,9 +25,10 @@ A new need is usually solved as one of these — pick deliberately:
   box could want, standing on its own (a web app, an API, a data store, a device
   bridge). Ships as a template. Example: "a photo library", "an office-light
   dashboard".
-- **Upstream / reuse** — when the runtime already provides it. Before building an
-  agent/LLM/gateway/tool feature, check whether **Hermes** (or HA, Authelia,
-  Ollama, NPM) already ships it, and consume/extend that instead of forking.
+- **Reuse what's there** — when the runtime already provides it. Before building
+  an agent/LLM/tool or device feature, check whether **HA, Authelia, Ollama, NPM,
+  or the Solaris Engine** already provides it, and consume/extend that instead of
+  rebuilding.
 - **Both** — a ServiceBay service exposes the capability (e.g. an MCP surface or
   API), and Solaris consumes it as a tool. Prefer this over duplicating logic:
   generic mechanism in ServiceBay, household-specific behavior in Solaris.

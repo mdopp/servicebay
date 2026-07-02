@@ -13,10 +13,10 @@ home, chat in the browser, one agent with long memory, per-resident privacy,
 and real control of the house through Home Assistant. Nothing leaves the house
 without an explicit, audited opt-in.
 
-> Note: `solbay-architecture.md` in the ServiceBay repo describes an earlier
-> Hermes-gateway design. The **current** architecture (v0.10+) is the native
-> **Solaris Engine** — see `mdopp/solbay` `README.md` / `solaris-architecture.md`
-> for the canonical picture.
+> Note: `solbay-architecture.md` in the ServiceBay repo is **stale** (a pre-v0.10
+> design that mentioned an external agent gateway — no longer used). The current
+> architecture is the native **Solaris Engine**; see `mdopp/solbay` `README.md` /
+> `solaris-architecture.md` for the canonical picture.
 
 ## Structure (repo `mdopp/solbay`)
 - **`solaris-chat/`** — the Solaris Engine: one process owning the agent loop
