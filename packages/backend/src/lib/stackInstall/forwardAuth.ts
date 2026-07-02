@@ -108,7 +108,7 @@ export const AUTHELIA_LOCATION_HEADERS = [
  * `$upstream_http_location` which Authelia populates with the correct
  * `auth.<domain>/?rd=<original>` URL.
  */
-export const AUTHELIA_FORWARD_AUTH_SNIPPET = [
+const AUTHELIA_FORWARD_AUTH_CORE = [
   'auth_request /authelia;',
   'auth_request_set $target_url $scheme://$http_host$request_uri;',
   'auth_request_set $user $upstream_http_remote_user;',
@@ -132,20 +132,59 @@ export const AUTHELIA_FORWARD_AUTH_SNIPPET = [
   '    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
   '    proxy_set_header X-Real-IP $remote_addr;',
   '}',
-  '',
-  '# #1680 — Let LE HTTP-01 through on :80. The server-level',
-  '# `auth_request /authelia` above is inherited by every location,',
-  '# including the ACME challenge — but Authelia\'s auth-request endpoint',
-  '# is https-only and 400s the plain-http challenge (→ 500), so certbot',
-  '# never gets its token and issuance fails. Disable forward-auth for the',
-  '# challenge path and serve it from NPM\'s webroot so the challenge is',
-  '# never swallowed by forward-auth.',
+].join('\n');
+
+/**
+ * #1680 — Let LE HTTP-01 through on :80. The server-level `auth_request
+ * /authelia` is inherited by every location, including the ACME challenge —
+ * but Authelia's auth-request endpoint is https-only and 400s the plain-http
+ * challenge (→ 500), so certbot never gets its token and issuance fails.
+ * Disable forward-auth for the challenge path and serve it from NPM's webroot
+ * so the challenge is never swallowed by forward-auth.
+ *
+ * #2143 — This block is emitted ONLY for hosts that do NOT get a Let's
+ * Encrypt cert (i.e. `exposure: 'lan'`). Any host that requests an LE cert
+ * (`public`/`internal`) gets an *identical* `location /.well-known/acme-
+ * challenge/` block injected by NPM itself → two identical locations →
+ * `nginx: [emerg] duplicate location "/.well-known/acme-challenge/"` → NPM
+ * reverts the conf and the host answers with an SSL error. So on LE hosts we
+ * must NOT emit our own copy; NPM already provides it.
+ */
+const AUTHELIA_ACME_BYPASS = [
   'location /.well-known/acme-challenge/ {',
   '    auth_request off;',
   '    allow all;',
   '    root /data/letsencrypt-acme-challenge;',
   '}',
 ].join('\n');
+
+/**
+ * The full forward-auth snippet, INCLUDING the ACME-challenge bypass. Kept
+ * for callers/tests that want the complete block; note that on a Let's
+ * Encrypt host the bypass duplicates NPM's own acme location (#2143) — such
+ * callers must pass `{ omitAcmeBypass: true }` to {@link
+ * expandForwardAuthSentinel} / {@link renderForwardAuthAdvancedConfig}.
+ */
+export const AUTHELIA_FORWARD_AUTH_SNIPPET = `${AUTHELIA_FORWARD_AUTH_CORE}\n\n${AUTHELIA_ACME_BYPASS}`;
+
+/** Options controlling how the sentinel expands. */
+export interface ForwardAuthExpandOptions {
+  /**
+   * #2143 — Omit the `location /.well-known/acme-challenge/` bypass. Set
+   * for hosts that get a Let's Encrypt cert (`public`/`internal` exposure),
+   * where NPM injects an identical acme-challenge location — emitting our
+   * own too crashes nginx with `[emerg] duplicate location`. Leave false for
+   * cert-less LAN hosts (harmless there, and forward-auth still shouldn't
+   * swallow a challenge if one is ever served).
+   */
+  omitAcmeBypass?: boolean;
+}
+
+function baseSnippet(opts?: ForwardAuthExpandOptions): string {
+  return opts?.omitAcmeBypass
+    ? AUTHELIA_FORWARD_AUTH_CORE
+    : AUTHELIA_FORWARD_AUTH_SNIPPET;
+}
 
 /**
  * Expand the sentinel value (if present) to the full snippet. Anything
@@ -156,16 +195,22 @@ export const AUTHELIA_FORWARD_AUTH_SNIPPET = [
  * A template can append extra nginx directives by writing
  * `__authelia_forward_auth__\n<extra config>` — anything past the
  * sentinel line is glued onto the end of the rendered snippet.
+ *
+ * `opts.omitAcmeBypass` drops the acme-challenge bypass for LE hosts (#2143).
  */
-export function expandForwardAuthSentinel(advancedConfig: string | undefined): string | undefined {
+export function expandForwardAuthSentinel(
+  advancedConfig: string | undefined,
+  opts?: ForwardAuthExpandOptions,
+): string | undefined {
   if (!advancedConfig) return advancedConfig;
+  const snippet = baseSnippet(opts);
   if (advancedConfig === AUTHELIA_FORWARD_AUTH_SENTINEL) {
-    return AUTHELIA_FORWARD_AUTH_SNIPPET;
+    return snippet;
   }
   // Prefix form: `__authelia_forward_auth__\n<extras>`.
   if (advancedConfig.startsWith(`${AUTHELIA_FORWARD_AUTH_SENTINEL}\n`)) {
     const extras = advancedConfig.slice(AUTHELIA_FORWARD_AUTH_SENTINEL.length + 1);
-    return `${AUTHELIA_FORWARD_AUTH_SNIPPET}\n${extras}`;
+    return `${snippet}\n${extras}`;
   }
   return advancedConfig;
 }
@@ -186,8 +231,9 @@ export function expandForwardAuthSentinel(advancedConfig: string | undefined): s
 export function renderForwardAuthAdvancedConfig(
   advancedConfig: string | undefined,
   port: string = DEFAULT_AUTHELIA_PORT,
+  opts?: ForwardAuthExpandOptions,
 ): string | undefined {
-  const expanded = expandForwardAuthSentinel(advancedConfig);
+  const expanded = expandForwardAuthSentinel(advancedConfig, opts);
   if (expanded === undefined) return expanded;
   return expanded.replace(/\{\{AUTHELIA_PORT\}\}/g, port);
 }

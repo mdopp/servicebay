@@ -302,6 +302,17 @@ export async function assembleManifest(
   // (e.g. subdomain vars used only for proxy-host configuration).
   for (const key of Object.keys(allMeta)) vars.add(key);
 
+  // #2144 — A `type: subdomain` variable needs PUBLIC_DOMAIN to form its
+  // FQDN (`buildProxyHosts` reads it). PUBLIC_DOMAIN is otherwise injected
+  // only when a template's YAML references `{{PUBLIC_DOMAIN}}`; a template
+  // that declares a subdomain var but never references PUBLIC_DOMAIN got
+  // `domain=undefined` → the proxy host was silently skipped. Auto-inject it
+  // whenever any subdomain var exists so the route is always created (the
+  // value is resolved from config.reverseProxy.publicDomain in the loop
+  // below, exactly as a referenced PUBLIC_DOMAIN would be).
+  const hasSubdomainVar = Object.values(allMeta).some(m => m.type === 'subdomain');
+  if (hasSubdomainVar) vars.add('PUBLIC_DOMAIN');
+
   // Secret-typed values generated fresh in THIS run — persisted before
   // returning so a mid-install failure doesn't strand a value that
   // exists only in this manifest (#622).

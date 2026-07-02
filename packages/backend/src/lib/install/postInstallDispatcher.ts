@@ -63,7 +63,30 @@ export async function ensureProxyHosts(
   node: string | undefined,
 ): Promise<void> {
   const { domain, hosts } = buildProxyHosts(variables);
-  if (!domain || hosts.length === 0) return;
+  // #2144 — A subdomain-typed variable needs PUBLIC_DOMAIN to form its FQDN.
+  // If a template declared one but PUBLIC_DOMAIN never made it into the
+  // manifest (`domain` is undefined) the proxy host used to be dropped with
+  // ZERO log output — the operator saw the service install "succeed" but
+  // `<sub>.<domain>` served NPM's default page with no explanation. The
+  // assembler now auto-injects PUBLIC_DOMAIN when a subdomain var exists
+  // (#2144), so this should be reachable only on a truly domain-less box —
+  // but if it happens, say exactly why the route was skipped rather than
+  // failing silent.
+  const hasSubdomainVar = variables.some(v => v.meta?.type === 'subdomain' && v.value);
+  if (!domain) {
+    if (hasSubdomainVar) {
+      const subs = variables
+        .filter(v => v.meta?.type === 'subdomain' && v.value)
+        .map(v => v.value)
+        .join(', ');
+      await log(
+        jobId,
+        `⚠️ Subdomain service(s) [${subs}] declared but no public domain is configured (config.reverseProxy.publicDomain is empty) — proxy host(s) skipped. Set the public domain in Settings, then Settings → Self-Diagnose → Reprovision to create the route(s).`,
+      );
+    }
+    return;
+  }
+  if (hosts.length === 0) return;
   try {
     const res = await apiFetch('/api/system/nginx/proxy-hosts', {
       method: 'POST',
