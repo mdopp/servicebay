@@ -32,7 +32,15 @@ import { recordAudit } from './audit';
 import { notifyDestructiveOp } from './notify';
 import { createPendingApproval } from './pendingApprovals';
 import { redactLogText, redactServiceFiles } from './redact';
-import { type ApiScope, scopeSatisfiedBy } from '@/lib/auth/apiScope';
+import { type ApiScope, scopeSatisfiedBy, ALL_SCOPES } from '@/lib/auth/apiScope';
+import {
+  submitTokenRequest,
+  pollTokenRequest,
+  listTokenRequests,
+  MAX_TTL_SECS,
+  TokenRequestError,
+  type TokenRequestStatus,
+} from '@/lib/auth/tokenRequests';
 import { parseEfibootmgr, assessUsbBootReadiness } from './efibootmgr';
 import { performStackReset, StackResetError } from '@/lib/install/performStackReset';
 import { jailPath, realPathInJail, JAIL_ROOT } from './pathJail';
@@ -159,6 +167,14 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   get_unmanaged_bundles: 'read',
   get_channel: 'read',
   list_access_requests: 'read', get_access_request_status: 'read',
+  // Scoped-token request flow (#2139). A token *request* itself grants
+  // nothing — it just files a pending item the admin must approve — so it
+  // needs only the lowest scope (`read`). This is deliberate: a caller with
+  // no token at all can't invoke MCP tools, but a caller holding even a
+  // read-only token can ASK for a broader, short-lived grant that a human
+  // signs off on. Making request_token require a high scope would defeat the
+  // point (you'd need the very authority you're trying to request).
+  request_token: 'read', poll_token_request: 'read', list_token_requests: 'read',
   // read-oriented file/disk tools (#1872) — jailed reads, no mutation
   read_file: 'read', list_dir: 'read', disk_usage: 'read',
   // lifecycle
@@ -1658,6 +1674,67 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         requestedAt: req.requestedAt,
         resolvedAt: req.resolvedAt,
       });
+    },
+  );
+
+  // --- Scoped, admin-approved, self-expiring token request flow (#2139) ---
+  // Built ON TOP of the pending→approve/adjust→poll pattern the access-request
+  // tools use, but for TOKEN issuance (own store: auth/tokenRequests.ts). A
+  // caller asks for least-privilege short-lived scopes + a reason; the admin
+  // approves (optionally narrowing scopes / overriding TTL) or denies from the
+  // dashboard; the caller polls to collect the minted `sb_` token once. The
+  // token self-expires and is swept from api-tokens.json (auth/apiTokens.ts).
+  const SCOPE_ENUM = z.enum(ALL_SCOPES as [ApiScope, ...ApiScope[]]);
+
+  server.tool(
+    'request_token',
+    'Request a scoped, short-lived sb_ API token that a ServiceBay admin must approve. Names the scopes you need, a human reason, and a TTL in seconds. Returns a pending request id — NO token yet. Poll it with poll_token_request; the admin may approve with NARROWED scopes (least privilege) or a shorter TTL, or deny. This tool itself needs only the read scope: a request grants nothing until a human signs off.',
+    {
+      scopes: z.array(SCOPE_ENUM).min(1).describe(`Scopes to request (least→most: ${ALL_SCOPES.join(', ')}). Ask for the minimum the task needs; the admin can only grant these or fewer.`),
+      reason: z.string().trim().min(1).max(1000).describe('Why the token is needed — the justification the admin weighs (e.g. "deploy one service, tor.dopp.cloud").'),
+      ttl_seconds: z.number().int().positive().max(MAX_TTL_SECS).describe(`Requested time-to-live in seconds (max ${MAX_TTL_SECS} = 30d). The admin can shorten it. The token auto-expires and is deleted from storage.`),
+    },
+    async ({ scopes, reason, ttl_seconds }) => {
+      try {
+        const view = await submitTokenRequest({
+          requestedScopes: scopes,
+          requestedTtlSecs: ttl_seconds,
+          reason,
+          requestedBy: opts?.auth?.user,
+        });
+        return textResult({
+          ok: true,
+          id: view.id,
+          status: view.status,
+          message: `Token request filed. A ServiceBay admin must approve it (Settings → MCP). Poll with poll_token_request(id="${view.id}").`,
+        });
+      } catch (e) {
+        return errorResult(e instanceof TokenRequestError ? e.message : e instanceof Error ? e.message : String(e));
+      }
+    },
+  );
+
+  server.tool(
+    'poll_token_request',
+    'Poll a token request by id (from request_token). While "pending" no token is returned. On admin approval the FIRST poll returns the actual sb_ token secret plus the GRANTED (possibly narrowed) scopes and expiry — collect it then; later polls return no secret. "denied" → no token. The token auto-expires at the returned time and is then deleted from storage.',
+    {
+      id: z.string().min(1).describe('Request id returned by request_token.'),
+    },
+    async ({ id }) => {
+      const result = await pollTokenRequest(id);
+      return textResult(result);
+    },
+  );
+
+  server.tool(
+    'list_token_requests',
+    'List scoped-token requests (request_token lifecycle) for admin/audit visibility. Defaults to pending; pass status="approved", "denied", or "all". Never returns token secrets — only the request metadata, granted scopes, expiry, and minted token id.',
+    {
+      status: z.enum(['pending', 'approved', 'denied', 'all']).optional().default('pending').describe('Filter by status. Default: pending.'),
+    },
+    async ({ status }) => {
+      const requests = await listTokenRequests(status as TokenRequestStatus | 'all');
+      return textResult({ requests });
     },
   );
 

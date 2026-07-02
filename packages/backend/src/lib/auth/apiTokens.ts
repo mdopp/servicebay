@@ -260,6 +260,33 @@ export async function createDelegatedToken(input: {
   });
 }
 
+/**
+ * Sweep expired tokens out of `api-tokens.json` (#2139). `verifyToken`
+ * already *rejects* an expired token, but a rejected-yet-present row is a
+ * dead credential lingering in the store — noisy in the UI and a latent
+ * data-at-rest liability. This deletes every row whose `expiresAt` is in the
+ * past, so a self-expiring token (e.g. a short-TTL grant from the MCP
+ * request_token flow) leaves no trace once it lapses.
+ *
+ * Fire-and-forget-safe: it settles any in-flight lastUsedAt stamp first (so a
+ * stale snapshot can't resurrect a swept row), no-ops when nothing is expired
+ * (no write), and returns the ids it removed for the audit log. Called on a
+ * timer by the server bootstrap AND opportunistically off the verify path, so
+ * expiry cleanup happens without a dedicated cron.
+ */
+export async function sweepExpiredTokens(now: number = Date.now()): Promise<string[]> {
+  await pendingStamp; // settle any in-flight stamp so it can't re-add a swept row
+  const data = await loadFile();
+  const expired = data.tokens.filter(t => t.expiresAt && Date.parse(t.expiresAt) < now);
+  if (expired.length === 0) return []; // nothing to do → no write
+  const expiredIds = new Set(expired.map(t => t.id));
+  data.tokens = data.tokens.filter(t => !expiredIds.has(t.id));
+  await saveFile(data);
+  const ids = [...expiredIds];
+  logger.info('auth:apiTokens', `Swept ${ids.length} expired API token(s): [${ids.join(',')}]`);
+  return ids;
+}
+
 export async function revokeToken(id: string): Promise<boolean> {
   await pendingStamp; // settle any in-flight lastUsedAt write so it can't resurrect this revoked token
   const data = await loadFile();
@@ -365,10 +392,20 @@ export async function verifyToken(raw: string): Promise<Omit<ApiToken, 'hash'> |
   const stampedAt = new Date().toISOString();
   pendingStamp = (async () => {
     const fresh = await loadFile();
+    const now = Date.now();
+    // Opportunistic expiry sweep (#2139): drop any dead rows in the same
+    // read-modify-write that stamps this token, so expired grants don't
+    // linger between the periodic sweeps. Never touches this token (it just
+    // verified, so it isn't expired).
+    const before = fresh.tokens.length;
+    fresh.tokens = fresh.tokens.filter(t => !(t.expiresAt && Date.parse(t.expiresAt) < now));
     const t = fresh.tokens.find(tok => tok.id === id);
     if (!t) return; // token revoked/removed in the meantime — nothing to stamp
     t.lastUsedAt = stampedAt;
     await saveFile(fresh);
+    if (fresh.tokens.length < before) {
+      logger.info('auth:apiTokens', `Swept ${before - fresh.tokens.length} expired API token(s) during verify of ${id}`);
+    }
   })().catch(e => logger.warn('auth:apiTokens', `Could not update lastUsedAt for ${id}: ${e instanceof Error ? e.message : String(e)}`));
 
   return publicView({ ...token, lastUsedAt: stampedAt });
