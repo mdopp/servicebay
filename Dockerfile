@@ -24,6 +24,13 @@ RUN npm ci
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
+# Copy workspace-scoped node_modules that npm did not hoist to root.
+# npm may deoptimize hoisting for some packages (e.g. nodemailer, semver),
+# leaving them under packages/*/node_modules instead of the root.
+# Without this copy the Turbopack build fails with "Module not found" when a
+# frontend API route imports a backend module that depends on those packages
+# (email.ts → nodemailer, approve/route.ts → email.ts, #2148 regression).
+COPY --from=deps /app/packages/backend/node_modules ./packages/backend/node_modules
 COPY . .
 
 # Next.js collects completely anonymous telemetry data about general usage.
