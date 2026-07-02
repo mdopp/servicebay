@@ -10,6 +10,33 @@ tags: [architecture, adr, new-service, language, libraries, tests, storage, secr
 Recommended defaults, not mandates — deviate when you have a reason, and say why.
 These sit on top of the platform ADRs in `docs/adr/` (respect those; see bottom).
 
+An architecture recommendation must say **how** a need is solved — and the first
+decision is **where it lives**. Only then do language/structure/etc. follow.
+
+## Where should it live? (decide the shape first)
+
+A new need is usually solved as one of these — pick deliberately:
+
+- **A capability in Solaris** — when it's about *this household*: identity,
+  memory, conversation, per-resident privacy, or a home-control behavior driven
+  through the assistant. Lives in `mdopp/solbay` (the Solaris Engine / tools).
+  Example: "remember the family's book list and answer questions about it."
+- **A service in ServiceBay** — when it's a *generic, installable capability* any
+  box could want, standing on its own (a web app, an API, a data store, a device
+  bridge). Ships as a template. Example: "a photo library", "an office-light
+  dashboard".
+- **Upstream / reuse** — when the runtime already provides it. Before building an
+  agent/LLM/gateway/tool feature, check whether **Hermes** (or HA, Authelia,
+  Ollama, NPM) already ships it, and consume/extend that instead of forking.
+- **Both** — a ServiceBay service exposes the capability (e.g. an MCP surface or
+  API), and Solaris consumes it as a tool. Prefer this over duplicating logic:
+  generic mechanism in ServiceBay, household-specific behavior in Solaris.
+
+Rule of thumb (the "three projects, three jobs" boundary): **generic → ServiceBay
+or upstream; household-specific → Solaris.** If you'd want it on someone else's
+box unchanged, it's a service; if it only makes sense for *this* family, it's a
+Solaris capability. State this choice explicitly in the design.
+
 ## Language & runtime
 - **Any language works** — a service is just a container. Pick the smallest,
   fastest-to-start stack that fits the job.

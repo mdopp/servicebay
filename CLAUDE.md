@@ -10,6 +10,20 @@ Orientation:
 - `docs/TEMPLATE_AUTHORING.md` + `templates/CLAUDE.md` — the template contract (auto-loads under `templates/`).
 - `docs/UX_DECISIONS.md` — locked UX decisions; don't re-litigate.
 
+## Workflow: issues first, then the autoloop
+
+Capture work as **GitHub issues first**, then let the **autoloop-issues** pipeline
+work them — issues are the unit of work, not ad-hoc edits.
+
+- File an issue before starting non-trivial work. Body = symptom + goal + repro +
+  starting-point files; an acceptance/goal section is good. Leave out the
+  fix-plan — the "how" evolves in the PR.
+- Then burn the backlog down via `autoloop-issues` (Planner → Builder →
+  Box-Verify through a shared work queue). Don't hand-edit the tree while an
+  autoloop batch is active (use a worktree or file an issue).
+- Releases go through **release-please only** — never bump versions by hand
+  (ADR 0003).
+
 ## Capturing reusable knowledge (assists)
 
 When you work out something non-trivial — a recipe, a sequence of steps, a
