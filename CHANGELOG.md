@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.148.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.147.3...servicebay-v4.148.0) (2026-07-06)
+
+
+### Features
+
+* MCP proxy/install/token tools + forward-auth fixes + lockfile CI gate ([0b2bb45](https://github.com/mdopp/servicebay/commit/0b2bb454050e91e07ffc7674d845ac3931bdff79))
+* **mcp:** full proxy-route creation, install_template, jailed write_file ([a2fa2bf](https://github.com/mdopp/servicebay/commit/a2fa2bf7618624f1d3af76fdfafc054ccab44248)), closes [#2140](https://github.com/mdopp/servicebay/issues/2140) [#2141](https://github.com/mdopp/servicebay/issues/2141) [#2142](https://github.com/mdopp/servicebay/issues/2142)
+* **mcp:** scoped, admin-approved, self-expiring token request flow ([18c0504](https://github.com/mdopp/servicebay/commit/18c05048566ce049798be6dd671f0945bc8d527f)), closes [#2139](https://github.com/mdopp/servicebay/issues/2139)
+
+
+### Bug Fixes
+
+* **docker:** copy workspace node_modules in builder stage ([3de87e1](https://github.com/mdopp/servicebay/commit/3de87e196dc72a2758017b048f8f22038544bd57))
+* **docker:** copy workspace node_modules in builder stage ([98cd90b](https://github.com/mdopp/servicebay/commit/98cd90ba25cab043e2cbc70908863036c4817ad4))
+* **docker:** ship workspace-scoped runtime deps in the runner image ([#2152](https://github.com/mdopp/servicebay/issues/2152)) ([7744090](https://github.com/mdopp/servicebay/commit/774409020efb94a3e5a87aa500e1ad23d2028d9e))
+* **install:** forward-auth acme collision + silent subdomain proxy skip ([57cee84](https://github.com/mdopp/servicebay/commit/57cee84e56de8e9223d65643532221775cbc6346)), closes [#2143](https://github.com/mdopp/servicebay/issues/2143) [#2144](https://github.com/mdopp/servicebay/issues/2144)
+
 ## [4.147.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.147.2...servicebay-v4.147.3) (2026-06-24)
 
 
