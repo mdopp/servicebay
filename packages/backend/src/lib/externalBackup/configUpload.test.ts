@@ -140,7 +140,7 @@ describe('runConfigUpload', () => {
   it('rejects an unknown service before touching the filesystem', async () => {
     const io = fakeIO();
     await expect(
-      runConfigUpload({ service: 'vaultwarden', from: '/x', target: 'fritzbox', assumeYes: true }, io),
+      runConfigUpload({ service: 'not-a-real-service', from: '/x', target: 'fritzbox', assumeYes: true }, io),
     ).rejects.toThrow(ConfigUploadError);
     expect(mockBackup).not.toHaveBeenCalled();
   });

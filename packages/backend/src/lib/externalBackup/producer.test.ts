@@ -393,7 +393,9 @@ describe('backupServiceToNas', () => {
   });
 
   it('rejects a service with no manifest without touching the NAS', async () => {
-    await expect(backupServiceToNas('vaultwarden')).rejects.toThrow(/No backup manifest/);
+    // immich has persistent volumes but no config-backup manifest (all bulk —
+    // photo library + Postgres, EXCLUDED_BULK_VOLUMES), so it has no tarball.
+    await expect(backupServiceToNas('immich')).rejects.toThrow(/No backup manifest/);
     expect(mockNas.nasUpload).not.toHaveBeenCalled();
   });
 
