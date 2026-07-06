@@ -146,9 +146,12 @@ export interface ServiceBackupManifest {
 }
 
 /**
- * Per-service config scope, transcribed from the table in #1190.
- * vaultwarden is intentionally absent — its vault DB has no reset path and
- * needs its own user-exported backup story, out of scope for this feature.
+ * Per-service config scope, transcribed from the table in #1190 and extended in
+ * #2153 to close the coverage gap (lldap / vaultwarden / radicale / jellyfin /
+ * honcho / file-share / authelia db.sqlite3). Every template that declares a
+ * persistent `{{DATA_DIR}}/…` volume must either appear here (a manifest entry)
+ * or be listed in `EXCLUDED_BULK_VOLUMES` below — enforced by
+ * `scripts/check-backup-coverage.ts` so a new template can't silently opt out.
  */
 export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
   {
@@ -234,12 +237,22 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     data: ['store.jsonl'],
   },
   {
+    // Authelia (#2153). Its real per-service secret store is the SQLite DB at
+    // `auth/authelia-data/db.sqlite3` — TOTP secrets, WebAuthn credentials, and
+    // OIDC consent grants. The legacy `users_database.yml` file-backend is dead
+    // on a live box (LLDAP is the auth source since #1737), so backing that up
+    // preserved nothing useful while the actual secrets were lost on reinstall.
+    // `configuration.yml` is NOT backed up: ServiceBay re-renders it from
+    // `configuration.yml.mustache` on every deploy (it's regenerable, not state).
     service: 'authelia',
-    include: ['users_database.yml'],
+    dataSubdir: 'auth/authelia-data',
+    // db.sqlite3 is WAL-mode (post-deploy.py flips journal_mode=WAL, #1679). We
+    // stage the main DB plus its `-wal`/`-shm` sidecars byte-for-byte so a live
+    // copy stays whole on restore (the same reason NPM ships a snapshot). The DB
+    // is encrypted with AUTHELIA_STORAGE_ENCRYPTION_KEY and kept verbatim — no
+    // strip; the trusted-NAS decision (see NPM below) covers it.
+    include: ['db.sqlite3', 'db.sqlite3-wal', 'db.sqlite3-shm'],
     exclude: [],
-    // Usernames, groups, email, display name only — password hashes are
-    // stripped; operators reset via email-forgotten after a restore.
-    strip: [{ file: 'users_database.yml', dropYamlKeys: ['password'] }],
   },
   {
     service: 'adguard',
@@ -301,7 +314,122 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     // are never staged (they're not in `include`), so the restored DB is whole.
     collector: { kind: 'npm-sqlite' },
   },
+  {
+    // LLDAP (#2153). `users.db` is the family identity store — every user,
+    // group, and membership (the documented reinstall foot-gun in
+    // docs/CREDENTIAL_SELF_HEAL.md). LLDAP 0.6.x stores it as SQLite under the
+    // container's /data → `auth/lldap/`. Kept verbatim (identities can't be
+    // regenerated; trusted-NAS class). The `-wal`/`-shm` sidecars ride along so
+    // a live copy restores whole.
+    service: 'lldap',
+    dataSubdir: 'auth/lldap',
+    include: ['users.db', 'users.db-wal', 'users.db-shm'],
+    exclude: [],
+  },
+  {
+    // Vaultwarden (#2153) — the household password vault. Small config-grade
+    // state, maximal value. `db.sqlite3` is the vault ciphertext (encrypted with
+    // each user's master password — useless to an attacker with the NAS, so kept
+    // verbatim); `rsa_key.*` are the JWT signing keys that MUST persist or every
+    // session/invite token breaks after a reinstall; `config.json` holds the
+    // admin/runtime config. Attachments/sends/icon_cache are bulk user data.
+    service: 'vaultwarden',
+    include: [
+      'db.sqlite3', 'db.sqlite3-wal', 'db.sqlite3-shm',
+      'rsa_key.pem', 'rsa_key.pub.pem', 'config.json',
+    ],
+    exclude: ['icon_cache', 'tmp', 'attachments', 'sends'],
+    // The vault DB is encrypted at rest; attachments are the heavy on-RAID data.
+    data: ['attachments', 'sends'],
+  },
+  {
+    // Radicale (#2153) — CalDAV/CardDAV. The `collections` tree under /data holds
+    // every calendar event and contact card; without it a reinstall loses all
+    // family calendars/contacts. Kept verbatim (plain files, no secrets).
+    service: 'radicale',
+    dataSubdir: 'radicale/data',
+    include: ['collections'],
+    exclude: [],
+  },
+  {
+    // Jellyfin (#2153) — the media SERVER's config, NOT the media library. Data
+    // lives under `media/jellyfin-config/` (the container's /config). We back up
+    // the small config-grade bits — server settings (`config/`: system.xml,
+    // network.xml, encoding.xml, the LDAP-plugin config), the users/libraries DB
+    // (`data/jellyfin.db`), and installed plugins + their config — and EXCLUDE
+    // the regenerable bulk: transcode/artwork caches, logs, and re-scannable
+    // metadata. The media files themselves live on a separate volume
+    // (`JELLYFIN_MEDIA_PATH`) that is never backed up (EXCLUDED_BULK_VOLUMES).
+    service: 'jellyfin',
+    dataSubdir: 'media/jellyfin-config',
+    include: [
+      'config',
+      'data/jellyfin.db', 'data/jellyfin.db-wal', 'data/jellyfin.db-shm',
+      'plugins',
+    ],
+    exclude: [
+      'cache', 'log', 'transcodes', 'metadata',
+      'data/subtitles', 'data/transcodes',
+    ],
+    // Artwork/metadata caches are large and re-scannable — kept on the RAID
+    // through a wipe-config rather than re-downloaded.
+    data: ['metadata', 'cache'],
+  },
+  {
+    // Honcho (#2153) — AI memory service. The app's config-grade state lives on
+    // its /data volume (`honcho/data/`). Its Postgres store is a SEPARATE volume
+    // (`honcho/pgdata/`) that is bulk + credential-coupled: it's excluded here
+    // (EXCLUDED_BULK_VOLUMES) and reconciled by the reinstall-over-pgdata rekey
+    // work (#2165), not restored from a NAS tarball. The pg password is an
+    // env-injected secret, not a file, so there is nothing to strip here.
+    service: 'honcho',
+    dataSubdir: 'honcho/data',
+    include: ['config.json'],
+    exclude: [],
+  },
+  {
+    // File-share (#2153) — the config that defines the shares, NOT the shared
+    // files. Data lives under `file-share/`: `samba-private/` holds the Samba
+    // passdb (user accounts + password hashes — kept verbatim, they can't be
+    // regenerated), `filebrowser-db/` is FileBrowser's user/settings SQLite, and
+    // `filebrowser-config/` its settings. The `data/` volume is the shared
+    // household files — bulk, never backed up (EXCLUDED_BULK_VOLUMES).
+    service: 'file-share',
+    include: [
+      'samba-private',
+      'filebrowser-db/filebrowser.db',
+      'filebrowser-config',
+    ],
+    exclude: [],
+  },
 ];
+
+/**
+ * Templates that declare a persistent `{{DATA_DIR}}/…` volume which is
+ * DELIBERATELY not in a backup manifest — bulk/regenerable/credential-coupled
+ * data that must never enter a NAS tarball (multi-GB media, photo blobs, the
+ * recorder DB, Postgres data dirs reconciled by rekey, caches). Each key is the
+ * `{{DATA_DIR}}`-relative volume path exactly as the template declares it; the
+ * value is the reason. `scripts/check-backup-coverage.ts` treats a volume as
+ * covered if it maps to a manifest entry OR appears here — so a new template
+ * volume can't silently opt out of the backup contract (#2153).
+ */
+export const EXCLUDED_BULK_VOLUMES: Readonly<Record<string, string>> = {
+  // Regenerable / re-syncable / re-scannable bulk.
+  'auth/authelia-config': 'configuration.yml is re-rendered from configuration.yml.mustache on every deploy — regenerable, not state.',
+  'home-assistant/matter-server': 'Matter fabric is re-commissioned per reinstall, not restored (project_matter_fabric_not_portable).',
+  'media/jellyfin-cache': 'Jellyfin transcode/artwork cache — regenerable.',
+  'immich/model-cache': 'ML model cache — re-downloaded on demand.',
+  'claude-dev/workspace': 'Ephemeral dev scratch workspace — not household config.',
+  // Heavy household DATA (photos, media, shared files) — never in a tarball.
+  JELLYFIN_MEDIA_PATH: 'The media library itself — multi-TB, lives on the RAID.',
+  'immich/upload': 'Immich photo/video library — multi-GB blobs, RAID-resident.',
+  'file-share/data': 'The shared household files — bulk user data on the RAID.',
+  // Postgres data dirs: credential-coupled, reconciled by rekey (#2165), not
+  // restored from a NAS tarball.
+  'honcho/pgdata': 'Postgres data dir — reconciled by reinstall-over-data rekey (#2165), not NAS-restored.',
+  'immich/pgdata': 'Immich Postgres data dir — RAID-resident, rekey-reconciled, not NAS-restored.',
+};
 
 export function getServiceManifest(service: string): ServiceBackupManifest | undefined {
   return SERVICE_BACKUP_MANIFESTS.find(m => m.service === service);

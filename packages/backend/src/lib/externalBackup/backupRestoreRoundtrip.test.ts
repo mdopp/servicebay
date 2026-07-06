@@ -90,26 +90,23 @@ describe('backup → restore round-trip (#1218 / #1190)', () => {
     expect(await exists(path.join(dataDir, 'www'))).toBe(false);
   });
 
-  it('authelia: round-trips usernames + email but strips password hashes', async () => {
+  it('authelia: round-trips the db.sqlite3 secret store, not the dead legacy YAML (#2153)', async () => {
     const src = path.join(tmpRoot, 'src-authelia');
     await writeFiles(src, {
-      'users_database.yml': [
-        'users:',
-        '  alice:',
-        '    displayname: Alice',
-        '    email: alice@dopp.cloud',
-        '    password: $argon2id$SECRET-HASH',
-        '',
-      ].join('\n'),
+      // The real per-service secrets (TOTP/WebAuthn/OIDC consent) live here now;
+      // kept verbatim (encrypted at rest, trusted-NAS class).
+      'db.sqlite3': 'AUTHELIA-TOTP-WEBAUTHN-SECRETS',
+      // Legacy file-backend YAML — no longer in the include-set, must not survive.
+      'users_database.yml': 'users:\n  alice:\n    password: $argon2id$SECRET-HASH\n',
     });
 
     await backupServiceToNas('authelia', { serviceDataDir: src });
     const { dataDir } = await restoreServiceBackup('authelia', { local: true });
-    const restored = await fs.readFile(path.join(dataDir, 'users_database.yml'), 'utf8');
 
-    expect(restored).toContain('alice');
-    expect(restored).toContain('alice@dopp.cloud');
-    expect(restored).not.toContain('SECRET-HASH'); // password stripped before it ever reaches the NAS
+    const restored = await fs.readFile(path.join(dataDir, 'db.sqlite3'), 'utf8');
+    expect(restored).toBe('AUTHELIA-TOTP-WEBAUTHN-SECRETS');
+    // The dead YAML never reached the NAS, so it isn't restored.
+    await expect(fs.access(path.join(dataDir, 'users_database.yml'))).rejects.toThrow();
   });
 
   it('survives a wipe-then-reinstall: a populated source restores cleanly into the emptied data dir', async () => {

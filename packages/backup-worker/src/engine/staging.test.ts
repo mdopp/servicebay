@@ -57,16 +57,17 @@ describe('stageServiceBackup', () => {
     expect(staged).toContain('configuration.yaml');
   });
 
-  it('applies strip rules (password hashes never enter the tar)', async () => {
+  it('applies strip rules (secrets never enter the tar)', async () => {
+    // hermes strips LLM api keys from config.yaml before it enters the tarball.
     const src = await mkTmp();
-    await write(src, 'users_database.yml', 'users:\n  a:\n    password: $argon2$SEKRIT\n    email: a@x\n');
+    await write(src, 'config.yaml', 'api_key: SEKRIT\nmodel: gemma-e4b\n');
     const staging = await mkTmp();
 
-    await stageServiceBackup(src, getServiceManifest('authelia')!, staging);
+    await stageServiceBackup(src, getServiceManifest('hermes')!, staging);
 
-    const out = await fs.readFile(path.join(staging, 'users_database.yml'), 'utf8');
+    const out = await fs.readFile(path.join(staging, 'config.yaml'), 'utf8');
     expect(out).not.toContain('SEKRIT');
-    expect(out).toContain('a@x');
+    expect(out).toContain('gemma-e4b');
   });
 
   it('stages a renamed source path under its canonical tar name', async () => {

@@ -14,12 +14,55 @@ import {
 } from './serviceManifest';
 
 describe('service backup manifests', () => {
-  it('covers the #1190 services and excludes vaultwarden', () => {
+  it('covers the #1190 services plus the #2153 coverage-gap services', () => {
     const names = SERVICE_BACKUP_MANIFESTS.map(m => m.service);
     expect(names).toEqual(
-      expect.arrayContaining(['home-assistant', 'authelia', 'adguard', 'syncthing', 'hermes']),
+      expect.arrayContaining([
+        'home-assistant', 'authelia', 'adguard', 'syncthing', 'hermes',
+        // #2153 — previously unprotected services now covered.
+        'lldap', 'vaultwarden', 'radicale', 'jellyfin', 'honcho', 'file-share',
+      ]),
     );
-    expect(getServiceManifest('vaultwarden')).toBeUndefined();
+  });
+
+  it('backs up LLDAP users.db — the family identity store (#2153)', () => {
+    const lldap = getServiceManifest('lldap')!;
+    expect(lldap.dataSubdir).toBe('auth/lldap');
+    expect(lldap.include).toContain('users.db');
+    // Identities can't be regenerated — kept verbatim.
+    expect(lldap.strip).toBeUndefined();
+  });
+
+  it('backs up vaultwarden vault + JWT signing keys, excludes bulk attachments (#2153)', () => {
+    const vw = getServiceManifest('vaultwarden')!;
+    expect(vw.include).toEqual(
+      expect.arrayContaining(['db.sqlite3', 'rsa_key.pem', 'rsa_key.pub.pem', 'config.json']),
+    );
+    // rsa keys MUST persist or every session/token breaks — never stripped.
+    expect(vw.strip).toBeUndefined();
+    // Attachments/sends are bulk user DATA, kept off the tarball.
+    expect(vw.exclude).toContain('attachments');
+    expect(vw.data).toContain('attachments');
+  });
+
+  it('backs up radicale collections (calendars/contacts) (#2153)', () => {
+    const rad = getServiceManifest('radicale')!;
+    expect(rad.dataSubdir).toBe('radicale/data');
+    expect(rad.include).toContain('collections');
+  });
+
+  it('backs up jellyfin server config + users db, excludes regenerable caches (#2153)', () => {
+    const jf = getServiceManifest('jellyfin')!;
+    expect(jf.dataSubdir).toBe('media/jellyfin-config');
+    expect(jf.include).toEqual(expect.arrayContaining(['config', 'data/jellyfin.db', 'plugins']));
+    // The media library + caches are never in the tarball.
+    expect(jf.exclude).toEqual(expect.arrayContaining(['cache', 'metadata', 'transcodes']));
+  });
+
+  it('backs up file-share samba passdb + filebrowser config (#2153)', () => {
+    const fs = getServiceManifest('file-share')!;
+    expect(fs.include).toContain('samba-private');
+    expect(fs.include).toContain('filebrowser-config');
   });
 
   it('keeps the zwave_js network keys in home-assistant (needed to recover the mesh)', () => {
@@ -142,17 +185,28 @@ describe('config/data classification (#1585)', () => {
   it('a service may declare no DATA class (authelia is config-only)', () => {
     expect(getServiceManifest('authelia')!.data).toBeUndefined();
     expect(getDataPaths('authelia')).toEqual([]);
-    expect(getConfigPaths('authelia')).toContain('users_database.yml');
+  });
+
+  it('authelia backs up the SQLite secret store, not the dead legacy YAML (#2153)', () => {
+    const authelia = getServiceManifest('authelia')!;
+    // The real per-service secrets (TOTP/WebAuthn/OIDC consent) live in db.sqlite3.
+    expect(authelia.dataSubdir).toBe('auth/authelia-data');
+    expect(getConfigPaths('authelia')).toContain('db.sqlite3');
+    // The legacy file-backend YAML is dead (LLDAP is the auth source) — not backed up.
+    expect(getConfigPaths('authelia')).not.toContain('users_database.yml');
+    // Encrypted at rest, kept verbatim — no strip.
+    expect(authelia.strip).toBeUndefined();
   });
 });
 
 describe('applyStripRules', () => {
   it('strips a targeted file and passes other files through untouched', () => {
-    const authelia = getServiceManifest('authelia')!;
-    const stripped = applyStripRules(authelia, 'users_database.yml', 'users:\n  a:\n    password: x\n');
-    expect(stripped).not.toContain('password');
-    const passthrough = applyStripRules(authelia, 'some-other-file.yml', 'password: keep\n');
-    expect(passthrough).toBe('password: keep\n');
+    // hermes strips LLM api keys from config.yaml; other files pass through.
+    const hermes = getServiceManifest('hermes')!;
+    const stripped = applyStripRules(hermes, 'config.yaml', 'api_key: SEKRIT\nmodel: gemma\n');
+    expect(stripped).not.toContain('SEKRIT');
+    const passthrough = applyStripRules(hermes, 'some-other-file.yml', 'api_key: keep\n');
+    expect(passthrough).toBe('api_key: keep\n');
   });
 });
 

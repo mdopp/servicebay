@@ -111,22 +111,19 @@ describe('GOLDEN: stageServiceBackup selection per real manifest', () => {
     expect(staged).toEqual(['conf/AdGuardHome.yaml']);
   });
 
-  it('authelia — keeps users_database.yml with password hashes STRIPPED, identity kept', async () => {
+  it('authelia — backs up the db.sqlite3 secret store, not the dead legacy YAML (#2153)', async () => {
     const src = await mkTmp();
-    await write(
-      src,
-      'users_database.yml',
-      'users:\n  alice:\n    password: $argon2id$SECRET\n    displayname: Alice\n    email: a@x\n    groups:\n      - admins\n',
-    );
+    // The real per-service secret store (TOTP/WebAuthn/OIDC consent) — kept
+    // verbatim (encrypted at rest, trusted-NAS class).
+    await write(src, 'db.sqlite3', 'AUTHELIA-SQLITE-SECRETS');
+    // The legacy file-backend YAML is no longer in the include-set — even if a
+    // stray file is present, it must NOT enter the tarball.
+    await write(src, 'users_database.yml', 'users:\n  alice:\n    password: $argon2id$SECRET\n');
     const staging = await mkTmp();
     const staged = await stageServiceBackup(src, getServiceManifest('authelia')!, staging);
-    expect(staged).toEqual(['users_database.yml']);
-    const out = await fs.readFile(path.join(staging, 'users_database.yml'), 'utf8');
-    expect(out).not.toContain('SECRET');
-    expect(out).not.toMatch(/password:/);
-    expect(out).toContain('a@x');
-    expect(out).toContain('Alice');
-    expect(out).toContain('admins');
+    expect(staged).toEqual(['db.sqlite3']);
+    expect(await fs.readFile(path.join(staging, 'db.sqlite3'), 'utf8')).toBe('AUTHELIA-SQLITE-SECRETS');
+    await expect(fs.access(path.join(staging, 'users_database.yml'))).rejects.toThrow();
   });
 
   it('home-assistant — globs (lovelace*/hacs*) + custom_components dir + config-entries transform; DB/logs excluded', async () => {
@@ -248,13 +245,9 @@ describe('GOLDEN: runConfigUpload writes the canonical on-NAS atom (real produce
     return { log: () => {}, confirm: async () => true };
   }
 
-  it('produces sb-backup/authelia.tar (whitelist + strip) + .meta.json sidecar', async () => {
+  it('produces sb-backup/authelia.tar (db.sqlite3 whitelist) + .meta.json sidecar', async () => {
     const from = await mkTmp();
-    await write(
-      from,
-      'users_database.yml',
-      'users:\n  bob:\n    password: $argon2$NOPE\n    email: b@x\n',
-    );
+    await write(from, 'db.sqlite3', 'AUTHELIA-SECRETS-BLOB');
     await write(from, 'ignored.txt', 'not in the manifest');
 
     const result = await runConfigUpload(
@@ -273,13 +266,13 @@ describe('GOLDEN: runConfigUpload writes the canonical on-NAS atom (real produce
     expect(uploadPaths).toContain(`sb-backup/${result.tarName}`);
     expect(uploadPaths).toContain(`sb-backup/${result.metaName}`);
 
-    // The tar carries the stripped whitelist file only — same as a box backup.
+    // The tar carries the db.sqlite3 whitelist only (the -wal/-shm sidecars
+    // aren't present in this fixture); ignored.txt is not in the manifest.
     const tarBuf = mockNas.nasUpload.mock.calls.find(c => datedTarRe('authelia').test(String(c[0])))![1] as Buffer;
     const extracted = await extractTar(tarBuf);
-    expect(await listFilesRel(extracted)).toEqual(['users_database.yml']);
-    const body = await fs.readFile(path.join(extracted, 'users_database.yml'), 'utf8');
-    expect(body).not.toContain('NOPE');
-    expect(body).toContain('b@x');
+    expect(await listFilesRel(extracted)).toEqual(['db.sqlite3']);
+    const body = await fs.readFile(path.join(extracted, 'db.sqlite3'), 'utf8');
+    expect(body).toBe('AUTHELIA-SECRETS-BLOB');
 
     // Sidecar JSON shape.
     const metaBuf = mockNas.nasUpload.mock.calls.find(c => String(c[0]).endsWith('.meta.json'))![1] as Buffer;

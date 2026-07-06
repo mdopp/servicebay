@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 const { mockNas, mockCfg, mockNpmCredStatus, mockRekeyNpm, mockGetExecutor } = vi.hoisted(() => ({
   mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn() },
-  mockCfg: { getConfig: vi.fn() },
+  mockCfg: { getConfig: vi.fn(), saveConfig: vi.fn() },
   mockNpmCredStatus: vi.fn(),
   mockRekeyNpm: vi.fn(),
   mockGetExecutor: vi.fn(),
@@ -55,6 +55,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'restore-test-'));
   mockCfg.getConfig.mockResolvedValue({ templateSettings: { DATA_DIR: tmpRoot } });
+  mockCfg.saveConfig.mockResolvedValue(undefined);
   // #1865 — restore now resolves the latest snapshot from the listing. Default
   // to advertising the bare legacy slot (a valid undated snapshot) so the
   // existing backward-compat restore tests resolve it; tests asserting dated
@@ -248,6 +249,26 @@ describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
     await autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'wipe-all', node: 'Local', local: true }, async l => { logs.push(l); });
     expect(await fs.readFile(path.join(dataDir, 'configuration.yaml'), 'utf8')).toBe('restored:');
     expect(logs.some(l => l.includes('restored') && l.includes('home-assistant'))).toBe(true);
+  });
+
+  it('a failed restore is a LOUD warning + persists a diagnose finding, never a quiet note (#2161)', async () => {
+    // A backup exists (so we attempt), but the download blows up mid-restore.
+    mockNas.nasList.mockResolvedValue([{ name: 'home-assistant.tar', size: 1024 }]);
+    mockNas.nasDownload.mockRejectedValue(new Error('NAS connection refused'));
+    const logs: string[] = [];
+    await expect(
+      autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'wipe-all', node: 'Local', local: true }, async l => { logs.push(l); }),
+    ).resolves.toBeUndefined(); // never blocks the deploy
+    // Loud warning naming the service + the default-config consequence.
+    expect(logs.some(l => l.includes('⚠️') && l.includes('home-assistant') && /FAILED/i.test(l) && /DEFAULT config/i.test(l))).toBe(true);
+    // NOT demoted to a quiet (note).
+    expect(logs.some(l => l.startsWith('(note) home-assistant: NAS config restore skipped'))).toBe(false);
+    // Persistent diagnose finding recorded (saveConfig carries the restore failure).
+    type SavedCfg = { installHandlerFailures?: Record<string, { message: string }> };
+    const saved = mockCfg.saveConfig.mock.calls.map(c => c[0] as SavedCfg);
+    const withFailure = saved.find(c => c?.installHandlerFailures?.['restore:home-assistant']);
+    expect(withFailure).toBeTruthy();
+    expect(withFailure!.installHandlerFailures!['restore:home-assistant'].message).toMatch(/NAS config restore failed/);
   });
 });
 

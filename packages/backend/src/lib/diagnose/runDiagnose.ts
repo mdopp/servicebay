@@ -20,8 +20,10 @@ import { checkNpmDataStale } from '@/lib/diagnose/probes/npmDataStale';
 import { checkLanIpChanged } from '@/lib/diagnose/probes/lanIpChanged';
 import { checkRouterDnsNotPointing } from '@/lib/diagnose/probes/routerDnsNotPointing';
 import { checkPostDeployFailed } from '@/lib/diagnose/probes/postDeployFailed';
+import { checkInstallHandlerFailed } from '@/lib/diagnose/probes/installHandlerFailed';
 import { checkMediaLibraryAccess } from '@/lib/diagnose/probes/mediaLibraryAccess';
 import { checkProxyRouteMissing } from '@/lib/diagnose/probes/proxyRouteMissing';
+import { checkNginxOnlineFailed } from '@/lib/diagnose/probes/nginxOnlineFailed';
 import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
 import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailure';
 import { checkAdguardRewritesMissing } from '@/lib/diagnose/probes/adguardRewritesMissing';
@@ -78,6 +80,7 @@ const PROBE_GROUP: Record<string, ProbeGroup> = {
   failed_units: 'services',
   crash_loop: 'services',
   post_deploy_failed: 'services',
+  install_handler_failed: 'services',
   // Reverse-proxy routes
   dangling_proxy: 'reverse-proxy',
   // Proxy admin reachable
@@ -833,6 +836,24 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     });
   }
 
+  // 11b) #2156 — routes NPM created (HTTP 200) but nginx REFUSED to load
+  //      (meta.nginx_online=false): a bad advanced_config reverted the conf,
+  //      so the domain 000s/502s while everything else is green. Row carries
+  //      the [emerg] reason + a "Re-render route" retry action.
+  try {
+    const nof = await checkNginxOnlineFailed(nodeName);
+    probes.push({
+      id: 'nginx_online_failed',
+      label: 'Reverse-proxy nginx load',
+      status: nof.status,
+      detail: nof.detail,
+      hint: nof.hint,
+      _items: nof.items && nof.items.length > 0 ? nof.items : undefined,
+    });
+  } catch (e) {
+    probes.push({ id: 'nginx_online_failed', label: 'Reverse-proxy nginx load', status: 'info', detail: `Skipped: ${e instanceof Error ? e.message : String(e)}` });
+  }
+
   // 12) NPM admin credentials staleness — probe-action handlers
   //     attached automatically when status !== 'ok' (see withActions).
   try {
@@ -958,6 +979,31 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     probes.push({
       id: 'post_deploy_failed',
       label: 'Service seed steps',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 15a) Unresolved install-time capability/restore failures (#2160/#2161).
+  //     A `feature.installed` handler (OIDC/proxy/DNS) that stayed failed
+  //     after the runner's bounded retries, or a NAS auto-restore that
+  //     failed — the service is up but on incomplete/default config.
+  //     Symmetric with post_deploy_failed: one row per service, each with
+  //     a "Retry" (re-register / re-restore) + "Clear record" action.
+  try {
+    const ihf = await checkInstallHandlerFailed();
+    probes.push({
+      id: 'install_handler_failed',
+      label: 'Install capability/restore',
+      status: ihf.status,
+      detail: ihf.detail,
+      hint: ihf.hint,
+      _items: ihf.items,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'install_handler_failed',
+      label: 'Install capability/restore',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

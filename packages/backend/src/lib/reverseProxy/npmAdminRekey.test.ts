@@ -32,7 +32,7 @@ vi.stubGlobal('fetch', vi.fn(async () => {
   return { ok: state.fetchStatus < 400, status: state.fetchStatus, json: async () => state.fetchBody } as unknown as Response;
 }));
 
-import { npmAdminCredStatus, rekeyNpmAdmin } from './npmAdminRekey';
+import { npmAdminCredStatus, rekeyNpmAdmin, NPM_REKEY_JS } from './npmAdminRekey';
 
 const ACTIVE_NGINX = [{ name: 'nginx-web', active: true, ports: [{ host: '81', container: '81' }] }];
 
@@ -81,6 +81,26 @@ describe('npmAdminCredStatus', () => {
   it("returns 'unknown' when NPM is unreachable (skip, don't re-key blindly)", async () => {
     state.fetchThrows = true;
     expect(await npmAdminCredStatus('Local')).toBe('unknown');
+  });
+});
+
+describe('NPM_REKEY_JS — concurrency pragmas (avoid `database is locked` #1679)', () => {
+  it('sets busy_timeout and journal_mode=WAL immediately after opening the DB', () => {
+    expect(NPM_REKEY_JS).toContain("db.pragma('busy_timeout = 5000');");
+    expect(NPM_REKEY_JS).toContain("db.pragma('journal_mode = WAL');");
+  });
+
+  it('applies both pragmas AFTER the Database() open and BEFORE the first query', () => {
+    const open = NPM_REKEY_JS.indexOf("const db=Database('/data/database.sqlite');");
+    const busy = NPM_REKEY_JS.indexOf("db.pragma('busy_timeout = 5000');");
+    const wal = NPM_REKEY_JS.indexOf("db.pragma('journal_mode = WAL');");
+    const firstQuery = NPM_REKEY_JS.indexOf('db.prepare(');
+    expect(open).toBeGreaterThanOrEqual(0);
+    // busy_timeout first (per-connection, always safe), then WAL, both between
+    // the open and the first prepared statement.
+    expect(open).toBeLessThan(busy);
+    expect(busy).toBeLessThan(wal);
+    expect(wal).toBeLessThan(firstQuery);
   });
 });
 

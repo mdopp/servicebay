@@ -107,10 +107,21 @@ export async function npmAdminCredStatus(node: string): Promise<'ok' | 'rejected
 
 // Runs inside the NPM container. Reads NEWPW from env; re-keys the first
 // non-deleted admin user's password hash. Prints `email=<x>;updated=<n>`.
-const NPM_REKEY_JS = [
+//
+// Concurrency pragmas set immediately after open, BEFORE any query: NPM is
+// actively writing this same DB during host creates / cert renewals, so an
+// unguarded external opener races and fails with `database is locked` (the
+// #1679 class). `busy_timeout=5000` (per-connection, always safe) makes this
+// opener WAIT out a concurrent write instead of aborting; `journal_mode=WAL`
+// matches NPM's own journal mode (jc21 runs its SQLite in WAL), so readers
+// and writers don't block each other. Mirrors the in-repo pattern in
+// logger.ts / auth/rateLimit.ts (pragma right after the Database() open).
+export const NPM_REKEY_JS = [
   "const bcrypt=require('/app/node_modules/bcrypt');",
   "const Database=require('/app/node_modules/better-sqlite3');",
   "const db=Database('/data/database.sqlite');",
+  "db.pragma('busy_timeout = 5000');",
+  "db.pragma('journal_mode = WAL');",
   "const u=db.prepare(\"SELECT id,email FROM user WHERE is_deleted=0 ORDER BY id LIMIT 1\").get();",
   "if(!u){process.stdout.write('noadmin');process.exit(0);}",
   "const hash=bcrypt.hashSync(process.env.NEWPW,13);",

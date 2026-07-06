@@ -627,13 +627,24 @@ async function patchProxyHostConfFile(
         if (testFailed) {
             // Roll the offending host back to its pre-patch conf so it can't
             // crash the proxy; the patch we just wrote never gets loaded.
-            await agent.sendCommand('write_file', { path: confPath, content, sudo: true }).catch(() => {});
+            // #2156 — a failing rollback write leaves the crashing patch on
+            // disk, so log the command error instead of swallowing it: the
+            // operator (and box-verify) needs to know the quarantine itself
+            // didn't take.
+            await agent.sendCommand('write_file', { path: confPath, content, sudo: true }).catch((e: unknown) => {
+                logger.error('ProxyHosts', `Rollback write of ${confPath} for ${domain} FAILED — the rejected patch may still be on disk: ${e instanceof Error ? e.message : String(e)}`);
+            });
             const reason = `nginx -t rejected the patched config for ${domain}; quarantined (kept previous conf). ${testOut.split('\n').find(l => /\[emerg\]/i.test(l))?.trim() ?? testRes?.error ?? ''}`.trim();
             logger.warn('ProxyHosts', reason);
             return { patched: false, reason };
         }
         // Reload nginx to pick up the change (config validated above).
-        await agent.sendCommand('exec', { command: 'podman exec nginx-nginx-proxy-manager nginx -s reload' }).catch(() => {});
+        // #2156 — a `nginx -s reload` failure here leaves stale routing with
+        // zero breadcrumb; log the command error so a silently-dead reload is
+        // visible in the install log / journal instead of vanishing.
+        await agent.sendCommand('exec', { command: 'podman exec nginx-nginx-proxy-manager nginx -s reload' }).catch((e: unknown) => {
+            logger.warn('ProxyHosts', `nginx -s reload after patching ${domain} FAILED — routing may be stale: ${e instanceof Error ? e.message : String(e)}`);
+        });
         logger.info('ProxyHosts', `Patched ${domain} location / with forward-auth headers${upstreamHostHeader ? ` + Host=${upstreamHostHeader}` : ''}`);
         return { patched: true };
     } catch (e) {
@@ -744,6 +755,53 @@ async function createProxyHost(baseUrl: string, token: string, host: ProxyHostRe
         throw new Error(err.message || `NPM API returned ${res.status}`);
     }
     return await res.json();
+}
+
+/**
+ * #2156 — NPM returns HTTP 200 the instant it writes a host's DB row, but
+ * the row's `meta.nginx_online` only flips true once nginx actually loaded
+ * the generated conf. A bad advanced_config (e.g. the duplicate
+ * acme-challenge location that reverted the buerolicht host) makes nginx
+ * reject the conf: NPM sets `nginx_online:false` and stashes the `[emerg]`
+ * text in `nginx_err` — but the create call already returned 200. This
+ * fetches the live host record so the caller can surface `nginx_err` and
+ * flag the step instead of reporting a green create for a dead route.
+ *
+ * Returns `{ online: true }` on success or when the status can't be read
+ * (fail-open: an unreadable status must not turn a working create red).
+ */
+/**
+ * Pure decision for a fetched host's meta: only `nginx_online === false`
+ * is a definite failure. `undefined`/`true` (older NPM, or the status not
+ * yet computed) stays online to be fail-open. Exported for unit testing
+ * the flag-the-step path without standing up the whole POST handler.
+ */
+export function decideNginxOnline(
+    meta: { nginx_online?: boolean; nginx_err?: string | null } | undefined,
+): { online: boolean; err?: string } {
+    if (meta?.nginx_online === false) {
+        return { online: false, err: (meta.nginx_err ?? '').trim() || 'nginx reverted the conf (no error text recorded)' };
+    }
+    return { online: true };
+}
+
+async function checkNginxOnline(
+    baseUrl: string,
+    token: string,
+    hostId: number,
+): Promise<{ online: boolean; err?: string }> {
+    try {
+        const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts/${hostId}`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) return { online: true };
+        const h = (await res.json()) as { meta?: { nginx_online?: boolean; nginx_err?: string | null } };
+        return decideNginxOnline(h.meta);
+    } catch {
+        return { online: true };
+    }
 }
 
 /**
@@ -1003,7 +1061,7 @@ export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request })
         const errorPageDomain = publicDomain ?? config.reverseProxy?.publicDomain;
         await deployProxyErrorPages(errorPageDomain, node);
 
-        const results: { domain: string; success: boolean; error?: string; certIssued?: boolean; certError?: string; lanRestricted?: boolean }[] = [];
+        const results: { domain: string; success: boolean; error?: string; certIssued?: boolean; certError?: string; lanRestricted?: boolean; nginxOffline?: boolean; nginxErr?: string }[] = [];
 
         // The `__authelia_forward_auth__` sentinel is normally expanded by the
         // STACK INSTALLER (postInstall) right before Mustache renders. A DIRECT
@@ -1148,6 +1206,27 @@ export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request })
                     }
                 }
             }
+
+            // #2156 — NPM's create/cert-bind/patch all returned "ok", but the
+            // route only actually routes if nginx loaded the conf. Read the
+            // live meta.nginx_online now (after cert-bind + any re-patch have
+            // settled): a bad advanced_config makes nginx revert the conf and
+            // NPM records the [emerg] reason in nginx_err while still having
+            // answered 200. Surface it in the install log and flag the step so
+            // a dead route isn't reported green.
+            if (typeof createdHost?.id === 'number') {
+                const onlineStatus = await checkNginxOnline(npm.apiUrl, token, createdHost.id);
+                if (!onlineStatus.online) {
+                    const last = results[results.length - 1];
+                    last.nginxOffline = true;
+                    last.nginxErr = onlineStatus.err;
+                    // Flag the step: a route nginx refused to load is not a
+                    // successful create, even though NPM's API said 200.
+                    last.success = false;
+                    last.error = last.error ?? `nginx refused the conf (nginx_online=false): ${onlineStatus.err}`;
+                    logger.error('ProxyHosts', `Route ${host.domain} created in NPM but nginx_online=false — traffic will 000/502. nginx_err: ${onlineStatus.err}`);
+                }
+            }
         }
 
         const created = results.filter(r => r.success);
@@ -1222,6 +1301,14 @@ export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request })
             // are still publicly reachable — the diagnose UI is the
             // recovery path).
             lanRestricted: results.filter(r => r.lanRestricted).map(r => r.domain),
+            // #2156 — hosts NPM created (HTTP 200) but nginx refused to load
+            // (meta.nginx_online=false). These also appear in `failed[]`; this
+            // array carries the [emerg] reason so the wizard can name the
+            // nginx error, and the nginx_online_failed diagnose probe is the
+            // recovery path.
+            nginxOffline: results
+                .filter(r => r.nginxOffline)
+                .map(r => ({ domain: r.domain, nginx_err: r.nginxErr })),
             adminUrl: npm.apiUrl,
             node: npm.nodeName,
         });
