@@ -22,9 +22,18 @@ on:
       - 'tsconfig.json'
       - '.github/workflows/build-images.yml'
   pull_request:
+    # Must cover the SAME effective input set as the push filter above: the
+    # worker Containerfiles `npm ci` the whole workspace and COPY api-client's
+    # source + the shared tsconfig, so an api-client / lockfile / manifest /
+    # tsconfig break would otherwise skip the PR build and only fail after
+    # merge (#2162).
     paths:
       - 'packages/disk-import-worker/**'
       - 'packages/backup-worker/**'
+      - 'packages/api-client/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
       - '.github/workflows/build-images.yml'
   workflow_dispatch:
 

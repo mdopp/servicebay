@@ -58,7 +58,43 @@ jobs:
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, 'chore(main): release') }}
             type=raw,value=test,enable=${{ github.ref == 'refs/heads/test' }}
 
-      - name: Build and push Docker image
+      # Build the image into the LOCAL docker daemon (load, do NOT push yet) so
+      # we can boot it and smoke-test /health before it ever becomes :latest.
+      # Layers land in the GHA cache (mode=max), so the gated push step below
+      # is a cache-only re-export — no second real build (#2155).
+      - name: Build Docker image (load, no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          # A single local tag for the smoke test. The real registry tags are
+          # applied by the push step after the smoke test passes.
+          tags: servicebay-release-candidate:smoke
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Boot the freshly built image and exercise it end-to-end BEFORE pushing.
+      # scripts/test-container-e2e.sh (the proven local harness) starts the
+      # container, waits for HTTP readiness, probes GET /api/system/version, and
+      # scans logs for "Cannot find module"/MODULE_NOT_FOUND crash signatures —
+      # which is exactly how a boot failure, an un-loadable dist-server/server.cjs
+      # bundle, or a runtime dep dropped by `npm ci --omit=dev` surfaces. A
+      # non-2xx probe or a crash signature exits non-zero and fails this step,
+      # so a broken image never reaches the push below (#2155).
+      # The harness uses podman (preinstalled on ubuntu-latest); load the
+      # docker-built image into podman's store so it can run it.
+      - name: Smoke-test the built image (boot + /health before push)
+        run: |
+          set -euo pipefail
+          docker save servicebay-release-candidate:smoke | podman load
+          scripts/test-container-e2e.sh servicebay-release-candidate:smoke
+
+      # Only reached when the smoke test passed. Re-runs build-push-action with
+      # push: true; every layer is already in the GHA cache from the load build
+      # above, so this is a cache-hit export + push, not a second compilation.
+      - name: Push Docker image (smoke test passed)
         uses: docker/build-push-action@v7
         with:
           context: .
