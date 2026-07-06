@@ -40,7 +40,7 @@ const nonRetryableFail = (): EmitResult => ({
 describe('emitFeatureInstalledWithRetry (#2160)', () => {
   it('a handler that fails-then-succeeds is retried and ends green', async () => {
     const emit = vi
-      .fn<[], Promise<EmitResult>>()
+      .fn<() => Promise<EmitResult>>()
       .mockResolvedValueOnce(retryableFail())
       .mockResolvedValueOnce(ok);
     const result = await emitFeatureInstalledWithRetry({ emit, sleep: async () => {} });
@@ -50,7 +50,7 @@ describe('emitFeatureInstalledWithRetry (#2160)', () => {
   });
 
   it('a handler that always fails exhausts the retry budget and stays failed', async () => {
-    const emit = vi.fn<[], Promise<EmitResult>>().mockResolvedValue(retryableFail());
+    const emit = vi.fn<() => Promise<EmitResult>>().mockResolvedValue(retryableFail());
     const onRetry = vi.fn();
     const result = await emitFeatureInstalledWithRetry({ emit, onRetry, sleep: async () => {} });
     expect(emit).toHaveBeenCalledTimes(MAX_EMIT_ATTEMPTS);
@@ -60,7 +60,7 @@ describe('emitFeatureInstalledWithRetry (#2160)', () => {
   });
 
   it('does not retry a non-retryable failure', async () => {
-    const emit = vi.fn<[], Promise<EmitResult>>().mockResolvedValue(nonRetryableFail());
+    const emit = vi.fn<() => Promise<EmitResult>>().mockResolvedValue(nonRetryableFail());
     const result = await emitFeatureInstalledWithRetry({ emit, sleep: async () => {} });
     expect(emit).toHaveBeenCalledTimes(1);
     expect(result.ok).toBe(false);
