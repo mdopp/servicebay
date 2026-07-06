@@ -22,6 +22,7 @@ import { checkRouterDnsNotPointing } from '@/lib/diagnose/probes/routerDnsNotPoi
 import { checkPostDeployFailed } from '@/lib/diagnose/probes/postDeployFailed';
 import { checkMediaLibraryAccess } from '@/lib/diagnose/probes/mediaLibraryAccess';
 import { checkProxyRouteMissing } from '@/lib/diagnose/probes/proxyRouteMissing';
+import { checkNginxOnlineFailed } from '@/lib/diagnose/probes/nginxOnlineFailed';
 import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
 import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailure';
 import { checkAdguardRewritesMissing } from '@/lib/diagnose/probes/adguardRewritesMissing';
@@ -831,6 +832,24 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
+  }
+
+  // 11b) #2156 — routes NPM created (HTTP 200) but nginx REFUSED to load
+  //      (meta.nginx_online=false): a bad advanced_config reverted the conf,
+  //      so the domain 000s/502s while everything else is green. Row carries
+  //      the [emerg] reason + a "Re-render route" retry action.
+  try {
+    const nof = await checkNginxOnlineFailed(nodeName);
+    probes.push({
+      id: 'nginx_online_failed',
+      label: 'Reverse-proxy nginx load',
+      status: nof.status,
+      detail: nof.detail,
+      hint: nof.hint,
+      _items: nof.items && nof.items.length > 0 ? nof.items : undefined,
+    });
+  } catch (e) {
+    probes.push({ id: 'nginx_online_failed', label: 'Reverse-proxy nginx load', status: 'info', detail: `Skipped: ${e instanceof Error ? e.message : String(e)}` });
   }
 
   // 12) NPM admin credentials staleness — probe-action handlers

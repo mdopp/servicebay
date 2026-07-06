@@ -18,6 +18,7 @@ import './danglingProxy';
 import './postDeployFailed';
 import './crashLoop';
 import './proxyRouteMissing';
+import './nginxOnlineFailed';
 import './failedUnits';
 import './healthChecks';
 import './disk';
