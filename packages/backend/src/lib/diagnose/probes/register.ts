@@ -16,6 +16,7 @@ import './npmDataStale';
 import './routerDnsNotPointing';
 import './danglingProxy';
 import './postDeployFailed';
+import './installHandlerFailed';
 import './crashLoop';
 import './proxyRouteMissing';
 import './nginxOnlineFailed';

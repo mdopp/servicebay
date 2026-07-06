@@ -14,6 +14,15 @@
  * boot (#266 self-IP auto-update) and on every public-domain switch.
  */
 
+/** Abort any AdGuard admin API call that doesn't answer within ~8s so an
+ *  unreachable/wedged AdGuard fails fast instead of hanging the whole
+ *  wildcard-rewrite op (#2158). Matches the diagnose house pattern
+ *  (`ssoVerify.ts`, `certExpiry.ts` all use `AbortSignal.timeout(...)`).
+ *  Callers already degrade on rejection (`listRewrites` → `[]`,
+ *  ensure/remove → `'failed'`), so the timeout surfaces as a clear
+ *  degrade rather than an indefinite stall. */
+const HTTP_TIMEOUT_MS = 8000;
+
 const REWRITES_LIST = '/control/rewrite/list';
 const REWRITES_ADD = '/control/rewrite/add';
 const REWRITES_UPDATE = '/control/rewrite/update';
@@ -48,6 +57,7 @@ async function request(opts: ClientOpts, path: string, body?: unknown, method: '
     method,
     headers,
     body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
 }
 

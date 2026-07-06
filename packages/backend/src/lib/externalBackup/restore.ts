@@ -29,6 +29,9 @@ import { getServiceManifest, getConfigPaths } from './serviceManifest';
 import { safeTarExtract, extractServiceConfigToNode } from '../systemBackup';
 import { getExecutor, type Executor } from '../executor';
 import { logger } from '../logger';
+// handlerFailures only imports config + logger (no runner) — no cycle with the
+// install module despite living under install/. See #2160/#2161 plumbing.
+import { recordHandlerFailure } from '../install/handlerFailures';
 
 /**
  * Per-service wipe mode (#1585). Structurally identical to
@@ -401,7 +404,21 @@ export async function autoRestoreServiceOnReinstall(
       await log(`${r.credentialReconcile.ok ? '🔑 ' : '⚠️ '}${service}: ${r.credentialReconcile.message}`);
     }
   } catch (e) {
-    // A restore failure must never block the deploy — log a breadcrumb and continue.
-    await log(`(note) ${service}: NAS config restore skipped — ${e instanceof Error ? e.message : String(e)}.`);
+    // A restore failure must never block the deploy (best-effort by design),
+    // but it must NOT be a quiet `(note)` either (#2161): the service comes up
+    // on fresh/default config while the operator believes their backed-up
+    // state was restored, and discovers the loss much later. Make it a
+    // PROMINENT warning naming the service, AND persist a standing diagnose
+    // finding with a retry action so the state stays recoverable while the
+    // backup still exists on the NAS.
+    const message = e instanceof Error ? e.message : String(e);
+    await log(
+      `⚠️ ${service}: NAS config restore FAILED — ${message}. The service will start on DEFAULT config; your backed-up state was NOT restored. Retry it from Diagnose while the backup is still on the NAS.`,
+    );
+    await recordHandlerFailure({
+      kind: 'restore',
+      service,
+      message: `NAS config restore failed: ${message}`,
+    });
   }
 }

@@ -117,6 +117,14 @@ export interface JobState {
     totalCount: number;
   };
   error?: string;
+  /** Non-fatal problems that leave the install in a degraded-but-done
+   *  state — e.g. a capability handler that stayed failed after bounded
+   *  retries, or a NAS restore that failed (#2160/#2161). The install
+   *  still reaches `phase: 'done'` (one-shot, no rollback), but a
+   *  non-empty `warnings` marks the run non-green: the Done UI shows it
+   *  as "completed with warnings" and diagnose carries the standing
+   *  finding + retry action. */
+  warnings?: string[];
   credentialsManifest?: Credential[];
   /** Set when the runner pauses on the NPM credentials prompt. The
    *  client reads `fallback` to pre-fill the prompt UI. */

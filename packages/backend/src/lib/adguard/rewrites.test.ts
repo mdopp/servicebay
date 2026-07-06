@@ -161,3 +161,39 @@ describe('removeWildcardRewrite', () => {
     ).toBe('absent');
   });
 });
+
+// #2158 — every AdGuard admin fetch must carry an AbortSignal timeout so an
+// unreachable/wedged AdGuard fails fast instead of hanging the op, and callers
+// degrade gracefully on the resulting rejection.
+describe('AdGuard fetch timeout (#2158)', () => {
+  it('passes an AbortSignal on every admin call', async () => {
+    const signals: (AbortSignal | null | undefined)[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      signals.push(init.signal);
+      return { ok: true, json: async () => [] } as Response;
+    });
+    await listRewrites(opts(fetchImpl as unknown as typeof fetch));
+    await ensureWildcardRewrite(opts(fetchImpl as unknown as typeof fetch), '*.home.arpa', '10.0.0.5');
+    expect(signals.length).toBeGreaterThan(0);
+    for (const s of signals) expect(s).toBeInstanceOf(AbortSignal);
+  });
+
+  it('listRewrites degrades to [] when the fetch aborts (timeout)', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    });
+    expect(await listRewrites(opts(fetchImpl as unknown as typeof fetch))).toEqual([]);
+  });
+
+  it("ensureWildcardRewrite returns 'failed' when the add fetch aborts", async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (new URL(url).pathname.endsWith('/list')) {
+        return { ok: true, json: async () => [] } as Response;
+      }
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    });
+    expect(
+      await ensureWildcardRewrite(opts(fetchImpl as unknown as typeof fetch), '*.home.arpa', '10.0.0.5'),
+    ).toBe('failed');
+  });
+});

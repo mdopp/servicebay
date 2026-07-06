@@ -414,6 +414,21 @@ export interface AppConfig {
    */
   servicePostDeploy?: Record<string, ServicePostDeployRecord>;
   /**
+   * Unresolved install-time failures that the deploy could NOT recover
+   * from and that leave a service in a silent half-state — a capability
+   * handler that never registered its OIDC client / proxy host after
+   * bounded retries (#2160), or a NAS auto-restore that failed so the
+   * service came up on default config (#2161). Persisted so the
+   * `install_handler_failed` diagnose probe surfaces them with a
+   * retry/reconcile action long after the install log scrolled away,
+   * symmetric with `servicePostDeploy` + `post_deploy_failed`.
+   *
+   * Key is `${kind}:${service}` (e.g. `capability:immich`,
+   * `restore:radicale`) so a later successful reconcile of the same
+   * service clears exactly its record.
+   */
+  installHandlerFailures?: Record<string, InstallHandlerFailureRecord>;
+  /**
    * Per-service record of the template-schema-version that was
    * deployed. Updated by `ServiceManager.deployKubeService` whenever a
    * deploy succeeds, so the next deploy can detect a breaking-change
@@ -535,6 +550,23 @@ export interface ServicePostDeployRecord {
   exitCode: number;
   /** Tail of stdout (last ~1KB). Aids "what failed" diagnosis without bloating config. */
   stdoutTail?: string;
+}
+
+/**
+ * One unresolved install-time failure surfaced by the
+ * `install_handler_failed` diagnose probe (#2160 / #2161). See
+ * `installHandlerFailures` on `AppConfig` for the keying convention.
+ */
+export interface InstallHandlerFailureRecord {
+  /** What failed: a capability handler emit, or a NAS auto-restore. Drives
+   *  which retry action the diagnose probe offers. */
+  kind: 'capability' | 'restore';
+  /** The service/template the failure affects (e.g. `immich`). */
+  service: string;
+  /** Human-readable cause (handler name + message, or the restore error). */
+  message: string;
+  /** ISO timestamp of the last (exhausted) attempt. */
+  lastFailedAt: string;
 }
 
 /**

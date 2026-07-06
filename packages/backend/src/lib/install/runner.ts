@@ -47,6 +47,7 @@ import { buildCredentialsManifest, mergeCredentials, type Credential } from '@/l
 import { provisionPortalWithRetries } from '@/lib/stackInstall/portalProvision';
 import { npmAdminCredStatus, rekeyNpmAdmin } from '@/lib/reverseProxy/npmAdminRekey';
 import { getCapabilityBus } from '@/lib/capabilities/bus';
+import { recordHandlerFailure, emitFeatureInstalledWithRetry, MAX_EMIT_ATTEMPTS } from './handlerFailures';
 import { getStoreSnapshot } from '@/lib/store/repository';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { getConfig, saveConfig, type InstalledCredential } from '@/lib/config';
@@ -149,6 +150,17 @@ async function patchJob(
   const next = await updateJob(jobId, partial);
   if (next) emitJobUpdate(next);
   return next;
+}
+
+/** Mark the install run non-green with a standing warning (#2160/#2161).
+ *  Appends to `JobState.warnings` (deep-merge can't append arrays, so we
+ *  read → concat → write the whole array). The install still reaches
+ *  `phase: 'done'`, but a non-empty `warnings` flags it as "completed with
+ *  warnings" in the Done UI. Best-effort; never throws. */
+async function appendJobWarning(jobId: string, warning: string): Promise<void> {
+  const job = await getJob(jobId).catch(() => null);
+  const warnings = [...(job?.warnings ?? []), warning];
+  await patchJob(jobId, { warnings }).catch(() => undefined);
 }
 
 /** Public abort entry-point. Sets the in-memory flag and unblocks any
@@ -1403,19 +1415,34 @@ async function runJob(jobId: string): Promise<void> {
         await log(jobId, `(note) skipped capability emit for ${name}: ${parsed.errors.join('; ')}`);
         continue;
       }
-      const result = await bus.emit({
-        kind: 'feature.installed',
-        template: name,
-        manifest: parsed.manifest,
-        variables,
+      // Bounded retry of RETRYABLE handler failures (#2160). Covers the
+      // Authelia `retryable: true` OIDC-registration races (auth pod
+      // restarting mid-install, capabilities/authelia.ts:142) that were
+      // previously dropped. Retry policy lives in `emitFeatureInstalledWithRetry`.
+      const result = await emitFeatureInstalledWithRetry({
+        emit: () =>
+          bus.emit({
+            kind: 'feature.installed',
+            template: name,
+            manifest: parsed.manifest,
+            variables,
+          }),
+        onRetry: (attempt, count) =>
+          log(jobId, `↻ Retrying ${count} recoverable handler failure(s) for ${name} (attempt ${attempt + 1}/${MAX_EMIT_ATTEMPTS})…`),
       });
       for (const f of result.failures) {
-        // Surface as diagnose-style log lines but don't abort — handler
-        // failures are recoverable and the operator can retry the
-        // specific service via diagnose actions.
-        if (!f.result.ok) {
-          await log(jobId, `⚠️ ${f.handler} (${name}): ${f.result.message}`);
-        }
+        if (f.result.ok) continue;
+        // A failure that survived bounded retries (or was never retryable)
+        // leaves this service in a silent half-state. Mark the install
+        // non-green and persist a standing diagnose finding with a
+        // reconcile action — don't just log-and-forget (#2160).
+        await log(jobId, `⚠️ ${f.handler} (${name}): ${f.result.message} — capability registration did NOT complete; SSO/proxy for this service may be dead until reconciled.`);
+        await appendJobWarning(jobId, `${name}: ${f.handler} — ${f.result.message}`);
+        await recordHandlerFailure({
+          kind: 'capability',
+          service: name,
+          message: `${f.handler}: ${f.result.message}`,
+        });
       }
     } catch (e) {
       await log(jobId, `(note) capability emit failed for ${name}: ${e instanceof Error ? e.message : String(e)}`);
