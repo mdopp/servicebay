@@ -109,6 +109,45 @@ func TestRenderButane_SubstitutesAndPreserves(t *testing.T) {
 	}
 }
 
+// The servicebay.container quadlet must wire the out-of-band crash breadcrumb
+// (#2159): an ExecStartPre relabel/permission self-heal and an ExecStopPost
+// breadcrumb writer, plus the two helper scripts they invoke. A missing hook
+// makes servicebay's own crash-loop invisible again.
+func TestRenderButane_CrashBreadcrumbWiring(t *testing.T) {
+	out := RenderInputs{
+		Settings: Settings{ServerName: "OSCAR", HostUser: "core", ServicebayChannel: "stable", ServicebayPort: "5888"},
+	}.Butane()
+
+	wiring := []string{
+		// ExecStartPre self-heal for the relabel/permission failure class.
+		"ExecStartPre=-/bin/bash /usr/local/bin/servicebay-relabel-selfheal.sh",
+		// ExecStopPost out-of-band breadcrumb writer.
+		"ExecStopPost=-/bin/bash /usr/local/bin/servicebay-crash-breadcrumb.sh",
+		// The helper scripts themselves are shipped.
+		"path: /usr/local/bin/servicebay-relabel-selfheal.sh",
+		"path: /usr/local/bin/servicebay-crash-breadcrumb.sh",
+	}
+	for _, w := range wiring {
+		if !strings.Contains(out, w) {
+			t.Errorf("servicebay.container is missing crash-breadcrumb wiring: %q", w)
+		}
+	}
+
+	// The breadcrumb file lands in the data dir (survives the container being
+	// down) and the writer only fires on an abnormal stop.
+	if !strings.Contains(out, "${DATA_ROOT}/servicebay/last-crash.json") &&
+		!strings.Contains(out, "/servicebay/last-crash.json") {
+		t.Error("breadcrumb writer should target <data-dir>/last-crash.json")
+	}
+	if !strings.Contains(out, `[ "$RESULT" = "success" ]`) {
+		t.Error("breadcrumb writer should skip clean (SERVICE_RESULT=success) stops")
+	}
+	// The self-heal names the *.bak-verify* stray class explicitly.
+	if !strings.Contains(out, "*.bak-verify*") {
+		t.Error("relabel self-heal should name the *.bak-verify* stray class")
+	}
+}
+
 func TestRenderButane_FactoryFresh(t *testing.T) {
 	base := RenderInputs{Settings: Settings{ServerName: "OSCAR", HostUser: "core", ServicebayChannel: "stable"}}
 
