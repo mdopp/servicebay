@@ -111,6 +111,73 @@ describe('HealthStore.markLastResultAlerted (#1661)', () => {
   });
 });
 
+describe('HealthStore read cache (#2163) — no synchronous re-read on the hot path', () => {
+  let HealthStore: typeof import('./store').HealthStore;
+  let realFs: typeof import('fs');
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'healthstore-'));
+    vi.resetModules();
+    vi.restoreAllMocks();
+    process.env.DATA_DIR = tmpDir;
+    realFs = (await import('fs')).default;
+    ({ HealthStore } = await import('./store'));
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    delete process.env.DATA_DIR;
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  const result = (secondsAgo: number): CheckResult => ({
+    check_id: 'perf', status: 'ok',
+    timestamp: new Date(Date.now() - secondsAgo * 1000).toISOString(),
+  });
+
+  it('getChecks() serves from cache without a second readFileSync when the file is unchanged', () => {
+    HealthStore.saveCheck(serviceCheck('immich'));
+    // Prime the cache.
+    expect(HealthStore.getChecks().map(c => c.target)).toEqual(['immich']);
+
+    const readSpy = vi.spyOn(realFs, 'readFileSync');
+    // Many hot-path reads with no intervening write → zero disk parses.
+    for (let i = 0; i < 20; i++) HealthStore.getChecks();
+    expect(readSpy).not.toHaveBeenCalled();
+  });
+
+  it('getResults() serves from cache without a second readFileSync when the file is unchanged', () => {
+    HealthStore.saveResult(result(1));
+    // Prime the cache.
+    expect(HealthStore.getResults('perf')).toHaveLength(1);
+
+    const readSpy = vi.spyOn(realFs, 'readFileSync');
+    for (let i = 0; i < 20; i++) HealthStore.getResults('perf');
+    expect(readSpy).not.toHaveBeenCalled();
+  });
+
+  it('a write invalidates the cache so the next read reflects it (no stale serve)', () => {
+    HealthStore.saveCheck(serviceCheck('immich'));
+    expect(HealthStore.getChecks().map(c => c.target)).toEqual(['immich']);
+
+    HealthStore.saveCheck(serviceCheck('vaultwarden'));
+    // Read-after-write must see the new check, not the cached snapshot.
+    expect(HealthStore.getChecks().map(c => c.target).sort()).toEqual(['immich', 'vaultwarden']);
+  });
+
+  it('picks up an external write (mtime/size change) even without going through the store', () => {
+    HealthStore.saveCheck(serviceCheck('immich'));
+    expect(HealthStore.getChecks()).toHaveLength(1);
+
+    // Simulate another bundle/process rewriting checks.json directly.
+    realFs.writeFileSync(
+      path.join(tmpDir, 'checks.json'),
+      JSON.stringify([serviceCheck('immich'), serviceCheck('media')], null, 2),
+    );
+    expect(HealthStore.getChecks().map(c => c.target).sort()).toEqual(['immich', 'media']);
+  });
+});
+
 describe('HealthStore.deleteCheck — honest return (synthetic rows can\'t be deleted)', () => {
   let HealthStore: typeof import('./store').HealthStore;
 
