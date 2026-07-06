@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.148.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.148.0...servicebay-v4.148.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **backup:** close manifest coverage gaps + add round-trip test + CI contract ([4c23618](https://github.com/mdopp/servicebay/commit/4c2361886480b85a2216b4a0de480120c3c13d24)), closes [#2153](https://github.com/mdopp/servicebay/issues/2153) [#2154](https://github.com/mdopp/servicebay/issues/2154)
+* **install:** import EmitResult from capabilities/types not bus ([68e84af](https://github.com/mdopp/servicebay/commit/68e84afc97f22d4486662742dd968cb04ad5b9e2))
+* **install:** surface silent install/capability/restore failures ([770f61a](https://github.com/mdopp/servicebay/commit/770f61a444205c9b26b321d103813dcb4d161885)), closes [#2158](https://github.com/mdopp/servicebay/issues/2158) [#2160](https://github.com/mdopp/servicebay/issues/2160) [#2161](https://github.com/mdopp/servicebay/issues/2161)
+* **nginx:** stop swallowing reload/nginx_online failures on proxy hosts ([dbb03d3](https://github.com/mdopp/servicebay/commit/dbb03d3e3971e00a833c950c9d2fe45e9a51b056)), closes [#2156](https://github.com/mdopp/servicebay/issues/2156)
+* **reverseProxy:** set busy_timeout + WAL on NPM rekey DB open ([d819a1b](https://github.com/mdopp/servicebay/commit/d819a1b9f2ff8330a2128c8a29f0ad49c42f1453)), closes [#2157](https://github.com/mdopp/servicebay/issues/2157)
+* surface silent install failures + backup/nginx/npm-wal/release-smoke hardening ([3f30d49](https://github.com/mdopp/servicebay/commit/3f30d495627740c3414a2f7a1180b99cfb1915ed))
+
 ## [4.148.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.147.3...servicebay-v4.148.0) (2026-07-06)
 
 
