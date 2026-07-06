@@ -131,6 +131,17 @@ COPY --from=builder /app/packages/backend/src/lib/agent/v4/scripts ./src/lib/age
 
 # Copy production node_modules (with built native modules)
 COPY --from=prod-deps /app/node_modules ./node_modules
+# npm sometimes deoptimizes hoisting and leaves runtime deps under
+# packages/*/node_modules instead of the root (e.g. nodemailer + semver after
+# the ^9.0.3 bump in 6a37174e). The pre-bundled server (dist-server/server.cjs)
+# require()s these externals and node resolves them from /app/node_modules at
+# runtime — it never looks in packages/backend/node_modules. The builder-stage
+# fix (98cd90ba) only unblocked the Turbopack build; the runner still shipped
+# without them, so the container crash-looped on boot with "Cannot find module
+# 'nodemailer'". Merge any workspace-scoped deps into root (no-clobber so
+# hoisted copies always win) regardless of npm's hoisting decision.
+COPY --from=prod-deps /app/packages ./packages-proddeps
+RUN for d in packages-proddeps/*/node_modules; do [ -d "$d" ] && cp -rn "$d/." node_modules/; done; rm -rf packages-proddeps
 COPY --from=builder /app/package.json ./package.json
 
 # We run as root inside the container to ensure access to mapped volumes (ssh keys)
