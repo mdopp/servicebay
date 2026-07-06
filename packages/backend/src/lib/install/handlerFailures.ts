@@ -21,7 +21,7 @@
 import { getConfig, saveConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import type { InstallHandlerFailureRecord } from '@/lib/config';
-import type { EmitResult } from '@/lib/capabilities/bus';
+import type { EmitResult } from '@/lib/capabilities/types';
 
 export type { InstallHandlerFailureRecord };
 

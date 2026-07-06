@@ -19,7 +19,7 @@ import {
   emitFeatureInstalledWithRetry,
   MAX_EMIT_ATTEMPTS,
 } from './handlerFailures';
-import type { EmitResult } from '@/lib/capabilities/bus';
+import type { EmitResult } from '@/lib/capabilities/types';
 
 beforeEach(() => {
   mockConfig = {};
