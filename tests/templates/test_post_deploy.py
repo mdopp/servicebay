@@ -687,6 +687,112 @@ class FileShareScript(unittest.TestCase):
         self.assertIn("Could not pre-seed FileBrowser admin", out)
 
 
+class HonchoScript(unittest.TestCase):
+    """#2165: Postgres role-password reconciliation on reinstall-over-pgdata.
+
+    HONCHO_POSTGRES_PASSWORD is generated fresh every install, but the
+    pgvector cluster seeds it only on first init. On a reinstall over a
+    preserved pgdata the DB keeps the OLD password → the app can't connect →
+    crash loop. reconcile_postgres_password() must ALTER ROLE the persisted
+    cluster to this install's password over the trusted local socket, and be
+    a no-op on fresh pgdata.
+    """
+
+    def _run_reconcile(self, tmp, pgdata_exists, env_extra=None):
+        """Run reconcile_postgres_password() with subprocess mocked; return
+        the list of recorded podman command argv lists + the psql stdin."""
+        import subprocess as subprocess_mod
+        m = load_script("honcho")
+        pgdata = os.path.join(tmp, "honcho", "pgdata")
+        os.makedirs(pgdata, exist_ok=True)
+        if pgdata_exists:
+            with open(os.path.join(pgdata, "PG_VERSION"), "w", encoding="utf-8") as fh:
+                fh.write("16\n")
+
+        calls: list[list[str]] = []
+        stdins: list[str] = []
+
+        class _OK:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def record_run(cmd, *_a, **kw):
+            calls.append(list(cmd))
+            if kw.get("input") is not None:
+                stdins.append(kw["input"])
+            return _OK()
+
+        env = {"DATA_DIR": tmp, "HONCHO_POSTGRES_PASSWORD": "n3w-pw"}
+        if env_extra:
+            env.update(env_extra)
+        with run_with_env(env), \
+                mock.patch.object(subprocess_mod, "run", record_run):
+            m.reconcile_postgres_password()
+        return calls, stdins
+
+    def test_rekeys_role_when_pgdata_preserved(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            calls, stdins = self._run_reconcile(tmp, pgdata_exists=True)
+        joined = [" ".join(c) for c in calls]
+        # pg_isready gate, then the ALTER ROLE psql, then bounce the app.
+        self.assertTrue(any("pg_isready" in c for c in joined), joined)
+        self.assertTrue(
+            any("psql" in c and "-U" in c and "honcho" in c for c in calls),
+            joined,
+        )
+        # The new password rides ONLY via a bound psql variable — never
+        # inline in the SQL string (injection-safe, no host process-table leak).
+        self.assertTrue(any(c == "-v" for cmd in calls for c in cmd) or
+                        any("pw=n3w-pw" in c for cmd in calls for c in cmd), joined)
+        self.assertIn("ALTER ROLE honcho WITH PASSWORD :'pw';", stdins)
+        self.assertTrue(all("n3w-pw" not in s for s in stdins),
+                        "password must not be inlined into the SQL string")
+        # App container bounced so it reconnects with the matching password.
+        self.assertTrue(any("restart" in c and "honcho" in c for c in joined), joined)
+
+    def test_noop_on_fresh_pgdata(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            calls, stdins = self._run_reconcile(tmp, pgdata_exists=False)
+        # No PG_VERSION marker → fresh install → the env seed already matches,
+        # so no podman/psql commands run at all.
+        self.assertEqual(calls, [])
+        self.assertEqual(stdins, [])
+
+    def test_main_still_emits_api_key_credential(self):
+        """The added reconciliation must not break the existing behaviour:
+        main() still probes health and emits the HONCHO_API_KEY marker."""
+        import subprocess as subprocess_mod
+        import urllib.request as urlreq
+        m = load_script("honcho")
+
+        class _OK:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        env = {
+            "HOST": "192.168.1.10",
+            "HONCHO_PORT": "8652",
+            "HONCHO_API_KEY": "bearer-token-xyz",
+            "HONCHO_POSTGRES_PASSWORD": "n3w-pw",
+            "DATA_DIR": "/nonexistent-fresh",  # no pgdata → reconcile no-ops
+            "HONCHO_HEALTH_TIMEOUT": "0",       # skip the health poll loop
+        }
+        responses = {"/health": {"status": 200, "body": {"ok": True}}}
+        with run_with_env(env), \
+                mock.patch.object(subprocess_mod, "run", lambda *a, **kw: _OK()), \
+                mock.patch.object(urlreq, "urlopen", fake_urlopen_factory(responses)):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        creds = parse_credentials(out)
+        self.assertEqual(len(creds), 1)
+        self.assertEqual(creds[0]["service"], "Honcho (Per-User Memory)")
+        self.assertEqual(creds[0]["password"], "bearer-token-xyz")
+
+
 class MediaScript(unittest.TestCase):
     def test_no_passwords_emits_nothing_and_returns_zero(self):
         m = load_script("media")
