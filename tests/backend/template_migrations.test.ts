@@ -158,6 +158,82 @@ describe('Template migration scripts — filename + structure', () => {
   });
 });
 
+describe('Template migration scripts — Docker image coverage (#2166)', () => {
+  // A migration file that passes the repo-side chain validation above but is
+  // NOT copied into the runner image reads identically on the box to a
+  // *missing* step: the runner aborts every redeploy with "migration chain
+  // incomplete" (memory: schema_bump_migration_and_real_redeploy_verify).
+  // A glob miss in the Dockerfile is therefore a silent, box-only failure the
+  // repo-side tests never see. Assert here that whatever the Dockerfile copies
+  // into the image would cover every `templates/*/migrations/*.py` on disk.
+  //
+  // The migrations live under `templates/`, which the runner stage copies
+  // wholesale (`COPY --from=builder /app/templates ./templates`). This test
+  // fails the moment that COPY is narrowed to a glob that could drop a
+  // migration file (e.g. someone switching to `COPY .../templates/*/*.yml`).
+  const DOCKERFILE = path.join(REPO_ROOT, 'Dockerfile');
+
+  /** COPY lines in the runner stage that land files at `./templates`. */
+  function runnerTemplateCopyDests(): string[] {
+    const text = fs.readFileSync(DOCKERFILE, 'utf-8');
+    const dests: string[] = [];
+    for (const raw of text.split('\n')) {
+      const line = raw.trim();
+      // Match `COPY [--from=...] <src...> <dest>` whose dest is the templates tree.
+      const m = /^COPY\s+(.*)$/i.exec(line);
+      if (!m) continue;
+      const parts = m[1].split(/\s+/).filter(p => !p.startsWith('--'));
+      if (parts.length < 2) continue;
+      const dest = parts[parts.length - 1];
+      const srcs = parts.slice(0, -1);
+      // The wholesale `COPY . .` in the builder stage and the runner's
+      // `COPY --from=builder /app/templates ./templates` both deliver the
+      // templates dir. We care about the runner dest landing at ./templates.
+      if (dest === './templates' || dest === './templates/' || dest === 'templates') {
+        dests.push(`${srcs.join(' ')} -> ${dest}`);
+      }
+    }
+    return dests;
+  }
+
+  it('the runner image copies the whole templates/ tree (covers every migration file)', () => {
+    const copies = runnerTemplateCopyDests();
+    // There must be exactly one directory-level copy of templates/ — a
+    // narrower per-file glob would risk dropping .py migration scripts.
+    expect(copies.length).toBeGreaterThanOrEqual(1);
+    const text = fs.readFileSync(DOCKERFILE, 'utf-8');
+    // The copy must be a *directory* copy (src ends in `templates`), not a
+    // glob like `templates/*/template.yml` that would exclude migrations.
+    const dirCopy = /COPY\s+--from=\S+\s+\S*\/templates\s+\.\/templates\b/.test(text);
+    expect(
+      dirCopy,
+      'Dockerfile must copy the templates/ directory wholesale into the runner image ' +
+      '(`COPY --from=builder /app/templates ./templates`). A per-file glob risks dropping ' +
+      'migration scripts, which surfaces on the box as "migration chain incomplete".',
+    ).toBe(true);
+  });
+
+  it('every on-disk migration file lives under templates/ (so the dir copy covers it)', () => {
+    // Guards the assumption above: if a migration script is ever placed
+    // outside templates/ it would fall out of the wholesale copy and would
+    // need its own COPY line + this test updated.
+    const strays: string[] = [];
+    for (const t of templatesWithMigrations) {
+      for (const m of t.migrations) {
+        if (m.fromVersion < 0) continue;
+        const rel = path.relative(TEMPLATES_DIR, m.fullPath);
+        if (rel.startsWith('..') || path.isAbsolute(rel)) {
+          strays.push(m.fullPath);
+        }
+      }
+    }
+    expect(strays).toEqual([]);
+    // Sanity: we actually found migration files to guard (the test isn't
+    // vacuously passing on an empty set).
+    expect(templatesWithMigrations.length).toBeGreaterThan(0);
+  });
+});
+
 describe('Template migration scripts — discovery via getTemplateMigrationScripts', () => {
   it('discovers home-assistant v1-to-v2.py from the built-in catalog', async () => {
     const { getTemplateMigrationScripts } = await import('@/lib/registry');
