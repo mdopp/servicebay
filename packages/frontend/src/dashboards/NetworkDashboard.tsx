@@ -766,6 +766,10 @@ function LegendBody() {
                     <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#d97706" strokeWidth="2" strokeDasharray="4 4" /></svg>
                     <span>Declared dependency</span>
                 </div>
+                <div className="flex items-center gap-2">
+                    <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#a855f7" strokeWidth="2" strokeDasharray="2 3" /></svg>
+                    <span>Inferred (env / host)</span>
+                </div>
             </div>
             {/* Ubiquitous-dependency badges (#1785). Hub-spoke edges to
                 auth/LLDAP and AdGuard DNS are collapsed into these node
@@ -1328,7 +1332,9 @@ export default function NetworkDashboard() {
                     ? 'Declared dependency — not observed traffic'
                     : e.kind === 'observed'
                         ? `Observed TCP flow${Number.isFinite(e.port) && e.port > 0 ? ` to :${e.port}` : ''}`
-                        : undefined,
+                        : e.kind === 'inferred'
+                            ? 'Inferred from env / host — not observed traffic'
+                            : undefined,
             },
             animated: connectsToDownNode ? true : e.state === 'active'
         };

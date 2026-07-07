@@ -18,6 +18,14 @@ import {
 import { buildGlobalInfrastructure } from './topologyAssembler';
 import { suppressUbiquitousDeps } from './ubiquitousDeps';
 import {
+    inferEnvEdges,
+    anchorFloatingNodes,
+    buildEnvInferenceTarget,
+    extractPodEnv,
+    type EnvSource,
+    type EnvInferenceTarget,
+} from './inferredEdges';
+import {
     resolvePortNumber,
     type FritzPortMapping,
     type KubePodSpec,
@@ -1955,6 +1963,65 @@ export class NetworkService {
       }
     } catch (e) {
       logger.warn('NetworkService', `declared-edge synthesis skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // #2175 — env-target inference. Services that bind localhost and declare
+    // nothing (claude-dev, solaris-tts/whisper, exhibitor-dashboard) produce
+    // zero edges from the four sources above and float as loose components.
+    // Scan each service node's env for a `http(s)://host:port` / `host:port`
+    // value naming another node and emit a `kind: 'inferred'` edge labelled
+    // with the env-var name, deduped against the edges above. Best-effort.
+    try {
+      // Build resolvable targets from every node: aliases = base service
+      // name, container names, bound host IPs; hostPorts = its host-side
+      // published ports (for the localhost-bound port-only match).
+      const targets: EnvInferenceTarget[] = nodes.map(node =>
+        buildEnvInferenceTarget(node),
+      );
+
+      // Collect env from each managed service's rendered pod yaml.
+      const envSources: EnvSource[] = [];
+      const fileMapEnv = twinNode.files || {};
+      const readYamlForBase = (baseName: string): string | null => {
+        const kubeKey = Object.keys(fileMapEnv).find(k => k.endsWith(`/${baseName}.kube`));
+        if (kubeKey) {
+          const kubeContent = fileMapEnv[kubeKey]?.content;
+          const yamlMatch = kubeContent?.match(/^Yaml=(.+)$/m);
+          if (yamlMatch) {
+            const yamlKey = Object.keys(fileMapEnv).find(k => k.endsWith(`/${yamlMatch[1].trim()}`));
+            if (yamlKey) return fileMapEnv[yamlKey]?.content ?? null;
+          }
+        }
+        // Fallback: a direct <base>.yml (kube-less single-pod templates).
+        const ymlKey = Object.keys(fileMapEnv).find(k => k.endsWith(`/${baseName}.yml`) || k.endsWith(`/${baseName}.yaml`));
+        return ymlKey ? (fileMapEnv[ymlKey]?.content ?? null) : null;
+      };
+
+      for (const svc of services) {
+        if (!svc.isManaged) continue;
+        const base = svc.name.replace(/\.service$/, '');
+        const srcId = prefix(`service-${svc.name}`);
+        if (!nodes.some(n => n.id === srcId)) continue;
+        const yamlContent = readYamlForBase(base);
+        if (!yamlContent) continue;
+        for (const env of extractPodEnv(yamlContent)) {
+          envSources.push({ nodeId: srcId, name: env.name, value: env.value });
+        }
+      }
+
+      const inferred = inferEnvEdges(envSources, targets, mergedEdges);
+      mergedEdges.push(...inferred);
+    } catch (e) {
+      logger.warn('NetworkService', `inferred-edge synthesis skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // #2175 — fallback anchor. Any service node still edge-less anchors to
+    // the host root (`gateway`) so no card renders fully disconnected.
+    try {
+      const anchors = anchorFloatingNodes(nodes, mergedEdges, routerId);
+      mergedEdges.push(...anchors);
+    } catch (e) {
+      logger.warn('NetworkService', `fallback-anchor synthesis skipped: ${e instanceof Error ? e.message : String(e)}`);
     }
 
     return { nodes, edges: mergedEdges };
