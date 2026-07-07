@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.149.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.148.1...servicebay-v4.149.0) (2026-07-07)
+
+
+### Features
+
+* **monitoring:** out-of-band breadcrumb for servicebay self crash-loop ([82f60f3](https://github.com/mdopp/servicebay/commit/82f60f37857457736c25d112a3c34b93e4f2bf88)), closes [#2159](https://github.com/mdopp/servicebay/issues/2159)
+* **settings:** typed-confirmation modal for API token revoke ([52a1ec4](https://github.com/mdopp/servicebay/commit/52a1ec409c2c4f467a996bfa70cf306dc1095880)), closes [#2164](https://github.com/mdopp/servicebay/issues/2164)
+
+
+### Bug Fixes
+
+* **honcho:** re-key Postgres role password on reinstall-over-preserved-pgdata ([3b335f2](https://github.com/mdopp/servicebay/commit/3b335f25c58a40ced5a609560c5842c21dfe493a)), closes [#2165](https://github.com/mdopp/servicebay/issues/2165)
+* **test:** use vi.stubEnv for NODE_ENV in prod-redaction lane ([5894e92](https://github.com/mdopp/servicebay/commit/5894e922da47c160a61030ab537f22b212821871))
+
+
+### Performance Improvements
+
+* **health:** cache HealthStore reads to keep diagnose/health off the sync-IO hot path ([c91098c](https://github.com/mdopp/servicebay/commit/c91098c79e38d8f955b46dd49f8d7065e931234c)), closes [#2163](https://github.com/mdopp/servicebay/issues/2163)
+
 ## [4.148.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.148.0...servicebay-v4.148.1) (2026-07-06)
 
 
