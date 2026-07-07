@@ -6,31 +6,53 @@ const elk = new ELK();
 
 const GROUP_NODE_TYPES = new Set(['group', 'proxy', 'service', 'pod', 'unmanaged-service']);
 
-// ELK options for layout
-const layoutOptions = {
-  'elk.algorithm': 'layered',
-  'elk.direction': 'RIGHT', // Horizontal flow (Internet -> Router -> Proxy -> Services)
-  'elk.spacing.nodeNode': '100', // Vertical spacing between nodes
-  'elk.layered.spacing.nodeNodeBetweenLayers': '350', // Horizontal spacing between layers
-  'elk.hierarchyHandling': 'INCLUDE_CHILDREN', // Crucial for nesting
-  'elk.padding': '[top=50,left=50,bottom=50,right=50]', // Padding for groups
-  // #1782 — orthogonal edge routing ("circuit-board" look). The
-  // computed bend points are read back from edge.sections and rendered
-  // verbatim by the frontend custom edge instead of smoothstep.
-  'elk.edgeRouting': 'ORTHOGONAL',
-  // Crossing minimization tuning — BRANDES_KOEPF straightens trunks and
-  // higher thoroughness reduces crossings so the orthogonal routes stay
-  // readable. Extra edge/edge + edge/node spacing keeps parallel runs apart.
-  'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-  'elk.layered.thoroughness': '20',
-  'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
-  'elk.spacing.edgeEdge': '20',
-  'elk.spacing.edgeNode': '30',
-  // #1783 — place a per-edge port label (e.g. `:2283`) at the centre of each
-  // edge and reserve space for it so chips never overlap the routed lines.
-  'elk.edgeLabels.placement': 'CENTER',
-  'elk.spacing.edgeLabel': '8',
-};
+// ELK options for layout. #2176 — `elk.hierarchyHandling: INCLUDE_CHILDREN`
+// is required for laying out nested (compound) group nodes, but it disables
+// ELK's connected-component packer — with it on, disconnected components (and
+// the anchored floating cards from #2175) stack into a single dense column
+// beside an empty half of the canvas. So we only add it when the graph
+// actually has nesting (some node declares a parentId); a flat graph gets the
+// component packer instead, which fans components out toward the aspect ratio.
+function buildLayoutOptions(hasNesting: boolean): Record<string, string> {
+  const options: Record<string, string> = {
+    'elk.algorithm': 'layered',
+    'elk.direction': 'RIGHT', // Horizontal flow (Internet -> Router -> Proxy -> Services)
+    // #2176 — vertical gap *between* same-layer nodes. This is a MINIMUM added
+    // on top of each node's declared height, so overlap-free packing depends on
+    // calculateNodeHeight being truthful (see below), not on this number. Kept
+    // generous so tall multi-container group cards keep breathing room.
+    'elk.spacing.nodeNode': '120',
+    'elk.layered.spacing.nodeNodeBetweenLayers': '350', // Horizontal spacing between layers
+    'elk.padding': '[top=50,left=50,bottom=50,right=50]', // Padding for groups
+    // #1782 — orthogonal edge routing ("circuit-board" look). The
+    // computed bend points are read back from edge.sections and rendered
+    // verbatim by the frontend custom edge instead of smoothstep.
+    'elk.edgeRouting': 'ORTHOGONAL',
+    // Crossing minimization tuning — BRANDES_KOEPF straightens trunks and
+    // higher thoroughness reduces crossings so the orthogonal routes stay
+    // readable. Extra edge/edge + edge/node spacing keeps parallel runs apart.
+    'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+    'elk.layered.thoroughness': '20',
+    'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+    'elk.spacing.edgeEdge': '20',
+    'elk.spacing.edgeNode': '30',
+    // #1783 — place a per-edge port label (e.g. `:2283`) at the centre of each
+    // edge and reserve space for it so chips never overlap the routed lines.
+    'elk.edgeLabels.placement': 'CENTER',
+    'elk.spacing.edgeLabel': '8',
+    // #2176 — spread disconnected components across the canvas instead of
+    // stacking them as one dense right column beside an empty left half.
+    'elk.separateConnectedComponents': 'true',
+    'elk.spacing.componentComponent': '80',
+    // Bias component packing toward a landscape canvas so components fan out
+    // horizontally (using the empty left half) rather than piling in a column.
+    'elk.aspectRatio': '1.6',
+  };
+  if (hasNesting) {
+    options['elk.hierarchyHandling'] = 'INCLUDE_CHILDREN'; // Crucial for nesting
+  }
+  return options;
+}
 
 // #1783 — approximate the pixel box a monospace port chip occupies so ELK
 // reserves overlap-free space for it. ~6.4px/char at the 10px font the chip
@@ -393,9 +415,14 @@ function buildHierarchy(nodes: Node[], edges: Edge[]): ElkNode {
     // However, putting them at root usually works for basic layout.
     const elkEdges: ElkExtendedEdge[] = edges.map(toElkEdge);
 
+    // #2176 — INCLUDE_CHILDREN is only needed (and only worth disabling the
+    // component packer for) when the graph actually nests. A group whose
+    // children were all filtered out (collapsed) is a leaf card here.
+    const hasNesting = nodes.some(n => n.parentId && nodeMap.has(n.parentId));
+
     return {
         id: 'root',
-        layoutOptions: layoutOptions,
+        layoutOptions: buildLayoutOptions(hasNesting),
         children: rootChildren,
         edges: elkEdges
     };
@@ -429,55 +456,86 @@ function countDetailRows(
     return 0;
 }
 
+/**
+ * #2176 — count the port badges the card footer actually renders. The footer
+ * (PortTagsList) draws one badge per entry of the card's effective port list,
+ * which is `rawData.ports` when present, else the aggregated `summary.portMap`
+ * (a COLLAPSED GROUP card's ports come from its children via that summary — the
+ * old code only looked at `data.ports`, undercounting large multi-container
+ * groups like file-share and the home-assistant cluster and so handing ELK a
+ * height far shorter than the card renders → the same-layer overlap in #2176).
+ */
+function countRenderedPorts(data: Record<string, unknown>): number {
+    const raw = (data.rawData as Record<string, unknown> | undefined) ?? {};
+    const rawPorts = Array.isArray(raw.ports) ? raw.ports : undefined;
+    if (rawPorts && rawPorts.length > 0) return rawPorts.length;
+
+    const summary = (data.summary as Record<string, unknown> | undefined) ?? {};
+    const summaryPorts = Array.isArray(summary.portMap) ? summary.portMap : undefined;
+    if (summaryPorts && summaryPorts.length > 0) return summaryPorts.length;
+
+    const dataPorts = Array.isArray(data.ports) ? data.ports : undefined;
+    return dataPorts ? dataPorts.length : 0;
+}
+
+/** #2176 — footer height: the ports region wraps ~3 badges/row (~28px/row);
+ *  the footer border + type-badge row renders even with zero ports. */
+function footerHeight(portRows: number): number {
+    return portRows > 0 ? 15 + portRows * 28 : 24;
+}
+
+/**
+ * #2176 — conservative safety margin derived from content count (NOT a blind
+ * constant): the frontend card is CSS h-auto, so real rendered rows (gap-3
+ * between blocks, line-wrap, border padding) run a little taller than these
+ * per-row approximations. A small per-content-row cushion keeps ELK's declared
+ * height ≥ the rendered height so same-layer cards never overlap, without
+ * wildly over-reserving for tiny cards.
+ */
+function safetyMargin(detailRows: number, domainRows: number, portRows: number, extraRows: number): number {
+    return 12 + (detailRows + domainRows + portRows + extraRows) * 4;
+}
+
 function calculateNodeHeight(node: Node): number | undefined {
     if (node.data.type === 'group') return 320;
     if (node.data.type === 'internet') return 150;
-    
+
     // Base Header (Title + Status + Padding)
-    let height = 60; 
+    let height = 60;
     const data = node.data || {};
-    
-    // SubLabel (IP or Image) - ~28px
-    if (data.subLabel) height += 28;
-    
-    // Details Grid — replicates the row count from NetworkDashboard.tsx.
+
     // #969 — rawData / metadata carry per-node-kind discriminated shapes
     // (container / service / router / link). Type as Record<string, unknown>;
     // every field access narrows at the call site with a typeof / truthiness
     // check, so we don't need (and don't have) a discriminated union here.
     const raw = (data.rawData as Record<string, unknown> | undefined) ?? {};
     const metadata = (data.metadata as Record<string, unknown> | undefined) ?? {};
+    let extraRows = 0;
 
-    // Each detail row is approx 40px (label + value + gap)
-    height += countDetailRows(node.data.type, raw, metadata) * 40;
-
-    // Verified Domains (Nginx / Router)
-    const domains = Array.isArray(metadata.verifiedDomains) ? metadata.verifiedDomains as string[] : undefined;
-    if (domains && domains.length > 0) {
-        height += 25; // Header "Verified Domains"
-        height += domains.length * 36; // Each domain row approximation
-        height += 10; // Padding
-    }
-
-    // Hostname Field
-    if (data.hostname) height += 28;
-
+    // SubLabel (IP or Image) - ~28px
+    if (data.subLabel) { height += 28; extraRows++; }
+    // Hostname Field - ~28px
+    if (data.hostname) { height += 28; extraRows++; }
     // Description (line-clamp-2 -> max ~36px)
     if (metadata.description && node.data.type !== 'link') height += 40;
-    
-    // Footer (Ports)
-    const ports = (data.ports as string[]) || [];
-    if (ports.length > 0) {
-        height += 15; // Top border/padding
-        // Badges wrap. Assume ~3 badges per row for standard width (340px)
-        // Each badge is approx 24px high + gap
-        const rows = Math.ceil(ports.length / 3);
-        height += rows * 20;
-    }
-    
-    // Bottom Padding
-    height += 20;
-    
+
+    // Details Grid — each row approx 40px (label + value + gap).
+    const detailRows = countDetailRows(node.data.type, raw, metadata);
+    height += detailRows * 40;
+
+    // Verified Domains (Nginx / Router): header + rows + padding.
+    const domains = Array.isArray(metadata.verifiedDomains) ? metadata.verifiedDomains as string[] : undefined;
+    const domainRows = domains?.length ?? 0;
+    if (domainRows > 0) height += 25 + domainRows * 36 + 10;
+
+    // Footer (Ports). #2176 — count the badges the card ACTUALLY renders
+    // (rawData.ports / aggregated summary.portMap), not just `data.ports`.
+    const portRows = Math.ceil(countRenderedPorts(data as Record<string, unknown>) / 3);
+    height += footerHeight(portRows);
+
+    height += 20; // Bottom Padding
+    height += safetyMargin(detailRows, domainRows, portRows, extraRows);
+
     return Math.max(height, 240); // Ensure minimum height
 }
 
