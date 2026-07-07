@@ -8,10 +8,12 @@ Read first: the orchestrator's shared rules in `.claude/skills/autoloop-issues/S
 
 | | When | What runs |
 |---|---|---|
-| **Fast gate** | after **every** unit (per-issue) | `npm run lint` · `npm run check:arch` · `npx vitest run --changed` |
-| **Full gate** | once, at the **batch seal** | `npm run lint` · `npm run check:arch` · **`npm test`** (full suite) → push → CI |
+| **Fast gate** | after **every** unit (per-issue) | `npm run lint` · `npm run typecheck` · `npm run check:arch` · `npx vitest run --changed` |
+| **Full gate** | once, at the **batch seal** | `npm run lint` · `npm run typecheck` · `npm run check:arch` · **`npm test`** (full suite) → push → CI |
 
 Rationale: `check:arch` (global, fast) catches import/structure breakage per issue; `vitest --changed` runs every test that imports the changed module *transitively*, which covers the common cross-module regression cheaply. The full ~844-case suite is the safety net at the seal — and since you accumulate on one branch in one session, a red full-run is a cheap in-context bisect, not a cold one. **Do not run the full `npm test` per issue.**
+
+`npm run typecheck` (= `tsc --noEmit`, the **exact** command CI's `typecheck` job runs, over all workspaces via the root `tsconfig.json`) is in **both** gates because `vitest` does **not** type-check — a type error (read-only `NODE_ENV`, `vi.fn` generic arity, wrong import source) passes `--changed` and the full suite, then only fails after push in CI's dedicated typecheck job (#2172). Running it per-unit catches the type error locally, before push, on every unit.
 
 ---
 
@@ -44,6 +46,7 @@ When the unit carries **explicit acceptance criteria** — a spec §N checklist 
 ### 4. Fast gate (per unit)
 ```bash
 npm run lint            # 0 errors; warnings only if count didn't increase
+npm run typecheck       # tsc --noEmit — SAME as CI's typecheck job; vitest doesn't type-check (#2172)
 npm run check:arch      # invariants + depcruise — must pass
 npx vitest run --changed   # tests transitively affected by this unit's changes
 ```
@@ -77,7 +80,7 @@ Precondition (the orchestrator checked it, re-assert anyway): (`batch.count >= 8
 ```bash
 git checkout <batch.branch>
 git rebase origin/main
-npm run lint && npm run check:arch && npm test    # full suite — the safety net
+npm run lint && npm run typecheck && npm run check:arch && npm test    # + tsc --noEmit (CI parity, #2172); full suite — the safety net
 ```
 A full-suite failure that the per-unit `--changed` runs missed → identify the culprit commit (atomic, `Closes #N` — cheap in-context bisect), fix on the branch, re-run. Push only when green:
 ```bash
