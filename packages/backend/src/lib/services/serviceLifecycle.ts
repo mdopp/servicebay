@@ -22,6 +22,7 @@ import { getConfig, updateConfig } from '../config';
 import { saveSnapshot } from '../history';
 import { injectServiceDirectives } from './quadletDirectives';
 import { ServiceListing } from './serviceListing';
+import { buildExpectedContainerNames } from './containerNameMatcher';
 import type { PodLikeDoc, PodLikeVolumeMount } from './containerNameMatcher';
 
 const SYSTEMD_DIR = '.config/containers/systemd';
@@ -921,6 +922,16 @@ export class ServiceLifecycle {
             await ServiceLifecycle.runPostDeployScript(nodeName, name, postDeployScript, postDeployEnv ?? {}, onProgress);
         }
 
+        // #2174 — a post-deploy.py may swap this service to a `.container`
+        // GPU Quadlet (ollama's CDI fixup, #1026). deployKubeService just
+        // wrote `${name}.kube`+`${name}.yml` above; both units generate
+        // `${name}.service`, and systemd may pick the `.kube` (kube-play,
+        // no CDI device) over the `.container` — silently dropping ollama
+        // to CPU. Reconcile: if a `.container` unit now exists, retire the
+        // shadowing `.kube`/`.yml` and force-recreate the container so it
+        // picks up the CDI device. No-op for every non-`.container` deploy.
+        await ServiceLifecycle.reconcileContainerQuadletShadow(nodeName, name, yamlName, yamlContent, onProgress);
+
         // Stamp the template's schema version so future re-deploys can
         // detect breaking-change deltas vs. the version that's actually
         // running on the box. See #353 / #354. Best-effort: a failure
@@ -967,6 +978,97 @@ export class ServiceLifecycle {
             }
         } catch (e) {
             logger.warn('ServiceManager', `Failed to create health check for ${name}:`, e);
+        }
+    }
+
+    /**
+     * Reconcile a `.container` GPU Quadlet against the shadowing `.kube`/`.yml`
+     * that `deployKubeService` writes on every deploy (#2174).
+     *
+     * A template's post-deploy.py can swap a service to a `.container` unit so
+     * `AddDevice=nvidia.com/gpu=all` survives (ollama's CDI fixup, #1026 —
+     * `podman kube play` silently drops `resources.limits.nvidia.com/gpu` on
+     * rootless). But `deployKubeService` unconditionally (re)writes
+     * `${name}.kube` + `${name}.yml` earlier in the deploy. **Both units
+     * generate `${name}.service`** — and systemd's generator may pick the
+     * `.kube` (kube-play, CPU) over the `.container`, so ollama silently drops
+     * to CPU with no error, and even when the `.container` does win, the old
+     * CPU container keeps the container name so a plain `start`/`restart`
+     * never re-creates it with the CDI device.
+     *
+     * Idempotent reconcile, guarded to nodes where the `.container` is in use:
+     *   1. If no `${name}.container` on disk → no-op (every normal kube deploy).
+     *   2. Move the shadowing `.kube`/`.yml` this deploy just wrote into the
+     *      trash bucket so `${name}.service` unambiguously comes from the
+     *      `.container` (recoverable, mirrors soft-delete).
+     *   3. daemon-reload, stop the unit, **force-remove** every plausible
+     *      container name (a plain restart leaves the old CPU container by
+     *      name), then start — so the container is recreated with the CDI
+     *      device. Matches the manual restore documented in #2174.
+     *
+     * Best-effort: any agent failure is logged and swallowed — a botched
+     * reconcile must not fail the deploy (the service is already running).
+     */
+    static async reconcileContainerQuadletShadow(
+        nodeName: string,
+        name: string,
+        yamlName: string,
+        yamlContent: string,
+        onProgress?: (message: string) => void,
+    ): Promise<void> {
+        try {
+            const agent = await agentManager.ensureAgent(nodeName);
+
+            // Guard: only act when a `.container` unit is actually on disk.
+            // Absent → this is an ordinary `.kube` deploy; nothing to shadow.
+            const containerCheck = await agent.sendCommand('exec', {
+                command: `test -f ~/${SYSTEMD_DIR}/${name}.container && echo present || echo absent`,
+            });
+            if ((containerCheck?.stdout ?? '').trim() !== 'present') return;
+
+            onProgress?.(`${name}: a .container GPU Quadlet is in use — retiring the shadowing .kube/.yml and force-recreating the container.`);
+            logger.info('ServiceManager', `${name}: reconciling .container over shadowing .kube/.yml (#2174)`);
+
+            // Move the shadowing units into the trash bucket (recoverable),
+            // mirroring soft-delete's "move, don't rm".
+            const trashStamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const trashDir = `~/${SYSTEMD_DIR}/.trash/${trashStamp}-${name}-shadow`;
+            await agent.sendCommand('exec', { command: `mkdir -p '${trashDir}'` });
+            await agent.sendCommand('exec', {
+                command: `mv -f ~/${SYSTEMD_DIR}/${name}.kube '${trashDir}/' 2>/dev/null || true`,
+            });
+            await agent.sendCommand('exec', {
+                command: `mv -f ~/${SYSTEMD_DIR}/${yamlName} '${trashDir}/' 2>/dev/null || true`,
+            });
+
+            await ServiceLifecycle.reloadDaemon(nodeName);
+
+            // Force-recreate: stop the unit, remove every plausible container
+            // name (the old CPU container survives a restart by holding the
+            // name), then start so the `.container` unit recreates it with the
+            // CDI device. Candidate names come from the shadowing pod spec
+            // plus the standard Quadlet name shapes (`ollama-ollama` etc.).
+            try {
+                await agent.sendCommand('exec', { command: `systemctl --user stop ${name}.service` });
+            } catch { /* may already be stopped */ }
+
+            let podDocs: PodLikeDoc[] = [];
+            try {
+                podDocs = (yaml.loadAll(yamlContent) as PodLikeDoc[]).filter(Boolean);
+            } catch { /* malformed yaml → fall back to the standard name shapes */ }
+            const candidates = buildExpectedContainerNames(name, podDocs);
+            for (const cname of candidates) {
+                await agent.sendCommand('exec', { command: `podman rm -f ${cname} 2>/dev/null || true` });
+            }
+
+            try {
+                await agent.sendCommand('exec', { command: `systemctl --user reset-failed ${name}.service` });
+            } catch { /* unit may not be in failed state */ }
+            await ServiceLifecycle.startService(nodeName, name);
+
+            onProgress?.(`${name}: container force-recreated from the .container Quadlet — GPU device should now be attached.`);
+        } catch (e) {
+            logger.warn('ServiceManager', `${name}: .container shadow reconcile failed (non-fatal):`, e);
         }
     }
 
