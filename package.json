@@ -16,6 +16,7 @@
     "build": "next build packages/frontend && node scripts/patch-routes-manifest.mjs && node scripts/build-server.mjs",
     "start": "NODE_ENV=production node dist-server/server.cjs",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "knip": "knip",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
