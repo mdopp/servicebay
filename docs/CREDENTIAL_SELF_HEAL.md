@@ -20,7 +20,9 @@ some drift, one is a known foot-gun.
 | **LLDAP** | `LLDAP_ADMIN_PASSWORD` (`enc:` in `config.json`) | `auth/lldap/users.db` (admin bcrypt set on first start) | Installer dynamically injects `LLDAP_FORCE_LDAP_USER_PASS_RESET=true` on deploy when a password regenerates, forcing LLDAP to reset its admin password to match `config.json` | ✅ |
 | **Immich (OIDC secret)** | `config.installedSecrets[IMMICH_SSO_SECRET]` (mirrored into Authelia's client) | `immich` DB `system_metadata` row `system-config` → `oauth.clientSecret` | post-deploy first tries the admin-authenticated `PUT /api/system-config`; if the admin login fails (drifted `IMMICH_ADMIN_PASSWORD`), falls back to a no-token DB re-stamp of the stored secret via `podman exec immich-database psql … jsonb_set` (#1556) | ✅ |
 | **Audiobookshelf (OIDC secret)** | `config.installedSecrets[ABS_OIDC_SECRET]` (mirrored into Authelia's `audiobookshelf` client) | `media` ABS `absdatabase.sqlite` `settings` row `server-settings` → `authOpenIDClientSecret` | post-deploy first tries the admin-authenticated `PATCH /api/auth-settings`; if the ABS admin login fails (drifted `ABS_ADMIN_PASSWORD`), falls back to a no-token DB re-stamp via `podman exec media-audiobookshelf sqlite3 … json_set`, then restarts the ABS container (#1717) | ✅ |
+| **Honcho (Postgres role password)** | `HONCHO_POSTGRES_PASSWORD` (`enc:` in `config.json`, auto-generated fresh every install) | `honcho/pgdata` (pgvector cluster; role password seeded from env only on first cluster init) | post-deploy detects preserved pgdata (`PG_VERSION` marker) and re-keys the role in place — `podman exec honcho-postgres psql … ALTER ROLE honcho WITH PASSWORD :'pw'` over the trusted local socket — so a reinstall-over-data password mismatch can't crash-loop the app. No-op on fresh pgdata (env seed already matches). Same class as LLDAP FORCE_RESET / NPM API rekey (#2165) | ✅ |
 | **Jellyfin (LDAP→LLDAP)** | `LLDAP_ADMIN_PASSWORD` (bind DN), no per-service secret | `media/jellyfin-config/plugins/configurations/LDAP-Auth.xml` | post-deploy (re)writes the LDAP-Auth plugin config pointed at LLDAP on every deploy (idempotent), installs the plugin binary via the package API when an admin token is available, and bounces Jellyfin. Local Jellyfin `admin` stays a break-glass login (#1718) | ✅ |
+| **Jellyfin (local user DB divergence)** | none — Jellyfin owns its `jellyfin.db` accounts | `media/jellyfin-config/data/jellyfin.db` (persists across reinstall) | **n/a — user-managed, no server-side reconciliation.** LDAP users authenticate live against LLDAP every login (the row above keeps that binding self-healing), so a persisted local user DB is *benign divergence*, not a crash/lockout class like Honcho/LLDAP/NPM: nothing ServiceBay generates is checked against those rows, so nothing can mismatch and crash-loop. ServiceBay does not own Jellyfin user identity and must not rewrite it — auto-editing accounts would clobber operator-created local users. Recovery for a genuinely wedged local account is Jellyfin's own admin UI (#2165) | n/a |
 | **Cloudflare API key** | `config.dns.cloudflareToken` | n/a — operator-supplied | None possible; operator re-enters via wizard | n/a |
 | **FritzBox** | `config.gateway.fritzbox.password` | n/a — operator-supplied | None possible | n/a |
 | **SMTP** | `config.notifications.email.smtp.password` | n/a — operator-supplied | None possible | n/a |
@@ -40,6 +42,29 @@ The pathological combination is **wipe `secrets`, preserve `identity`**:
 
 **Mitigation & Recovery**: This dynamic self-healing runs automatically, eliminating the old lockout cycle entirely. The defaults (`preserve secrets + certs + identity`, wipe only `service-data`) still avoid database modifications entirely, but this safety net ensures any combination chosen remains fully working.
 
+## The Honcho edge case (Postgres role rekey)
+
+Honcho's `HONCHO_POSTGRES_PASSWORD` is auto-generated fresh on **every**
+install (`type: secret`, never reused). The pgvector image seeds that
+password into the cluster only on **first** `initdb`; afterwards it is a
+row in the DB, ignored on subsequent boots. So on the pathological
+**reinstall-over-preserved-pgdata**:
+
+1. The wizard generates a brand-new `HONCHO_POSTGRES_PASSWORD`.
+2. `honcho/pgdata` is preserved → the cluster keeps its OLD role password.
+3. Both containers get the NEW password via env; the app dials
+   `postgresql+psycopg://honcho:<new>@…` → auth failure → crash loop.
+
+The fix (`templates/honcho/post-deploy.py`) mirrors the LLDAP/NPM in-place
+rekey: on a preserved pgdata (probed by the `PG_VERSION` marker), it waits
+for `pg_isready`, then re-keys the role over the container's **trusted local
+socket** (`podman exec honcho-postgres psql … ALTER ROLE honcho WITH PASSWORD
+:'pw'`) so the DB password matches the env password again, and bounces the
+app. The role password is an *access credential*, not an encryption key —
+re-keying it loses no data (every table is owned by the role, not the
+password). No-op on a fresh install (the env seed already matches). This is
+the connection-password analog of the LLDAP admin-bind self-heal below.
+
 ## Pattern: when to add a self-heal
 
 A new service template needs an explicit self-heal entry above when
@@ -50,7 +75,11 @@ A new service template needs an explicit self-heal entry above when
 2. The image does not re-key from env on every start.
 
 If either is false, mustache overwrite (AdGuard pattern) or API-side
-rotation (NPM pattern) is sufficient.
+rotation (NPM pattern) is sufficient. When the stored credential is a
+**database connection/role password** that the image seeds only on first
+init (Postgres pattern), re-key it in place over the container's trusted
+local socket (Honcho `ALTER ROLE`, Immich/NPM DB re-stamp) rather than
+letting a preserved data dir crash-loop the app.
 
 See [`feedback_ux_philosophy.md`](../.claude/projects/-home-mdopp-servicebay/memory/feedback_ux_philosophy.md)
 — self-heal first, structured-action second.

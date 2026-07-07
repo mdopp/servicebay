@@ -51,4 +51,52 @@ describe('ApiTokensSection (#2100 settings migration)', () => {
     fireEvent.click(screen.getByRole('button', { name: /new token/i }));
     expect(screen.getByRole('button', { name: /^create$/i })).toBeDefined();
   });
+
+  // #2164: revoke is guarded by the typed-confirmation ConfirmModal, not a bare
+  // browser confirm() — consistent with stack-wipe / service-delete / factory-reset.
+  it('revoke opens a typed-confirmation modal that blocks until the token name is typed', async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/system/mcp-bootstrap') {
+        return Promise.resolve(new Response(JSON.stringify({ active: false }), { status: 200 }));
+      }
+      if (url.startsWith('/api/system/api-tokens')) {
+        if (init?.method === 'DELETE') return Promise.resolve(new Response('{}', { status: 200 }));
+        return Promise.resolve(new Response(JSON.stringify({ tokens: [TOKEN] }), { status: 200 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    // A bare browser confirm() must never be used on this path.
+    const confirmSpy = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirmSpy);
+
+    render(<ApiTokensSection />);
+    await waitFor(() => expect(screen.getByText('workstation')).toBeDefined());
+
+    fireEvent.click(screen.getByRole('button', { name: /revoke workstation/i }));
+
+    // Modal is open with the typed-confirmation prompt referencing the token name.
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toBeDefined();
+    expect(screen.getByText(/Type/i)).toBeDefined();
+
+    // No bare confirm() was fired.
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    // Confirm is disabled until the exact token name is typed.
+    const confirmBtn = screen.getByRole('button', { name: /revoke token/i }) as HTMLButtonElement;
+    expect(confirmBtn.disabled).toBe(true);
+
+    const input = dialog.querySelector('input[type="text"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'wrong-name' } });
+    expect(confirmBtn.disabled).toBe(true);
+
+    fireEvent.change(input, { target: { value: 'workstation' } });
+    expect(confirmBtn.disabled).toBe(false);
+
+    fireEvent.click(confirmBtn);
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/system/api-tokens?id=t1', { method: 'DELETE' }),
+    );
+  });
 });

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { HealthStore } from '@/lib/health/store';
-import { CheckConfig } from '@/lib/health/types';
+import { CheckConfig, isCheckPending } from '@/lib/health/types';
 import { v4 as uuidv4 } from 'uuid';
 import { withApiHandler } from '@/lib/api/handler';
 import { HealthCheckTarget, NodeName } from '@/lib/api/schemas';
@@ -27,6 +27,11 @@ export const GET = withApiHandler({}, async () => {
       status: lastResult ? lastResult.status : 'unknown',
       lastRun: lastResult ? lastResult.timestamp : null,
       lastResult: lastResult ? lastResult.message : null,
+      // #2166: a check created-but-never-run (within the grace window) is
+      // "pending", not the same undifferentiated 'unknown' as a check that's
+      // been silent for reasons other than being new. Lets the UI read a
+      // brand-new check as "not run yet" instead of a suspicious blank.
+      pending: isCheckPending(check.created_at, Boolean(lastResult)),
       history
     };
   });

@@ -647,6 +647,20 @@ storage:
           SecurityLabelDisable=true
 
           [Service]
+          # Self-heal the known relabel/permission failure class BEFORE
+          # podman tries the :Z relabel of the /app/data volume. A
+          # foreign-owned stray (root-owned *.bak-verify* left in
+          # ${DATA_ROOT}/servicebay by an aborted verify, #1796 follow-up)
+          # makes the container-side `chcon`/relabel fail → podman exits
+          # 126 and servicebay crash-loops with the UI dark on
+          # :${SERVICEBAY_PORT} while every stack stays up. This script
+          # runs on the HOST (rootless user unit sees the data dir
+          # directly, unlike the container which cannot edit its own host
+          # quadlet, #dirs) and reclaims/removes those strays so the
+          # relabel succeeds. Leading `-` + the script's own `|| true`
+          # guards mean it NEVER blocks startup, even if the data dir is
+          # missing or already clean.
+          ExecStartPre=-/bin/bash /usr/local/bin/servicebay-relabel-selfheal.sh
           # Stop the splash sidecar before podman binds :${SERVICEBAY_PORT}
           # so the port is free. Replaces the [Unit] Conflicts= directive
           # that systemd's transaction resolver was dropping splash's
@@ -667,6 +681,22 @@ storage:
           # The leading `-` and the script's own idempotency mean a
           # second run does nothing and never fails servicebay startup.
           ExecStartPost=-/bin/bash /usr/local/bin/retire-splash-quadlet.sh
+          # Out-of-band crash breadcrumb (#2159). When servicebay.service
+          # stops — crucially on FAILURE (exit 126 from a broken :Z
+          # relabel, OOM, a crash-loop) — the thing that would normally
+          # report the problem (the ServiceBay UI on :${SERVICEBAY_PORT})
+          # is the thing that's down, so the operator gets nothing. This
+          # writer runs on the HOST as the service exits and drops a
+          # machine-readable breadcrumb (exit code + result + last journal
+          # lines + timestamp) to ${DATA_ROOT}/servicebay/last-crash.json
+          # — a host path that survives the container being down. systemd
+          # exports $EXIT_CODE / $EXIT_STATUS / $SERVICE_RESULT to
+          # ExecStopPost. The backend surfaces it via the
+          # `servicebay_crash_breadcrumb` diagnose probe once the container
+          # recovers; an out-of-band reader (sb-tui over SSH) can read the
+          # same file while it's still down. Leading `-` so a breadcrumb
+          # write failure never blocks the unit's teardown/restart.
+          ExecStopPost=-/bin/bash /usr/local/bin/servicebay-crash-breadcrumb.sh
           # Retry restart if it fails (e.g. socket not ready)
           Restart=always
           RestartSec=5
@@ -1069,6 +1099,131 @@ storage:
           /usr/bin/mv -f "$QUADLET" "$RETIRED"
           /usr/bin/systemctl --user daemon-reload || true
           echo "retire-splash-quadlet: renamed $QUADLET → $RETIRED"
+
+    # ExecStartPre self-heal for the known relabel/permission failure
+    # class (#2159 / #1796). A foreign-owned stray in the data dir — most
+    # notoriously a root-owned `*.bak-verify*` file left by an aborted
+    # verify — makes podman's :Z relabel of ${DATA_ROOT}/servicebay fail,
+    # so `podman run` exits 126 and servicebay crash-loops with the UI
+    # dark. This runs on the HOST as the rootless user before podman, and:
+    #   1. removes `*.bak-verify*` strays (never real data — always a
+    #      leftover from a crashed verify, safe to delete);
+    #   2. reclaims any remaining entry NOT owned by ${HOST_USER} back to
+    #      ${HOST_USER}:${HOST_USER} so the relabel can proceed.
+    # Every step is guarded (`|| true`) and the unit wires it with a
+    # leading `-`, so a missing dir / already-clean tree / partial failure
+    # can never block servicebay from starting. It is deliberately
+    # conservative: it does NOT touch ownership outside ${DATA_ROOT}/servicebay
+    # and only chowns foreign-owned entries (a fully $HOST_USER-owned tree
+    # is a no-op).
+    - path: /usr/local/bin/servicebay-relabel-selfheal.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          # No `set -e`: this is best-effort self-heal — a single failing
+          # step must never abort servicebay startup.
+          DATA_DIR="${DATA_ROOT}/servicebay"
+          OWNER="${HOST_USER}"
+
+          if [ ! -d "$DATA_DIR" ]; then
+              # Nothing to heal (fresh box / not yet created). Not an error.
+              exit 0
+          fi
+
+          # 1. Purge *.bak-verify* strays. These are aborted-verify leftovers,
+          #    frequently root-owned, and are exactly what broke the :Z
+          #    relabel in the real incident. They are never live data.
+          find "$DATA_DIR" -maxdepth 2 -name '*.bak-verify*' -print -exec rm -rf {} + 2>/dev/null || true
+
+          # 2. Reclaim any remaining foreign-owned entry so the relabel can
+          #    proceed. Only entries NOT owned by $OWNER are touched — a
+          #    clean tree is a no-op. Scoped strictly to the data dir.
+          if command -v id >/dev/null 2>&1 && id -u "$OWNER" >/dev/null 2>&1; then
+              UID_WANT="$(id -u "$OWNER" 2>/dev/null)"
+              if [ -n "$UID_WANT" ]; then
+                  # `-not -uid` finds foreign-owned files without walking the
+                  # whole tree with chown when it's already correct.
+                  find "$DATA_DIR" -not -uid "$UID_WANT" -exec chown -h "$OWNER:$OWNER" {} + 2>/dev/null || true
+              fi
+          fi
+          exit 0
+
+    # ExecStopPost out-of-band crash breadcrumb writer (#2159). Runs on
+    # the HOST whenever servicebay.service stops. On a FAILURE stop (the
+    # crash-loop case the operator can't otherwise see, because the UI IS
+    # the failing container) it captures a machine-readable status file to
+    # a host path that survives the container being down. systemd exports
+    # $EXIT_CODE ("exited"/"killed"/…), $EXIT_STATUS (numeric code / signal)
+    # and $SERVICE_RESULT ("success"/"exit-code"/"signal"/…) to
+    # ExecStopPost. The file is JSON so sb-tui / the backend diagnose probe
+    # can parse it without scraping.
+    - path: /usr/local/bin/servicebay-crash-breadcrumb.sh
+      mode: 0755
+      contents:
+        inline: |
+          #!/bin/bash
+          # Best-effort: never fail the unit's teardown.
+          DATA_DIR="${DATA_ROOT}/servicebay"
+          OUT="$DATA_DIR/last-crash.json"
+          OWNER="${HOST_USER}"
+
+          # Only write on an abnormal stop. A clean stop (operator restart,
+          # image update, shutdown) is SERVICE_RESULT=success — don't clobber
+          # a real crash breadcrumb with a routine restart.
+          RESULT="${SERVICE_RESULT:-unknown}"
+          if [ "$RESULT" = "success" ]; then
+              exit 0
+          fi
+
+          [ -d "$DATA_DIR" ] || mkdir -p "$DATA_DIR" 2>/dev/null || exit 0
+
+          TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+          CODE="${EXIT_CODE:-unknown}"
+          STATUS="${EXIT_STATUS:-unknown}"
+
+          # Last journal lines for servicebay.service (this user unit). Cap
+          # the size so the breadcrumb stays small and JSON-embeddable. Strip
+          # control chars and escape for a JSON string.
+          JOURNAL="$(journalctl --user -u servicebay.service -n 40 --no-pager -o cat 2>/dev/null | tail -c 4000)"
+
+          # Emit "$1" as a JSON string literal (quotes included). Prefers
+          # python3's json.dumps (always on the box — the agent runtime);
+          # falls back to a sed/tr escaper for backslash, double-quote, and
+          # control chars so the file is still valid JSON without python.
+          json_escape() {
+              printf '%s' "$1" | python3 -c 'import json,sys; sys.stdout.write(json.dumps(sys.stdin.read()))' 2>/dev/null \
+                  || printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\000-\037' | tr '\n' ' ')"
+          }
+
+          JOURNAL_JSON="$(json_escape "$JOURNAL")"
+
+          # Name the known failure class so a reader can lead with the
+          # recovery hint even before parsing the journal. Exit 126 is the
+          # relabel/permission class (the ExecStartPre self-heal already
+          # tried to fix it, so a persistent 126 means it recurred).
+          if [ "$STATUS" = "126" ]; then
+              CAUSE='relabel-or-permission (exit 126): a foreign-owned stray in the data dir may be breaking the :Z relabel; the ExecStartPre self-heal removes bak-verify strays and reclaims foreign-owned files. If it recurs, check ownership of the ServiceBay data dir.'
+          else
+              CAUSE='see journal_tail'
+          fi
+
+          TMP="$OUT.tmp.$$"
+          {
+              printf '{\n'
+              printf '  "unit": "servicebay.service",\n'
+              printf '  "timestamp": "%s",\n' "$TS"
+              printf '  "service_result": "%s",\n' "$RESULT"
+              printf '  "exit_code": "%s",\n' "$CODE"
+              printf '  "exit_status": "%s",\n' "$STATUS"
+              printf '  "likely_cause": "%s",\n' "$CAUSE"
+              printf '  "journal_tail": %s\n' "$JOURNAL_JSON"
+              printf '}\n'
+          } > "$TMP" 2>/dev/null || exit 0
+
+          mv -f "$TMP" "$OUT" 2>/dev/null || { rm -f "$TMP" 2>/dev/null; exit 0; }
+          chown "$OWNER:$OWNER" "$OUT" 2>/dev/null || true
+          exit 0
 
     # Path unit that waits for /var/lib/installation-ready and starts
     # servicebay.service the moment it appears. Lives in user systemd

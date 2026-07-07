@@ -32,6 +32,28 @@ export type CheckType =
   // row's action button.
   | 'dns_routing';
 
+/**
+ * Grace window (#2166) within which a check that has produced no result yet is
+ * "pending" (just created, first tick hasn't landed) rather than
+ * "healthy-silent" (silent past grace = a scheduler that never ran it). Matches
+ * the 2-min stale threshold the diagnose `health_checks` probe already uses so
+ * the two views agree on when a resultless check becomes suspicious.
+ */
+export const PENDING_GRACE_MS = 2 * 60_000;
+
+/**
+ * Given a check's `created_at` and whether it has ever produced a result,
+ * classify it as pending (#2166). Pending ⇔ never run AND created within the
+ * grace window; a resultless check older than the window is NOT pending — it's
+ * a genuine stale/unknown signal that should surface.
+ */
+export function isCheckPending(createdAt: string | undefined, hasResult: boolean, now: number = Date.now()): boolean {
+  if (hasResult) return false;
+  const created = createdAt ? Date.parse(createdAt) : NaN;
+  if (!Number.isFinite(created)) return false;
+  return now - created <= PENDING_GRACE_MS;
+}
+
 export interface CheckConfig {
   id: string;
   name: string;
@@ -182,6 +204,22 @@ export interface Check extends CheckConfig {
   status: 'ok' | 'fail' | 'unknown';
   lastRun: string | null;
   lastResult: string | null;
+  /**
+   * Distinguishes a check that was **created but has not had its first tick
+   * yet** (legitimately pending, still inside the boot/creation grace window)
+   * from one that is **healthy-silent** — no result for reasons other than
+   * "just created" (#2166). Both previously collapsed to `status:'unknown'`
+   * with `lastRun:null`, so a brand-new check looked identical to a check whose
+   * scheduler wedged and never ran it.
+   *
+   * `true`  → never run AND created within {@link PENDING_GRACE_MS}: expected,
+   *           transient; the UI should read it as "Pending — not run yet",
+   *           not a broken/unknown red-adjacent state.
+   * `false` → either it has a result, OR it's been silent past the grace
+   *           window without ever producing one (that IS a problem worth
+   *           surfacing as stale/unknown).
+   */
+  pending?: boolean;
   message?: string;
   history: { status: 'ok' | 'fail'; latency: number; timestamp: string }[];
   /** Present only on synthetic diagnose rows (#1423). */

@@ -177,7 +177,18 @@ export interface AppConfig {
   schemaVersion?: number;
   logLevel?: LogLevel;
   serverName?: string; // Custom display name for this server
-  domain?: string; // Optional domain for display
+  /**
+   * Optional display domain for this box. NOT the reverse-proxy domain (see
+   * `reverseProxy.publicDomain` / `lanDomain`) — this is a purely cosmetic
+   * label. It is READ in exactly two places and never breaks routing:
+   *   - `layout.tsx` — browser tab title (`"<domain> - ServiceBay"`).
+   *   - `network/topologyAssembler.ts` — the synthetic "Internet" node's
+   *     display URL fallback (`config.domain || 'node'`).
+   * Kept (not removed) deliberately (#2166): both reads are live, so dropping
+   * the field would blank the tab title and the topology label. It is written
+   * only by an operator setting it in config; there is no auto-population.
+   */
+  domain?: string;
   gateway?: GatewayConfig;
   reverseProxy?: ReverseProxyConfig;
   agent?: AgentConfig;

@@ -18,6 +18,62 @@ function ensureDirs() {
 }
 
 /**
+ * Hot-path read cache (#2163). getChecks / getResults sit on the diagnose,
+ * health-API and core-health-summary request paths and were doing a full
+ * readFileSync + JSON.parse on every call — with many checks or a large
+ * results file on a loaded disk that blocks the event loop and wedges the
+ * diagnose/health pages.
+ *
+ * We keep the public API sync (dozens of callers across MCP, portal, service
+ * lifecycle and API routes rely on it) but serve parsed JSON from an in-memory
+ * cache keyed on the file's mtime+size. A `statSync` is a single cheap syscall;
+ * we only pay the expensive read+parse when the file actually changed. This is
+ * multi-writer-safe: writes from any bundle/process (the API-route webpack
+ * bundle, fs.watch in service.ts, another node process) bump the mtime, so the
+ * next reader re-parses. On write we invalidate our own entry immediately so a
+ * read-after-write in the same process never serves stale data even within
+ * mtime granularity.
+ */
+interface CacheEntry<T> {
+  mtimeMs: number;
+  size: number;
+  value: T;
+}
+
+const checksCache = { entry: null as CacheEntry<CheckConfig[]> | null };
+const resultsCache = new Map<string, CacheEntry<CheckResult[]>>();
+
+/** Read + JSON.parse a file, but reuse the cached parse when mtime+size are
+ *  unchanged. Returns `fallback` on any error (missing file / bad JSON). */
+function cachedRead<T>(
+  file: string,
+  getEntry: () => CacheEntry<T> | null | undefined,
+  setEntry: (e: CacheEntry<T> | null) => void,
+  fallback: T,
+): T {
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(file);
+  } catch {
+    setEntry(null);
+    return fallback;
+  }
+  const cached = getEntry();
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.value;
+  }
+  try {
+    const value = JSON.parse(fs.readFileSync(file, 'utf-8')) as T;
+    setEntry({ mtimeMs: stat.mtimeMs, size: stat.size, value });
+    return value;
+  } catch (e) {
+    logger.error('store', `Failed to read/parse ${file}`, e);
+    setEntry(null);
+    return fallback;
+  }
+}
+
+/**
  * Note: an earlier listener-callback design (PR #166) was abandoned because
  * Next.js bundles API routes in a webpack module graph that's separate from
  * the custom server's esbuild bundle. saveCheck calls from API routes
@@ -33,25 +89,32 @@ function ensureDirs() {
 
 export class HealthStore {
   static getChecks(): CheckConfig[] {
-    if (!fs.existsSync(CHECKS_FILE)) return [];
-    try {
-      return JSON.parse(fs.readFileSync(CHECKS_FILE, 'utf-8'));
-    } catch (e) {
-      logger.error('store', 'Failed to read checks config', e);
-      return [];
-    }
+    return cachedRead<CheckConfig[]>(
+      CHECKS_FILE,
+      () => checksCache.entry,
+      e => { checksCache.entry = e; },
+      [],
+    );
+  }
+
+  /** Persist checks.json and invalidate the read cache so a same-process
+   *  read-after-write can't serve stale data within mtime granularity. */
+  private static writeChecks(checks: CheckConfig[]) {
+    fs.writeFileSync(CHECKS_FILE, JSON.stringify(checks, null, 2));
+    checksCache.entry = null;
   }
 
   static saveCheck(check: CheckConfig) {
     ensureDirs();
-    const checks = this.getChecks();
+    // Copy — getChecks() may return the cached array; don't mutate it in place.
+    const checks = [...this.getChecks()];
     const index = checks.findIndex(c => c.id === check.id);
     if (index >= 0) {
       checks[index] = check;
     } else {
       checks.push(check);
     }
-    fs.writeFileSync(CHECKS_FILE, JSON.stringify(checks, null, 2));
+    this.writeChecks(checks);
   }
 
   /** Delete a STORED check by id. Returns false when nothing matched — e.g. a
@@ -63,7 +126,7 @@ export class HealthStore {
     const checks = this.getChecks();
     const remaining = checks.filter(c => c.id !== id);
     if (remaining.length === checks.length) return false;
-    fs.writeFileSync(CHECKS_FILE, JSON.stringify(remaining, null, 2));
+    this.writeChecks(remaining);
     return true;
   }
 
@@ -86,32 +149,33 @@ export class HealthStore {
       !((c.type === 'service' && c.target === serviceName) ||
         c.name === `Service: ${serviceName}`));
     if (remaining.length !== all.length) {
-      fs.writeFileSync(CHECKS_FILE, JSON.stringify(remaining, null, 2));
+      this.writeChecks(remaining);
     }
     return all.length - remaining.length;
   }
 
+  /** Persist a check's result file and invalidate its cache entry. */
+  private static writeResults(checkId: string, results: CheckResult[]) {
+    const resultFile = path.join(RESULTS_DIR, `${checkId}.json`);
+    try {
+      fs.writeFileSync(resultFile, JSON.stringify(results, null, 2));
+      resultsCache.delete(checkId);
+    } catch (e) {
+      logger.error('HealthStore', `Failed to save result for ${checkId}:`, e);
+    }
+  }
+
   static saveResult(result: CheckResult) {
     ensureDirs();
-    const resultFile = path.join(RESULTS_DIR, `${result.check_id}.json`);
-    let results: CheckResult[] = [];
-    if (fs.existsSync(resultFile)) {
-      try {
-        results = JSON.parse(fs.readFileSync(resultFile, 'utf-8'));
-      } catch {}
-    }
+    let results: CheckResult[] = [...this.getResults(result.check_id)];
     results.unshift(result);
-    
+
     // Keep results for 7 days
     const retentionMs = 7 * 24 * 60 * 60 * 1000;
     const now = Date.now();
     results = results.filter(r => new Date(r.timestamp).getTime() > now - retentionMs);
-    
-    try {
-        fs.writeFileSync(resultFile, JSON.stringify(results, null, 2));
-    } catch (e) {
-        logger.error('HealthStore', `Failed to save result for ${result.check_id}:`, e);
-    }
+
+    this.writeResults(result.check_id, results);
   }
 
   /** Every check_id that has a persisted result file on disk. Used by
@@ -130,12 +194,12 @@ export class HealthStore {
 
   static getResults(checkId: string): CheckResult[] {
     const resultFile = path.join(RESULTS_DIR, `${checkId}.json`);
-    if (!fs.existsSync(resultFile)) return [];
-    try {
-      return JSON.parse(fs.readFileSync(resultFile, 'utf-8'));
-    } catch {
-      return [];
-    }
+    return cachedRead<CheckResult[]>(
+      resultFile,
+      () => resultsCache.get(checkId),
+      e => { if (e) resultsCache.set(checkId, e); else resultsCache.delete(checkId); },
+      [],
+    );
   }
   
   static getLastResult(checkId: string): CheckResult | null {
@@ -151,20 +215,9 @@ export class HealthStore {
    * silent). No-op if there is no persisted result yet.
    */
   static markLastResultAlerted(checkId: string): void {
-    const resultFile = path.join(RESULTS_DIR, `${checkId}.json`);
-    if (!fs.existsSync(resultFile)) return;
-    let results: CheckResult[];
-    try {
-      results = JSON.parse(fs.readFileSync(resultFile, 'utf-8'));
-    } catch {
-      return;
-    }
+    const results = [...this.getResults(checkId)];
     if (results.length === 0) return;
-    results[0].alerted = true;
-    try {
-      fs.writeFileSync(resultFile, JSON.stringify(results, null, 2));
-    } catch (e) {
-      logger.error('HealthStore', `Failed to mark alerted for ${checkId}:`, e);
-    }
+    results[0] = { ...results[0], alerted: true };
+    this.writeResults(checkId, results);
   }
 }

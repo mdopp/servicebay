@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui';
+import ConfirmModal from '@/components/ConfirmModal';
 import { copyToClipboard } from '../clipboard';
 
 type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'reboot' | 'destroy' | 'exec';
@@ -200,6 +201,11 @@ export default function ApiTokensSection() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
   const [secretCopied, setSecretCopied] = useState(false);
+  // Tokens gate MCP/agent access, so revoke is a typed-confirmation destructive
+  // action (ConfirmModal), consistent with stack-wipe / service-delete /
+  // factory-reset — never a bare browser confirm() (#2164).
+  const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
+  const [revoking, setRevoking] = useState(false);
 
   // The hash is set by the install script; this UI just reflects status +
   // offers a manual revoke. Auto-revoked when the operator mints their first
@@ -272,10 +278,20 @@ export default function ApiTokensSection() {
     }
   };
 
-  const revokeOneToken = async (id: string, name: string) => {
-    if (!confirm(`Revoke token "${name}"? Any client using this token will be locked out immediately.`)) return;
-    const res = await fetch(`/api/system/api-tokens?id=${id}`, { method: 'DELETE' });
-    if (res.ok) loadTokens();
+  const revokeOneToken = (id: string, name: string) => {
+    setRevokeTarget({ id, name });
+  };
+
+  const confirmRevoke = async () => {
+    if (!revokeTarget || revoking) return;
+    setRevoking(true);
+    try {
+      const res = await fetch(`/api/system/api-tokens?id=${revokeTarget.id}`, { method: 'DELETE' });
+      if (res.ok) loadTokens();
+      setRevokeTarget(null);
+    } finally {
+      setRevoking(false);
+    }
   };
 
   const copySecret = async () => {
@@ -335,6 +351,22 @@ export default function ApiTokensSection() {
           </Button>
         )}
       </div>
+
+      <ConfirmModal
+        isOpen={revokeTarget !== null}
+        title="Revoke API token"
+        isDestructive
+        requireTypedConfirm
+        resourceName={revokeTarget?.name ?? ''}
+        isLoading={revoking}
+        confirmText={revoking ? 'Revoking…' : 'Revoke token'}
+        message="Any client using this token — an MCP assistant, the ServiceBay TUI, or a script — is locked out immediately. This cannot be undone."
+        onConfirm={confirmRevoke}
+        onCancel={() => {
+          if (revoking) return;
+          setRevokeTarget(null);
+        }}
+      />
     </>
   );
 }
