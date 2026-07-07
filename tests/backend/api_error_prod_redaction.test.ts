@@ -21,8 +21,6 @@ vi.mock('@/lib/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-const ORIGINAL_ENV = process.env.NODE_ENV;
-
 async function loadApiError() {
   vi.resetModules();
   const mod = await import('@/lib/api/errors');
@@ -30,13 +28,13 @@ async function loadApiError() {
 }
 
 afterEach(() => {
-  process.env.NODE_ENV = ORIGINAL_ENV;
+  vi.unstubAllEnvs();
   vi.resetModules();
 });
 
 describe('apiError — NODE_ENV=production lane (#2166)', () => {
   beforeEach(() => {
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
   });
 
   it('redacts the real error message to a generic string in production', async () => {
@@ -78,7 +76,7 @@ describe('apiError — NODE_ENV=production lane (#2166)', () => {
 
 describe('apiError — development lane surfaces the real message', () => {
   beforeEach(() => {
-    process.env.NODE_ENV = 'development';
+    vi.stubEnv('NODE_ENV', 'development');
   });
 
   it('includes the real error message in development', async () => {
