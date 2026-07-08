@@ -1311,7 +1311,11 @@ export default function NetworkDashboard() {
             parentId: n.parentNode,
             extent: n.parentNode ? 'parent' : undefined,
             className: isGroup ? 'border border-dashed border-slate-300 dark:border-white/10 bg-slate-500/[0.02] dark:bg-white/[0.01] rounded-2xl backdrop-blur-[2px]' : undefined,
-            style: isGroup ? { 
+            // #2201 — React Flow v12 reads layout dims from top-level
+            // width/height, not style. Set the initial group guess top-level so
+            // it doesn't fight the top-level dims getLayoutedElements stamps.
+            ...(isGroup ? { width: 400, height: 200 } : {}),
+            style: isGroup ? {
                 width: 400, // Initial guess, ELK will resize
                 height: 200,
             } : undefined
