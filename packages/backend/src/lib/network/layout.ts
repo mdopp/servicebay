@@ -8,23 +8,40 @@ const GROUP_NODE_TYPES = new Set(['group', 'proxy', 'service', 'pod', 'unmanaged
 
 // ELK options for the ROOT graph.
 //
-// #2176 — `elk.hierarchyHandling: INCLUDE_CHILDREN` on the root disables ELK's
-// connected-component packer: with it set globally, disconnected components
-// (and the anchored floating cards from #2175) stack into a single dense column
-// beside an empty half of the canvas. So the root NEVER gets INCLUDE_CHILDREN —
-// it keeps `separateConnectedComponents` + `aspectRatio` so components fan out.
+// #2198 — the root DOES get `elk.hierarchyHandling: INCLUDE_CHILDREN`.
+// ELK needs it there to resolve CROSS-HIERARCHY edges (an edge whose source
+// and target sit at different levels of the compound tree — e.g. the #2175
+// `kind:"inferred"` edge from a top-level service to a container nested inside
+// ANOTHER service). Without root INCLUDE_CHILDREN, ELK throws
+// `UnsupportedGraphException("... connects a node ... to a node in another
+// level of hierarchy ... solved by setting hierarchyHandling INCLUDE_CHILDREN")`,
+// getLayoutedElements' catch returns the UNLAID nodes at (0,0), and every
+// container child stacks at its parent's origin (the operator-reported symptom).
 //
-// #2191 — nested (compound) group nodes still need INCLUDE_CHILDREN to grow and
-// enclose their children. The two are NOT in tension once you stop relying on a
-// single global flag: `hierarchyHandling` can be set PER NODE, so each compound
-// node carries its own INCLUDE_CHILDREN in buildHierarchy (see the group
-// per-node layoutOptions) while the root keeps the component packer. This lets a
-// multi-container service GROW around its containers AND disconnected components
-// fan out, in the same graph (the #2191 hard case).
+// History / why the earlier reasoning inverted:
+//   #2176 turned the root INCLUDE_CHILDREN OFF because it disabled ELK's
+//   connected-component packer, and back then the graph had genuine
+//   disconnected components (floating cards) that needed `separateConnected
+//   Components` + `aspectRatio` to fan out. #2191 then tried to keep nesting
+//   working by moving INCLUDE_CHILDREN to a PER-NODE flag on each compound
+//   group — but a per-node flag does NOT let the ROOT resolve a cross-hierarchy
+//   edge, so #2175's inferred edges broke the whole layout.
+//   The real resolution: #2175 now ANCHORS every otherwise-floating node to
+//   the gateway, so there are NO disconnected components left. With nothing to
+//   pack, the #2176 packer is unnecessary — we can turn
+//   `separateConnectedComponents` OFF and put INCLUDE_CHILDREN back on the root,
+//   which both encloses children AND resolves the cross-hierarchy edges.
+//   (Verified on the real box graph: no exception; group children get distinct
+//   enclosed positions; top-level nodes still spread across the canvas.)
 function buildLayoutOptions(): Record<string, string> {
   return {
     'elk.algorithm': 'layered',
     'elk.direction': 'RIGHT', // Horizontal flow (Internet -> Router -> Proxy -> Services)
+    // #2198 — resolve cross-hierarchy edges (#2175 inferred edges) at the root.
+    // Safe now that #2175 anchors every node to the gateway → no disconnected
+    // components remain, so the #2176 component packer (which conflicts with
+    // INCLUDE_CHILDREN) is no longer needed.
+    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
     // #2176 — vertical gap *between* same-layer nodes. This is a MINIMUM added
     // on top of each node's declared height, so overlap-free packing depends on
     // calculateNodeHeight being truthful (see below), not on this number. Kept
@@ -48,13 +65,11 @@ function buildLayoutOptions(): Record<string, string> {
     // edge and reserve space for it so chips never overlap the routed lines.
     'elk.edgeLabels.placement': 'CENTER',
     'elk.spacing.edgeLabel': '8',
-    // #2176 — spread disconnected components across the canvas instead of
-    // stacking them as one dense right column beside an empty left half.
-    'elk.separateConnectedComponents': 'true',
-    'elk.spacing.componentComponent': '80',
-    // Bias component packing toward a landscape canvas so components fan out
-    // horizontally (using the empty left half) rather than piling in a column.
-    'elk.aspectRatio': '1.6',
+    // #2198 — with root INCLUDE_CHILDREN the component packer must be OFF
+    // (INCLUDE_CHILDREN disables it anyway); #2175 anchors leave no
+    // disconnected components to pack, so nothing regresses. Kept explicit so
+    // the intent is unambiguous.
+    'elk.separateConnectedComponents': 'false',
   };
 }
 
@@ -91,6 +106,26 @@ function toElkEdge(edge: Edge): ElkExtendedEdge {
   };
 }
 
+// Append one React Flow node with its ELK-computed box. Groups MUST take ELK's
+// height to enclose their children. #2198 — a CHILD leaf (has a parentId) also
+// takes ELK's height: root INCLUDE_CHILDREN lays each child out at a real box
+// inside its grown parent, and the child card renders `h-full` to fill exactly
+// that slot (NetworkDashboard.CustomNode), so it can't spill into the sibling
+// below it. A parentless leaf keeps h-auto (grows with content) → undefined.
+function pushLayoutedNode(out: Node[], original: Node, elkNode: ElkNode): void {
+  const isGroup = GROUP_NODE_TYPES.has(original.data?.type as string);
+  const isChildLeaf = original.parentId !== undefined;
+  out.push({
+    ...original,
+    position: { x: elkNode.x!, y: elkNode.y! },
+    style: {
+      ...original.style,
+      width: elkNode.width,
+      height: (isGroup || isChildLeaf) ? elkNode.height : undefined,
+    },
+  });
+}
+
 export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
   // We need to restructure the flat list of nodes into a hierarchy for ELK
   const hierarchy = buildHierarchy(nodes, edges);
@@ -104,19 +139,7 @@ export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
     const flatten = (node: ElkNode) => {
       if (node.id !== 'root') {
         const original = nodes.find(n => n.id === node.id);
-        if (original) {
-            layoutedNodes.push({
-                ...original,
-                position: { x: node.x!, y: node.y! },
-                // We do NOT set height here for leaf nodes, so the node can grow with content (CSS h-auto)
-                // But for groups, we MUST set the height calculated by ELK to contain children.
-                style: { 
-                    ...original.style, 
-                    width: node.width,
-                    height: (GROUP_NODE_TYPES.has(original.data?.type as string)) ? node.height : undefined
-                }
-            });
-        }
+        if (original) pushLayoutedNode(layoutedNodes, original, node);
       }
       
       node.children?.forEach(child => flatten(child));
@@ -164,6 +187,12 @@ export const getLayoutedElements = async (nodes: Node[], edges: Edge[]) => {
 
     return { nodes: layoutedNodes, edges: layoutedEdges };
   } catch (error) {
+    // #2198 — a thrown ELK layout (e.g. an unresolved cross-hierarchy edge)
+    // falls back to the UNLAID nodes at (0,0), which stacks every group child
+    // at its parent origin. That silent failure hid the #2175/#2191 regression
+    // for three releases — so warn loudly with the error while still returning
+    // the fallback so the map renders *something* instead of a blank canvas.
+    logger.warn('layout', 'ELK layout failed — returning unlaid nodes (children will stack at origin):', error);
     logger.error('layout', 'ELK Layout Error:', error);
     return { nodes, edges };
   }
@@ -381,19 +410,21 @@ function buildHierarchy(nodes: Node[], edges: Edge[]): ElkNode {
             width: node.measured?.width ?? calculateNodeWidth(node),
             height: node.measured?.height ?? calculateNodeHeight(node),
             layoutOptions: isGroup ? {
-                'elk.padding': '[top=80,left=50,bottom=50,right=50]',
+                // #2198 — snug internal spacing so the enclosing box hugs its
+                // children: a small per-group nodeNode gap + tighter bottom/right
+                // padding make the group height ≈ sum(child heights) + padding
+                // instead of the ~3-4× oversized empty box the operator flagged.
+                'elk.padding': '[top=80,left=50,bottom=30,right=30]',
                 'elk.direction': 'RIGHT', // Horizontal layout for contents (Containers side-by-side)
                 'elk.algorithm': 'layered',
                 'elk.resize': 'true',
                 'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-                'elk.spacing.nodeNode': '80',
+                'elk.spacing.nodeNode': '20',
                 'elk.layered.spacing.nodeNodeBetweenLayers': '120',
-                // #2191 — INCLUDE_CHILDREN is set PER compound node (here), not on
-                // the root, so this node grows to enclose its children while the
-                // root keeps the connected-component packer (see buildLayoutOptions).
-                // It's harmless on a group whose children were all filtered out
-                // (collapsed) — such a node has no children[] to include.
-                'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+                // #2198 — no per-node INCLUDE_CHILDREN: the ROOT carries it now
+                // (buildLayoutOptions), which both encloses these children AND
+                // resolves cross-hierarchy (#2175 inferred) edges. A per-node
+                // flag could not do the latter (that was the #2191 regression).
             } : undefined,
             labels: [{ text: (node.data.label as string) || '' }],
             children: []
@@ -425,10 +456,9 @@ function buildHierarchy(nodes: Node[], edges: Edge[]): ElkNode {
     // However, putting them at root usually works for basic layout.
     const elkEdges: ElkExtendedEdge[] = edges.map(toElkEdge);
 
-    // #2191 — the root NEVER gets INCLUDE_CHILDREN (that would disable the
-    // connected-component packer, #2176). Nesting is handled per compound node
-    // via each group's own layoutOptions above, so a multi-container service
-    // grows around its containers AND disconnected components still fan out.
+    // #2198 — the root carries INCLUDE_CHILDREN (buildLayoutOptions), which
+    // both grows each compound node around its children AND resolves the
+    // cross-hierarchy #2175 inferred edges declared here at root level.
     return {
         id: 'root',
         layoutOptions: buildLayoutOptions(),

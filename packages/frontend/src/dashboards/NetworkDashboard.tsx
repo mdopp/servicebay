@@ -43,7 +43,6 @@ import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import { Button, Badge, StatusDot } from '@/components/ui';
 import {
-  applyChildSlotHeights,
   buildOrthogonalPath,
   buildServiceEditHref,
   computeEgoNodeIds,
@@ -1155,13 +1154,11 @@ export default function NetworkDashboard() {
     }
 
     // 4. Layout
+    // #2198 — getLayoutedElements now stamps each child leaf's ELK-computed
+    // box (width + height) directly, so the #2194 applyChildSlotHeights
+    // band-aid is gone; the child card renders `h-full` to fill that slot.
     const layouted = await getLayoutedElements(layoutNodes, layoutEdges);
-    // #2194 — the group node already carries ELK's grown width/height; give each
-    // child leaf its ELK-reserved vertical slot so it fills the room ELK
-    // allocated instead of rendering at h-auto and overflowing into the next
-    // child (the "containers stacked on top of each other" symptom).
-    const sizedNodes = applyChildSlotHeights(layouted.nodes as Node<GraphNodeData>[]);
-    const filteredNodes = applyFilter(sizedNodes, search);
+    const filteredNodes = applyFilter(layouted.nodes as Node<GraphNodeData>[], search);
     const layoutedEdges = layouted.edges;
     setNodes(filteredNodes);
     setEdges(layoutedEdges);

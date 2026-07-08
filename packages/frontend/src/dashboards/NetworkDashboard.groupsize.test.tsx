@@ -1,31 +1,31 @@
 /**
- * #2194 — service-group container sizing at the RENDER layer.
+ * #2194/#2198 — service-group container sizing.
  *
  * #2191 fixed the BACKEND ELK geometry (a compound group grows to enclose its
- * children; child positions are parent-relative). But the map still rendered
- * child containers "stacked on top of each other" because the FRONTEND left
- * each child leaf at `h-auto`: ELK reserves a uniform column slot per child,
- * and a card that renders taller than that slot overflows into the child below.
- * The prior box-verify only checked backend API geometry (headless font bug
- * hides text) → false green. This test encodes the regression where it broke:
- * at the frontend render/size-application layer.
+ * children; child positions are parent-relative). #2194 then patched child
+ * heights at the RENDER layer via a frontend `applyChildSlotHeights` band-aid,
+ * because leaf children came out of layout with `style.height: undefined`.
  *
- * Two assertions:
- *  1. `applyChildSlotHeights` (the post-layout transform) leaves the GROUP node
- *     at its ELK-computed width/height (NOT the pre-layout 400×200 guess) and
- *     gives every child leaf a DEFINITE height equal to its reserved slot, so
- *     consecutive children never overlap.
+ * #2198 removes that band-aid: with root INCLUDE_CHILDREN, `getLayoutedElements`
+ * lays each child out at a real ELK box and now stamps the ELK-computed
+ * width/height DIRECTLY onto the child leaf node — so the child card renders
+ * `h-full overflow-hidden` and fills exactly its slot with no post-processing.
+ *
+ * Assertions:
+ *  1. `getLayoutedElements` leaves the GROUP node at its ELK-computed
+ *     width/height (NOT the pre-layout 400×200 guess) and gives every child
+ *     leaf a DEFINITE height, so consecutive children never overlap.
  *  2. `CustomNode` RENDERS a slot-sized child leaf with `h-full overflow-hidden`
  *     (fills exactly its slot) instead of `h-auto` (overflow → stack).
  *
- * Both would FAIL on the old behaviour (child height `undefined` / `h-auto`).
+ * Both would FAIL on the pre-fix behaviour (child height `undefined` / `h-auto`).
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import type { Node, Edge } from '@xyflow/react';
 import { getLayoutedElements } from '@servicebay/api-client';
-import { applyChildSlotHeights, type GraphNodeData } from './_lib/networkDashboard';
+import { type GraphNodeData } from './_lib/networkDashboard';
 
 // Keep @xyflow/react's canvas-bound pieces inert in jsdom; CustomNode only
 // needs Handle/Position to render its wrapper markup.
@@ -66,10 +66,10 @@ async function layoutServiceWith(childPorts: number[]) {
     ...childPorts.map((p, i) => childNode(`c${i + 1}`, 'svc', p)),
   ];
   const laidOut = await getLayoutedElements(nodes, [] as Edge[]);
-  return applyChildSlotHeights(laidOut.nodes as Node<GraphNodeData>[]);
+  return laidOut.nodes as Node<GraphNodeData>[];
 }
 
-describe('#2194 service-group render sizing', () => {
+describe('#2194/#2198 service-group sizing', () => {
   it('keeps the ELK-computed group size (not 400×200) and grows with container count', async () => {
     const three = await layoutServiceWith([1, 3, 2]);
     const four = await layoutServiceWith([1, 3, 2, 4]);
