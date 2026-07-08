@@ -31,11 +31,15 @@ export interface NetworkNode {
  *   - `observed`  — a real TCP flow seen on the host (`ss`); ground truth.
  *   - `declared`  — a template's `servicebay.dependencies` (author intent,
  *                   NOT observed traffic — rendered distinctly).
+ *   - `inferred`  — derived from a service's env (`http://host:port` /
+ *                   `host:port` naming another service) or, as a last
+ *                   resort, a fallback anchor to the host so no card
+ *                   floats disconnected (#2175). Rendered distinctly.
  *   - `manual`    — an operator-drawn edge (the `isManual` case).
  * Optional for backwards compatibility; absent is treated as a plain
  * structural edge.
  */
-export type NetworkEdgeKind = 'gateway' | 'proxy' | 'observed' | 'declared' | 'manual';
+export type NetworkEdgeKind = 'gateway' | 'proxy' | 'observed' | 'declared' | 'inferred' | 'manual';
 
 export interface NetworkEdge {
   id: string;

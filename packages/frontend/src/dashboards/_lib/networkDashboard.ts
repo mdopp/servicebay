@@ -373,6 +373,11 @@ export const DOWN_EDGE_DASHES = '6 3';
 export const DECLARED_EDGE_COLOR = '#64748b'; // Slate
 export const DECLARED_EDGE_DASHES = '4 4';
 export const OBSERVED_EDGE_COLOR = '#3b82f6'; // Clean blue
+// #2175 — inferred edges (env-target inference + fallback anchor). Violet
+// with a dotted stroke so they read as "derived, not declared/observed":
+// distinct from declared's slate dash and observed's solid blue.
+export const INFERRED_EDGE_COLOR = '#a855f7'; // Violet
+export const INFERRED_EDGE_DASHES = '2 3';
 
 export function styleForEdgeKind(
   kind: string | undefined,
@@ -391,6 +396,13 @@ export function styleForEdgeKind(
       stroke: OBSERVED_EDGE_COLOR,
     };
   }
+  if (kind === 'inferred') {
+    return {
+      ...(base || {}),
+      stroke: INFERRED_EDGE_COLOR,
+      strokeDasharray: INFERRED_EDGE_DASHES,
+    };
+  }
   return base;
 }
 
@@ -400,6 +412,9 @@ export function labelForEdgeKind(
 ): string | undefined {
   if (kind === 'declared') {
     return baseLabel ? `${baseLabel} (declared)` : 'declared';
+  }
+  if (kind === 'inferred') {
+    return baseLabel ? `${baseLabel} (inferred)` : 'inferred';
   }
   return baseLabel;
 }

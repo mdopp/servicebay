@@ -5,6 +5,12 @@ import {
   buildOrthogonalPath,
   topologyLayoutSignature,
   mergeGraphPreservingPositions,
+  styleForEdgeKind,
+  labelForEdgeKind,
+  INFERRED_EDGE_COLOR,
+  INFERRED_EDGE_DASHES,
+  DECLARED_EDGE_COLOR,
+  OBSERVED_EDGE_COLOR,
 } from './networkDashboard';
 
 // Minimal graph mirroring the map's shape:
@@ -36,6 +42,27 @@ const edges: Edge[] = [
   edge('nginx', 'abs'),
   edge('hermes', 'ollama'),
 ];
+
+describe('edge-kind styling — inferred is visually distinct (#2175)', () => {
+  it('styles an inferred edge with the violet dotted stroke', () => {
+    const style = styleForEdgeKind('inferred', { strokeWidth: 2 });
+    expect(style).toMatchObject({
+      strokeWidth: 2,
+      stroke: INFERRED_EDGE_COLOR,
+      strokeDasharray: INFERRED_EDGE_DASHES,
+    });
+  });
+
+  it('inferred stroke differs from declared and observed', () => {
+    expect(INFERRED_EDGE_COLOR).not.toBe(DECLARED_EDGE_COLOR);
+    expect(INFERRED_EDGE_COLOR).not.toBe(OBSERVED_EDGE_COLOR);
+  });
+
+  it('suffixes an inferred edge label with "(inferred)"', () => {
+    expect(labelForEdgeKind('inferred', 'OLLAMA_URL')).toBe('OLLAMA_URL (inferred)');
+    expect(labelForEdgeKind('inferred', undefined)).toBe('inferred');
+  });
+});
 
 describe('computeEgoNodeIds', () => {
   it('returns an empty set when there is no focus', () => {
