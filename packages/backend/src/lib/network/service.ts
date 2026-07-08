@@ -309,6 +309,25 @@ export class NetworkService {
       logger.info('NetworkService', `Suppressed ${suppressed} ubiquitous hub-spoke edge(s) (auth/dns) into node badges`);
     }
 
+    // 6. Fallback anchor (#2175) — runs on the POST-suppression edge set so a
+    // service node whose ONLY edge was a suppressed ubiquitous dep (e.g.
+    // claude-dev→auth) now anchors to the host root (`gateway`) instead of
+    // floating. Must run here in getGraph, not per-node in getNodeGraph: the
+    // suppression that leaves such a node edge-less is global (#1785), so the
+    // anchor decision is only correct against the final merged+suppressed
+    // edges over all nodes. `anchorFloatingNodes` already skips nodes that
+    // still have a surviving edge (no double-anchor) and preserves the #2175
+    // anchor-edge kind/style.
+    try {
+      const anchors = anchorFloatingNodes(allNodes, deUbiquitousEdges, 'gateway');
+      if (anchors.length > 0) {
+        logger.info('NetworkService', `Anchored ${anchors.length} floating service node(s) to gateway after suppression`);
+      }
+      deUbiquitousEdges.push(...anchors);
+    } catch (e) {
+      logger.warn('NetworkService', `fallback-anchor synthesis skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     return { nodes: allNodes, edges: deUbiquitousEdges };
   }
 
@@ -2015,14 +2034,12 @@ export class NetworkService {
       logger.warn('NetworkService', `inferred-edge synthesis skipped: ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    // #2175 — fallback anchor. Any service node still edge-less anchors to
-    // the host root (`gateway`) so no card renders fully disconnected.
-    try {
-      const anchors = anchorFloatingNodes(nodes, mergedEdges, routerId);
-      mergedEdges.push(...anchors);
-    } catch (e) {
-      logger.warn('NetworkService', `fallback-anchor synthesis skipped: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    // #2175 — the fallback-anchor pass does NOT run here. It must operate on
+    // the POST-suppression edge set (a node whose only edge is a suppressible
+    // ubiquitous dep — e.g. claude-dev→auth — looks "connected" at this
+    // per-node stage but ends edge-less once getGraph's suppressUbiquitousDeps
+    // drops that edge). anchorFloatingNodes is called in getGraph AFTER
+    // suppression, over the merged+suppressed edge set (#2175 order fix).
 
     return { nodes, edges: mergedEdges };
   }

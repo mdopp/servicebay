@@ -6,6 +6,7 @@ import {
   type EnvSource,
   type EnvInferenceTarget,
 } from './inferredEdges';
+import { suppressUbiquitousDeps } from './ubiquitousDeps';
 import type { NetworkEdge, NetworkNode } from './types';
 
 describe('parseEnvHostPort (#2175)', () => {
@@ -185,5 +186,96 @@ describe('anchorFloatingNodes — fallback anchor (#2175)', () => {
       svc('service-child.service', { parentNode: 'group-parent' }),
     ];
     expect(anchorFloatingNodes(nodes, [], 'gateway')).toHaveLength(0);
+  });
+});
+
+// Ordering regression (#2175 box-verify #4 red): the anchor pass must run on
+// the POST-suppression edge set. A service node whose ONLY edge is a
+// suppressible ubiquitous dep (claude-dev→auth) looks "connected" before
+// suppression but ends edge-less after — it MUST get an anchor. This encodes
+// the exact getGraph sequence: suppressUbiquitousDeps → anchorFloatingNodes.
+describe('anchor after ubiquitous-dep suppression — ordering (#2175)', () => {
+  const svc = (id: string, extra: Partial<NetworkNode> = {}): NetworkNode => ({
+    id,
+    type: 'service',
+    label: id,
+    status: 'up',
+    ...extra,
+  });
+
+  it('anchors a node whose ONLY edge is a suppressed auth dep', () => {
+    const nodes: NetworkNode[] = [
+      svc('service-auth.service'),
+      svc('service-claude-dev.service'),
+    ];
+    // claude-dev's sole edge is a declared dependency on the auth hub.
+    const edges: NetworkEdge[] = [
+      {
+        id: 'declared-claude-dev-auth',
+        source: 'service-claude-dev.service',
+        target: 'service-auth.service',
+        protocol: 'tcp',
+        port: 0,
+        state: 'active',
+        kind: 'declared',
+      },
+    ];
+
+    // Step 1 — suppression removes the claude-dev→auth hub-spoke edge.
+    const { edges: afterSuppress, suppressed } = suppressUbiquitousDeps(nodes, edges);
+    expect(suppressed).toBe(1);
+    expect(afterSuppress).toHaveLength(0);
+
+    // Step 2 — anchoring on the post-suppression set now anchors claude-dev
+    // (it would NOT have been anchored on the pre-suppression `edges`, which
+    // is exactly the box-verify #4 bug).
+    const anchors = anchorFloatingNodes(nodes, afterSuppress, 'gateway');
+    const claudeDevAnchor = anchors.find(
+      (a) => a.target === 'service-claude-dev.service',
+    );
+    expect(claudeDevAnchor).toBeDefined();
+    expect(claudeDevAnchor).toMatchObject({ source: 'gateway', kind: 'inferred' });
+
+    // The claude-dev card ends with >=1 edge.
+    const finalEdges = [...afterSuppress, ...anchors];
+    expect(
+      finalEdges.some(
+        (e) =>
+          e.source === 'service-claude-dev.service' ||
+          e.target === 'service-claude-dev.service',
+      ),
+    ).toBe(true);
+  });
+
+  it('does NOT anchor a node that keeps a real surviving edge after suppression', () => {
+    const nodes: NetworkNode[] = [
+      svc('service-auth.service'),
+      svc('service-webapp.service'),
+    ];
+    // webapp has an auth dep (suppressed) AND a real gateway edge (survives).
+    const edges: NetworkEdge[] = [
+      {
+        id: 'declared-webapp-auth',
+        source: 'service-webapp.service',
+        target: 'service-auth.service',
+        protocol: 'tcp',
+        port: 0,
+        state: 'active',
+        kind: 'declared',
+      },
+      {
+        id: 'gateway-webapp',
+        source: 'gateway',
+        target: 'service-webapp.service',
+        protocol: 'tcp',
+        port: 443,
+        state: 'active',
+      },
+    ];
+
+    const { edges: afterSuppress } = suppressUbiquitousDeps(nodes, edges);
+    const anchors = anchorFloatingNodes(nodes, afterSuppress, 'gateway');
+    // No anchor for webapp — its gateway edge survived (no double edge).
+    expect(anchors.find((a) => a.target === 'service-webapp.service')).toBeUndefined();
   });
 });
