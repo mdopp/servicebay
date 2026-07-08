@@ -106,18 +106,34 @@ function toElkEdge(edge: Edge): ElkExtendedEdge {
   };
 }
 
-// Append one React Flow node with its ELK-computed box. Groups MUST take ELK's
-// height to enclose their children. #2198 — a CHILD leaf (has a parentId) also
-// takes ELK's height: root INCLUDE_CHILDREN lays each child out at a real box
-// inside its grown parent, and the child card renders `h-full` to fill exactly
-// that slot (NetworkDashboard.CustomNode), so it can't spill into the sibling
-// below it. A parentless leaf keeps h-auto (grows with content) → undefined.
+// Append one React Flow node with its ELK-computed box.
+//
+// #2201 — React Flow **v12** (`@xyflow/react` v12.x) reads a node's layout
+// dimensions from the TOP-LEVEL `node.width`/`node.height`, NOT from `style`
+// (the v11 convention). Without top-level parent dimensions RF v12 can't
+// compute parent bounds, so child nodes with `extent:'parent'` clamp to the
+// parent origin → they render at (0,0) with no size and the containers stack.
+// So we stamp the ELK-computed box as top-level `width`/`height` on EVERY laid
+// out node — group parents AND child leaves alike (children need their own box
+// so the extent-clamp math works). We keep the same values mirrored into
+// `style` for the visual card sizing the CustomNode already relies on.
+//
+// Groups MUST take ELK's height to enclose their children. #2198 — a CHILD leaf
+// (has a parentId) also takes ELK's height: root INCLUDE_CHILDREN lays each
+// child out at a real box inside its grown parent, and the child card renders
+// `h-full` to fill exactly that slot (NetworkDashboard.CustomNode), so it can't
+// spill into the sibling below it. A parentless leaf keeps h-auto (grows with
+// content) → its style height stays undefined, but its top-level width/height
+// still carry the ELK box for RF v12.
 function pushLayoutedNode(out: Node[], original: Node, elkNode: ElkNode): void {
   const isGroup = GROUP_NODE_TYPES.has(original.data?.type as string);
   const isChildLeaf = original.parentId !== undefined;
   out.push({
     ...original,
     position: { x: elkNode.x!, y: elkNode.y! },
+    // #2201 — top-level dims are what RF v12 uses for layout + extent bounds.
+    width: elkNode.width,
+    height: elkNode.height,
     style: {
       ...original.style,
       width: elkNode.width,

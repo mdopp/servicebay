@@ -147,6 +147,54 @@ describe('getLayoutedElements — ELK orthogonal routing (#1782)', () => {
     ]);
   });
 
+  it('stamps ELK-computed dimensions as TOP-LEVEL width/height for RF v12 (#2201)', async () => {
+    // React Flow v12 reads layout dims from node.width/node.height, not style.
+    // Without top-level dims, children with extent:'parent' clamp to (0,0).
+    layoutMock.mockResolvedValueOnce({
+      id: 'root',
+      children: [
+        {
+          id: 'g',
+          x: 500,
+          y: 100,
+          width: 520,
+          height: 610,
+          children: [
+            { id: 'c1', x: 50, y: 80, width: 440, height: 240, children: [] },
+            { id: 'c2', x: 50, y: 340, width: 440, height: 240, children: [] },
+          ],
+        },
+      ],
+      edges: [],
+    });
+
+    const nodes: Node[] = [
+      { id: 'g', position: { x: 0, y: 0 }, data: { type: 'group' } },
+      { id: 'c1', parentId: 'g', position: { x: 0, y: 0 }, data: { type: 'container' } },
+      { id: 'c2', parentId: 'g', position: { x: 0, y: 0 }, data: { type: 'container' } },
+    ];
+
+    const result = await getLayoutedElements(nodes, []);
+    const byId = new Map(result.nodes.map((n) => [n.id, n]));
+
+    // Group parent: top-level dims carry the ELK box (RF v12 uses these to
+    // compute parent bounds for extent-clamped children).
+    const g = byId.get('g')!;
+    expect(g.width).toBe(520);
+    expect(g.height).toBe(610);
+
+    // Child leaves: top-level dims carry each child's own box so the
+    // extent-clamp math places them inside the parent instead of at (0,0).
+    const c1 = byId.get('c1')!;
+    expect(c1.width).toBe(440);
+    expect(c1.height).toBe(240);
+    expect(c1.position).toEqual({ x: 50, y: 80 });
+    const c2 = byId.get('c2')!;
+    expect(c2.width).toBe(440);
+    expect(c2.height).toBe(240);
+    expect(c2.position).toEqual({ x: 50, y: 340 });
+  });
+
   it('leaves an edge untouched when ELK produced no section for it', async () => {
     layoutMock.mockResolvedValueOnce({
       id: 'root',
