@@ -853,31 +853,38 @@ export default function NetworkDashboard() {
   const layoutSignatureRef = React.useRef<string | null>(null);
   const laidOutGraphRef = React.useRef<{ nodes: Node<GraphNodeData>[]; edges: Edge[] } | null>(null);
   const hasFitViewRef = React.useRef(false);
+    // #2195 — `activeToastRef` now only tracks a toast owned by an EXPLICIT
+    // network scan (the `network-scan-progress` SSE below opens/updates it).
+    // The steady-state twin-driven auto-refresh no longer creates one: a
+    // background fetch is silent, so a flurry of status/metric twin updates
+    // never stacks a "Refreshing Network" toast and makes the UI restless.
     const activeToastRef = React.useRef<string | null>(null);
-    const { addToast, updateToast, removeToast } = useToast();
+    const { addToast, updateToast } = useToast();
 
-  const startReloadToast = useCallback((description = 'Reloading network graph...') => {
+  // #2195 — surface a refresh indicator ONLY when the topology actually
+  // changed (a full re-layout). It is brief and non-sticky (auto-dismisses),
+  // never a duration-0 sticky loop. The in-place status/metric merge path
+  // (topology signature unchanged) calls neither of these — it stays silent.
+  const NETWORK_UPDATED_TOAST_MS = 2500;
+  const notifyTopologyChanged = useCallback(() => {
+      // If an explicit scan is showing a loading toast, resolve it in place
+      // instead of stacking a second toast on top.
       if (activeToastRef.current) {
-          updateToast(activeToastRef.current, 'loading', 'Refreshing Network', description);
-          return activeToastRef.current;
+          updateToast(activeToastRef.current, 'success', 'Network updated', 'Topology changed', NETWORK_UPDATED_TOAST_MS);
+          activeToastRef.current = null;
+          return;
       }
-
-      const id = addToast('loading', 'Refreshing Network', description, 0);
-      activeToastRef.current = id;
-      return id;
+      addToast('info', 'Network updated', undefined, NETWORK_UPDATED_TOAST_MS);
   }, [addToast, updateToast]);
 
-  const resolveReloadToast = useCallback((status: 'success' | 'error', description?: string) => {
-      if (!activeToastRef.current) return;
-
-      if (status === 'success') {
-          removeToast(activeToastRef.current);
-      } else {
+  const notifyRefreshError = useCallback((description?: string) => {
+      if (activeToastRef.current) {
           updateToast(activeToastRef.current, 'error', 'Network refresh failed', description);
+          activeToastRef.current = null;
+          return;
       }
-
-      activeToastRef.current = null;
-  }, [removeToast, updateToast]);
+      addToast('error', 'Network refresh failed', description);
+  }, [addToast, updateToast]);
 
   // Health Modal State
   const [showHealthModal, setShowHealthModal] = useState(false);
@@ -1210,11 +1217,16 @@ export default function NetworkDashboard() {
       const topologyUnchanged =
           layoutSignatureRef.current === signature && laidOutGraphRef.current !== null;
       const hasFreshDeepLinkFocus = Boolean(focusPlan.appliedParam && focusPlan.nodeId);
+      // #2195 — the FIRST layout (no prior signature) is the map appearing, not
+      // a change; don't announce it. Only a subsequent topology change (a
+      // re-layout with a prior signature) surfaces the brief indicator.
+      const isFirstLayout = layoutSignatureRef.current === null;
       const isStale = () => layoutRunRef.current !== runId;
       try {
           if (topologyUnchanged && !hasFreshDeepLinkFocus) {
+              // #2195 — background status/metric merge: the map updates in place
+              // and stays SILENT (no loading toast, no success toast).
               mergeInPlace(gd.nodes, gd.edges, searchQuery);
-              if (!isStale()) resolveReloadToast('success', 'Latest network topology is ready');
               return;
           }
           await processAndLayout(gd.nodes, gd.edges, currentCollapsed, searchQuery, currentFocus);
@@ -1224,18 +1236,19 @@ export default function NetworkDashboard() {
               appliedFocusParamRef.current = focusPlan.appliedParam;
               setFocusNodeId(focusPlan.nodeId);
           }
-          resolveReloadToast('success', 'Latest network topology is ready');
+          // #2195 — a real topology change re-laid the map out: surface a brief,
+          // non-sticky indicator (skip the initial appear + deep-link camera move).
+          if (!isFirstLayout && !hasFreshDeepLinkFocus) notifyTopologyChanged();
       } catch {
-          if (!isStale()) resolveReloadToast('error', 'Unable to render network map');
+          if (!isStale()) notifyRefreshError('Unable to render network map');
       }
-  }, [mergeInPlace, processAndLayout, searchQuery, resolveReloadToast, setFocusNodeId]);
+  }, [mergeInPlace, processAndLayout, searchQuery, notifyTopologyChanged, notifyRefreshError, setFocusNodeId]);
 
   // #1071 phase 1: data layer (graph fetch + twin-driven auto-refresh
   // + the two effects that drive them) is in useTopologyData. Toast
   // plumbing stays here since it's a UI concern.
   const { rawData, fetchGraph, twin } = useTopologyData({
-    onLoadStart: startReloadToast,
-    onLoadError: (message) => resolveReloadToast('error', message),
+    onLoadError: (message) => notifyRefreshError(message),
   });
 
   // The service-action overlays (start/stop/restart/delete modals) still mount
