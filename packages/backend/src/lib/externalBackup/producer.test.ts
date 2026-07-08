@@ -312,6 +312,89 @@ describe('runBackupCollector (NPM in-container sqlite snapshot, #1528)', () => {
     expect(msg).not.toMatch(/\(unknown\)/);
     warn.mockRestore();
   });
+
+  it('remaps the include to the snapshot even when the live DB is absent (nodb sentinel, code 0)', async () => {
+    // The script prints `nodb` (exit 0) when /data/database.sqlite doesn't exist.
+    // `nodb` is NOT a failure — it must fall through to the remap, not the
+    // live-file fallback. The (never-created) .sb-backup is then a no-op at
+    // staging (stageServiceBackup skips a missing include), so the remap is safe.
+    mockSendCommand
+      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
+      .mockResolvedValueOnce({ stdout: 'nodb', stderr: '', code: 0 });
+    const out = await runBackupCollector(npm, 'Local');
+    // Regression guard: `nodb` must not be swallowed into the live-file fallback.
+    expect(out).not.toBe(npm);
+    expect(out.include).toContain('data/database.sqlite.sb-backup');
+    expect(out.include).not.toContain('data/database.sqlite');
+    expect(out.renames).toEqual({ 'data/database.sqlite.sb-backup': 'data/database.sqlite' });
+  });
+
+  it('drives the snapshot exec against the container name discovered by the ps/awk probe', async () => {
+    // The awk probe returns "<name> <image>"; the collector must parse the FIRST
+    // token as the container and target THAT name in the podman-exec snapshot.
+    mockSendCommand
+      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager  docker.io/jc21/nginx-proxy-manager', code: 0 })
+      .mockResolvedValueOnce({ stdout: 'ok', code: 0 });
+    await runBackupCollector(npm, 'Local');
+    expect(mockSendCommand).toHaveBeenCalledTimes(2);
+    const [op, args] = mockSendCommand.mock.calls[1];
+    expect(op).toBe('exec');
+    // The snapshot script is base64-piped into `podman exec -i <container> sh -`.
+    expect((args as { command: string }).command).toContain('podman exec -i npm_proxy-manager sh -');
+    // …and it must NOT leak the image token into the container name.
+    expect((args as { command: string }).command).not.toContain('docker.io/jc21');
+  });
+
+  it('falls back to the live file on an unrecognized snapshot output even at exit 0', async () => {
+    // A zero exit code with neither ok/nodb/no-sqlite3 is still a failure — the
+    // snapshot did not complete, so we must degrade to the live file, never
+    // remap to a snapshot that isn't there.
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    mockSendCommand
+      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
+      .mockResolvedValueOnce({ stdout: 'partial garbage', stderr: '', code: 0 });
+    const out = await runBackupCollector(npm, 'Local');
+    expect(out).toBe(npm);
+    expect(out.include).toContain('data/database.sqlite');
+    const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
+    expect(msg).toMatch(/snapshot failed/i);
+    warn.mockRestore();
+  });
+
+  it('does NOT turn a rejecting sendCommand into a silent green — degrades to the live file and logs (feedback_agent_sendcommand_rejects)', async () => {
+    // agent.sendCommand REJECTS on an error reply (write_file EACCES etc.); it does
+    // not resolve with {error}. The collector's catch must degrade honestly to the
+    // live file AND log the real reason — never swallow the throw into a snapshot
+    // that was never taken. Regression: an uncaught throw or a false-green remap.
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    mockSendCommand
+      .mockResolvedValueOnce({ stdout: 'npm_proxy-manager img', code: 0 })
+      .mockRejectedValueOnce(new Error('agent exec EACCES'));
+    const out = await runBackupCollector(npm, 'Local');
+    expect(out).toBe(npm); // live file, not a phantom snapshot remap
+    expect(out.include).toContain('data/database.sqlite');
+    const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
+    expect(msg).toContain('agent exec EACCES'); // the real error is surfaced
+    warn.mockRestore();
+  });
+
+  it('rejecting ensureAgent (node unreachable) degrades to the live file, not a crash', async () => {
+    // The FIRST await (ensureAgent) can also reject if the node is unreachable.
+    // That throw must land in the same honest-degrade catch, not propagate and
+    // fail the whole backup run.
+    const { agentManager } = await import('../agent/manager');
+    const spy = vi
+      .spyOn(agentManager, 'ensureAgent')
+      .mockRejectedValueOnce(new Error('node offline'));
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const out = await runBackupCollector(npm, 'Local');
+    expect(out).toBe(npm);
+    expect(mockSendCommand).not.toHaveBeenCalled();
+    const msg = warn.mock.calls.map(c => String(c[1])).join('\n');
+    expect(msg).toContain('node offline');
+    warn.mockRestore();
+    spy.mockRestore();
+  });
 });
 
 describe('buildServiceBackupTar', () => {
