@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.150.4](https://github.com/mdopp/servicebay/compare/servicebay-v4.150.3...servicebay-v4.150.4) (2026-07-08)
+
+
+### Bug Fixes
+
+* **map:** resolve cross-hierarchy inferred edges (root INCLUDE_CHILDREN) so containers stop stacking ([08c061d](https://github.com/mdopp/servicebay/commit/08c061dd63482df95c90b664be660ae360d0e5f2))
+* **map:** set top-level node width/height for React Flow v12 so containers position inside their group ([56a9e57](https://github.com/mdopp/servicebay/commit/56a9e57e830129921aee3daa91eb4e628dcc9eef))
+* **network:** resolve cross-hierarchy ELK edges via root INCLUDE_CHILDREN ([1f57428](https://github.com/mdopp/servicebay/commit/1f574282683b9c3e8dce92b344f3f0a0286e1f74)), closes [#2198](https://github.com/mdopp/servicebay/issues/2198)
+* **network:** set top-level node width/height for React Flow v12 ([921c513](https://github.com/mdopp/servicebay/commit/921c5131fe82e84cfcbae4eb4448e2b2cda9e5e7)), closes [#2201](https://github.com/mdopp/servicebay/issues/2201)
+
 ## [4.150.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.150.2...servicebay-v4.150.3) (2026-07-08)
 
 
