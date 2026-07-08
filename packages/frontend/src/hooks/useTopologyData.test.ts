@@ -42,7 +42,6 @@ describe('useTopologyData callback stability (#1175)', () => {
   it('returns a stable fetchGraph across renders even when callers pass fresh inline arrows', () => {
     const { result, rerender } = renderHook(() =>
       useTopologyData({
-        onLoadStart: () => { /* fresh arrow every render */ },
         onLoadError: (msg) => { void msg; /* fresh arrow every render */ },
       }),
     );
@@ -54,25 +53,23 @@ describe('useTopologyData callback stability (#1175)', () => {
     expect(result.current.fetchGraph).toBe(firstFetchGraph);
   });
 
-  it('still calls the LATEST onLoadStart / onLoadError when fetchGraph runs after a re-render', async () => {
-    // Caller updates the callbacks every render. The hook must dispatch
-    // to the most recent ones, not the originals captured at mount.
+  it('still calls the LATEST onLoadError when fetchGraph runs after a re-render', async () => {
+    // Caller updates the callback every render. The hook must dispatch
+    // to the most recent one, not the original captured at mount.
     let latestErr: string | null = null;
-    let calls = 0;
 
     const { result, rerender } = renderHook(
       ({ tag }: { tag: string }) =>
         useTopologyData({
-          onLoadStart: () => { calls += 1; },
           onLoadError: (msg) => { latestErr = `${tag}: ${msg}`; },
         }),
       { initialProps: { tag: 'first' } },
     );
 
     // Wait for the initial-mount fetch to complete
-    await waitFor(() => expect(calls).toBeGreaterThan(0));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
-    // Re-render with a new tag — the callbacks change closure values.
+    // Re-render with a new tag — the callback changes closure value.
     rerender({ tag: 'second' });
 
     // Force a failing fetch this time

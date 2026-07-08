@@ -64,8 +64,16 @@ vi.mock('@/hooks/useTopologyData', () => ({
 vi.mock('@/hooks/useServiceActions', () => ({
   useServiceActions: () => ({ overlays: null }),
 }));
+// #2195 — stable toast spies so a test can assert the auto-refresh does NOT
+// open a loading toast on a background merge, and DOES surface a brief
+// (non-sticky) indicator only when the topology changes. Typed to the
+// ToastProvider API so `.mock.calls` destructures (type, title, msg, duration).
+const addToast =
+  vi.fn<(type: string, title: string, message?: string, duration?: number) => string>(() => 'toast-id');
+const updateToast = vi.fn();
+const removeToast = vi.fn();
 vi.mock('@/providers/ToastProvider', () => ({
-  useToast: () => ({ addToast: vi.fn(), updateToast: vi.fn(), removeToast: vi.fn() }),
+  useToast: () => ({ addToast, updateToast, removeToast }),
 }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
@@ -83,6 +91,9 @@ import NetworkDashboard from './NetworkDashboard';
 describe('NetworkDashboard (#2100 dashboards migration)', () => {
   beforeEach(() => {
     fetchGraph.mockClear();
+    addToast.mockClear();
+    updateToast.mockClear();
+    removeToast.mockClear();
     topologyRawData = null;
     focusSearchParam = null;
     vi.stubGlobal('EventSource', class { close() {} } as unknown as typeof EventSource);
@@ -191,6 +202,75 @@ describe('NetworkDashboard (#2100 dashboards migration)', () => {
     rerender(<NetworkDashboard />);
     // Topology changed → a fresh ELK pass runs.
     await waitFor(() => expect(getLayoutedElements.mock.calls.length).toBeGreaterThan(before));
+  });
+
+  it('#2195 shows NO loading toast and NO toast on a background in-place merge (topology unchanged)', async () => {
+    topologyRawData = {
+      nodes: [
+        { id: 'internet', type: 'internet', label: 'Internet' },
+        { id: 'service-immich.service', type: 'service', label: 'immich', status: 'up' },
+      ],
+      edges: [{ id: 'e1', source: 'internet', target: 'service-immich.service' }],
+    };
+    const { rerender } = render(<NetworkDashboard />);
+    await waitFor(() => expect(getLayoutedElements).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Clear whatever the initial appear did — from here on we simulate N
+    // background twin updates (status/metric flips) with an UNCHANGED topology
+    // signature, exactly the steady-state that made the UI restless.
+    addToast.mockClear();
+    updateToast.mockClear();
+    removeToast.mockClear();
+
+    for (let i = 0; i < 5; i++) {
+      topologyRawData = {
+        nodes: [
+          { id: 'internet', type: 'internet', label: 'Internet' },
+          { id: 'service-immich.service', type: 'service', label: 'immich', status: i % 2 ? 'down' : 'up' },
+        ],
+        edges: [{ id: 'e1', source: 'internet', target: 'service-immich.service' }],
+      };
+      rerender(<NetworkDashboard />);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    // No loading toast (the old sticky 'Refreshing Network'), and no toast at
+    // all on the in-place path.
+    const loadingCalls = addToast.mock.calls.filter((c) => c[0] === 'loading');
+    expect(loadingCalls.length).toBe(0);
+    expect(addToast).not.toHaveBeenCalled();
+  });
+
+  it('#2195 surfaces exactly one brief, non-sticky indicator when the topology actually changes', async () => {
+    topologyRawData = {
+      nodes: [{ id: 'service-a.service', type: 'service', label: 'a' }],
+      edges: [],
+    };
+    const { rerender } = render(<NetworkDashboard />);
+    await waitFor(() => expect(getLayoutedElements).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The FIRST layout (map appearing) is not a change → not announced.
+    addToast.mockClear();
+
+    // A real topology change: a node is added → a full re-layout runs.
+    topologyRawData = {
+      nodes: [
+        { id: 'service-a.service', type: 'service', label: 'a' },
+        { id: 'service-b.service', type: 'service', label: 'b' },
+      ],
+      edges: [],
+    };
+    rerender(<NetworkDashboard />);
+    await waitFor(() => expect(addToast).toHaveBeenCalled());
+
+    // A single, brief, NON-sticky toast (duration > 0), never a loading toast.
+    expect(addToast).toHaveBeenCalledTimes(1);
+    const [type, , , duration] = addToast.mock.calls[0];
+    expect(type).not.toBe('loading');
+    expect(typeof duration).toBe('number');
+    expect(duration as number).toBeGreaterThan(0);
   });
 
   it('#2108 does NOT enter focus mode when the focus param matches no node (stale link)', async () => {

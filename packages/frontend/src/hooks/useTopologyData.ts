@@ -6,9 +6,7 @@ import type { DigitalTwinSnapshot } from '@/providers/DigitalTwinProvider';
 import type { NetworkGraph } from '@servicebay/api-client';
 
 interface UseTopologyDataOptions {
-  /** Called when a refresh kicks off — typically opens a toast. */
-  onLoadStart?: () => void;
-  /** Called when a refresh fails — typically resolves the toast as error. */
+  /** Called when a refresh fails — typically surfaces an error toast. */
   onLoadError?: (message: string) => void;
 }
 
@@ -31,14 +29,25 @@ interface UseTopologyDataResult {
  *
  * Auto-fetch behaviour:
  *   1. Initial mount triggers one fetch.
- *   2. Every digital-twin snapshot update triggers a debounced (500ms)
- *      re-fetch — the server pushes twin updates, not graph deltas, so
- *      polling on twin changes keeps the map in sync without a refresh
- *      button.
+ *   2. Every digital-twin snapshot update triggers a debounced re-fetch
+ *      — the server pushes twin updates, not graph deltas, so polling on
+ *      twin changes keeps the map in sync without a refresh button.
+ *      #2195 — twin updates fire on ANY status/metric/sync change (dozens
+ *      per minute on a busy box), not just topology changes. The fetch is
+ *      SILENT: it emits no loading toast, so a flurry of background twin
+ *      updates never makes the UI restless. The dashboard shows a brief
+ *      indicator only when the fetched topology actually changed (a full
+ *      re-layout) — see NetworkDashboard.applyTopology. The debounce is
+ *      raised to coalesce bursts of twin updates into at most one fetch.
  *
- * The toast callbacks are intentionally pass-through: the hook itself
- * has no dependency on the toast provider so it stays testable.
+ * The error callback is intentionally pass-through: the hook itself has
+ * no dependency on the toast provider so it stays testable.
  */
+// #2195 — coalesce a burst of twin updates (status/metric flips) into a
+// single re-fetch. Higher than the old 500ms so a flurry doesn't drive a
+// fetch per update; still snappy enough to keep the map live.
+const TWIN_REFETCH_DEBOUNCE_MS = 1000;
+
 export function useTopologyData(options: UseTopologyDataOptions = {}): UseTopologyDataResult {
   const { data: twin } = useDigitalTwin();
   const [rawData, setRawData] = useState<NetworkGraph | null>(null);
@@ -51,15 +60,16 @@ export function useTopologyData(options: UseTopologyDataOptions = {}): UseTopolo
   // depth — fetch → setRawData → re-render → fresh callbacks → fresh
   // fetchGraph → effects re-fire → fetch …). The ref pattern keeps
   // the hook tolerant of unstable callers.
-  const onLoadStartRef = useRef(options.onLoadStart);
   const onLoadErrorRef = useRef(options.onLoadError);
   useEffect(() => {
-    onLoadStartRef.current = options.onLoadStart;
     onLoadErrorRef.current = options.onLoadError;
   });
 
   const fetchGraph = useCallback(async () => {
-    onLoadStartRef.current?.();
+    // #2195 — no onLoadStart / loading toast: the refresh is silent. The
+    // dashboard decides whether to surface an indicator, and only does so
+    // when the fetched topology actually changed (a re-layout), never for
+    // a background status/metric merge.
     try {
       const res = await fetch('/api/network/graph');
       if (!res.ok) {
@@ -84,7 +94,7 @@ export function useTopologyData(options: UseTopologyDataOptions = {}): UseTopolo
   // rapid SYNC_PARTIAL bursts during initial sync).
   useEffect(() => {
     if (!twin) return;
-    const t = setTimeout(fetchGraph, 500);
+    const t = setTimeout(fetchGraph, TWIN_REFETCH_DEBOUNCE_MS);
     return () => { clearTimeout(t); };
   }, [twin, fetchGraph]);
 
