@@ -6,6 +6,19 @@ ServiceBay turns a USB stick + a spare PC into a self-hosted personal cloud — 
 
 Underneath it's a web-first management plane for Podman Quadlet on Fedora CoreOS. But the point isn't that. The point is: your photos, passwords, calendar, files, audiobooks, music, smart home, and ad-blocker all live on one machine you own, and you don't need to become a sysadmin to keep it running.
 
+## Highlights
+
+The things worth bragging about — each true against the code, each with a detail doc in **[docs/FEATURES.md](docs/FEATURES.md)**:
+
+- **It heals itself** — wipe the secrets on a clean install and passwords re-sync in place (no lockout); ServiceBay's own crash leaves a readable breadcrumb *outside* the container; GPU survives every redeploy with no silent CPU fallback.
+- **Diagnostics that fix** — 26 probes, each with a one-click action instead of a stack trace; SSO/cert/DNS/proxy caught before the family notices.
+- **A living network map** — Internet→Gateway→Service drawn from proxy routes, port-forwards, declared deps, observed TCP flows, *and* edges inferred from container env; no service floats disconnected; ego-focus drill-down (ELK + React Flow).
+- **SSO with no hand-wiring** — deploy a service and its OIDC client self-registers; redeploy auth and existing clients survive (merge, not overwrite); family portal with self-service access requests.
+- **Backup that survives a reinstall** — per-service manifest on the NAS; reinstall auto-restores config (no re-typing passwords); secrets stripped from archives.
+- **Drivable by an agent** — 62 scoped MCP tools (deploy templates, create proxy routes, jailed `write_file`) + a time-limited token request/approve flow.
+- **Extend without code** — templates are Git repos (YAML + Mustache + Python); migrations let them evolve on live installs.
+- **Shipped like a product** — release-image smoke gate, lockfile CI gate, local typecheck gate, and box-verify on `:dev` — a broken build never becomes `:latest`.
+
 ## What you get out of the box
 
 | Replaces | With |
@@ -26,7 +39,7 @@ Underneath it's a web-first management plane for Podman Quadlet on Fedora CoreOS
 
 ### An LLM-native admin surface
 
-The control plane is exposed as ~37 MCP tools. Hand Claude (or Claude Desktop, or any MCP client) a scoped API token and you can administer the box in plain English:
+The control plane is exposed as 62 MCP tools. Hand Claude (or Claude Desktop, or any MCP client) a scoped API token and you can administer the box in plain English:
 
 - *"Why is photos.dopp.cloud loading slow?"* → Claude pulls Immich logs, spots the OOM, restarts the container.
 - *"Add a Jellyfin instance for the kids."* → Claude lists templates, deploys it, creates the Authelia OIDC client, configures the proxy subdomain.
@@ -118,7 +131,7 @@ The install USB provisions the entire system: OS, networking, ServiceBay contain
 - **Auto-Updates** — keep ServiceBay and containers current automatically; email notification on each new release
 - **Self-Diagnose** — built-in probe battery with one-click fixes for every detected problem: restart crash-looping containers, retry stale NPM auth, delete dangling proxy routes, configure FritzBox DNS via TR-064, re-run failed seed scripts, free disk space, and more. Auto-runs at end of install.
 - **Mobile-Responsive** — full UI with dedicated mobile navigation
-- **MCP Server** — 37+ MCP tools, scoped tokens, audit log, soft-delete, auto-snapshot, exec denylist, destructive-op email alerts
+- **MCP Server** — 62 MCP tools, scoped tokens, audit log, soft-delete, auto-snapshot, exec denylist, destructive-op email alerts
 
 ## Architecture
 
@@ -188,7 +201,7 @@ keypair that the in-container agent uses to manage the host.
 
 Every UI action has an HTTP equivalent under `/api/`. For LLM-driven
 automation, ServiceBay also exposes a [Model Context Protocol](https://modelcontextprotocol.io)
-server at `/mcp` (session-cookie auth — same as the UI), publishing ~37 tools
+server at `/mcp` (session-cookie auth — same as the UI), publishing 62 tools
 across services, containers, proxy, backups, health checks, and config:
 read paths like `list_nodes`, `list_services`, `get_container_logs`,
 `get_network_graph`, `get_health_checks`, …, and write paths like
@@ -253,6 +266,7 @@ Settings → System → Check for Updates → Update. Your service containers ar
 
 | Document | Content |
 |----------|---------|
+| [docs/FEATURES.md](docs/FEATURES.md) | The feature index — what's worth bragging about, with a detail doc per area under [docs/features/](docs/features/) |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flow, API reference, testing strategy, frontend design |
 | [docs/ARCHITECTURE_INVARIANTS.md](docs/ARCHITECTURE_INVARIANTS.md) | CI-enforced invariants — what the build refuses to merge |
 | [docs/UX_PHILOSOPHY.md](docs/UX_PHILOSOPHY.md) | Self-heal first / diagnose with structured actions / hide expert knobs |
