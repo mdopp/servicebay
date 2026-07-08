@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.150.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.150.2...servicebay-v4.150.3) (2026-07-08)
+
+
+### Bug Fixes
+
+* **dashboards:** render service-group children in their ELK slots so they stop stacking ([2370ac3](https://github.com/mdopp/servicebay/commit/2370ac3b374032becec793080521adb76990b1dc)), closes [#2194](https://github.com/mdopp/servicebay/issues/2194)
+* **dashboards:** stop the 'Refreshing Network' toast firing on every twin update ([1fa9a35](https://github.com/mdopp/servicebay/commit/1fa9a35b3759349bc45376b147e2be467df3283b)), closes [#2195](https://github.com/mdopp/servicebay/issues/2195)
+* **map:** child containers render in their group slot (no stacking) + silence per-poll refresh toast ([00c888b](https://github.com/mdopp/servicebay/commit/00c888bb697bd37b3af9ead6bac12cf971ba4e70))
+
 ## [4.150.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.150.1...servicebay-v4.150.2) (2026-07-08)
 
 
