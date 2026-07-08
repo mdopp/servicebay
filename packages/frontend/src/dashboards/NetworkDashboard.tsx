@@ -43,6 +43,7 @@ import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import { Button, Badge, StatusDot } from '@/components/ui';
 import {
+  applyChildSlotHeights,
   buildOrthogonalPath,
   buildServiceEditHref,
   computeEgoNodeIds,
@@ -155,7 +156,10 @@ function getNodeTypeInfo(data: GraphNodeData) {
 }
 
 // Custom Node Component
-const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
+// Exported for the #2194 render test (assert a child leaf fills its ELK slot
+// with h-full/overflow-hidden and a group renders at the ELK size). Not part of
+// the public dashboard API — the graph mounts it via `nodeTypes`.
+export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
     const isCollapsed = data.collapsed;
     const onToggle = data.onToggle;
     const { isGroup, isExpandable, effectiveType, isManagedService, isUnmanagedService, isServiceType, isMissing, isGateway } = getNodeTypeInfo(data);
@@ -370,8 +374,19 @@ const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
   const targetPos = data.targetHandlePosition || Position.Left;
   const sourcePos = data.sourceHandlePosition || Position.Right;
 
+  // #2194 — a child leaf inside a service group is given a definite ELK-reserved
+  // slot height (applyChildSlotHeights). Fill that slot with h-full + clip so the
+  // card occupies exactly its column slot and can never overflow into the child
+  // below it (the stacked/overlapping symptom). Top-level cards keep h-auto.
+  const isChildLeaf = Boolean(data.parentNode) && !isGroup && !renderAsExpandedGroup;
   return (
-    <div className={`w-full ${(isGroup || renderAsExpandedGroup) ? 'h-full' : 'min-w-[320px] h-auto'}`}>
+    <div className={`w-full ${
+      (isGroup || renderAsExpandedGroup)
+        ? 'h-full'
+        : isChildLeaf
+          ? 'min-w-[320px] h-full overflow-hidden'
+          : 'min-w-[320px] h-auto'
+    }`}>
       {/* Handles for connecting */}
       <Handle type="target" position={targetPos} className="!w-3 !h-3 !bg-blue-400" />
       <Handle type="source" position={sourcePos} className="!w-3 !h-3 !bg-blue-400" />
@@ -1134,7 +1149,12 @@ export default function NetworkDashboard() {
 
     // 4. Layout
     const layouted = await getLayoutedElements(layoutNodes, layoutEdges);
-    const filteredNodes = applyFilter(layouted.nodes as Node<GraphNodeData>[], search);
+    // #2194 — the group node already carries ELK's grown width/height; give each
+    // child leaf its ELK-reserved vertical slot so it fills the room ELK
+    // allocated instead of rendering at h-auto and overflowing into the next
+    // child (the "containers stacked on top of each other" symptom).
+    const sizedNodes = applyChildSlotHeights(layouted.nodes as Node<GraphNodeData>[]);
+    const filteredNodes = applyFilter(sizedNodes, search);
     const layoutedEdges = layouted.edges;
     setNodes(filteredNodes);
     setEdges(layoutedEdges);
