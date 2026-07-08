@@ -252,8 +252,13 @@ describe('rewriteAutheliaConfig — OIDC redirect_uris (additive, deduped)', () 
   it('does NOT twin a third-party (non-lan) callback', () => {
     const doc = load(rewrite(LAN_CONFIG).yaml);
     const immich = doc.identity_providers.oidc.clients[0];
+    // match on the exact host, not a substring, so the assertion can't be
+    // satisfied by an attacker-shaped URL like https://example.com.evil/ (CodeQL
+    // js/incomplete-url-substring-sanitization)
     expect(
-      immich.redirect_uris.filter((u: string) => u.includes('example.com')),
+      immich.redirect_uris.filter(
+        (u: string) => new URL(u).hostname === 'third-party.example.com',
+      ),
     ).toEqual(['https://third-party.example.com/callback']);
   });
 
