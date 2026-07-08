@@ -9,17 +9,21 @@
  * `{ sessionId, setupCompleted }`. `sessionId` is regenerated per process
  * start, so:
  *   - normal reconnect (network blip)   → same sessionId, no action
- *   - server restart                    → new sessionId, banner + 10s
- *                                          auto-reload
+ *   - server restart                    → new sessionId, calm update pill
  *   - reinstall (setupCompleted: false) → forced immediate reload, since
  *                                          the wizard is binding anyway
  *
- * Mounted once at the root layout. Renders a small fixed banner at the
- * top of the viewport when a restart is detected; auto-reloads after
- * `RELOAD_GRACE_SECONDS`. The user can click "Reload now" to skip the
- * countdown or "Dismiss" to hide the banner for the current session
- * (useful if they're mid-form and want to copy something out first —
- * they still control when to refresh).
+ * UX (#2203): the box is a heavily-exercised target and restarts often, so
+ * a ticking countdown that force-reloads the page out from under the user
+ * felt restless on mobile. Good practice for an "app updated, reload" prompt
+ * is to be calm and never yank the page mid-interaction:
+ *   - show a small, dismissible pill — no countdown, no surprise reload;
+ *   - apply the pending reload QUIETLY the next time the tab is hidden
+ *     (screen lock / app switch), so a mobile user returns to a fresh page;
+ *   - the user can still Reload now (explicit) or Dismiss;
+ *   - coalesce — once a reload is pending, further restarts don't re-trigger.
+ *
+ * Mounted once at the root layout.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -31,15 +35,14 @@ interface ServerIdentity {
   setupCompleted: boolean;
 }
 
-const RELOAD_GRACE_SECONDS = 10;
-
 export default function ServerIdentityWatcher() {
   const { socket } = useSocket();
   /** First identity received this page-load. Compared against every
    *  subsequent emit to detect a restart. */
   const initial = useRef<ServerIdentity | null>(null);
-  /** When non-null, the banner is shown with `remaining` seconds left. */
-  const [reload, setReload] = useState<{ remaining: number } | null>(null);
+  /** True once a restart is detected — a reload is queued but NOT forced;
+   *  the pill is shown and the reload applies quietly on next tab-hide. */
+  const [pending, setPending] = useState(false);
   /** True once the user clicks Dismiss; suppresses further detection
    *  until the page is reloaded. */
   const [dismissed, setDismissed] = useState(false);
@@ -67,13 +70,15 @@ export default function ServerIdentityWatcher() {
       if (setupReverted) {
         // The install wizard is showing again — every API call from this
         // page will redirect / 401. There's no useful state to preserve;
-        // skip the banner and reload immediately.
+        // skip the pill and reload immediately.
         window.location.reload();
         return;
       }
 
       if (restarted) {
-        setReload({ remaining: RELOAD_GRACE_SECONDS });
+        // Coalesce: setState to the same `true` is a no-op, so repeated
+        // restarts never re-trigger or stack the pill.
+        setPending(true);
       }
     }
     socket.on('server:identity', onIdentity);
@@ -82,44 +87,45 @@ export default function ServerIdentityWatcher() {
     };
   }, [socket, dismissed]);
 
-  // Countdown + auto-reload at zero.
+  // Quiet reload: once a reload is pending, apply it the next time the tab
+  // is backgrounded (screen lock / app switch / tab change). The user is not
+  // looking, so they return to a fresh page instead of being yanked.
   useEffect(() => {
-    if (!reload) return;
-    if (reload.remaining <= 0) {
-      window.location.reload();
-      return;
+    if (!pending) return;
+    function onHidden() {
+      if (document.visibilityState === 'hidden') {
+        window.location.reload();
+      }
     }
-    const t = setTimeout(() => {
-      setReload(r => (r ? { ...r, remaining: r.remaining - 1 } : null));
-    }, 1000);
-    return () => clearTimeout(t);
-  }, [reload]);
+    document.addEventListener('visibilitychange', onHidden);
+    return () => document.removeEventListener('visibilitychange', onHidden);
+  }, [pending]);
 
-  if (!reload) return null;
+  if (!pending) return null;
 
   return (
     <div
-      role="alert"
+      role="status"
       aria-live="polite"
-      className="fixed top-3 left-1/2 -translate-x-1/2 z-[60] max-w-md px-4 py-2.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 shadow-lg flex items-center gap-3"
+      className="fixed top-3 left-1/2 -translate-x-1/2 z-[60] max-w-md px-3.5 py-2 rounded-full border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 shadow-lg flex items-center gap-2.5"
     >
-      <RefreshCcw size={16} className="shrink-0 text-amber-700 dark:text-amber-300" />
+      <RefreshCcw size={15} className="shrink-0 text-amber-700 dark:text-amber-300" />
       <span className="text-sm text-amber-900 dark:text-amber-100">
-        ServiceBay was restarted. Reloading in {reload.remaining}s…
+        ServiceBay updated
       </span>
       <button
         type="button"
         onClick={() => window.location.reload()}
-        className="text-xs font-medium px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white"
+        className="text-xs font-medium px-2.5 py-1 rounded-full bg-amber-600 hover:bg-amber-700 text-white"
       >
-        Reload now
+        Reload
       </button>
       <button
         type="button"
         aria-label="Dismiss"
         onClick={() => {
           setDismissed(true);
-          setReload(null);
+          setPending(false);
         }}
         className="text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-100"
       >
