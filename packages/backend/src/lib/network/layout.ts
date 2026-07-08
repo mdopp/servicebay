@@ -6,15 +6,23 @@ const elk = new ELK();
 
 const GROUP_NODE_TYPES = new Set(['group', 'proxy', 'service', 'pod', 'unmanaged-service']);
 
-// ELK options for layout. #2176 — `elk.hierarchyHandling: INCLUDE_CHILDREN`
-// is required for laying out nested (compound) group nodes, but it disables
-// ELK's connected-component packer — with it on, disconnected components (and
-// the anchored floating cards from #2175) stack into a single dense column
-// beside an empty half of the canvas. So we only add it when the graph
-// actually has nesting (some node declares a parentId); a flat graph gets the
-// component packer instead, which fans components out toward the aspect ratio.
-function buildLayoutOptions(hasNesting: boolean): Record<string, string> {
-  const options: Record<string, string> = {
+// ELK options for the ROOT graph.
+//
+// #2176 — `elk.hierarchyHandling: INCLUDE_CHILDREN` on the root disables ELK's
+// connected-component packer: with it set globally, disconnected components
+// (and the anchored floating cards from #2175) stack into a single dense column
+// beside an empty half of the canvas. So the root NEVER gets INCLUDE_CHILDREN —
+// it keeps `separateConnectedComponents` + `aspectRatio` so components fan out.
+//
+// #2191 — nested (compound) group nodes still need INCLUDE_CHILDREN to grow and
+// enclose their children. The two are NOT in tension once you stop relying on a
+// single global flag: `hierarchyHandling` can be set PER NODE, so each compound
+// node carries its own INCLUDE_CHILDREN in buildHierarchy (see the group
+// per-node layoutOptions) while the root keeps the component packer. This lets a
+// multi-container service GROW around its containers AND disconnected components
+// fan out, in the same graph (the #2191 hard case).
+function buildLayoutOptions(): Record<string, string> {
+  return {
     'elk.algorithm': 'layered',
     'elk.direction': 'RIGHT', // Horizontal flow (Internet -> Router -> Proxy -> Services)
     // #2176 — vertical gap *between* same-layer nodes. This is a MINIMUM added
@@ -48,10 +56,6 @@ function buildLayoutOptions(hasNesting: boolean): Record<string, string> {
     // horizontally (using the empty left half) rather than piling in a column.
     'elk.aspectRatio': '1.6',
   };
-  if (hasNesting) {
-    options['elk.hierarchyHandling'] = 'INCLUDE_CHILDREN'; // Crucial for nesting
-  }
-  return options;
 }
 
 // #1783 — approximate the pixel box a monospace port chip occupies so ELK
@@ -376,14 +380,20 @@ function buildHierarchy(nodes: Node[], edges: Edge[]): ElkNode {
             // If it becomes a parent (has children), we will remove width/height later to let ELK calculate it.
             width: node.measured?.width ?? calculateNodeWidth(node),
             height: node.measured?.height ?? calculateNodeHeight(node),
-            layoutOptions: isGroup ? { 
+            layoutOptions: isGroup ? {
                 'elk.padding': '[top=80,left=50,bottom=50,right=50]',
                 'elk.direction': 'RIGHT', // Horizontal layout for contents (Containers side-by-side)
-                'elk.algorithm': 'layered', 
+                'elk.algorithm': 'layered',
                 'elk.resize': 'true',
                 'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-                'elk.spacing.nodeNode': '80', 
+                'elk.spacing.nodeNode': '80',
                 'elk.layered.spacing.nodeNodeBetweenLayers': '120',
+                // #2191 — INCLUDE_CHILDREN is set PER compound node (here), not on
+                // the root, so this node grows to enclose its children while the
+                // root keeps the connected-component packer (see buildLayoutOptions).
+                // It's harmless on a group whose children were all filtered out
+                // (collapsed) — such a node has no children[] to include.
+                'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
             } : undefined,
             labels: [{ text: (node.data.label as string) || '' }],
             children: []
@@ -415,14 +425,13 @@ function buildHierarchy(nodes: Node[], edges: Edge[]): ElkNode {
     // However, putting them at root usually works for basic layout.
     const elkEdges: ElkExtendedEdge[] = edges.map(toElkEdge);
 
-    // #2176 — INCLUDE_CHILDREN is only needed (and only worth disabling the
-    // component packer for) when the graph actually nests. A group whose
-    // children were all filtered out (collapsed) is a leaf card here.
-    const hasNesting = nodes.some(n => n.parentId && nodeMap.has(n.parentId));
-
+    // #2191 — the root NEVER gets INCLUDE_CHILDREN (that would disable the
+    // connected-component packer, #2176). Nesting is handled per compound node
+    // via each group's own layoutOptions above, so a multi-container service
+    // grows around its containers AND disconnected components still fan out.
     return {
         id: 'root',
-        layoutOptions: buildLayoutOptions(hasNesting),
+        layoutOptions: buildLayoutOptions(),
         children: rootChildren,
         edges: elkEdges
     };
