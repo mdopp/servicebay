@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.150.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.150.0...servicebay-v4.150.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **frontend:** add async feedback to regenerate/save buttons + Escape-close rename modal ([fc9c524](https://github.com/mdopp/servicebay/commit/fc9c5249429c284f9f6308b6de19a2eded922a90)), closes [#2186](https://github.com/mdopp/servicebay/issues/2186) [#2187](https://github.com/mdopp/servicebay/issues/2187) [#2188](https://github.com/mdopp/servicebay/issues/2188)
+* **frontend:** async button feedback + Escape-close; test: cover reset/authelia/crashloop/backup-collector ([7be0112](https://github.com/mdopp/servicebay/commit/7be0112d198e1ca843881cb340ae105021b6a67d))
+
 ## [4.150.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.149.0...servicebay-v4.150.0) (2026-07-08)
 
 
