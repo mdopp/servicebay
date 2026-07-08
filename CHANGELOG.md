@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.150.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.149.0...servicebay-v4.150.0) (2026-07-08)
+
+
+### Features
+
+* **network:** infer edges from env + anchor floating service cards ([917c1ee](https://github.com/mdopp/servicebay/commit/917c1ee97b3072f7bf8f736f68d8df84941ad4f1)), closes [#2175](https://github.com/mdopp/servicebay/issues/2175)
+* **network:** map edge inference + layout overlap fix; fix(ollama): GPU CDI redeploy; deps ([5fd6152](https://github.com/mdopp/servicebay/commit/5fd6152c64c22a8b10c9d52e8279d92b8bbfddf7))
+
+
+### Bug Fixes
+
+* **network:** anchor floating map nodes after ubiquitous-dep suppression ([fe80027](https://github.com/mdopp/servicebay/commit/fe80027d97ac750428bdab8037e79b667ad6f32f))
+* **network:** anchor floating nodes after ubiquitous-dep suppression ([a295d62](https://github.com/mdopp/servicebay/commit/a295d6226a19442d319f04c5d1ad5c0117375ed1)), closes [#2175](https://github.com/mdopp/servicebay/issues/2175)
+* **network:** truthful ELK card heights + component packing to kill map overlap ([8e2d187](https://github.com/mdopp/servicebay/commit/8e2d18728fc7c434b5afcb8fa768ec467930a22b)), closes [#2176](https://github.com/mdopp/servicebay/issues/2176)
+* **services:** retire kube-play shadow of the ollama GPU .container on redeploy ([38a4574](https://github.com/mdopp/servicebay/commit/38a45748f87e86862f9406e51d07ec5cc6ab3115)), closes [#2174](https://github.com/mdopp/servicebay/issues/2174)
+
 ## [4.149.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.148.1...servicebay-v4.149.0) (2026-07-07)
 
 
