@@ -605,6 +605,7 @@ describe('OIDC client_id single source of truth', () => {
     'packages/backend/src/lib/capabilities/autheliaClientMerge.test.ts',    // unit tests use fixture client_id literals to drive the merge
     'packages/backend/src/lib/diagnose/probes/reconcileOidcClients.test.ts', // unit tests use fixture oidcClient meta to drive the reconcile action
     'packages/backend/src/lib/diagnose/ssoVerify.ts',                        // SSO probe maps each gated subdomain → its client_id + registered redirect to drive the real OIDC handshake (the value it TESTS, not a declaration)
+    'packages/backend/src/lib/reverseProxy/autheliaRewrite.test.ts',         // unit tests use a fixture Authelia config's client_id literals to drive + assert the LAN->Public rewrite
   ]);
 
   it('no src/ file hardcodes a client_id / username literal that mirrors an OIDC declaration', () => {

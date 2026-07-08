@@ -194,6 +194,38 @@ export function restartCountIndicatesLoop(restartCount: number, status: string, 
   return Number.isFinite(restartCount) && restartCount >= threshold && !isContainerCurrentlyStable(status);
 }
 
+/**
+ * The complete per-container crash-loop verdict for one `podman ps` row, given
+ * its Status string, cumulative RestartCount, and whether the system has been up
+ * long enough that a *young* container must be a fresh restart (`treatYoungAsLoop`).
+ * This is the exact decision path the `crash_loop` probe applies to each line;
+ * factored out (and exported) so the boundary/inversion cases are unit-testable
+ * without standing up the whole diagnose orchestrator:
+ *  - a restart-count at/over `threshold` on a not-currently-stable container → loop
+ *    (the only signal that survives the boot/install grace window);
+ *  - an explicit `Restarting…`/`Initialized…` status → loop;
+ *  - once past the grace window (`treatYoungAsLoop`), a container up < 30 s (or
+ *    "Up Less than a second") → loop; below the grace window young is expected → not a loop.
+ * A high lifetime count on a long-stable container (Up hours) does NOT fire (the
+ * solaris-tts-bridge false positive), and a below-threshold count never fires on
+ * its own. Order matters: the restart-count check runs first, then status.
+ */
+export function psLineIndicatesLoop(
+  status: string,
+  restartCount: number,
+  opts: { treatYoungAsLoop: boolean; threshold: number },
+): boolean {
+  const s = status.trim();
+  if (restartCountIndicatesLoop(restartCount, s, opts.threshold)) return true;
+  if (/^Restarting/i.test(s)) return true;
+  if (/^Initialized/i.test(s)) return true;
+  if (!opts.treatYoungAsLoop) return false;
+  if (/^Up Less than a second/i.test(s)) return true;
+  const m = s.match(/^Up (\d+) seconds?\b/);
+  if (m && parseInt(m[1], 10) < 30) return true;
+  return false;
+}
+
 function withHistory(probes: DiagnoseProbe[]): DiagnoseProbe[] {
   return probes.map(p => {
     const history = buildProbeHistory(p.id);
@@ -605,19 +637,12 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     const status = (parts[1] ?? '').trim();
     const restartCountRaw = (parts[2] ?? '').trim();
     const restartCount = parseInt(restartCountRaw, 10);
-    // Restart-count check first — it's the only signal that survives
-    // the status-string heuristics' boot/install grace window. (The CUMULATIVE-
-    // count vs current-stability nuance lives in restartCountIndicatesLoop.)
-    if (restartCountIndicatesLoop(restartCount, status, RESTART_COUNT_LOOP_THRESHOLD)) return true;
-    if (/^Restarting/i.test(status)) return true;
-    if (/^Initialized/i.test(status)) return true;
-    // Only flag "Up <30s" when the system has been up long enough that a
-    // young container *must* be a fresh restart — see comment above.
-    if (!treatYoungAsLoop) return false;
-    if (/^Up Less than a second/i.test(status)) return true;
-    const m = status.match(/^Up (\d+) seconds?\b/);
-    if (m && parseInt(m[1], 10) < 30) return true;
-    return false;
+    // Full per-line verdict (restart-count-first, then status heuristics gated on
+    // treatYoungAsLoop) lives in psLineIndicatesLoop, exported for unit testing.
+    return psLineIndicatesLoop(status, restartCount, {
+      treatYoungAsLoop,
+      threshold: RESTART_COUNT_LOOP_THRESHOLD,
+    });
   });
   // Pull the actual crash reason for each restart-looping container instead
   // of leaving the operator to run `podman logs <name>` by hand. Three lines

@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { VariableMeta } from '@servicebay/api-client';
 import { typedFetch, GenerateSecretResponseSchema } from '@servicebay/api-client';
@@ -211,45 +212,11 @@ export default function StackVariableField({
   }
 
   // Secret (auto-generated default; regenerate button picks a fresh
-  // random value)
+  // random value). Delegated to a small stateful subcomponent so the
+  // regenerate request can drive a pending/disabled/error affordance
+  // (hooks can't live behind these early-return branches).
   if (v.meta?.type === 'secret') {
-    return (
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={v.value}
-          onChange={(e) => onChange(e.target.value)}
-          className={`${cls} font-mono text-xs flex-1`}
-          spellCheck={false}
-          autoComplete="off"
-        />
-        <button
-          type="button"
-          onClick={async () => {
-            try {
-              const { secret } = await typedFetch(
-                '/api/install/generate-secret',
-                GenerateSecretResponseSchema,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({}),
-                },
-              );
-              onChange(secret);
-            } catch {
-              // If the server is unreachable mid-edit the operator can
-              // still type a value manually; swallowing keeps the form
-              // responsive instead of throwing into React.
-            }
-          }}
-          className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-          title="Regenerate"
-        >
-          <RefreshCw size={16} />
-        </button>
-      </div>
-    );
+    return <SecretField value={v.value} onChange={onChange} cls={cls} />;
   }
 
   // Default — plain text. Placeholder prefers `meta.example`, then
@@ -264,5 +231,71 @@ export default function StackVariableField({
         ? `e.g. ${v.meta.example}`
         : (v.meta?.default ? `Default: ${v.meta.default}` : `Value for ${v.name}`)}
     />
+  );
+}
+
+const fetchGeneratedSecret = () =>
+  typedFetch('/api/install/generate-secret', GenerateSecretResponseSchema, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+
+/**
+ * Secret variable input + regenerate button. Owns the in-flight state so
+ * the operator gets feedback while `/api/install/generate-secret` is
+ * pending: the button disables + spins, and a failed request surfaces a
+ * visible inline hint instead of silence (#2186). The field stays typeable
+ * throughout — the operator can always enter a value manually.
+ */
+function SecretField({
+  value,
+  onChange,
+  cls,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  cls: string;
+}) {
+  const [regenerating, setRegenerating] = useState(false);
+  const [error, setError] = useState(false);
+
+  // Unreachable mid-edit surfaces a visible hint rather than failing silently;
+  // the operator can still type a value manually. The `regenerating` guard
+  // stops a double-fire from a second click while the request is pending.
+  const regenerate = async () => {
+    if (regenerating) return;
+    setRegenerating(true);
+    setError(false);
+    try {
+      onChange((await fetchGeneratedSecret()).secret);
+    } catch {
+      setError(true);
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex gap-2">
+        <input
+          type="text" value={value} onChange={(e) => onChange(e.target.value)}
+          className={`${cls} font-mono text-xs flex-1`} spellCheck={false} autoComplete="off"
+        />
+        <button
+          type="button" onClick={regenerate} disabled={regenerating} aria-busy={regenerating}
+          title="Regenerate"
+          className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <RefreshCw size={16} className={regenerating ? 'animate-spin' : ''} />
+        </button>
+      </div>
+      {error && (
+        <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">
+          Couldn&apos;t generate a secret — check your connection or type one manually.
+        </p>
+      )}
+    </div>
   );
 }
