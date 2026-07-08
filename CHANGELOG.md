@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.150.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.150.1...servicebay-v4.150.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **network:** grow service group around its containers (per-node INCLUDE_CHILDREN) ([eee394c](https://github.com/mdopp/servicebay/commit/eee394caeae22cc3ccafb65d26799fd69bdce0c0))
+* **network:** grow service group around its containers via per-node INCLUDE_CHILDREN ([2cc68e5](https://github.com/mdopp/servicebay/commit/2cc68e5aaeecfbf82d6c7ca2f672274cbb9568ed)), closes [#2191](https://github.com/mdopp/servicebay/issues/2191)
+
 ## [4.150.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.150.0...servicebay-v4.150.1) (2026-07-08)
 
 
