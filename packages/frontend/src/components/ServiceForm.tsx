@@ -14,6 +14,7 @@ import HistoryViewer from './HistoryViewer';
 import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@servicebay/api-client';
 import { useToast } from '@/providers/ToastProvider';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 interface KubeContainerPort {
     containerPort: number;
@@ -103,6 +104,13 @@ export default function ServiceForm({ initialData, isEdit, defaultNode, onClose,
   const [isRenaming, setIsRenaming] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<'yaml' | 'kube' | 'service' | 'history'>('yaml');
+
+  // Escape closes the rename modal like every other modal in the app
+  // (ConfirmModal etc.), but not while a rename request is in flight (#2188).
+  useEscapeKey(
+    () => setShowRenameModal(false),
+    showRenameModal && !isRenaming,
+  );
 
   // Options for generation
   const [autoUpdate, setAutoUpdate] = useState(() => {

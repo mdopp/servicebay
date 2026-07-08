@@ -115,4 +115,54 @@ describe('HealthDashboard (#2100 dashboards migration)', () => {
     // The checks panel unmounts when a non-checks tab is active.
     await waitFor(() => expect(screen.queryByTestId('health-checks')).toBeNull());
   });
+
+  // #2187 — Save Check disables + spins while the POST is in flight, so a
+  // double-click can't create two checks.
+  it('Save Check disables while saving and guards against a double-submit', async () => {
+    // A save POST that stays pending until we release it, so we can observe
+    // the in-flight state and fire a second click.
+    let releaseSave: (r: Response) => void = () => {};
+    let saveCalls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string, init?: RequestInit) => {
+        if (url === '/api/health/checks' && init?.method === 'POST') {
+          saveCalls += 1;
+          return new Promise<Response>((resolve) => {
+            releaseSave = resolve;
+          });
+        }
+        if (url === '/api/health/checks') {
+          return Promise.resolve(new Response(JSON.stringify(checks), { status: 200 }));
+        }
+        return Promise.resolve(new Response('[]', { status: 200 }));
+      }),
+    );
+
+    render(<HealthDashboard />);
+    await waitFor(() => expect(screen.getByTestId('health-checks')).toBeDefined());
+
+    fireEvent.click(screen.getByRole('button', { name: /add check/i }));
+    await screen.findByText('Create Health Check');
+
+    // Give the (http) check a name so it's a real save; type stays 'http'
+    // (a non-system check), so the Save button renders.
+    fireEvent.change(screen.getByPlaceholderText('e.g. Production API'), {
+      target: { value: 'My Check' },
+    });
+
+    const save = screen.getByRole('button', { name: /save check/i }) as HTMLButtonElement;
+    fireEvent.click(save);
+
+    // In flight: button is disabled + a second click is a no-op.
+    await waitFor(() => expect(save.disabled).toBe(true));
+    fireEvent.click(save);
+
+    // Only one POST despite two clicks.
+    expect(saveCalls).toBe(1);
+
+    // Release the request; the button re-enables via the modal closing.
+    releaseSave(new Response('{}', { status: 200 }));
+    await waitFor(() => expect(screen.queryByText('Create Health Check')).toBeNull());
+  });
 });

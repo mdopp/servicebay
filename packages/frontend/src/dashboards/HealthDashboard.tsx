@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Plus, RefreshCw, X, Search } from 'lucide-react';
+import { Plus, RefreshCw, X, Search, Loader2 } from 'lucide-react';
 import { useToast, ToastType } from '@/providers/ToastProvider';
 import { useSocket } from '@/hooks/useSocket';
 import PageHeader from '@/components/PageHeader';
@@ -41,6 +41,7 @@ export default function HealthDashboard() {
   const [managedServices, setManagedServices] = useState<string[]>([]);
   // const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [checkToDelete, setCheckToDelete] = useState<string | null>(null);
   const [editingCheck, setEditingCheck] = useState<CheckConfig | null>(null);
@@ -261,6 +262,8 @@ export default function HealthDashboard() {
   };
 
   const handleSave = async () => {
+    if (isSaving) return; // guard against a double-submit creating duplicate checks
+    setIsSaving(true);
     try {
       const url = '/api/health/checks';
       // const method = editingCheck ? 'PUT' : 'POST'; // Note: PUT not implemented in API yet, need to fix that
@@ -285,6 +288,8 @@ export default function HealthDashboard() {
     } catch (error) {
       console.error(error);
       addToast('error', 'Failed to save check');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -942,8 +947,9 @@ export default function HealthDashboard() {
                 {isSystemCheck() ? 'Close' : 'Cancel'}
               </Button>
               {!isSystemCheck() && (
-              <Button onClick={handleSave}>
-                Save Check
+              <Button onClick={handleSave} disabled={isSaving} aria-busy={isSaving}>
+                {isSaving && <Loader2 size={14} className="animate-spin" />}
+                {isSaving ? 'Saving...' : 'Save Check'}
               </Button>
               )}
             </div>
