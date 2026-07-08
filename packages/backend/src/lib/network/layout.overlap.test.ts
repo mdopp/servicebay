@@ -3,10 +3,15 @@ import type { Node, Edge } from '@xyflow/react';
 
 // #2176 — unlike layout.test.ts (which stubs ELK to assert edge-point
 // extraction), this suite drives the REAL elkjs layout so we can assert the
-// two geometric acceptance criteria of #2176:
-//   1. same-layer large group cards never overlap, and
-//   2. disconnected components spread across the canvas (bounded aspect
-//      ratio) instead of stacking into one dense column.
+// geometric acceptance criteria of the map layout:
+//   1. same-layer large group cards never overlap (#2176), and
+//   2. nodes anchored to the gateway spread across the canvas (#2175/#2198 —
+//      every node now anchors to the gateway, so there are no disconnected
+//      components; the root INCLUDE_CHILDREN layout must still fan the anchored
+//      nodes out across x-bands, not stack them in one column), and
+//   3. a compound service group grows to enclose its children with real
+//      per-child boxes, even in the presence of a cross-hierarchy inferred
+//      edge (#2198 — the bug that returned unlaid nodes at (0,0)).
 // elkjs runs synchronously-enough in-process here; only the logger is stubbed.
 vi.mock('../logger', () => ({
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
@@ -143,24 +148,38 @@ function serviceGroupWithChildren(id: string): Node {
   } as unknown as Node;
 }
 
-describe('getLayoutedElements — nested group grows around children (#2191 criterion 1+3)', () => {
-  it('grows a multi-container service to enclose its children AND fans out disconnected components in the SAME graph', async () => {
-    // The #2191 HARD case: one expanded service that OWNS 4 containers (must
-    // grow to enclose them, zero child-child overlap) PLUS several disconnected
-    // top-level components (must still fan out, not stack into one column) — in
-    // ONE layout. Pre-#2191 the `hasNesting` gate turned INCLUDE_CHILDREN on
-    // globally, which broke the fan-out; or off, which stacked the containers.
+describe('getLayoutedElements — nested group grows around children (#2191/#2198 criterion 1+3)', () => {
+  it('grows a multi-container service to enclose its children AND fans out gateway-anchored nodes in the SAME graph', async () => {
+    // The hard case (post-#2198): one expanded service that OWNS 4 containers
+    // (must grow to enclose them, zero child-child overlap) PLUS several other
+    // top-level cards ANCHORED to the gateway (#2175 — no disconnected
+    // components any more) that must still fan out across x-bands, not stack
+    // into one column — in ONE layout, with the root carrying INCLUDE_CHILDREN.
+    const gw: Node = {
+      id: 'gw',
+      position: { x: 0, y: 0 },
+      data: { type: 'router', label: 'gateway', status: 'up', rawData: { type: 'gateway' } },
+    } as unknown as Node;
     const svc = serviceGroupWithChildren('big-service');
     const containers = ['c-alpha', 'c-beta', 'c-gamma', 'c-delta'].map((c) =>
       containerNode(c, 'big-service'),
     );
-    // Disconnected top-level floaters (the #2175/#2176 shape) in the same graph.
-    const floaters = Array.from({ length: 5 }, (_, i) =>
-      largeGroupNode(`float-${i}`, 3, [`float${i}.example.com`]),
+    // Other top-level cards anchored to the gateway (the #2175 anchored shape).
+    const anchored = Array.from({ length: 5 }, (_, i) =>
+      largeGroupNode(`anchored-${i}`, 3, [`anchored${i}.example.com`]),
     );
 
-    const nodes: Node[] = [svc, ...containers, ...floaters];
-    const edges: Edge[] = []; // service↔container nesting needs no edges; floaters disconnected
+    const nodes: Node[] = [gw, svc, ...containers, ...anchored];
+    const edges: Edge[] = [
+      // #2175 anchors: every top-level card hangs off the gateway.
+      { id: 'gw-big', source: 'gw', target: 'big-service' },
+      ...anchored.map((a) => ({ id: `gw-${a.id}`, source: 'gw', target: a.id })),
+      // #2198 — a CROSS-HIERARCHY inferred edge: from a top-level anchored
+      // service to a CONTAINER nested inside big-service. Pre-fix (no root
+      // INCLUDE_CHILDREN) this is exactly what made ELK throw and drop every
+      // node to (0,0); the layout must resolve it, not fall back.
+      { id: 'inferred-x', source: 'anchored-0', target: 'c-alpha', data: { kind: 'inferred' } },
+    ] as Edge[];
 
     const { nodes: laid } = await getLayoutedElements(nodes, edges);
 
@@ -179,6 +198,18 @@ describe('getLayoutedElements — nested group grows around children (#2191 crit
     // the parent's box.
     const kids = laid.filter((n) => n.parentId === 'big-service');
     expect(kids.length).toBe(containers.length);
+    // #2198 — each child must carry a DEFINITE ELK-stamped height (the card
+    // renders h-full to fill exactly that box). Pre-fix, leaf children kept
+    // `style.height === undefined` (h-auto) and overflowed into the sibling
+    // below — the operator's stacked-containers symptom.
+    for (const k of kids) {
+      expect(typeof k.style?.height).toBe('number');
+      expect(k.style?.height as number).toBeGreaterThan(0);
+    }
+    // #2198 — children get DISTINCT y positions inside the parent (no two at
+    // the same y). Pre-fix fallback stacked them all at the parent origin.
+    const kidYs = kids.map((k) => Math.round(k.position.y));
+    expect(new Set(kidYs).size).toBe(kids.length);
     const kidRects: Rect[] = kids.map((k) => ({
       x: k.position.x,
       y: k.position.y,
@@ -213,21 +244,29 @@ describe('getLayoutedElements — nested group grows around children (#2191 crit
         ).toBe(false);
       }
     }
-    // Floaters + the grown service fan out into more than one x-band.
+    // Anchored cards + the grown service fan out into more than one x-band
+    // (the gateway sits in its own layer; its targets spread beyond it).
     const distinctXBands = new Set(topBoxes.map((b) => Math.round(b.x / 50))).size;
     expect(distinctXBands).toBeGreaterThan(1);
   });
 });
 
-describe('getLayoutedElements — component spread (#2176 criterion 2)', () => {
-  it('spreads disconnected components into a bounded aspect ratio, not one column', async () => {
-    // Six independent (edge-less) service cards — the #2175 anchored/floating
-    // shape. separateConnectedComponents + aspectRatio must fan them out so the
-    // layout is not a single tall column with an empty left half.
-    const nodes: Node[] = Array.from({ length: 6 }, (_, i) =>
+describe('getLayoutedElements — anchored-card spread (#2176/#2198 criterion 2)', () => {
+  it('spreads gateway-anchored cards across x-bands, not into one column', async () => {
+    // Six service cards ANCHORED to the gateway (#2175 — no disconnected
+    // components any more). The layered layout must still fan them out across
+    // the canvas rather than stacking them in one tall column with an empty
+    // left half (the #2176 symptom).
+    const gw: Node = {
+      id: 'gw',
+      position: { x: 0, y: 0 },
+      data: { type: 'router', label: 'gateway', status: 'up', rawData: { type: 'gateway' } },
+    } as unknown as Node;
+    const cards: Node[] = Array.from({ length: 6 }, (_, i) =>
       largeGroupNode(`svc-${i}`, 3, [`svc${i}.example.com`]),
     );
-    const edges: Edge[] = []; // fully disconnected components
+    const nodes: Node[] = [gw, ...cards];
+    const edges: Edge[] = cards.map((c) => ({ id: `gw-${c.id}`, source: 'gw', target: c.id }));
 
     const { nodes: laid } = await getLayoutedElements(nodes, edges);
     const boxes = boundingBoxes(laid);
