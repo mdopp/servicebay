@@ -79,7 +79,12 @@ function renderProxyConfig(
   // nginx snippet before the Mustache pass so the snippet's own
   // {{PUBLIC_DOMAIN}} / {{AUTHELIA_PORT}} placeholders still get
   // substituted from `view`.
-  const expanded = expandForwardAuthSentinel(proxyConfig.advanced_config, { omitAcmeBypass }) ?? proxyConfig.advanced_config;
+  const expanded = expandForwardAuthSentinel(proxyConfig.advanced_config, {
+    omitAcmeBypass,
+    // #2210 — per-path forward-auth exceptions (e.g. /.well-known/, /static/)
+    // are baked into the expanded config so they survive NPM host rebuilds.
+    authSkipPaths: proxyConfig.authSkipPaths,
+  }) ?? proxyConfig.advanced_config;
   // #1677 — A forward-auth snippet that renders `{{AUTHELIA_PORT}}` to
   // an empty string emits `proxy_pass http://127.0.0.1:/api/authz/...`,
   // which nginx rejects with `[emerg] invalid port` — and one such bad

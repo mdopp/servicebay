@@ -178,12 +178,59 @@ export interface ForwardAuthExpandOptions {
    * swallow a challenge if one is ever served).
    */
   omitAcmeBypass?: boolean;
+  /**
+   * #2210 — Path prefixes that must SKIP forward-auth while the rest of the
+   * host stays gated. Each becomes an `auth_request off` location that still
+   * proxies to the upstream, so e.g. `/.well-known/assetlinks.json` (Google's
+   * unauthenticated Digital-Asset-Links fetch for a TWA) or `/static/` (PWA
+   * icons/manifest) pass straight through. See {@link buildAuthSkipLocations}.
+   */
+  authSkipPaths?: string[];
+}
+
+/**
+ * #2210 — Build `auth_request off` bypass locations for the given path
+ * prefixes. Each still proxies to the upstream by reusing NPM's own
+ * server-level `$forward_scheme`/`$server`/`$port` variables (set in the
+ * generated proxy-host conf), so we never need to know the concrete upstream.
+ *
+ * `location ^~` (longest-prefix, wins over regex) is used so a bypass beats
+ * both the inherited server-level `auth_request /authelia` AND stays distinct
+ * from NPM's own `location ^~ /.well-known/acme-challenge/` (a longer, more
+ * specific prefix → different location string → no `duplicate location`
+ * crash, and acme still routes to NPM's webroot). We explicitly refuse
+ * `/.well-known/acme-challenge` here for the same reason — NPM owns it.
+ */
+export function buildAuthSkipLocations(paths: string[] | undefined): string {
+  if (!paths?.length) return '';
+  const seen = new Set<string>();
+  const blocks: string[] = [];
+  for (const raw of paths) {
+    const path = raw.trim();
+    // Absolute prefixes only; never shadow NPM's acme-challenge location.
+    if (!path.startsWith('/')) continue;
+    if (path.startsWith('/.well-known/acme-challenge')) continue;
+    if (seen.has(path)) continue;
+    seen.add(path);
+    blocks.push(
+      [
+        `location ^~ ${path} {`,
+        '    auth_request off;',
+        '    include conf.d/include/proxy.conf;',
+        '    proxy_pass $forward_scheme://$server:$port;',
+        '}',
+      ].join('\n'),
+    );
+  }
+  return blocks.join('\n\n');
 }
 
 function baseSnippet(opts?: ForwardAuthExpandOptions): string {
-  return opts?.omitAcmeBypass
+  const core = opts?.omitAcmeBypass
     ? AUTHELIA_FORWARD_AUTH_CORE
     : AUTHELIA_FORWARD_AUTH_SNIPPET;
+  const skip = buildAuthSkipLocations(opts?.authSkipPaths);
+  return skip ? `${core}\n\n${skip}` : core;
 }
 
 /**

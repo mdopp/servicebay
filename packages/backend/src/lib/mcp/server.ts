@@ -1214,10 +1214,11 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
       sslForced: z.boolean().optional().describe('Force HTTPS redirect (default true for public/internal once a cert binds).'),
       websocket: z.boolean().optional().describe('Enable WebSocket upgrade on the host.'),
       advancedConfig: z.string().optional().describe('Custom nginx directives to inject into the server block (appended after any forward-auth snippet).'),
+      authSkipPaths: z.array(z.string().startsWith('/')).optional().describe('#2210 — path prefixes that skip forward-auth while the rest of the host stays gated, e.g. ["/.well-known/", "/static/"]. Each becomes an `auth_request off` location that still proxies upstream (TWA assetlinks, ACME, PWA assets). Only meaningful with forwardAuth=true.'),
       service: z.string().optional().describe('Logical service name (default: first label of the domain).'),
       node: nodeParam,
     },
-    async ({ domain, forwardPort, forwardHost, exposure, forwardAuth, sslForced, websocket, advancedConfig, service, node }) => {
+    async ({ domain, forwardPort, forwardHost, exposure, forwardAuth, sslForced, websocket, advancedConfig, authSkipPaths, service, node }) => {
       if (forwardAuth && exposure === 'lan') {
         return errorResult('forwardAuth requires exposure "public" or "internal": Authelia forward-auth needs an https (cert-bound) host, and a "lan" host serves plain HTTP. Use exposure "internal" for a LAN-only SSO-gated service.');
       }
@@ -1242,6 +1243,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
           ...(websocket !== undefined ? { allow_websocket_upgrade: websocket } : {}),
           ...(sslForced !== undefined ? { ssl_forced: sslForced } : {}),
           ...(composedAdvanced ? { advanced_config: composedAdvanced } : {}),
+          ...(authSkipPaths?.length ? { authSkipPaths } : {}),
         },
       };
       try {
