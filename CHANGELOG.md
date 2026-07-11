@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.152.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.152.0...servicebay-v4.152.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* **proxy:** authSkipPaths location must not add its own proxy_pass ([#2210](https://github.com/mdopp/servicebay/issues/2210)) ([c216cf1](https://github.com/mdopp/servicebay/commit/c216cf1f91704397d59608f56150ca63999dc93a))
+* **proxy:** authSkipPaths location must not add its own proxy_pass ([#2210](https://github.com/mdopp/servicebay/issues/2210)) ([9694bfc](https://github.com/mdopp/servicebay/commit/9694bfcdb2a4b993e289fdef8b9e66e98ad5e31c))
+
 ## [4.152.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.151.0...servicebay-v4.152.0) (2026-07-11)
 
 
