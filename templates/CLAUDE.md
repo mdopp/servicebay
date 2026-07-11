@@ -144,3 +144,27 @@ per service. The diagnose page surfaces failures.
    and is idempotent. Run `python3 -m py_compile templates/<name>/migrations/*.py`.
 6. `npm test` passes — the consistency suite catches typos,
    dangling references, and bad migration filenames at build time.
+7. **No literal secrets.** Express every credential as a `type: "secret"`
+   variable — the wizard generates/injects the value at deploy. Never put a
+   real key/token/password in `template.yml`, `variables.json` defaults, or a
+   `*.mustache`; `{{VAR}}` placeholders only. A build-time scan
+   (`tests/backend/assist_consistency.test.ts`) fails on known secret shapes.
+
+## Architecture recommendations for a new service
+
+Before designing a new service, read the ADR-style recommendations assist
+**`new-service-architecture`** (via `list_assists` / `get_assist`, or
+`assists/new-service-architecture.md`): recommended language, basic structure,
+libraries, tests, data storage, and secrets — plus the platform ADRs in
+`docs/adr/` a new service must respect (SSO, non-destructive installs,
+reconciliation, network isolation, backup tiering, service tokens). Orientation
+on the platforms themselves is in the `servicebay-overview` and `solaris-overview`
+assists.
+
+## Reusable know-how → assists
+
+If, while authoring a template, you work out a non-trivial recipe or hit a
+sharp-edged gotcha that others will meet again, capture it as an **assist**
+(`assists/<id>.md`, surfaced by the `list_assists` / `get_assist` MCP tools) —
+abstracted, with no box-specific values or secrets. See the root `CLAUDE.md`
+("Capturing reusable knowledge").

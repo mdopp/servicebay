@@ -102,6 +102,9 @@ COPY --from=builder /app/packages/frontend/.next ./packages/frontend/.next
 # Copy templates and stacks
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/stacks ./stacks
+# Task-assist catalog (#2146) — served by the list_assists / get_assist MCP
+# tools; resolves at /app/assists via process.cwd(), like templates/ + stacks/.
+COPY --from=builder /app/assists ./assists
 
 # Markdown content rendered at runtime by /api/help (per-page contextual
 # help, plus the CHANGELOG entry for the sidebar "What's new" modal). The
