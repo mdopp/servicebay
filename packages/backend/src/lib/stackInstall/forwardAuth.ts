@@ -186,6 +186,37 @@ export interface ForwardAuthExpandOptions {
    * icons/manifest) pass straight through. See {@link buildAuthSkipLocations}.
    */
   authSkipPaths?: string[];
+  /**
+   * #2205 — Strip a redundant `proxy_http_version` directive from the
+   * `advanced_config` when the host has websocket upgrade enabled. NPM
+   * already emits `proxy_http_version 1.1;` at server level whenever
+   * `allow_websocket_upgrade` is on, so any advanced_config that ALSO sets
+   * `proxy_http_version` (e.g. an SSE-tuning block) produces a DUPLICATE
+   * directive → `nginx: [emerg] "proxy_http_version" directive is duplicate`
+   * → the vhost is invalid and the domain returns a TLS `unrecognized_name`
+   * after redeploy. Set for websocket-enabled hosts so ServiceBay never
+   * emits the second copy. See {@link stripDuplicateProxyHttpVersion}.
+   */
+  websocket?: boolean;
+}
+
+/**
+ * #2205 — Remove any `proxy_http_version` directive from an nginx config
+ * block. Used only when the host has websocket upgrade enabled: NPM emits its
+ * own server-level `proxy_http_version 1.1;` for websocket hosts, so a copy in
+ * our `advanced_config` duplicates it and nginx rejects the whole vhost with
+ * `[emerg] "proxy_http_version" directive is duplicate`. Confirmed live during
+ * the #2210 work on chat.dopp.cloud (an SSE-tuning block carried its own
+ * `proxy_http_version 1.1;`). Idempotent: a block with no such directive is
+ * returned unchanged. We strip the directive entirely (rather than dedupe to
+ * one) because on a websocket host NPM's server-level copy already provides it,
+ * so ours is always redundant.
+ */
+export function stripDuplicateProxyHttpVersion(content: string): string {
+  // Drop each full `proxy_http_version <ver>;` line, including its
+  // leading whitespace and the trailing newline, so we don't leave a
+  // blank line behind. Case-insensitive on the directive name only.
+  return content.replace(/^[ \t]*proxy_http_version\b[^;\n]*;[ \t]*\r?\n?/gim, '');
 }
 
 /**
@@ -256,6 +287,12 @@ export function expandForwardAuthSentinel(
   opts?: ForwardAuthExpandOptions,
 ): string | undefined {
   if (!advancedConfig) return advancedConfig;
+  // #2205 — on a websocket host, strip any redundant `proxy_http_version`
+  // (NPM emits its own at server level) so we never produce a duplicate
+  // directive. Applies to the sentinel's appended extras AND to a plain
+  // advanced_config that carries the directive on its own.
+  const sanitize = (s: string): string =>
+    opts?.websocket ? stripDuplicateProxyHttpVersion(s) : s;
   const snippet = baseSnippet(opts);
   if (advancedConfig === AUTHELIA_FORWARD_AUTH_SENTINEL) {
     return snippet;
@@ -263,9 +300,9 @@ export function expandForwardAuthSentinel(
   // Prefix form: `__authelia_forward_auth__\n<extras>`.
   if (advancedConfig.startsWith(`${AUTHELIA_FORWARD_AUTH_SENTINEL}\n`)) {
     const extras = advancedConfig.slice(AUTHELIA_FORWARD_AUTH_SENTINEL.length + 1);
-    return `${snippet}\n${extras}`;
+    return `${snippet}\n${sanitize(extras)}`;
   }
-  return advancedConfig;
+  return sanitize(advancedConfig);
 }
 
 /**

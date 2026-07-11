@@ -1087,9 +1087,12 @@ export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request })
                 // own acme-challenge location, so omit ours to avoid the
                 // `[emerg] duplicate location` crash that reverts the conf.
                 const omitAcmeBypass = host.exposure === 'public' || host.exposure === 'internal';
+                // #2205 — a websocket host gets a server-level `proxy_http_version
+                // 1.1;` from NPM; strip any copy in advanced_config so we never
+                // emit the duplicate directive that invalidates the whole vhost.
                 host.proxyConfig = {
                     ...host.proxyConfig,
-                    advanced_config: renderForwardAuthAdvancedConfig(host.proxyConfig.advanced_config, authPort, { omitAcmeBypass, authSkipPaths: host.proxyConfig.authSkipPaths }),
+                    advanced_config: renderForwardAuthAdvancedConfig(host.proxyConfig.advanced_config, authPort, { omitAcmeBypass, authSkipPaths: host.proxyConfig.authSkipPaths, websocket: host.proxyConfig.allow_websocket_upgrade }),
                 };
             }
             // Default forward host = node LAN IP (NPM is in a container,
