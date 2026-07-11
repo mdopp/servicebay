@@ -715,6 +715,17 @@ export interface ProxyConfig {
    * upstream sees a loopback Host regardless of the node's LAN IP.
    */
   localUpstreamHost?: boolean;
+  /**
+   * #2210 — Path prefixes that SKIP forward-auth on an otherwise Authelia-
+   * gated (`forwardAuth: true`) host. Each emits an `auth_request off`
+   * location that still proxies to the upstream, letting unauthenticated
+   * fetchers reach specific public paths — e.g. `/.well-known/assetlinks.json`
+   * (Google's Digital-Asset-Links check that drops a TWA's URL bar),
+   * `/.well-known/` (ACME, apple-app-site-association, security.txt), or
+   * `/static/` (PWA icons/manifest for reproducible app builds). Only
+   * meaningful together with the forward-auth sentinel `advanced_config`.
+   */
+  authSkipPaths?: string[];
 }
 
 export interface OidcClientConfig {

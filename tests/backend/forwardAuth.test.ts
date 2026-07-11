@@ -5,6 +5,7 @@ import {
   DEFAULT_AUTHELIA_PORT,
   expandForwardAuthSentinel,
   sanitizeForwardAuthPort,
+  buildAuthSkipLocations,
 } from '@/lib/stackInstall/forwardAuth';
 
 /**
@@ -82,5 +83,60 @@ describe('AUTHELIA_FORWARD_AUTH_SNIPPET', () => {
   it('exposes the LE acme-challenge path with forward-auth disabled (#1680)', () => {
     expect(AUTHELIA_FORWARD_AUTH_SNIPPET).toContain('location /.well-known/acme-challenge/');
     expect(AUTHELIA_FORWARD_AUTH_SNIPPET).toContain('auth_request off;');
+  });
+});
+
+/**
+ * #2210 — per-path forward-auth exceptions. A gated host can let specific
+ * public path prefixes (TWA assetlinks, ACME, PWA static assets) skip
+ * Authelia while everything else stays behind auth_request.
+ */
+describe('authSkipPaths (#2210)', () => {
+  it('builds an auth_request off location that still proxies upstream', () => {
+    const out = buildAuthSkipLocations(['/.well-known/assetlinks.json']);
+    expect(out).toContain('location ^~ /.well-known/assetlinks.json {');
+    expect(out).toContain('auth_request off;');
+    // reuses NPM's own server-level upstream vars — no concrete host needed
+    expect(out).toContain('proxy_pass $forward_scheme://$server:$port;');
+  });
+
+  it('emits one block per path, prefix-matched (^~), deduped', () => {
+    const out = buildAuthSkipLocations(['/.well-known/', '/static/', '/.well-known/']);
+    expect(out.match(/location \^~ /g)?.length).toBe(2);
+    expect(out).toContain('location ^~ /.well-known/ {');
+    expect(out).toContain('location ^~ /static/ {');
+  });
+
+  it('refuses acme-challenge (NPM owns that location) and non-absolute paths', () => {
+    const out = buildAuthSkipLocations(['/.well-known/acme-challenge/', 'relative/path', '/ok/']);
+    expect(out).not.toContain('acme-challenge');
+    expect(out).not.toContain('relative/path');
+    expect(out).toContain('location ^~ /ok/ {');
+  });
+
+  it('returns empty for no paths', () => {
+    expect(buildAuthSkipLocations(undefined)).toBe('');
+    expect(buildAuthSkipLocations([])).toBe('');
+  });
+
+  it('appends skip locations onto the expanded forward-auth snippet', () => {
+    const out = expandForwardAuthSentinel(AUTHELIA_FORWARD_AUTH_SENTINEL, {
+      authSkipPaths: ['/.well-known/'],
+    });
+    // core forward-auth still present + the bypass appended
+    expect(out).toContain('auth_request /authelia;');
+    expect(out).toContain('location ^~ /.well-known/ {');
+    expect(out).toContain('auth_request off;');
+  });
+
+  it('does not collide with NPM acme on LE hosts: omitAcmeBypass + /.well-known/ skip yields distinct locations', () => {
+    const out = expandForwardAuthSentinel(AUTHELIA_FORWARD_AUTH_SENTINEL, {
+      omitAcmeBypass: true,
+      authSkipPaths: ['/.well-known/'],
+    })!;
+    // our own acme-challenge bypass is omitted (NPM provides it)...
+    expect(out).not.toContain('location /.well-known/acme-challenge/ {');
+    // ...and our /.well-known/ skip is a DIFFERENT (shorter ^~ prefix) location
+    expect(out).toContain('location ^~ /.well-known/ {');
   });
 });

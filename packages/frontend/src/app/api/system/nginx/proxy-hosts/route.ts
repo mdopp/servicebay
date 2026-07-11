@@ -89,6 +89,13 @@ interface ProxyHostRequest {
          * regardless of the node's LAN IP.
          */
         localUpstreamHost?: boolean;
+        /**
+         * #2210 — Path prefixes that skip forward-auth (emit `auth_request
+         * off` locations that still proxy upstream) on a `forwardAuth` host,
+         * e.g. `/.well-known/` (TWA assetlinks, ACME) or `/static/` (PWA
+         * assets). Only meaningful with the forward-auth `advanced_config`.
+         */
+        authSkipPaths?: string[];
     };
 }
 
@@ -1082,7 +1089,7 @@ export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request })
                 const omitAcmeBypass = host.exposure === 'public' || host.exposure === 'internal';
                 host.proxyConfig = {
                     ...host.proxyConfig,
-                    advanced_config: renderForwardAuthAdvancedConfig(host.proxyConfig.advanced_config, authPort, { omitAcmeBypass }),
+                    advanced_config: renderForwardAuthAdvancedConfig(host.proxyConfig.advanced_config, authPort, { omitAcmeBypass, authSkipPaths: host.proxyConfig.authSkipPaths }),
                 };
             }
             // Default forward host = node LAN IP (NPM is in a container,
