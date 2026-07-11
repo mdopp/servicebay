@@ -313,8 +313,11 @@ export function topologyLayoutSignature(
  * re-running the layout: for every existing node, carry its `position` (and
  * layout-affecting `style` width/height) forward while taking the new `data`
  * (status / metadata / label). Nodes that vanished are dropped; nodes that
- * appeared are kept at their incoming position (shouldn't happen when the
- * topology signature is unchanged, but handled defensively). Edges adopt the
+ * appeared but were NOT in the laid-out set are ALSO dropped (#2201) — never
+ * injected at their raw (0,0) incoming position, which stacked collapsed-service
+ * containers at the origin. A real topology change flips the signature and
+ * routes to a full re-layout, so this path only sees the laid-out visible set.
+ * Edges adopt the
  * fresh styling/label but are matched to the laid-out edge by source→target
  * so the routed `points`/`hops`/positions survive the poll.
  */
@@ -325,18 +328,30 @@ export function mergeGraphPreservingPositions<TNode extends Node, TEdge extends 
   freshEdges: TEdge[],
 ): { nodes: TNode[]; edges: TEdge[] } {
   const laidOutById = new Map(laidOutNodes.map((n) => [n.id, n]));
-  const nodes = freshNodes.map((fresh) => {
+  const nodes: TNode[] = [];
+  for (const fresh of freshNodes) {
     const prev = laidOutById.get(fresh.id);
-    if (!prev) return fresh;
-    return {
+    // #2201 — DROP fresh nodes that were not in the laid-out set instead of
+    // injecting them at their raw (0,0) position. This merge path only runs when
+    // the topology SIGNATURE is unchanged, so the visible node set is supposed to
+    // match the last full layout. A fresh node with no prior layout is one the
+    // layout deliberately excluded — e.g. a container whose service is collapsed
+    // (processAndLayout filters it, but graphData.nodes still carries it). The old
+    // `return fresh` re-introduced every such container at its parent's origin,
+    // which is exactly what stacked all containers at (0,0) on the first poll
+    // after the initial collapsed layout. A genuine topology change flips the
+    // signature and routes to a full processAndLayout, so dropping unknowns here
+    // is safe and keeps merge output consistent with the laid-out set.
+    if (!prev) continue;
+    nodes.push({
       ...prev,
       data: fresh.data,
       // Keep the laid-out position + layout-sized style; refresh everything
       // else (className etc.) from the fresh node.
       position: prev.position,
       style: prev.style,
-    } as TNode;
-  });
+    } as TNode);
+  }
 
   const laidOutEdgeByPair = new Map(
     laidOutEdges.map((e) => [`${e.source}->${e.target}`, e]),
