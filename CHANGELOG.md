@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.151.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.150.4...servicebay-v4.151.0) (2026-07-11)
+
+
+### Features
+
+* **home:** surface pending MCP approvals on the Home page ([5cf29d6](https://github.com/mdopp/servicebay/commit/5cf29d6d25c9656e4b23e16678c4dc7f75fc0755))
+* **home:** surface pending MCP approvals on the Home page ([32f5d1c](https://github.com/mdopp/servicebay/commit/32f5d1c3ec430aaffea456573f60f1eab470be23))
+
+
+### Bug Fixes
+
+* **immich:** migrate DB from pgvecto.rs to VectorChord (immich v3) ([dcb8977](https://github.com/mdopp/servicebay/commit/dcb8977b36e2138ec759296e26b30984f9339d29))
+* **immich:** migrate DB from pgvecto.rs to VectorChord (immich v3) ([3b94ad3](https://github.com/mdopp/servicebay/commit/3b94ad36a8fd2c5c921f16de4169d8e2e57e7a3f))
+* **network:** preserve collapsed/summary/onToggle across mergeInPlace ([#2201](https://github.com/mdopp/servicebay/issues/2201)) ([f76e07c](https://github.com/mdopp/servicebay/commit/f76e07c13ac15323eea96a4232310d8704221e4e))
+* **network:** preserve collapsed/summary/onToggle across mergeInPlace ([#2201](https://github.com/mdopp/servicebay/issues/2201)) ([cce5fee](https://github.com/mdopp/servicebay/commit/cce5feef66a250a07f85db37d8c6794f0e1dc590))
+* **network:** stop mergeInPlace from stacking collapsed-service containers ([#2201](https://github.com/mdopp/servicebay/issues/2201)) ([129466d](https://github.com/mdopp/servicebay/commit/129466dba62a976a83d563e9c4c4cc6a1a0f10da))
+* **network:** stop mergeInPlace stacking collapsed-service containers ([#2201](https://github.com/mdopp/servicebay/issues/2201)) ([de14668](https://github.com/mdopp/servicebay/commit/de14668cceba622f9840c7e3a19d1fc7b3e57b26))
+* **ui:** calm the mobile "ServiceBay restarted" reload prompt ([fd9bb5a](https://github.com/mdopp/servicebay/commit/fd9bb5a5fbbbf8df7eecdb823e3cfe97e6dfcf4c))
+* **ui:** calm the mobile "ServiceBay restarted" reload prompt ([#2203](https://github.com/mdopp/servicebay/issues/2203)) ([fbea701](https://github.com/mdopp/servicebay/commit/fbea7012670ea939ae2fd7b4cf4fccfd8a8e54ba))
+
 ## [4.150.4](https://github.com/mdopp/servicebay/compare/servicebay-v4.150.3...servicebay-v4.150.4) (2026-07-08)
 
 
