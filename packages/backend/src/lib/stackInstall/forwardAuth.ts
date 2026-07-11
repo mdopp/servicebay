@@ -190,9 +190,14 @@ export interface ForwardAuthExpandOptions {
 
 /**
  * #2210 — Build `auth_request off` bypass locations for the given path
- * prefixes. Each still proxies to the upstream by reusing NPM's own
- * server-level `$forward_scheme`/`$server`/`$port` variables (set in the
- * generated proxy-host conf), so we never need to know the concrete upstream.
+ * prefixes. Each still proxies to the upstream via NPM's own
+ * `include conf.d/include/proxy.conf` — that include ALREADY contains the
+ * `proxy_pass $forward_scheme://$server:$port$request_uri;` (plus the Host /
+ * X-Forwarded-* headers) using NPM's server-level upstream variables, so we
+ * neither need the concrete upstream NOR our own `proxy_pass` (a second one is
+ * `nginx: [emerg] "proxy_pass" directive is duplicate`, confirmed live on the
+ * chat.dopp.cloud conf). The bypass location therefore only adds
+ * `auth_request off;` on top of that include.
  *
  * `location ^~` (longest-prefix, wins over regex) is used so a bypass beats
  * both the inherited server-level `auth_request /authelia` AND stays distinct
@@ -216,8 +221,9 @@ export function buildAuthSkipLocations(paths: string[] | undefined): string {
       [
         `location ^~ ${path} {`,
         '    auth_request off;',
+        // proxy.conf supplies proxy_pass + Host/X-Forwarded-* — do NOT add our
+        // own proxy_pass (duplicate directive → nginx refuses the conf).
         '    include conf.d/include/proxy.conf;',
-        '    proxy_pass $forward_scheme://$server:$port;',
         '}',
       ].join('\n'),
     );
