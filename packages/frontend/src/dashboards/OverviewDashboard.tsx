@@ -10,6 +10,7 @@ import { useImageUpdates, type ServiceImageUpdate } from '@/hooks/useImageUpdate
 import { useServiceActions } from '@/hooks/useServiceActions';
 import ImageUpdatesPendingBanner from '@/components/ImageUpdatesPendingBanner';
 import ServiceBayUpdateCard from '@/components/ServiceBayUpdateCard';
+import PendingApprovalsCard from '@/components/PendingApprovalsCard';
 import { Card, SectionHeading, StatusDot } from '@/components/ui';
 import { cn } from '@/components/ui';
 
@@ -294,6 +295,11 @@ export default function OverviewDashboard() {
 
         {/* Headline status — the single sentence that answers "is everything OK?" */}
         <HealthHeadline tone={healthHeadline.tone} text={healthHeadline.text} />
+
+        {/* Pending MCP destructive-tool approvals — surfaced here (not just in
+            Settings) because they're short-lived and easy to miss otherwise.
+            Renders nothing when there's nothing to approve. */}
+        <PendingApprovalsCard />
 
         {/* Updates — one coherent area (#2082): the ServiceBay self-updater
             (version status + "Update now", GET/POST /api/system/update) and the
