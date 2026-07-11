@@ -32,3 +32,41 @@ export function renderTemplate(template: string, view: Record<string, unknown>):
     Mustache.escape = savedEscape;
   }
 }
+
+/**
+ * Render a POD/quadlet YAML template (#2206).
+ *
+ * Pod templates carry variable values inside **double-quoted YAML scalars**
+ * (`value: "{{VAPID_PRIVATE_KEY}}"`). A value that contains a raw newline
+ * (a multi-line PEM private key, a wrapped token) substituted verbatim splits
+ * the scalar across lines, and podman's Go YAML parser rejects the result
+ * (`yaml: line NNN: could not find expected ':'`) → the pod crash-loops on the
+ * next restart, long after the install that wrote it. js-yaml tolerates the
+ * folded newline, so this only bites the real box.
+ *
+ * The fix escapes control characters (backslash first, then newline / carriage
+ * return / tab) in every string value, so they emit as YAML escape sequences
+ * (`\n`, `\r`, `\t`) inside the double-quoted scalar — valid in *every* YAML
+ * parser and a faithful round-trip back to the original value. This is applied
+ * ONLY to pod YAML; config-file rendering keeps real newlines (a PEM written to
+ * a config file needs its literal line breaks).
+ */
+export function renderPodYaml(template: string, view: Record<string, unknown>): string {
+  const escaped: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(view)) {
+    escaped[k] = typeof v === 'string' ? escapeYamlScalar(v) : v;
+  }
+  return renderTemplate(template, escaped);
+}
+
+/** Escape control chars so a value survives inside a double-quoted YAML
+ *  scalar. Backslash must be escaped first, or the escapes we add would be
+ *  double-escaped. Exported for the runner's empty-var detection, which must
+ *  compare against the pre-render view. */
+export function escapeYamlScalar(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
+}
