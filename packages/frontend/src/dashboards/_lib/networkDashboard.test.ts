@@ -292,6 +292,23 @@ describe('#2119 mergeGraphPreservingPositions', () => {
     expect(nodes.find((x) => x.id === 's1')!.style).toEqual({ width: 320 });
   });
 
+  it('#2201 DROPS a fresh node that was not in the laid-out set (no (0,0) injection)', () => {
+    // Simulates a poll after a collapsed layout: `fresh` carries the collapsed
+    // service's containers (position {0,0}), but they were filtered out of the
+    // laid-out set. They must NOT be re-introduced at the origin (which stacked
+    // every container on its parent) — they're dropped until a real re-layout.
+    const child = (id: string, parentId: string): Node =>
+      ({ id, type: 'custom', position: { x: 0, y: 0 }, parentId, data: { type: 'container', label: id } });
+    const { nodes } = mergeGraphPreservingPositions(
+      [laid('s1', 100, 'up')], // laid-out set: just the (collapsed) service
+      [],
+      [fresh('s1', 'up'), child('c1', 's1'), child('c2', 's1')], // fresh carries the containers
+      [],
+    );
+    expect(nodes.map((n) => n.id)).toEqual(['s1']); // containers dropped, not stacked at (0,0)
+    expect(nodes.find((n) => n.id === 's1')!.position).toEqual({ x: 100, y: 100 });
+  });
+
   it('keeps the laid-out routed edge geometry, refreshing only styling/label', () => {
     const laidEdge: Edge = {
       id: 'e-s1-s2', source: 's1', target: 's2',
