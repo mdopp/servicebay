@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.153.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.152.1...servicebay-v4.153.0) (2026-07-11)
+
+
+### Features
+
+* **mcp:** task-assist catalog + list_assists/get_assist ([#2146](https://github.com/mdopp/servicebay/issues/2146), [#2145](https://github.com/mdopp/servicebay/issues/2145)) ([333ca8d](https://github.com/mdopp/servicebay/commit/333ca8df9c90d8ab92ccd64579028b591e913a06))
+* **mcp:** task-assist catalog + list_assists/get_assist tools ([#2146](https://github.com/mdopp/servicebay/issues/2146)) ([fe44a5b](https://github.com/mdopp/servicebay/commit/fe44a5be02799c7edd258728e6ba1d5c765d5960))
+
 ## [4.152.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.152.0...servicebay-v4.152.1) (2026-07-11)
 
 
