@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.152.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.151.0...servicebay-v4.152.0) (2026-07-11)
+
+
+### Features
+
+* **proxy:** per-path forward-auth exceptions via authSkipPaths ([#2210](https://github.com/mdopp/servicebay/issues/2210)) ([974674d](https://github.com/mdopp/servicebay/commit/974674da3d01acdf1c60f963f878c432e0829548))
+* **proxy:** per-path forward-auth exceptions via authSkipPaths ([#2210](https://github.com/mdopp/servicebay/issues/2210)) ([34fc2b5](https://github.com/mdopp/servicebay/commit/34fc2b5a7a5d3075df25bc4c8cb6a8c832d01ac8))
+
 ## [4.151.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.150.4...servicebay-v4.151.0) (2026-07-11)
 
 
