@@ -309,6 +309,23 @@ describe('#2119 mergeGraphPreservingPositions', () => {
     expect(nodes.find((n) => n.id === 's1')!.position).toEqual({ x: 100, y: 100 });
   });
 
+  it('#2201 preserves the aggregation fields (collapsed/summary/onToggle) across a merge', () => {
+    const toggle = () => {};
+    const laidAgg: Node = {
+      id: 's1', type: 'custom', position: { x: 5, y: 5 },
+      data: { type: 'service', label: 's1', status: 'up', collapsed: true, summary: { status: 'up' }, onToggle: toggle },
+    };
+    const { nodes } = mergeGraphPreservingPositions(
+      [laidAgg], [],
+      [fresh('s1', 'down')], [], // fresh has NO collapsed/summary/onToggle
+    );
+    const d = nodes[0].data as { status?: string; collapsed?: boolean; summary?: unknown; onToggle?: unknown };
+    expect(d.status).toBe('down');        // fresh status flows through
+    expect(d.collapsed).toBe(true);       // aggregation preserved (not lost to fresh)
+    expect(d.summary).toEqual({ status: 'up' });
+    expect(d.onToggle).toBe(toggle);      // toggle handler survives the poll
+  });
+
   it('keeps the laid-out routed edge geometry, refreshing only styling/label', () => {
     const laidEdge: Edge = {
       id: 'e-s1-s2', source: 's1', target: 's2',

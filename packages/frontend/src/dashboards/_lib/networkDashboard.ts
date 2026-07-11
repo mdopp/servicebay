@@ -343,9 +343,22 @@ export function mergeGraphPreservingPositions<TNode extends Node, TEdge extends 
     // signature and routes to a full processAndLayout, so dropping unknowns here
     // is safe and keeps merge output consistent with the laid-out set.
     if (!prev) continue;
+    // #2201 — take the fresh status/health data, but PRESERVE the fields that
+    // processAndLayout's aggregation adds (they don't exist on the raw
+    // graphData node): `collapsed`/`summary` drive the collapsed-vs-expanded
+    // card, and `onToggle` is the collapse handler. The old `data: fresh.data`
+    // dropped all three, so after the first poll every collapsed service
+    // re-rendered as an EXPANDED-but-empty frame with a dead toggle button.
+    const prevData = prev.data as Record<string, unknown>;
+    const mergedData = {
+      ...(fresh.data as Record<string, unknown>),
+      collapsed: prevData.collapsed,
+      summary: prevData.summary,
+      onToggle: prevData.onToggle,
+    } as TNode['data'];
     nodes.push({
       ...prev,
-      data: fresh.data,
+      data: mergedData,
       // Keep the laid-out position + layout-sized style; refresh everything
       // else (className etc.) from the fresh node.
       position: prev.position,
