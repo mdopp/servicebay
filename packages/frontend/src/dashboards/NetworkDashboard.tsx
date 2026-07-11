@@ -704,16 +704,6 @@ const nodeTypes = {
   custom: CustomNode,
 };
 
-// __MAPDBG__ temporary #2201 diagnostic — records the runtime layout sequence
-// (which path ran + the auth children positions) onto window so we can read it
-// on :dev. REMOVE once the container-stacking cause is confirmed.
-function mapdbg(path: string, detail: Record<string, unknown>): void {
-  if (typeof window === 'undefined') return;
-  const w = window as unknown as { __mapdbg?: unknown[] };
-  w.__mapdbg = w.__mapdbg || [];
-  w.__mapdbg.push({ t: performance.now() | 0, path, ...detail });
-}
-
 const edgeTypes = {
   custom: CustomEdge,
 };
@@ -1170,15 +1160,6 @@ export default function NetworkDashboard() {
     const layouted = await getLayoutedElements(layoutNodes, layoutEdges);
     const filteredNodes = applyFilter(layouted.nodes as Node<GraphNodeData>[], search);
     const layoutedEdges = layouted.edges;
-    // __MAPDBG__ temporary #2201 diag
-    mapdbg('processAndLayout', {
-      inNodes: layoutNodes.length,
-      collapsed: collapsed.size,
-      outNodes: filteredNodes.length,
-      authKids: filteredNodes
-        .filter((n) => n.parentId === 'Local:service-auth')
-        .map((n) => ({ pos: n.position, w: n.width, h: n.height, sw: n.style?.width })),
-    });
     setNodes(filteredNodes);
     setEdges(layoutedEdges);
     // #2119 — snapshot the laid-out graph so a subsequent identical-topology
@@ -1210,15 +1191,6 @@ export default function NetworkDashboard() {
       const merged = mergeGraphPreservingPositions(prev.nodes, prev.edges, freshNodes, freshEdges);
       const filtered = applyFilter(merged.nodes, search);
       laidOutGraphRef.current = { nodes: filtered, edges: merged.edges };
-      // __MAPDBG__ temporary #2201 diag
-      mapdbg('mergeInPlace', {
-        prevNodes: prev.nodes.length,
-        freshNodes: freshNodes.length,
-        outNodes: filtered.length,
-        authKids: filtered
-          .filter((n) => n.parentId === 'Local:service-auth')
-          .map((n) => ({ pos: n.position, w: n.width, prevHad: prev.nodes.some((p) => p.id === n.id) })),
-      });
       setNodes(filtered);
       setEdges(merged.edges);
   }, [applyFilter, setNodes, setEdges]);
@@ -1247,13 +1219,6 @@ export default function NetworkDashboard() {
       // re-layout with a prior signature) surfaces the brief indicator.
       const isFirstLayout = layoutSignatureRef.current === null;
       const isStale = () => layoutRunRef.current !== runId;
-      // __MAPDBG__ temporary #2201 diag
-      mapdbg('applyTopology', {
-        decision: topologyUnchanged && !hasFreshDeepLinkFocus ? 'mergeInPlace' : 'processAndLayout',
-        collapsed: currentCollapsed.size,
-        gdNodes: gd.nodes.length,
-        prevSigMatch: layoutSignatureRef.current === signature,
-      });
       try {
           if (topologyUnchanged && !hasFreshDeepLinkFocus) {
               // #2195 — background status/metric merge: the map updates in place
