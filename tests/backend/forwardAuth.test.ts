@@ -92,12 +92,15 @@ describe('AUTHELIA_FORWARD_AUTH_SNIPPET', () => {
  * Authelia while everything else stays behind auth_request.
  */
 describe('authSkipPaths (#2210)', () => {
-  it('builds an auth_request off location that still proxies upstream', () => {
+  it('builds an auth_request off location that proxies via NPM proxy.conf (no duplicate proxy_pass)', () => {
     const out = buildAuthSkipLocations(['/.well-known/assetlinks.json']);
     expect(out).toContain('location ^~ /.well-known/assetlinks.json {');
     expect(out).toContain('auth_request off;');
-    // reuses NPM's own server-level upstream vars — no concrete host needed
-    expect(out).toContain('proxy_pass $forward_scheme://$server:$port;');
+    // proxy.conf already carries proxy_pass ($forward_scheme://$server:$port…) —
+    // the location must NOT add its own (a second proxy_pass is a duplicate
+    // directive and nginx refuses the whole conf; confirmed live on 17.conf).
+    expect(out).toContain('include conf.d/include/proxy.conf;');
+    expect(out).not.toContain('proxy_pass');
   });
 
   it('emits one block per path, prefix-matched (^~), deduped', () => {
