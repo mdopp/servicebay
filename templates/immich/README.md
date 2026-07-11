@@ -14,7 +14,7 @@ This template deploys a complete Immich stack in a single Pod:
 - Immich Server (web UI + API)
 - Immich Machine Learning
 - Redis
-- PostgreSQL (with pgvecto.rs for vector search)
+- PostgreSQL (with VectorChord for vector search)
 
 Data is persisted at `${DATA_DIR}/immich/` with separate directories for uploads, model cache, and database.
 
