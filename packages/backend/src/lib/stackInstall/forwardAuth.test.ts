@@ -3,8 +3,13 @@ import {
   AUTHELIA_FORWARD_AUTH_SENTINEL,
   expandForwardAuthSentinel,
   renderForwardAuthAdvancedConfig,
+  stripDuplicateProxyHttpVersion,
   DEFAULT_AUTHELIA_PORT,
 } from './forwardAuth';
+
+/** Count occurrences of the `proxy_http_version` directive. */
+const countHttpVersion = (s: string): number =>
+  (s.match(/proxy_http_version/gi) ?? []).length;
 
 describe('expandForwardAuthSentinel', () => {
   it('expands the bare sentinel into the auth_request snippet (still {{AUTHELIA_PORT}}-templated)', () => {
@@ -73,5 +78,70 @@ describe('renderForwardAuthAdvancedConfig — the no-Mustache (direct API) path'
     const out = renderForwardAuthAdvancedConfig(AUTHELIA_FORWARD_AUTH_SENTINEL, '9091', { omitAcmeBypass: true })!;
     expect(out).not.toContain('acme-challenge');
     expect(out).toContain('proxy_pass http://127.0.0.1:9091/api/authz/auth-request;');
+  });
+});
+
+// #2205 — a websocket host gets a server-level `proxy_http_version 1.1;` from
+// NPM; any copy in advanced_config duplicates it and nginx rejects the vhost
+// (`[emerg] "proxy_http_version" directive is duplicate`).
+describe('stripDuplicateProxyHttpVersion', () => {
+  it('removes the directive (with leading whitespace) and leaves no blank line', () => {
+    const input = 'proxy_read_timeout 1h;\n    proxy_http_version 1.1;\nproxy_buffering off;\n';
+    const out = stripDuplicateProxyHttpVersion(input);
+    expect(countHttpVersion(out)).toBe(0);
+    expect(out).toBe('proxy_read_timeout 1h;\nproxy_buffering off;\n');
+  });
+  it('removes EVERY copy (SSE blocks sometimes repeat it)', () => {
+    const input = 'proxy_http_version 1.1;\nproxy_set_header X 1;\nproxy_http_version 1.1;\n';
+    expect(countHttpVersion(stripDuplicateProxyHttpVersion(input))).toBe(0);
+  });
+  it('is idempotent when the directive is absent', () => {
+    const input = 'proxy_set_header Connection "upgrade";\n';
+    expect(stripDuplicateProxyHttpVersion(input)).toBe(input);
+  });
+});
+
+describe('websocket sanitize — exactly one proxy_http_version reaches nginx (#2205)', () => {
+  // A realistic SSE-tuning advanced_config that sets proxy_http_version itself.
+  const SSE_CONFIG = [
+    'proxy_http_version 1.1;',
+    'proxy_set_header Connection "";',
+    'proxy_buffering off;',
+    'proxy_read_timeout 3600s;',
+  ].join('\n');
+
+  it('websocket=true strips the redundant proxy_http_version from a plain advanced_config', () => {
+    const out = expandForwardAuthSentinel(SSE_CONFIG, { websocket: true })!;
+    // ServiceBay emits ZERO (NPM adds the one server-level copy for websocket
+    // hosts), so the rendered vhost ends up with exactly one — not two.
+    expect(countHttpVersion(out)).toBe(0);
+    // the rest of the SSE tuning is preserved
+    expect(out).toContain('proxy_read_timeout 3600s;');
+    expect(out).toContain('proxy_buffering off;');
+  });
+  it('websocket unset leaves the advanced_config (and its proxy_http_version) untouched', () => {
+    const out = expandForwardAuthSentinel(SSE_CONFIG)!;
+    expect(countHttpVersion(out)).toBe(1);
+    expect(out).toContain('proxy_http_version 1.1;');
+  });
+  it('websocket=true strips the directive from the sentinel prefix-form extras too', () => {
+    const out = renderForwardAuthAdvancedConfig(
+      `${AUTHELIA_FORWARD_AUTH_SENTINEL}\n${SSE_CONFIG}`,
+      '9091',
+      { omitAcmeBypass: true, websocket: true },
+    )!;
+    // forward-auth core still renders...
+    expect(out).toContain('proxy_pass http://127.0.0.1:9091/api/authz/auth-request;');
+    // ...and the duplicate directive from the extras is gone.
+    expect(countHttpVersion(out)).toBe(0);
+    expect(out).toContain('proxy_read_timeout 3600s;');
+  });
+  it('websocket=true on the forward-auth sentinel does not touch its own body (no proxy_http_version there)', () => {
+    const out = renderForwardAuthAdvancedConfig(AUTHELIA_FORWARD_AUTH_SENTINEL, '9091', {
+      omitAcmeBypass: true,
+      websocket: true,
+    })!;
+    expect(countHttpVersion(out)).toBe(0);
+    expect(out).toContain('auth_request /authelia;');
   });
 });

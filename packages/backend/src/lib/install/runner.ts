@@ -24,7 +24,7 @@
  * `crashed` by `jobStore.markCrashedOnStartup()` (see server.ts).
  */
 import crypto from 'node:crypto';
-import { renderTemplate } from '../template/render';
+import { renderTemplate, renderPodYaml } from '../template/render';
 // Direct lib imports (#600) — the actions.ts wrappers are RPC bridges
 // for client components, not appropriate for server-side lib code.
 import {
@@ -510,8 +510,11 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
 
   // Inject dynamic variables for self-healing and template rendering.
   Object.assign(view, authDynamicVars(item.name));
-  // Render YAML with unified template renderer
-  const yamlContent = renderTemplate(item.yaml, view);
+  // Render YAML with the pod renderer — it escapes control chars (newlines in
+  // a multi-line PEM/token) so they emit as `\n` inside the double-quoted
+  // scalar rather than splitting it across lines and producing YAML that
+  // podman's parser rejects → crash-loop on the next restart (#2206).
+  const yamlContent = renderPodYaml(item.yaml, view);
 
   // #1318 — the pod YAML had no missing-var guard (config files did), so an
   // unfilled {{VAR}} rendered empty and deployed silently. Surface a

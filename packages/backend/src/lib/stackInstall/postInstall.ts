@@ -84,6 +84,9 @@ function renderProxyConfig(
     // #2210 — per-path forward-auth exceptions (e.g. /.well-known/, /static/)
     // are baked into the expanded config so they survive NPM host rebuilds.
     authSkipPaths: proxyConfig.authSkipPaths,
+    // #2205 — websocket hosts already get a server-level `proxy_http_version`
+    // from NPM; strip any duplicate the template's advanced_config carries.
+    websocket: proxyConfig.allow_websocket_upgrade,
   }) ?? proxyConfig.advanced_config;
   // #1677 — A forward-auth snippet that renders `{{AUTHELIA_PORT}}` to
   // an empty string emits `proxy_pass http://127.0.0.1:/api/authz/...`,

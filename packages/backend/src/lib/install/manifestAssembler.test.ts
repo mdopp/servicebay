@@ -245,6 +245,45 @@ describe('assembleManifest', () => {
     expect(persistSingleSecret).not.toHaveBeenCalled();
   });
 
+  it('partial prefilled preserves stored secrets omitted from the map (#2206)', async () => {
+    // A partial install_template that supplies only ONE new variable must NOT
+    // wipe the other stored secrets to empty — that silently took HA + Jellyfin
+    // offline on the solaris service (2026-07-11).
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', []));
+    getTemplateVariables.mockResolvedValue({
+      HASS_TOKEN: { type: 'secret', noAutoGenerate: true },
+      JELLYFIN_PASSWORD: { type: 'secret', noAutoGenerate: true },
+      VAPID_PUBLIC: { type: 'secret', noAutoGenerate: true },
+    });
+    loadSavedSecrets.mockReturnValue({ HASS_TOKEN: 'ha-tok', JELLYFIN_PASSWORD: 'jf-pw' });
+
+    const r = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      prefilled: { VAPID_PUBLIC: 'new-vapid-pub' }, // only the new var supplied
+      templateSource: 'Built-in',
+    });
+
+    // Omitted secrets keep their stored value, not empty.
+    expect(r.variables.find(v => v.name === 'HASS_TOKEN')?.value).toBe('ha-tok');
+    expect(r.variables.find(v => v.name === 'JELLYFIN_PASSWORD')?.value).toBe('jf-pw');
+    // The supplied var wins.
+    expect(r.variables.find(v => v.name === 'VAPID_PUBLIC')?.value).toBe('new-vapid-pub');
+  });
+
+  it('an explicit empty prefilled value does not clobber a stored secret (#2206)', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', []));
+    getTemplateVariables.mockResolvedValue({ SVC_SECRET: { type: 'secret' } });
+    loadSavedSecrets.mockReturnValue({ SVC_SECRET: 'stored-value' });
+
+    const r = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      prefilled: { SVC_SECRET: '' }, // explicitly empty — must fall back to stored
+      templateSource: 'Built-in',
+    });
+
+    expect(r.variables.find(v => v.name === 'SVC_SECRET')?.value).toBe('stored-value');
+  });
+
   it('always resolves LLDAP_HOST to localhost', async () => {
     getTemplateYaml.mockResolvedValue(tmplYaml('svc', [], '    # {{LLDAP_HOST}}'));
     getTemplateVariables.mockResolvedValue({});
