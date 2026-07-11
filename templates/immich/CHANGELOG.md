@@ -1,5 +1,31 @@
 # Immich — template changelog
 
+## v4 — pgvecto.rs → VectorChord (breaking)
+
+immich v3 removed the deprecated **pgvecto.rs** vector extension. The template
+pinned the old `docker.io/tensorchord/pgvecto-rs:pg14-v0.2.0` DB image while
+`immich-server:release` auto-updated past it, so the microservices worker
+crash-looped with *"No vector extension found. Available extensions: vchord,
+vector"*.
+
+Changes:
+
+1. **DB image** → `ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0`
+   (immich's own image; bundles VectorChord + pgvector + pgvecto.rs and sets
+   `shared_preload_libraries` internally).
+2. **No postgres `args`** — the old `-c shared_preload_libraries=vectors.so`
+   / `listen_addresses` override is removed (the image handles preload; a
+   partial override would drop it — the #410 trap). Postgres stays pod-internal
+   (no ports), so the localhost-only bind isn't needed for isolation.
+3. **`DB_VECTOR_EXTENSION=vectorchord`** on immich-server.
+
+**Operator impact (breaking):** immich migrates the existing `vectors` data to
+VectorChord **in place** on its next startup (reindex takes seconds-to-minutes
+by library size). **Back up pgdata before redeploy** — the migration rewrites
+the vector column. The new image bundles pgvecto.rs too, so an old backup can
+still be restored. **Do not downgrade immich below 1.133.0 after migrating.**
+Photo files are untouched (they live in the upload volume, not the DB).
+
 ## v3 — #1904
 
 Disk-import photos become keyless External Libraries (Decision A):

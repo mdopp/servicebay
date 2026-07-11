@@ -6,7 +6,7 @@ metadata:
     app: immich
   annotations:
     servicebay.label: "Photos"
-    servicebay.schema-version: "3"
+    servicebay.schema-version: "4"
     servicebay.ports: "{{IMMICH_PORT}}/tcp"
     # photos.<domain> is served via nginx; Immich's SSO uses Authelia.
     # file-share supplies the read-only photo areas for the disk-import
@@ -88,6 +88,10 @@ spec:
           value: "{{DB_PASSWORD}}"
         - name: DB_DATABASE_NAME
           value: "immich"
+        # immich v3 dropped pgvecto.rs; pin VectorChord so immich migrates the
+        # old `vectors` extension to `vchord` on startup (schema v4, #2203-repair).
+        - name: DB_VECTOR_EXTENSION
+          value: "vectorchord"
         - name: REDIS_HOSTNAME
           value: "127.0.0.1"
         - name: IMMICH_MACHINE_LEARNING_URL
@@ -124,20 +128,15 @@ spec:
       args: ["--bind", "127.0.0.1", "--protected-mode", "yes"]
 
     - name: database
-      image: docker.io/tensorchord/pgvecto-rs:pg14-v0.2.0
-      # The pgvecto-rs image's default CMD sets
-      # `shared_preload_libraries=vectors.so` — overriding args to
-      # restrict listen_addresses dropped that, postgres started
-      # without the extension and immich's microservices worker
-      # crashed with "pgvecto.rs must be loaded via
-      # shared_preload_libraries" (#410 follow-up). Keep BOTH
-      # `-c` flags: extension load AND localhost-only bind.
-      args:
-        - "postgres"
-        - "-c"
-        - "shared_preload_libraries=vectors.so"
-        - "-c"
-        - "listen_addresses=127.0.0.1"
+      # immich's VectorChord postgres image (pg14). Bundles vchord + pgvector +
+      # pgvecto.rs and sets `shared_preload_libraries` internally, so we pass NO
+      # args — a partial override would drop the preload (the #410 trap). immich
+      # migrates the old pgvecto.rs `vectors` extension to VectorChord on startup
+      # (see immich upgrading docs; do not downgrade immich below 1.133.0 after).
+      # The bundled pgvecto.rs is only needed during migration / to restore an
+      # old backup. Postgres is pod-internal (no ports), so the previous
+      # localhost-only listen_addresses bind is not needed for LAN isolation.
+      image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
       env:
         - name: POSTGRES_PASSWORD
           value: "{{DB_PASSWORD}}"
