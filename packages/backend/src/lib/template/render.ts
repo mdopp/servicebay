@@ -61,11 +61,15 @@ export function renderPodYaml(template: string, view: Record<string, unknown>): 
 
 /** Escape control chars so a value survives inside a double-quoted YAML
  *  scalar. Backslash must be escaped first, or the escapes we add would be
- *  double-escaped. Exported for the runner's empty-var detection, which must
- *  compare against the pre-render view. */
+ *  double-escaped. The double-quote must also be escaped (`\"`), or a value
+ *  containing a `"` closes the scalar early → invalid YAML → the pod
+ *  crash-loops on the next restart (same failure class as an unescaped
+ *  newline, #2224). Exported for the runner's empty-var detection, which
+ *  must compare against the pre-render view. */
 export function escapeYamlScalar(value: string): string {
   return value
     .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
     .replace(/\n/g, '\\n')
     .replace(/\r/g, '\\r')
     .replace(/\t/g, '\\t');
