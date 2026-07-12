@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.154.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.153.1...servicebay-v4.154.0) (2026-07-12)
+
+
+### Features
+
+* **assists:** assists-catalog editor backend + config-render escaping and map-merge regression fixes ([5b0ac92](https://github.com/mdopp/servicebay/commit/5b0ac92d53efec0223e8041fe28be881b298407c))
+* **assists:** backend REST API for the assists catalog editor ([bbd5656](https://github.com/mdopp/servicebay/commit/bbd5656366cecf924d17eb1f1388458820ae808e)), closes [#2221](https://github.com/mdopp/servicebay/issues/2221)
+
+
+### Bug Fixes
+
+* **config-render:** escape double-quote in YAML scalars and handle CRLF forward-auth sentinel ([9732920](https://github.com/mdopp/servicebay/commit/9732920cf3e682ecc3056da77b8624baacc1aa8c)), closes [#2224](https://github.com/mdopp/servicebay/issues/2224)
+* **dashboards:** merge fresh className/type on in-place map poll ([eb36b12](https://github.com/mdopp/servicebay/commit/eb36b126ad1024ca4c2eb6f22717a4bc61460ec8)), closes [#2225](https://github.com/mdopp/servicebay/issues/2225)
+
 ## [4.153.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.153.0...servicebay-v4.153.1) (2026-07-11)
 
 
