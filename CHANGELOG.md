@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.155.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.155.0...servicebay-v4.155.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* **settings:** strip assist frontmatter before rendering the body ([db59ff8](https://github.com/mdopp/servicebay/commit/db59ff85a6cc8bd916840e35d2e47cf748623ecf)), closes [#2231](https://github.com/mdopp/servicebay/issues/2231)
+* **settings:** strip assist frontmatter before rendering the Knowledge body ([3208e14](https://github.com/mdopp/servicebay/commit/3208e143b0a732b21aca43cabf4e7807f04a50d3))
+
 ## [4.155.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.154.0...servicebay-v4.155.0) (2026-07-12)
 
 
