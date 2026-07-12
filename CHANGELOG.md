@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.155.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.154.0...servicebay-v4.155.0) (2026-07-12)
+
+
+### Features
+
+* **settings:** add Knowledge section for the assists catalog editor ([a113b15](https://github.com/mdopp/servicebay/commit/a113b1525ed18914a9dc54e9aa1d6e0dc9e4e7a6)), closes [#2228](https://github.com/mdopp/servicebay/issues/2228)
+* **settings:** Knowledge section for the assists catalog editor ([ed99f6a](https://github.com/mdopp/servicebay/commit/ed99f6aeb6bdcc56af6d2f3e9f354db22c3ae7aa))
+
 ## [4.154.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.153.1...servicebay-v4.154.0) (2026-07-12)
 
 
