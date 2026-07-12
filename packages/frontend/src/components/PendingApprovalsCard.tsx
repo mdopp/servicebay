@@ -24,10 +24,12 @@ export interface PendingApproval {
   toolName: string;
   args: Record<string, unknown>;
   caller?: string;
-  expiresAt: number;
+  // Durable approvals (#2234) never expire, so this is null; a legacy numeric
+  // expiry is still rendered if present.
+  expiresAt: number | null;
 }
 
-/** Poll cadence — well under the ~5 min approval TTL so the list stays fresh. */
+/** Poll cadence — keeps the list fresh against approve/reject from other tabs. */
 const POLL_MS = 15_000;
 
 export function usePendingApprovals() {
@@ -42,11 +44,11 @@ export function usePendingApprovals() {
       .catch(() => setPending([]));
   }, []);
 
-  const approve = useCallback(async (id: string) => {
+  const resolve = useCallback(async (id: string, method: 'POST' | 'DELETE') => {
     setBusyId(id);
     setError(null);
     try {
-      const res = await fetch(`/api/system/mcp/approve/${id}`, { method: 'POST' });
+      const res = await fetch(`/api/system/mcp/approve/${id}`, { method });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error ?? `HTTP ${res.status}`);
@@ -59,28 +61,32 @@ export function usePendingApprovals() {
     }
   }, [load]);
 
+  const approve = useCallback((id: string) => resolve(id, 'POST'), [resolve]);
+  const reject = useCallback((id: string) => resolve(id, 'DELETE'), [resolve]);
+
   useEffect(() => {
     load();
     const t = setInterval(load, POLL_MS);
     return () => clearInterval(t);
   }, [load]);
 
-  return { pending, busyId, error, approve };
+  return { pending, busyId, error, approve, reject };
 }
 
-function ApprovalRow({ entry, busy, onApprove }: { entry: PendingApproval; busy: boolean; onApprove: (id: string) => void }) {
-  // Absolute expiry time (not a Date.now()-derived countdown) so render stays
-  // pure; the poll drops expired entries off the list anyway.
-  const expiresAtLabel = new Date(entry.expiresAt).toLocaleTimeString();
+function ApprovalRow({ entry, busy, onApprove, onReject }: { entry: PendingApproval; busy: boolean; onApprove: (id: string) => void; onReject: (id: string) => void }) {
+  const expiresAtLabel = entry.expiresAt != null ? new Date(entry.expiresAt).toLocaleTimeString() : null;
   return (
     <li className="text-xs rounded-card border border-status-warn/40 bg-status-warn/10 p-2">
       <div className="flex items-center gap-2">
         <span className="font-mono font-semibold text-status-warn">{entry.toolName}</span>
         {entry.caller && <span className="text-text-subtle">from {entry.caller}</span>}
-        <span className="text-text-subtle ml-auto">expires {expiresAtLabel}</span>
+        <span className="text-text-subtle ml-auto">{expiresAtLabel ? `expires ${expiresAtLabel}` : 'awaiting approval'}</span>
       </div>
       <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] text-text-muted font-mono">{JSON.stringify(entry.args, null, 2)}</pre>
-      <div className="mt-1.5 flex justify-end">
+      <div className="mt-1.5 flex justify-end gap-1">
+        <Button type="button" variant="danger" size="sm" disabled={busy} onClick={() => onReject(entry.pendingId)}>
+          Reject
+        </Button>
         <Button type="button" size="sm" disabled={busy} onClick={() => onApprove(entry.pendingId)}>
           <ShieldCheck size={12} />
           {busy ? 'Approving…' : 'Approve & run'}
@@ -95,7 +101,7 @@ function ApprovalRow({ entry, busy, onApprove }: { entry: PendingApproval; busy:
  * the top of Home unconditionally.
  */
 export default function PendingApprovalsCard() {
-  const { pending, busyId, error, approve } = usePendingApprovals();
+  const { pending, busyId, error, approve, reject } = usePendingApprovals();
   if (!pending || pending.length === 0) return null;
 
   return (
@@ -107,12 +113,12 @@ export default function PendingApprovalsCard() {
       </div>
       <p className="text-xs text-text-muted mb-2">
         An MCP agent proposed these destructive actions. They run only after you approve —
-        the agent cannot approve its own request. Approvals expire after a few minutes.
+        the agent cannot approve its own request. Requests persist until you approve or reject them.
       </p>
       {error && <p className="text-xs text-status-fail mb-2">{error}</p>}
       <ul className="space-y-2">
         {pending.map(p => (
-          <ApprovalRow key={p.pendingId} entry={p} busy={busyId === p.pendingId} onApprove={approve} />
+          <ApprovalRow key={p.pendingId} entry={p} busy={busyId === p.pendingId} onApprove={approve} onReject={reject} />
         ))}
       </ul>
     </Card>

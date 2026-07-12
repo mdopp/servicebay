@@ -31,7 +31,8 @@ import { getServicebayChannel, setServicebayChannel } from '@/lib/servicebayChan
 import { guardMutation, guardExec, snapshotBeforeMutation } from './safety';
 import { recordAudit } from './audit';
 import { notifyDestructiveOp } from './notify';
-import { createPendingApproval } from './pendingApprovals';
+import { submitApproval, registerMcpDispatcher } from '@/lib/approvals';
+import { dispatchWithServer } from './dispatchTool';
 import { redactLogText, redactServiceFiles } from './redact';
 import { type ApiScope, scopeSatisfiedBy, ALL_SCOPES } from '@/lib/auth/apiScope';
 import {
@@ -83,6 +84,13 @@ interface McpAuthContext {
   scopes: ApiScope[];
   tokenId?: string;
 }
+
+// Wire the approvals kernel's MCP-tool re-dispatch (#2234) to a no-auth
+// (operator) MCP server. Registered at module load — server.ts is loaded at
+// process startup — so approving a persisted MCP approval runs the tool. The
+// dispatcher closes over `createMcpServer` here rather than dispatchTool.ts
+// importing server.ts, which would close an approvals ↔ mcp dependency cycle.
+registerMcpDispatcher((toolName, args) => dispatchWithServer(() => createMcpServer(), toolName, args));
 
 const nodeParam = z.string().optional().describe('Node name (defaults to first available node)');
 
@@ -308,6 +316,27 @@ function isDestroyTierTool(toolName: string): boolean {
 }
 
 /**
+ * A destroy-tier approval's `service` anchor for the operator's Approvals UI
+ * (#2234). Most destructive tools name a target in `args.name` (delete_service,
+ * delete_health_check) or `args.service` — use it when it's a single safe path
+ * segment so the request reads e.g. "delete_service: honcho". Otherwise fall
+ * back to a neutral "mcp" bucket (the approvals store re-validates either way).
+ */
+const APPROVAL_SERVICE_RE = /^[a-zA-Z0-9_.-]+$/;
+function coerceApprovalService(args: Record<string, unknown>): string {
+  const candidate = args.name ?? args.service;
+  if (
+    typeof candidate === 'string' &&
+    candidate !== '.' &&
+    candidate !== '..' &&
+    APPROVAL_SERVICE_RE.test(candidate)
+  ) {
+    return candidate;
+  }
+  return 'mcp';
+}
+
+/**
  * Run the snapshot → real handler → audit/notify tail for one tool call.
  * This is the part of the safety flow that actually executes the mutation,
  * factored out so it can run either inline OR deferred behind a human
@@ -397,32 +426,41 @@ function safeHandler(
       }
     }
 
-    // Approval gate (#1766): a TOKEN caller (the agent) may *propose* a
-    // destroy-tier tool but not execute it — park the call for an
-    // out-of-band human confirm and hand back a pending handle instead of a
-    // result. Cookie callers (no `auth`) bypass the gate and execute
-    // inline, same as before: the human IS the operator. The gate lands
-    // here, AFTER the scope + mutation/exec guards (so the agent still
-    // learns immediately if the call would be refused) but BEFORE the
-    // snapshot/handler, which are deferred into the approval's `execute`.
+    // Approval gate (#1766, #2234): a TOKEN caller (the agent) may *propose* a
+    // destroy-tier tool but not execute it. The proposal is parked as a
+    // *persistent* approval in the shared approvals queue (lib/approvals) —
+    // NOT an ephemeral in-memory pending — so it (a) shows up in the operator's
+    // Approvals UI (which polls /api/approvals), (b) survives a backend restart
+    // on disk, and (c) has a truthful, durable lifetime instead of vanishing
+    // after ~5 min. Approving it there re-dispatches this exact tool via the
+    // declared `on_approve.mcp` action; rejecting cancels it. The cookie-gated
+    // approve route means the proposing token still cannot self-approve.
+    // Cookie callers (no `auth`) bypass the gate and execute inline, same as
+    // before: the human IS the operator. The gate lands here, AFTER the scope +
+    // mutation/exec guards (so the agent still learns immediately if the call
+    // would be refused) but BEFORE the snapshot/handler.
     if (auth && isDestroyTierTool(toolName)) {
-      const pending = createPendingApproval({
-        toolName,
-        args,
-        caller: auth.user,
-        execute: () => runToolWithSideEffects(toolName, args, handler, handlerArgs, auth),
+      // Derive a service anchor from the tool args when it names one, else a
+      // neutral "mcp" bucket. `submitApproval` re-validates it as a safe path
+      // segment; fall back to "mcp" if the arg is not a usable service name.
+      const service = coerceApprovalService(args);
+      const request = await submitApproval({
+        service,
+        title: `${toolName}${service !== 'mcp' ? `: ${service}` : ''}`,
+        description: `An MCP agent (${auth.user}) proposed the destructive tool "${toolName}". It runs only after you approve; the agent cannot approve its own request.`,
+        payload: { toolName, args, caller: auth.user },
+        on_approve: { mcp: { toolName, args } },
       });
-      void recordAudit({ ts: new Date().toISOString(), tool: toolName, caller: auth.user, outcome: 'blocked', durationMs: 0, args, errorMessage: `pending human approval (${pending.pendingId})` });
+      void recordAudit({ ts: new Date().toISOString(), tool: toolName, caller: auth.user, outcome: 'blocked', durationMs: 0, args, errorMessage: `pending human approval (${request.id})` });
       return {
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
             status: 'pending_approval',
-            pendingId: pending.pendingId,
-            toolName: pending.toolName,
-            args: pending.args,
-            expiresAt: new Date(pending.expiresAt).toISOString(),
-            message: `Destructive tool "${toolName}" requires human approval before it runs. A ServiceBay admin must approve pending request ${pending.pendingId} from the dashboard (Settings → MCP). This token cannot self-approve. The request expires at ${new Date(pending.expiresAt).toISOString()}.`,
+            approvalId: request.id,
+            toolName,
+            args,
+            message: `Destructive tool "${toolName}" requires human approval before it runs. A ServiceBay admin must approve request ${request.id} from the dashboard (Settings → Access → Approvals). This token cannot self-approve. The request is durable — it persists until an admin approves or rejects it.`,
           }, null, 2),
         }],
       };

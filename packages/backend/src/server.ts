@@ -274,11 +274,11 @@ app.prepare().then(() => {
         return;
       }
 
-      // MCP pending-approval routes — intercepted here (not via Next.js API
-      // routes) so they share the SAME pendingApprovals module instance as the
-      // /mcp handler above. Next.js Turbopack bundles a separate copy of the
-      // in-memory store for API routes, so a proposal made via /mcp would be
-      // invisible to a Next.js confirm route → every approve 410'd (#1766 fix).
+      // MCP pending-approval routes — a cookie-gated adapter over the durable
+      // approvals queue (lib/approvals), listing/approving/rejecting the MCP-
+      // kind approvals a token agent proposed (#1766, #2234). Kept as an
+      // intercept (not a Next.js API route) so it runs in the SAME module graph
+      // as the /mcp handler, which registers the tool re-dispatcher at startup.
       // The handler is cookie-session ONLY (Bearer/anon → 401); see
       // lib/mcp/approveRoute.ts for the full security/CSRF rationale.
       if (isMcpApprovePath(parsedUrl.pathname)) {
