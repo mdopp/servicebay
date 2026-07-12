@@ -326,6 +326,33 @@ describe('#2119 mergeGraphPreservingPositions', () => {
     expect(d.onToggle).toBe(toggle);      // toggle handler survives the poll
   });
 
+  it('#2225 surfaces a fresh className/type while preserving the laid-out position/style', () => {
+    // Same id + same topology signature (in-place merge path), but the fresh
+    // node changed its className and type. The merge must take className/type
+    // from the FRESH node (they are non-position/style fields), while position
+    // and the layout-sized style stay from the laid-out (prev) node.
+    const laidNode: Node = {
+      id: 's1', type: 'oldType', className: 'old-class',
+      position: { x: 100, y: 100 }, style: { width: 320 },
+      data: { type: 'service', label: 's1', status: 'up' },
+    };
+    const freshNode: Node = {
+      id: 's1', type: 'newType', className: 'new-class',
+      position: { x: 0, y: 0 }, style: { width: 9999 },
+      data: { type: 'service', label: 's1', status: 'down' },
+    };
+    const { nodes } = mergeGraphPreservingPositions([laidNode], [], [freshNode], []);
+    const merged = nodes[0];
+    // className/type come from the FRESH node
+    expect(merged.className).toBe('new-class');
+    expect(merged.type).toBe('newType');
+    // position + layout-sized style stay from the laid-out node
+    expect(merged.position).toEqual({ x: 100, y: 100 });
+    expect(merged.style).toEqual({ width: 320 });
+    // fresh data still flows through
+    expect((merged.data as { status?: string }).status).toBe('down');
+  });
+
   it('keeps the laid-out routed edge geometry, refreshing only styling/label', () => {
     const laidEdge: Edge = {
       id: 'e-s1-s2', source: 's1', target: 's2',

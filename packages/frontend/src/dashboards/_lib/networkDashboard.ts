@@ -356,11 +356,17 @@ export function mergeGraphPreservingPositions<TNode extends Node, TEdge extends 
       summary: prevData.summary,
       onToggle: prevData.onToggle,
     } as TNode['data'];
+    // #2225 — spread `...fresh` FIRST so non-position/style fields
+    // (className, type, parentId, measured) come from the FRESH node, then
+    // override with the merged data + the laid-out position and layout-sized
+    // style. The old order spread `...prev` first and only overrode
+    // data/position/style, so a fresh className/type/parentId change was
+    // silently discarded on every in-place poll merge — contradicting this
+    // function's own "refresh everything else from the fresh node" intent.
     nodes.push({
-      ...prev,
+      ...fresh,
       data: mergedData,
-      // Keep the laid-out position + layout-sized style; refresh everything
-      // else (className etc.) from the fresh node.
+      // Keep the laid-out position + layout-sized style from the prev node.
       position: prev.position,
       style: prev.style,
     } as TNode);
