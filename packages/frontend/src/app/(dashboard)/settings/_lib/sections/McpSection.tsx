@@ -116,22 +116,31 @@ interface PendingApproval {
   toolName: string;
   args: Record<string, unknown>;
   caller?: string;
-  expiresAt: number;
+  // Durable approvals (#2234) never expire, so this is null; a legacy numeric
+  // expiry is still rendered if present.
+  expiresAt: number | null;
 }
 
-function PendingApprovalRow({ entry, busy, onApprove }: { entry: PendingApproval; busy: boolean; onApprove: (id: string) => void }) {
-  // Absolute expiry time (not a Date.now()-derived countdown) so render stays
-  // pure; the 15s poll drops expired entries off the list anyway.
-  const expiresAtLabel = new Date(entry.expiresAt).toLocaleTimeString();
+function PendingApprovalRow({ entry, busy, onApprove, onReject }: { entry: PendingApproval; busy: boolean; onApprove: (id: string) => void; onReject: (id: string) => void }) {
+  const expiresAtLabel = entry.expiresAt != null ? new Date(entry.expiresAt).toLocaleTimeString() : null;
   return (
     <li className="text-xs rounded-card border border-status-warn/40 bg-status-warn/10 p-2">
       <div className="flex items-center gap-2">
         <span className="font-mono font-semibold text-status-warn">{entry.toolName}</span>
         {entry.caller && <span className="text-text-subtle">from {entry.caller}</span>}
-        <span className="text-text-subtle ml-auto">expires {expiresAtLabel}</span>
+        <span className="text-text-subtle ml-auto">{expiresAtLabel ? `expires ${expiresAtLabel}` : 'awaiting approval'}</span>
       </div>
       <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] text-text-muted font-mono">{JSON.stringify(entry.args, null, 2)}</pre>
-      <div className="mt-1.5 flex justify-end">
+      <div className="mt-1.5 flex justify-end gap-1">
+        <Button
+          type="button"
+          variant="danger"
+          size="sm"
+          disabled={busy}
+          onClick={() => onReject(entry.pendingId)}
+        >
+          Reject
+        </Button>
         <Button
           type="button"
           size="sm"
@@ -146,11 +155,12 @@ function PendingApprovalRow({ entry, busy, onApprove }: { entry: PendingApproval
   );
 }
 
-function McpPendingApprovals({ pending, busyId, error, onRefresh, onApprove }: {
+function McpPendingApprovals({ pending, busyId, error, onRefresh, onApprove, onReject }: {
   pending: PendingApproval[] | null;
   busyId: string | null;
   error: string | null;
   onRefresh: () => void;
+  onReject: (id: string) => void;
   onApprove: (id: string) => void;
 }) {
   if (!pending || pending.length === 0) return null;
@@ -172,7 +182,7 @@ function McpPendingApprovals({ pending, busyId, error, onRefresh, onApprove }: {
       {error && <p className="text-xs text-status-fail mb-2">{error}</p>}
       <ul className="space-y-2">
         {pending.map(p => (
-          <PendingApprovalRow key={p.pendingId} entry={p} busy={busyId === p.pendingId} onApprove={onApprove} />
+          <PendingApprovalRow key={p.pendingId} entry={p} busy={busyId === p.pendingId} onApprove={onApprove} onReject={onReject} />
         ))}
       </ul>
     </div>
@@ -228,11 +238,11 @@ export default function McpSection() {
       .catch(() => setPending([]));
   }, []);
 
-  const approvePending = useCallback(async (id: string) => {
+  const resolvePending = useCallback(async (id: string, method: 'POST' | 'DELETE') => {
     setApproveBusyId(id);
     setApproveError(null);
     try {
-      const res = await fetch(`/api/system/mcp/approve/${id}`, { method: 'POST' });
+      const res = await fetch(`/api/system/mcp/approve/${id}`, { method });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error ?? `HTTP ${res.status}`);
@@ -244,6 +254,8 @@ export default function McpSection() {
       setApproveBusyId(null);
     }
   }, [loadPending]);
+  const approvePending = useCallback((id: string) => resolvePending(id, 'POST'), [resolvePending]);
+  const rejectPending = useCallback((id: string) => resolvePending(id, 'DELETE'), [resolvePending]);
 
   const loadAudit = () => {
     setAuditLoading(true);
@@ -366,6 +378,7 @@ export default function McpSection() {
         error={approveError}
         onRefresh={loadPending}
         onApprove={approvePending}
+        onReject={rejectPending}
       />
 
       {/* Recent MCP activity. Toggleable so the section stays compact for

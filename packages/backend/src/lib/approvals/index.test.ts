@@ -36,7 +36,13 @@ import {
   submitApproval,
   approveApproval,
   rejectApproval,
+  registerMcpDispatcher,
 } from './index';
+
+// The mcp action calls the registered dispatcher (injected by the MCP layer in
+// production) to re-dispatch the proposed tool (#2234).
+const dispatchMcpTool = vi.fn(() => Promise.resolve({ content: [{ type: 'text', text: 'ok' }] }));
+registerMcpDispatcher(dispatchMcpTool);
 
 beforeEach(() => {
   for (const k of Object.keys(fakeFs)) delete fakeFs[k];
@@ -44,6 +50,8 @@ beforeEach(() => {
   executor.rename.mockClear();
   executor.mkdir.mockClear();
   restartService.mockClear();
+  dispatchMcpTool.mockClear();
+  dispatchMcpTool.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
 });
 
 afterEach(async () => {
@@ -319,5 +327,56 @@ describe('restart-target authorization (#1884)', () => {
     const res = await approveApproval(r.id);
     expect(restartService).toHaveBeenCalledWith('box1', 'svc');
     expect(res.restarted).toBe(true);
+  });
+});
+
+describe('mcp-tool re-dispatch action (#2234)', () => {
+  it('approving an mcp approval re-dispatches the proposed tool and marks approved', async () => {
+    const r = await submitApproval({
+      service: 'honcho',
+      title: 'delete_service: honcho',
+      payload: { toolName: 'delete_service', args: { name: 'honcho' }, caller: 'token:ci-bot' },
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+    });
+    const res = await approveApproval(r.id);
+    expect(dispatchMcpTool).toHaveBeenCalledWith('delete_service', { name: 'honcho' });
+    expect(res.request.status).toBe('approved');
+    expect((await getApproval(r.id))?.status).toBe('approved');
+  });
+
+  it('a failed tool dispatch propagates and leaves the request pending', async () => {
+    dispatchMcpTool.mockRejectedValueOnce(new Error('tool blew up'));
+    const r = await submitApproval({
+      service: 'honcho',
+      title: 'delete_service: honcho',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+    });
+    await expect(approveApproval(r.id)).rejects.toThrow(/tool blew up/);
+    // The request must NOT be marked approved when the tool failed to run.
+    expect((await getApproval(r.id))?.status).toBe('pending');
+  });
+
+  it('rejecting an mcp approval cancels it WITHOUT running the tool', async () => {
+    const r = await submitApproval({
+      service: 'honcho',
+      title: 'delete_service: honcho',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+    });
+    const res = await rejectApproval(r.id);
+    expect(res.request.status).toBe('rejected');
+    // on_reject carries no mcp action → the tool is never dispatched.
+    expect(dispatchMcpTool).not.toHaveBeenCalled();
+  });
+
+  it('the approval persists across a reload of the store (survives restart)', async () => {
+    const r = await submitApproval({
+      service: 'honcho',
+      title: 'delete_service: honcho',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+    });
+    // Re-read from disk (fresh listApprovals call = what a restarted process does).
+    const reloaded = await getApproval(r.id);
+    expect(reloaded?.status).toBe('pending');
+    expect(reloaded?.on_approve.mcp).toEqual({ toolName: 'delete_service', args: { name: 'honcho' } });
   });
 });

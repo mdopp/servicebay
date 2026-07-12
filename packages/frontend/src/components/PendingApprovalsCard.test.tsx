@@ -51,4 +51,26 @@ describe('PendingApprovalsCard (#2203-followup)', () => {
       expect(fetchMock).toHaveBeenCalledWith('/api/system/mcp/approve/abc-123', { method: 'POST' }),
     );
   });
+
+  it('rejects via DELETE to the pendingId endpoint (#2234)', async () => {
+    const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
+      if (url.includes('/approve/') && opts?.method === 'DELETE') return jsonResponse({ ok: true });
+      return jsonResponse({ pending: fetchMock.mock.calls.some(c => (c[1] as RequestInit)?.method === 'DELETE') ? [] : [APPROVAL] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<PendingApprovalsCard />);
+    const btn = await screen.findByText(/^Reject$/i);
+    await act(async () => { btn.click(); });
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/system/mcp/approve/abc-123', { method: 'DELETE' }),
+    );
+  });
+
+  it('renders a durable approval (expiresAt null) as "awaiting approval", not Invalid Date (#2234)', async () => {
+    const durable = { ...APPROVAL, expiresAt: null };
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ pending: [durable] })));
+    render(<PendingApprovalsCard />);
+    expect(await screen.findByText(/awaiting approval/i)).toBeTruthy();
+    expect(screen.queryByText(/Invalid Date/)).toBeNull();
+  });
 });

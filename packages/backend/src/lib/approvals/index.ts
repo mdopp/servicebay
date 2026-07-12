@@ -112,13 +112,22 @@ function assertRestartTarget(target: string, service: string): void {
   }
 }
 
-/** A declared side effect. Both fields optional so a request can move a
- *  file, restart a service, both, or neither (a pure review gate). */
+/** A declared side effect. All fields optional so a request can move a
+ *  file, restart a service, dispatch an MCP tool, any combination, or none
+ *  (a pure review gate). */
 export interface ApprovalAction {
   /** Move `src` → `dst` (absolute POSIX paths on the target node). */
   move?: { src: string; dst: string };
   /** Restart this service (by service name) after the move. */
   restart?: string;
+  /**
+   * Re-dispatch a destructive MCP tool the agent proposed but could not run
+   * itself (#2234). Carried on `on_approve` so approving the request in the
+   * operator's Approvals UI actually executes the tool (via the cookie/
+   * operator path, which bypasses the destroy gate). `on_reject` leaves this
+   * unset, so rejecting simply cancels the proposal without running anything.
+   */
+  mcp?: { toolName: string; args: Record<string, unknown> };
 }
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
@@ -139,6 +148,21 @@ export interface ApprovalRequest {
   node: string;
   created_at: string;
   status: ApprovalStatus;
+}
+
+/**
+ * Runs a destructive MCP tool by name+args (#2234). Injected by the MCP layer
+ * via {@link registerMcpDispatcher} so this kernel module can execute an
+ * `on_approve.mcp` action without importing `mcp/server` (which imports this
+ * module to submit approvals — a static import both ways would be a cycle).
+ */
+export type McpToolDispatcher = (toolName: string, args: Record<string, unknown>) => Promise<unknown>;
+
+let mcpDispatcher: McpToolDispatcher | null = null;
+
+/** Register the function that executes an MCP-tool approval on approve. */
+export function registerMcpDispatcher(fn: McpToolDispatcher): void {
+  mcpDispatcher = fn;
 }
 
 /** Input accepted by {@link submitApproval}. `id`, `created_at` and `status`
@@ -250,6 +274,18 @@ async function runAction(action: ApprovalAction, node: string, service: string):
       logger.warn(TAG, `action ran but restart of ${action.restart} failed: ${message}`);
       return { restarted: false, restartError: message };
     }
+  }
+  if (action.mcp) {
+    // Re-dispatch the destructive MCP tool the agent proposed (#2234). This is
+    // the LOAD-BEARING side effect for an MCP approval — a failure here must
+    // propagate so the operator sees the tool did not run (the caller marks the
+    // request approved only after runAction resolves). The dispatcher is
+    // injected by the MCP layer (registerMcpDispatcher) so this kernel module
+    // never imports mcp/server — that would close an approvals ↔ mcp cycle.
+    if (!mcpDispatcher) {
+      throw new Error('MCP tool dispatcher is not registered; cannot run this approval.');
+    }
+    await mcpDispatcher(action.mcp.toolName, action.mcp.args);
   }
   return {};
 }
