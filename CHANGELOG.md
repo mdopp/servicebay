@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.153.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.153.0...servicebay-v4.153.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* **install,reverseProxy:** preserve omitted secrets + escape multi-line pod YAML; strip duplicate websocket proxy_http_version ([75d85b5](https://github.com/mdopp/servicebay/commit/75d85b59fc9c36cd8748fb8ea05fd3e7dc9b434c))
+* **install:** preserve omitted secrets on partial update; escape newlines in pod YAML ([ecaca27](https://github.com/mdopp/servicebay/commit/ecaca278ac86880e546b828bca1b232f0bae98b7)), closes [#2206](https://github.com/mdopp/servicebay/issues/2206)
+* **reverseProxy:** strip duplicate proxy_http_version on websocket routes ([df37d7c](https://github.com/mdopp/servicebay/commit/df37d7cca958a4a14e5b4ee74357337b890509b9)), closes [#2205](https://github.com/mdopp/servicebay/issues/2205)
+
 ## [4.153.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.152.1...servicebay-v4.153.0) (2026-07-11)
 
 
