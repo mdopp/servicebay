@@ -22,6 +22,7 @@
 
 import {
   Bell,
+  BookOpen,
   Network,
   Server,
   Users,
@@ -127,6 +128,20 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       // the heavy job runs in a resource-capped worker container reached via a
       // dashboard tile, so it is no longer a Settings entry here.
       { id: 'factory-reset', label: 'Factory reset', tier: 'advanced', keywords: ['reset', 'wipe', 'erase', 'danger'] },
+    ],
+  },
+  {
+    // The assist catalog editor (#2228, epic #2147): browse/view/edit the
+    // knowledge base (guides, recipes, ADRs, footguns…) that MCP agents self-
+    // select from, with an approval gate on every edit. Its own group because the
+    // list/view/edit/history UI needs full-page real estate, not a disclosure
+    // strip in an existing cross-cutting group.
+    id: 'knowledge',
+    label: 'Knowledge',
+    intent: 'The assist catalog — guides, recipes and ADRs agents draw on, editable behind an approval gate.',
+    icon: BookOpen,
+    entries: [
+      { id: 'catalog', label: 'Assist catalog', tier: 'essential', keywords: ['assist', 'assists', 'knowledge', 'catalog', 'adr', 'guide', 'recipe', 'footgun', 'docs', 'edit'] },
     ],
   },
   {
