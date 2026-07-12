@@ -2,7 +2,7 @@
 // assert the two acceptance criteria the frontend owns pre-flight: required
 // frontmatter + the secret scan that blocks a PEM key or sb_ token.
 import { describe, it, expect } from 'vitest';
-import { validateProposal, scanForSecret, parseFrontmatterKeys } from './validation';
+import { validateProposal, scanForSecret, parseFrontmatterKeys, stripFrontmatter } from './validation';
 
 const VALID = `---
 title: Do a thing
@@ -85,5 +85,34 @@ describe('parseFrontmatterKeys', () => {
   it('strips surrounding quotes on a scalar', () => {
     const keys = parseFrontmatterKeys(`---\ntitle: "quoted"\n---\nbody`);
     expect(keys.title).toBe('quoted');
+  });
+});
+
+describe('stripFrontmatter — RenderedBody must not leak YAML (#2231)', () => {
+  it('drops the leading --- frontmatter block, keeps the body', () => {
+    const out = stripFrontmatter(VALID);
+    expect(out).toBe('Body here.');
+    // the YAML must be gone
+    expect(out).not.toMatch(/---/);
+    expect(out).not.toMatch(/title:/);
+    expect(out).not.toMatch(/whenToUse:/);
+    expect(out).not.toMatch(/kind:/);
+  });
+
+  it('returns a body with no frontmatter unchanged', () => {
+    expect(stripFrontmatter('# Just markdown\n\ntext')).toBe('# Just markdown\n\ntext');
+  });
+
+  it('does not strip a mid-document --- horizontal rule', () => {
+    const doc = `---\ntitle: x\nkind: guide\n---\nintro\n\n---\n\nafter the rule`;
+    const out = stripFrontmatter(doc);
+    expect(out).toBe('intro\n\n---\n\nafter the rule');
+    expect(out).not.toMatch(/title:/);
+  });
+
+  it('tolerates CRLF frontmatter fences', () => {
+    const out = stripFrontmatter('---\r\ntitle: x\r\nkind: guide\r\n---\r\nbody text');
+    expect(out).toBe('body text');
+    expect(out).not.toMatch(/title:/);
   });
 });

@@ -79,6 +79,22 @@ export function parseFrontmatterKeys(content: string): Record<string, string> {
   return out;
 }
 
+/**
+ * Strip a leading `---\n…\n---` frontmatter block from an assist document,
+ * returning only the markdown body. `GET /api/assists/:id` intentionally returns
+ * the full raw file (so the editor can edit the frontmatter fields), but the
+ * rendered view must NOT show the YAML — the title/kind/tags are already surfaced
+ * as structured metadata in the DetailHeader (#2231).
+ *
+ * A document without a leading frontmatter block is returned unchanged. Tolerant
+ * of CRLF endings and of trailing whitespace after the closing fence.
+ */
+export function stripFrontmatter(content: string): string {
+  const normalized = content.replace(/\r\n/g, '\n');
+  const stripped = normalized.replace(/^---\n[\s\S]*?\n---[ \t]*\n?/, '');
+  return stripped;
+}
+
 export interface ValidationResult {
   ok: boolean;
   /** First blocking error, caller-safe (no secret value echoed). */
