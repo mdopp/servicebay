@@ -7,12 +7,13 @@ describe('settings IA — cross-cutting only, no Services group (spec §4.4 / §
     expect(SETTINGS_GROUPS.find(g => g.id === 'services')).toBeUndefined();
   });
 
-  it('exposes exactly the cross-cutting groups + Maintenance', () => {
+  it('exposes exactly the cross-cutting groups + Knowledge + Maintenance', () => {
     expect(SETTINGS_GROUPS.map(g => g.id)).toEqual([
       'network-domain',
       'access',
       'notifications',
       'system',
+      'knowledge',
       'maintenance',
     ]);
   });
@@ -59,6 +60,31 @@ describe('settings IA — Maintenance launcher (#1958 follow-up)', () => {
   it('non-launcher entries still deep-link to their in-page settings anchor', () => {
     const updates = SEARCH_INDEX.find(h => h.entry.id === 'updates');
     expect(updates?.href).toBe('/settings/system#updates');
+  });
+});
+
+describe('settings IA — Knowledge group (assists catalog editor #2228)', () => {
+  it('has a top-level Knowledge group with the assist-catalog entry', () => {
+    const group = SETTINGS_GROUPS.find(g => g.id === 'knowledge');
+    expect(group).toBeDefined();
+    const entry = group!.entries.find(e => e.id === 'catalog');
+    expect(entry).toBeDefined();
+    expect(entry!.tier).toBe('essential');
+  });
+
+  it('deep-links the catalog entry to its group anchor', () => {
+    const hit = SEARCH_INDEX.find(h => h.entry.id === 'catalog');
+    expect(hit).toBeDefined();
+    expect(hit!.href).toBe('/settings/knowledge#catalog');
+  });
+
+  it('is findable by name + synonyms (assist, knowledge, adr, recipe)', () => {
+    for (const term of ['assist', 'knowledge', 'adr', 'recipe', 'catalog']) {
+      expect(
+        searchSettings(term).some(h => h.entry.id === 'catalog'),
+        `"${term}" must surface the assist-catalog entry`,
+      ).toBe(true);
+    }
   });
 });
 
