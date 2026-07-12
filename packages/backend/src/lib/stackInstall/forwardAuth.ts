@@ -287,6 +287,12 @@ export function expandForwardAuthSentinel(
   opts?: ForwardAuthExpandOptions,
 ): string | undefined {
   if (!advancedConfig) return advancedConfig;
+  // #2224 — normalize CRLF → LF so a Windows/Local-authored template whose
+  // sentinel line ends `__authelia_forward_auth__\r\n<extras>` still matches
+  // the prefix form and expands its extras. Without this the `\r` breaks the
+  // `\n`-anchored prefix check, the literal sentinel survives, and nginx
+  // rejects the .conf with `[emerg] unknown directive "__authelia_..."`.
+  advancedConfig = advancedConfig.replace(/\r\n/g, '\n');
   // #2205 — on a websocket host, strip any redundant `proxy_http_version`
   // (NPM emits its own at server level) so we never produce a duplicate
   // directive. Applies to the sentinel's appended extras AND to a plain

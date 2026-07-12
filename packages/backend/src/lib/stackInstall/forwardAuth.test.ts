@@ -23,6 +23,22 @@ describe('expandForwardAuthSentinel', () => {
     expect(out).toContain('auth_request /authelia;');
     expect(out).toContain('client_max_body_size 0;');
   });
+  it('expands a CRLF-terminated sentinel line exactly like the LF form (#2224)', () => {
+    // A Windows/Local-authored template whose sentinel line ends in CRLF
+    // must still expand its extras — the literal sentinel must never reach
+    // the rendered .conf (nginx `[emerg] unknown directive`).
+    const out = expandForwardAuthSentinel(
+      `${AUTHELIA_FORWARD_AUTH_SENTINEL}\r\nclient_max_body_size 0;`,
+    )!;
+    expect(out).toContain('auth_request /authelia;');
+    expect(out).toContain('client_max_body_size 0;');
+    expect(out).not.toContain(AUTHELIA_FORWARD_AUTH_SENTINEL);
+    // identical to the LF form's output
+    const lf = expandForwardAuthSentinel(
+      `${AUTHELIA_FORWARD_AUTH_SENTINEL}\nclient_max_body_size 0;`,
+    )!;
+    expect(out).toBe(lf);
+  });
   it('leaves a non-sentinel config untouched, and undefined as undefined', () => {
     expect(expandForwardAuthSentinel('proxy_set_header X 1;')).toBe('proxy_set_header X 1;');
     expect(expandForwardAuthSentinel(undefined)).toBeUndefined();

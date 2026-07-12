@@ -57,6 +57,17 @@ describe('renderPodYaml (#2206)', () => {
     expect(out).toContain('value: "abc"');
     expect(out).toContain('value: "xyz"');
   });
+
+  it('escapes a double-quote in a secret so the scalar stays valid (#2224)', () => {
+    // A password/secret containing a `"` must not close the double-quoted
+    // scalar early — it renders as `\"` and round-trips back verbatim.
+    const secret = 'p@ss"w0rd"!';
+    const out = renderPodYaml(POD, { VAPID_PRIVATE_KEY: secret, HASS_TOKEN: 'tok' });
+    expect(out).toContain('value: "p@ss\\"w0rd\\"!"');
+    const parsed = yaml.load(out) as { spec: { containers: { env: { name: string; value: string }[] }[] } };
+    const env = parsed.spec.containers[0].env;
+    expect(env.find(e => e.name === 'VAPID_PRIVATE_KEY')?.value).toBe(secret);
+  });
 });
 
 describe('escapeYamlScalar', () => {
@@ -71,5 +82,12 @@ describe('escapeYamlScalar', () => {
   it('round-trips through a YAML parser back to the original value', () => {
     const doc = `value: "${escapeYamlScalar(PEM)}"\n`;
     expect((yaml.load(doc) as { value: string }).value).toBe(PEM);
+  });
+
+  it('escapes a double-quote and round-trips (#2224)', () => {
+    const val = 'a"b\\c"d';
+    expect(escapeYamlScalar(val)).toBe('a\\"b\\\\c\\"d');
+    const doc = `value: "${escapeYamlScalar(val)}"\n`;
+    expect((yaml.load(doc) as { value: string }).value).toBe(val);
   });
 });
