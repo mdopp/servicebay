@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.155.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.155.2...servicebay-v4.155.3) (2026-07-12)
+
+
+### Bug Fixes
+
+* **approvals:** serialize store writes + unique temp path to survive concurrency ([80a04d2](https://github.com/mdopp/servicebay/commit/80a04d25e63567d00b3dee9c9b915cfc5c93511d))
+* **approvals:** serialize store writes + unique temp path to survive concurrency ([dc99b13](https://github.com/mdopp/servicebay/commit/dc99b1369ea6ee162e6af4e77b126f6b0a6a4718)), closes [#2239](https://github.com/mdopp/servicebay/issues/2239)
+
 ## [4.155.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.155.1...servicebay-v4.155.2) (2026-07-12)
 
 
