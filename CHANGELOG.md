@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.155.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.155.1...servicebay-v4.155.2) (2026-07-12)
+
+
+### Bug Fixes
+
+* **approvals:** dispatch MCP tools from the Settings Approvals approve route ([ed1d1dd](https://github.com/mdopp/servicebay/commit/ed1d1dd0e7ef0a27dfd7b0548c6d460894f0a903))
+* **approvals:** register MCP dispatcher in the /api/approvals approve route ([a34e6a1](https://github.com/mdopp/servicebay/commit/a34e6a125f2e62e709b6fd5a0304a40223b5f8df)), closes [#2237](https://github.com/mdopp/servicebay/issues/2237)
+* **mcp:** route destroy-tier approvals through the durable operator queue ([7ddbf44](https://github.com/mdopp/servicebay/commit/7ddbf44ecb1299dd95f92c8e7b8f375ec0121462)), closes [#2234](https://github.com/mdopp/servicebay/issues/2234)
+* **mcp:** route destroy-tier MCP approvals through the durable operator queue ([54d844f](https://github.com/mdopp/servicebay/commit/54d844f83ba968c35d250fb7466325014cc7ed33))
+
 ## [4.155.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.155.0...servicebay-v4.155.1) (2026-07-12)
 
 
