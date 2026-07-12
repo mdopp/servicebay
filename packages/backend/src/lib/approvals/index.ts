@@ -190,9 +190,46 @@ async function readStore(): Promise<ApprovalRequest[]> {
 
 async function writeStore(requests: ApprovalRequest[]): Promise<void> {
   await fs.mkdir(DATA_DIR, { recursive: true });
-  const tmp = `${STORE_PATH}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(requests, null, 2), 'utf-8');
-  await fs.rename(tmp, STORE_PATH);
+  // A UNIQUE temp path per write. `process.pid` alone is a constant (1 in the
+  // container) so two concurrent writes would share ONE temp file
+  // (`approvals.json.1.tmp`): the first `rename` moves it to the store, the
+  // second then `rename`s a now-missing temp → `ENOENT` → the approve handler
+  // throws AFTER the destructive tool already ran, and the UI hangs (#2239).
+  // Appending a random UUID makes every in-flight write use its own temp file.
+  const tmp = `${STORE_PATH}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tmp, JSON.stringify(requests, null, 2), 'utf-8');
+    await fs.rename(tmp, STORE_PATH);
+  } catch (err) {
+    // Best-effort cleanup so a failed write doesn't strand its temp file.
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * In-process serialization for the read-modify-write mutators (#2239).
+ *
+ * Every mutator does `readStore()` → mutate → `writeStore()`. Without
+ * serialization, two concurrent approvals both read the same snapshot, each
+ * flips its own field, and the second write clobbers the first (lost update).
+ * A module-level promise chain funnels the critical sections through one at a
+ * time — cheap, in-process, and sufficient because a single Node process owns
+ * the JSON store. Callers get their turn in submission order.
+ */
+let storeMutex: Promise<unknown> = Promise.resolve();
+
+function withStoreLock<T>(fn: () => Promise<T>): Promise<T> {
+  // Chain onto the tail regardless of the previous result (a rejected prior
+  // critical section must not deadlock the queue), then run `fn`.
+  const run = storeMutex.then(fn, fn);
+  // Swallow the result/rejection on the chained tail so one failing mutator
+  // never rejects the shared mutex for the next caller.
+  storeMutex = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
 }
 
 /** Resolve the node a request targets, defaulting to the first known node. */
@@ -232,9 +269,13 @@ export async function submitApproval(input: SubmitApprovalInput): Promise<Approv
     created_at: new Date().toISOString(),
     status: 'pending',
   };
-  const all = await readStore();
-  all.push(request);
-  await writeStore(all);
+  // Serialize the read-modify-write so a concurrent submit/approve can't read a
+  // stale snapshot and clobber the other's update (#2239).
+  await withStoreLock(async () => {
+    const all = await readStore();
+    all.push(request);
+    await writeStore(all);
+  });
   logger.info(TAG, `submitted approval ${request.id} for service ${request.service}`);
   return request;
 }
@@ -291,19 +332,44 @@ async function runAction(action: ApprovalAction, node: string, service: string):
 }
 
 async function resolve(id: string, status: 'approved' | 'rejected', action: ApprovalAction): Promise<{ request: ApprovalRequest; restarted?: boolean; restartError?: string }> {
-  const all = await readStore();
-  const request = all.find(r => r.id === id);
-  if (!request) {
-    throw new Error(`Approval request not found: ${id}`);
-  }
-  if (request.status !== 'pending') {
-    throw new Error(`Approval request ${id} is already ${request.status}`);
-  }
-  const result = await runAction(action, request.node, request.service);
-  request.status = status;
-  await writeStore(all);
-  logger.info(TAG, `${status} approval ${id} (service ${request.service})`);
-  return { request, ...result };
+  // The whole read → run side effect → persist sequence runs under the store
+  // lock so a concurrent approve/reject/submit can't read a stale snapshot and
+  // clobber the status flip (lost update, #2239). Serializing per-item is fine:
+  // the destructive side effect (`runAction`) is the point of the gate, so at
+  // most one approval executes at a time regardless.
+  return withStoreLock(async () => {
+    const all = await readStore();
+    const request = all.find(r => r.id === id);
+    if (!request) {
+      throw new Error(`Approval request not found: ${id}`);
+    }
+    if (request.status !== 'pending') {
+      throw new Error(`Approval request ${id} is already ${request.status}`);
+    }
+    const result = await runAction(action, request.node, request.service);
+    // The side effect has now run (a destructive MCP tool may already have
+    // deleted a service). Flip the status and persist. If persistence itself
+    // fails HERE — after the side effect — we must NOT re-throw the raw error:
+    // the client would stay in its loading state believing nothing happened,
+    // even though the tool ran (#2239). Surface a clear, distinct error that
+    // tells the operator the action ran but its record could not be saved, so
+    // the UI leaves the spinner and shows an honest message.
+    request.status = status;
+    try {
+      await writeStore(all);
+    } catch (persistErr) {
+      const detail = persistErr instanceof Error ? persistErr.message : String(persistErr);
+      logger.error(
+        TAG,
+        `${status} approval ${id} ran its action but the store write failed: ${detail}`,
+      );
+      throw new Error(
+        `The action was ${status === 'approved' ? 'approved and executed' : 'rejected'}, but saving the result failed (${detail}). It may show as still pending; do not re-run it.`,
+      );
+    }
+    logger.info(TAG, `${status} approval ${id} (service ${request.service})`);
+    return { request, ...result };
+  });
 }
 
 /** Approve a pending request: run its `on_approve` action, mark approved. */
