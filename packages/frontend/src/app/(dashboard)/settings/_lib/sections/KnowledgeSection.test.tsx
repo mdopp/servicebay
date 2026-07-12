@@ -90,6 +90,27 @@ describe('KnowledgeSection — browse, view, edit, approve, revert', () => {
     expect(screen.getByText(/first edit/)).toBeDefined();
   });
 
+  it('strips the YAML frontmatter from the rendered body (#2231)', async () => {
+    mockApi();
+    render(<KnowledgeSection />);
+    await waitFor(() => expect(screen.getByText('ServiceBay Overview')).toBeDefined());
+    fireEvent.click(screen.getByText('ServiceBay Overview'));
+    await waitFor(() => expect(screen.getByText(/rendered/)).toBeDefined());
+
+    // The raw YAML frontmatter lines must NOT leak into the DOM as body text.
+    // (CONTENT carries a `title:/whenToUse:/kind:` frontmatter block that used to
+    // render verbatim through ReactMarkdown — see #2231.)
+    const domText = document.body.textContent ?? '';
+    expect(domText).not.toMatch(/title:\s*ServiceBay Overview/);
+    expect(domText).not.toMatch(/whenToUse:\s*Understand the platform\./);
+    expect(domText).not.toMatch(/kind:\s*guide/);
+
+    // The metadata is still surfaced as structured UI (the DetailHeader kind badge),
+    // and the markdown body still renders.
+    expect(screen.getAllByText('guide').length).toBeGreaterThan(0);
+    expect(screen.getByText(/rendered/)).toBeDefined();
+  });
+
   it('shows a validation error for a secret-bearing edit and blocks submit', async () => {
     mockApi();
     render(<KnowledgeSection />);

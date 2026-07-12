@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { AlertTriangle, Check, History, Loader2, Pencil, RotateCcw, X } from 'lucide-react';
 import { Badge, Button, Card } from '@/components/ui';
-import { validateProposal } from './validation';
+import { stripFrontmatter, validateProposal } from './validation';
 import type { AssistApproval, AssistSummary, HistoryEntry } from './types';
 import type { useKnowledge } from './useKnowledge';
 
@@ -121,9 +121,14 @@ function RenderedBody({ content }: { content: string | null }) {
       </p>
     );
   }
+  // GET /api/assists/:id returns the full raw file (frontmatter + body) so the
+  // ProposalEditor can edit the frontmatter. The rendered view must strip the
+  // frontmatter — the title/kind/tags are already shown in the DetailHeader
+  // metadata; leaking the raw YAML into the body is redundant + wrong (#2231).
+  const body = stripFrontmatter(content);
   return (
     <div className="prose dark:prose-invert prose-sm max-w-none">
-      <ReactMarkdown>{content}</ReactMarkdown>
+      <ReactMarkdown>{body}</ReactMarkdown>
     </div>
   );
 }
