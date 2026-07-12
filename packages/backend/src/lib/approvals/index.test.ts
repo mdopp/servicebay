@@ -380,3 +380,84 @@ describe('mcp-tool re-dispatch action (#2234)', () => {
     expect(reloaded?.on_approve.mcp).toEqual({ toolName: 'delete_service', args: { name: 'honcho' } });
   });
 });
+
+// The store is atomic-written via a temp file + rename. `process.pid` alone is
+// a constant (1 in the container), so before #2239 two concurrent writes shared
+// ONE temp path — one rename moved it away, the other renamed a now-missing
+// temp → ENOENT → the approve handler threw AFTER the tool already ran, and the
+// UI hung forever. These fire genuinely-concurrent writes against the REAL fs
+// store (only the executor is faked) to prove no ENOENT and no lost update.
+describe('concurrent store writes (#2239)', () => {
+  it('two concurrent submits both persist — no ENOENT, no lost update', async () => {
+    const [a, b] = await Promise.all([
+      submitApproval({ service: 'svc-a', title: 'a' }),
+      submitApproval({ service: 'svc-b', title: 'b' }),
+    ]);
+    const list = await listApprovals();
+    const ids = list.map(r => r.id);
+    // Both requests survive — neither write clobbered the other.
+    expect(ids).toContain(a.id);
+    expect(ids).toContain(b.id);
+    expect(list).toHaveLength(2);
+  });
+
+  it('a burst of concurrent submits all persist (no writes lost to a temp collision)', async () => {
+    const N = 12;
+    const created = await Promise.all(
+      Array.from({ length: N }, (_, i) => submitApproval({ service: 'svc', title: `t${i}` })),
+    );
+    const list = await listApprovals();
+    expect(list).toHaveLength(N);
+    for (const r of created) {
+      expect(list.some(x => x.id === r.id)).toBe(true);
+    }
+  });
+
+  it('two concurrent approvals both succeed and both leave the pending list', async () => {
+    const r1 = await submitApproval({ service: 'svc', title: 'one' });
+    const r2 = await submitApproval({ service: 'svc', title: 'two' });
+    // Approve both at once — before the fix, one throws ENOENT on rename.
+    const results = await Promise.all([approveApproval(r1.id), approveApproval(r2.id)]);
+    expect(results.map(x => x.request.status)).toEqual(['approved', 'approved']);
+    // Persisted status reflects both approvals — no lost update.
+    expect((await getApproval(r1.id))?.status).toBe('approved');
+    expect((await getApproval(r2.id))?.status).toBe('approved');
+    const stillPending = (await listApprovals()).filter(r => r.status === 'pending');
+    expect(stillPending).toHaveLength(0);
+  });
+
+  it('concurrent approve of a move + an mcp tool both persist and run their side effects', async () => {
+    fakeFs['/mnt/data/stacks/svc/draft'] = 'c';
+    const mover = await submitApproval({
+      service: 'svc',
+      title: 'promote',
+      on_approve: { move: { src: '/mnt/data/stacks/svc/draft', dst: '/mnt/data/stacks/svc/published' } },
+    });
+    const runner = await submitApproval({
+      service: 'honcho',
+      title: 'delete_service: honcho',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+    });
+    const [mv, mc] = await Promise.all([approveApproval(mover.id), approveApproval(runner.id)]);
+    expect(mv.request.status).toBe('approved');
+    expect(mc.request.status).toBe('approved');
+    expect('/mnt/data/stacks/svc/published' in fakeFs).toBe(true);
+    expect(dispatchMcpTool).toHaveBeenCalledWith('delete_service', { name: 'honcho' });
+  });
+
+  it('a persist failure AFTER the tool ran surfaces a clear "ran but not saved" error (client not stranded)', async () => {
+    const r = await submitApproval({
+      service: 'honcho',
+      title: 'delete_service: honcho',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+    });
+    // The destructive tool runs, THEN the final store write fails — the handler
+    // must reject with a distinct message (not a raw ENOENT) so the UI leaves
+    // its loading state and the operator learns the tool already ran.
+    const renameSpy = vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('disk full'));
+    await expect(approveApproval(r.id)).rejects.toThrow(/approved and executed, but saving the result failed/);
+    // The tool DID run — the error is about persistence, not the action.
+    expect(dispatchMcpTool).toHaveBeenCalledWith('delete_service', { name: 'honcho' });
+    renameSpy.mockRestore();
+  });
+});
