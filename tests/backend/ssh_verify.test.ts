@@ -49,14 +49,20 @@ describe('verifySSHConnection', () => {
     expect(args.some((a) => a.includes('ssh -i'))).toBe(false);
   });
 
-  it('does not let a metacharacter host inject a separate command', async () => {
+  it('rejects a metacharacter host before it reaches ssh (request-forgery barrier)', async () => {
     const { verifySSHConnection } = await import('../../packages/backend/src/lib/ssh');
     const evil = 'h; rm -rf /';
-    await verifySSHConnection(evil, 22, 'core', '/keys/id_rsa');
-    // The malicious host is one opaque argv entry; ssh receives it verbatim,
-    // the shell never sees it.
-    expect(execCalls[0].args).toContain(`core@${evil}`);
-    expect(execCalls[0].cmd).toBe('ssh');
+    const ok = await verifySSHConnection(evil, 22, 'core', '/keys/id_rsa');
+    // The host fails the hostname/IP allowlist → ssh is never invoked.
+    expect(ok).toBe(false);
+    expect(execCalls).toHaveLength(0);
+  });
+
+  it('rejects a URL/SSRF-shaped host before it reaches ssh', async () => {
+    const { verifySSHConnection } = await import('../../packages/backend/src/lib/ssh');
+    const ok = await verifySSHConnection('http://169.254.169.254/latest/', 22, 'core', '/keys/id_rsa');
+    expect(ok).toBe(false);
+    expect(execCalls).toHaveLength(0);
   });
 
   it('returns false when ssh exits non-zero', async () => {
