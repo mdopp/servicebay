@@ -13,20 +13,21 @@
  * consumes this; this route makes NO `(dashboard)/` changes.
  */
 import { NextResponse } from 'next/server';
-import { requireSession } from '@/lib/api/requireSession';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { getInstalledImageUpdates } from '@/lib/imageDigest';
 
 export const dynamic = 'force-dynamic';
 
-// tokenScope:'read' (#2243) — a scoped SB-MCP Bearer token may poll this
-// pending-image-updates signal so an external consumer (Solaris Wartung chat)
-// can render "update available" cards. The gate stays deny-by-default: a
+// tokenScope must live in the withApiHandler OPTIONS so handler.ts's built-in
+// requireSession runs with it (#2249): a scoped SB-MCP Bearer token may poll
+// this pending-image-updates signal so an external consumer (Solaris Wartung
+// chat) can render "update available" cards. The gate stays deny-by-default: a
 // missing/wrong-scope Bearer 401s and a session cookie keeps working unchanged.
-export const GET = withApiHandler({}, async ({ request }) => {
-  const auth = await requireSession(request, { tokenScope: 'read' });
-  if (auth instanceof NextResponse) return auth;
+// (Previously the scope sat on an INNER requireSession call while the wrapper
+// gate ran scopeless first → the Bearer path was skipped → 401 on a valid
+// read token; box-verify #2243 RED.)
+export const GET = withApiHandler({ tokenScope: 'read' }, async () => {
   try {
     const services = await getInstalledImageUpdates();
     return NextResponse.json({ services });

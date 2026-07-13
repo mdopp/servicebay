@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { requireSession } from '@/lib/api/requireSession';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { getConfig } from '@/lib/config';
@@ -38,11 +37,12 @@ interface UpgradeSummary {
  * would sit unnoticed for any operator who never opens the
  * Re-deploy modal.
  */
-// tokenScope:'read' (#2243) — same pending-updates signal, template side. A
-// scoped Bearer token may read it; cookie sessions are unaffected.
-export const GET = withApiHandler({}, async ({ request }) => {
-  const auth = await requireSession(request, { tokenScope: 'read' });
-  if (auth instanceof NextResponse) return auth;
+// tokenScope must live in the withApiHandler OPTIONS so handler.ts's built-in
+// requireSession runs with it (#2249) — same pending-updates signal, template
+// side. A scoped Bearer token may read it; cookie sessions are unaffected.
+// (Previously the scope sat on an INNER requireSession call while the wrapper
+// gate ran scopeless first → the Bearer path was skipped → 401; box-verify RED.)
+export const GET = withApiHandler({ tokenScope: 'read' }, async () => {
   try {
     const config = await getConfig();
     const installed = config.installedTemplates ?? {};
