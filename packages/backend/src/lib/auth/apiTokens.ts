@@ -126,12 +126,27 @@ export async function flushPendingStamps(): Promise<void> {
 function genId(): string {
   return crypto.randomBytes(4).toString('hex');
 }
-function genSecret(): string {
-  // 32 chars from base32-ish alphabet → ~160 bits of entropy.
-  const bytes = crypto.randomBytes(SECRET_LEN);
+/**
+ * One uniform index into SECRET_ALPHABET via rejection sampling: draw a byte
+ * and discard any that falls in the biased tail above the largest multiple of
+ * the alphabet size (`limit`). `bytes[i] % len` would skew the distribution
+ * whenever 256 isn't a multiple of `len` (js/biased-cryptographic-random). This
+ * yields a provably-unbiased pick for ANY alphabet length. Exported for tests.
+ */
+export function randomSecretIndex(len: number = SECRET_ALPHABET.length): number {
+  const limit = Math.floor(256 / len) * len; // largest multiple of len ≤ 256
+  let byte: number;
+  do {
+    byte = crypto.randomBytes(1)[0];
+  } while (byte >= limit);
+  return byte % len;
+}
+export function genSecret(): string {
+  // SECRET_LEN chars from base32-ish alphabet → ~160 bits of entropy, drawn
+  // via unbiased rejection sampling (no modulo-on-CSPRNG bias).
   let out = '';
   for (let i = 0; i < SECRET_LEN; i++) {
-    out += SECRET_ALPHABET[bytes[i] % SECRET_ALPHABET.length];
+    out += SECRET_ALPHABET[randomSecretIndex()];
   }
   return out;
 }
