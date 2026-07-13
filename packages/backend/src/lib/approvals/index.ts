@@ -15,6 +15,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { DATA_DIR } from '@/lib/dirs';
 import { getExecutor } from '@/lib/executor';
@@ -206,6 +207,55 @@ export interface SubmitApprovalInput {
   node?: string;
 }
 
+/**
+ * A minimal, non-secret notification that a NEW pending approval was created
+ * (#2268 part B). Emitted server-side so a trusted server-server subscriber
+ * (Solaris) can be notified and republish it on its own bus — per ADR 0010 the
+ * PHONE never subscribes to ServiceBay directly, Solaris aggregates. The payload
+ * carries ONLY what a subscriber needs to fetch the full request over the
+ * already-authenticated read surface: id + kind (the service) + a short summary
+ * (the title). No payload, no on_approve/on_reject actions, no secrets leak onto
+ * the stream.
+ */
+export interface NewApprovalEvent {
+  type: 'new-approval';
+  id: string;
+  /** The requesting service name — the event "kind" for the subscriber. */
+  kind: string;
+  /** Human-readable one-liner (the request title). */
+  summary: string;
+  created_at: string;
+}
+
+/**
+ * In-process event bus for approval lifecycle notifications. A single Node
+ * process owns the JSON store, so an in-process EventEmitter is sufficient to
+ * fan a create-event out to every open SSE stream. `setMaxListeners(0)` removes
+ * the default 10-listener warning cap — each open Solaris SSE connection adds a
+ * listener, and there is no fixed upper bound on concurrent subscribers.
+ */
+const approvalEvents = new EventEmitter();
+approvalEvents.setMaxListeners(0);
+
+const NEW_APPROVAL_EVENT = 'new-approval';
+
+/** Subscribe to new-pending-approval events. Returns an unsubscribe fn. */
+export function onNewApproval(listener: (event: NewApprovalEvent) => void): () => void {
+  approvalEvents.on(NEW_APPROVAL_EVENT, listener);
+  return () => approvalEvents.off(NEW_APPROVAL_EVENT, listener);
+}
+
+/** Build the minimal, secret-free event payload for a freshly-created request. */
+function toNewApprovalEvent(request: ApprovalRequest): NewApprovalEvent {
+  return {
+    type: 'new-approval',
+    id: request.id,
+    kind: request.service,
+    summary: request.title,
+    created_at: request.created_at,
+  };
+}
+
 async function readStore(): Promise<ApprovalRequest[]> {
   try {
     const raw = await fs.readFile(STORE_PATH, 'utf-8');
@@ -328,6 +378,16 @@ export async function submitApproval(input: SubmitApprovalInput): Promise<Approv
     await writeStore(all);
   });
   logger.info(TAG, `submitted approval ${request.id} for service ${request.service}`);
+  // Notify server-server subscribers (Solaris) that a NEW pending approval
+  // exists so they can republish it (#2268 part B). Emitted only AFTER the
+  // request is durably persisted, so a subscriber that fetches on the event
+  // always finds it. Emit is best-effort: a throwing listener must never fail
+  // the submit (the approval is already stored).
+  try {
+    approvalEvents.emit(NEW_APPROVAL_EVENT, toNewApprovalEvent(request));
+  } catch (err) {
+    logger.warn(TAG, `new-approval event listener threw: ${err instanceof Error ? err.message : String(err)}`);
+  }
   return request;
 }
 
