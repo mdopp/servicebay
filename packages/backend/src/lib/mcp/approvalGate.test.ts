@@ -26,6 +26,9 @@ vi.mock('@/lib/approvals', () => ({
   submitApproval: (input: Record<string, unknown>) => submitApproval(input),
   // server.ts registers the MCP dispatcher at module load — no-op here.
   registerMcpDispatcher: vi.fn(),
+  // tokenRequests.ts (imported transitively) registers the one-shot minter at
+  // module load (#2245) — no-op here.
+  registerTokenMinter: vi.fn(),
 }));
 
 const deleteService = vi.fn().mockResolvedValue(undefined);

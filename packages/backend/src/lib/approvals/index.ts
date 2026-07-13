@@ -128,6 +128,17 @@ export interface ApprovalAction {
    * unset, so rejecting simply cancels the proposal without running anything.
    */
   mcp?: { toolName: string; args: Record<string, unknown> };
+  /**
+   * Mint a one-shot, short-TTL ELEVATED-scope token for a specific op the
+   * agent requested via request_token (#2245, option b). Carried on
+   * `on_approve` so approving in the operator's Approvals UI mints the token
+   * INTO the referenced token-request row (never returned to the operator) —
+   * the requesting agent then collects it exactly once via poll_token_request.
+   * `on_reject` leaves this unset, so denying mints nothing. The minter is
+   * injected (registerTokenMinter) so this kernel module never imports the
+   * token layer directly (would close an approvals ↔ token cycle).
+   */
+  mintToken?: { tokenRequestId: string };
 }
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
@@ -163,6 +174,24 @@ let mcpDispatcher: McpToolDispatcher | null = null;
 /** Register the function that executes an MCP-tool approval on approve. */
 export function registerMcpDispatcher(fn: McpToolDispatcher): void {
   mcpDispatcher = fn;
+}
+
+/**
+ * Mints the one-shot elevated token for an approved request_token one-shot
+ * request (#2245). Injected by the token layer via {@link registerTokenMinter}
+ * so this kernel module executes a `mintToken` action without importing
+ * `auth/tokenRequests` (which does not import this module, but keeping the seam
+ * symmetric with mcpDispatcher avoids any future cycle and matches the pattern).
+ * Throws if the request is unknown/not-pending so the operator sees the mint
+ * failed and the approval is NOT marked approved.
+ */
+export type TokenMinter = (tokenRequestId: string) => Promise<void>;
+
+let tokenMinter: TokenMinter | null = null;
+
+/** Register the function that mints a one-shot elevated token on approve. */
+export function registerTokenMinter(fn: TokenMinter): void {
+  tokenMinter = fn;
 }
 
 /** Input accepted by {@link submitApproval}. `id`, `created_at` and `status`
@@ -349,6 +378,17 @@ async function runAction(action: ApprovalAction, node: string, service: string):
       throw new Error('MCP tool dispatcher is not registered; cannot run this approval.');
     }
     await mcpDispatcher(action.mcp.toolName, action.mcp.args);
+  }
+  if (action.mintToken) {
+    // Mint the one-shot elevated token for the referenced request_token row
+    // (#2245). LOAD-BEARING: a failure must propagate so the approval is NOT
+    // marked approved and the operator sees the mint failed (the agent then
+    // gets nothing to poll). The minter stashes the secret on the token-request
+    // row; the operator never sees it. Injected via registerTokenMinter.
+    if (!tokenMinter) {
+      throw new Error('Token minter is not registered; cannot run this approval.');
+    }
+    await tokenMinter(action.mintToken.tokenRequestId);
   }
   return {};
 }

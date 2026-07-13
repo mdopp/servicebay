@@ -37,11 +37,27 @@ import { randomUUID } from 'crypto';
 import { DATA_DIR } from '@/lib/dirs';
 import { atomicWriteFile } from '@/lib/util/atomicWrite';
 import { logger } from '@/lib/logger';
+import { submitApproval, registerTokenMinter } from '@/lib/approvals';
 import { ALL_SCOPES, type ApiScope } from './apiScope';
 import { createToken, revokeToken } from './apiTokens';
 
 const TAG = 'auth:tokenRequests';
 const STORE_PATH = path.join(DATA_DIR, 'token-requests.json');
+
+/**
+ * Elevated scopes (destroy/exec) that a ONE-SHOT owner-approved token may carry
+ * (#2245, option b). A one-shot request's granted scope must be exactly ONE of
+ * these — the whole point is a single elevated op the ambient token can't do.
+ */
+const ELEVATED_SCOPES: ReadonlySet<ApiScope> = new Set<ApiScope>(['destroy', 'exec']);
+
+/**
+ * TTL ceiling for a one-shot elevated token (#2245): 10 minutes. Far tighter
+ * than MAX_TTL_SECS — a one-shot elevation is meant to be collected and used
+ * immediately after the owner approves, then it burns (single-use) or lapses.
+ * The request may ask for less; anything above this is clamped down at submit.
+ */
+export const ONE_SHOT_MAX_TTL_SECS = 10 * 60;
 
 /** Anti-spam cap on outstanding pending token requests (mirrors the
  *  access-request MAX_PENDING). A hostile caller can't fill the disk. */
@@ -83,6 +99,22 @@ export interface TokenRequest {
    * view. This is the one-time hand-off channel — poll once, or re-request.
    */
   pendingSecret?: string;
+  /**
+   * One-shot ELEVATED-op binding (#2245, option b). Present only when this is a
+   * one-shot-elevation request: the caller asked for a token authorizing ONE
+   * specific destructive op (tool + optional target service), not a standing
+   * grant. When set:
+   *   - `requestedScopes` is exactly the single elevated scope (destroy|exec).
+   *   - the request PARKS in the durable approvals store (an approval card with
+   *     the self-approve guard), not the admin token-request PATCH route.
+   *   - on owner Approve, the minted token carries ONLY this scope, is bound to
+   *     this op, is single-use, and gets the ONE_SHOT_MAX_TTL_SECS-capped TTL.
+   */
+  oneShotOp?: { toolName: string; service?: string };
+  /** Id of the durable approval that gates a one-shot request (#2245). Set on
+   *  submit for a one-shot request so the caller can surface an approval card
+   *  and the operator's generic Approvals UI drives approve/deny. */
+  approvalId?: string;
 }
 
 /** Caller-facing view: the one-time secret is stripped from every list/audit
@@ -142,17 +174,54 @@ export class TokenRequestError extends Error {
   }
 }
 
-/** File a pending token request. Returns its id + status — NO token yet. */
+/** A one-shot op's target service must be a single, safe path segment (no
+ *  separators, no traversal) — mirrors the approvals-store service guard. */
+const ONE_SHOT_SERVICE_RE = /^[a-zA-Z0-9_.-]+$/;
+
+/** File a pending token request. Returns its id + status — NO token yet.
+ *
+ * `oneShotOp` (#2245, option b) switches to the one-shot ELEVATED-elevation
+ * flow: `requestedScopes` must be exactly one elevated scope (destroy|exec),
+ * the TTL is clamped to ONE_SHOT_MAX_TTL_SECS, and the request PARKS as a
+ * durable approval (card + self-approve guard) instead of the admin token PATCH
+ * route. On owner Approve the minted token is bound to `oneShotOp`, carries
+ * ONLY that scope, and is single-use. `requestedBy` is recorded as the approval
+ * proposer so the self-approve guard refuses the requester approving itself. */
 export async function submitTokenRequest(input: {
   requestedScopes: ApiScope[];
   requestedTtlSecs: number;
   reason: string;
   requestedBy?: string;
+  oneShotOp?: { toolName: string; service?: string };
 }): Promise<TokenRequestView> {
   assertScopes(input.requestedScopes, 'requestedScopes');
   assertTtl(input.requestedTtlSecs, 'requestedTtlSecs');
   const reason = (input.reason ?? '').trim();
   if (!reason) throw new TokenRequestError('reason is required', 400);
+
+  // One-shot elevation: validate the op binding + narrow the grant hard.
+  let oneShotOp: { toolName: string; service?: string } | undefined;
+  let ttlSecs = input.requestedTtlSecs;
+  if (input.oneShotOp) {
+    const scopes = [...new Set(input.requestedScopes)];
+    if (scopes.length !== 1 || !ELEVATED_SCOPES.has(scopes[0])) {
+      throw new TokenRequestError(
+        `A one-shot elevated request must ask for exactly one elevated scope (destroy or exec); got [${scopes.join(',')}].`,
+        400,
+      );
+    }
+    const toolName = (input.oneShotOp.toolName ?? '').trim();
+    if (!toolName) throw new TokenRequestError('oneShotOp.toolName is required', 400);
+    const service = input.oneShotOp.service?.trim();
+    if (service !== undefined && service !== '') {
+      if (!ONE_SHOT_SERVICE_RE.test(service) || service === '.' || service === '..') {
+        throw new TokenRequestError(`oneShotOp.service is not a valid service name: "${service}".`, 400);
+      }
+    }
+    oneShotOp = service ? { toolName, service } : { toolName };
+    // A one-shot elevation is meant to be used immediately — clamp hard.
+    ttlSecs = Math.min(ttlSecs, ONE_SHOT_MAX_TTL_SECS);
+  }
 
   const all = await readStore();
   const pending = all.filter(r => r.status === 'pending');
@@ -166,15 +235,37 @@ export async function submitTokenRequest(input: {
   const request: TokenRequest = {
     id: randomUUID(),
     requestedScopes: [...new Set(input.requestedScopes)],
-    requestedTtlSecs: input.requestedTtlSecs,
+    requestedTtlSecs: ttlSecs,
     reason: reason.slice(0, 1000),
     ...(input.requestedBy ? { requestedBy: input.requestedBy.slice(0, 120) } : {}),
+    ...(oneShotOp ? { oneShotOp } : {}),
     status: 'pending',
     createdAt: new Date().toISOString(),
   };
+
+  // A one-shot request parks as a DURABLE approval so it (a) surfaces as an
+  // operator approval card, (b) inherits the self-approve guard (the proposer
+  // can't approve its own request), and (c) survives a restart — the same
+  // owner-approved model as #2246. The approval's on_approve.mintToken mints the
+  // one-shot token INTO this row (mintOneShotForRequest); poll_token_request
+  // then hands it to the requester once. A plain (non-one-shot) request keeps
+  // the original admin-PATCH approve path unchanged.
+  if (oneShotOp) {
+    const opLabel = oneShotOp.service ? `${oneShotOp.toolName}: ${oneShotOp.service}` : oneShotOp.toolName;
+    const approval = await submitApproval({
+      service: oneShotOp.service ?? 'mcp',
+      title: `one-shot ${request.requestedScopes[0]} token — ${opLabel}`,
+      description: `An MCP agent (${input.requestedBy ?? 'anon'}) requested a ONE-SHOT, short-lived ${request.requestedScopes[0]} token authorizing exactly "${oneShotOp.toolName}"${oneShotOp.service ? ` on ${oneShotOp.service}` : ''}, once. Approving mints the token for the agent to collect; it cannot self-approve. Reason: ${reason.slice(0, 300)}`,
+      // caller drives the self-approve guard (isSelfApproval reads payload.caller).
+      payload: { caller: input.requestedBy, tokenRequestId: request.id, oneShotOp },
+      on_approve: { mintToken: { tokenRequestId: request.id } },
+    });
+    request.approvalId = approval.id;
+  }
+
   all.push(request);
   await writeStore(all);
-  logger.info(TAG, `submitted token request ${request.id} scopes=[${request.requestedScopes.join(',')}] ttl=${request.requestedTtlSecs}s by ${input.requestedBy ?? 'anon'}`);
+  logger.info(TAG, `submitted token request ${request.id} scopes=[${request.requestedScopes.join(',')}] ttl=${request.requestedTtlSecs}s${oneShotOp ? ` one-shot=${oneShotOp.toolName}${oneShotOp.service ? '/' + oneShotOp.service : ''} approval=${request.approvalId}` : ''} by ${input.requestedBy ?? 'anon'}`);
   return publicView(request);
 }
 
@@ -249,6 +340,70 @@ export async function approveTokenRequest(
   logger.info(TAG, `approved token request ${id} → token ${minted.token.id} scopes=[${req.grantedScopes.join(',')}] ttl=${grantedTtlSecs}s`);
   return publicView(req);
 }
+
+/**
+ * Mint the one-shot ELEVATED token for an approved one-shot request (#2245).
+ * Called by the durable approval's `on_approve.mintToken` action (via the
+ * injected registerTokenMinter seam) when the OWNER approves the card. Mints a
+ * token that:
+ *   - carries ONLY the single elevated scope the request named,
+ *   - is BOUND to the one op (oneShotOp: toolName + optional service),
+ *   - is SINGLE-USE (burns after the first successful op), and
+ *   - expires on the short (ONE_SHOT_MAX_TTL_SECS-capped) TTL.
+ * Stashes the secret on the request row for the requester's single poll.
+ *
+ * Refuses (throws) if the request is unknown, not a one-shot request, or not
+ * pending — so a replay/double-approve can't mint a second token. The throw
+ * propagates through runAction so the approval is NOT marked approved.
+ */
+export async function mintOneShotForRequest(tokenRequestId: string): Promise<void> {
+  const all = await readStore();
+  const req = all.find(r => r.id === tokenRequestId);
+  if (!req) throw new TokenRequestError(`Token request not found: ${tokenRequestId}`, 404);
+  if (!req.oneShotOp) {
+    throw new TokenRequestError(`Token request ${tokenRequestId} is not a one-shot request`, 400);
+  }
+  if (req.status !== 'pending') {
+    throw new TokenRequestError(`Token request ${tokenRequestId} is already ${req.status}`, 409);
+  }
+  // The grant is exactly the single elevated scope validated at submit — we do
+  // NOT let an approval widen it (defense-in-depth; submit already narrowed).
+  const scopes = [...new Set(req.requestedScopes)];
+  if (scopes.length !== 1 || !ELEVATED_SCOPES.has(scopes[0])) {
+    throw new TokenRequestError(
+      `One-shot request ${tokenRequestId} has a non-elevated/over-broad scope set [${scopes.join(',')}]; refusing to mint.`,
+      403,
+    );
+  }
+  const grantedTtlSecs = Math.min(req.requestedTtlSecs, ONE_SHOT_MAX_TTL_SECS);
+  const expiresAt = new Date(Date.now() + grantedTtlSecs * 1000).toISOString();
+
+  const minted = await createToken({
+    name: `mcp-oneshot:${req.oneShotOp.toolName}${req.oneShotOp.service ? ':' + req.oneShotOp.service : ''}`.slice(0, 100),
+    scopes,
+    expiresAt,
+    createdBy: 'owner-approval:one-shot',
+    oneShotOp: req.oneShotOp,
+    singleUse: true,
+  });
+
+  req.status = 'approved';
+  req.resolvedAt = new Date().toISOString();
+  req.grantedScopes = scopes;
+  req.grantedTtlSecs = grantedTtlSecs;
+  req.expiresAt = expiresAt;
+  req.tokenId = minted.token.id;
+  req.pendingSecret = minted.secret; // one-time hand-off, wiped on first poll
+  await writeStore(all);
+  logger.info(TAG, `minted one-shot ${scopes[0]} token ${minted.token.id} for request ${tokenRequestId} op=${req.oneShotOp.toolName}${req.oneShotOp.service ? '/' + req.oneShotOp.service : ''} ttl=${grantedTtlSecs}s`);
+}
+
+// Wire the one-shot minter into the approvals kernel at module load (#2245), so
+// an approved one-shot approval's `on_approve.mintToken` action mints the token.
+// Symmetric with mcp/server.ts's registerMcpDispatcher call. Loaded whenever
+// this module is imported (the MCP server + the frontend approve route both do,
+// the latter via its side-effect `import '@/lib/mcp/server'`).
+registerTokenMinter(mintOneShotForRequest);
 
 /** Admin denies a pending request. No token is minted. */
 export async function denyTokenRequest(id: string): Promise<TokenRequestView> {

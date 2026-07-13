@@ -61,6 +61,21 @@ export interface ApiToken {
   // (session/admin) tokens — existing tokens have no parentId, which is fine;
   // this is purely additive and never settable by an external caller.
   parentId?: string;
+  // One-shot owner-approved elevation (#2245). Set only when this token was
+  // minted through the approved request_token one-shot flow. It carries an
+  // ELEVATED scope (destroy/exec) but is BOUND to exactly one op:
+  //   - `toolName` — the only MCP tool this token may invoke.
+  //   - `service`  — when present, the tool's target must match (e.g. only
+  //     `delete_service` on `honcho`), so the grant can't be redirected.
+  // The MCP gate refuses any call that doesn't match this binding. Combined
+  // with `singleUse`, the elevation is exactly one approved op, once. Never
+  // settable by an external caller — only the approved-mint path sets it.
+  oneShotOp?: { toolName: string; service?: string };
+  // Single-use burn (#2245): a token that is revoked after its first
+  // successful op (see consumeSingleUseToken), so the minted elevation can
+  // never be replayed. Paired with `oneShotOp` on the one-shot flow; a normal
+  // token never sets it.
+  singleUse?: boolean;
 }
 
 /** Raised by createDelegatedToken when the parent credential or the requested
@@ -178,6 +193,12 @@ export async function createToken(input: {
   // Lineage marker (#2048). Set only by the delegated-mint path — the public
   // mint route never passes it, so an external caller can't forge a parent.
   parentId?: string;
+  // One-shot op binding + single-use burn (#2245). Set only by the approved
+  // request_token one-shot-elevation path (mintOneShotForRequest); the public
+  // mint route never passes them, so an external caller can't forge a one-shot
+  // elevated token.
+  oneShotOp?: { toolName: string; service?: string };
+  singleUse?: boolean;
 }): Promise<{ token: Omit<ApiToken, 'hash'>; secret: string }> {
   if (!input.name?.trim()) throw new Error('Token name is required');
   if (!input.scopes?.length) throw new Error('At least one scope is required');
@@ -198,6 +219,8 @@ export async function createToken(input: {
     expiresAt: input.expiresAt,
     createdBy: input.createdBy,
     ...(input.parentId ? { parentId: input.parentId } : {}),
+    ...(input.oneShotOp ? { oneShotOp: input.oneShotOp } : {}),
+    ...(input.singleUse ? { singleUse: true } : {}),
   };
   data.tokens.push(token);
   await saveFile(data);
@@ -310,6 +333,29 @@ export async function revokeToken(id: string): Promise<boolean> {
   if (data.tokens.length === before) return false;
   await saveFile(data);
   logger.info('auth:apiTokens', `Revoked API token ${id}`);
+  return true;
+}
+
+/**
+ * Burn a single-use token after its one approved op ran (#2245). Removes the
+ * row IFF it is flagged `singleUse` — so a second call with the same token
+ * fails `verifyToken` (absent from the store) and yields 401. A non-single-use
+ * id is left untouched (defensive: this is only ever called from the MCP gate
+ * for a one-shot token, but we never want a stray call to nuke a standing
+ * credential). Returns whether a row was burned.
+ *
+ * Idempotent + concurrency-safe like revokeToken: settles the in-flight stamp
+ * first so a stale snapshot can't resurrect the burned row.
+ */
+export async function consumeSingleUseToken(id: string): Promise<boolean> {
+  if (!id) return false;
+  await pendingStamp;
+  const data = await loadFile();
+  const token = data.tokens.find(t => t.id === id);
+  if (!token || !token.singleUse) return false; // only burn a real single-use row
+  data.tokens = data.tokens.filter(t => t.id !== id);
+  await saveFile(data);
+  logger.info('auth:apiTokens', `Burned single-use API token ${id} after its one approved op`);
   return true;
 }
 
