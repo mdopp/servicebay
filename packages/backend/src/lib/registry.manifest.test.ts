@@ -163,3 +163,82 @@ describe('manifest layout (servicebay.json present)', () => {
     expect(ghost).toBeUndefined();
   });
 });
+
+describe('path-injection barrier (CodeQL js/path-injection, #2257)', () => {
+  it('rejects a traversal item name against a registry source', async () => {
+    // Plant a sensitive file above the registry root.
+    const secretPath = path.join(REG_DIR, 'secret.txt');
+    await fs.writeFile(secretPath, 'TOP SECRET');
+    await seed('legacy-reg', {
+      'templates/foo/template.yml': 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: foo\n',
+      'templates/foo/README.md': 'foo readme',
+    });
+    mockConfigState.registries.items.push({ name: 'legacy-reg', url: 'http://example/legacy.git' });
+
+    // A crafted item name that would resolve outside the registry root must
+    // fail closed to null, never returning the secret's contents.
+    for (const evil of ['../../secret', '../secret', '..', '.', 'a/b', 'a\\b', 'foo/../../secret']) {
+      expect(await getReadme(evil, 'template', 'legacy-reg')).not.toBe('TOP SECRET');
+      expect(await getTemplateYaml(evil, 'legacy-reg')).toBeNull();
+    }
+    // The legitimate name still resolves.
+    expect(await getReadme('foo', 'template', 'legacy-reg')).toBe('foo readme');
+  });
+
+  it('rejects a traversal registry (source) name', async () => {
+    const secretPath = path.join(REG_DIR, 'secret.txt');
+    await fs.writeFile(secretPath, 'TOP SECRET');
+    // A source (registry name) that tries to climb out of REGISTRIES_DIR must
+    // not read the planted file, regardless of the item name.
+    for (const evilSource of ['../', '..', 'a/b']) {
+      expect(await getReadme('secret', 'template', evilSource)).not.toBe('TOP SECRET');
+      expect(await getReadme('../secret', 'template', evilSource)).not.toBe('TOP SECRET');
+    }
+  });
+
+  it('rejects a manifest entry.path that escapes the registry root', async () => {
+    // Plant a secret above the registry root; a manifest whose entry.path
+    // climbs out (../../secret) must not expose it as a readable template.
+    const secretDir = path.join(REG_DIR, 'escaped');
+    await fs.mkdir(secretDir, { recursive: true });
+    await fs.writeFile(path.join(secretDir, 'template.yml'), 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: evil\n');
+    await fs.writeFile(path.join(secretDir, 'README.md'), 'ESCAPED SECRET');
+    await seed('escaper', {
+      'servicebay.json': JSON.stringify({
+        templates: [{ name: 'evil', path: '../escaped' }],
+      }),
+    });
+    mockConfigState.registries.items.push({ name: 'escaper', url: 'http://example/escaper.git' });
+
+    // The escaping entry must not read the file outside the registry root.
+    expect(await getReadme('evil', 'template', 'escaper')).not.toBe('ESCAPED SECRET');
+  });
+
+  it('resolves a legitimate multi-segment manifest entry.path', async () => {
+    // A path with an internal separator (stacks/household-shape) is allowed
+    // as long as it stays inside the registry root.
+    await seed('nested', {
+      'servicebay.json': JSON.stringify({
+        templates: [{ name: 'deep', path: 'sub/deep-dir' }],
+      }),
+      'sub/deep-dir/template.yml': 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: deep\n  annotations:\n    servicebay.label: "deep"\n    servicebay.ports: "1/tcp"\n    servicebay.schema-version: "1"\n',
+      'sub/deep-dir/README.md': 'deep readme',
+    });
+    mockConfigState.registries.items.push({ name: 'nested', url: 'http://example/nested.git' });
+
+    expect(await getReadme('deep', 'template', 'nested')).toBe('deep readme');
+  });
+
+  it('rejects a traversal name against the built-in fallback (no source)', async () => {
+    // With no source and no registries, a traversal `name` funnels to the
+    // built-in TEMPLATES_PATH join, which the barrier constrains — the read
+    // must fail closed rather than climbing out of the bundled templates dir.
+    mockConfigState.registries.items = [];
+    for (const evil of ['../../../../etc/passwd', '../secret', '..', 'a/b']) {
+      // No throw, and no content from outside the built-in tree.
+      const readme = await getReadme(evil, 'template');
+      expect(readme).toBeNull();
+      expect(await getTemplateYaml(evil)).toBeNull();
+    }
+  });
+});

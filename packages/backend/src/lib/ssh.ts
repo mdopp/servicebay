@@ -5,11 +5,16 @@ import * as path from 'path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'util';
 import { SSH_DIR } from './dirs';
+import { assertValidHost, assertValidPort, assertWritablePassword } from './sshValidate';
 
 const execFileAsync = promisify(execFile);
 
 export async function verifySSHConnection(host: string, port: number, user: string, identityFile: string): Promise<boolean> {
   try {
+    // Barrier: only a well-formed hostname/IP + valid port may become a
+    // connection target (closes the js/request-forgery taint path).
+    host = assertValidHost(host);
+    port = assertValidPort(port);
     // Use execFile with an args array (no shell) so host/user/identityFile/port
     // cannot inject shell commands. Mirrors backup/service.ts:buildSSHArgv.
     const args = [
@@ -29,6 +34,17 @@ export async function verifySSHConnection(host: string, port: number, user: stri
 }
 
 export async function checkTcpConnection(host: string, port: number): Promise<boolean> {
+  // Barrier: reject anything that is not a plain hostname/IP + valid port
+  // before it flows into socket.connect (closes the js/request-forgery taint
+  // path at :47). A malformed/SSRF-shaped host throws → caller sees "failed".
+  let validHost: string;
+  let validPort: number;
+  try {
+    validHost = assertValidHost(host);
+    validPort = assertValidPort(port);
+  } catch {
+    return false;
+  }
   return new Promise((resolve) => {
     const socket = new net.Socket();
     socket.setTimeout(2000);
@@ -44,13 +60,26 @@ export async function checkTcpConnection(host: string, port: number): Promise<bo
       socket.destroy();
       resolve(false);
     });
-    socket.connect(port, host);
+    socket.connect(validPort, validHost);
   });
 }
 
 export async function setupSSHKey(host: string, port: number, user: string, pass: string): Promise<{ success: boolean; logs: string[] }> {
   const logs: string[] = [];
-  
+
+  // Barriers on tainted admin input before it reaches the ssh-copy-id argv /
+  // the PTY password write. host/port must be a well-formed target; the
+  // password must be a single control-char-free line (closes the
+  // js/code-injection taint at the proc.write below).
+  try {
+    host = assertValidHost(host);
+    port = assertValidPort(port);
+    pass = assertWritablePassword(pass);
+  } catch (e) {
+    logs.push(String(e));
+    return { success: false, logs };
+  }
+
   // Ensure we have a public key
   const sshDir = SSH_DIR;
   const pubKeyPath = path.join(sshDir, 'id_rsa.pub');

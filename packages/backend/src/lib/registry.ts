@@ -112,7 +112,9 @@ export function _resetRegistryManifestCacheForTests(): void {
 
 async function readRegistryManifest(regName: string): Promise<RegistryManifest | null> {
   if (manifestCache.has(regName)) return manifestCache.get(regName) ?? null;
-  const p = path.join(REGISTRIES_DIR, regName, 'servicebay.json');
+  // `regName` is config-supplied — constrain it to a single safe segment so a
+  // crafted registry name can't traverse out of REGISTRIES_DIR (js/path-injection).
+  const p = safeJoin(REGISTRIES_DIR, regName, 'servicebay.json');
   try {
     const raw = await fs.readFile(p, 'utf-8');
     const parsed = JSON.parse(raw) as RegistryManifest;
@@ -139,13 +141,97 @@ async function resolveRegistryItemPath(
 ): Promise<string> {
   const manifest = await readRegistryManifest(regName);
   const entries = type === 'template' ? manifest?.templates : manifest?.stacks;
+  // The registry root is `REGISTRIES_DIR/<safe regName>`. `regName` is
+  // config-supplied, so it goes through the single-segment barrier; the
+  // resulting root is what every join below must stay under
+  // (js/path-injection; #1919 barrier).
+  const regRoot = safeJoin(REGISTRIES_DIR, regName);
   if (entries) {
     const entry = entries.find(e => e.name === itemName);
-    if (entry) return path.join(REGISTRIES_DIR, regName, entry.path);
+    // A manifest `entry.path` may legitimately carry internal `/` separators
+    // (e.g. `servicebay-template`, `stacks/household`), so it can't go through
+    // the single-segment barrier. Instead resolve it against the registry root
+    // and confirm the result stays inside — a `../` or absolute path is rejected
+    // to the nonexistent sentinel so the read fails closed.
+    if (entry) return resolveWithinRoot(regRoot, entry.path);
   }
-  // Legacy fallback — also the path for manifest-less registries.
+  // Legacy fallback — also the path for manifest-less registries. `itemName`
+  // is request-supplied → single-segment barrier.
   const subdir = type === 'template' ? 'templates' : 'stacks';
-  return path.join(REGISTRIES_DIR, regName, subdir, itemName);
+  return safeJoin(regRoot, subdir, itemName);
+}
+
+/**
+ * A path segment guaranteed never to exist. Returned by `safeSegment` /
+ * `safeJoin` when a request-supplied component fails the traversal barrier,
+ * so every caller's `fs.readFile` / `fs.readdir` / `fs.access` fails closed
+ * to "not found" instead of reading outside its intended root.
+ */
+const UNSAFE_SENTINEL = '\0nonexistent';
+
+/**
+ * Traversal barrier for a **single** request-supplied path component
+ * (a template/stack/registry name, or a manifest-declared segment).
+ *
+ * Collapses `seg` to a lone path component with `path.basename` (the
+ * CodeQL-recognised path-injection sanitiser) and rejects it if that
+ * changed the value or produced a traversal / empty / NUL-bearing
+ * segment — so only a plain, self-contained name is ever joined onto a
+ * root. On rejection returns `UNSAFE_SENTINEL` (a guaranteed-nonexistent
+ * name) so the join fails closed rather than escaping the root.
+ *
+ * Shared by `localItemPath`, `readRegistryManifest`,
+ * `resolveRegistryItemPath` and the built-in-template joins — every place
+ * a caller-supplied name reaches the filesystem (CodeQL js/path-injection,
+ * following the #1919 barrier).
+ */
+function safeSegment(seg: string): string {
+  const base = path.basename(seg);
+  if (
+    !base ||
+    base !== seg ||
+    base === '.' ||
+    base === '..' ||
+    base.includes('\0')
+  ) {
+    return UNSAFE_SENTINEL;
+  }
+  return base;
+}
+
+/**
+ * `path.join(root, ...segments)` with each segment forced through the
+ * `safeSegment` traversal barrier first. A single unsafe segment collapses
+ * the whole join to a guaranteed-nonexistent path under `root`, so the
+ * result can never escape it. Manifest-declared `entry.path` values (which
+ * legitimately carry internal `/` separators) are NOT routed through here —
+ * they are constrained separately (see `resolveRegistryItemPath`).
+ */
+function safeJoin(root: string, ...segments: string[]): string {
+  const safe = segments.map(safeSegment);
+  return path.join(root, ...safe);
+}
+
+/**
+ * Join a **multi-segment** relative path (which may legitimately contain
+ * internal `/` separators — e.g. a manifest's `stacks/household`) onto
+ * `root`, then confirm the resolved result stays inside `root`. A `../`,
+ * absolute path, or any value that escapes `root` collapses to the
+ * guaranteed-nonexistent sentinel under `root`, so the read fails closed
+ * rather than reaching outside the registry (CodeQL js/path-injection).
+ */
+function resolveWithinRoot(root: string, rel: string): string {
+  if (rel.includes('\0')) return path.join(root, UNSAFE_SENTINEL);
+  const resolvedRoot = path.resolve(root);
+  const resolved = path.resolve(resolvedRoot, rel);
+  if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) {
+    return path.join(root, UNSAFE_SENTINEL);
+  }
+  // Re-derive the in-root path from the sanitised relative remainder so the
+  // value CodeQL sees flowing to `fs` is built from the barrier output, not
+  // the raw taint.
+  const inner = path.relative(resolvedRoot, resolved);
+  return inner ? path.join(root, inner) : root;
 }
 
 /**
@@ -155,30 +241,14 @@ async function resolveRegistryItemPath(
  * handle "not found" the same way they do for built-in/registry items.
  *
  * `name` is request-supplied, so it is constrained to a single safe path
- * segment (no separators, no `.`/`..`, no NUL) and the joined result is
- * asserted to stay under its root. An unsafe `name` resolves to a
- * guaranteed-nonexistent sentinel so every caller's fs path fails closed
- * to "not found" rather than reading outside the local source
- * (path-injection guard; CodeQL js/path-injection).
+ * segment via `safeSegment` (no separators, no `.`/`..`, no NUL). An
+ * unsafe `name` resolves to a guaranteed-nonexistent sentinel so every
+ * caller's fs path fails closed to "not found" rather than reading outside
+ * the local source (path-injection guard; CodeQL js/path-injection).
  */
 function localItemPath(type: 'template' | 'stack', name: string): string {
   const root = type === 'stack' ? LOCAL_STACKS_PATH : LOCAL_TEMPLATES_PATH;
-  // `name` is request-supplied. Collapse it to a single path component with
-  // path.basename (the recognised path-injection barrier) and reject if that
-  // changed the value or yielded a traversal/empty segment — only a plain,
-  // self-contained directory name is ever joined onto the local root, so the
-  // result can never escape it.
-  const segment = path.basename(name);
-  if (
-    !segment ||
-    segment !== name ||
-    segment === '.' ||
-    segment === '..' ||
-    segment.includes('\0')
-  ) {
-    return path.join(root, '\0nonexistent');
-  }
-  return path.join(root, segment);
+  return safeJoin(root, name);
 }
 
 export interface Template {
@@ -629,10 +699,10 @@ export async function getReadme(name: string, type: 'template' | 'stack', source
     }
   }
 
-  // Built-in fallback
+  // Built-in fallback — `name` is request-supplied → single-segment barrier.
   try {
     const basePath = type === 'stack' ? STACKS_PATH : TEMPLATES_PATH;
-    const filePath = path.join(basePath, name, 'README.md');
+    const filePath = safeJoin(basePath, name, 'README.md');
     return await fs.readFile(filePath, 'utf-8');
   } catch {
     return null;
@@ -675,9 +745,9 @@ export async function getTemplateYaml(name: string, source?: string): Promise<st
     }
   }
 
-  // Built-in fallback
+  // Built-in fallback — `name` is request-supplied → single-segment barrier.
   try {
-    const filePath = path.join(TEMPLATES_PATH, name, 'template.yml');
+    const filePath = safeJoin(TEMPLATES_PATH, name, 'template.yml');
     return await fs.readFile(filePath, 'utf-8');
   } catch {
     return null;
@@ -865,7 +935,8 @@ export async function getTemplateVariables(name: string, source?: string): Promi
     }
   }
 
-  return tryRead(path.join(TEMPLATES_PATH, name, 'variables.json'));
+  // `name` is request-supplied → single-segment barrier.
+  return tryRead(safeJoin(TEMPLATES_PATH, name, 'variables.json'));
 }
 
 export interface TemplateConfigFile {
@@ -920,7 +991,8 @@ export async function getTemplateConfigFiles(name: string, source?: string): Pro
     }
   }
 
-  return scanDir(path.join(TEMPLATES_PATH, name));
+  // `name` is request-supplied → single-segment barrier.
+  return scanDir(safeJoin(TEMPLATES_PATH, name));
 }
 
 /**
@@ -1011,7 +1083,8 @@ export async function getTemplateAssetFiles(
     }
   }
 
-  return walk(path.join(TEMPLATES_PATH, name));
+  // `name` is request-supplied → single-segment barrier.
+  return walk(safeJoin(TEMPLATES_PATH, name));
 }
 
 /**
@@ -1083,7 +1156,8 @@ export async function readTemplateFile(
     }
   }
 
-  return tryRead(path.join(TEMPLATES_PATH, name));
+  // `name` is request-supplied → single-segment barrier.
+  return tryRead(safeJoin(TEMPLATES_PATH, name));
 }
 
 /**
@@ -1196,7 +1270,8 @@ export async function getTemplateMigrationScripts(
     }
   }
 
-  return scanDir(path.join(TEMPLATES_PATH, name));
+  // `name` is request-supplied → single-segment barrier.
+  return scanDir(safeJoin(TEMPLATES_PATH, name));
 }
 
 /**
@@ -1240,7 +1315,8 @@ export async function getStackManifest(
         }
       }
     }
-    if (yamlText === null) yamlText = await tryRead(path.join(STACKS_PATH, name));
+    // `name` is request-supplied → single-segment barrier.
+    if (yamlText === null) yamlText = await tryRead(safeJoin(STACKS_PATH, name));
   }
 
   if (yamlText === null) return null;

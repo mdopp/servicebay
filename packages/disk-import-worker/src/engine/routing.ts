@@ -13,6 +13,7 @@
 // models the data + resolution only.
 
 import { CATEGORIES } from './categories';
+import { normPath } from './pathNorm';
 import type {
   BoxUserId,
   Category,
@@ -63,7 +64,7 @@ export function parentDir(dir: string): string | null {
 
 /** The exact top-level segment of a dir (`Backup-2023` for `Backup-2023/x/y`). */
 export function topLevelSegment(dir: string): string {
-  const trimmed = dir.replace(/^\/+/, '').replace(/\/+$/, '');
+  const trimmed = normPath(dir);
   if (trimmed === '') return '';
   const slash = trimmed.indexOf('/');
   return slash === -1 ? trimmed : trimmed.slice(0, slash);
@@ -371,7 +372,7 @@ function flattenAudiobookTail(tail: string[]): string[] {
 
 /** The directory of a relative file path (`''` for a top-level file). */
 export function dirOfRel(relPath: string): string {
-  const trimmed = relPath.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  const trimmed = normPath(relPath, { backslashToSlash: true });
   const slash = trimmed.lastIndexOf('/');
   return slash === -1 ? '' : trimmed.slice(0, slash);
 }

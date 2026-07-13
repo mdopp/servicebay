@@ -34,10 +34,30 @@ function safeRedirectUri(uri: string, fqdn: string, publicDomain: string): strin
   }
 }
 
-function generateSecret(length = 32): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const bytes = crypto.randomBytes(length);
-  return Array.from(bytes).map(b => chars[b % chars.length]).join('');
+const OIDC_SECRET_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+/**
+ * One uniform index into `OIDC_SECRET_CHARS` via rejection sampling: draw a
+ * random byte and discard any in the biased tail above the largest multiple of
+ * the charset size. `byte % len` skews the distribution whenever 256 isn't a
+ * multiple of `len` (js/biased-cryptographic-random) — the 62-char alphabet is
+ * exactly such a case. This gives a provably-unbiased pick. Exported for tests.
+ */
+export function unbiasedOidcCharIndex(len: number = OIDC_SECRET_CHARS.length): number {
+  const limit = Math.floor(256 / len) * len; // largest multiple of len ≤ 256
+  let byte: number;
+  do {
+    byte = crypto.randomBytes(1)[0];
+  } while (byte >= limit);
+  return byte % len;
+}
+
+export function generateSecret(length = 32): string {
+  let out = '';
+  for (let i = 0; i < length; i++) {
+    out += OIDC_SECRET_CHARS[unbiasedOidcCharIndex()];
+  }
+  return out;
 }
 
 /**

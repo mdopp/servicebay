@@ -1,12 +1,13 @@
 'use client';
 
-import { Bot, Key, ShieldAlert, UserPlus, Users } from 'lucide-react';
+import { Bot, Key, ShieldAlert, Smartphone, UserPlus, Users } from 'lucide-react';
 import GroupIntro from '../_lib/GroupIntro';
 import SettingDisclosure from '../_lib/SettingDisclosure';
 import { SETTINGS_GROUPS } from '../_lib/ia';
 import AccessRequestsSection from '../_lib/sections/AccessRequestsSection';
 import CredentialsSection from '../_lib/sections/CredentialsSection';
 import ApiTokensSection from '../_lib/sections/ApiTokensSection';
+import ConnectDeviceSection from '../_lib/sections/ConnectDeviceSection';
 import McpSection from '../_lib/sections/McpSection';
 import PortalAccessSection from '../_lib/sections/PortalAccessSection';
 import ApprovalsSection from '../_lib/sections/ApprovalsSection';
@@ -45,6 +46,16 @@ export default function AccessSettingsPage() {
         description="Named, revocable, scoped credentials. One token authenticates both the MCP server and opt-in REST API routes."
       >
         <ApiTokensSection />
+      </SettingDisclosure>
+      <SettingDisclosure
+        id="connect-device"
+        tier="advanced"
+        label="Connect device"
+        icon={Smartphone}
+        iconTone="ok"
+        description="Pair a phone or companion app with a one-time QR code. The paired device gets a read-only token."
+      >
+        <ConnectDeviceSection />
       </SettingDisclosure>
       <SettingDisclosure
         id="mcp"

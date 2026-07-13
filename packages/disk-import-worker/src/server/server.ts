@@ -133,7 +133,15 @@ async function handleReplan(deps: ServerDeps, req: IncomingMessage, res: ServerR
     sendJson(res, 200, { ok: true, ...result });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    sendJson(res, message.includes('no plan') ? 409 : 500, { error: message });
+    // "no plan yet" is an expected client-facing state (409) — safe to surface.
+    // Anything else is an internal fault: log it, return a generic 500 body so
+    // no internal error/stack leaks to the client (#2255, js/stack-trace-exposure).
+    if (message.includes('no plan')) {
+      sendJson(res, 409, { error: message });
+      return;
+    }
+    console.error('disk-import-worker: replan failed', e);
+    sendJson(res, 500, { error: 'internal server error' });
   }
 }
 
@@ -174,7 +182,10 @@ export async function handleRequest(deps: ServerDeps, req: IncomingMessage, res:
     }
     sendJson(res, 404, { error: 'not found' });
   } catch (e) {
-    sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
+    // Never leak the internal error (message/stack) to the client — log it
+    // server-side and return a generic body (#2255, js/stack-trace-exposure).
+    console.error('disk-import-worker: request handler error', e);
+    sendJson(res, 500, { error: 'internal server error' });
   }
 }
 

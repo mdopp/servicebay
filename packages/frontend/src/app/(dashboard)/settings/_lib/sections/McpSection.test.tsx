@@ -44,6 +44,12 @@ describe('McpSection (#2100 settings migration)', () => {
     render(<McpSection />);
     await waitFor(() => expect(screen.getByText('MCP endpoint')).toBeDefined());
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    // Wait for the initial GET /api/settings to resolve so the toggle reflects
+    // loaded state — clicking before that races the async load and the POST
+    // never fires within the window (CI parallel-load flake).
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith('/api/settings'),
+    );
     const switches = screen.getAllByRole('switch');
     fireEvent.click(switches[0]);
     await waitFor(() =>

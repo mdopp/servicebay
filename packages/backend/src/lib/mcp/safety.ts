@@ -92,8 +92,13 @@ export async function guardMutation(toolName: string): Promise<ToolErrorResult |
  * isn't this regex.
  */
 const OBVIOUSLY_DESTRUCTIVE_PATTERNS: { pattern: RegExp; reason: string }[] = [
-  { pattern: /\brm\s+(-[rRfF]+\w*\s+)*\/(?:\s|$)/, reason: '`rm -rf /` would wipe the rootfs' },
-  { pattern: /\brm\s+(-[rRfF]+\w*\s+)*\/(mnt|var|home|etc|usr|boot)(\s|\/)/, reason: 'recursive rm of a system path' },
+  // The flag-group is `-[rRfF]\w*` (not `-[rRfF]+\w*`): `[rRfF]` ⊆ `\w`, so
+  // `[rRfF]+\w*` and `[rRfF]\w*` accept the identical set of tokens, but the
+  // `+`/`\w*` overlap made the outer `(… )*` backtrack super-linearly on a
+  // long flag run with no trailing `/` (js/redos). The single-char form is
+  // linear and matches exactly the same commands.
+  { pattern: /\brm\s+(-[rRfF]\w*\s+)*\/(?:\s|$)/, reason: '`rm -rf /` would wipe the rootfs' },
+  { pattern: /\brm\s+(-[rRfF]\w*\s+)*\/(mnt|var|home|etc|usr|boot)(\s|\/)/, reason: 'recursive rm of a system path' },
   { pattern: /\bmkfs(\.\w+)?\b/, reason: 'mkfs reformats a filesystem' },
   { pattern: /\bdd\b[^|\n]*\bof=\/dev\/(sd|nvme|md|mmcblk|vd)/, reason: 'dd to a raw block device destroys partitions' },
   { pattern: />\s*\/dev\/(sd|nvme|md|mmcblk|vd)\w*/, reason: 'shell redirect to a raw block device' },

@@ -12,6 +12,7 @@
 // (PlanSidecar.plan.items). The worker reads the sidecar ONCE per request and
 // returns only the small child slice; the compact status.json is untouched.
 
+import { normPath } from '../engine/pathNorm';
 import type { Category, ImportPlan } from '../engine/types';
 
 /**
@@ -48,7 +49,7 @@ export interface LazyTreeLevel {
 
 /** Normalise a relative path (strip leading/trailing slashes, backslashes). */
 function normDir(rel: string): string {
-  return rel.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '');
+  return normPath(rel, { backslashToSlash: true });
 }
 
 /** The directory of a relative file path (`''` for a root-level file). */
@@ -95,7 +96,7 @@ export function lazyChildren(plan: ImportPlan, parent: string, mountBase = ''): 
   const norm = normDir(parent);
   // Trim only a trailing slash from the base — keep its leading slash so an
   // absolute source path matches it (normDir would strip the leading slash).
-  const base = mountBase.replace(/\\/g, '/').replace(/\/+$/, '');
+  const base = normPath(mountBase, { backslashToSlash: true, stripLeading: false });
   const rel = (sourcePath: string): string =>
     base && sourcePath.startsWith(base + '/') ? sourcePath.slice(base.length + 1) : normDir(sourcePath);
 

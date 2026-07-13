@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { resolveOidcClientSecret, extractPlaintextSecret } from './route';
+import {
+  resolveOidcClientSecret,
+  extractPlaintextSecret,
+  generateSecret,
+  unbiasedOidcCharIndex,
+} from './route';
 
 describe('extractPlaintextSecret', () => {
   it('strips the $plaintext$ prefix off a stored secret', () => {
@@ -67,5 +72,45 @@ describe('resolveOidcClientSecret (#1738 — reconcile, never regenerate)', () =
     const b = resolveOidcClientSecret('$plaintext$stable', 'irrelevant');
     expect(a.secret).toBe('stable');
     expect(b.secret).toBe('stable');
+  });
+});
+
+// #2260 — the generated OIDC client_secret must use an UNBIASED cryptographic
+// mapping (js/biased-cryptographic-random). Old `byte % 62` skewed the picks.
+// Assert the unbiased path + unchanged length/alphabet (the $plaintext$<secret>
+// consumer format stays stable).
+const OIDC_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // 62
+
+describe('generateSecret (#2260 unbiased OIDC client_secret)', () => {
+  it('emits the requested length over the exact 62-char alphabet', () => {
+    expect(generateSecret()).toHaveLength(32);
+    const s = generateSecret(40);
+    expect(s).toHaveLength(40);
+    expect(s).toMatch(/^[a-zA-Z0-9]{40}$/);
+    for (const ch of s) expect(OIDC_CHARS).toContain(ch);
+  });
+
+  it('every index in range, all reachable (rejection sampling)', () => {
+    const len = OIDC_CHARS.length;
+    const counts = new Array(len).fill(0);
+    for (let i = 0; i < 20000; i++) {
+      const idx = unbiasedOidcCharIndex(len);
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(idx).toBeLessThan(len);
+      counts[idx]++;
+    }
+    expect(counts.every(c => c > 0)).toBe(true);
+  });
+
+  it('stays unbiased over the 62-char alphabet (the modulo-bias case)', () => {
+    const len = OIDC_CHARS.length; // 62 — does not divide 256
+    const counts = new Array(len).fill(0);
+    const N = 62000;
+    for (let i = 0; i < N; i++) counts[unbiasedOidcCharIndex(len)]++;
+    const expected = N / len;
+    for (const c of counts) {
+      expect(c).toBeGreaterThan(expected * 0.75);
+      expect(c).toBeLessThan(expected * 1.25);
+    }
   });
 });

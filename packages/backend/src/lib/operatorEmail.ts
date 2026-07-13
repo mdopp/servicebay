@@ -20,6 +20,35 @@ const LE_REJECTED_TLDS = new Set([
 ]);
 
 /**
+ * Single-pass syntactic check, equivalent to the old
+ * `/^[^\s@]+@[^\s@]+\.[^\s@]+$/` but without the ambiguous
+ * `[^\s@]+\.[^\s@]+` grouping that CodeQL flags as js/polynomial-redos
+ * (the class `[^\s@]` and the literal `.` overlap, so the two `+` groups
+ * around the dot can split the same input many ways → super-linear
+ * backtracking on a dot-free tail).
+ *
+ * Accepts exactly `local@domain` where:
+ *   - the whole string contains no whitespace and exactly one `@`,
+ *   - the local part is non-empty,
+ *   - the domain part contains a `.` with at least one character before it
+ *     and at least one character after it (i.e. a dot at index 1..len-2).
+ * Every scan is linear in the input length.
+ */
+function hasValidEmailSyntax(value: string): boolean {
+  // No whitespace anywhere (mirrors the `[^\s]` in both classes).
+  if (/\s/.test(value)) return false;
+  const at = value.indexOf('@');
+  // Exactly one `@`, with a non-empty local part before it.
+  if (at <= 0 || value.indexOf('@', at + 1) !== -1) return false;
+  const domain = value.slice(at + 1);
+  // Domain must contain a dot with ≥1 char before it AND ≥1 char after it,
+  // i.e. a dot at some index in [1, len-2]. The earliest such dot is the
+  // first dot; if the first dot is already the last char there is none.
+  const dot = domain.indexOf('.');
+  return dot >= 1 && dot <= domain.length - 2;
+}
+
+/**
  * True when `value` is a syntactically valid e-mail address whose TLD
  * Let's Encrypt will accept. Falsy for empty strings, addresses without
  * an `@`, or addresses ending in a reserved TLD.
@@ -33,8 +62,8 @@ export function isValidOperatorEmail(value: string): boolean {
   if (!value) return false;
   const trimmed = value.trim();
   // Rough syntax: one or more chars + @ + at least one dotted label.
-  // Whitespace is forbidden anywhere.
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return false;
+  // Whitespace is forbidden anywhere. (Linear scan, no ReDoS.)
+  if (!hasValidEmailSyntax(trimmed)) return false;
   const lastDot = trimmed.lastIndexOf('.');
   const tld = trimmed.slice(lastDot + 1).toLowerCase();
   if (LE_REJECTED_TLDS.has(tld)) return false;
@@ -49,7 +78,7 @@ export function isValidOperatorEmail(value: string): boolean {
 export function operatorEmailIssue(value: string): string {
   if (!value || !value.trim()) return 'Email is required for Let’s Encrypt';
   const trimmed = value.trim();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+  if (!hasValidEmailSyntax(trimmed)) {
     return 'Doesn’t look like an email address';
   }
   const tld = trimmed.slice(trimmed.lastIndexOf('.') + 1).toLowerCase();

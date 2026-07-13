@@ -12,9 +12,31 @@
  * StackInstallFlow consumer (#341) share one implementation
  * instead of three near-copies.
  */
+const SECRET_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+/**
+ * One uniform index into `SECRET_CHARS` via rejection sampling: draw a random
+ * byte and discard any that falls in the biased tail above the largest multiple
+ * of the charset size. `byte % len` would skew the distribution whenever 256
+ * isn't a multiple of `len` (js/biased-cryptographic-random) — the 62-char
+ * alphabet here is exactly such a case. This yields a provably-unbiased pick.
+ * Exported for tests.
+ */
+export function unbiasedCharIndex(len: number = SECRET_CHARS.length): number {
+  const limit = Math.floor(256 / len) * len; // largest multiple of len ≤ 256
+  const buf = new Uint8Array(1);
+  let byte: number;
+  do {
+    crypto.getRandomValues(buf);
+    byte = buf[0];
+  } while (byte >= limit);
+  return byte % len;
+}
+
 export function generateRandomSecret(length = 32): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  return Array.from(crypto.getRandomValues(new Uint8Array(length)))
-    .map(b => chars[b % chars.length])
-    .join('');
+  let out = '';
+  for (let i = 0; i < length; i++) {
+    out += SECRET_CHARS[unbiasedCharIndex()];
+  }
+  return out;
 }

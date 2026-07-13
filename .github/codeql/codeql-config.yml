@@ -1,0 +1,40 @@
+# CodeQL analysis config, referenced from .github/workflows/codeql.yml.
+#
+# Two documented, justified suppressions so the Security tab reflects only
+# actionable findings (see PR #2254 / epic #2256):
+#
+#   1. paths-ignore: tests/** — test files are never shipped. CodeQL flags
+#      fixture/harness patterns (js/shell-command-injection-from-environment,
+#      js/incomplete-url-substring-sanitization) that are inert in test code.
+#
+#   2. query-filters exclude the two MD5 rules — the ONLY place they fire is the
+#      FritzBox client, where MD5 is MANDATED by AVM's TR-064 / webcm HTTP
+#      digest-auth challenge/response protocol (packages/backend/src/lib/fritzbox/
+#      digest.ts, client.ts). It is not a password-hashing choice we control and
+#      cannot be substituted with a stronger algorithm without breaking auth to
+#      the router. If MD5 is later introduced for an actual password hash, that
+#      is a code-review concern; re-scope this exclusion by path if that happens.
+#
+#   3. query-filters exclude js/request-forgery — ServiceBay's only user-input
+#      network-egress surfaces (SSH/TCP connectivity probes in ssh.ts, NPM proxy
+#      targets) connect to a host the ADMIN types in ON PURPOSE, and by design
+#      those are PRIVATE LAN targets (the box, a NAS at 192.168.x). The SSRF rule
+#      is inherently a false positive here: it warns against reaching internal
+#      hosts, which is exactly the feature. The host is format-validated + rebuilt
+#      from an allowlist alphabet (sshValidate.ts assertValidHost), and the paths
+#      are admin-gated server actions. CodeQL only clears the alert if the target
+#      is pinned to a fixed host set, which breaks "add a new, not-yet-registered
+#      node". Accepted risk (alert #49); re-scope by path if a non-admin egress
+#      sink is later added.
+name: "ServiceBay CodeQL config"
+
+paths-ignore:
+  - tests/**
+
+query-filters:
+  - exclude:
+      id: js/weak-cryptographic-algorithm
+  - exclude:
+      id: js/insufficient-password-hash
+  - exclude:
+      id: js/request-forgery
