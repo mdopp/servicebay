@@ -52,3 +52,28 @@ describe('/napi/* read endpoints are read-scoped in the handler OPTIONS (#2252, 
     });
   }
 });
+
+/**
+ * The MUTATING `/napi/*` companion-app surface (#2253). Same anti-false-green
+ * pin as the read routes, but each mutating route must carry the CORRECT
+ * higher scope in the withApiHandlerParams OPTIONS — a `read`-only device token
+ * (the pairing default, #2251) must be unable to reach these:
+ *   - operate (start/stop/restart) → 'lifecycle'
+ *   - approve / deny verdict       → 'mutate'
+ * Pinning the exact scope here is what stops a future edit from silently
+ * widening a read token's reach into service control or approval verdicts.
+ */
+const MUTATE_ROUTES: Array<{ path: string; scope: string }> = [
+  { path: 'services/[name]/operate/route.ts', scope: 'lifecycle' },
+  { path: 'approvals/[id]/approve/route.ts', scope: 'mutate' },
+  { path: 'approvals/[id]/deny/route.ts', scope: 'mutate' },
+];
+
+describe('/napi/* mutating endpoints carry the correct scope in the handler OPTIONS (#2253, #2249)', () => {
+  for (const { path, scope } of MUTATE_ROUTES) {
+    it(`${path} → tokenScope '${scope}' in withApiHandlerParams options, not an inner call`, () => {
+      expect(optionsScope(path)).toBe(scope);
+      expect(hasInnerRequireSessionScope(path)).toBe(false);
+    });
+  }
+});
