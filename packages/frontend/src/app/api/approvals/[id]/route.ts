@@ -5,8 +5,10 @@ import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
 
+// tokenScope:'read' (#2244) — a scoped Bearer token may read a single
+// approval by id (card detail). Cookie sessions unaffected.
 export const GET = withApiHandlerParams<undefined, undefined, { id: string }>(
-  {},
+  { tokenScope: 'read' },
   async ({ params }) => {
     try {
       const approval = await getApproval(decodeURIComponent(params.id));

@@ -20,8 +20,12 @@ import { getInstalledImageUpdates } from '@/lib/imageDigest';
 
 export const dynamic = 'force-dynamic';
 
+// tokenScope:'read' (#2243) — a scoped SB-MCP Bearer token may poll this
+// pending-image-updates signal so an external consumer (Solaris Wartung chat)
+// can render "update available" cards. The gate stays deny-by-default: a
+// missing/wrong-scope Bearer 401s and a session cookie keeps working unchanged.
 export const GET = withApiHandler({}, async ({ request }) => {
-  const auth = await requireSession(request);
+  const auth = await requireSession(request, { tokenScope: 'read' });
   if (auth instanceof NextResponse) return auth;
   try {
     const services = await getInstalledImageUpdates();
