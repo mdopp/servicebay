@@ -31,6 +31,20 @@ import { logger } from '@/lib/logger';
  *   privilege boundary, the only accepted proof of a verified admin is the
  *   proxy-injected identity.
  *
+ * PRIVILEGE-ESCALATION GUARD (#2246/#2249, SECURITY):
+ *   This endpoint mints authority from a *browser* Authelia session — the
+ *   legitimate caller is a signed-in admin behind NPM, whose request carries
+ *   the Authelia cookie (consumed by NPM's forward-auth) and NO client
+ *   `Authorization: Bearer` token. A token client, by contrast, must NEVER be
+ *   able to reach here: on a DIRECT `:5888` call (bypassing NPM) a Bearer holder
+ *   passes `proxy.ts`'s `isValidBearerToken()` gate and could then supply its
+ *   OWN `Remote-User: evil` / `Remote-Groups: admins` headers (nothing upstream
+ *   overwrote them) → mint an admin-scoped token = self-elevation. So we REFUSE
+ *   any request that presents a client Bearer (403, mint nothing). Identity here
+ *   may only come from the proxy-injected forward-auth headers, never from a
+ *   caller who is already a token. This also keeps a token from bootstrapping a
+ *   higher-scoped token than it holds.
+ *
  * `skipAuth: true`: the Authelia proxy headers ARE the credential (mirrors
  * `/api/auth/session-from-token`, which treats the presented Bearer as the
  * credential). No cookie/admin session is required — that's the point.
@@ -56,6 +70,23 @@ function parseGroups(raw: string | null): string[] {
 }
 
 export const POST = withApiHandler({ skipAuth: true }, async ({ request }: { request: NextRequest }) => {
+  // PRIVILEGE-ESCALATION GUARD (#2249): refuse any caller presenting a client
+  // Bearer token. The legitimate flow is a browser Authelia session behind NPM
+  // (cookie, no Bearer). A token client reaching here on a direct :5888 call
+  // could set its OWN Remote-User/Remote-Groups (nothing overwrote them) and
+  // self-elevate to an admin-scoped token. A token must never mint identity.
+  const authz = request.headers.get('authorization');
+  if (authz && authz.startsWith('Bearer ')) {
+    logger.warn(
+      'api:auth:token-from-authelia-session',
+      'Refused token exchange: request carried a client Bearer token (not a browser Authelia session)',
+    );
+    return NextResponse.json(
+      { error: 'This endpoint is for a browser Authelia session; a token client may not exchange for a token here' },
+      { status: 403 },
+    );
+  }
+
   // Only the proxy-injected identity is trusted (see TRUST MODEL above).
   const user = request.headers.get('remote-user');
   if (!user) {

@@ -25,18 +25,43 @@ function src(relPath: string): string {
   return readFileSync(path.join(API_DIR, relPath), 'utf8');
 }
 
-/** The tokenScope on the first handler declared in a single-handler route. */
-function soleScope(relPath: string): string | null {
-  const m = src(relPath).match(/tokenScope:\s*'([a-z]+)'/);
-  return m ? m[1] : null;
+/**
+ * The tokenScope baked into the route's `withApiHandler(...)` / `withApiHandlerParams(...)`
+ * OPTIONS object — the ONLY place the built-in gate reads it (#2249).
+ *
+ * We deliberately do NOT match a bare `tokenScope:'read'` anywhere in the file:
+ * the old regex matched the scope written in a CODE COMMENT, so the test passed
+ * even when the routes wired the scope into an INNER `requireSession(req, {…})`
+ * call that the wrapper gate never saw → a valid read Bearer 401'd (box-verify
+ * #2243 RED, CI false-green). This scopes the match to the handler options.
+ */
+function optionsScope(relPath: string): string | null {
+  const s = src(relPath);
+  // Grab the options object literal that is the FIRST argument to
+  // withApiHandler / withApiHandlerParams, then read tokenScope out of it.
+  const m = s.match(/withApiHandler(?:Params)?\s*(?:<[^>]*>)?\s*\(\s*(\{[^}]*\})/);
+  if (!m) return null;
+  const opts = m[1];
+  const scope = opts.match(/tokenScope:\s*'([a-z]+)'/);
+  return scope ? scope[1] : null;
 }
 
-describe('updates signal is read-scoped for Bearer tokens (#2243)', () => {
-  it('image-updates GET → read', () => {
-    expect(soleScope('system/stacks/image-updates/route.ts')).toBe('read');
+/** Assert the route does NOT hide the scope in an inner requireSession call —
+ *  that shape 401s a valid Bearer because the wrapper gate runs scopeless. */
+function hasInnerRequireSessionScope(relPath: string): boolean {
+  return /requireSession\([^)]*tokenScope/.test(src(relPath));
+}
+
+describe('updates signal is read-scoped for Bearer tokens (#2243, #2249)', () => {
+  it('image-updates GET → read (in withApiHandler options, not a comment/inner call)', () => {
+    expect(optionsScope('system/stacks/image-updates/route.ts')).toBe('read');
+    // #2249: the scope must NOT live on an inner requireSession — that 401s a
+    // valid Bearer because handler.ts's own gate ran scopeless first.
+    expect(hasInnerRequireSessionScope('system/stacks/image-updates/route.ts')).toBe(false);
   });
-  it('templates/upgrades-pending GET → read', () => {
-    expect(soleScope('system/templates/upgrades-pending/route.ts')).toBe('read');
+  it('templates/upgrades-pending GET → read (in withApiHandler options)', () => {
+    expect(optionsScope('system/templates/upgrades-pending/route.ts')).toBe('read');
+    expect(hasInnerRequireSessionScope('system/templates/upgrades-pending/route.ts')).toBe(false);
   });
 });
 
@@ -58,15 +83,15 @@ describe('approval feed is read-scoped, verdict is mutate-scoped (#2244)', () =>
   });
 
   it('GET /api/approvals/[id] (detail) → read', () => {
-    expect(soleScope('approvals/[id]/route.ts')).toBe('read');
+    expect(optionsScope('approvals/[id]/route.ts')).toBe('read');
   });
 
   it('POST /api/approvals/[id]/approve → mutate (verdict, not destroy)', () => {
-    expect(soleScope('approvals/[id]/approve/route.ts')).toBe('mutate');
+    expect(optionsScope('approvals/[id]/approve/route.ts')).toBe('mutate');
   });
 
   it('POST /api/approvals/[id]/reject → mutate', () => {
-    expect(soleScope('approvals/[id]/reject/route.ts')).toBe('mutate');
+    expect(optionsScope('approvals/[id]/reject/route.ts')).toBe('mutate');
   });
 
   it('approve + reject enforce the token self-approval guard (isSelfApproval)', () => {
