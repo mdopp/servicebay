@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.159.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.158.0...servicebay-v4.159.0) (2026-07-13)
+
+
+### Features
+
+* **mcp:** one-shot owner-approved elevated destroy/exec token via request_token ([99833ec](https://github.com/mdopp/servicebay/commit/99833ec9150792047de76aee5a6c06203cf635a8))
+* **mcp:** one-shot owner-approved elevated token via request_token (option b) ([961770f](https://github.com/mdopp/servicebay/commit/961770fbc97fd0200dbe63eeefef10198c554349)), closes [#2245](https://github.com/mdopp/servicebay/issues/2245)
+
 ## [4.158.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.157.0...servicebay-v4.158.0) (2026-07-13)
 
 
