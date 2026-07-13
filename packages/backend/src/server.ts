@@ -218,7 +218,6 @@ app.prepare().then(() => {
         const authHeader = req.headers.authorization || '';
         const bearerMatch = authHeader.match(/^Bearer\s+(\S+)$/i);
         let auth: { user: string; scopes: import('./lib/auth/apiScope').ApiScope[]; tokenId?: string } | null = null;
-        let authError: string | null = null;
         try {
           if (bearerMatch) {
             const t = await verifyToken(bearerMatch[1]);
@@ -237,7 +236,9 @@ app.prepare().then(() => {
             }
           }
         } catch (err) {
-          authError = err instanceof Error ? err.message : String(err);
+          // Keep the real reason server-side only; the client gets a generic
+          // 401 message below (js/stack-trace-exposure).
+          console.error('MCP auth error:', err);
         }
         if (!auth) {
           const session = await getSessionFromCookieHeader(req.headers.cookie);
@@ -253,7 +254,7 @@ app.prepare().then(() => {
             jsonrpc: '2.0',
             error: {
               code: -32001,
-              message: authError || 'Unauthorized — provide Authorization: Bearer sb_… or a session cookie',
+              message: 'Unauthorized — provide Authorization: Bearer sb_… or a session cookie',
             },
             id: null,
           }));

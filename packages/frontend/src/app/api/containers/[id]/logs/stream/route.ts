@@ -41,7 +41,9 @@ export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, { id: 
 
     return new NextResponse('Unknown error', { status: 500 });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return new NextResponse(msg, { status: 500 });
+    // Log the real error server-side only; never leak the message/stack to
+    // the HTTP client (js/stack-trace-exposure).
+    console.error('Error streaming container logs:', error);
+    return new NextResponse('internal server error', { status: 500 });
   }
 });

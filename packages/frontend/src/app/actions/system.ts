@@ -54,7 +54,7 @@ export async function readFileContent(path: string, nodeName?: string): Promise<
   try {
     return await executor.readFile(path);
   } catch (error) {
-    console.error(`Error reading file ${path}:`, error);
+    console.error('Error reading file %s:', path, error);
     throw new Error(`Failed to read file: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
