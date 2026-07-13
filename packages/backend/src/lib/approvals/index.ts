@@ -228,13 +228,34 @@ export interface NewApprovalEvent {
 }
 
 /**
- * In-process event bus for approval lifecycle notifications. A single Node
- * process owns the JSON store, so an in-process EventEmitter is sufficient to
- * fan a create-event out to every open SSE stream. `setMaxListeners(0)` removes
- * the default 10-listener warning cap — each open Solaris SSE connection adds a
- * listener, and there is no fixed upper bound on concurrent subscribers.
+ * In-process event bus for approval lifecycle notifications, backed by a
+ * `globalThis`-shared singleton so EVERY webpack/Turbopack bundle in the process
+ * shares ONE emitter (#2268 part B).
+ *
+ * CROSS-BUNDLE HAZARD — the reason this is not a bare `new EventEmitter()`:
+ * a single Node process owns the JSON store, but in the Next.js standalone
+ * build EACH App-Router route is bundled with its OWN module-cache copy of this
+ * file. A module-level `const approvalEvents = new EventEmitter()` therefore
+ * gives DIFFERENT emitter instances to different route bundles. The event is
+ * EMITTED from the MCP-server bundle (mcp/server → submitApproval → emit) but
+ * the SSE feed SUBSCRIBES in the /napi/approvals/events route bundle
+ * (onNewApproval) — two different emitters → the event was fired on one and
+ * listened for on the other, so nothing ever arrived on the box (box-verified
+ * RED 2026-07-13). This is the SAME cross-bundle-singleton class as #2237
+ * (mcpDispatcher was null in the Next.js route bundle vs the MCP-server bundle).
+ *
+ * A side-effect import can co-locate a per-bundle *registration* (that is how
+ * #2237 fixed the dispatcher), but an EventEmitter is a shared STATEFUL object:
+ * a side-effect import cannot make two separately-constructed emitters be the
+ * same instance. Since all bundles run in ONE process, `globalThis` IS shared
+ * across them, so stashing the emitter on `globalThis` gives every bundle the
+ * one-and-only emitter. `setMaxListeners(0)` removes the default 10-listener
+ * warning cap — each open Solaris SSE connection adds a listener, and there is
+ * no fixed upper bound on concurrent subscribers.
  */
-const approvalEvents = new EventEmitter();
+const globalForApprovals = globalThis as unknown as { __sbApprovalEvents?: EventEmitter };
+const approvalEvents =
+  globalForApprovals.__sbApprovalEvents ?? (globalForApprovals.__sbApprovalEvents = new EventEmitter());
 approvalEvents.setMaxListeners(0);
 
 const NEW_APPROVAL_EVENT = 'new-approval';
