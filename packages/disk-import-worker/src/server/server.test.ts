@@ -123,4 +123,34 @@ describe('worker server handleRequest', () => {
     await handleRequest(deps({ replan }), mockReq('POST', '/api/replan', { explicit: {} }), res);
     expect(res.statusCode).toBe(409);
   });
+
+  it('does NOT leak the internal error message/stack on a 500 (#2255)', async () => {
+    const secret = 'ENOENT: secret internal path /out/plan.json at Object.<anonymous>';
+    const replan = vi.fn(async () => {
+      throw new Error(secret);
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = mockRes();
+    await handleRequest(deps({ replan }), mockReq('POST', '/api/replan', { explicit: {} }), res);
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.body)).toEqual({ error: 'internal server error' });
+    expect(res.body).not.toContain(secret);
+    // The detail is still logged server-side for diagnosis.
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it('does NOT leak the internal error on a top-level handler throw (#2255)', async () => {
+    const secret = 'boom: /out internal detail';
+    const readJson = vi.fn(async () => {
+      throw new Error(secret);
+    });
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = mockRes();
+    await handleRequest(deps({ readJson }), mockReq('GET', '/api/status'), res);
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.body)).toEqual({ error: 'internal server error' });
+    expect(res.body).not.toContain(secret);
+    errSpy.mockRestore();
+  });
 });
