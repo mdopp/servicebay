@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.158.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.157.0...servicebay-v4.158.0) (2026-07-13)
+
+
+### Features
+
+* **napi:** companion-app operate + verdict endpoints and deep-link docs ([354f9c5](https://github.com/mdopp/servicebay/commit/354f9c51eed6f1ba3e8a3958b0c7a6a47b2329c0))
+* **napi:** companion-app operate + verdict endpoints and deep-link docs ([6c1dab0](https://github.com/mdopp/servicebay/commit/6c1dab0288fd7ff09c5ff20d43ea172721ce9d6b)), closes [#2253](https://github.com/mdopp/servicebay/issues/2253)
+
 ## [4.157.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.156.0...servicebay-v4.157.0) (2026-07-13)
 
 
