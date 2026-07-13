@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.160.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.159.0...servicebay-v4.160.0) (2026-07-13)
+
+
+### Features
+
+* **auth:** delegated-admin verification + delegated approve/deny & new-approval SSE feed ([db31cd6](https://github.com/mdopp/servicebay/commit/db31cd69e9b9b57f4f187446776db04666845990))
+* **auth:** delegated-admin verification mechanism for Solaris server-server mutations ([93ee4ae](https://github.com/mdopp/servicebay/commit/93ee4ae3b6a017523c68e5cfda1e9047b53f59fc)), closes [#2270](https://github.com/mdopp/servicebay/issues/2270)
+* **napi:** delegated-admin approve/deny + new-approval SSE feed ([262da02](https://github.com/mdopp/servicebay/commit/262da024ca4344baa59b56055a3404175fc7a8cd)), closes [#2268](https://github.com/mdopp/servicebay/issues/2268)
+
+
+### Bug Fixes
+
+* **approvals:** share approvalEvents bus via globalThis across bundles ([b5e9ab2](https://github.com/mdopp/servicebay/commit/b5e9ab25cf70d66457ce7063fd1b5d440055d777))
+* **approvals:** share approvalEvents bus via globalThis across bundles ([3c0bfb1](https://github.com/mdopp/servicebay/commit/3c0bfb17795a91e26beba2177d84eb57933de0bf)), closes [#2268](https://github.com/mdopp/servicebay/issues/2268)
+
 ## [4.159.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.158.0...servicebay-v4.159.0) (2026-07-13)
 
 
