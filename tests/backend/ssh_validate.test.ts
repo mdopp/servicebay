@@ -46,6 +46,19 @@ describe('assertValidHost', () => {
     expect(() => assertValidHost('-bad.example')).toThrow(/Invalid host/);
     expect(() => assertValidHost('bad-.example')).toThrow(/Invalid host/);
   });
+
+  it('returns a value built only from the allowlist alphabet (SSRF barrier)', () => {
+    // The returned host must be content-identical to the (trimmed) input for a
+    // legit host — the char-by-char rebuild keeps every allowed character — and
+    // must contain no character outside the hostname/IP alphabet. This pins the
+    // js/request-forgery barrier: the connection target is derived from an
+    // allowlist, not passed through as the raw tainted string.
+    for (const h of ['box.local', 'a-b.example.com', '192.168.178.100', 'fe80::1', '::1']) {
+      const out = assertValidHost(h);
+      expect(out).toBe(h);
+      expect(out).toMatch(/^[A-Za-z0-9.:-]+$/);
+    }
+  });
 });
 
 describe('assertValidPort', () => {
