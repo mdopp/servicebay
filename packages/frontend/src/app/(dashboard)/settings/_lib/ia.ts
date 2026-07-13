@@ -88,6 +88,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
       { id: 'access-requests', label: 'Access requests', tier: 'essential', keywords: ['request', 'approve', 'invite', 'people'] },
       { id: 'credentials', label: 'Credentials', tier: 'essential', keywords: ['password', 'login', 'admin', 'lldap'] },
       { id: 'api-tokens', label: 'API tokens', tier: 'advanced', keywords: ['token', 'api', 'bearer'] },
+      { id: 'connect-device', label: 'Connect device', tier: 'advanced', keywords: ['pair', 'pairing', 'qr', 'phone', 'device', 'companion', 'app', 'scan'] },
       { id: 'mcp', label: 'MCP access', tier: 'advanced', keywords: ['mcp', 'agent', 'claude', 'tool'] },
       { id: 'portal-access', label: 'Portal access', tier: 'advanced', keywords: ['portal', 'public page', 'landing'] },
       { id: 'approvals', label: 'Action approvals', tier: 'advanced', keywords: ['approve', 'destructive', 'confirm'] },
