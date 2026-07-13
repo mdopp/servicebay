@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.156.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.155.3...servicebay-v4.156.0) (2026-07-13)
+
+
+### Features
+
+* **api:** open updates + approvals endpoints to scoped SB-MCP token auth ([9586a0f](https://github.com/mdopp/servicebay/commit/9586a0f325fde06d545b0df1b2cf4f1d9064e84c)), closes [#2243](https://github.com/mdopp/servicebay/issues/2243) [#2244](https://github.com/mdopp/servicebay/issues/2244)
+* **auth:** mint scoped SB-MCP token from a verified Authelia admin session ([bdad07e](https://github.com/mdopp/servicebay/commit/bdad07ea228a14a3857691671a789c4a59999792)), closes [#2246](https://github.com/mdopp/servicebay/issues/2246)
+* **auth:** token-scoped updates+approvals APIs and Authelia-session token exchange ([54c1cf3](https://github.com/mdopp/servicebay/commit/54c1cf33d344802dd537dcdd4354b4d3e351ba1d))
+
+
+### Bug Fixes
+
+* **api:** wire tokenScope into handler options + block authelia-session token spoof ([cc6be65](https://github.com/mdopp/servicebay/commit/cc6be656103b564511cdc521b27c2573c41423e8))
+* **api:** wire tokenScope into handler options + block authelia-session token spoof ([97da36d](https://github.com/mdopp/servicebay/commit/97da36dc4b0c9730d340f83014b24f8a32653e2a)), closes [#2249](https://github.com/mdopp/servicebay/issues/2249)
+
 ## [4.155.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.155.2...servicebay-v4.155.3) (2026-07-12)
 
 
