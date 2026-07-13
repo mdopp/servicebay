@@ -217,11 +217,13 @@ app.prepare().then(() => {
         const { verifyBootstrapToken, clientIpForLanGate } = await import('./lib/mcp/bootstrapToken');
         const authHeader = req.headers.authorization || '';
         const bearerMatch = authHeader.match(/^Bearer\s+(\S+)$/i);
-        let auth: { user: string; scopes: import('./lib/auth/apiScope').ApiScope[]; tokenId?: string } | null = null;
+        let auth: { user: string; scopes: import('./lib/auth/apiScope').ApiScope[]; tokenId?: string; oneShotOp?: { toolName: string; service?: string }; singleUse?: boolean } | null = null;
         try {
           if (bearerMatch) {
             const t = await verifyToken(bearerMatch[1]);
-            if (t) auth = { user: `token:${t.name}`, scopes: t.scopes, tokenId: t.id };
+            // Thread the one-shot binding (#2245) into the auth context so the
+            // MCP gate can enforce "this token may run exactly this op, once".
+            if (t) auth = { user: `token:${t.name}`, scopes: t.scopes, tokenId: t.id, ...(t.oneShotOp ? { oneShotOp: t.oneShotOp } : {}), ...(t.singleUse ? { singleUse: true } : {}) };
             // Bootstrap token (#322): only valid bearer that doesn't
             // match the sb_<id>_<secret> shape. Always read-only, always
             // LAN-only, always TTL'd. The verifier handles all three

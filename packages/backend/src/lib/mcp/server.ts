@@ -35,11 +35,13 @@ import { submitApproval, registerMcpDispatcher } from '@/lib/approvals';
 import { dispatchWithServer } from './dispatchTool';
 import { redactLogText, redactServiceFiles } from './redact';
 import { type ApiScope, scopeSatisfiedBy, ALL_SCOPES } from '@/lib/auth/apiScope';
+import { consumeSingleUseToken } from '@/lib/auth/apiTokens';
 import {
   submitTokenRequest,
   pollTokenRequest,
   listTokenRequests,
   MAX_TTL_SECS,
+  ONE_SHOT_MAX_TTL_SECS,
   TokenRequestError,
   type TokenRequestStatus,
 } from '@/lib/auth/tokenRequests';
@@ -83,6 +85,12 @@ interface McpAuthContext {
   user: string;
   scopes: ApiScope[];
   tokenId?: string;
+  // One-shot owner-approved elevation (#2245). Present only for a token minted
+  // through the approved request_token one-shot flow: it holds an elevated
+  // scope BOUND to exactly one op, and burns after one use. The gate enforces
+  // the binding + burns the token; a normal token leaves these unset.
+  oneShotOp?: { toolName: string; service?: string };
+  singleUse?: boolean;
 }
 
 // Wire the approvals kernel's MCP-tool re-dispatch (#2234) to a no-auth
@@ -404,6 +412,26 @@ function safeHandler(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return async (...handlerArgs: any[]): Promise<ToolResult> => {
     const args = (handlerArgs[0] && typeof handlerArgs[0] === 'object') ? handlerArgs[0] : {};
+    // One-shot elevation binding (#2245): a token minted through the approved
+    // request_token one-shot flow carries an elevated scope but is BOUND to
+    // exactly one op. It may ONLY invoke its bound tool (and, when a target
+    // service was named, only against that service). Any other call — even a
+    // read — is refused, so the elevated grant can't be redirected. The token
+    // then burns after its one successful op (below). Checked before the scope
+    // check so an off-target call is refused up front.
+    if (auth?.oneShotOp) {
+      const bound = auth.oneShotOp;
+      if (toolName !== bound.toolName) {
+        const msg = `This is a one-shot token bound to "${bound.toolName}"${bound.service ? ` on ${bound.service}` : ''}; it cannot call ${toolName}.`;
+        void recordAudit({ ts: new Date().toISOString(), tool: toolName, caller: auth.user, outcome: 'blocked', durationMs: 0, args, errorMessage: msg });
+        return { content: [{ type: 'text' as const, text: msg }], isError: true as const };
+      }
+      if (bound.service && coerceApprovalService(args) !== bound.service) {
+        const msg = `This one-shot token is bound to "${bound.toolName}" on "${bound.service}"; the call targets a different service.`;
+        void recordAudit({ ts: new Date().toISOString(), tool: toolName, caller: auth.user, outcome: 'blocked', durationMs: 0, args, errorMessage: msg });
+        return { content: [{ type: 'text' as const, text: msg }], isError: true as const };
+      }
+    }
     // Scope check (token auth only — cookie has all scopes by design).
     const required = TOOL_SCOPES[toolName] ?? 'read';
     if (auth && !tokenHasScope(auth.scopes, required)) {
@@ -439,7 +467,10 @@ function safeHandler(
     // before: the human IS the operator. The gate lands here, AFTER the scope +
     // mutation/exec guards (so the agent still learns immediately if the call
     // would be refused) but BEFORE the snapshot/handler.
-    if (auth && isDestroyTierTool(toolName)) {
+    // A one-shot token (#2245) already went through owner approval when it was
+    // minted, so it must NOT park again — it runs its one bound op inline (then
+    // burns below). Only a NON-one-shot token proposing a destroy-tier op parks.
+    if (auth && !auth.oneShotOp && isDestroyTierTool(toolName)) {
       // Derive a service anchor from the tool args when it names one, else a
       // neutral "mcp" bucket. `submitApproval` re-validates it as a safe path
       // segment; fall back to "mcp" if the arg is not a usable service name.
@@ -466,7 +497,16 @@ function safeHandler(
       };
     }
 
-    return runToolWithSideEffects(toolName, args, handler, handlerArgs, auth);
+    const result = await runToolWithSideEffects(toolName, args, handler, handlerArgs, auth);
+    // Single-use burn (#2245): a one-shot elevated token is revoked after its
+    // one op RAN (isError = the tool reported a logical failure — then we do NOT
+    // burn, so the caller can retry the still-valid grant within its short TTL).
+    // Burn is fire-and-forget-safe but awaited so a follow-up call in the same
+    // tick can't slip through before the row is gone.
+    if (auth?.singleUse && auth.tokenId && !(result && typeof result === 'object' && (result as { isError?: boolean }).isError)) {
+      await consumeSingleUseToken(auth.tokenId).catch(() => undefined);
+    }
+    return result;
   };
 }
 
@@ -2033,25 +2073,46 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
 
   server.tool(
     'request_token',
-    'Request a scoped, short-lived sb_ API token that a ServiceBay admin must approve. Names the scopes you need, a human reason, and a TTL in seconds. Returns a pending request id — NO token yet. Poll it with poll_token_request; the admin may approve with NARROWED scopes (least privilege) or a shorter TTL, or deny. This tool itself needs only the read scope: a request grants nothing until a human signs off.',
+    'Request a scoped, short-lived sb_ API token that a ServiceBay admin must approve. Names the scopes you need, a human reason, and a TTL in seconds. Returns a pending request id — NO token yet. Poll it with poll_token_request; the admin may approve with NARROWED scopes (least privilege) or a shorter TTL, or deny. This tool itself needs only the read scope: a request grants nothing until a human signs off. Pass one_shot_op to instead request a ONE-SHOT, owner-approved ELEVATED (destroy/exec) token bound to exactly one op on one service — it parks as an approval card, mints only after the owner approves, authorizes that op ONCE, then burns.',
     {
-      scopes: z.array(SCOPE_ENUM).min(1).describe(`Scopes to request (least→most: ${ALL_SCOPES.join(', ')}). Ask for the minimum the task needs; the admin can only grant these or fewer.`),
+      scopes: z.array(SCOPE_ENUM).min(1).describe(`Scopes to request (least→most: ${ALL_SCOPES.join(', ')}). Ask for the minimum the task needs; the admin can only grant these or fewer. For a one-shot request pass exactly one elevated scope (destroy or exec) matching the tool's tier.`),
       reason: z.string().trim().min(1).max(1000).describe('Why the token is needed — the justification the admin weighs (e.g. "deploy one service, tor.dopp.cloud").'),
-      ttl_seconds: z.number().int().positive().max(MAX_TTL_SECS).describe(`Requested time-to-live in seconds (max ${MAX_TTL_SECS} = 30d). The admin can shorten it. The token auto-expires and is deleted from storage.`),
+      ttl_seconds: z.number().int().positive().max(MAX_TTL_SECS).describe(`Requested time-to-live in seconds (max ${MAX_TTL_SECS} = 30d). The admin can shorten it. A one-shot request is clamped to ${ONE_SHOT_MAX_TTL_SECS}s. The token auto-expires and is deleted from storage.`),
+      one_shot_op: z.object({
+        tool_name: z.string().trim().min(1).describe('The single MCP tool this one-shot token may invoke (e.g. "delete_service" or "exec_command"). Must be a destroy/exec-tier tool.'),
+        service: z.string().trim().optional().describe('Optional target service — when set, the token may only run the op against this service (e.g. delete_service on "honcho").'),
+      }).optional().describe('Request a ONE-SHOT owner-approved ELEVATED token bound to this op instead of a standing grant. The request parks as an approval card; the ambient token gains nothing. On owner Approve, poll_token_request returns a single-use, short-TTL token authorizing exactly this op once.'),
     },
-    async ({ scopes, reason, ttl_seconds }) => {
+    async ({ scopes, reason, ttl_seconds, one_shot_op }) => {
       try {
+        // For a one-shot request, validate the named tool is an elevated tier
+        // and that the requested scope matches its tier — server.ts owns
+        // TOOL_SCOPES, so the tier resolution lives here (keeps tokenRequests
+        // free of a cycle back to the tool map).
+        if (one_shot_op) {
+          const tier = TOOL_SCOPES[one_shot_op.tool_name];
+          if (tier !== 'destroy' && tier !== 'exec') {
+            return errorResult(`one_shot_op.tool_name "${one_shot_op.tool_name}" is not a destroy/exec-tier tool; a one-shot elevated token can only authorize an elevated op.`);
+          }
+          if (!(scopes.length === 1 && scopes[0] === tier)) {
+            return errorResult(`For a one-shot request, scopes must be exactly ["${tier}"] to match ${one_shot_op.tool_name}; got [${scopes.join(',')}].`);
+          }
+        }
         const view = await submitTokenRequest({
           requestedScopes: scopes,
           requestedTtlSecs: ttl_seconds,
           reason,
           requestedBy: opts?.auth?.user,
+          ...(one_shot_op ? { oneShotOp: { toolName: one_shot_op.tool_name, ...(one_shot_op.service ? { service: one_shot_op.service } : {}) } } : {}),
         });
         return textResult({
           ok: true,
           id: view.id,
           status: view.status,
-          message: `Token request filed. A ServiceBay admin must approve it (Settings → MCP). Poll with poll_token_request(id="${view.id}").`,
+          ...(view.approvalId ? { approvalId: view.approvalId } : {}),
+          message: one_shot_op
+            ? `One-shot ${scopes[0]} token request filed as approval ${view.approvalId}. The owner must approve it (Settings → Access → Approvals); it cannot self-approve. Poll with poll_token_request(id="${view.id}") — on approval you collect a single-use token authorizing "${one_shot_op.tool_name}" once.`
+            : `Token request filed. A ServiceBay admin must approve it (Settings → MCP). Poll with poll_token_request(id="${view.id}").`,
         });
       } catch (e) {
         return errorResult(e instanceof TokenRequestError ? e.message : e instanceof Error ? e.message : String(e));
