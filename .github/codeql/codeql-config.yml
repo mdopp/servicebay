@@ -14,6 +14,18 @@
 #      cannot be substituted with a stronger algorithm without breaking auth to
 #      the router. If MD5 is later introduced for an actual password hash, that
 #      is a code-review concern; re-scope this exclusion by path if that happens.
+#
+#   3. query-filters exclude js/request-forgery — ServiceBay's only user-input
+#      network-egress surfaces (SSH/TCP connectivity probes in ssh.ts, NPM proxy
+#      targets) connect to a host the ADMIN types in ON PURPOSE, and by design
+#      those are PRIVATE LAN targets (the box, a NAS at 192.168.x). The SSRF rule
+#      is inherently a false positive here: it warns against reaching internal
+#      hosts, which is exactly the feature. The host is format-validated + rebuilt
+#      from an allowlist alphabet (sshValidate.ts assertValidHost), and the paths
+#      are admin-gated server actions. CodeQL only clears the alert if the target
+#      is pinned to a fixed host set, which breaks "add a new, not-yet-registered
+#      node". Accepted risk (alert #49); re-scope by path if a non-admin egress
+#      sink is later added.
 name: "ServiceBay CodeQL config"
 
 paths-ignore:
@@ -24,3 +36,5 @@ query-filters:
       id: js/weak-cryptographic-algorithm
   - exclude:
       id: js/insufficient-password-hash
+  - exclude:
+      id: js/request-forgery
