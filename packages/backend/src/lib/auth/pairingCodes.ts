@@ -67,11 +67,24 @@ function sweepExpired(t: number): void {
   }
 }
 
+/** One uniform index into CODE_ALPHABET via rejection sampling: draw a byte and
+ *  discard any that falls in the biased tail above the largest multiple of the
+ *  alphabet size (`limit`). This yields a provably-unbiased pick for ANY alphabet
+ *  length — no modulo-on-CSPRNG bias, even if the alphabet is later resized. */
+function randIndex(): number {
+  const size = CODE_ALPHABET.length;
+  const limit = Math.floor(256 / size) * size; // largest multiple of size ≤ 256
+  let byte: number;
+  do {
+    byte = crypto.randomBytes(1)[0];
+  } while (byte >= limit);
+  return byte % size;
+}
+
 function genCode(): string {
-  const bytes = crypto.randomBytes(CODE_LEN);
   let out = '';
   for (let i = 0; i < CODE_LEN; i++) {
-    out += CODE_ALPHABET[bytes[i] % CODE_ALPHABET.length];
+    out += CODE_ALPHABET[randIndex()];
   }
   return out;
 }
