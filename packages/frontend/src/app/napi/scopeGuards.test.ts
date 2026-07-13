@@ -40,7 +40,15 @@ function hasInnerRequireSessionScope(relPath: string): boolean {
   return /requireSession\([^)]*tokenScope/.test(src(relPath));
 }
 
-const ROUTES = ['home/route.ts', 'approvals/route.ts', 'services/route.ts', 'upgrades/route.ts'];
+const ROUTES = [
+  'home/route.ts',
+  'approvals/route.ts',
+  'services/route.ts',
+  'upgrades/route.ts',
+  // #2268 part B — the server-server new-approval SSE feed (Solaris subscribes
+  // with a read-scoped token; the phone gets it via Solaris per ADR 0010).
+  'approvals/events/route.ts',
+];
 
 describe('/napi/* read endpoints are read-scoped in the handler OPTIONS (#2252, #2249)', () => {
   for (const route of ROUTES) {

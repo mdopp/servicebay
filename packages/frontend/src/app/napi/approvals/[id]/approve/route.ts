@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withApiHandlerParams } from '@/lib/api/handler';
 import { approveApproval, getApproval, isSelfApproval } from '@/lib/approvals';
+import { resolveDelegatedApprover } from '../../delegatedApprover';
 // Side-effect import (#2237): loading mcp/server runs its top-level
 // registerMcpDispatcher(...) call, so THIS route's bundle instance of
 // lib/approvals has a dispatcher when approving an on_approve.mcp approval.
@@ -37,14 +38,25 @@ export const dynamic = 'force-dynamic';
  */
 export const POST = withApiHandlerParams<undefined, undefined, { id: string }>(
   { tokenScope: 'mutate' },
-  async ({ params, auth }) => {
+  async ({ request, params, auth }) => {
     const id = decodeURIComponent(params.id);
-    const existing = await getApproval(id);
-    if (existing && isSelfApproval(existing, auth?.user)) {
-      return NextResponse.json(
-        { error: 'A token cannot approve the request it proposed; a ServiceBay admin must approve it.' },
-        { status: 403 },
-      );
+
+    // Delegated-admin auth mode (#2268, ADR 0010): if the caller carries a valid
+    // X-SB-Delegated-Admin assertion, the verdict runs AS that real admin user
+    // (audited by the guard). No assertion → fall back to the existing
+    // device-token/session path (self-approve guard below). An INVALID assertion
+    // → 403, never a silent fall-through.
+    const delegated = await resolveDelegatedApprover(request, 'approve', id, auth);
+    if (delegated.mode === 'reject') return delegated.response;
+
+    if (delegated.mode === 'fallback') {
+      const existing = await getApproval(id);
+      if (existing && isSelfApproval(existing, auth?.user)) {
+        return NextResponse.json(
+          { error: 'A token cannot approve the request it proposed; a ServiceBay admin must approve it.' },
+          { status: 403 },
+        );
+      }
     }
     try {
       const result = await approveApproval(id);

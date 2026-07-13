@@ -38,7 +38,9 @@ import {
   rejectApproval,
   registerMcpDispatcher,
   isSelfApproval,
+  onNewApproval,
   type ApprovalRequest,
+  type NewApprovalEvent,
 } from './index';
 
 // The mcp action calls the registered dispatcher (injected by the MCP layer in
@@ -494,5 +496,74 @@ describe('isSelfApproval — token cannot resolve its own proposal (#2244)', () 
 
   it('is a no-op for a request with no recorded proposer (plain move/restart)', () => {
     expect(isSelfApproval(withCaller(undefined), 'token:solaris')).toBe(false);
+  });
+});
+
+// #2268 part B — the new-approval event hook. Solaris subscribes server-server
+// and republishes on its own bus; the SSE route (wiring tested separately) is a
+// thin adapter over this emit. Here we prove the emit fires on a new pending
+// approval, carries a MINIMAL secret-free payload, and unsubscribe stops it.
+describe('onNewApproval / submitApproval emit hook (#2268 part B)', () => {
+  it('emits a new-approval event with id/kind/summary when a request is created', async () => {
+    const events: NewApprovalEvent[] = [];
+    const off = onNewApproval(e => events.push(e));
+    try {
+      const created = await submitApproval({
+        service: 'honcho',
+        title: 'delete_service: honcho',
+        description: 'secret detail here',
+        payload: { caller: 'token:solaris', secretToken: 'sb_should_not_leak' },
+        on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+        node: 'box1',
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0]).toEqual({
+        type: 'new-approval',
+        id: created.id,
+        kind: 'honcho',
+        summary: 'delete_service: honcho',
+        created_at: created.created_at,
+      });
+    } finally {
+      off();
+    }
+  });
+
+  it('leaks NO secret/payload/action fields onto the event', async () => {
+    const events: NewApprovalEvent[] = [];
+    const off = onNewApproval(e => events.push(e));
+    try {
+      await submitApproval({
+        service: 'honcho',
+        title: 'do the thing',
+        payload: { caller: 'token:solaris', apiKey: 'sb_secret_value' },
+        on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+        node: 'box1',
+      });
+      const serialized = JSON.stringify(events[0]);
+      expect(serialized).not.toContain('sb_secret_value');
+      expect(serialized).not.toContain('delete_service');
+      expect(Object.keys(events[0]).sort()).toEqual(['created_at', 'id', 'kind', 'summary', 'type']);
+    } finally {
+      off();
+    }
+  });
+
+  it('stops delivering after unsubscribe', async () => {
+    const events: NewApprovalEvent[] = [];
+    const off = onNewApproval(e => events.push(e));
+    off();
+    await submitApproval({ service: 'honcho', title: 't', node: 'box1' });
+    expect(events).toHaveLength(0);
+  });
+
+  it('a throwing listener does not fail the submit (approval is stored)', async () => {
+    const off = onNewApproval(() => { throw new Error('boom'); });
+    try {
+      const created = await submitApproval({ service: 'honcho', title: 't', node: 'box1' });
+      expect(await getApproval(created.id)).not.toBeNull();
+    } finally {
+      off();
+    }
   });
 });

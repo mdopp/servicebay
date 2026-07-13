@@ -314,6 +314,16 @@ const DELETE_USER_MUTATION = `
   }
 `;
 
+// Single-user group-membership lookup (#2270). `user(userId:)` returns the one
+// user + their group displayNames — the authoritative source ServiceBay checks
+// to decide whether a delegated-admin assertion's named user is REALLY an admin
+// here (we never trust the assertion's own role claim — confused-deputy).
+const USER_GROUPS_QUERY = `
+  query UserGroups($userId: String!) {
+    user(userId: $userId) { id groups { displayName } }
+  }
+`;
+
 type LldapMutationReason =
   | 'not_configured'
   | 'unreachable'
@@ -399,6 +409,52 @@ export async function deleteLldapUser(userId: string): Promise<LldapMutationResu
     return { ok: false, reason: 'graphql_error', message: `LLDAP did not confirm deletion of ${userId}.` };
   }
   return { ok: true };
+}
+
+export type LldapUserInGroupResult =
+  | { ok: true; inGroup: boolean; groups: string[] }
+  | { ok: false; reason: LldapMutationReason | 'unknown_user'; message: string };
+
+/**
+ * Is `userId` a member of `groupDisplayName` per ServiceBay's OWN LLDAP (#2270)?
+ *
+ * This is the confused-deputy mitigation for delegated-admin: a caller (Solaris)
+ * asserts "act as user X, who is an admin" — ServiceBay does NOT trust that role
+ * claim, it re-derives the truth here by asking its own identity source whether
+ * X is actually in `admins`. Group match is on displayName (LLDAP 0.6.x has no
+ * POSIX attrs; Authelia's access rules key off the same displayName), matched
+ * case-insensitively since LLDAP group names are effectively case-folded.
+ *
+ * A missing user is `{ ok:true, inGroup:false }` with reason surfaced via the
+ * empty `groups` — an unknown user is a definitive "not an admin", not an error
+ * the caller should retry. A network/auth/config failure is `ok:false` so the
+ * guard fails CLOSED (deny) rather than treating an unreachable directory as a
+ * membership decision.
+ */
+export async function userIsInLldapGroup(
+  userId: string,
+  groupDisplayName: string,
+): Promise<LldapUserInGroupResult> {
+  if (!userId) return { ok: true, inGroup: false, groups: [] };
+  const r = await runAuthedGraphql<{ user?: { id: string; groups?: Array<{ displayName: string }> } }>(
+    USER_GROUPS_QUERY,
+    { userId },
+  );
+  if (!r.ok) {
+    // LLDAP returns a graphql error for an unknown user id ("Entity not found").
+    // Treat that specific case as a definitive non-member rather than a failure,
+    // so a delegated assertion naming a bogus user is a clean 403 (not a 5xx).
+    if (r.reason === 'graphql_error' && /not\s*found|no\s*such|unknown/i.test(r.message)) {
+      return { ok: true, inGroup: false, groups: [] };
+    }
+    return { ok: false, reason: r.reason, message: r.message };
+  }
+  const user = r.data.user;
+  if (!user) return { ok: true, inGroup: false, groups: [] };
+  const groups = (user.groups ?? []).map(g => g.displayName);
+  const target = groupDisplayName.toLowerCase();
+  const inGroup = groups.some(g => g.toLowerCase() === target);
+  return { ok: true, inGroup, groups };
 }
 
 /**

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withApiHandlerParams } from '@/lib/api/handler';
 import { rejectApproval, getApproval, isSelfApproval } from '@/lib/approvals';
+import { resolveDelegatedApprover } from '../../delegatedApprover';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -24,14 +25,24 @@ export const dynamic = 'force-dynamic';
  */
 export const POST = withApiHandlerParams<undefined, undefined, { id: string }>(
   { tokenScope: 'mutate' },
-  async ({ params, auth }) => {
+  async ({ request, params, auth }) => {
     const id = decodeURIComponent(params.id);
-    const existing = await getApproval(id);
-    if (existing && isSelfApproval(existing, auth?.user)) {
-      return NextResponse.json(
-        { error: 'A token cannot resolve the request it proposed; a ServiceBay admin must decide it.' },
-        { status: 403 },
-      );
+
+    // Delegated-admin auth mode (#2268, ADR 0010): a valid X-SB-Delegated-Admin
+    // assertion runs the verdict AS that real admin user (audited). No assertion
+    // → fall back to the device-token/session path (self-approve guard below).
+    // An INVALID assertion → 403, never a silent fall-through.
+    const delegated = await resolveDelegatedApprover(request, 'deny', id, auth);
+    if (delegated.mode === 'reject') return delegated.response;
+
+    if (delegated.mode === 'fallback') {
+      const existing = await getApproval(id);
+      if (existing && isSelfApproval(existing, auth?.user)) {
+        return NextResponse.json(
+          { error: 'A token cannot resolve the request it proposed; a ServiceBay admin must decide it.' },
+          { status: 403 },
+        );
+      }
     }
     try {
       const result = await rejectApproval(id);

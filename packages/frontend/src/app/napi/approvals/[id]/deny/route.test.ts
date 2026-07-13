@@ -13,7 +13,13 @@ import type { ApprovalRequest } from '@/lib/approvals';
 const mocks = vi.hoisted(() => ({
   rejectApproval: vi.fn(),
   getApproval: vi.fn(),
+  verifyDelegatedAdmin: vi.fn(),
   authRef: { value: undefined as { user: string } | undefined },
+}));
+
+vi.mock('@/lib/auth/delegatedAdmin', () => ({
+  DELEGATION_HEADER: 'x-sb-delegated-admin',
+  verifyDelegatedAdmin: mocks.verifyDelegatedAdmin,
 }));
 
 vi.mock('@/lib/approvals', async () => {
@@ -29,10 +35,10 @@ vi.mock('@/lib/api/handler', () => ({
   withApiHandlerParams:
     (
       _opts: unknown,
-      handler: (ctx: { params: { id: string }; auth?: { user: string } }) => Promise<Response>,
+      handler: (ctx: { request: NextRequest; params: { id: string }; auth?: { user: string } }) => Promise<Response>,
     ) =>
-    async (_request: NextRequest, ctx: { params: Promise<{ id: string }> }) =>
-      handler({ params: await ctx.params, auth: mocks.authRef.value }),
+    async (request: NextRequest, ctx: { params: Promise<{ id: string }> }) =>
+      handler({ request, params: await ctx.params, auth: mocks.authRef.value }),
 }));
 
 import { POST } from './route';
@@ -50,15 +56,17 @@ const proposal = (caller: string): ApprovalRequest => ({
   status: 'pending',
 });
 
-const call = async (auth: { user: string } | undefined) => {
+const call = async (auth: { user: string } | undefined, delegationHeader?: string) => {
   mocks.authRef.value = auth;
-  const req = new NextRequest('http://localhost/napi/approvals/r1/deny', { method: 'POST' });
+  const headers = delegationHeader ? { 'x-sb-delegated-admin': delegationHeader } : undefined;
+  const req = new NextRequest('http://localhost/napi/approvals/r1/deny', { method: 'POST', headers });
   return POST(req, { params: Promise.resolve({ id: 'r1' }) });
 };
 
 beforeEach(() => {
   mocks.rejectApproval.mockReset();
   mocks.getApproval.mockReset();
+  mocks.verifyDelegatedAdmin.mockReset();
   mocks.rejectApproval.mockResolvedValue({ request: proposal('token:solaris') });
 });
 
@@ -80,6 +88,34 @@ describe('POST /napi/approvals/:id/deny — self-approval guard (#2253, #2244)',
   it('lets the cookie operator deny (never a token proposer)', async () => {
     mocks.getApproval.mockResolvedValue(proposal('token:solaris'));
     const res = await call({ user: 'admin' });
+    expect(res.status).toBe(200);
+    expect(mocks.rejectApproval).toHaveBeenCalledWith('r1');
+  });
+});
+
+describe('POST /napi/approvals/:id/deny — delegated-admin auth mode (#2268, ADR 0010)', () => {
+  it('denies when a valid delegated-admin assertion is presented (runs AS the admin)', async () => {
+    mocks.verifyDelegatedAdmin.mockResolvedValue({ ok: true, user: 'alice', assertion: {} });
+    const res = await call({ user: 'token:solaris' }, 'valid-assertion');
+    expect(res.status).toBe(200);
+    expect(mocks.verifyDelegatedAdmin).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedAction: 'approvals.deny', expectedTarget: 'r1', rawAssertion: 'valid-assertion' }),
+    );
+    expect(mocks.getApproval).not.toHaveBeenCalled();
+    expect(mocks.rejectApproval).toHaveBeenCalledWith('r1');
+  });
+
+  it('403s an INVALID assertion — never silently falls back to the raw token', async () => {
+    mocks.verifyDelegatedAdmin.mockResolvedValue({ ok: false, reason: 'bad_signature', message: 'Delegated-admin assertion signature is invalid.' });
+    const res = await call({ user: 'token:solaris' }, 'forged');
+    expect(res.status).toBe(403);
+    expect(mocks.rejectApproval).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the device-token path when NO assertion header is present', async () => {
+    mocks.getApproval.mockResolvedValue(proposal('token:solaris'));
+    const res = await call({ user: 'token:other' });
+    expect(mocks.verifyDelegatedAdmin).not.toHaveBeenCalled();
     expect(res.status).toBe(200);
     expect(mocks.rejectApproval).toHaveBeenCalledWith('r1');
   });
