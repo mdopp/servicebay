@@ -98,13 +98,53 @@ export interface BundleStackArtifacts {
   configPaths: string[];
 }
 
+const isAllowedNameChar = (code: number): boolean =>
+  (code >= 48 && code <= 57) || // 0-9
+  (code >= 65 && code <= 90) || // A-Z
+  (code >= 97 && code <= 122) || // a-z
+  code === 45 || // -
+  code === 46; // .
+
+/**
+ * Slugify a discovered service/pod name into a stable bundle key.
+ *
+ * Rewritten as a single linear character scan (was a chain of
+ * `.replace(/…+/g)` calls) so CodeQL stops flagging js/polynomial-redos
+ * on the overlapping quantifiers. Output is byte-identical to the old
+ * chain: strip a trailing `.service` suffix, map every run of
+ * disallowed characters to one `-`, collapse runs of `-` to one `-`,
+ * trim leading/trailing `-`, lowercase.
+ */
 export const sanitizeBundleName = (value: string): string => {
-  return value
-    .replace(/\.service$/i, '')
-    .replace(/[^a-zA-Z0-9-.]+/g, '-')
-    .replace(/-{2,}/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .toLowerCase();
+  // Strip a trailing `.service` (case-insensitive), matching /\.service$/i.
+  let s = value;
+  if (s.length >= 8) {
+    const tail = s.slice(s.length - 8);
+    if (tail.toLowerCase() === '.service') {
+      s = s.slice(0, s.length - 8);
+    }
+  }
+
+  let out = '';
+  let pendingDash = false; // a `-` is owed (from a disallowed run or a literal `-`)
+  let started = false; // have we emitted any non-dash char yet?
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (isAllowedNameChar(code) && code !== 45) {
+      // Allowed, non-dash char: flush a single pending dash first (but
+      // never lead with one), then emit the char lowercased.
+      if (pendingDash && started) out += '-';
+      pendingDash = false;
+      started = true;
+      // Lowercase A-Z.
+      out += code >= 65 && code <= 90 ? String.fromCharCode(code + 32) : s[i];
+    } else {
+      // Disallowed char OR a literal `-`: both collapse into one owed dash.
+      pendingDash = true;
+    }
+  }
+  // A trailing pending dash is dropped (mirrors the /-+$/ trim).
+  return out;
 };
 
 export const deriveBundleDisplayName = (serviceName: string): string => {
