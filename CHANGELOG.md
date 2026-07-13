@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.157.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.156.0...servicebay-v4.157.0) (2026-07-13)
+
+
+### Features
+
+* **napi:** device pairing + read-only companion-app endpoints ([#2251](https://github.com/mdopp/servicebay/issues/2251) [#2252](https://github.com/mdopp/servicebay/issues/2252)) ([cac3aff](https://github.com/mdopp/servicebay/commit/cac3aff3bb182fabcf29fe673eed5febbf8841e0))
+* **napi:** device-pairing — POST /napi/pair + public /redeem + Connect Device page ([009a004](https://github.com/mdopp/servicebay/commit/009a004e7b4bf55222a8917b4ea7614da19736d7)), closes [#2251](https://github.com/mdopp/servicebay/issues/2251)
+* **napi:** read-only companion-app endpoints — home/approvals/services/upgrades ([a4a62cc](https://github.com/mdopp/servicebay/commit/a4a62cc4e6062c3d9d47a5aed1840f1ecf2f13ab)), closes [#2252](https://github.com/mdopp/servicebay/issues/2252)
+
+
+### Bug Fixes
+
+* **auth:** unbiased pairing-code index via rejection sampling ([a339f21](https://github.com/mdopp/servicebay/commit/a339f2160e0df2909544d0ae8023b7dc3677d1ed)), closes [#2251](https://github.com/mdopp/servicebay/issues/2251)
+* **crypto:** unbiased secret generation to close CodeQL js/biased-cryptographic-random ([255d66b](https://github.com/mdopp/servicebay/commit/255d66b8d6cc3f86e361ee982a273162c97591d8)), closes [#2260](https://github.com/mdopp/servicebay/issues/2260)
+* **disk-import-worker:** kill polynomial-redos + stack-trace-exposure ([98c81c6](https://github.com/mdopp/servicebay/commit/98c81c6b0d1cffd9cc9ab411c3794fa407c6fac1)), closes [#2255](https://github.com/mdopp/servicebay/issues/2255)
+* **nodes:** constrain SSH-identity path to allowed key dirs to close CodeQL js/path-injection ([e5d5851](https://github.com/mdopp/servicebay/commit/e5d5851a278ed06526d1d011d6574209b69191f3)), closes [#2258](https://github.com/mdopp/servicebay/issues/2258)
+* **registry:** traversal barrier on all name/source path joins to close CodeQL js/path-injection ([6cdd407](https://github.com/mdopp/servicebay/commit/6cdd407944a32f9fb264a20b71e63afa9a49e498)), closes [#2257](https://github.com/mdopp/servicebay/issues/2257)
+* **security:** close CodeQL redos/polynomial-redos in backend regex sweep ([4c72198](https://github.com/mdopp/servicebay/commit/4c72198bcef978cd0d643ee4016e85b2b7af5431)), closes [#2261](https://github.com/mdopp/servicebay/issues/2261)
+* **security:** close CodeQL stack-trace-exposure + tainted-format-string (misc) ([223a97a](https://github.com/mdopp/servicebay/commit/223a97a59434f5067c705e387134e504ce988261)), closes [#2262](https://github.com/mdopp/servicebay/issues/2262)
+* **ssh:** allowlist host + guard PTY password to close CRITICAL CodeQL alerts ([9a35c1a](https://github.com/mdopp/servicebay/commit/9a35c1ac5ac928c00e1d6aaa0cd1427f74d3c828)), closes [#2259](https://github.com/mdopp/servicebay/issues/2259)
+* **ssh:** derive connection host from allowlist to clear CodeQL js/request-forgery ([6d55194](https://github.com/mdopp/servicebay/commit/6d55194d29b93c8a29030922aa86052427f9a92f)), closes [#2259](https://github.com/mdopp/servicebay/issues/2259)
+
 ## [4.156.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.155.3...servicebay-v4.156.0) (2026-07-13)
 
 
