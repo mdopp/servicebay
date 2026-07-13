@@ -38,8 +38,10 @@ interface UpgradeSummary {
  * would sit unnoticed for any operator who never opens the
  * Re-deploy modal.
  */
+// tokenScope:'read' (#2243) — same pending-updates signal, template side. A
+// scoped Bearer token may read it; cookie sessions are unaffected.
 export const GET = withApiHandler({}, async ({ request }) => {
-  const auth = await requireSession(request);
+  const auth = await requireSession(request, { tokenScope: 'read' });
   if (auth instanceof NextResponse) return auth;
   try {
     const config = await getConfig();

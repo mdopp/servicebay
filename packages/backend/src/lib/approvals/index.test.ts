@@ -37,6 +37,8 @@ import {
   approveApproval,
   rejectApproval,
   registerMcpDispatcher,
+  isSelfApproval,
+  type ApprovalRequest,
 } from './index';
 
 // The mcp action calls the registered dispatcher (injected by the MCP layer in
@@ -459,5 +461,38 @@ describe('concurrent store writes (#2239)', () => {
     // The tool DID run — the error is about persistence, not the action.
     expect(dispatchMcpTool).toHaveBeenCalledWith('delete_service', { name: 'honcho' });
     renameSpy.mockRestore();
+  });
+});
+
+describe('isSelfApproval — token cannot resolve its own proposal (#2244)', () => {
+  const withCaller = (caller: unknown): ApprovalRequest => ({
+    id: 'r1',
+    service: 'honcho',
+    title: 'delete_service: honcho',
+    description: null,
+    payload: caller === undefined ? {} : { caller },
+    on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+    on_reject: {},
+    node: 'box1',
+    created_at: new Date().toISOString(),
+    status: 'pending',
+  });
+
+  it('blocks the SAME token that proposed the request', () => {
+    expect(isSelfApproval(withCaller('token:solaris'), 'token:solaris')).toBe(true);
+  });
+
+  it('allows a DIFFERENT token to resolve it (verdict-delivery consumer)', () => {
+    expect(isSelfApproval(withCaller('token:solaris'), 'token:other')).toBe(false);
+  });
+
+  it('never blocks the cookie operator (non-token caller)', () => {
+    expect(isSelfApproval(withCaller('token:solaris'), 'admin')).toBe(false);
+    expect(isSelfApproval(withCaller('token:solaris'), 'internal')).toBe(false);
+    expect(isSelfApproval(withCaller('token:solaris'), undefined)).toBe(false);
+  });
+
+  it('is a no-op for a request with no recorded proposer (plain move/restart)', () => {
+    expect(isSelfApproval(withCaller(undefined), 'token:solaris')).toBe(false);
   });
 });

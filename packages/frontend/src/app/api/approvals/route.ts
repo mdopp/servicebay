@@ -34,8 +34,14 @@ const Body = z.object({
   node: z.string().optional(),
 });
 
+// tokenScope:'read' (#2244) — a scoped Bearer token may fetch the generic
+// pending-approval feed so an external consumer (Solaris Wartung chat) can
+// render approval cards. Deny-by-default: no/insufficient-scope Bearer 401s;
+// the cookie-session path is unchanged. The POST (submit) below deliberately
+// stays cookie/internal-only (no tokenScope) — this issue only opens the read
+// feed + the approve/reject verdict to tokens, not new-request submission.
 export const GET = withApiHandler(
-  {},
+  { tokenScope: 'read' },
   async () => {
     try {
       const approvals = await listApprovals();

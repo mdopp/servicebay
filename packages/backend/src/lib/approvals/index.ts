@@ -251,6 +251,28 @@ export async function getApproval(id: string): Promise<ApprovalRequest | null> {
   return all.find(r => r.id === id) ?? null;
 }
 
+/**
+ * Whether `caller` is the same principal that PROPOSED `request` — used to
+ * refuse token self-approval (#2244). A destroy-tier MCP proposal records the
+ * proposing token's identity in `payload.caller` (see mcp/server.ts:
+ * `payload: { …, caller: auth.user }`); a Bearer token holding `mutate` may
+ * approve/reject the operator queue, but it must never approve or reject the
+ * very request IT proposed — that would let an agent self-authorize its own
+ * destructive action, defeating the human-in-the-loop gate.
+ *
+ * `caller` is the requesting principal's `SessionPayload.user` string
+ * (`token:<name>` for a Bearer token, `admin`/`internal` otherwise). A cookie
+ * operator (`caller` not `token:*`) is never a proposer here, so the check is a
+ * no-op for the human path. Returns false when the request carries no recorded
+ * proposer, so a plain move/restart approval (no `payload.caller`) stays
+ * approvable by any authorized caller.
+ */
+export function isSelfApproval(request: ApprovalRequest, caller: string | undefined): boolean {
+  if (!caller || !caller.startsWith('token:')) return false;
+  const proposer = request.payload?.caller;
+  return typeof proposer === 'string' && proposer === caller;
+}
+
 /** Persist a new pending request and return it. */
 export async function submitApproval(input: SubmitApprovalInput): Promise<ApprovalRequest> {
   // AUTHORIZE the jail anchor at submit time so a traversal-style name
