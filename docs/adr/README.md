@@ -27,3 +27,4 @@ ratcheted invariants see [../ARCHITECTURE_INVARIANTS.md](../ARCHITECTURE_INVARIA
 | [0008](0008-tui-desired-state-and-journey.md) | TUI = desired-state stack editor + numbered setup-journey menu |
 | [0009](0009-service-tokens-and-trust.md) | Tokens & trust between services: per-box identity secrets, SSO, scoped named tokens, the LAN-only bootstrap reconnect bridge, allow-listed host exec |
 | [0010](0010-node-20-minor-floats.md) | Node runtime tracks the Node 20 line; the minor floats, kept consistent across package.json / .nvmrc / CI / Dockerfile |
+| [0011](0011-app-integrations-aggregate-server-side.md) | App integrations aggregate server-side: Solaris is the BFF/Hub; the Companion App has one pairing, one token, one SSE; ServiceBay's `/napi` is consumed server-to-server |
