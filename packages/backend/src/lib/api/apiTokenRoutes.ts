@@ -24,7 +24,19 @@ const CreateBody = z.object({
   name: z.string().min(1).max(100),
   scopes: z.array(z.enum(ALL_SCOPES as [ApiScope, ...ApiScope[]])).min(1),
   expiresAt: z.string().datetime().optional(),
+  // Non-expiring machine token (#2299). Opt-in; defaults false. HARD-guarded
+  // below to read-only scopes — a never-expiring credential that could mutate
+  // or destroy is a standing liability, so it's fail-closed to `read`.
+  neverExpires: z.boolean().optional().default(false),
 });
+
+/** A never-expiring token may only carry the read scope (#2299). Any other
+ *  requested scope is refused so an unattended, non-lapsing credential can
+ *  never mutate/destroy/exec. Read is the single allowed scope (no implication
+ *  path widens `read`, so an exact-equality check is correct and fail-closed). */
+function neverExpiresScopesAreReadOnly(scopes: ApiScope[]): boolean {
+  return scopes.every(s => s === 'read');
+}
 
 export async function createTokenHandler({ request }: { request: Request }) {
   // requireSession is re-run here (the wrapper already gated POST) to
@@ -33,10 +45,21 @@ export async function createTokenHandler({ request }: { request: Request }) {
   if (auth instanceof NextResponse) return auth;
   try {
     const body = CreateBody.parse(await request.json());
+
+    // Fail-closed guard (#2299): a never-expiring token is restricted to the
+    // read scope. Reject (403) before minting if it asks for anything more.
+    if (body.neverExpires && !neverExpiresScopesAreReadOnly(body.scopes)) {
+      return NextResponse.json(
+        { error: 'A never-expiring token may only carry the read scope. Remove the extra scopes or give the token an expiry.' },
+        { status: 403 },
+      );
+    }
+
     const result = await createToken({
       name: body.name,
       scopes: body.scopes,
       expiresAt: body.expiresAt,
+      neverExpires: body.neverExpires,
       createdBy: auth.user,
     });
 

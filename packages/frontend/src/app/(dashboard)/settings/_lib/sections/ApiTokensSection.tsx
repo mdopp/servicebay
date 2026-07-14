@@ -108,6 +108,12 @@ function TokenRow({ token, onRevoke }: { token: TokenView; onRevoke: (id: string
           {token.scopes.map(s => (
             <span key={s} className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-chip ${SCOPE_BADGE[s]}`}>{s}</span>
           ))}
+          {/* A token minted with "Never Expires" carries no expiresAt (#2299) —
+              surface it so the operator can tell a long-lived machine token from
+              an expiring one at a glance. */}
+          <span className="text-[10px] text-text-subtle">
+            {token.expiresAt ? `expires ${new Date(token.expiresAt).toLocaleString()}` : 'Expires: Never'}
+          </span>
           <span className="text-[10px] text-text-subtle">
             {token.lastUsedAt ? `last used ${new Date(token.lastUsedAt).toLocaleString()}` : 'never used'}
           </span>
@@ -131,15 +137,49 @@ function TokenRow({ token, onRevoke }: { token: TokenView; onRevoke: (id: string
 interface CreateTokenFormProps {
   name: string;
   scopes: ApiScope[];
+  neverExpires: boolean;
   creating: boolean;
   error: string | null;
   onName: (v: string) => void;
   onToggleScope: (s: ApiScope) => void;
+  onToggleNeverExpires: () => void;
   onCreate: () => void;
   onCancel: () => void;
 }
 
+/** A "Never Expires" token is fail-closed to the read scope only (#2299) — the
+ *  server refuses any other scope with a 403, so the checkbox is only offered
+ *  when the selected scope set is exactly read-only. */
+function isReadOnlyScopeSet(scopes: ApiScope[]): boolean {
+  return scopes.length > 0 && scopes.every(s => s === 'read');
+}
+
+/** The "Never Expires" checkbox (#2299): enabled only for a read-only scope
+ *  set, mirroring the server's fail-closed 403 guard. */
+function NeverExpiresField({ readOnly, checked, onToggle }: { readOnly: boolean; checked: boolean; onToggle: () => void }) {
+  return (
+    <div>
+      <label
+        className={`flex items-center gap-1.5 text-xs ${readOnly ? 'cursor-pointer text-text-muted' : 'cursor-not-allowed text-text-subtle opacity-60'}`}
+        title={readOnly ? 'Mint a non-expiring token — safe only for a read-only, unattended consumer.' : 'Never-expiring tokens are limited to the read scope. Select only "read" to enable this.'}
+      >
+        <input
+          type="checkbox"
+          checked={readOnly && checked}
+          disabled={!readOnly}
+          onChange={onToggle}
+          className="rounded accent-accent"
+          aria-label="Never Expires"
+        />
+        <span>Never Expires</span>
+      </label>
+      <p className="text-[10px] text-text-subtle mt-1">For an unattended machine consumer. Only available when the scope set is read-only.</p>
+    </div>
+  );
+}
+
 function CreateTokenForm(props: CreateTokenFormProps) {
+  const readOnly = isReadOnlyScopeSet(props.scopes);
   return (
     <div className="space-y-2 p-3 rounded-card border border-border bg-surface-2">
       <div>
@@ -164,6 +204,7 @@ function CreateTokenForm(props: CreateTokenFormProps) {
         </div>
         <p className="text-[10px] text-text-subtle mt-1">read = list/get only. lifecycle = start/stop/restart. mutate = create/update/config-edit. reboot = reboot the node (transient, recoverable). destroy = delete/restore/purge/factory-reset. exec = exec_command (shell). Tokens with destroy also implicitly grant reboot and exec for back-compat.</p>
       </div>
+      <NeverExpiresField readOnly={readOnly} checked={props.neverExpires} onToggle={props.onToggleNeverExpires} />
       {props.error && <p className="text-xs text-status-fail">{props.error}</p>}
       <div className="flex gap-2">
         <Button
@@ -197,6 +238,9 @@ export default function ApiTokensSection() {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newScopes, setNewScopes] = useState<ApiScope[]>(['read']);
+  // Non-expiring machine token (#2299) — only honored when the scope set is
+  // read-only (the server 403s otherwise).
+  const [newNeverExpires, setNewNeverExpires] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
@@ -256,16 +300,20 @@ export default function ApiTokensSection() {
     setCreating(true);
     setCreateError(null);
     try {
+      // Only a read-only scope set may carry neverExpires (the server enforces
+      // this too, fail-closed) — never send it alongside a broader scope.
+      const readOnly = newScopes.length > 0 && newScopes.every(s => s === 'read');
       const res = await fetch('/api/system/api-tokens', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim(), scopes: newScopes }),
+        body: JSON.stringify({ name: newName.trim(), scopes: newScopes, neverExpires: readOnly && newNeverExpires }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setRevealedSecret(data.secret);
       setNewName('');
       setNewScopes(['read']);
+      setNewNeverExpires(false);
       setShowCreate(false);
       loadTokens();
       // Server-side createToken auto-revokes the bootstrap token —
@@ -303,8 +351,16 @@ export default function ApiTokensSection() {
   };
 
   const toggleScope = (scope: ApiScope) => {
-    setNewScopes(prev => prev.includes(scope) ? prev.filter(s => s !== scope) : [...prev, scope]);
+    setNewScopes(prev => {
+      const next = prev.includes(scope) ? prev.filter(s => s !== scope) : [...prev, scope];
+      // Leaving a read-only scope set disables "Never Expires" — clear it so a
+      // stale checked state can't ride along to a broader-scope mint (#2299).
+      if (!(next.length > 0 && next.every(s => s === 'read'))) setNewNeverExpires(false);
+      return next;
+    });
   };
+
+  const toggleNeverExpires = () => setNewNeverExpires(prev => !prev);
 
   return (
     <>
@@ -332,10 +388,12 @@ export default function ApiTokensSection() {
           <CreateTokenForm
             name={newName}
             scopes={newScopes}
+            neverExpires={newNeverExpires}
             creating={creating}
             error={createError}
             onName={setNewName}
             onToggleScope={toggleScope}
+            onToggleNeverExpires={toggleNeverExpires}
             onCreate={createNewToken}
             onCancel={() => { setShowCreate(false); setCreateError(null); }}
           />
