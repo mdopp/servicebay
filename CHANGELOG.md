@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.161.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.161.2...servicebay-v4.161.3) (2026-07-14)
+
+
+### Performance Improvements
+
+* **box-verify:** render-only fast path, pre-pull + parallel probes, scratch nginx -t ([ee32bf6](https://github.com/mdopp/servicebay/commit/ee32bf647498364112787b97a780090c9cea2833))
+* **box-verify:** render-only fast path, pre-pull + parallel probes, scratch nginx -t ([f17b030](https://github.com/mdopp/servicebay/commit/f17b0308c7c63170d898e3ead9de71db497f156d))
+
 ## [4.161.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.161.1...servicebay-v4.161.2) (2026-07-14)
 
 
