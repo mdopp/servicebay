@@ -34,7 +34,15 @@
 const SENSITIVE_NAME =
   /(_PASSWORD|_SECRET|_TOKEN|_KEY|^ACCOUNT_[A-Za-z0-9]+|^PASSWORD$|^SECRET$|^TOKEN$)/;
 
-const REDACTED = '<redacted>';
+/**
+ * The mask string that MCP read tools (`get_service_files`, log tools)
+ * substitute for a real secret value. Exported so the install path can
+ * REJECT it if it ever leaks back in as a variable value (#2296): a
+ * consumer that reads redacted variables and re-sends them must never
+ * cause `<redacted>` to be persisted as a real secret.
+ */
+export const REDACTION_SENTINEL = '<redacted>';
+const REDACTED = REDACTION_SENTINEL;
 
 /**
  * Redact sensitive env-var pairs in a YAML/JSON-ish blob.
