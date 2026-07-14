@@ -262,6 +262,111 @@ export function buildAuthSkipLocations(paths: string[] | undefined): string {
   return blocks.join('\n\n');
 }
 
+/**
+ * #2278 — nginx `location` block that makes the ServiceBay session-mint routes
+ * (`/api/auth/delegated-admin-from-authelia-session` and
+ * `/api/auth/token-from-authelia-session`) reachable server-to-server through
+ * NPM, WITHOUT weakening the CSRF gate.
+ *
+ * THE PROBLEM (issue #2278): those two routes are `skipAuth:true` and expect a
+ * forward-auth-header-only POST (NPM-injected `Remote-User`/`Remote-Groups`, NO
+ * Bearer, NO Origin — the handler refuses a Bearer to block self-elevation). But
+ * `proxy.ts`'s CSRF guard 403s that shape *before* the handler runs: it is not
+ * `isInternalCall` (no `X-SB-Internal-Token`), not a valid Bearer, and not
+ * same-origin (no Origin/Referer on a server-to-server call). There was no
+ * working call path.
+ *
+ * THE FIX (operator decision): on the SB host's NPM route we add a location for
+ * exactly these two paths that (a) runs Authelia forward-auth to inject the
+ * trusted `Remote-User`/`Remote-Groups`, AND (b) injects
+ * `X-SB-Internal-Token: <internalToken>` — the AUTH_SECRET-derived token
+ * `proxy.ts:isInternalCall` already accepts (proxy.ts:187 bypasses CSRF for it).
+ * So a request coming THROUGH NPM carries the token → passes the CSRF gate →
+ * reaches the handler, which then applies its own no-Bearer / Remote-Groups∋admins
+ * / LLDAP re-derive checks.
+ *
+ * WHY THIS IS NOT A FORGERY HOLE: the token is injected by NPM (which holds the
+ * position of trust), not by the client. A DIRECT `:5888` POST forging
+ * `Remote-User`/`Remote-Groups:admins` but WITHOUT the internal token (and
+ * without an Origin) still hits `proxy.ts`'s CSRF 403 — it never reaches the
+ * handler. Trust flows from NPM's network position, exactly like the existing
+ * post-deploy internal callbacks; no standing AUTH_SECRET-derived credential
+ * lives in any consumer pod.
+ *
+ * The token is rendered into the config at DEPLOY time (`getInternalApiToken()`,
+ * AUTH_SECRET-derived) — never a committed literal.
+ *
+ * The location uses `location ~ ^…$` (regex, exact set) so it wins over the
+ * default `location /` and matches ONLY the two mint paths. It carries its OWN
+ * `auth_request /authelia` (this host has no server-level forward-auth — the
+ * portal apex is intentionally anonymous), and reuses the shared
+ * `location = /authelia` internal subrequest emitted by
+ * {@link AUTHELIA_FORWARD_AUTH_CORE}. The auth-request `X-Original-URL` is
+ * pointed at `www.<domain>` (the `*.<domain>` `one_factor`-covered host), NOT
+ * the apex — the apex is Authelia default-deny (ADR 0006), so probing it yields
+ * no identity (mirrors `portal/auth.ts`). Pass `undefined`/'' for `wwwHost` on a
+ * host that is already itself under the wildcard rule (probe the request's own
+ * host).
+ */
+export const AUTHELIA_SESSION_MINT_PATHS = [
+  '/api/auth/delegated-admin-from-authelia-session',
+  '/api/auth/token-from-authelia-session',
+] as const;
+
+export function buildAutheliaSessionMintLocation(
+  internalToken: string,
+  wwwHost: string | undefined,
+  autheliaPort: string = DEFAULT_AUTHELIA_PORT,
+): string {
+  // Anchored alternation matching EXACTLY the two mint paths (regex location so
+  // it beats `location /`; `$` anchors so nothing broader slips through).
+  const pathRegex = `^/api/auth/(?:delegated-admin|token)-from-authelia-session$`;
+  // The auth-request subrequest target. On the anonymous portal apex the
+  // request's own host is default-deny, so probe the wildcard-covered
+  // `www.<domain>` instead (same rationale as portal/auth.ts). When wwwHost is
+  // empty we fall back to the request's own scheme/host (a host that IS under
+  // the wildcard rule).
+  const originalUrl = wwwHost
+    ? `https://${wwwHost}$request_uri`
+    : `$scheme://$http_host$request_uri`;
+  const mintLocation = [
+    `location ~ ${pathRegex} {`,
+    '    auth_request /authelia;',
+    '    auth_request_set $user $upstream_http_remote_user;',
+    '    auth_request_set $groups $upstream_http_remote_groups;',
+    '    auth_request_set $name $upstream_http_remote_name;',
+    '    auth_request_set $email $upstream_http_remote_email;',
+    // Trusted identity, injected by NPM (overwrites any client-supplied copy).
+    '    proxy_set_header Remote-User $user;',
+    '    proxy_set_header Remote-Groups $groups;',
+    '    proxy_set_header Remote-Name $name;',
+    '    proxy_set_header Remote-Email $email;',
+    // #2278 — the internal token that lets this NPM-fronted request cross
+    // proxy.ts's CSRF gate (isInternalCall). Rendered at deploy time.
+    `    proxy_set_header X-SB-Internal-Token ${internalToken};`,
+    // proxy.conf supplies proxy_pass + Host/X-Forwarded-* — do NOT add our own
+    // proxy_pass (a second one is `nginx: [emerg] "proxy_pass" directive is
+    // duplicate`). The Remote-*/token set BEFORE the include so nginx's
+    // "location owns all proxy_set_header" rule picks them up.
+    '    include conf.d/include/proxy.conf;',
+    '}',
+  ].join('\n');
+  // The internal auth-request upstream, pointed at the wildcard-covered host.
+  const authRequest = [
+    'location = /authelia {',
+    '    internal;',
+    `    proxy_pass http://127.0.0.1:${autheliaPort}/api/authz/auth-request;`,
+    '    proxy_pass_request_body off;',
+    '    proxy_set_header Content-Length "";',
+    `    proxy_set_header X-Original-URL ${originalUrl};`,
+    '    proxy_set_header X-Original-Method $request_method;',
+    '    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+    '    proxy_set_header X-Real-IP $remote_addr;',
+    '}',
+  ].join('\n');
+  return `${mintLocation}\n\n${authRequest}`;
+}
+
 function baseSnippet(opts?: ForwardAuthExpandOptions): string {
   const core = opts?.omitAcmeBypass
     ? AUTHELIA_FORWARD_AUTH_CORE

@@ -88,4 +88,42 @@ describe('provisionPortalRouting', () => {
     );
     expect(res.rewrites).toEqual({ 'dopp.cloud': 'added', 'www.dopp.cloud': 'added', '*.dopp.cloud': 'added' });
   });
+
+  // #2278 — the SB proxy host must inject X-SB-Internal-Token on the two
+  // *-from-authelia-session mint routes so a server-to-server caller through NPM
+  // crosses proxy.ts's CSRF gate and reaches the mint handler.
+  it('POSTs the SB proxy host with the internal-token mint location for BOTH apex and www', async () => {
+    process.env.AUTH_SECRET = 'test-secret-for-2278-provisioner';
+    const { getInternalApiToken } = await import('@/lib/auth/internalToken');
+    const expectedToken = getInternalApiToken();
+
+    // nginx active so provisionNpmProxyHost proceeds to the POST.
+    state.services = [{ name: 'nginx', active: true, ports: [{ containerPort: 81, hostPort: 81 }] }];
+
+    let postBody: any = null;
+    mockFetch.mockImplementation((url: string, init?: any) => {
+      if (typeof url === 'string' && url.includes('/api/system/nginx/proxy-hosts') && init?.method === 'POST') {
+        postBody = JSON.parse(init.body);
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ created: ['dopp.cloud', 'www.dopp.cloud'] }) });
+      }
+      // AdGuard rewrites etc. — irrelevant to this assertion.
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    });
+
+    await provisionPortalRouting();
+
+    expect(postBody).not.toBeNull();
+    expect(postBody.hosts).toHaveLength(2);
+    for (const host of postBody.hosts) {
+      const cfg = host.proxyConfig?.advanced_config ?? '';
+      // The internal token (AUTH_SECRET-derived, rendered at deploy time) is
+      // stamped on the mint location — this is what lets the NPM-fronted call
+      // pass proxy.ts:isInternalCall.
+      expect(cfg).toContain(`proxy_set_header X-SB-Internal-Token ${expectedToken};`);
+      // Scoped to exactly the two mint routes (no over-broad token stamping).
+      expect(cfg).toContain('location ~ ^/api/auth/(?:delegated-admin|token)-from-authelia-session$ {');
+      // Forward-auth injects the trusted identity the handler requires.
+      expect(cfg).toContain('proxy_set_header Remote-Groups $groups;');
+    }
+  });
 });

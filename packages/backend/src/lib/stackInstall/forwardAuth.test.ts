@@ -4,6 +4,8 @@ import {
   expandForwardAuthSentinel,
   renderForwardAuthAdvancedConfig,
   stripDuplicateProxyHttpVersion,
+  buildAutheliaSessionMintLocation,
+  AUTHELIA_SESSION_MINT_PATHS,
   DEFAULT_AUTHELIA_PORT,
 } from './forwardAuth';
 
@@ -159,5 +161,63 @@ describe('websocket sanitize — exactly one proxy_http_version reaches nginx (#
     })!;
     expect(countHttpVersion(out)).toBe(0);
     expect(out).toContain('auth_request /authelia;');
+  });
+});
+
+// #2278 — the SB host injects the internal token on the *-from-authelia-session
+// mint routes so a server-to-server caller through NPM crosses proxy.ts's CSRF
+// gate (isInternalCall) and reaches the mint handler.
+describe('buildAutheliaSessionMintLocation (#2278)', () => {
+  const TOKEN = 'deadbeef'.repeat(8); // AUTH_SECRET-derived HMAC shape
+
+  it('emits a location matching ONLY the two mint paths and injects the internal token', () => {
+    const out = buildAutheliaSessionMintLocation(TOKEN, 'www.dopp.cloud');
+    // The regex location anchors exactly the two mint routes.
+    expect(out).toContain('location ~ ^/api/auth/(?:delegated-admin|token)-from-authelia-session$ {');
+    // The internal token is stamped so the request passes proxy.ts:isInternalCall.
+    expect(out).toContain(`proxy_set_header X-SB-Internal-Token ${TOKEN};`);
+    // Both documented mint routes are covered by the anchored alternation.
+    for (const p of AUTHELIA_SESSION_MINT_PATHS) {
+      const re = new RegExp('^/api/auth/(?:delegated-admin|token)-from-authelia-session$');
+      expect(re.test(p)).toBe(true);
+    }
+    // Unrelated paths must NOT match — the token is scoped to the mint routes.
+    const re = new RegExp('^/api/auth/(?:delegated-admin|token)-from-authelia-session$');
+    expect(re.test('/api/system/update')).toBe(false);
+    expect(re.test('/api/auth/login')).toBe(false);
+    expect(re.test('/api/auth/token-from-authelia-session/extra')).toBe(false);
+  });
+
+  it('runs forward-auth so the trusted Remote-User/Remote-Groups are injected (not client-supplied)', () => {
+    const out = buildAutheliaSessionMintLocation(TOKEN, 'www.dopp.cloud');
+    expect(out).toContain('auth_request /authelia;');
+    expect(out).toContain('auth_request_set $user $upstream_http_remote_user;');
+    expect(out).toContain('auth_request_set $groups $upstream_http_remote_groups;');
+    expect(out).toContain('proxy_set_header Remote-User $user;');
+    expect(out).toContain('proxy_set_header Remote-Groups $groups;');
+    // Reuses NPM's proxy.conf for the upstream proxy_pass — never a second one.
+    expect(out).toContain('include conf.d/include/proxy.conf;');
+    expect(out).not.toContain('proxy_pass $forward_scheme');
+  });
+
+  it('probes the wildcard-covered www host (apex is Authelia default-deny — no identity there)', () => {
+    const out = buildAutheliaSessionMintLocation(TOKEN, 'www.dopp.cloud');
+    expect(out).toContain('proxy_pass http://127.0.0.1:9091/api/authz/auth-request;');
+    // X-Original-URL points at the www host, NOT the request's own (apex) host.
+    expect(out).toContain('proxy_set_header X-Original-URL https://www.dopp.cloud$request_uri;');
+  });
+
+  it('falls back to the request host when no www host is given (host already under the wildcard rule)', () => {
+    const out = buildAutheliaSessionMintLocation(TOKEN, undefined);
+    expect(out).toContain('proxy_set_header X-Original-URL $scheme://$http_host$request_uri;');
+  });
+
+  it('substitutes the given Authelia port (defaults to DEFAULT_AUTHELIA_PORT)', () => {
+    expect(buildAutheliaSessionMintLocation(TOKEN, 'www.dopp.cloud', '9099')).toContain(
+      'proxy_pass http://127.0.0.1:9099/api/authz/auth-request;',
+    );
+    expect(buildAutheliaSessionMintLocation(TOKEN, 'www.dopp.cloud')).toContain(
+      `proxy_pass http://127.0.0.1:${DEFAULT_AUTHELIA_PORT}/api/authz/auth-request;`,
+    );
   });
 });

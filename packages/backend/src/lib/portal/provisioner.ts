@@ -28,6 +28,8 @@ import { getConfig } from '@/lib/config';
 import { getActiveDomain } from '@/lib/mode';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { ensureWildcardRewrite } from '@/lib/adguard/rewrites';
+import { buildAutheliaSessionMintLocation } from '@/lib/stackInstall/forwardAuth';
+import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { logger } from '@/lib/logger';
 
 const LOG = 'portal:provisioner';
@@ -86,9 +88,18 @@ function buildPortalProxyHost(domain: string, lanIp: string): {
     forwardScheme: string;
     service: string;
     exposure: 'public' | 'lan';
+    proxyConfig?: { advanced_config?: string };
   }>;
 } {
   const port = parseInt(process.env.PORT ?? '5888', 10);
+  // #2278 — the SB host must inject the internal token on the two
+  // *-from-authelia-session mint routes so a server-to-server caller (Solaris)
+  // coming THROUGH NPM with Authelia-injected Remote-*/no-Bearer/no-Origin can
+  // cross proxy.ts's CSRF gate and reach the mint handler. Token is
+  // AUTH_SECRET-derived and rendered here at deploy time — never a literal. The
+  // auth-request probes `www.<domain>` (the `*.<domain>` one_factor host), since
+  // the apex is Authelia default-deny (ADR 0006) and yields no identity.
+  const mintConfig = { advanced_config: buildAutheliaSessionMintLocation(getInternalApiToken(), `www.${domain}`) };
   // The portal apex is reachable from outside (operator sees it at
   // the public domain), so exposure is `public`. Without this the
   // letsdebug check and the domain-health dot defaulted via the
@@ -96,8 +107,8 @@ function buildPortalProxyHost(domain: string, lanIp: string): {
   // domain, the heuristic isn't safe and we set the value explicitly.
   return {
     hosts: [
-      { domain, forwardPort: port, forwardHost: lanIp, forwardScheme: 'http', service: 'servicebay-portal', exposure: 'public' },
-      { domain: `www.${domain}`, forwardPort: port, forwardHost: lanIp, forwardScheme: 'http', service: 'servicebay-portal', exposure: 'public' },
+      { domain, forwardPort: port, forwardHost: lanIp, forwardScheme: 'http', service: 'servicebay-portal', exposure: 'public', proxyConfig: mintConfig },
+      { domain: `www.${domain}`, forwardPort: port, forwardHost: lanIp, forwardScheme: 'http', service: 'servicebay-portal', exposure: 'public', proxyConfig: mintConfig },
     ],
   };
 }
