@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.161.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.160.0...servicebay-v4.161.0) (2026-07-14)
+
+
+### Features
+
+* **auth:** session-driven delegated-admin mint (no standing key in consumer) ([2fdb55c](https://github.com/mdopp/servicebay/commit/2fdb55cc6832dc568528dddd64b00d1a295a8643))
+* **auth:** session-driven delegated-admin mint (no standing key in consumer) ([d183677](https://github.com/mdopp/servicebay/commit/d18367727e4def21719a31967076513e77260d94)), closes [#2275](https://github.com/mdopp/servicebay/issues/2275)
+
 ## [4.160.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.159.0...servicebay-v4.160.0) (2026-07-13)
 
 
