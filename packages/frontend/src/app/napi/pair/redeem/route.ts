@@ -24,10 +24,12 @@ import { logger } from '@/lib/logger';
  *     or destroy anything on the box.
  *
  * `skipAuth: true`: intentionally public — the pairing CODE is the credential.
- * This route lives under `/napi/*` (not `/api/*`), so proxy.ts's CSRF/session
- * gate never runs against it; the fail-closed checks here are the whole gate.
- * (When `/napi/*` moves behind proxy.ts, add a PUBLIC_API_RULES entry mirroring
- * this `skipAuth`.)
+ * `/napi/*` now runs through proxy.ts's gate (#2281), so this route has a
+ * `csrfExempt` PUBLIC_API_RULES entry there: its legitimate caller (the companion
+ * app) is cross-origin with no browser Origin, and the fail-closed checks here
+ * (single-use + constant-time + rate-limited code → read-only token) are the
+ * whole gate. `/napi/pair` (the mint) is deliberately NOT csrf-exempt — it stays
+ * CSRF-gated so a direct forgery 403s.
  */
 
 /** The minted token's scopes. READ ONLY — never widen this. The public redeem

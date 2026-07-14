@@ -120,8 +120,10 @@ describe('provisionPortalRouting', () => {
       // stamped on the mint location — this is what lets the NPM-fronted call
       // pass proxy.ts:isInternalCall.
       expect(cfg).toContain(`proxy_set_header X-SB-Internal-Token ${expectedToken};`);
-      // Scoped to exactly the two mint routes (no over-broad token stamping).
-      expect(cfg).toContain('location ~ ^/api/auth/(?:delegated-admin|token)-from-authelia-session$ {');
+      // Scoped to exactly the mint routes + /napi/pair (#2281) — anchored, no
+      // over-broad token stamping (the PUBLIC /napi/pair/redeem is excluded).
+      expect(cfg).toContain('location ~ ^(?:/api/auth/(?:delegated-admin|token)-from-authelia-session|/napi/pair)$ {');
+      expect(cfg).not.toContain('/napi/pair/redeem');
       // Forward-auth injects the trusted identity the handler requires.
       expect(cfg).toContain('proxy_set_header Remote-Groups $groups;');
     }

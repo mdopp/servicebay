@@ -170,22 +170,35 @@ describe('websocket sanitize — exactly one proxy_http_version reaches nginx (#
 describe('buildAutheliaSessionMintLocation (#2278)', () => {
   const TOKEN = 'deadbeef'.repeat(8); // AUTH_SECRET-derived HMAC shape
 
-  it('emits a location matching ONLY the two mint paths and injects the internal token', () => {
+  // The anchored alternation the location regex is built from (#2278 + #2281).
+  const MINT_RE = new RegExp('^(?:/api/auth/(?:delegated-admin|token)-from-authelia-session|/napi/pair)$');
+
+  it('emits a location matching the mint paths + /napi/pair and injects the internal token', () => {
     const out = buildAutheliaSessionMintLocation(TOKEN, 'www.dopp.cloud');
-    // The regex location anchors exactly the two mint routes.
-    expect(out).toContain('location ~ ^/api/auth/(?:delegated-admin|token)-from-authelia-session$ {');
+    // The regex location anchors exactly the two mint routes AND /napi/pair.
+    expect(out).toContain('location ~ ^(?:/api/auth/(?:delegated-admin|token)-from-authelia-session|/napi/pair)$ {');
     // The internal token is stamped so the request passes proxy.ts:isInternalCall.
     expect(out).toContain(`proxy_set_header X-SB-Internal-Token ${TOKEN};`);
-    // Both documented mint routes are covered by the anchored alternation.
+    // All three forward-auth-trust routes are covered by the anchored alternation.
     for (const p of AUTHELIA_SESSION_MINT_PATHS) {
-      const re = new RegExp('^/api/auth/(?:delegated-admin|token)-from-authelia-session$');
-      expect(re.test(p)).toBe(true);
+      expect(MINT_RE.test(p)).toBe(true);
     }
-    // Unrelated paths must NOT match — the token is scoped to the mint routes.
-    const re = new RegExp('^/api/auth/(?:delegated-admin|token)-from-authelia-session$');
-    expect(re.test('/api/system/update')).toBe(false);
-    expect(re.test('/api/auth/login')).toBe(false);
-    expect(re.test('/api/auth/token-from-authelia-session/extra')).toBe(false);
+    // #2281 — /napi/pair is included in the exported path set.
+    expect(AUTHELIA_SESSION_MINT_PATHS).toContain('/napi/pair');
+    // Unrelated paths must NOT match — the token is scoped to these routes only.
+    expect(MINT_RE.test('/api/system/update')).toBe(false);
+    expect(MINT_RE.test('/api/auth/login')).toBe(false);
+    expect(MINT_RE.test('/api/auth/token-from-authelia-session/extra')).toBe(false);
+  });
+
+  it('scopes /napi/pair TIGHTLY — the PUBLIC redeem path + other /napi twins do NOT get the token (#2281)', () => {
+    // Anchored `$` — the public /napi/pair/redeem (which must NOT be forward-auth
+    // gated NOR get the internal token) is excluded, and so are the other twins.
+    expect(MINT_RE.test('/napi/pair/redeem')).toBe(false);
+    expect(MINT_RE.test('/napi/pairXYZ')).toBe(false);
+    expect(MINT_RE.test('/napi/services')).toBe(false);
+    expect(MINT_RE.test('/napi/approvals')).toBe(false);
+    expect(MINT_RE.test('/napi/home')).toBe(false);
   });
 
   it('runs forward-auth so the trusted Remote-User/Remote-Groups are injected (not client-supplied)', () => {
