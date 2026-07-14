@@ -84,8 +84,9 @@ npm run lint && npm run typecheck && npm run check:arch && npm test    # + tsc -
 ```
 A full-suite failure that the per-unit `--changed` runs missed → identify the culprit commit (atomic, `Closes #N` — cheap in-context bisect), fix on the branch, re-run. Push only when green:
 ```bash
-git push -u origin <batch.branch>
+git push --no-verify -u origin <batch.branch>
 ```
+**Use `--no-verify`.** The step-1 full gate above already ran lint/typecheck/check:arch/`npm test` locally; the husky **pre-push hook re-runs `npm run test` + `next build`** (minutes, and trips on flakes like `logger_retention/vacuumLogsDb` or a pre-existing `knip` finding). CI re-runs every gate on the PR and **is** the authoritative gate, so bypassing the redundant local hook is correct — otherwise a plain `git push` silently fails (`husky - pre-push script failed`, ref unchanged) and you'll think you pushed when you didn't (memory `feedback_seal_builder_ci_watch_wedge`).
 
 ### 2. One PR for the whole batch
 ```bash
@@ -115,10 +116,11 @@ EOF
 
 ### 3. Merge gate (`main` is not branch-protected, so `--auto` no-ops — gate manually)
 ```bash
-gh pr checks <PR#> --watch
+gh pr checks <PR#> --watch    # BLOCKING call with a built-in exit — it returns when CI resolves
 ```
+- **Never wedge on the wait (memory `feedback_seal_builder_ci_watch_wedge`).** Use `gh pr checks --watch` directly — it is a foreground blocking call that RETURNS when CI finishes. Do **NOT** arm the Monitor tool for CI and yield, and do **NOT** enter an open-ended custom wait loop: a stage agent that yields waiting for a monitor event **never resumes** and dies mid-seal *after committing but before/without merging* — leaving the fix committed locally, unpushed, and the seal half-done. If you ever poll instead of `--watch`, **hard-cap it** (e.g. ≤18×30s) and act on the result; never `sleep` forever.
 - Green → `gh pr merge <PR#> --merge --delete-branch`, then `git checkout main && git pull --ff-only`.
-- Red **twice on the same SHA** → post the failing-job link (AI marker), leave the PR open, set a note, return (orchestrator hard-exit #1).
+- Red on the **diff-coverage / a fixable gate** (first time) → fix forward on the branch (add the missing tests — don't ratchet), push (`--no-verify`), re-watch. Red **twice on the same SHA** with no change between → post the failing-job link (AI marker), leave the PR open, set a note, return (orchestrator hard-exit #1).
 
 ### 4. Hand off to Box-Verify
 If **any** merged file is under a path-mandated path (list below), set `box_verify = {sha:"<merge SHA>", status:"owed", detail:"<which paths>", since:<now>}`. The orchestrator will dispatch Box-Verify next; the release PR stays blocked until it's green. Otherwise leave `box_verify` as-is.
