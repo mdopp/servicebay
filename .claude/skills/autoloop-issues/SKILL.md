@@ -71,7 +71,7 @@ The builder enforces the per-issue side (fast gates only, commit to the batch br
 
 Then pick **exactly one** foreground stage this tick, by the first rule that matches, and spawn it (Step 2). Then re-read the queue and loop.
 
-1. **Builder — seal** — if a `batch` exists and (`batch.count >= 8` **or** `queue[]` has no `status:"planned"` unit) and the batch isn't already merged **and `box_verify.status` is clear** (`green` or `null` — *not* `owed`/`verifying`/`red`). The builder pushes the accumulated branch, runs full gates + CI, merges, and sets `box_verify=owed` if any merged file was path-mandated. **Seal-ahead is forbidden:** if `box_verify` is `owed`/`verifying`/`red`, a prior batch is still in the release/verify critical section — do **not** seal; build-ahead instead (rule 2), or if nothing to build, idle-wait for the verify (Step 3).
+1. **Seal — you run the script yourself (no sub-agent)** — if a `batch` exists and (`batch.count >= 8` **or** `queue[]` has no `status:"planned"` unit) and it isn't merged **and `box_verify.status` is clear** (`green`/`null`). The seal (push → CI → merge → path-mandated) is deterministic, so **the orchestrator runs it directly** — never a wedge-prone seal builder (memory `feedback_seal_builder_ci_watch_wedge`): run the local safety-net gate (`npm run lint && npm run typecheck && npm run check:arch && npm test`) on the batch branch, write the PR body to a temp file, then `npm run autoloop:seal -- <batch.branch> --title "<subject>" --body-file <f>`. **Exit 0** → fold the `AUTOLOOP_SEAL_RESULT` JSON: `box_verify=owed` when `boxVerifyOwed` **or** any sealed unit's `gate` was `verify`; units → `completed[]` (+ `review[]` for `security:true`); `batch=null`. **Exit 3** (CI red) → dispatch a **Builder** to diagnose + fix-forward on the batch branch (real fix, don't ratchet), then re-run the script; a same-SHA re-red with no change → hard-exit #1. **Exit 2** (setup: dirty tree / conflict) → fix + re-run. **Seal-ahead is forbidden:** if `box_verify` is `owed`/`verifying`/`red`, a prior batch is still in the release/verify critical section — don't seal; build-ahead (rule 2) or idle-wait (Step 3).
 2. **Builder — build** — if `queue[]` has a `planned` unit and `batch.count < 8`. The builder implements the next unit onto the batch branch with fast gates only. **This is the build-ahead path** — it's eligible even while a background Box-Verify runs, because building touches neither `main` nor the box.
 3. **Planner** — if there is no actionable unit (queue has no `planned` units and no open batch to seal). The planner refills the queue: groom + cluster open issues, decompose epics, park refinement/awaiting-user (security issues become normal `security:true` units, not parked), or (queue genuinely dry) enqueue lint-sweep units or run a codebase eval.
 
@@ -168,7 +168,7 @@ The **Needs refinement** line is the point of the whole pipeline — it's what y
 
 ## Things this orchestrator explicitly does NOT do
 
-- Does not write code, groom issues, or run `/verify` itself — it only dispatches stage agents.
+- Does not write code, groom issues, or run `/verify` itself — it dispatches stage agents for those, and runs deterministic **scripts** for mechanics (e.g. `autoloop:seal` — push/CI/merge; it does not spawn a seal sub-agent).
 - Does not run `gh pr merge --auto` (no branch protection on this repo — it silently no-ops).
 - Does not bump versions or edit the release-please PR's contents.
 - Does not dispatch a seal/release step while mid-batch (prime directive).
