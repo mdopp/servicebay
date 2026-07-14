@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.162.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.161.3...servicebay-v4.162.0) (2026-07-14)
+
+
+### Features
+
+* **portal:** generic pwa_install + apk_download setup-asset kinds ([a26d7d6](https://github.com/mdopp/servicebay/commit/a26d7d6607e81017b441be618692103e828737fa))
+* **portal:** generic pwa_install + apk_download setup-asset kinds ([7ef1476](https://github.com/mdopp/servicebay/commit/7ef147607da6045cb3791795d9330c3111f879d9)), closes [#2295](https://github.com/mdopp/servicebay/issues/2295)
+
 ## [4.161.3](https://github.com/mdopp/servicebay/compare/servicebay-v4.161.2...servicebay-v4.161.3) (2026-07-14)
 
 
