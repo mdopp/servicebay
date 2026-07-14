@@ -72,73 +72,19 @@ Implement the one file/rule named in the unit. Size guard: **≤2 source files**
 
 ---
 
-## Mode: `seal` — ship the accumulated batch (expensive pipeline, once)
+## Mode: `seal` — ship the accumulated batch (once)
 
-Precondition (the orchestrator checked it, re-assert anyway): (`batch.count >= 8` **or** `queue[]` has no `planned` unit) **and** `box_verify.status` is clear (`green` or `null` — *not* `owed`/`verifying`/`red`). If you're mid-batch, do nothing, return "not ready to seal". If `box_verify` is `owed`/`verifying`/`red`, a prior batch is still in the release/verify critical section — **do not seal** (seal-ahead forbidden); return "blocked on box_verify, not sealing".
+Precondition (re-assert): (`batch.count >= 8` **or** no `planned` unit) **and** `box_verify.status` clear (`green`/`null`). Mid-batch → return "not ready to seal". `box_verify` owed/verifying/red → return "blocked on box_verify, not sealing" (seal-ahead forbidden).
 
-### 1. Full gate
-```bash
-git checkout <batch.branch>
-git rebase origin/main
-npm run lint && npm run typecheck && npm run check:arch && npm test    # + tsc --noEmit (CI parity, #2172); full suite — the safety net
-```
-A full-suite failure that the per-unit `--changed` runs missed → identify the culprit commit (atomic, `Closes #N` — cheap in-context bisect), fix on the branch, re-run. Push only when green:
-```bash
-git push --no-verify -u origin <batch.branch>
-```
-**Use `--no-verify`.** The step-1 full gate above already ran lint/typecheck/check:arch/`npm test` locally; the husky **pre-push hook re-runs `npm run test` + `next build`** (minutes, and trips on flakes like `logger_retention/vacuumLogsDb` or a pre-existing `knip` finding). CI re-runs every gate on the PR and **is** the authoritative gate, so bypassing the redundant local hook is correct — otherwise a plain `git push` silently fails (`husky - pre-push script failed`, ref unchanged) and you'll think you pushed when you didn't (memory `feedback_seal_builder_ci_watch_wedge`).
+1. **Local safety net.** `git checkout <batch.branch> && git rebase origin/main`, then `npm run lint && npm run typecheck && npm run check:arch && npm test`. A full-suite failure the per-unit `--changed` runs missed → bisect the culprit commit (atomic, `Closes #N`), fix on the branch, re-run.
 
-### 2. One PR for the whole batch
-```bash
-gh pr create --title "<conventional subject>" --body "$(cat <<'EOF'
-## What
-<1-2 sentences across the batch's themes>
+2. **Seal — run the script, don't hand-roll the mechanics** (why: `CLAUDE.md` "deterministic → scripts"; the invariants — `--no-verify` push, hard-capped CI poll that returns, merge-on-green — live in `scripts/autoloop-seal.ts`, not here):
+   ```bash
+   npm run autoloop:seal -- <batch.branch> --title "<conventional subject>" --body-file /tmp/seal-body.md
+   ```
+   It emits `AUTOLOOP_SEAL_RESULT {json}`. **Exit 0** → fold the JSON (step 3). **Exit 3** = CI red → *your judgment*: a first fixable gate (e.g. diff-coverage) → fix forward on the branch (real tests, don't ratchet) + re-run; red twice same-SHA no-change → post the failing-job link (AI marker), leave the PR open, return (hard-exit #1). **Exit 2** = setup error (dirty tree / bad branch / conflict) → fix + re-run. (`--body-file` is a normal PR body: `## What` / `Closes #a` per issue / `## Risk·Rollback`.)
 
-## Why
-Closes #<a>
-Closes #<b>
-<one Closes line per issue in the batch>
-
-## Risk
-<low | medium | high — one sentence>
-
-## Rollback
-<git revert is enough | requires X>
-
-## Verification
-- [ ] npm run lint
-- [ ] npm run check:arch
-- [ ] npm test (full)
-- [ ] /verify on FCoS :dev box (if any file is path-mandated — see below)
-EOF
-)"
-```
-
-### 3. Merge gate (`main` is not branch-protected, so `--auto` no-ops — gate manually)
-```bash
-gh pr checks <PR#> --watch    # BLOCKING call with a built-in exit — it returns when CI resolves
-```
-- **Never wedge on the wait (memory `feedback_seal_builder_ci_watch_wedge`).** Use `gh pr checks --watch` directly — it is a foreground blocking call that RETURNS when CI finishes. Do **NOT** arm the Monitor tool for CI and yield, and do **NOT** enter an open-ended custom wait loop: a stage agent that yields waiting for a monitor event **never resumes** and dies mid-seal *after committing but before/without merging* — leaving the fix committed locally, unpushed, and the seal half-done. If you ever poll instead of `--watch`, **hard-cap it** (e.g. ≤18×30s) and act on the result; never `sleep` forever.
-- Green → `gh pr merge <PR#> --merge --delete-branch`, then `git checkout main && git pull --ff-only`.
-- Red on the **diff-coverage / a fixable gate** (first time) → fix forward on the branch (add the missing tests — don't ratchet), push (`--no-verify`), re-watch. Red **twice on the same SHA** with no change between → post the failing-job link (AI marker), leave the PR open, set a note, return (orchestrator hard-exit #1).
-
-### 4. Hand off to Box-Verify
-If **any** merged file is under a path-mandated path (list below), set `box_verify = {sha:"<merge SHA>", status:"owed", detail:"<which paths>", since:<now>}`. The orchestrator will dispatch Box-Verify next; the release PR stays blocked until it's green. Otherwise leave `box_verify` as-is.
-
-Move the batch's units → `completed[]` (`{issue|unit, pr, gate, merged_at}`), mark lint-sweep entries in `lint_sweep[]`, and **reset `batch` to `null`**. For every shipped `security:true` unit, also append `{issue, pr, flag:"security", merged_at}` to `review[]` (the human's post-deploy review list). Note: the release PR itself is merged later by the orchestrator preflight, *after* box-verify is green — not here.
-
-### Path-mandated paths (trigger `box_verify=owed`)
-```
-packages/backend/src/lib/install/
-packages/backend/src/lib/config.ts
-packages/backend/src/lib/agent/
-packages/backend/src/lib/systemBackup.ts
-packages/backend/src/lib/mcp/
-packages/frontend/src/app/portal/
-packages/frontend/src/app/(dashboard)/
-packages/frontend/src/dashboards/
-packages/frontend/src/components/OnboardingWizard.tsx (or its decomposition)
-```
+3. **Fold the result.** Set `box_verify={sha,status:"owed",detail,since}` when the JSON's `boxVerifyOwed` is true **OR** any sealed unit's `gate` was `verify` (a user-facing unit is `gate:verify` even if its files aren't path-mandated). Move units → `completed[]`, lint-sweeps → `lint_sweep[]`, every `security:true` → `review[]`, and **reset `batch` to `null`**. (The release PR is merged later by orchestrator preflight, after box-verify is green.) The path-mandated list is canonical in the script's `PATH_MANDATED_PATHS` — edit it there.
 
 ## Return
 - build: `Builder: built fe-layout (#1420,#1424) onto batch/2026-06-01a, fast gate green, count 4/8.`

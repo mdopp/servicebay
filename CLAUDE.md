@@ -10,6 +10,10 @@ Orientation:
 - `docs/TEMPLATE_AUTHORING.md` + `templates/CLAUDE.md` — the template contract (auto-loads under `templates/`).
 - `docs/UX_DECISIONS.md` — locked UX decisions; don't re-litigate.
 
+## Deterministic execution → scripts; LLMs coordinate + evaluate
+
+**Deterministic steps belong in a good script, not in prose an LLM re-interprets each run.** Prose invariants are advisory (an LLM skips them — that wedged the seal builders + stranded box-verify); in a script they're structural (a `finally` that flips back to `:latest`, a hard-capped poll that returns, a fixed `--no-verify`) — and cheaper, zero-variance. Reserve the LLM for **judgment**: what to verify, why a red happened + how to fix, triage/planning, writing the code. So: **scripts run the mechanics; LLMs coordinate + evaluate.** House pattern: `tsx scripts/*.ts`, `node:` only, no new dep (e.g. `scripts/check-diff-coverage.ts`, `autoloop-seal.ts`); shrink the playbook to "call the script, then judge X."
+
 ## Workflow: issues first, then the autoloop
 
 Capture work as **GitHub issues first**, then let the **autoloop-issues** pipeline
