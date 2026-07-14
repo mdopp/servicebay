@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.162.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.162.0...servicebay-v4.162.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* **install:** reject the &lt;redacted&gt; mask as a real secret value on deploy ([ba96816](https://github.com/mdopp/servicebay/commit/ba96816193a87f870e694ec0f04e53bdfb02c965)), closes [#2296](https://github.com/mdopp/servicebay/issues/2296)
+
 ## [4.162.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.161.3...servicebay-v4.162.0) (2026-07-14)
 
 
