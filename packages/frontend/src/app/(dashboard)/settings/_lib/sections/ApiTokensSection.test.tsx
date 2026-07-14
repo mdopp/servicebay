@@ -52,6 +52,37 @@ describe('ApiTokensSection (#2100 settings migration)', () => {
     expect(screen.getByRole('button', { name: /^create$/i })).toBeDefined();
   });
 
+  // #2299: the "Never Expires" checkbox is offered only for a read-only scope
+  // set; selecting any broader scope disables it (fail-closed, mirroring the
+  // server's 403 guard).
+  it('Never Expires checkbox is enabled for read-only scopes and disabled once a broader scope is selected', async () => {
+    mockFetch([]);
+    render(<ApiTokensSection />);
+    await waitFor(() => expect(screen.getByText(/No tokens yet/)).toBeDefined());
+    fireEvent.click(screen.getByRole('button', { name: /new token/i }));
+
+    const neverExpires = screen.getByRole('checkbox', { name: /never expires/i }) as HTMLInputElement;
+    // Default scope set is ['read'] → enabled.
+    expect(neverExpires.disabled).toBe(false);
+
+    // Selecting `mutate` (a non-read scope) disables it.
+    fireEvent.click(screen.getByRole('checkbox', { name: /^mutate$/i }));
+    expect(neverExpires.disabled).toBe(true);
+    // …and it can't stay checked.
+    expect(neverExpires.checked).toBe(false);
+
+    // Removing `mutate` again re-enables it.
+    fireEvent.click(screen.getByRole('checkbox', { name: /^mutate$/i }));
+    expect(neverExpires.disabled).toBe(false);
+  });
+
+  it('shows "Expires: Never" for a token with no expiresAt', async () => {
+    mockFetch([{ ...TOKEN, scopes: ['read'], expiresAt: undefined }]);
+    render(<ApiTokensSection />);
+    await waitFor(() => expect(screen.getByText('workstation')).toBeDefined());
+    expect(screen.getByText(/Expires: Never/i)).toBeDefined();
+  });
+
   // #2164: revoke is guarded by the typed-confirmation ConfirmModal, not a bare
   // browser confirm() — consistent with stack-wipe / service-delete / factory-reset.
   it('revoke opens a typed-confirmation modal that blocks until the token name is typed', async () => {

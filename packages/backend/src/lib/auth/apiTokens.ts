@@ -189,6 +189,12 @@ export async function createToken(input: {
   name: string;
   scopes: ApiScope[];
   expiresAt?: string;
+  // Non-expiring machine token (#2299). When true, the token is minted with NO
+  // `expiresAt` at all, so it never lapses — the safe path for an unattended
+  // consumer. The *route* fail-closed-guards this to read-only scopes; the
+  // model-level primitive itself just omits the expiry when asked. Mutually
+  // exclusive with `expiresAt` (a never-expiring token can't also carry one).
+  neverExpires?: boolean;
   createdBy: string;
   // Lineage marker (#2048). Set only by the delegated-mint path — the public
   // mint route never passes it, so an external caller can't forge a parent.
@@ -216,7 +222,9 @@ export async function createToken(input: {
     hash: sha256(secret),
     prefix: secret.slice(0, 4),
     createdAt: new Date().toISOString(),
-    expiresAt: input.expiresAt,
+    // `neverExpires` wins: a non-expiring token is minted with no expiresAt,
+    // regardless of any expiresAt passed alongside it (#2299).
+    expiresAt: input.neverExpires ? undefined : input.expiresAt,
     createdBy: input.createdBy,
     ...(input.parentId ? { parentId: input.parentId } : {}),
     ...(input.oneShotOp ? { oneShotOp: input.oneShotOp } : {}),
