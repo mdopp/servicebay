@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.161.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.161.0...servicebay-v4.161.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* **auth:** make *-from-authelia-session mint reachable server-to-server via NPM-injected internal token ([8fbab6d](https://github.com/mdopp/servicebay/commit/8fbab6d6f07f3ebd6997fec35c96f9d90c932934)), closes [#2278](https://github.com/mdopp/servicebay/issues/2278)
+* **auth:** mint reachable server-to-server via NPM-injected internal token ([89262d0](https://github.com/mdopp/servicebay/commit/89262d07dc5a1e4f860a41ec16ce919f81d3e615))
+
 ## [4.161.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.160.0...servicebay-v4.161.0) (2026-07-14)
 
 
