@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.161.2](https://github.com/mdopp/servicebay/compare/servicebay-v4.161.1...servicebay-v4.161.2) (2026-07-14)
+
+
+### Bug Fixes
+
+* **security:** gate /napi/pair against LAN Remote-User header forgery ([b22a306](https://github.com/mdopp/servicebay/commit/b22a306668efef39bf67e6ea4118d260d6aec733))
+* **security:** gate /napi/pair against LAN Remote-User header forgery ([cce37fe](https://github.com/mdopp/servicebay/commit/cce37fe66da92c2d8c069ea5a1dc7d9a1d36f355)), closes [#2281](https://github.com/mdopp/servicebay/issues/2281)
+
 ## [4.161.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.161.0...servicebay-v4.161.1) (2026-07-14)
 
 
