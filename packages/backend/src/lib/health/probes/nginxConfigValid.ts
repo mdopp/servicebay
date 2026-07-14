@@ -47,7 +47,12 @@ export interface NginxTestParse {
 export function parseNginxTestOutput(output: string, exitCode: number): NginxTestParse {
   if (exitCode === 0) return { ok: true };
   const text = output ?? '';
-  const emergMatch = text.match(/nginx:\s*\[emerg\].*/);
+  // Match the whole line containing `[emerg]`. `nginx -t` emits some errors
+  // with a `nginx: [emerg]` prefix (e.g. invalid port) and others with a
+  // timestamp prefix (`2026/07/14 15:21 [emerg] duplicate location …`). The
+  // old `nginx:`-only pattern missed the timestamp form, reddening the check
+  // with no detail line.
+  const emergMatch = text.match(/^.*\[emerg\].*$/m);
   const emergLine = emergMatch ? emergMatch[0].trim() : undefined;
   const hostMatch = text.match(/proxy_host\/(\d+)\.conf/);
   const hostId = hostMatch ? Number(hostMatch[1]) : undefined;
