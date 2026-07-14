@@ -23,6 +23,18 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # js-yaml v5 makes complex-key parsing strict: it THROWS on an unquoted
+      # `{{VAR}}` template placeholder that v4 tolerated (v4 → `{'[object
+      # Object]': null}`, v5 → "object-based map does not support complex keys").
+      # That breaks every `yaml.load`/`loadAll` of UN-rendered template YAML —
+      # the #1688 healthcheck parser, manifestAssembler, serviceListing,
+      # inferredEdges, contract, yamlExtractor. Declined (#2115/#2289): v4 works
+      # and there's no functional/security reason for v5; taking it needs a
+      # Mustache pre-substitution refactor across all those parse sites. Drop
+      # this ignore only when/if that refactor lands.
+      - dependency-name: "js-yaml"
+        versions: [">=5"]
     commit-message:
       prefix: chore
       include: scope
