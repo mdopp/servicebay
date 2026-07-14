@@ -68,18 +68,42 @@ export interface RecommendedApp {
  *      client straight onto the phone (point the phone camera at it
  *      → the APK download opens). Pure client-side render of the
  *      `/api/system/downloads/basicsync` URL — no server round-trip.
+ *    - `pwa_install` — a generic, service-agnostic "Add to Home
+ *      Screen" card. Renders a QR to the service `url` (from the
+ *      asset's `url` param) plus an "Add to Home Screen" CTA that
+ *      opens that URL. URL-driven — the portal builds the QR client-
+ *      side from the frontmatter `url`; no server artifact.
+ *    - `apk_download` — a generic APK-download card. Renders a
+ *      download button + a QR pointing at the release `url` (from the
+ *      asset's `url` param) so a phone can grab the APK directly.
+ *      URL-driven; the resolver just echoes the URL back (no server
+ *      artifact beyond the URL). NOT hard-coded to any one service —
+ *      the URL comes from the service's user-guide.md frontmatter.
  */
 export type SetupAssetKind =
   | 'ios_calendar_profile'
   | 'audiobookshelf_deeplink'
   | 'syncthing_qr'
-  | 'basicsync_install_qr';
+  | 'basicsync_install_qr'
+  | 'pwa_install'
+  | 'apk_download';
 
 const KNOWN_ASSET_KINDS: ReadonlySet<SetupAssetKind> = new Set([
   'ios_calendar_profile',
   'audiobookshelf_deeplink',
   'syncthing_qr',
   'basicsync_install_qr',
+  'pwa_install',
+  'apk_download',
+]);
+
+/** Kinds whose card is driven by an explicit `url` in the frontmatter
+ *  (a service PWA URL, an APK release URL). The parser keeps the URL;
+ *  the client builds the QR / CTA from it. Kept service-agnostic — the
+ *  URL is whatever the template author declares. */
+const URL_DRIVEN_ASSET_KINDS: ReadonlySet<SetupAssetKind> = new Set([
+  'pwa_install',
+  'apk_download',
 ]);
 
 export interface SetupAsset {
@@ -90,6 +114,11 @@ export interface SetupAsset {
   /** Optional one-line description rendered as a tooltip + below
    *  the button on the card. */
   description?: string;
+  /** URL the card points at, for URL-driven kinds (`pwa_install`,
+   *  `apk_download`). The QR encodes it and the CTA opens it. Only an
+   *  absolute http(s) URL is accepted — a URL-driven asset without a
+   *  valid `url` is dropped so a broken card never renders. */
+  url?: string;
 }
 
 /**
@@ -421,9 +450,19 @@ function parseSetupAssets(input: unknown): SetupAsset[] {
       if (!entry || typeof entry !== 'object') return null;
       const e = entry as Record<string, unknown>;
       if (typeof e.kind !== 'string' || !KNOWN_ASSET_KINDS.has(e.kind as SetupAssetKind)) return null;
-      const out: SetupAsset = { kind: e.kind as SetupAssetKind };
+      const kind = e.kind as SetupAssetKind;
+      const out: SetupAsset = { kind };
       if (typeof e.label === 'string' && e.label.trim()) out.label = e.label.trim();
       if (typeof e.description === 'string' && e.description.trim()) out.description = e.description.trim();
+      // URL-driven kinds (`pwa_install`, `apk_download`) require an
+      // absolute http(s) `url` from the frontmatter — the QR/CTA is
+      // built from it. Reject dangerous / protocol-relative schemes and
+      // drop the whole asset when the URL is missing/invalid so a broken
+      // card never renders. Non-URL-driven kinds ignore any stray `url`.
+      if (URL_DRIVEN_ASSET_KINDS.has(kind)) {
+        if (typeof e.url !== 'string' || !/^https?:\/\//i.test(e.url)) return null;
+        out.url = e.url;
+      }
       return out;
     })
     .filter((a): a is SetupAsset => a !== null);

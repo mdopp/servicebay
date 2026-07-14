@@ -167,4 +167,21 @@ describe('resolveSetupAsset', () => {
     const out = await resolveSetupAsset('basicsync_install_qr', 'file-share');
     expect(out).toBeNull();
   });
+
+  it('echoes the frontmatter url for pwa_install (service-agnostic, no server artifact)', async () => {
+    const out = await resolveSetupAsset('pwa_install', 'any-service', undefined, 'https://home.example.com');
+    expect(out).toEqual({ kind: 'pwa_install', data: 'https://home.example.com' });
+  });
+
+  it('echoes the release url for apk_download', async () => {
+    const url = 'https://github.com/owner/repo/releases/latest/download/app.apk';
+    const out = await resolveSetupAsset('apk_download', 'any-service', undefined, url);
+    expect(out).toEqual({ kind: 'apk_download', data: url });
+  });
+
+  it('returns null for a url-driven kind with a missing or unsafe url', async () => {
+    expect(await resolveSetupAsset('pwa_install', 'svc')).toBeNull();
+    expect(await resolveSetupAsset('apk_download', 'svc', undefined, 'javascript:alert(1)')).toBeNull();
+    expect(await resolveSetupAsset('pwa_install', 'svc', undefined, '//evil.example/x')).toBeNull();
+  });
 });

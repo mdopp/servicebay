@@ -10,10 +10,18 @@ import { verifyAutheliaSession } from '@/lib/portal/auth';
 
 export const dynamic = 'force-dynamic';
 
-const KIND_VALUES: SetupAssetKind[] = ['ios_calendar_profile', 'audiobookshelf_deeplink', 'syncthing_qr'];
+const KIND_VALUES: SetupAssetKind[] = [
+  'ios_calendar_profile', 'audiobookshelf_deeplink', 'syncthing_qr',
+  'pwa_install', 'apk_download',
+];
 
 const Query = z.object({
   subdomain_var: z.string().regex(/^[A-Z][A-Z0-9_]*_SUBDOMAIN$/).optional(),
+  // URL-driven kinds (`pwa_install`, `apk_download`) pass their
+  // frontmatter target here so the resolver can validate + echo it.
+  // Only absolute http(s) URLs are accepted (defends the JSON echo
+  // against `javascript:` / `data:` smuggling).
+  url: z.string().url().regex(/^https?:\/\//i).optional(),
 });
 
 type Params = { service: string; kind: string };
@@ -32,6 +40,10 @@ type Params = { service: string; kind: string };
  *   - kind=`audiobookshelf_deeplink` → returns JSON `{ url: "abs://…" }`.
  *   - kind=`syncthing_qr` → returns JSON `{ deviceId }`; client
  *     renders the QR locally.
+ *   - kind=`pwa_install` / `apk_download` → returns JSON `{ url }`
+ *     echoing the frontmatter-declared `url` query param (service-
+ *     agnostic); client renders the QR + Add-to-Home-Screen / download
+ *     CTA locally.
  *
  * The service name and kind are validated against the templates that
  * actually ship the asset — random combos return 404.
@@ -83,9 +95,16 @@ export const GET = withApiHandlerParams<undefined, z.infer<typeof Query>, Params
       kind as SetupAssetKind,
       service,
       query.subdomain_var,
+      query.url,
     );
     if (!asset) {
       return new NextResponse('Asset not available — service may not be installed yet.', { status: 404 });
+    }
+
+    if (asset.kind === 'pwa_install' || asset.kind === 'apk_download') {
+      // URL-driven, service-agnostic — return the validated URL as JSON
+      // so the client renders the QR + Add-to-Home-Screen / download CTA.
+      return NextResponse.json({ url: asset.data });
     }
 
     if (asset.kind === 'ios_calendar_profile') {
