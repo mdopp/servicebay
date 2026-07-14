@@ -50,6 +50,19 @@ describe('parseNginxTestOutput', () => {
     expect(r.emergLine).toBe('nginx: [emerg] unexpected end of file');
     expect(r.hostId).toBeUndefined();
   });
+
+  it('surfaces a TIMESTAMP-prefixed emerg line (duplicate location) — not just `nginx:`-prefixed', () => {
+    const out =
+      'nginx: [alert] could not open error log file: open() "/var/log/nginx/error.log" failed\n' +
+      '2026/07/14 15:21:15 [emerg] 4#4: duplicate location "/napi/pair" in /data/nginx/proxy_host/7.conf:15\n' +
+      'nginx: configuration file /etc/nginx/nginx.conf test failed';
+    const r = parseNginxTestOutput(out, 1);
+    expect(r.ok).toBe(false);
+    expect(r.emergLine).toBe(
+      '2026/07/14 15:21:15 [emerg] 4#4: duplicate location "/napi/pair" in /data/nginx/proxy_host/7.conf:15',
+    );
+    expect(r.hostId).toBe(7);
+  });
 });
 
 describe('nginx_config_valid probe.run', () => {
