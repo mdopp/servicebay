@@ -55,7 +55,7 @@ jobs:
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Cache node modules
@@ -76,7 +76,7 @@ jobs:
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Cache node modules
@@ -97,7 +97,7 @@ jobs:
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Cache node modules
@@ -129,7 +129,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Cache node modules
@@ -162,7 +162,7 @@ jobs:
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Cache node modules
@@ -183,7 +183,7 @@ jobs:
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: Cache node modules
@@ -258,7 +258,7 @@ jobs:
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       - name: npm audit (report-only)
@@ -307,7 +307,7 @@ jobs:
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
       # `npm ci --dry-run` reproduces the Dockerfile's strict resolution
