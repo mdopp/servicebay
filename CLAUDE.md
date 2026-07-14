@@ -10,6 +10,25 @@ Orientation:
 - `docs/TEMPLATE_AUTHORING.md` + `templates/CLAUDE.md` — the template contract (auto-loads under `templates/`).
 - `docs/UX_DECISIONS.md` — locked UX decisions; don't re-litigate.
 
+## Deterministic execution → scripts; LLMs coordinate + evaluate
+
+**If a step is deterministic, make it a good script — don't leave it as prose an
+LLM re-interprets each run.** Prose invariants ("always push `--no-verify`",
+"never leave the box on `:dev`", "poll CI in a bounded loop") are *advisory* — an
+LLM can skip them, and did (that's what wedged the seal builders and stranded
+box-verify this session). In a script the same invariant is *structural*: a
+`finally` that flips back to `:latest`, a hard-capped poll that returns, a fixed
+`--no-verify` flag. Scripts are also cheaper (no tokens) and have zero variance.
+
+Reserve the LLM for **judgment**: *what* to verify (interpret acceptance), *why*
+a red happened (flake vs real) and how to fix it, triage/clustering/planning, and
+writing the actual code. So the split is: **scripts run the mechanics; LLMs
+coordinate them and evaluate the results.** When you find yourself writing a long
+procedural playbook, ask whether the deterministic core belongs in
+`scripts/*.ts` (house pattern: `tsx`, `node:` only, no new dep — see
+`scripts/check-diff-coverage.ts`) with the playbook shrunk to "call this script,
+then make *these* judgments."
+
 ## Workflow: issues first, then the autoloop
 
 Capture work as **GitHub issues first**, then let the **autoloop-issues** pipeline

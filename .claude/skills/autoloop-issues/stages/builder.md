@@ -88,57 +88,50 @@ git push --no-verify -u origin <batch.branch>
 ```
 **Use `--no-verify`.** The step-1 full gate above already ran lint/typecheck/check:arch/`npm test` locally; the husky **pre-push hook re-runs `npm run test` + `next build`** (minutes, and trips on flakes like `logger_retention/vacuumLogsDb` or a pre-existing `knip` finding). CI re-runs every gate on the PR and **is** the authoritative gate, so bypassing the redundant local hook is correct — otherwise a plain `git push` silently fails (`husky - pre-push script failed`, ref unchanged) and you'll think you pushed when you didn't (memory `feedback_seal_builder_ci_watch_wedge`).
 
-### 2. One PR for the whole batch
+### 2. Seal via the deterministic script (push → CI → merge)
+
+The push/PR/CI-watch/merge/path-mandated mechanics are DETERMINISTIC — run the
+script, don't hand-roll them (that's what wedged past seals, memory
+`feedback_seal_builder_ci_watch_wedge`; principle in `CLAUDE.md`). Write the PR
+body to a temp file, then:
+
 ```bash
-gh pr create --title "<conventional subject>" --body "$(cat <<'EOF'
+npm run autoloop:seal -- <batch.branch> --title "<conventional subject>" --body-file /tmp/seal-body.md
+```
+The script (`scripts/autoloop-seal.ts`) pushes `--no-verify`, creates the PR,
+**hard-capped-polls** CI (returns, never a Monitor / unbounded wait), merges on
+green, pulls `main`, and computes path-mandated files. It prints one last line:
+```
+AUTOLOOP_SEAL_RESULT {"ok":true,"pr":123,"sha":"abc1234","pathMandated":[...],"boxVerifyOwed":true,"detail":"…"}
+```
+Exit codes: **0** merged (parse the JSON for the fold-in below); **3** CI red —
+that's your JUDGMENT call: read the failing check, and on a first *fixable* gate
+red (e.g. diff-coverage) fix forward on the branch (add real tests — don't
+ratchet) and re-run the script; red twice on the same SHA with no change between
+→ post the failing-job link (AI marker), leave the PR open, return (orchestrator
+hard-exit #1). **2** setup error (dirty tree / bad branch / merge conflict) —
+fix and re-run.
+
+PR body template (write to the `--body-file`):
+```
 ## What
 <1-2 sentences across the batch's themes>
 
 ## Why
 Closes #<a>
-Closes #<b>
 <one Closes line per issue in the batch>
 
-## Risk
-<low | medium | high — one sentence>
-
-## Rollback
-<git revert is enough | requires X>
-
-## Verification
-- [ ] npm run lint
-- [ ] npm run check:arch
-- [ ] npm test (full)
-- [ ] /verify on FCoS :dev box (if any file is path-mandated — see below)
-EOF
-)"
+## Risk / Rollback
+<low|med|high — one sentence> · <git revert is enough | requires X>
 ```
 
-### 3. Merge gate (`main` is not branch-protected, so `--auto` no-ops — gate manually)
-```bash
-gh pr checks <PR#> --watch    # BLOCKING call with a built-in exit — it returns when CI resolves
-```
-- **Never wedge on the wait (memory `feedback_seal_builder_ci_watch_wedge`).** Use `gh pr checks --watch` directly — it is a foreground blocking call that RETURNS when CI finishes. Do **NOT** arm the Monitor tool for CI and yield, and do **NOT** enter an open-ended custom wait loop: a stage agent that yields waiting for a monitor event **never resumes** and dies mid-seal *after committing but before/without merging* — leaving the fix committed locally, unpushed, and the seal half-done. If you ever poll instead of `--watch`, **hard-cap it** (e.g. ≤18×30s) and act on the result; never `sleep` forever.
-- Green → `gh pr merge <PR#> --merge --delete-branch`, then `git checkout main && git pull --ff-only`.
-- Red on the **diff-coverage / a fixable gate** (first time) → fix forward on the branch (add the missing tests — don't ratchet), push (`--no-verify`), re-watch. Red **twice on the same SHA** with no change between → post the failing-job link (AI marker), leave the PR open, set a note, return (orchestrator hard-exit #1).
+### 3. Fold the result into the queue + hand off to Box-Verify
 
-### 4. Hand off to Box-Verify
-If **any** merged file is under a path-mandated path (list below), set `box_verify = {sha:"<merge SHA>", status:"owed", detail:"<which paths>", since:<now>}`. The orchestrator will dispatch Box-Verify next; the release PR stays blocked until it's green. Otherwise leave `box_verify` as-is.
+From the script's `AUTOLOOP_SEAL_RESULT` JSON: set `box_verify = {sha:<sha>, status:"owed", detail:<detail>, since:<now>}` when **`boxVerifyOwed` is true OR any sealed unit's `gate` was `verify`** (the script only measures files; a user-facing/visual unit is `gate:verify` even if its files aren't path-mandated). Otherwise leave `box_verify` as-is. The orchestrator dispatches Box-Verify next; the release PR stays blocked until it's green.
 
-Move the batch's units → `completed[]` (`{issue|unit, pr, gate, merged_at}`), mark lint-sweep entries in `lint_sweep[]`, and **reset `batch` to `null`**. For every shipped `security:true` unit, also append `{issue, pr, flag:"security", merged_at}` to `review[]` (the human's post-deploy review list). Note: the release PR itself is merged later by the orchestrator preflight, *after* box-verify is green — not here.
+Then: move the batch's units → `completed[]` (`{issue|unit, pr, gate, merged_at}`), mark lint-sweep entries in `lint_sweep[]`, **reset `batch` to `null`**, and for every shipped `security:true` unit append `{issue, pr, flag:"security", merged_at}` to `review[]`. The release PR itself is merged later by the orchestrator preflight, *after* box-verify is green — not here.
 
-### Path-mandated paths (trigger `box_verify=owed`)
-```
-packages/backend/src/lib/install/
-packages/backend/src/lib/config.ts
-packages/backend/src/lib/agent/
-packages/backend/src/lib/systemBackup.ts
-packages/backend/src/lib/mcp/
-packages/frontend/src/app/portal/
-packages/frontend/src/app/(dashboard)/
-packages/frontend/src/dashboards/
-packages/frontend/src/components/OnboardingWizard.tsx (or its decomposition)
-```
+**Path-mandated list is canonical in the script** — `PATH_MANDATED_PATHS` in `scripts/autoloop-seal.ts` (kept broader than the old prose copy: it includes the NPM-render / proxy-gate / auth files — `stackInstall/`, `lib/portal/`, `proxy.ts`, `middleware.ts` — that this session proved need a box verify). Edit that array + its unit test to change the list, not this doc.
 
 ## Return
 - build: `Builder: built fe-layout (#1420,#1424) onto batch/2026-06-01a, fast gate green, count 4/8.`
