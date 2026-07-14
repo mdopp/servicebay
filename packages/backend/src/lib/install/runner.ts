@@ -485,6 +485,40 @@ export function reuseSavedSecrets(
   return { overrideNames, sentinelRestored, sentinelUnresolved };
 }
 
+/** Render the `name1, name2, +N more` fragment used in the #2296 secret logs. */
+export function formatSecretNameList(names: string[], head = 4): string {
+  const shown = names.slice(0, head).join(', ');
+  return names.length > head ? `${shown}, +${names.length - head} more` : shown;
+}
+
+/**
+ * #2296 — the operator-facing log line for the "kept the stored secret over a
+ * re-sent `<redacted>`" case. Pure so the pluralisation / truncation is tested
+ * without driving the whole install loop.
+ */
+export function formatSentinelRestoredLog(sentinelRestored: string[], sentinel: string): string {
+  const n = sentinelRestored.length;
+  return `🔒 Ignored the masked value '${sentinel}' sent for ${n} secret variable${n === 1 ? '' : 's'} (${formatSecretNameList(sentinelRestored)}) and kept the previously-stored real secret (#2296).`;
+}
+
+/**
+ * #2296 — the hard-fail message when a secret was supplied as the redaction
+ * mask and no stored value exists to fall back on. Pure so the copy is
+ * asserted in a unit test rather than only through the install loop.
+ */
+export function buildSentinelUnresolvedError(sentinelUnresolved: string[], sentinel: string): string {
+  return `Refusing to deploy: secret variable(s) were supplied as the redaction mask '${sentinel}', not a real value, and no stored secret exists to fall back on: ${sentinelUnresolved.join(', ')}. This usually means a caller read the masked variables and re-sent them verbatim — re-send the real secret value for these vars (#2296).`;
+}
+
+/**
+ * #2296 — the hard-fail message for the post-render backstop: a rendered pod
+ * env still carries the redaction mask. Pure so the copy is unit-tested rather
+ * than only reached through the full deploy loop.
+ */
+export function buildRenderedSentinelError(itemName: string, sentinelSecrets: string[], sentinel: string): string {
+  return `Cannot deploy ${itemName}: env var(s) rendered to the redaction mask '${sentinel}' instead of a real secret: ${sentinelSecrets.join(', ')}. Deploying this would take the service's auth offline — re-send the real secret value for these vars (#2296).`;
+}
+
 /**
  * #1724 — before the auth stack overwrites Authelia's `configuration.yml`,
  * merge any OIDC clients already on disk that the fresh render doesn't own
@@ -609,7 +643,7 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
     const { REDACTION_SENTINEL } = await import('@/lib/mcp/redact');
     const sentinelSecrets = findSentinelSecretsInYaml(yamlContent, REDACTION_SENTINEL);
     if (sentinelSecrets.length > 0) {
-      const msg = `Cannot deploy ${item.name}: env var(s) rendered to the redaction mask '${REDACTION_SENTINEL}' instead of a real secret: ${sentinelSecrets.join(', ')}. Deploying this would take the service's auth offline — re-send the real secret value for these vars (#2296).`;
+      const msg = buildRenderedSentinelError(item.name, sentinelSecrets, REDACTION_SENTINEL);
       await log(jobId, `❌ ${msg}`);
       throw new Error(msg);
     }
@@ -1034,10 +1068,10 @@ async function runJob(jobId: string): Promise<void> {
       const { overrideNames, sentinelRestored, sentinelUnresolved } =
         reuseSavedSecrets(input.variables, saved, reusedSecretNames, REDACTION_SENTINEL);
       if (sentinelRestored.length > 0) {
-        await log(jobId, `🔒 Ignored the masked value '${REDACTION_SENTINEL}' sent for ${sentinelRestored.length} secret variable${sentinelRestored.length === 1 ? '' : 's'} (${sentinelRestored.slice(0, 4).join(', ')}${sentinelRestored.length > 4 ? `, +${sentinelRestored.length - 4} more` : ''}) and kept the previously-stored real secret (#2296).`);
+        await log(jobId, formatSentinelRestoredLog(sentinelRestored, REDACTION_SENTINEL));
       }
       if (sentinelUnresolved.length > 0) {
-        const msg = `Refusing to deploy: secret variable(s) were supplied as the redaction mask '${REDACTION_SENTINEL}', not a real value, and no stored secret exists to fall back on: ${sentinelUnresolved.join(', ')}. This usually means a caller read the masked variables and re-sent them verbatim — re-send the real secret value for these vars (#2296).`;
+        const msg = buildSentinelUnresolvedError(sentinelUnresolved, REDACTION_SENTINEL);
         await log(jobId, `❌ ${msg}`);
         await patchJob(jobId, { phase: 'error', endedAt: new Date().toISOString(), error: msg });
         return;

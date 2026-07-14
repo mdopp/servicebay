@@ -13,7 +13,14 @@
  *     sentinel slips through into the rendered pod YAML.
  */
 import { describe, it, expect } from 'vitest';
-import { reuseSavedSecrets, findSentinelSecretsInYaml } from './runner';
+import {
+  reuseSavedSecrets,
+  findSentinelSecretsInYaml,
+  formatSecretNameList,
+  formatSentinelRestoredLog,
+  buildSentinelUnresolvedError,
+  buildRenderedSentinelError,
+} from './runner';
 import { REDACTION_SENTINEL } from '@/lib/mcp/redact';
 import type { JobInputVariable } from './jobStore';
 
@@ -121,5 +128,48 @@ describe('findSentinelSecretsInYaml — post-render backstop (#2296)', () => {
       `- name: C\n  value: "${REDACTION_SENTINEL}"`,
     ].join('\n');
     expect(findSentinelSecretsInYaml(yaml, REDACTION_SENTINEL)).toEqual(['A', 'C']);
+  });
+});
+
+describe('#2296 secret-log message builders', () => {
+  it('formatSecretNameList shows all names when at or under the head', () => {
+    expect(formatSecretNameList(['A', 'B'])).toBe('A, B');
+    expect(formatSecretNameList(['A', 'B', 'C', 'D'])).toBe('A, B, C, D');
+  });
+
+  it('formatSecretNameList truncates with a +N more suffix past the head', () => {
+    expect(formatSecretNameList(['A', 'B', 'C', 'D', 'E'])).toBe('A, B, C, D, +1 more');
+    expect(formatSecretNameList(['A', 'B'], 1)).toBe('A, +1 more');
+  });
+
+  it('formatSentinelRestoredLog uses singular copy for one variable', () => {
+    const msg = formatSentinelRestoredLog(['HASS_TOKEN'], REDACTION_SENTINEL);
+    expect(msg).toContain('1 secret variable ');
+    expect(msg).not.toContain('variables');
+    expect(msg).toContain('HASS_TOKEN');
+    expect(msg).toContain(REDACTION_SENTINEL);
+    expect(msg).toContain('#2296');
+  });
+
+  it('formatSentinelRestoredLog uses plural copy + truncation for many', () => {
+    const msg = formatSentinelRestoredLog(['A', 'B', 'C', 'D', 'E'], REDACTION_SENTINEL);
+    expect(msg).toContain('5 secret variables');
+    expect(msg).toContain('A, B, C, D, +1 more');
+  });
+
+  it('buildSentinelUnresolvedError names every offending var and how to fix it', () => {
+    const msg = buildSentinelUnresolvedError(['A', 'B'], REDACTION_SENTINEL);
+    expect(msg).toContain('Refusing to deploy');
+    expect(msg).toContain('A, B');
+    expect(msg).toContain(REDACTION_SENTINEL);
+    expect(msg).toContain('#2296');
+  });
+
+  it('buildRenderedSentinelError names the service, the vars, and the sentinel', () => {
+    const msg = buildRenderedSentinelError('home-assistant', ['HASS_TOKEN', 'DB_PASSWORD'], REDACTION_SENTINEL);
+    expect(msg).toContain('Cannot deploy home-assistant');
+    expect(msg).toContain('HASS_TOKEN, DB_PASSWORD');
+    expect(msg).toContain(REDACTION_SENTINEL);
+    expect(msg).toContain('#2296');
   });
 });
