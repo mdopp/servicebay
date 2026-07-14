@@ -30,7 +30,9 @@
     "check:deps": "depcruise --config .dependency-cruiser.cjs packages/frontend/src packages/backend/src",
     "check:arch": "npm run check:invariants && npm run check:backup-coverage && npm run check:deps",
     "prepare": "husky || true",
-    "autoloop:seal": "tsx scripts/autoloop-seal.ts"
+    "autoloop:seal": "tsx scripts/autoloop-seal.ts",
+    "autoloop:box": "tsx scripts/autoloop-box.ts",
+    "autoloop:dev-verify": "tsx scripts/autoloop-dev-verify.ts"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx}": [
