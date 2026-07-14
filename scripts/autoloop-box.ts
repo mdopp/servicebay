@@ -216,7 +216,8 @@ async function cli(): Promise<void> {
     case 'wait-health': {
       const ok = await waitHealth(rest[0] ? Number(rest[0]) : 300);
       console.log(JSON.stringify({ up: ok }));
-      process.exit(ok ? 0 : 1);
+      if (!ok) process.exit(1); // ok → fall through to break (natural exit 0)
+      break;
     }
     case 'api': {
       const [method, path, body] = rest;
