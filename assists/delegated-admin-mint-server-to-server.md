@@ -23,7 +23,7 @@ is the #1 stumbling block, because the two "obvious" shapes both fail:
 | Shape | Result | Why |
 |---|---|---|
 | Loopback `http://<lan>:5888/api/auth/…-from-authelia-session` (bypasses NPM) | **403 `Forbidden: cross-site request`** | proxy.ts's CSRF guard. The exemption only fires when NPM has injected `X-SB-Internal-Token`; loopback has no token. |
-| Public apex `https://dopp.cloud/…` with **no cookie** | **401** | NPM runs Authelia forward-auth on the portal route and challenges a cookie-less call. |
+| Public apex `https://<domain>/…` with **no cookie** | **401** | NPM runs Authelia forward-auth on the portal route and challenges a cookie-less call. |
 
 They're mutually exclusive on their own: the only NPM ingress that injects the
 internal token (the portal route) **also** enforces Authelia; the CSRF-exempt
@@ -39,8 +39,8 @@ The token is NPM's to inject from its position of trust — never the client's t
 
 The consumer is a **BFF acting for a signed-in admin**, so it already receives
 that admin's Authelia session cookie (Authelia's `session.cookies[].domain` is
-the parent domain, e.g. `dopp.cloud`, so the `authelia_session` cookie is sent
-to every `*.dopp.cloud` host — including the BFF's own subdomain). Forward it:
+the box's public domain `<domain>`, so the `authelia_session` cookie is sent to
+every `*.<domain>` host — including the BFF's own subdomain). Forward it:
 
 ```
 POST https://www.<domain>/api/auth/delegated-admin-from-authelia-session
