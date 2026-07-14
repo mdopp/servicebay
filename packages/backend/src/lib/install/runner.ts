@@ -58,6 +58,7 @@ import {
   updateJob,
   type JobInput,
   type JobInputItem,
+  type JobInputVariable,
   type JobState,
 } from './jobStore';
 import { emitJobLog, emitJobUpdate } from './socketBridge';
@@ -414,6 +415,111 @@ export function findEmptyYamlVars(yaml: string, view: Record<string, string>): s
 }
 
 /**
+ * #2296 — post-render backstop: scan a rendered pod YAML for any `name: X`
+ * env pair whose `value:` is the literal redaction sentinel (`<redacted>`).
+ * The input guard in the runner already rejects the sentinel before render,
+ * so a hit here means it slipped through some other path — hard-fail the
+ * deploy rather than persist `<redacted>` as a live secret. Returns the env
+ * var names carrying the sentinel value (empty when clean).
+ */
+export function findSentinelSecretsInYaml(yaml: string, sentinel: string): string[] {
+  const out: string[] = [];
+  // Match a kube env pair across one or two lines:
+  //   - name: FOO
+  //     value: "<redacted>"   (quoted or bare)
+  const re = /name:\s*["']?([A-Za-z_][A-Za-z0-9_]*)["']?\s*(?:\n\s*)?value:\s*["']?([^"'\n]*)["']?/g;
+  for (const m of yaml.matchAll(re)) {
+    if (m[2] === sentinel) out.push(m[1]);
+  }
+  return out;
+}
+
+/**
+ * #615 secret-reuse + #2296 sentinel guard, as a pure mutation over the
+ * install's variable list. For each `secret | bcrypt | rsa-private` var:
+ *
+ *   - value === `sentinel` (`<redacted>`): a caller re-sent the read-masked
+ *     value. NEVER persist that literal. Swap in the stored real secret if we
+ *     have one (→ `sentinelRestored`); otherwise it's unresolvable (→
+ *     `sentinelUnresolved`, and the caller must fail the deploy loudly).
+ *   - otherwise, if a saved secret exists: reuse it (the #615 clean-install
+ *     reuse path) and record the override.
+ *
+ * Mutates `v.value` in place and populates `reusedSecretNames`. Returns the
+ * three name buckets the caller logs / gates on. A real supplied value with no
+ * stored secret is left untouched (normal deploy).
+ */
+export function reuseSavedSecrets(
+  variables: JobInputVariable[],
+  saved: Record<string, string>,
+  reusedSecretNames: Set<string>,
+  sentinel: string,
+): { overrideNames: string[]; sentinelRestored: string[]; sentinelUnresolved: string[] } {
+  const overrideNames: string[] = [];
+  const sentinelRestored: string[] = [];
+  const sentinelUnresolved: string[] = [];
+  for (const v of variables) {
+    // `meta` is `unknown` on the persisted JobInputVariable shape — narrow to
+    // the {type} subset we need without reaching for VariableMeta (a UI type).
+    const type = (v.meta as { type?: string } | undefined)?.type;
+    if (type !== 'secret' && type !== 'bcrypt' && type !== 'rsa-private') continue;
+    const stored = saved[v.name];
+    if (v.value === sentinel) {
+      if (stored) {
+        v.value = stored;
+        reusedSecretNames.add(v.name);
+        sentinelRestored.push(v.name);
+      } else {
+        sentinelUnresolved.push(v.name);
+      }
+      continue;
+    }
+    if (!stored) continue;
+    // Track the reuse even when value already matches — downstream self-heals
+    // only care whether the value came from saved state.
+    reusedSecretNames.add(v.name);
+    if (stored === v.value) continue;
+    v.value = stored;
+    overrideNames.push(v.name);
+  }
+  return { overrideNames, sentinelRestored, sentinelUnresolved };
+}
+
+/** Render the `name1, name2, +N more` fragment used in the #2296 secret logs. */
+export function formatSecretNameList(names: string[], head = 4): string {
+  const shown = names.slice(0, head).join(', ');
+  return names.length > head ? `${shown}, +${names.length - head} more` : shown;
+}
+
+/**
+ * #2296 — the operator-facing log line for the "kept the stored secret over a
+ * re-sent `<redacted>`" case. Pure so the pluralisation / truncation is tested
+ * without driving the whole install loop.
+ */
+export function formatSentinelRestoredLog(sentinelRestored: string[], sentinel: string): string {
+  const n = sentinelRestored.length;
+  return `🔒 Ignored the masked value '${sentinel}' sent for ${n} secret variable${n === 1 ? '' : 's'} (${formatSecretNameList(sentinelRestored)}) and kept the previously-stored real secret (#2296).`;
+}
+
+/**
+ * #2296 — the hard-fail message when a secret was supplied as the redaction
+ * mask and no stored value exists to fall back on. Pure so the copy is
+ * asserted in a unit test rather than only through the install loop.
+ */
+export function buildSentinelUnresolvedError(sentinelUnresolved: string[], sentinel: string): string {
+  return `Refusing to deploy: secret variable(s) were supplied as the redaction mask '${sentinel}', not a real value, and no stored secret exists to fall back on: ${sentinelUnresolved.join(', ')}. This usually means a caller read the masked variables and re-sent them verbatim — re-send the real secret value for these vars (#2296).`;
+}
+
+/**
+ * #2296 — the hard-fail message for the post-render backstop: a rendered pod
+ * env still carries the redaction mask. Pure so the copy is unit-tested rather
+ * than only reached through the full deploy loop.
+ */
+export function buildRenderedSentinelError(itemName: string, sentinelSecrets: string[], sentinel: string): string {
+  return `Cannot deploy ${itemName}: env var(s) rendered to the redaction mask '${sentinel}' instead of a real secret: ${sentinelSecrets.join(', ')}. Deploying this would take the service's auth offline — re-send the real secret value for these vars (#2296).`;
+}
+
+/**
  * #1724 — before the auth stack overwrites Authelia's `configuration.yml`,
  * merge any OIDC clients already on disk that the fresh render doesn't own
  * back into the file-to-be-written. Without this, redeploying `auth` wipes
@@ -525,6 +631,22 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   if (emptyYamlVars.length > 0) {
     await log(jobId, `⚠️ ${item.name}: pod template variable(s) rendered empty: ${emptyYamlVars.join(', ')}. ` +
       `If any are required, go back to Configure and fill them in (or check the template's variables.json defaults) — an empty value can crash-loop the pod.`);
+  }
+
+  // #2296 — post-render backstop: never let the redaction mask string reach
+  // the pod as a real secret value. The runner's pre-render input guard
+  // already rejects `<redacted>` before we get here, so a hit means it
+  // slipped through another path — hard-fail rather than deploy a pod whose
+  // secret envs are all `<redacted>` (the multi-service auth outage this bug
+  // caused). Imported lazily to keep deployItem's top-level imports lean.
+  {
+    const { REDACTION_SENTINEL } = await import('@/lib/mcp/redact');
+    const sentinelSecrets = findSentinelSecretsInYaml(yamlContent, REDACTION_SENTINEL);
+    if (sentinelSecrets.length > 0) {
+      const msg = buildRenderedSentinelError(item.name, sentinelSecrets, REDACTION_SENTINEL);
+      await log(jobId, `❌ ${msg}`);
+      throw new Error(msg);
+    }
   }
 
   const kubeContent =
@@ -941,22 +1063,18 @@ async function runJob(jobId: string): Promise<void> {
     try {
       const { getConfig } = await import('@/lib/config');
       const { loadSavedSecrets } = await import('./savedSecrets');
+      const { REDACTION_SENTINEL } = await import('@/lib/mcp/redact');
       const saved = loadSavedSecrets(await getConfig());
-      const overrideNames: string[] = [];
-      for (const v of input.variables) {
-        // `meta` is `unknown` on the persisted JobInputVariable shape —
-        // narrow to the {type} subset we need without reaching for
-        // VariableMeta (a UI-side type).
-        const type = (v.meta as { type?: string } | undefined)?.type;
-        if (type !== 'secret' && type !== 'bcrypt' && type !== 'rsa-private') continue;
-        const stored = saved[v.name];
-        if (!stored) continue;
-        // Track the reuse even when value already matches — downstream
-        // self-heals only care whether the value came from saved state.
-        reusedSecretNames.add(v.name);
-        if (stored === v.value) continue;
-        v.value = stored;
-        overrideNames.push(v.name);
+      const { overrideNames, sentinelRestored, sentinelUnresolved } =
+        reuseSavedSecrets(input.variables, saved, reusedSecretNames, REDACTION_SENTINEL);
+      if (sentinelRestored.length > 0) {
+        await log(jobId, formatSentinelRestoredLog(sentinelRestored, REDACTION_SENTINEL));
+      }
+      if (sentinelUnresolved.length > 0) {
+        const msg = buildSentinelUnresolvedError(sentinelUnresolved, REDACTION_SENTINEL);
+        await log(jobId, `❌ ${msg}`);
+        await patchJob(jobId, { phase: 'error', endedAt: new Date().toISOString(), error: msg });
+        return;
       }
       if (overrideNames.length > 0) {
         await log(jobId, `🔑 Reusing ${overrideNames.length} saved secret${overrideNames.length === 1 ? '' : 's'} from before the reset (${overrideNames.slice(0, 4).join(', ')}${overrideNames.length > 4 ? `, +${overrideNames.length - 4} more` : ''}) so services with preserved data volumes can still authenticate.`);
