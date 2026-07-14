@@ -115,10 +115,12 @@
           "tests/e2e/**/*.e2e.ts"
         ],
         "ignoreDependencies": [
+          "@tailwindcss/typography",
           "better-sqlite3",
           "lucide-react",
           "react-markdown",
-          "socket.io-client"
+          "socket.io-client",
+          "tailwindcss"
         ]
       },
       "packages/frontend": {
