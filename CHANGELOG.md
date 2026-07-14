@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.164.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.163.0...servicebay-v4.164.0) (2026-07-14)
+
+
+### Features
+
+* **autoloop:** box-access helper + :dev flip-verify-flipback harness ([#2306](https://github.com/mdopp/servicebay/issues/2306) slices 2+3) ([bc6f3e0](https://github.com/mdopp/servicebay/commit/bc6f3e022ade621a8b5020b2b08c8a63c1bfc277))
+* **autoloop:** box-access helper + :dev flip-verify-flipback harness ([#2306](https://github.com/mdopp/servicebay/issues/2306) slices 2+3) ([6866af5](https://github.com/mdopp/servicebay/commit/6866af545b2c3443bcdd4ceb3dcc93259bbb5ee6))
+* **autoloop:** deterministic seal script + "scripts for mechanics, LLMs for judgment" rule ([#2306](https://github.com/mdopp/servicebay/issues/2306)) ([8fbf1a7](https://github.com/mdopp/servicebay/commit/8fbf1a711d52bacdef411c019d83b2d4aef4e249))
+* **autoloop:** deterministic seal script + scripts-for-mechanics rule ([#2306](https://github.com/mdopp/servicebay/issues/2306) slice 1) ([d651a09](https://github.com/mdopp/servicebay/commit/d651a091b8c217731b0a8010e90be71e481bf303))
+* **autoloop:** orchestrator runs autoloop:seal directly — retire the seal sub-agent ([#2306](https://github.com/mdopp/servicebay/issues/2306) slice 4) ([4eb5cbf](https://github.com/mdopp/servicebay/commit/4eb5cbfb21d96133454b376ebc1303d5fb3ac0e7))
+
+
+### Bug Fixes
+
+* **autoloop:** satisfy no-fallthrough in autoloop-box wait-health case (CI lint) ([05d5a2e](https://github.com/mdopp/servicebay/commit/05d5a2ecab85558801e89442dfa1eff1da55be39))
+
 ## [4.163.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.162.1...servicebay-v4.163.0) (2026-07-14)
 
 
