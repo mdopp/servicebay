@@ -25,6 +25,19 @@ type PublicApiRule = {
   /** Match by full-pathname regex. Mutually exclusive with prefix. */
   pattern?: RegExp;
   methods?: ReadonlySet<string>;
+  /**
+   * #2281 — also skip the same-origin CSRF check for this route. Normal public
+   * rules still enforce CSRF (they only skip the session cookie); set this ONLY
+   * for a route whose legitimate caller is a cross-origin, no-Origin client (a
+   * companion app / server-to-server POST) AND whose OWN handler is fail-closed
+   * on a self-supplied credential. `/napi/pair/redeem` qualifies: the pairing
+   * CODE is the credential, it is single-use + constant-time + rate-limited, and
+   * it mints only a READ-scoped token — so there is nothing for a forged
+   * cross-site POST to abuse. Do NOT set this on a header-trust route
+   * (`/napi/pair`): that one must stay CSRF-gated so a direct `:5888` forgery
+   * 403s (its trust flows only from the NPM-injected internal token, #2278).
+   */
+  csrfExempt?: boolean;
 };
 
 const PUBLIC_API_RULES: PublicApiRule[] = [
@@ -60,12 +73,20 @@ const PUBLIC_API_RULES: PublicApiRule[] = [
   // for the requested ABI and 302s to a public GitHub URL. Public because
   // the portal user guide that links it is family-facing — no secrets.
   { prefix: '/api/system/downloads/basicsync', methods: new Set(['GET']) },
+  // #2281 — the ONE public device-pairing redeem surface. A companion app
+  // POSTs `{ code }` here (cross-origin, no Origin, no Bearer) to trade a
+  // pairing code for a read-scoped token. It is `csrfExempt` because its
+  // legitimate caller has no browser Origin; the handler itself is fail-closed
+  // (single-use + constant-time + rate-limited code → read-only token), so the
+  // pairing CODE is the whole credential. This mirrors the route's own comment
+  // ("When `/napi/*` moves behind proxy.ts, add a PUBLIC_API_RULES entry").
+  { prefix: '/napi/pair/redeem', methods: new Set(['POST']), csrfExempt: true },
 ];
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-function isPublicApi(pathname: string, method: string): boolean {
-  return PUBLIC_API_RULES.some(rule => {
+function matchPublicRule(pathname: string, method: string): PublicApiRule | undefined {
+  return PUBLIC_API_RULES.find(rule => {
     let matches = false;
     if (rule.prefix !== undefined) {
       matches = pathname === rule.prefix || pathname.startsWith(rule.prefix + '/');
@@ -75,6 +96,26 @@ function isPublicApi(pathname: string, method: string): boolean {
     if (!matches) return false;
     return !rule.methods || rule.methods.has(method);
   });
+}
+
+function isPublicApi(pathname: string, method: string): boolean {
+  return matchPublicRule(pathname, method) !== undefined;
+}
+
+/** #2281 — a public route flagged to also skip the same-origin CSRF check
+ *  (its legitimate caller has no browser Origin; see {@link PublicApiRule.csrfExempt}). */
+function isCsrfExempt(pathname: string, method: string): boolean {
+  return matchPublicRule(pathname, method)?.csrfExempt === true;
+}
+
+/** True when a state-changing request must be rejected as cross-site: an unsafe
+ *  method that is neither same-origin nor a {@link isCsrfExempt} public route. */
+function failsCsrf(request: NextRequest): boolean {
+  return (
+    !SAFE_METHODS.has(request.method) &&
+    !isSameOrigin(request) &&
+    !isCsrfExempt(request.nextUrl.pathname, request.method)
+  );
 }
 
 // Server-to-server calls from ServiceBay's own post-deploy scripts on
@@ -169,11 +210,22 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const host = request.headers.get('host') ?? '';
 
-  // Apex / www host → portal. Rewrite (not redirect) so the URL bar
-  // stays at home.arpa / www.home.arpa per the v2 design call.
-  // Apply to every path on these hosts so URL guessing (home.arpa/services
-  // etc.) can't escape into the admin surface.
-  if (!pathname.startsWith('/api/')) {
+  // #2281 — `/napi/*` (the native-companion API twins) run through the SAME
+  // internal-token / Bearer / CSRF gate as `/api/*`, because `/napi/pair` is a
+  // `skipAuth:true` forward-auth-header-trust route: a direct `:5888` POST forging
+  // `Remote-User`/`Remote-Groups:admins` without an Origin (and without the
+  // NPM-injected internal token, #2278) MUST be 403'd, or a LAN attacker mints a
+  // pairing code. Before this, the `!startsWith('/api/')` short-circuit let every
+  // `/napi/*` request straight through, CSRF-unchecked. These routes never rely on
+  // a session cookie (they are token- or forward-auth-gated at the handler via
+  // `skipAuth`/`tokenScope`), so we run the gate but fall through to the handler
+  // rather than the cookie check — see the isNapi branch below.
+  const isNapi = pathname.startsWith('/napi/');
+  if (!pathname.startsWith('/api/') && !isNapi) {
+    // Apex / www host → portal. Rewrite (not redirect) so the URL bar
+    // stays at home.arpa / www.home.arpa per the v2 design call.
+    // Apply to every path on these hosts so URL guessing (home.arpa/services
+    // etc.) can't escape into the admin surface.
     if (await isPortalApexHost(host) && !pathname.startsWith('/portal')) {
       const rewritten = request.nextUrl.clone();
       rewritten.pathname = '/portal';
@@ -196,9 +248,16 @@ export async function proxy(request: NextRequest) {
   // check. An invalid/absent Bearer just falls through to the normal checks.
   if (await isValidBearerToken(request)) return NextResponse.next();
 
-  if (!SAFE_METHODS.has(request.method) && !isSameOrigin(request)) {
+  if (failsCsrf(request)) {
     return NextResponse.json({ error: 'Forbidden: cross-site request' }, { status: 403 });
   }
+
+  // #2281 — `/napi/*` routes carry their own auth at the handler (`skipAuth` +
+  // forward-auth headers, or `tokenScope` Bearer) and never use a session
+  // cookie. Having passed the internal-token/Bearer/CSRF gate above, let them
+  // reach the handler — do NOT fall into the admin session-cookie check below
+  // (which would 401 every token/forward-auth companion request).
+  if (isNapi) return NextResponse.next();
 
   if (isPublicApi(pathname, request.method)) return NextResponse.next();
 
@@ -222,6 +281,11 @@ export const config = {
   // the middleware.
   matcher: [
     '/api/:path*',
+    // #2281 — the native-companion API twins must also pass through the gate so
+    // the CSRF/internal-token check applies to `/napi/pair` (was previously
+    // short-circuited by the non-`/api/` bypass, letting a LAN header-forgery
+    // POST straight through).
+    '/napi/:path*',
     '/((?!_next/static|_next/image|favicon|icon\\.svg|.*\\.(?:png|jpg|jpeg|svg|webp|gif|ico|woff2?|ttf)).*)',
   ],
 };

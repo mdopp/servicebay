@@ -263,24 +263,27 @@ export function buildAuthSkipLocations(paths: string[] | undefined): string {
 }
 
 /**
- * #2278 — nginx `location` block that makes the ServiceBay session-mint routes
+ * #2278 / #2281 — nginx `location` block that makes ServiceBay's forward-auth
+ * header-trust routes reachable server-to-server through NPM, WITHOUT weakening
+ * the CSRF gate. Covers the two session-mint routes
  * (`/api/auth/delegated-admin-from-authelia-session` and
- * `/api/auth/token-from-authelia-session`) reachable server-to-server through
- * NPM, WITHOUT weakening the CSRF gate.
+ * `/api/auth/token-from-authelia-session`, #2278) AND the pairing-code mint
+ * `/napi/pair` (#2281) — all three `skipAuth:true` routes that trust
+ * NPM-injected `Remote-User`/`Remote-Groups` and must be gated the same way.
  *
- * THE PROBLEM (issue #2278): those two routes are `skipAuth:true` and expect a
+ * THE PROBLEM (issues #2278/#2281): these routes are `skipAuth:true` and expect a
  * forward-auth-header-only POST (NPM-injected `Remote-User`/`Remote-Groups`, NO
- * Bearer, NO Origin — the handler refuses a Bearer to block self-elevation). But
- * `proxy.ts`'s CSRF guard 403s that shape *before* the handler runs: it is not
- * `isInternalCall` (no `X-SB-Internal-Token`), not a valid Bearer, and not
- * same-origin (no Origin/Referer on a server-to-server call). There was no
- * working call path.
+ * Bearer, NO Origin — the handler refuses a Bearer to block self-elevation). Once
+ * `/napi/*` is routed through `proxy.ts` (#2281), `proxy.ts`'s CSRF guard 403s
+ * that shape *before* the handler runs: it is not `isInternalCall` (no
+ * `X-SB-Internal-Token`), not a valid Bearer, and not same-origin (no
+ * Origin/Referer on a server-to-server call). There was no working call path.
  *
  * THE FIX (operator decision): on the SB host's NPM route we add a location for
- * exactly these two paths that (a) runs Authelia forward-auth to inject the
- * trusted `Remote-User`/`Remote-Groups`, AND (b) injects
+ * exactly these paths that (a) runs Authelia forward-auth to inject the trusted
+ * `Remote-User`/`Remote-Groups`, AND (b) injects
  * `X-SB-Internal-Token: <internalToken>` — the AUTH_SECRET-derived token
- * `proxy.ts:isInternalCall` already accepts (proxy.ts:187 bypasses CSRF for it).
+ * `proxy.ts:isInternalCall` already accepts (proxy.ts bypasses CSRF for it).
  * So a request coming THROUGH NPM carries the token → passes the CSRF gate →
  * reaches the handler, which then applies its own no-Bearer / Remote-Groups∋admins
  * / LLDAP re-derive checks.
@@ -291,26 +294,32 @@ export function buildAuthSkipLocations(paths: string[] | undefined): string {
  * without an Origin) still hits `proxy.ts`'s CSRF 403 — it never reaches the
  * handler. Trust flows from NPM's network position, exactly like the existing
  * post-deploy internal callbacks; no standing AUTH_SECRET-derived credential
- * lives in any consumer pod.
+ * lives in any consumer pod. For `/napi/pair` this closes the LAN header-forgery
+ * hole: a direct `:5888` POST forging `Remote-User: mdopp` / `Remote-Groups:
+ * admins` can no longer mint a pairing code (#2281).
  *
  * The token is rendered into the config at DEPLOY time (`getInternalApiToken()`,
  * AUTH_SECRET-derived) — never a committed literal.
  *
  * The location uses `location ~ ^…$` (regex, exact set) so it wins over the
- * default `location /` and matches ONLY the two mint paths. It carries its OWN
- * `auth_request /authelia` (this host has no server-level forward-auth — the
- * portal apex is intentionally anonymous), and reuses the shared
- * `location = /authelia` internal subrequest emitted by
- * {@link AUTHELIA_FORWARD_AUTH_CORE}. The auth-request `X-Original-URL` is
- * pointed at `www.<domain>` (the `*.<domain>` `one_factor`-covered host), NOT
- * the apex — the apex is Authelia default-deny (ADR 0006), so probing it yields
- * no identity (mirrors `portal/auth.ts`). Pass `undefined`/'' for `wwwHost` on a
- * host that is already itself under the wildcard rule (probe the request's own
- * host).
+ * default `location /` and matches ONLY these three paths (anchored — nothing
+ * broader, e.g. `/napi/pair/redeem` (a PUBLIC route that must NOT get the token)
+ * or `/napi/services`, slips through). It carries its OWN `auth_request
+ * /authelia` (this host has no server-level forward-auth — the portal apex is
+ * intentionally anonymous), and reuses the shared `location = /authelia` internal
+ * subrequest emitted by {@link AUTHELIA_FORWARD_AUTH_CORE}. The auth-request
+ * `X-Original-URL` is pointed at `www.<domain>` (the `*.<domain>`
+ * `one_factor`-covered host), NOT the apex — the apex is Authelia default-deny
+ * (ADR 0006), so probing it yields no identity (mirrors `portal/auth.ts`). Pass
+ * `undefined`/'' for `wwwHost` on a host that is already itself under the
+ * wildcard rule (probe the request's own host).
  */
 export const AUTHELIA_SESSION_MINT_PATHS = [
   '/api/auth/delegated-admin-from-authelia-session',
   '/api/auth/token-from-authelia-session',
+  // #2281 — the pairing-code mint shares the exact same forward-auth header
+  // trust model; it is gated by the same token injection.
+  '/napi/pair',
 ] as const;
 
 export function buildAutheliaSessionMintLocation(
@@ -318,9 +327,10 @@ export function buildAutheliaSessionMintLocation(
   wwwHost: string | undefined,
   autheliaPort: string = DEFAULT_AUTHELIA_PORT,
 ): string {
-  // Anchored alternation matching EXACTLY the two mint paths (regex location so
-  // it beats `location /`; `$` anchors so nothing broader slips through).
-  const pathRegex = `^/api/auth/(?:delegated-admin|token)-from-authelia-session$`;
+  // Anchored alternation matching EXACTLY the three forward-auth-trust paths
+  // (regex location so it beats `location /`; `$` anchors so nothing broader —
+  // e.g. the PUBLIC `/napi/pair/redeem` — slips through and gets the token).
+  const pathRegex = `^(?:/api/auth/(?:delegated-admin|token)-from-authelia-session|/napi/pair)$`;
   // The auth-request subrequest target. On the anonymous portal apex the
   // request's own host is default-deny, so probe the wildcard-covered
   // `www.<domain>` instead (same rationale as portal/auth.ts). When wwwHost is
