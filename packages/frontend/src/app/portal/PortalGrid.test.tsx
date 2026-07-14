@@ -214,6 +214,60 @@ describe('Calendar one-tap iOS setup preserved behind disclosure (#2126)', () =>
   });
 });
 
+describe('generic URL-driven asset kinds — PWA install + APK download (#2295)', () => {
+  const pwaCard: PortalCard = {
+    ...baseCard,
+    id: 'some-app:APP_SUBDOMAIN',
+    name: 'some-app',
+    subdomainVar: 'APP_SUBDOMAIN',
+    label: 'Some App',
+    setupAssets: [
+      { kind: 'pwa_install', url: 'https://app.home.arpa', label: 'Install to Home Screen', description: 'Add it to your phone.' },
+    ],
+  };
+
+  const apkCard: PortalCard = {
+    ...baseCard,
+    id: 'some-app:APK_SUBDOMAIN',
+    name: 'some-app',
+    subdomainVar: 'APK_SUBDOMAIN',
+    label: 'Some APK App',
+    setupAssets: [
+      { kind: 'apk_download', url: 'https://github.com/owner/repo/releases/latest/download/app.apk', label: 'Download the app (Android)' },
+    ],
+  };
+
+  it('renders an "Install to Home Screen" card that opens a QR modal to the service url', () => {
+    render(<PortalGrid cards={[pwaCard]} />);
+    openDisclosure('Some App');
+    const btn = screen.getByRole('button', { name: /install to home screen/i });
+    expect(btn).toBeDefined();
+    // Modal QR + CTA to the service url appear only after clicking.
+    expect(screen.queryByRole('heading', { name: /add to home screen/i })).toBeNull();
+    fireEvent.click(btn);
+    expect(screen.getByRole('heading', { name: /add to home screen/i })).toBeDefined();
+    const cta = screen.getByRole('link', { name: /open to install/i });
+    expect(cta.getAttribute('href')).toBe('https://app.home.arpa');
+  });
+
+  it('renders an APK download card with a direct download link + a QR modal to the release url', () => {
+    render(<PortalGrid cards={[apkCard]} />);
+    openDisclosure('Some APK App');
+    const download = screen.getByRole('link', { name: /download the app \(android\)/i });
+    expect(download.getAttribute('href')).toBe('https://github.com/owner/repo/releases/latest/download/app.apk');
+    // The QR modal opens from the "Scan QR to phone" button.
+    fireEvent.click(screen.getByRole('button', { name: /scan qr to phone/i }));
+    expect(screen.getByRole('heading', { name: /download the app/i })).toBeDefined();
+    const link = screen.getByRole('link', { name: /open the download link directly/i });
+    expect(link.getAttribute('href')).toBe('https://github.com/owner/repo/releases/latest/download/app.apk');
+  });
+
+  it('is service-agnostic — neither card hard-codes Solaris', () => {
+    render(<PortalGrid cards={[pwaCard, apkCard]} />);
+    expect(screen.queryByText(/solaris/i)).toBeNull();
+  });
+});
+
 describe('per-service accent identity (#2126)', () => {
   const chipOf = (label: string): HTMLElement => {
     const chip = screen.getByRole('heading', { name: label })

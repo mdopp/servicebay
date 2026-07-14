@@ -18,6 +18,7 @@ import { Card } from '@/components/ui';
 import type { PortalCard } from '@/lib/portal/services';
 import type { AppPlatform, PortalAction, PortalIconName, SetupAssetKind } from '@/lib/portal/userGuide';
 import { ACCENT_CHIP_CLASS, serviceAccent, groupCardsBySection } from './portalAccent';
+import { PwaInstallButton, ApkDownloadButton } from './portalUrlAssets';
 
 type IconComponent = typeof Camera;
 
@@ -89,6 +90,8 @@ const ASSET_LABELS: Record<SetupAssetKind, { label: string; icon: IconComponent 
   audiobookshelf_deeplink: { label: 'Open in Audiobookshelf app', icon: Smartphone },
   syncthing_qr: { label: 'Pair Syncthing device', icon: QrCode },
   basicsync_install_qr: { label: 'Install BasicSync on your phone', icon: Download },
+  pwa_install: { label: 'Add to Home Screen', icon: Smartphone },
+  apk_download: { label: 'Download the app (Android)', icon: Download },
 };
 
 /** Coarse user-agent sniff for iOS devices — iPhone / iPad / iPod.
@@ -468,6 +471,12 @@ function SetupAssetButton({
   }
   if (asset.kind === 'basicsync_install_qr') {
     return <BasicSyncInstallQrButton label={label} description={asset.description} Icon={Icon} />;
+  }
+  if (asset.kind === 'pwa_install' && asset.url) {
+    return <PwaInstallButton url={asset.url} label={label} description={asset.description} Icon={Icon} />;
+  }
+  if (asset.kind === 'apk_download' && asset.url) {
+    return <ApkDownloadButton url={asset.url} label={label} description={asset.description} Icon={Icon} />;
   }
   return null;
 }

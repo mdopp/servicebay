@@ -164,6 +164,60 @@ setup_assets:
     });
   });
 
+  it('parses the pwa_install setup-asset kind with its url (service-agnostic)', () => {
+    const raw = `---
+setup_assets:
+  - kind: "pwa_install"
+    url: "https://home.example.com"
+    label: "Install to Home Screen"
+    description: "Add this to your phone."
+---
+`;
+    const result = parseUserGuide(raw, 'some-service');
+    expect(result!.frontmatter.setup_assets).toHaveLength(1);
+    expect(result!.frontmatter.setup_assets?.[0]).toEqual({
+      kind: 'pwa_install',
+      url: 'https://home.example.com',
+      label: 'Install to Home Screen',
+      description: 'Add this to your phone.',
+    });
+  });
+
+  it('parses the apk_download setup-asset kind with its release url', () => {
+    const raw = `---
+setup_assets:
+  - kind: "apk_download"
+    url: "https://github.com/owner/repo/releases/latest/download/app.apk"
+---
+`;
+    const result = parseUserGuide(raw, 'some-service');
+    expect(result!.frontmatter.setup_assets).toHaveLength(1);
+    expect(result!.frontmatter.setup_assets?.[0]).toEqual({
+      kind: 'apk_download',
+      url: 'https://github.com/owner/repo/releases/latest/download/app.apk',
+    });
+  });
+
+  it('drops a url-driven asset (pwa_install / apk_download) with a missing or unsafe url', () => {
+    const raw = `---
+setup_assets:
+  - kind: "pwa_install"
+  - kind: "apk_download"
+    url: "javascript:alert(1)"
+  - kind: "pwa_install"
+    url: "//evil.example/x"
+  - kind: "apk_download"
+    url: "https://ok.example/app.apk"
+---
+`;
+    const result = parseUserGuide(raw, 'x');
+    expect(result!.frontmatter.setup_assets).toHaveLength(1);
+    expect(result!.frontmatter.setup_assets?.[0]).toEqual({
+      kind: 'apk_download',
+      url: 'https://ok.example/app.apk',
+    });
+  });
+
   it('drops setup_assets entries with non-string kind', () => {
     const raw = `---
 setup_assets:

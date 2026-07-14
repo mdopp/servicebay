@@ -198,11 +198,18 @@ export async function fetchSyncthingDeviceId(node: string = 'Local'): Promise<st
   }
 }
 
-/** Resolve any setup-asset kind into its concrete artifact. */
+/** Resolve any setup-asset kind into its concrete artifact.
+ *
+ *  `url` carries the frontmatter-declared target for the URL-driven
+ *  kinds (`pwa_install`, `apk_download`) — those have no server
+ *  artifact, so the resolver simply validates + echoes the URL back
+ *  (the portal renders the QR/CTA client-side from it). Ignored for
+ *  the other kinds. */
 export async function resolveSetupAsset(
   kind: SetupAssetKind,
   serviceName: string,
   subdomainVar?: string,
+  url?: string,
 ): Promise<{ kind: SetupAssetKind; data: string } | null> {
   switch (kind) {
     case 'ios_calendar_profile': {
@@ -222,6 +229,15 @@ export async function resolveSetupAsset(
       // static `/api/system/downloads/basicsync` URL, no server
       // artifact to resolve. Nothing to fetch here.
       return null;
+    case 'pwa_install':
+    case 'apk_download':
+      // URL-driven, service-agnostic: the target comes from the
+      // service's user-guide.md frontmatter (a PWA URL or an APK
+      // release URL). There's no server artifact to build — validate
+      // the URL is an absolute http(s) link and echo it back so the
+      // client can render the QR + download/Add-to-Home-Screen CTA.
+      // A missing/invalid URL resolves to null (route returns 404).
+      return url && /^https?:\/\//i.test(url) ? { kind, data: url } : null;
   }
 }
 
