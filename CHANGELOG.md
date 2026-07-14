@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.163.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.162.1...servicebay-v4.163.0) (2026-07-14)
+
+
+### Features
+
+* **auth:** non-expiring read-only machine token for unattended consumers ([#2299](https://github.com/mdopp/servicebay/issues/2299)) ([ea91ac6](https://github.com/mdopp/servicebay/commit/ea91ac608031c20c85fd27ebb54fcd8b6576f879))
+
 ## [4.162.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.162.0...servicebay-v4.162.1) (2026-07-14)
 
 
