@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.165.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.164.0...servicebay-v4.165.0) (2026-07-15)
+
+
+### Features
+
+* **napi:** add POST /napi/services/:name/upgrade to apply a pending upgrade ([53b0831](https://github.com/mdopp/servicebay/commit/53b0831de23077e6b4be19979928d350b74a7c2c)), closes [#2313](https://github.com/mdopp/servicebay/issues/2313)
+* **napi:** POST /napi/services/[name]/upgrade — companion-triggered service upgrade ([#2313](https://github.com/mdopp/servicebay/issues/2313)) ([f1eb0ed](https://github.com/mdopp/servicebay/commit/f1eb0edd20ce02511b4340fc55615cbfba586109))
+
 ## [4.164.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.163.0...servicebay-v4.164.0) (2026-07-14)
 
 
