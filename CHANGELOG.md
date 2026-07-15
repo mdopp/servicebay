@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.166.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.166.0...servicebay-v4.166.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* **registry:** fall back to registries when a 'Built-in' source misses ([#2320](https://github.com/mdopp/servicebay/issues/2320)) ([fec44ae](https://github.com/mdopp/servicebay/commit/fec44aebafbae6215686acd1b95f38f4726a8934))
+* **registry:** fall back to registries when a 'Built-in' source misses ([#2320](https://github.com/mdopp/servicebay/issues/2320)) ([49d280c](https://github.com/mdopp/servicebay/commit/49d280c8efa2f8f28805e9d045672d237340c2bd))
+
 ## [4.166.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.165.0...servicebay-v4.166.0) (2026-07-15)
 
 
