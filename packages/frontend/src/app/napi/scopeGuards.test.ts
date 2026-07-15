@@ -67,12 +67,15 @@ describe('/napi/* read endpoints are read-scoped in the handler OPTIONS (#2252, 
  * higher scope in the withApiHandlerParams OPTIONS — a `read`-only device token
  * (the pairing default, #2251) must be unable to reach these:
  *   - operate (start/stop/restart) → 'lifecycle'
+ *   - upgrade (apply template/image re-deploy) → 'mutate' (#2313 — heavier than
+ *     operate's reversible verbs; a read OR a lifecycle token must be rejected)
  *   - approve / deny verdict       → 'mutate'
  * Pinning the exact scope here is what stops a future edit from silently
  * widening a read token's reach into service control or approval verdicts.
  */
 const MUTATE_ROUTES: Array<{ path: string; scope: string }> = [
   { path: 'services/[name]/operate/route.ts', scope: 'lifecycle' },
+  { path: 'services/[name]/upgrade/route.ts', scope: 'mutate' },
   { path: 'approvals/[id]/approve/route.ts', scope: 'mutate' },
   { path: 'approvals/[id]/deny/route.ts', scope: 'mutate' },
 ];
