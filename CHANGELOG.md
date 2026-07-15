@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [4.166.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.165.0...servicebay-v4.166.0) (2026-07-15)
+
+
+### Features
+
+* **post-deploy:** ServiceBay mints the durable read token as SB_READ_TOKEN ([#2317](https://github.com/mdopp/servicebay/issues/2317)) ([550d767](https://github.com/mdopp/servicebay/commit/550d7678fcb063a337e82be57c3a91f8aa57f8fe))
+* **post-deploy:** ServiceBay mints the durable read token as SB_READ_TOKEN ([#2317](https://github.com/mdopp/servicebay/issues/2317)) ([76e7f82](https://github.com/mdopp/servicebay/commit/76e7f826a553dcb539448a6f717a863873cfbc18))
+
 ## [4.165.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.164.0...servicebay-v4.165.0) (2026-07-15)
 
 
