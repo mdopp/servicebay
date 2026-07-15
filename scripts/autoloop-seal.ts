@@ -56,6 +56,11 @@ export const PATH_MANDATED_PATHS: readonly string[] = [
   // request-path gate + middleware (proxy.ts CSRF/internal-token gate)
   'packages/frontend/src/proxy.ts',
   'packages/frontend/src/middleware.ts',
+  // the /napi companion surface — token-scoped, proxy-bypassed routes the
+  // Solaris app calls (read + mutating operate/upgrade/approvals). A change
+  // here must box-verify on the real device path (#2313 dogfood found this
+  // gap — it was only caught by gate=verify before).
+  'packages/frontend/src/app/napi/',
   // user-facing surfaces that gate=verify covers
   'packages/frontend/src/app/portal/',
   'packages/frontend/src/app/(dashboard)/',
