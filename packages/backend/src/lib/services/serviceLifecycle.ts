@@ -570,20 +570,63 @@ export class ServiceLifecycle {
     }
 
     /**
+     * Mint a durable, read-scoped Bearer token for a service's post-deploy to
+     * hand to its long-running consumers (#818). The token is minted HERE, in
+     * ServiceBay — NOT by the external post-deploy script — because minting a
+     * `neverExpires` credential idempotently is the platform's job, not a
+     * template's: the post-deploy can't recover a lost secret, can't dedupe
+     * without a round-trip, and lives in an external registry that may ship a
+     * stale copy (the #818 failure mode — the read token was never minted).
+     *
+     * Fresh each deploy (prior same-named tokens revoked → no accumulation, no
+     * plaintext-secret persistence). The token never expires, so it stays valid
+     * between deploys; the consumer just re-reads the injected value each deploy.
+     * Read scope only — the route-level `neverExpires ⇒ read-only` guard (#2299)
+     * is honoured here too (fail-closed to `read`). Best-effort: a mint failure
+     * returns null and the post-deploy simply runs without SB_READ_TOKEN.
+     */
+    private static async mintDurableReadToken(serviceName: string): Promise<string | null> {
+        try {
+            const { listTokens, createToken, revokeToken } = await import('@/lib/auth/apiTokens');
+            const tokenName = `postdeploy-read:${serviceName}`;
+            for (const t of (await listTokens()).filter(t => t.name === tokenName)) {
+                await revokeToken(t.id);
+            }
+            const { secret } = await createToken({
+                name: tokenName,
+                scopes: ['read'],
+                neverExpires: true,
+                createdBy: `internal:post-deploy:${serviceName}`,
+            });
+            return secret;
+        } catch (e) {
+            logger.warn('ServiceManager', `Could not mint durable read token for ${serviceName}:`, e);
+            return null;
+        }
+    }
+
+    /**
      * Build post-deploy script env file content with SB metadata.
      */
     private static async buildPostDeployEnvLines(
         nodeName: string,
+        serviceName: string,
         env: Record<string, string>,
     ): Promise<string> {
         const sbPort = process.env.PORT || '5888';
         const sbApiUrl = `http://localhost:${sbPort}`;
         const { getInternalApiToken } = await import('@/lib/auth/internalToken');
         const sbApiToken = getInternalApiToken();
+        // Durable, read-scoped Bearer for the service's long-running consumers
+        // (#818). Distinct from SB_API_TOKEN (the all-scopes internal HMAC, sent
+        // as X-SB-Internal-Token) — this is a real, least-privilege sb_ token the
+        // consumer presents as `Authorization: Bearer` and that never lapses.
+        const sbReadToken = await ServiceLifecycle.mintDurableReadToken(serviceName);
         const envLines = [
             `SB_NODE=${nodeName}`,
             `SB_API_URL=${sbApiUrl}`,
             `SB_API_TOKEN=${sbApiToken}`,
+            ...(sbReadToken ? [`SB_READ_TOKEN=${sbReadToken}`] : []),
             ...Object.entries(env).map(([k, v]) => {
                 if (typeof v !== 'string') return null;
                 const esc = v.replace(/'/g, `'\\''`);
@@ -687,7 +730,7 @@ export class ServiceLifecycle {
             return;
         }
 
-        const envLines = await ServiceLifecycle.buildPostDeployEnvLines(nodeName, env);
+        const envLines = await ServiceLifecycle.buildPostDeployEnvLines(nodeName, name, env);
         const envPath = `${scriptDir}/${name}.env`;
         const envWrite = await agent.sendCommand('write_file', { path: envPath, content: envLines + '\n' });
         if (envWrite !== 'ok') {
