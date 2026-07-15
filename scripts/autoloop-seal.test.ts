@@ -15,6 +15,12 @@ describe('isPathMandated', () => {
     expect(isPathMandated('packages/frontend/src/proxy.ts')).toBe(true);
   });
 
+  it('matches the /napi companion surface (mutating device routes — #2313)', () => {
+    expect(isPathMandated('packages/frontend/src/app/napi/services/[name]/upgrade/route.ts')).toBe(true);
+    expect(isPathMandated('packages/frontend/src/app/napi/services/[name]/operate/route.ts')).toBe(true);
+    expect(isPathMandated('packages/frontend/src/app/napi/upgrades/route.ts')).toBe(true);
+  });
+
   it('matches user-facing surfaces (portal / dashboard / the wizard file)', () => {
     expect(isPathMandated('packages/frontend/src/app/portal/PortalGrid.tsx')).toBe(true);
     expect(isPathMandated('packages/frontend/src/app/(dashboard)/settings/page.tsx')).toBe(true);
