@@ -1117,6 +1117,10 @@ export async function getTemplatePostDeployScript(name: string, source?: string)
  *   source (a registry name)  → only that registry
  *   no source                 → local → every configured registry →
  *                               bundled built-in templates
+ *   source === 'Built-in'     → built-in first, then fall back to the
+ *                               registries (a stale/default 'Built-in' source
+ *                               record for a registry-shipped template must
+ *                               still resolve — #818)
  *
  * Returns the raw file content, or `null` when the file isn't present in
  * the resolved location(s). This is the single primitive behind
@@ -1145,19 +1149,36 @@ export async function readTemplateFile(
     return tryRead(await resolveRegistryItemPath(source, 'template', name));
   }
 
+  const config = await getConfig();
+  const registries = getRegistries(config);
+
   if (!source) {
+    // No source → local → every registry → built-in (order unchanged).
     const local = await tryRead(localItemPath('template', name));
     if (local !== null) return local;
-    const config = await getConfig();
-    const registries = getRegistries(config);
     for (const reg of registries) {
       const found = await tryRead(await resolveRegistryItemPath(reg.name, 'template', name));
       if (found !== null) return found;
     }
+    // `name` is request-supplied → single-segment barrier.
+    return tryRead(safeJoin(TEMPLATES_PATH, name));
   }
 
-  // `name` is request-supplied → single-segment barrier.
-  return tryRead(safeJoin(TEMPLATES_PATH, name));
+  // source === 'Built-in': honour the explicit request (built-in first), but
+  // if it MISSES, fall back to the registries. A template recorded with the
+  // default/stale 'Built-in' source that is actually shipped by a registry
+  // (e.g. `solaris` from the solbay/oscar registry) must still resolve — else
+  // its post-deploy is silently skipped. This was the root of #818: the
+  // solaris post-deploy that mints the /napi read token never ran because the
+  // saved JobInput carried templateSource:'Built-in', so getTemplatePostDeploy
+  // Script returned null and the deploy quietly shipped with no post-deploy.
+  const builtIn = await tryRead(safeJoin(TEMPLATES_PATH, name));
+  if (builtIn !== null) return builtIn;
+  for (const reg of registries) {
+    const found = await tryRead(await resolveRegistryItemPath(reg.name, 'template', name));
+    if (found !== null) return found;
+  }
+  return null;
 }
 
 /**

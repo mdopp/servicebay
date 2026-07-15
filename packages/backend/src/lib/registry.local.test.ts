@@ -43,6 +43,7 @@ import {
   getStackManifest,
   readTemplateFile,
   getTemplateUserGuide,
+  getTemplatePostDeployScript,
 } from './registry';
 
 const LOCAL_DIR = path.join(ROOTS.dataRoot, 'local-templates');
@@ -179,6 +180,32 @@ describe('local persistent source (#1919)', () => {
 
     // A file the template doesn't ship resolves to null, not a throw.
     expect(await readTemplateFile('solaris', 'does-not-exist.md')).toBeNull();
+  });
+
+  it('resolves a registry template through a stale "Built-in" source record (#818 fallback)', async () => {
+    // The solaris post-deploy that mints the /napi read token was silently
+    // skipped for weeks: its saved JobInput carried templateSource:'Built-in',
+    // and readTemplateFile('post-deploy.py', 'Built-in') looked ONLY in the
+    // bundled built-in dir (where solaris isn't) → returned null → the deploy
+    // shipped with no post-deploy. It's actually shipped by a registry, so a
+    // 'Built-in' miss must fall back to the registries.
+    // Manifest-less registry (no servicebay.json) → legacy layout
+    // REGISTRIES_DIR/<reg>/templates/<name>/. REGISTRIES_DIR lives under the
+    // config dir (CONTAINER_CONFIG_DIR), not the data mount.
+    const regDir = path.join(ROOTS.cfgRoot, 'registries', 'solbay', 'templates', 'solaris');
+    await fs.mkdir(regDir, { recursive: true });
+    await fs.writeFile(path.join(regDir, 'post-deploy.py'), '# mints SB_READ_TOKEN\nprint("solaris post-deploy")');
+    mockConfigState.registries.items = [{ name: 'solbay', url: 'https://github.com/mdopp/solbay' }];
+
+    // The stale/default 'Built-in' source still resolves it via the fallback.
+    const viaBuiltin = await getTemplatePostDeployScript('solaris', 'Built-in');
+    expect(viaBuiltin).toContain('mints SB_READ_TOKEN');
+    // …and no-source resolution finds it too.
+    expect(await getTemplatePostDeployScript('solaris')).toContain('mints SB_READ_TOKEN');
+    // A genuinely-absent template stays null (no false positive).
+    expect(await getTemplatePostDeployScript('nonesuch', 'Built-in')).toBeNull();
+
+    await fs.rm(path.join(ROOTS.cfgRoot, 'registries'), { recursive: true, force: true });
   });
 
   it('returns no local items when the local dir is absent', async () => {
