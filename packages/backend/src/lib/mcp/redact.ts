@@ -1,8 +1,8 @@
 /**
  * Secret-redaction helpers for MCP read tools (#321).
  *
- * Three of the read-scope MCP tools (`get_service_files`,
- * `get_service_logs`, `get_container_logs`) can otherwise hand back the
+ * The read-scope MCP tools `get_service_files` and `get_logs` (the
+ * service/container log sources) can otherwise hand back the
  * very secrets the operator typed into the install wizard:
  *
  *  - The kube YAML returned by `get_service_files` has env vars like

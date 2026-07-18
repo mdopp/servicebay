@@ -153,7 +153,7 @@ describe('access-request MCP tools (#1818)', () => {
     await client.close();
   });
 
-  it('list_access_requests filters by status (pending by default, approved/denied/all)', async () => {
+  it('list_requests(type="access") filters by status (pending by default, approved/denied/all)', async () => {
     const { client } = await connectClient();
     await client.callTool({ name: 'file_access_request', arguments: { subject: 'Pending One' } });
     await client.callTool({ name: 'file_access_request', arguments: { subject: 'Approved One' } });
@@ -163,18 +163,18 @@ describe('access-request MCP tools (#1818)', () => {
     store.accessRequests![2].status = 'denied';
     store.accessRequests![3].status = 'resolved'; // legacy → approved
 
-    const pending = parse(await client.callTool({ name: 'list_access_requests', arguments: {} }));
+    const pending = parse(await client.callTool({ name: 'list_requests', arguments: { type: 'access' } }));
     expect(pending.requests.map((r: { subject: string }) => r.subject)).toEqual(['Pending One']);
 
-    const approved = parse(await client.callTool({ name: 'list_access_requests', arguments: { status: 'approved' } }));
+    const approved = parse(await client.callTool({ name: 'list_requests', arguments: { type: 'access', status: 'approved' } }));
     expect(approved.requests.map((r: { subject: string }) => r.subject)).toEqual(['Approved One', 'Legacy Resolved']);
     // Legacy 'resolved' is normalized in the response too.
     expect(approved.requests.every((r: { status: string }) => r.status === 'approved')).toBe(true);
 
-    const denied = parse(await client.callTool({ name: 'list_access_requests', arguments: { status: 'denied' } }));
+    const denied = parse(await client.callTool({ name: 'list_requests', arguments: { type: 'access', status: 'denied' } }));
     expect(denied.requests.map((r: { subject: string }) => r.subject)).toEqual(['Denied One']);
 
-    const all = parse(await client.callTool({ name: 'list_access_requests', arguments: { status: 'all' } }));
+    const all = parse(await client.callTool({ name: 'list_requests', arguments: { type: 'access', status: 'all' } }));
     expect(all.requests).toHaveLength(4);
     await client.close();
   });

@@ -3,10 +3,11 @@
 ServiceBay exposes a [Model Context Protocol](https://modelcontextprotocol.io)
 server at `/mcp` so an AI assistant — Claude Code, Claude Desktop, or anything
 else that speaks MCP — can drive your homelab directly. Available tools include
-`list_services`, `start_service` / `stop_service` / `restart_service`,
-`update_service_yaml`, `add_proxy_route`, `run_backup`, `get_health_checks`,
-`exec_command`, and ~30 others. Sensitive fields (`auth.passwordHash`,
-SMTP/OIDC secrets) are redacted on read and write-allowlisted.
+`list_services`, `manage_service` (start/stop/restart via an `action`),
+`get_logs` (service/container/podman via a `source`), `update_service_yaml`,
+`add_proxy_route`, `run_backup`, `get_health_checks`, `exec_command`, and ~30
+others. Sensitive fields (`auth.passwordHash`, SMTP/OIDC secrets) are redacted
+on read and write-allowlisted.
 
 ## Quick start (Claude Code)
 
@@ -136,16 +137,80 @@ Claude Code) to see the live tool registry on your version.
 
 | Category | Tools |
 |----------|-------|
-| Services | `list_services`, `start_service`, `stop_service`, `restart_service`, `deploy_service`, `update_service_yaml`, `delete_service`, `rename_service` |
-| Containers | `list_containers`, `get_container_logs`, `get_podman_logs` |
+| Services | `list_services`, `manage_service` (`action: start\|stop\|restart`), `deploy_service`, `update_service_yaml`, `delete_service`, `rename_service` |
+| Containers / logs | `list_containers`, `get_logs` (`source: service\|container\|podman`) |
+| Templates | `list_templates`, `get_template_artifact` (`artifact: readme\|yaml\|variables`), `install_template` |
 | Health | `get_health_checks`, `create_health_check`, `delete_health_check`, `run_check_now` |
-| Proxy | `get_proxy_routes`, `add_proxy_route`, `remove_proxy_route` |
+| Proxy | `get_proxy_routes`, `add_proxy_route`, `create_proxy_route`, `remove_proxy_route` |
+| Requests | `list_requests` (`type: access\|token`), `file_access_request`, `get_access_request_status`, `request_token`, `poll_token_request` |
 | Backups | `list_backups`, `run_backup`, `restore_backup` |
 | System | `list_nodes`, `get_system_info`, `get_network_graph`, `get_config`, `update_config`, `exec_command`, `get_channel`, `set_channel` |
+| Knowledge | `list_assists`, `get_assist`, `get_service_standards` (`flavor: servicebay\|generic`) |
+
+The three merged tools above (`manage_service`, `get_logs`,
+`get_template_artifact`) plus `list_requests` replaced nine (+2) narrower tools
+in #2324 — a **breaking change** to the tool surface. Each stays in its original
+scope: `get_logs` / `get_template_artifact` / `list_requests` are `read`,
+`manage_service` is `lifecycle`.
 
 Sensitive config fields (`auth.passwordHash`, `oidc.clientSecret`, SMTP
 passwords) are redacted from `get_config` and write-allowlisted in
 `update_config`.
+
+`get_service_standards` (`read` scope) returns a curated *pointer* index for
+building a new project. `flavor: 'servicebay'` (default) yields four blocks —
+`mustRespectAdrs` (the platform ADRs a new service is bound by, with titles
+scanned live from `docs/adr/*.md` so they never drift), `enforcedInvariants`
+(pointer to `docs/ARCHITECTURE_INVARIANTS.md` + the gate commands and 70 %
+diff-coverage floor), `assistsToRead` (ids resolvable via `get_assist`), and
+`templateContract` (pointers to `docs/TEMPLATE_AUTHORING.md` + `templates/CLAUDE.md`).
+`flavor: 'generic'` yields platform-agnostic dev standards (commit convention,
+release discipline, coverage floor, secret hygiene, scripts-over-prose) with no
+ServiceBay ADRs or template details. Backing prose lives single-sourced in the
+`new-service-standards` / `generic-project-standards` assists.
+
+## Tool visibility is scoped to your token (#2325)
+
+`tools/list` returns **only the tools your token could actually call**. A tool
+is advertised iff its required scope (`TOOL_SCOPES` in
+`packages/backend/src/lib/mcp/server.ts`) is within your token's granted scopes,
+using the same implication ladder the gate uses (`destroy` implies `reboot` +
+`exec`; see `SCOPE_AUDIT.md`). So:
+
+- a **read-only** token sees only the `read`-tier tools — no
+  mutate/destroy/exec/lifecycle tools ever appear in its list;
+- a **lifecycle** token additionally sees `manage_service`, `run_backup`, … ;
+- a **cookie / session (operator)** client sees the full surface (cookie auth
+  carries all scopes by design).
+
+This is **visibility only** — it changes what's *advertised*, never what's
+*allowed*. Enforcement is unchanged: `safeHandler` remains the single authority,
+so a tool that a token can't see still exists and, if called by id, is refused
+at the scope gate (`Token scope '…' required for …`) — **not** with a
+"tool not found". Advertising less means fewer tokens in-context and fewer
+wrong picks for small models, plus least-privilege (don't advertise what you
+can't invoke).
+
+**Deterministic ordering.** The returned list is sorted by tool name and is
+stable per token across requests. Tool definitions render at prompt position 0
+(`tools → system → messages`), so a stable, deterministic order is what lets a
+client prompt-cache them: any add/remove/reorder invalidates that cache, and a
+scope-filtered list is cache-safe precisely because it's fixed per token and
+isn't rebuilt mid-session.
+
+### `defer_loading` kernel set
+
+A small **always-on core** is designated in `MCP_KERNEL_TOOLS`
+(`server.ts`): `list_services`, `list_containers`, `diagnose`, `get_logs`,
+`get_system_info` — all `read`-tier, so every token (down to read-only) sees the
+whole kernel. A client using the Anthropic **Tool Search Tool**
+(`tool_search_tool_regex_20251119` / `tool_search_tool_bm25_20251119`) can keep
+this kernel eagerly loaded and mark the rest `defer_loading: true`, lazy-loading
+a tool's schema only when it's needed. Because deferred schemas are **appended,
+not swapped**, the prompt cache stays intact. Enabling Tool Search is a
+**client-side decision** — ServiceBay doesn't force it; it just designates the
+kernel and keeps descriptions terse so the remaining surface is cheap to search
+and lazy-load.
 
 ### Channel switching
 

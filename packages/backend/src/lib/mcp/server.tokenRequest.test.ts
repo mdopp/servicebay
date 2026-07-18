@@ -6,7 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 // #2139: MCP scoped-token request tools (request_token / poll_token_request /
-// list_token_requests). The store is file-backed under DATA_DIR, so use a
+// list_requests(type="token")). The store is file-backed under DATA_DIR, so use a
 // real-fs temp dir per test (mirrors auth/tokenRequests.test.ts).
 let dataDir = '';
 vi.mock('@/lib/dirs', async (importOriginal) => {
@@ -56,7 +56,7 @@ describe('request_token / poll_token_request MCP tools (#2139)', () => {
     expect(polled.token).toBeNull();
 
     // Visible on the audit list with the caller identity captured.
-    const listed = parse(await client.callTool({ name: 'list_token_requests', arguments: {} }));
+    const listed = parse(await client.callTool({ name: 'list_requests', arguments: { type: 'token' } }));
     expect(listed.requests.map((r: { id: string }) => r.id)).toContain(filed.id);
     expect(listed.requests[0].requestedBy).toBe('agent:tester');
     await client.close();
@@ -89,7 +89,7 @@ describe('request_token / poll_token_request MCP tools (#2139)', () => {
     await client.close();
   });
 
-  it('list_token_requests filters by status and never leaks a secret', async () => {
+  it('list_requests(type="token") filters by status and never leaks a secret', async () => {
     const { client } = await connectClient();
     const a = parse(await client.callTool({ name: 'request_token', arguments: { scopes: ['read'], reason: 'a', ttl_seconds: 60 } }));
     const b = parse(await client.callTool({ name: 'request_token', arguments: { scopes: ['read'], reason: 'b', ttl_seconds: 60 } }));
@@ -98,12 +98,12 @@ describe('request_token / poll_token_request MCP tools (#2139)', () => {
     await approveTokenRequest(a.id);
     await denyTokenRequest(b.id);
 
-    const approved = parse(await client.callTool({ name: 'list_token_requests', arguments: { status: 'approved' } }));
+    const approved = parse(await client.callTool({ name: 'list_requests', arguments: { type: 'token', status: 'approved' } }));
     expect(approved.requests.map((r: { id: string }) => r.id)).toEqual([a.id]);
     // The one-time secret is never present on the list view.
     expect(JSON.stringify(approved)).not.toMatch(/pendingSecret/);
 
-    const denied = parse(await client.callTool({ name: 'list_token_requests', arguments: { status: 'denied' } }));
+    const denied = parse(await client.callTool({ name: 'list_requests', arguments: { type: 'token', status: 'denied' } }));
     expect(denied.requests.map((r: { id: string }) => r.id)).toEqual([b.id]);
     await client.close();
   });

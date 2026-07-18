@@ -19,7 +19,7 @@ That covers the four things a log line needs: **when**, **who**,
 containers emit JSON-lines on stdout matching the same shape land in
 the same searchable surface once the JSON-ingester is wired up.
 Templates whose containers emit raw stdout work today via
-`get_container_logs` and `get_podman_logs` (which stream stdout
+`get_logs` (source="container" / source="podman", which stream stdout
 verbatim) — they're just not searchable by structured fields.
 
 ## What to emit
@@ -89,7 +89,7 @@ separate from the log store.
 
 ## What ServiceBay does with the output today
 
-- `get_container_logs` / `get_podman_logs` MCP tools stream the raw
+- `get_logs` (source="container" / source="podman") MCP tool streams the raw
   stdout of a service's containers to the operator on demand.
 - The journald shipper indexes by service name and timestamp, so
   searches by container + time window work without any structured

@@ -201,11 +201,11 @@ keypair that the in-container agent uses to manage the host.
 
 Every UI action has an HTTP equivalent under `/api/`. For LLM-driven
 automation, ServiceBay also exposes a [Model Context Protocol](https://modelcontextprotocol.io)
-server at `/mcp` (session-cookie auth — same as the UI), publishing 62 tools
+server at `/mcp` (session-cookie auth — same as the UI), publishing tools
 across services, containers, proxy, backups, health checks, and config:
-read paths like `list_nodes`, `list_services`, `get_container_logs`,
+read paths like `list_nodes`, `list_services`, `get_logs`,
 `get_network_graph`, `get_health_checks`, …, and write paths like
-`start_service`/`stop_service`/`restart_service`, `update_service_yaml`,
+`manage_service` (start/stop/restart), `update_service_yaml`,
 `add_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`,
 `create_health_check`/`run_check_now`, `get_config`/`update_config`,
 `exec_command`. Sensitive fields (`auth.passwordHash`, `oidc.clientSecret`,

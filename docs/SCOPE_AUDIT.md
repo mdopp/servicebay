@@ -64,11 +64,20 @@ Source of truth is `TOOL_SCOPES`. Summary by tier (see `server.ts` for the full 
 | Scope | Tools |
 |---|---|
 | `read` | `list_*`, `get_*`, `diagnose`, `read_file`, `list_dir`, `disk_usage`, `verify_node_connection`, `verify_usb_boot`, … |
-| `lifecycle` | `start_service`, `stop_service`, `restart_service`, `run_check_now`, `refresh_agent`, `run_backup`, `set_channel` |
+| `lifecycle` | `manage_service`, `run_check_now`, `refresh_agent`, `run_backup`, `set_channel` |
 | `mutate` | `deploy_service`, `update_service_yaml`, `rename_service`, `add_proxy_route`, `create_health_check`, `restore_trashed_service`, `file_access_request`, `update_config` |
 | `reboot` | `reboot_node` |
 | `destroy` | `delete_service`, `delete_health_check`, `remove_proxy_route`, `restore_backup`, `purge_trashed_service`, `set_boot_next_usb`, `factory_reset` |
 | `exec` | `exec_command`, `container_exec` |
+
+**Scope-filtered visibility (#2325).** Surface (1) also *hides* what a token
+can't call: `tools/list` advertises only tools whose `TOOL_SCOPES` scope is
+within the caller's granted scopes (same `tokenHasScope` ladder), sorted by name
+and stable per token. A read-only token therefore never *sees* a
+mutate/destroy/exec tool. This is visibility only — the gate above is unchanged,
+so a filtered-out tool called by id is still refused at `safeHandler` (scope
+error, not "not found"). A no-auth/cookie caller (all scopes) sees the full
+surface. See `docs/MCP.md` → "Tool visibility is scoped to your token".
 
 ## REST route → scope (surface 2)
 

@@ -62,8 +62,8 @@ shell should join that allowlist explicitly rather than route around
 it. See `safety.ts` for the pattern.
 
 **Worked example:** `lib/mcp/server.ts:257` (`list_nodes`) for a
-read tool; `lib/mcp/server.ts` `start_service`/`stop_service` for the
-mutating-with-scope pattern.
+read tool; `lib/mcp/server.ts` `manage_service` for the
+mutating-with-scope + discriminator pattern.
 
 **Testing:** add a case to `lib/mcp/safety.test.ts` if the tool wraps
 something dangerous, and rely on the integration coverage that already
