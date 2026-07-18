@@ -15,7 +15,13 @@ import {
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getTemplates, getReadme, getTemplateYaml, getTemplateVariables } from '@/lib/registry';
 import { listAssists, getAssist, ASSIST_KINDS } from '@/lib/assists/catalog';
-import { submitProposal, ProposalError } from '@/lib/assists/proposals';
+import {
+  submitProposal,
+  ProposalError,
+  listProposalsForReview,
+  getProposalForReview,
+  type ProposalStatus,
+} from '@/lib/assists/proposals';
 import { buildServiceStandards, SERVICE_STANDARDS_FLAVORS } from './serviceStandards';
 import { listNodes, getNodeConnection } from '@/lib/nodes';
 import { verifyNodeConnection } from '@/lib/nodes/verify';
@@ -222,6 +228,12 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   get_unmanaged_bundles: 'read',
   get_channel: 'read',
   get_access_request_status: 'read',
+  // #2326 s3: admin reads of the learning-proposal review queue. `read`-scoped
+  // (like list_requests / get_access_request_status) — these only SURFACE
+  // pending proposals to an admin for review; approving/rejecting is an
+  // admin-only action on the dashboard (NOT an MCP tool), so a `propose`-scoped
+  // submitter can see nothing here and cannot approve their own proposal.
+  list_learning_proposals: 'read', get_learning_proposal: 'read',
   // Scoped-token request flow (#2139). A token *request* itself grants
   // nothing — it just files a pending item the admin must approve — so it
   // needs only the lowest scope (`read`). This is deliberate: a caller with
@@ -1056,6 +1068,74 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         if (e instanceof ProposalError) return errorResult(e.message);
         return errorResult(`Error submitting proposal: ${e instanceof Error ? e.message : String(e)}`);
       }
+    },
+  );
+
+  // --- Learning-proposal review queue (#2326 s3) ---
+  // The admin side of the Rückkanal: surface PENDING proposals so an admin can
+  // review the frontmatter + body + submitter self-assessment before acting.
+  // These are `read`-scoped and READ-ONLY — the approve/reject DECISION is an
+  // admin-only action (frontend route, same auth as approving an access
+  // request), NOT an MCP tool. That is what keeps a `propose`-scoped submitter
+  // from approving their own proposal: they never get read here (no `read`
+  // scope) and there is no MCP approve surface at all.
+  server.tool(
+    'list_learning_proposals',
+    'List learning proposals (submitted via propose_learning) for admin review. Defaults to pending — the admin\'s review queue; pass status="approved", "rejected", or "all". Each entry carries the proposal frontmatter (title, whenToUse, kind, tags), the markdown body, the submitter self-assessment (pros/cons/redundancy, or null), and `siblingProposalIds` — other proposals that would land as the SAME namespaced id `local/<slug>` (proposals are additive-only and never shadow a built-in, so there is no built-in diff, but a same-id local proposal already existing is worth knowing). Reading a proposal does NOT approve it; approving/rejecting is an admin-only action on the dashboard.',
+    {
+      status: z.enum(['pending', 'approved', 'rejected', 'all']).optional().default('pending')
+        .describe('Filter by status. Default: pending (the review queue).'),
+    },
+    async ({ status }) => {
+      const proposals = await listProposalsForReview(status as ProposalStatus | 'all');
+      return textResult({
+        proposals: proposals.map(p => ({
+          id: p.id,
+          assistId: p.assistId,
+          status: p.status,
+          title: p.title,
+          whenToUse: p.whenToUse,
+          kind: p.kind,
+          tags: p.tags,
+          body: p.body,
+          assessment: p.assessment ?? null,
+          submittedBy: p.submittedBy,
+          submittedAt: p.submittedAt,
+          resolvedAt: p.resolvedAt,
+          resolvedBy: p.resolvedBy,
+          siblingProposalIds: p.siblingProposalIds,
+          hasSameIdProposal: p.siblingProposalIds.length > 0,
+        })),
+      });
+    },
+  );
+
+  server.tool(
+    'get_learning_proposal',
+    'Fetch one learning proposal by its id (as returned by propose_learning / list_learning_proposals) for admin review. Returns the full frontmatter, markdown body, submitter self-assessment (or null), status, and `siblingProposalIds` (other proposals sharing the same namespaced id). Read-only — approving/rejecting is an admin-only action on the dashboard, not this tool.',
+    {
+      id: z.string().min(1).describe('Proposal id.'),
+    },
+    async ({ id }) => {
+      const p = await getProposalForReview(id);
+      if (!p) return textResult({ id, status: 'not-found' as const });
+      return textResult({
+        id: p.id,
+        assistId: p.assistId,
+        status: p.status,
+        title: p.title,
+        whenToUse: p.whenToUse,
+        kind: p.kind,
+        tags: p.tags,
+        body: p.body,
+        assessment: p.assessment ?? null,
+        submittedBy: p.submittedBy,
+        submittedAt: p.submittedAt,
+        resolvedAt: p.resolvedAt,
+        resolvedBy: p.resolvedBy,
+        siblingProposalIds: p.siblingProposalIds,
+        hasSameIdProposal: p.siblingProposalIds.length > 0,
+      });
     },
   );
 

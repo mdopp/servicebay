@@ -31,6 +31,17 @@ import {
 /** Persisted, namespaced id prefix for every proposal-landed assist. */
 export const PROPOSAL_ID_NAMESPACE = 'local';
 
+/**
+ * Proposal lifecycle.
+ *   pending  — submitted, awaiting an admin decision.
+ *   approved — admin signed off. NOTE: `approved` is the SEAM for slice 4 —
+ *              the assist is NOT yet written to `DATA_DIR/local-assists/` and
+ *              has NOT passed the secret-scan. Slice 4 hooks this state,
+ *              runs the secret-scan, lands the file, and (only then) will it
+ *              become effective. An `approved` proposal is decided-but-not-landed.
+ *   rejected — admin declined. Nothing lands; the submitting agent learns this
+ *              by polling `get_access_request_status`-style read of its proposal.
+ */
 export type ProposalStatus = 'pending' | 'approved' | 'rejected';
 
 /** The assist frontmatter + body an agent proposes. */
@@ -55,6 +66,17 @@ export interface LearningProposal extends LearningProposalContent {
   submittedAt: string;
   /** Calling agent/token identity, for the admin's audit trail. */
   submittedBy?: string;
+  /**
+   * ISO timestamp of when an admin approved/rejected it (#2326 s3). Mirrors
+   * `AccessRequest.resolvedAt` — set on the status transition out of `pending`.
+   */
+  resolvedAt?: string;
+  /**
+   * Which admin session resolved it (approve/reject), for the audit trail
+   * (#2326 s3). Mirrors the access-request approve/deny path recording who
+   * acted. Absent while `pending`.
+   */
+  resolvedBy?: string;
   /**
    * Optional honest self-assessment provided by the submitting agent.
    * Absent when the submitter did not provide one — proposal is still valid.
@@ -130,6 +152,114 @@ async function writeStore(items: LearningProposal[]): Promise<void> {
 /** List all persisted proposals (any status). */
 export async function listProposals(): Promise<LearningProposal[]> {
   return readStore();
+}
+
+/** Fetch one proposal by its store id, or `undefined` if not found. */
+export async function getProposal(id: string): Promise<LearningProposal | undefined> {
+  const items = await readStore();
+  return items.find(p => p.id === id);
+}
+
+/**
+ * Admin-visibility view of a proposal (#2326 s3). Carries the full frontmatter,
+ * body, and submitter self-assessment the admin needs to judge, PLUS a
+ * governance signal: `siblingProposalIds` — other proposals in the store that
+ * would land as the SAME namespaced `assistId` (`local/<slug>`). Proposals are
+ * additive-only and never shadow a built-in (enforced on submit), so there is
+ * no built-in diff to show; but if a same-id local proposal already exists,
+ * the admin should know before approving a duplicate/competing one.
+ */
+export interface ProposalView extends LearningProposal {
+  /**
+   * Ids of OTHER proposals (any status) that share this proposal's `assistId`.
+   * Empty when this is the only proposal for that `local/<slug>` id.
+   */
+  siblingProposalIds: string[];
+}
+
+function toView(target: LearningProposal, all: LearningProposal[]): ProposalView {
+  const siblingProposalIds = all
+    .filter(p => p.id !== target.id && p.assistId === target.assistId)
+    .map(p => p.id);
+  return { ...target, siblingProposalIds };
+}
+
+/**
+ * List proposals for admin review (#2326 s3), each enriched with the
+ * same-id sibling signal. Defaults to `pending` — the admin's queue — but
+ * accepts a status filter (`'all'` returns every proposal).
+ */
+export async function listProposalsForReview(
+  status: ProposalStatus | 'all' = 'pending',
+): Promise<ProposalView[]> {
+  const all = await readStore();
+  const filtered = status === 'all' ? all : all.filter(p => p.status === status);
+  return filtered.map(p => toView(p, all));
+}
+
+/** Get one proposal enriched with the same-id sibling signal, or `undefined`. */
+export async function getProposalForReview(id: string): Promise<ProposalView | undefined> {
+  const all = await readStore();
+  const target = all.find(p => p.id === id);
+  return target ? toView(target, all) : undefined;
+}
+
+/**
+ * The outcome of an admin approve/reject action on a proposal (#2326 s3).
+ *   'ok'         — the transition happened; `proposal` is the updated record.
+ *   'not-found'  — no proposal with that id.
+ *   'not-pending'— the proposal was already resolved (approved/rejected);
+ *                  a status transition only fires out of `pending` (mirrors
+ *                  the access-request approve path's 409-on-not-pending).
+ */
+export type ResolveOutcome =
+  | { result: 'ok'; proposal: LearningProposal }
+  | { result: 'not-found' }
+  | { result: 'not-pending'; proposal: LearningProposal };
+
+/**
+ * Flip a PENDING proposal to `approved` or `rejected` (#2326 s3) — the admin's
+ * decision, mirroring how the access-request approve/deny route flips
+ * `AccessRequest.status` and stamps `resolvedAt`. This ONLY records the
+ * decision: an `approved` proposal is decided-but-NOT-landed (no file written,
+ * no secret-scan run) — that is slice 4's job, hooking the `approved` state.
+ *
+ * Authority is enforced at the call site (an admin-only route/handler), exactly
+ * as the access-request approve/deny endpoints are admin-only. A `propose`-scoped
+ * MCP submitter has no path to this function.
+ */
+async function resolveProposal(
+  id: string,
+  status: 'approved' | 'rejected',
+  resolvedBy?: string,
+): Promise<ResolveOutcome> {
+  const items = await readStore();
+  const idx = items.findIndex(p => p.id === id);
+  if (idx < 0) return { result: 'not-found' };
+  const current = items[idx];
+  if (current.status !== 'pending') {
+    return { result: 'not-pending', proposal: current };
+  }
+  const updated: LearningProposal = {
+    ...current,
+    status,
+    resolvedAt: new Date().toISOString(),
+    ...(resolvedBy ? { resolvedBy } : {}),
+  };
+  items[idx] = updated;
+  await writeStore(items);
+  logger.info('assists', `Learning proposal ${id} (${current.assistId}) ${status}${resolvedBy ? ` by ${resolvedBy}` : ''}.`);
+  return { result: 'ok', proposal: updated };
+}
+
+/** Admin action: approve a pending proposal (records the decision only — s4 lands it). */
+export function approveProposal(id: string, resolvedBy?: string): Promise<ResolveOutcome> {
+  return resolveProposal(id, 'approved', resolvedBy);
+}
+
+/** Admin action: reject a pending proposal. Nothing lands. */
+export function rejectProposal(id: string, resolvedBy?: string): Promise<ResolveOutcome> {
+  return resolveProposal(id, 'rejected', resolvedBy);
 }
 
 /**
