@@ -9,9 +9,17 @@
  * Sources, mirroring the template registry's multi-source + local-drop shape:
  *   - Built-in: the repo-root `assists/` dir, shipped into the container image
  *     (`process.cwd()` is `/app` at runtime, so this resolves to `/app/assists`).
+ *     Served with the bare id `<stem>`.
  *   - Local:    `DATA_DIR/local-assists/` — a persisted drop dir so an operator
- *     (or an agent, once write access exists) can add an assist WITHOUT a
+ *     (or the assist editor, #2221) can add/override an assist WITHOUT a
  *     release. A Local entry with the same id overrides the built-in one.
+ *   - Landed:   `DATA_DIR/local-assists/landed/` — an ADDITIVE, NAMESPACED
+ *     source (#2326 s4): an approved `propose_learning` proposal is written
+ *     here and served under id `local/<stem>` with `source: Local`. It can
+ *     NEVER shadow a built-in id (governance decision, epic #2326: additive-only
+ *     namespaced ids — updating a built-in is a repo PR, never a silent runtime
+ *     override by id). This is why landed proposals get their own subdir + id
+ *     prefix rather than sharing the flat override space above.
  *
  * Each assist is a single markdown file with frontmatter:
  *
@@ -57,14 +65,49 @@ export interface AssistSummary {
 
 // Repo-root `assists/` (shipped to /app/assists in the container), then the
 // persisted drop dir. Order matters: later sources override earlier ones by id.
+// The namespaced landed dir (#2326 s4) is additive — its `local/` id prefix
+// means it never collides with the two bare-id sources above.
 const BUILTIN_ASSISTS_DIR = () => path.join(process.cwd(), 'assists');
 const LOCAL_ASSISTS_DIR = () => path.join(DATA_DIR, 'local-assists');
+/** Additive, namespaced landing dir for approved proposals (#2326 s4). */
+export const LANDED_ASSISTS_DIR = () => path.join(DATA_DIR, 'local-assists', 'landed');
+/** Id prefix every landed (namespaced) assist carries. */
+export const LOCAL_ID_PREFIX = 'local/';
 
-function assistSources(): { dir: string; source: string }[] {
+interface AssistSource {
+  dir: string;
+  source: string;
+  /** Id prefix for entries from this dir (`''` = bare stem, `local/` = namespaced). */
+  prefix: string;
+}
+
+function assistSources(): AssistSource[] {
   return [
-    { dir: BUILTIN_ASSISTS_DIR(), source: 'Built-in' },
-    { dir: LOCAL_ASSISTS_DIR(), source: 'Local' },
+    { dir: BUILTIN_ASSISTS_DIR(), source: 'Built-in', prefix: '' },
+    { dir: LOCAL_ASSISTS_DIR(), source: 'Local', prefix: '' },
+    { dir: LANDED_ASSISTS_DIR(), source: 'Local', prefix: LOCAL_ID_PREFIX },
   ];
+}
+
+/**
+ * Resolve a request-supplied assist id to the `<stem>.md` filename plus the
+ * ordered list of candidate source dirs to try (first hit wins), or null if the
+ * id is unsafe/unknown-shape. A `local/<stem>` id maps to the landed dir only; a
+ * bare `<stem>` id maps to the bare-id sources with Local overriding Built-in.
+ * The `<stem>` is basename-guarded so a read can never escape a source root
+ * (path-injection barrier; CodeQL js/path-injection).
+ */
+function resolveAssistFile(id: string): { file: string; dirs: string[] } | null {
+  if (id.startsWith(LOCAL_ID_PREFIX)) {
+    const stem = id.slice(LOCAL_ID_PREFIX.length);
+    const file = assistFileName(stem);
+    return file ? { file, dirs: [LANDED_ASSISTS_DIR()] } : null;
+  }
+  if (id.includes('/')) return null; // a bare id may not contain a path separator
+  const file = assistFileName(id);
+  if (!file) return null;
+  // Bare-id sources: Local drop dir wins over Built-in, mirroring precedence.
+  return { file, dirs: [LOCAL_ASSISTS_DIR(), BUILTIN_ASSISTS_DIR()] };
 }
 
 /**
@@ -156,9 +199,9 @@ export interface ListAssistsOptions {
  */
 export async function listAssists(opts: ListAssistsOptions = {}): Promise<AssistSummary[]> {
   const byId = new Map<string, AssistSummary>();
-  for (const { dir, source } of assistSources()) {
+  for (const { dir, source, prefix } of assistSources()) {
     for (const file of await readDirAssists(dir)) {
-      const id = file.slice(0, -'.md'.length);
+      const id = `${prefix}${file.slice(0, -'.md'.length)}`;
       let raw: string;
       try {
         raw = await fs.readFile(path.join(dir, file), 'utf-8');
@@ -166,7 +209,7 @@ export async function listAssists(opts: ListAssistsOptions = {}): Promise<Assist
         continue;
       }
       const summary = parseAssistSummary(raw, id, source);
-      if (summary) byId.set(id, summary); // later source wins
+      if (summary) byId.set(id, summary); // later BARE source wins; namespaced ids never collide
     }
   }
 
@@ -194,16 +237,16 @@ export async function listBuiltinAssistIds(): Promise<string[]> {
 }
 
 /**
- * Return the full raw markdown (frontmatter + body) of one assist, Local
- * overriding Built-in. Returns null for an unknown or unsafe id.
+ * Return the full raw markdown (frontmatter + body) of one assist by id. A bare
+ * `<stem>` id reads Local (drop-dir override) then Built-in; a `local/<stem>` id
+ * reads the additive landed dir (#2326 s4). Returns null for an unknown/unsafe id.
  */
 export async function getAssist(id: string): Promise<string | null> {
-  const file = assistFileName(id);
-  if (!file) return null;
-  // Local first so a drop-in override wins, mirroring registry precedence.
-  for (const { dir } of [...assistSources()].reverse()) {
+  const resolved = resolveAssistFile(id);
+  if (!resolved) return null;
+  for (const dir of resolved.dirs) {
     try {
-      return await fs.readFile(path.join(dir, file), 'utf-8');
+      return await fs.readFile(path.join(dir, resolved.file), 'utf-8');
     } catch {
       continue;
     }

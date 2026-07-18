@@ -26,7 +26,9 @@ import {
   ASSIST_KINDS,
   type AssistKind,
   listBuiltinAssistIds,
+  LANDED_ASSISTS_DIR,
 } from './catalog';
+import { scanForSecrets } from './secretScan';
 
 /** Persisted, namespaced id prefix for every proposal-landed assist. */
 export const PROPOSAL_ID_NAMESPACE = 'local';
@@ -34,15 +36,22 @@ export const PROPOSAL_ID_NAMESPACE = 'local';
 /**
  * Proposal lifecycle.
  *   pending  — submitted, awaiting an admin decision.
- *   approved — admin signed off. NOTE: `approved` is the SEAM for slice 4 —
- *              the assist is NOT yet written to `DATA_DIR/local-assists/` and
- *              has NOT passed the secret-scan. Slice 4 hooks this state,
- *              runs the secret-scan, lands the file, and (only then) will it
- *              become effective. An `approved` proposal is decided-but-not-landed.
+ *   approved — admin signed off; landing is in progress. This is the slice-4
+ *              SEAM: on approval we run the HARD secret-scan and, if clean,
+ *              write the assist to `DATA_DIR/local-assists/`. A proposal only
+ *              rests at `approved` if landing has not yet run (it is a
+ *              transient decided-but-not-landed state).
+ *   landed   — admin approved AND the assist passed the secret-scan and was
+ *              written to `DATA_DIR/local-assists/<slug>.md` (slice 4). It is
+ *              now effective — the catalog loader returns it as `local/<slug>`
+ *              with `source: Local`.
+ *   blocked  — admin approved BUT the content matched a secret signature, so
+ *              landing was REFUSED: NOTHING was written to disk. `landingError`
+ *              names the matched signature(s). A blocked proposal never lands.
  *   rejected — admin declined. Nothing lands; the submitting agent learns this
  *              by polling `get_access_request_status`-style read of its proposal.
  */
-export type ProposalStatus = 'pending' | 'approved' | 'rejected';
+export type ProposalStatus = 'pending' | 'approved' | 'landed' | 'blocked' | 'rejected';
 
 /** The assist frontmatter + body an agent proposes. */
 export interface LearningProposalContent {
@@ -82,6 +91,17 @@ export interface LearningProposal extends LearningProposalContent {
    * Absent when the submitter did not provide one — proposal is still valid.
    */
   assessment?: ProposalAssessment;
+  /**
+   * Reason landing was BLOCKED (#2326 s4). Set only on `blocked` proposals —
+   * names the secret signature(s) the content matched, so the admin sees why
+   * nothing was written to disk. Absent otherwise.
+   */
+  landingError?: string;
+  /**
+   * Relative filename the assist was written as under `DATA_DIR/local-assists/`
+   * once it `landed` (#2326 s4), e.g. `my-recipe.md`. Absent until landed.
+   */
+  landedFile?: string;
 }
 
 /**
@@ -252,9 +272,104 @@ async function resolveProposal(
   return { result: 'ok', proposal: updated };
 }
 
-/** Admin action: approve a pending proposal (records the decision only — s4 lands it). */
-export function approveProposal(id: string, resolvedBy?: string): Promise<ResolveOutcome> {
-  return resolveProposal(id, 'approved', resolvedBy);
+/**
+ * Serialize a proposal's frontmatter + body into the markdown an assist file
+ * carries, so the existing catalog loader (`parseAssistSummary` / `getAssist`)
+ * picks it up. `gray-matter`'s stringifier is deliberately avoided to keep the
+ * output minimal and stable; the fields are the same the loader reads.
+ */
+export function proposalToAssistMarkdown(p: LearningProposalContent): string {
+  const fm: string[] = [
+    '---',
+    `title: ${JSON.stringify(p.title)}`,
+    `whenToUse: ${JSON.stringify(p.whenToUse)}`,
+    `kind: ${p.kind}`,
+    `tags: [${p.tags.map(t => JSON.stringify(t)).join(', ')}]`,
+    '---',
+    '',
+  ];
+  return `${fm.join('\n')}${p.body}\n`;
+}
+
+/**
+ * The slug stem of a proposal's namespaced assist id (`local/<slug>` → `<slug>`).
+ * The landed proposal is written as `<slug>.md` into the catalog's additive
+ * `LANDED_ASSISTS_DIR` (`DATA_DIR/local-assists/landed/`), where the loader
+ * serves it under id `local/<slug>` + `source: Local` — additive-only, never
+ * shadowing a built-in (the bare `<slug>` was already proven collision-free at
+ * submit time by `deriveProposalAssistId`).
+ */
+function slugOfAssistId(assistId: string): string {
+  const idx = assistId.indexOf('/');
+  return idx >= 0 ? assistId.slice(idx + 1) : assistId;
+}
+
+/**
+ * The RUNTIME landing gate (#2326 s4). Called on approval: run the HARD
+ * secret-scan, and only on a CLEAN scan write the assist markdown to
+ * `DATA_DIR/local-assists/<slug>.md`. Returns the outcome so the caller can
+ * stamp the final status:
+ *   'landed'  — clean scan, file written, `landedFile` set.
+ *   'blocked' — content matched a secret signature; NOTHING written; `reason`
+ *               names the matched signature(s). A secret never reaches disk.
+ *
+ * Idempotent: writing the same content to the same path twice does not
+ * duplicate (single file, overwritten with identical bytes).
+ */
+async function landApprovedProposal(
+  p: LearningProposal,
+): Promise<{ result: 'landed'; file: string } | { result: 'blocked'; reason: string }> {
+  const markdown = proposalToAssistMarkdown(p);
+  // Scan the ENTIRE landed artifact (frontmatter + body) — a secret hidden in
+  // the title/tags must be caught too, not just the body.
+  const hits = scanForSecrets(markdown);
+  if (hits.length > 0) {
+    return {
+      result: 'blocked',
+      reason: `Secret-scan blocked landing: content matches ${hits.join(', ')}. Nothing was written to disk.`,
+    };
+  }
+  const slug = slugOfAssistId(p.assistId);
+  const dir = LANDED_ASSISTS_DIR();
+  await fs.mkdir(dir, { recursive: true });
+  const file = `${slug}.md`;
+  await fs.writeFile(path.join(dir, file), markdown, 'utf-8');
+  return { result: 'landed', file };
+}
+
+/**
+ * Admin action: approve a pending proposal AND land it (#2326 s4). Flips
+ * `pending → approved`, then runs the HARD secret-scan landing gate:
+ *   - clean  → writes `DATA_DIR/local-assists/<slug>.md`, status `landed`.
+ *   - secret → NOTHING written, status `blocked`, `landingError` set.
+ *
+ * A `not-pending` / `not-found` outcome short-circuits exactly as before, so a
+ * rejected/already-resolved proposal never lands, and re-approving a
+ * `landed`/`blocked` proposal is a no-op (idempotent — nothing is duplicated).
+ */
+export async function approveProposal(id: string, resolvedBy?: string): Promise<ResolveOutcome> {
+  const approved = await resolveProposal(id, 'approved', resolvedBy);
+  if (approved.result !== 'ok') return approved;
+
+  const landing = await landApprovedProposal(approved.proposal);
+  const items = await readStore();
+  const idx = items.findIndex(p => p.id === id);
+  if (idx < 0) return approved; // defensive: vanished between calls
+  const base = items[idx];
+
+  if (landing.result === 'blocked') {
+    const updated: LearningProposal = { ...base, status: 'blocked', landingError: landing.reason };
+    items[idx] = updated;
+    await writeStore(items);
+    logger.warn('assists', `Learning proposal ${id} (${base.assistId}) BLOCKED at landing: ${landing.reason}`);
+    return { result: 'ok', proposal: updated };
+  }
+
+  const updated: LearningProposal = { ...base, status: 'landed', landedFile: landing.file };
+  items[idx] = updated;
+  await writeStore(items);
+  logger.info('assists', `Learning proposal ${id} landed as local/${slugOfAssistId(base.assistId)} (${landing.file}).`);
+  return { result: 'ok', proposal: updated };
 }
 
 /** Admin action: reject a pending proposal. Nothing lands. */

@@ -16,6 +16,7 @@ import path from 'path';
 import yaml from 'js-yaml';
 import { describe, it, expect } from 'vitest';
 import { ASSIST_KINDS } from '@/lib/assists/catalog';
+import { SECRET_PATTERNS } from '@/lib/assists/secretScan';
 
 /** Extract + parse the YAML frontmatter block from a markdown file. */
 function frontmatter(raw: string): Record<string, unknown> {
@@ -42,16 +43,10 @@ function walk(dir: string): string[] {
   return out;
 }
 
-// High-signal secret formats only — matching concrete leaked values, never
-// `{{VAR}}` placeholders or file paths.
-const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
-  { name: 'PEM private key', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/ },
-  { name: 'ServiceBay token (sb_)', re: /\bsb_[a-z0-9]{6,}_[A-Za-z0-9]{20,}\b/ },
-  { name: 'AWS access key id', re: /\bAKIA[0-9A-Z]{16}\b/ },
-  { name: 'GitHub token', re: /\bgh[posru]_[A-Za-z0-9]{20,}\b/ },
-  { name: 'GitHub fine-grained PAT', re: /\bgithub_pat_[A-Za-z0-9_]{30,}\b/ },
-  { name: 'Slack token', re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
-];
+// Secret signatures are factored into the shared runtime module
+// `@/lib/assists/secretScan` (SECRET_PATTERNS) so this build-time backstop and
+// the runtime landing gate (#2326 s4: proposals.ts `approveProposal`) can never
+// drift — both scan with the SAME signatures.
 
 describe('assist catalog frontmatter', () => {
   const files = fs.existsSync(ASSISTS_DIR)

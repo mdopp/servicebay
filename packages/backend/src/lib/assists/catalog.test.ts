@@ -13,6 +13,7 @@ import { listAssists, getAssist } from './catalog';
 
 const BUILTIN = path.join(BASE, 'assists');
 const LOCAL = path.join(BASE, 'local-assists');
+const LANDED = path.join(BASE, 'local-assists', 'landed');
 let origCwd: string;
 
 async function seed(dir: string, id: string, front: Record<string, string>, body = 'body') {
@@ -102,5 +103,32 @@ describe('assist catalog', () => {
     expect(await getAssist('..')).toBeNull();
     expect(await getAssist('a/b')).toBeNull();
     expect(await getAssist('does-not-exist')).toBeNull();
+  });
+
+  it('landed proposals are served additively under id local/<stem>, never shadowing a built-in (#2326 s4)', async () => {
+    // Same stem exists as a built-in AND as a landed proposal.
+    await seed(BUILTIN, 'dup', { title: 'Built-in title', kind: 'guide' });
+    await seed(LANDED, 'dup', { title: 'Landed title', kind: 'recipe' }, 'landed body');
+
+    const list = await listAssists();
+    const builtin = list.find(a => a.id === 'dup');
+    const landed = list.find(a => a.id === 'local/dup');
+    // Both co-exist — the landed one does NOT override the built-in by id.
+    expect(builtin).toMatchObject({ title: 'Built-in title', source: 'Built-in' });
+    expect(landed).toMatchObject({ title: 'Landed title', kind: 'recipe', source: 'Local' });
+
+    // getAssist resolves each id to its own file.
+    expect(await getAssist('dup')).toContain('Built-in title');
+    const landedRaw = await getAssist('local/dup');
+    expect(landedRaw).toContain('Landed title');
+    expect(landedRaw).toContain('landed body');
+  });
+
+  it('a landed-dir file is not double-listed as a bare Local entry', async () => {
+    await seed(LANDED, 'only-landed', { title: 'Only landed', kind: 'guide' });
+    const list = await listAssists();
+    // The flat local-assists scan does not recurse into landed/, so no bare id.
+    expect(list.map(a => a.id)).toContain('local/only-landed');
+    expect(list.map(a => a.id)).not.toContain('only-landed');
   });
 });

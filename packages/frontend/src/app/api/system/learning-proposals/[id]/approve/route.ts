@@ -19,10 +19,13 @@ export const dynamic = 'force-dynamic';
  * `propose`-scoped MCP submitter has no session and no MCP approve tool, so
  * it can never approve its own proposal.
  *
- * SLICE BOUNDARY (s3 → s4): approving ONLY records the decision. `approved`
- * is decided-but-NOT-landed — no `.md` is written to
- * `DATA_DIR/local-assists/` and the secret-scan has NOT run. Slice 4 hooks
- * the `approved` state to run the secret-scan and land the file.
+ * LANDING (#2326 s4): approving now ALSO lands the assist. `approveProposal`
+ * runs the HARD secret-scan and, on a clean scan, writes the assist to
+ * `DATA_DIR/local-assists/<slug>.md` (final status `landed`, served as
+ * `local/<slug>`). If the content matches a secret signature the landing is
+ * REFUSED — nothing is written and the final status is `blocked` with a
+ * `landingError` reason. Either way the response reports the final status so
+ * the admin sees whether it landed or was blocked.
  */
 
 type Params = { id: string };
@@ -44,6 +47,8 @@ export const POST = withApiHandlerParams<undefined, undefined, Params>(
       ok: true,
       id: outcome.proposal.id,
       status: outcome.proposal.status,
+      ...(outcome.proposal.landingError ? { landingError: outcome.proposal.landingError } : {}),
+      ...(outcome.proposal.landedFile ? { landedFile: outcome.proposal.landedFile } : {}),
     });
   },
 );

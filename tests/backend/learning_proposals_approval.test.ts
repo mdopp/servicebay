@@ -81,9 +81,9 @@ const VALID = {
   assessment: { pros: ['useful'], cons: ['maintenance'], redundancyNote: 'none' },
 };
 
-/** local-assists landing dir slice 4 will write to — must stay untouched here. */
+/** The additive, namespaced landing dir slice 4 writes approved proposals to. */
 function localAssistsDir() {
-  return path.join(DATA_DIR, 'local-assists');
+  return path.join(DATA_DIR, 'local-assists', 'landed');
 }
 
 beforeEach(async () => {
@@ -119,12 +119,13 @@ describe('learning-proposal approval store (#2326 s3)', () => {
     expect(va!.siblingProposalIds).toEqual([b.id]);
   });
 
-  it('admin approve transitions pending -> approved and stamps who/when', async () => {
+  it('admin approve stamps who/when and lands the assist (#2326 s4)', async () => {
     const p = await submitProposal(VALID, 'token:proposer');
     const outcome = await approveProposal(p.id, 'session:admin');
     expect(outcome.result).toBe('ok');
     const after = await getProposal(p.id);
-    expect(after!.status).toBe('approved');
+    // s4: clean content lands -> status `landed`.
+    expect(after!.status).toBe('landed');
     expect(after!.resolvedBy).toBe('session:admin');
     expect(after!.resolvedAt).toBeTruthy();
   });
@@ -138,13 +139,13 @@ describe('learning-proposal approval store (#2326 s3)', () => {
     expect(after!.resolvedBy).toBe('session:admin');
   });
 
-  it('approving does NOT land a file (s3 seam: approved-not-landed)', async () => {
+  it('approving lands a file under local-assists (#2326 s4)', async () => {
     const p = await submitProposal(VALID);
     await approveProposal(p.id, 'session:admin');
-    // Status is approved, but nothing was written to the local-assists drop dir.
-    expect((await getProposal(p.id))!.status).toBe('approved');
+    // s4: clean content lands -> status `landed` and a `.md` is written.
+    expect((await getProposal(p.id))!.status).toBe('landed');
     const landed = await fs.readdir(localAssistsDir()).catch(() => []);
-    expect(landed).toEqual([]);
+    expect(landed).toHaveLength(1);
   });
 
   it('resolving a non-pending proposal is a no-op (not-pending)', async () => {
@@ -152,8 +153,8 @@ describe('learning-proposal approval store (#2326 s3)', () => {
     await approveProposal(p.id, 'session:admin');
     const again = await rejectProposal(p.id, 'session:other');
     expect(again.result).toBe('not-pending');
-    // Status unchanged — the first decision stands.
-    expect((await getProposal(p.id))!.status).toBe('approved');
+    // Status unchanged — the first decision (landed) stands.
+    expect((await getProposal(p.id))!.status).toBe('landed');
   });
 
   it('resolving an unknown id reports not-found', async () => {
