@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.2.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.2.0...servicebay-v5.2.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* **mcp:** exec_command/container_exec als Last-Resort mit read-Alternativen ([#2340](https://github.com/mdopp/servicebay/issues/2340)) ([d2697b5](https://github.com/mdopp/servicebay/commit/d2697b5cd12485385e8fb0d51831ca1fa627075c))
+* **mcp:** frame exec_command/container_exec as last-resort with read alternatives ([#2340](https://github.com/mdopp/servicebay/issues/2340)) ([5d6f827](https://github.com/mdopp/servicebay/commit/5d6f827fbe0dbdbe72c24201e586f1e9c78f46bf))
+
 ## [5.2.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.1.0...servicebay-v5.2.0) (2026-07-18)
 
 
