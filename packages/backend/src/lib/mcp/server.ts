@@ -1026,18 +1026,23 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   // knowledge and nothing else, and a read/mutate token can't submit at all.
   server.tool(
     'propose_learning',
-    'Propose a new assist (knowledge entry) to the ServiceBay catalog for admin review. Supply the assist frontmatter — title, whenToUse (one line describing when it applies), kind (guide | recipe | adr | template | checklist | footgun | snippet), tags — plus the markdown body. The submission is validated and queued as a PENDING proposal with a namespaced id `local/<slug>` derived from the title; it does NOT land or take effect until an admin approves it. Proposals are ADDITIVE-ONLY: a title whose slug collides with a built-in assist id is rejected — propose a companion, do not shadow a built-in (updating a built-in is a repo PR). Requires the `propose` scope.',
+    'Propose a new assist (knowledge entry) to the ServiceBay catalog for admin review. Supply the assist frontmatter — title, whenToUse (one line describing when it applies), kind (guide | recipe | adr | template | checklist | footgun | snippet), tags — plus the markdown body. The submission is validated and queued as a PENDING proposal with a namespaced id `local/<slug>` derived from the title; it does NOT land or take effect until an admin approves it. Proposals are ADDITIVE-ONLY: a title whose slug collides with a built-in assist id is rejected — propose a companion, do not shadow a built-in (updating a built-in is a repo PR). STRONGLY ENCOURAGED: provide an honest `assessment` with genuine pros AND real cons/risks (not just upsides), plus a redundancy check — name any existing assist this duplicates or conflicts with (or "none"). The admin reviews proposals on the basis of your self-assessment; a candid assessment (including honest cons) is more useful than a sales pitch. Requires the `propose` scope.',
     {
       title: z.string().min(1).max(200).describe('Short human-readable title. The namespaced id `local/<slug>` is derived from this.'),
       whenToUse: z.string().min(1).max(500).describe('One line telling an agent when this assist applies — drives self-selection.'),
       kind: z.enum(ASSIST_KINDS).describe('Assist kind: guide | recipe | adr | template | checklist | footgun | snippet.'),
       tags: z.array(z.string()).default([]).describe('Free-form tags for discovery.'),
       body: z.string().min(1).describe('The assist body as markdown.'),
+      assessment: z.object({
+        pros: z.array(z.string()).describe('Genuine benefits or use-cases this assist addresses.'),
+        cons: z.array(z.string()).describe('Real drawbacks, risks, maintenance concerns, or scope limits. Be honest — list real ones, not "none".'),
+        redundancyNote: z.string().optional().describe('Does this duplicate or conflict with an existing assist? Name it (e.g. "servicebay-overview"), or write "none".'),
+      }).optional().describe('Honest self-assessment of this proposal. Strongly encouraged — the admin needs a fair basis, not a sales pitch.'),
     },
-    async ({ title, whenToUse, kind, tags, body }) => {
+    async ({ title, whenToUse, kind, tags, body, assessment }) => {
       try {
         const proposal = await submitProposal(
-          { title, whenToUse, kind, tags, body },
+          { title, whenToUse, kind, tags, body, assessment },
           opts?.auth?.user,
         );
         return textResult({
