@@ -65,7 +65,10 @@ jobs:
           path: |
             node_modules
             packages/*/node_modules
-          key: node-modules-v2-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          # Node version is part of the key: native modules (e.g. better-sqlite3)
+          # are compiled against a specific Node ABI. Without it, a cache built on
+          # Node 20 (ABI 115) is reused on Node 22 (ABI 127), causing ERR_DLOPEN_FAILED.
+          key: node-modules-v3-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies
         if: steps.cache-npm.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
@@ -86,7 +89,10 @@ jobs:
           path: |
             node_modules
             packages/*/node_modules
-          key: node-modules-v2-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          # Node version is part of the key: native modules (e.g. better-sqlite3)
+          # are compiled against a specific Node ABI. Without it, a cache built on
+          # Node 20 (ABI 115) is reused on Node 22 (ABI 127), causing ERR_DLOPEN_FAILED.
+          key: node-modules-v3-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies
         if: steps.cache-npm.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
@@ -107,7 +113,10 @@ jobs:
           path: |
             node_modules
             packages/*/node_modules
-          key: node-modules-v2-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          # Node version is part of the key: native modules (e.g. better-sqlite3)
+          # are compiled against a specific Node ABI. Without it, a cache built on
+          # Node 20 (ABI 115) is reused on Node 22 (ABI 127), causing ERR_DLOPEN_FAILED.
+          key: node-modules-v3-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies
         if: steps.cache-npm.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
@@ -139,7 +148,10 @@ jobs:
           path: |
             node_modules
             packages/*/node_modules
-          key: node-modules-v2-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          # Node version is part of the key: native modules (e.g. better-sqlite3)
+          # are compiled against a specific Node ABI. Without it, a cache built on
+          # Node 20 (ABI 115) is reused on Node 22 (ABI 127), causing ERR_DLOPEN_FAILED.
+          key: node-modules-v3-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies
         if: steps.cache-npm.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
@@ -172,7 +184,10 @@ jobs:
           path: |
             node_modules
             packages/*/node_modules
-          key: node-modules-v2-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          # Node version is part of the key: native modules (e.g. better-sqlite3)
+          # are compiled against a specific Node ABI. Without it, a cache built on
+          # Node 20 (ABI 115) is reused on Node 22 (ABI 127), causing ERR_DLOPEN_FAILED.
+          key: node-modules-v3-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies
         if: steps.cache-npm.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
@@ -193,7 +208,10 @@ jobs:
           path: |
             node_modules
             packages/*/node_modules
-          key: node-modules-v2-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          # Node version is part of the key: native modules (e.g. better-sqlite3)
+          # are compiled against a specific Node ABI. Without it, a cache built on
+          # Node 20 (ABI 115) is reused on Node 22 (ABI 127), causing ERR_DLOPEN_FAILED.
+          key: node-modules-v3-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies
         if: steps.cache-npm.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
