@@ -89,6 +89,13 @@ The whole control plane is an MCP surface. → **[features/mcp.md](features/mcp.
 - **Time-limited token request/approve flow.** A narrow-scoped caller *requests* a
   token; an admin approves (only ever narrowing scope), and it's minted with a
   capped TTL. Least privilege by default.
+- **Scope-filtered tool visibility.** `tools/list` advertises only the tools a
+  token could actually call, in a deterministic prompt-cache-safe order.
+- **Agents feed knowledge back — admin-gated.** `propose_learning` (its own
+  off-ladder `propose` scope) lets a connected agent propose an assist into the
+  catalog; an admin approves it and it lands behind a hard secret scan — a central
+  knowledge base that agents improve. Plus `get_service_standards`, a curated
+  standards index for building a new service.
 
 ## Erweitern ohne Code — extend without code
 

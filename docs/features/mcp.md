@@ -28,6 +28,23 @@ mutation surface. Highlights beyond the read/lifecycle basics:
   `restore_trashed_service`, `factory_reset`, `set_boot_next_usb`, `reboot_node`,
   channel switch (`get_channel` / `set_channel`), backups, health checks, and the
   `diagnose` aggregator.
+- Knowledge: `list_assists` / `get_assist`, and **`get_service_standards`**
+  (`flavor: servicebay | generic`) — a curated pointer index (ADRs, invariants,
+  assists to read, the template contract) for an agent building a new service.
+
+Several formerly-narrow tools were **consolidated** in 5.0.0 (a breaking change
+to the surface): `manage_service` (`action: start|stop|restart`), `get_logs`
+(`source: service|container|podman`), `get_template_artifact`
+(`artifact: readme|yaml|variables`), and `list_requests` (`type: access|token`)
+replaced eleven older per-verb tools.
+
+**Tool visibility is scoped to the token.** `tools/list` advertises **only the
+tools a token could actually call** — its granted scopes filtered against
+`TOOL_SCOPES`, in a deterministic (name-sorted, prompt-cache-safe) order. A
+read-only token never sees mutate/destroy tools. A small always-on kernel
+(`MCP_KERNEL_TOOLS`) is designated for Tool-Search clients to keep eagerly loaded
+while the rest is `defer_loading`. This is visibility only — `safeHandler`
+remains the single enforcement authority. See [docs/MCP.md](../MCP.md) for detail.
 
 > The exact count is verified against the registry — do not copy a number from
 > older prose (`README`/`ARCHITECTURE.md` historically said "37"; the current
@@ -69,6 +86,31 @@ the MCP tools `request_token`, `poll_token_request`, `list_requests(type="token"
 There's also a **bootstrap token** (created during onboarding, ~30-minute expiry,
 LAN-only) that is re-activatable from Settings for the onboarding agent — see
 [UX_DECISIONS.md → MCP bootstrap token](../UX_DECISIONS.md).
+
+## Agents feed knowledge back — admin-gated (5.1.0)
+
+**What it does.** ServiceBay's assist catalog is a **central knowledge base that
+connected agents improve**, admin-gated. When an agent works out something reusable
+it can propose it back instead of losing it to a session — a knowledge Rückkanal,
+not just a one-way read.
+
+**How it works.** `propose_learning` (its own **off-ladder `propose` scope** — see
+[SCOPE_AUDIT.md](../SCOPE_AUDIT.md)) submits a proposed assist (frontmatter +
+markdown body + an optional self-assessment of pros/cons/redundancy). It queues as
+a **pending**, namespaced `local/<slug>` proposal that is **additive-only** — it
+never shadows a built-in assist.
+
+- **Admin review, no self-approval.** An admin reviews the queue via
+  `list_learning_proposals` / `get_learning_proposal` (read scope) and
+  approves/rejects from the dashboard; the submitter cannot approve its own
+  proposal.
+- **Landing behind a hard secret scan.** On approval the assist lands to
+  `DATA_DIR/local-assists/` — but a proposal that trips a known secret signature
+  is **blocked, never written**. Once landed it is served by `list_assists` /
+  `get_assist` with no release.
+- **Promotion backlog.** `list_assist_drift` reports landed local-assists that
+  aren't yet in the repo's `assists/` — the queue for a later manual PR that
+  ships them in the image.
 
 ## Related
 

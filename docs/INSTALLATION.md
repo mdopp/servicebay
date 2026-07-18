@@ -129,11 +129,11 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     subgraph "Multi-Stage Dockerfile"
-        B[base<br/>node:20-slim<br/>+ python3, make, g++]
+        B[base<br/>node:22-slim<br/>+ python3, make, g++]
         D[deps<br/>npm ci]
         BU[builder<br/>npm run build<br/>= next build --webpack<br/>+ patch-routes-manifest<br/>+ esbuild server.ts → CJS]
         P[prod-deps<br/>npm ci --omit=dev<br/>builds native modules]
-        R[runner<br/>node:20-slim<br/>CMD: node dist-server/server.cjs]
+        R[runner<br/>node:22-slim<br/>CMD: node dist-server/server.cjs]
     end
 
     B --> D --> BU

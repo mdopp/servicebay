@@ -145,7 +145,7 @@ Claude Code) to see the live tool registry on your version.
 | Requests | `list_requests` (`type: access\|token`), `file_access_request`, `get_access_request_status`, `request_token`, `poll_token_request` |
 | Backups | `list_backups`, `run_backup`, `restore_backup` |
 | System | `list_nodes`, `get_system_info`, `get_network_graph`, `get_config`, `update_config`, `exec_command`, `get_channel`, `set_channel` |
-| Knowledge | `list_assists`, `get_assist`, `get_service_standards` (`flavor: servicebay\|generic`), `propose_learning` (`propose` scope) |
+| Knowledge | `list_assists`, `get_assist`, `get_service_standards` (`flavor: servicebay\|generic`), `propose_learning` (`propose` scope), `list_learning_proposals` / `get_learning_proposal` / `list_assist_drift` (`read`, admin review) |
 
 The three merged tools above (`manage_service`, `get_logs`,
 `get_template_artifact`) plus `list_requests` replaced nine (+2) narrower tools
@@ -169,16 +169,36 @@ release discipline, coverage floor, secret hygiene, scripts-over-prose) with no
 ServiceBay ADRs or template details. Backing prose lives single-sourced in the
 `new-service-standards` / `generic-project-standards` assists.
 
-`propose_learning` (`propose` scope, #2326) is the knowledge **Rückkanal**: an
-agent submits a proposed assist — `title`, `whenToUse`, `kind` (guide | recipe |
-adr | template | checklist | footgun | snippet), `tags`, `body` — and it is
-queued as a **pending** proposal with a namespaced id `local/<slug>` (derived
-from the title). Proposals are **additive-only**: a slug that collides with a
-built-in assist id is rejected (propose a companion, don't shadow a built-in —
-updating a built-in is a repo PR). The submission does **not** take effect until
-an admin approves it (approval + landing arrive in later #2326 slices). `propose`
-is its own off-ladder scope (see `SCOPE_AUDIT.md`): a `propose`-only token can
-submit knowledge and nothing else, and a read/mutate token can't submit at all.
+### The learning-feedback loop (`propose_learning`, #2326)
+
+`propose_learning` (`propose` scope) is the knowledge **Rückkanal** — a
+central knowledge base that connected agents *improve*, admin-gated. An agent
+submits a proposed assist — `title`, `whenToUse`, `kind` (guide | recipe | adr |
+template | checklist | footgun | snippet), `tags`, `body`, plus an optional
+**self-assessment** (pros / cons / redundancy) — and it is queued as a **pending**
+proposal with a namespaced id `local/<slug>` (derived from the title). Proposals
+are **additive-only**: they land in the `local/` namespace and **never shadow a
+built-in** assist (propose a companion; updating a built-in is a repo PR). A
+same-id local proposal surfaces its `siblingProposalIds` so the admin sees
+duplicates.
+
+`propose` is its own **off-ladder** scope (see `SCOPE_AUDIT.md`): a
+`propose`-only token can submit knowledge and nothing else, and a read/mutate
+token can't submit at all. The submitter **cannot self-approve**.
+
+**Admin review + landing.** An admin reviews the queue with the read-scoped
+tools `list_learning_proposals` (defaults to pending) and `get_learning_proposal`
+(one proposal by id, with body + self-assessment), then approves or rejects from
+the dashboard. On approval the proposal lands to `DATA_DIR/local-assists/`
+**behind a hard secret scan** — a proposal that trips a known secret signature is
+**blocked and never written**, not merely flagged. Once landed it is served
+alongside built-ins by `list_assists` / `get_assist` with no release needed.
+
+**Promotion backlog.** `list_assist_drift` (read scope) reports landed
+local-assists that don't yet have a matching `assists/<slug>.md` in the repo —
+the promotion backlog. Each entry carries a `promotionHint`; making a runtime
+assist permanent (shipped in the image) is a later manual repo PR that adds the
+file.
 
 ## Tool visibility is scoped to your token (#2325)
 
