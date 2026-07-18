@@ -14,7 +14,7 @@ import {
 } from '@/lib/manager';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getTemplates, getReadme, getTemplateYaml, getTemplateVariables } from '@/lib/registry';
-import { listAssists, getAssist, ASSIST_KINDS } from '@/lib/assists/catalog';
+import { listAssists, getAssist, ASSIST_KINDS, listAssistDrift } from '@/lib/assists/catalog';
 import {
   submitProposal,
   ProposalError,
@@ -234,6 +234,9 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   // admin-only action on the dashboard (NOT an MCP tool), so a `propose`-scoped
   // submitter can see nothing here and cannot approve their own proposal.
   list_learning_proposals: 'read', get_learning_proposal: 'read',
+  // #2326 s5: drift-report — read-only view of landed local-assists that are
+  // not yet promoted to the repo (assists/). Surfaces the promotion backlog.
+  list_assist_drift: 'read',
   // Scoped-token request flow (#2139). A token *request* itself grants
   // nothing — it just files a pending item the admin must approve — so it
   // needs only the lowest scope (`read`). This is deliberate: a caller with
@@ -1136,6 +1139,22 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         siblingProposalIds: p.siblingProposalIds,
         hasSameIdProposal: p.siblingProposalIds.length > 0,
       });
+    },
+  );
+
+  // --- List Assist Drift (#2326 s5) ---
+  // Read-only promotion-backlog view: landed local-assists (DATA_DIR/local-assists/landed/)
+  // that do NOT yet have a corresponding built-in entry in assists/. Mapping:
+  //   landed id `local/<slug>` ↔ built-in id `<slug>` (assists/<slug>.md).
+  // An entry already present as a built-in is omitted — nothing to promote.
+  // Side-effect-free; `read`-scoped so any read token can call it.
+  server.tool(
+    'list_assist_drift',
+    'List landed local-assists (submitted via propose_learning and approved) that do not yet have a corresponding built-in entry in the repo\'s assists/ directory. These are the promotion backlog — each entry is a runtime-only assist that a repo PR adding assists/<slug>.md would make permanent and ship in the image. Returns each entry\'s id (local/<slug>), title, kind, whenToUse, tags, and a promotionHint. Read-only and side-effect-free.',
+    {},
+    async () => {
+      const entries = await listAssistDrift();
+      return textResult({ drift: entries, count: entries.length });
     },
   );
 

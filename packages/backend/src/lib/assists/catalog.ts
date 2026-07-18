@@ -237,6 +237,74 @@ export async function listBuiltinAssistIds(): Promise<string[]> {
 }
 
 /**
+ * Drift-report entry (#2326 s5): a landed local-assist that has no
+ * corresponding built-in entry in `assists/`. These are the assists awaiting
+ * promotion to a repo PR.
+ */
+export interface AssistDriftEntry {
+  /** Namespaced id of the landed assist, e.g. `local/my-recipe`. */
+  id: string;
+  title: string;
+  kind: AssistKind;
+  whenToUse: string;
+  tags: string[];
+  /**
+   * Hint for the admin: opening a repo PR to add `assists/<slug>.md` promotes
+   * this entry from runtime-only to built-in.
+   */
+  promotionHint: string;
+}
+
+/**
+ * Compare landed local-assists (`DATA_DIR/local-assists/landed/`) against the
+ * built-in repo assists (`assists/`). Returns every landed entry whose bare
+ * slug has NO corresponding `assists/<slug>.md` — i.e. the promotion backlog.
+ *
+ * Mapping:  landed id `local/<slug>` ↔ built-in id `<slug>`.
+ * An entry whose slug IS already in the built-in dir is omitted (nothing to
+ * promote — a built-in already covers that topic by id).
+ *
+ * Read-only and side-effect-free (#2326 s5).
+ */
+export async function listAssistDrift(): Promise<AssistDriftEntry[]> {
+  const [landedFiles, builtinIds] = await Promise.all([
+    readDirAssists(LANDED_ASSISTS_DIR()),
+    listBuiltinAssistIds(),
+  ]);
+  const builtinSet = new Set(builtinIds);
+
+  const result: AssistDriftEntry[] = [];
+  const dir = LANDED_ASSISTS_DIR();
+
+  for (const file of landedFiles) {
+    const slug = file.slice(0, -'.md'.length);
+    // Only surface entries with no built-in counterpart.
+    if (builtinSet.has(slug)) continue;
+
+    const id = `${LOCAL_ID_PREFIX}${slug}`;
+    let raw: string;
+    try {
+      raw = await fs.readFile(path.join(dir, file), 'utf-8');
+    } catch {
+      continue;
+    }
+    const summary = parseAssistSummary(raw, id, 'Local');
+    if (!summary) continue;
+
+    result.push({
+      id: summary.id,
+      title: summary.title,
+      kind: summary.kind,
+      whenToUse: summary.whenToUse,
+      tags: summary.tags,
+      promotionHint: `Open a repo PR adding assists/${slug}.md to promote this entry from runtime-only to built-in.`,
+    });
+  }
+
+  return result;
+}
+
+/**
  * Return the full raw markdown (frontmatter + body) of one assist by id. A bare
  * `<stem>` id reads Local (drop-dir override) then Built-in; a `local/<stem>` id
  * reads the additive landed dir (#2326 s4). Returns null for an unknown/unsafe id.
