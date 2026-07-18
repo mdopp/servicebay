@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.0.0...servicebay-v5.0.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* **ci:** scope node_modules cache key to Node version (native ABI) ([f3d3532](https://github.com/mdopp/servicebay/commit/f3d3532f58212e76e2db93161482897c5dbdb17e))
+* **runtime:** Node-Runtime 20 → 22 ([#2329](https://github.com/mdopp/servicebay/issues/2329)) ([58d078f](https://github.com/mdopp/servicebay/commit/58d078f96679d89b636674c32e30697277a3e706))
+* **runtime:** upgrade Node runtime from 20 to 22 ([0041882](https://github.com/mdopp/servicebay/commit/0041882f9b5a7e42f858de3ca1bd8eb822d5c669)), closes [#2329](https://github.com/mdopp/servicebay/issues/2329)
+
 ## [5.0.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.166.1...servicebay-v5.0.0) (2026-07-18)
 
 
