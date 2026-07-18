@@ -17,7 +17,7 @@ or a wiped install. → **[features/self-heal.md](features/self-heal.md)**
 
 - **Silent credential rekey.** Wipe the secrets group on a clean install and the
   service admin passwords re-sync *in place* — LLDAP, NPM, AdGuard, Immich,
-  Audiobookshelf, Honcho's Postgres role — no crash-loop, no lockout, no
+  Audiobookshelf — no crash-loop, no lockout, no
   re-typing. ([coverage matrix](CREDENTIAL_SELF_HEAL.md))
 - **Its own crash leaves a readable trace.** When `servicebay.service` exit-loops
   and the UI goes dark, a host-side systemd hook drops `last-crash.json` *outside*

@@ -4,7 +4,7 @@ OSCAR is a thin household layer on top of [Hermes Agent](https://github.com/Nous
 
 This page is the honest "what can I run today" walkthrough, in three tiers. Start at Tier 1; each tier is a superset of the one before.
 
-> **Why this exists.** The architecture (`solbay-architecture.md`) describes the *end state*. This page describes the *entry point*. As of May 2026 Hermes ships native Home-Assistant control, a local document-retrieval skill (`qmd`), voice mode, Honcho memory with per-user peers, and 20+ messaging gateways — so Tiers 1 and 2 deliver real value with zero OSCAR code.
+> **Why this exists.** The architecture (`solbay-architecture.md`) describes the *end state*. This page describes the *entry point*. As of May 2026 Hermes ships native Home-Assistant control, a local document-retrieval skill (`qmd`), voice mode, and 20+ messaging gateways — so Tiers 1 and 2 deliver real value with zero OSCAR code.
 
 ---
 
@@ -81,9 +81,9 @@ hermes
 | OSCAR intent | Tier-2 coverage |
 |---|---|
 | 1 — Sovereignty | Local LLM via Ollama; cloud opt-in. **Missing:** the per-call `cloud_audit` trail (OSCAR-eigen, Tier 3). |
-| 2 — Long memory | Honcho (conversation) + `qmd` (documents/notes). **Missing:** structured domain collections — maybe never needed. |
+| 2 — Long memory | `qmd` (documents/notes) + Hermes' own conversation memory. **Missing:** structured domain collections — maybe never needed. |
 | 3 — One conversation | Chat: full. Voice: CLI + Discord-voice. **Missing:** HA Voice PE pucks (gatekeeper, Phase 1). |
-| 4 — Per-resident privacy | Honcho keeps per-user "peer" profiles. **Missing:** *voice = identity* — recognising who is speaking (gatekeeper speaker-ID, Phase 2). |
+| 4 — Per-resident privacy | Hermes keeps per-user profiles. **Missing:** *voice = identity* — recognising who is speaking (gatekeeper speaker-ID, Phase 2). |
 | 5 — Things happen | Full — native HA integration. |
 
 Four of five intents, substantially, from `pip install` + config. That is the honest Phase-0 value, and it doesn't wait on anything.
@@ -99,7 +99,7 @@ What Tier 3 adds over Tier 2:
 - **Packaged, wizard-driven deploy** — install the four-template OSCAR stack with one click instead of running `pip install hermes-agent` and configuring each piece by hand.
 - **Cloud-LLM audit** — every cloud call writes a `cloud_audit` row, family-readable via the `oscar-audit-query` skill.
 - **HA Voice PE in the rooms** — the `gatekeeper` container bridges Wyoming-protocol voice pucks to Hermes (Phase 1).
-- **Voice = identity** — speaker-ID maps a voice to an LLDAP resident and the right Honcho peer (Phase 2).
+- **Voice = identity** — speaker-ID maps a voice to an LLDAP resident and the right per-resident profile (Phase 2).
 - **German-household defaults** and the per-resident harness composition.
 
 Walkthrough: [`mdopp/solbay`'s README](https://github.com/mdopp/solbay#readme). Enable the OSCAR registry during FCoS install (the prompt defaults to `Y`), or add `https://github.com/mdopp/solbay` to Settings → Registries on an existing install.
@@ -109,5 +109,5 @@ Walkthrough: [`mdopp/solbay`'s README](https://github.com/mdopp/solbay#readme). 
 ## Recommended sequence
 
 1. **Do Tier 1 now** on the GPU server (or any box with Python). Confirm Hermes + local Ollama is fast enough.
-2. **Do Tier 2** on the same box. Live with it for a few days — chat, HA control, `qmd`. Every finding (is `qmd` enough? are Honcho peers enough?) feeds back into the architecture and can *shrink* the OSCAR layer further.
+2. **Do Tier 2** on the same box. Live with it for a few days — chat, HA control, `qmd`. Every finding (is `qmd` enough? is Hermes' own memory enough?) feeds back into the architecture and can *shrink* the OSCAR layer further.
 3. **Move to Tier 3** when you want the household shape — multi-resident, audit, room voice pucks. By then the OSCAR-specific surface is well understood and small.

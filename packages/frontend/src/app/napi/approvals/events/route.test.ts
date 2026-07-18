@@ -49,19 +49,19 @@ describe('GET /napi/approvals/events — SSE new-approval feed (#2268 part B)', 
     expect(parseSse(decoder.decode(first.value))).toEqual({ type: 'connected' });
 
     // Create a pending approval — the stream must forward a new-approval event.
-    const created = await submitApproval({ service: 'honcho', title: 'delete honcho', node: 'box1' });
+    const created = await submitApproval({ service: 'media', title: 'delete media', node: 'box1' });
     const next = await reader.read();
     expect(parseSse(decoder.decode(next.value))).toEqual({
       type: 'new-approval',
       id: created.id,
-      kind: 'honcho',
-      summary: 'delete honcho',
+      kind: 'media',
+      summary: 'delete media',
       created_at: created.created_at,
     });
 
     // Cancelling the stream unsubscribes — a later approval must NOT arrive.
     await reader.cancel();
-    const before = await submitApproval({ service: 'honcho', title: 'later', node: 'box1' });
+    const before = await submitApproval({ service: 'media', title: 'later', node: 'box1' });
     expect(before.id).toBeTruthy(); // submit still succeeds with no live subscriber
   });
 });

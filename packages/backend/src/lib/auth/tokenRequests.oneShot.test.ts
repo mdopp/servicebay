@@ -42,9 +42,9 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
     const view = await submitTokenRequest({
       requestedScopes: ['destroy'],
       requestedTtlSecs: 300,
-      reason: 'delete honcho',
+      reason: 'delete media',
       requestedBy: 'token:wartung',
-      oneShotOp: { toolName: 'delete_service', service: 'honcho' },
+      oneShotOp: { toolName: 'delete_service', service: 'media' },
     });
     expect(view.status).toBe('pending');
     expect(view.approvalId).toBeTruthy();
@@ -73,7 +73,7 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
 
     const view = await submitTokenRequest({
       requestedScopes: ['destroy'], requestedTtlSecs: 300, reason: 'r',
-      requestedBy: 'token:wartung', oneShotOp: { toolName: 'delete_service', service: 'honcho' },
+      requestedBy: 'token:wartung', oneShotOp: { toolName: 'delete_service', service: 'media' },
     });
 
     // Owner approves the durable approval → mintToken runs.
@@ -88,7 +88,7 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
     expect(verified).not.toBeNull();
     expect(verified!.scopes).toEqual(['destroy']); // ONLY destroy, not read/lifecycle/mutate
     expect(verified!.singleUse).toBe(true);
-    expect(verified!.oneShotOp).toEqual({ toolName: 'delete_service', service: 'honcho' });
+    expect(verified!.oneShotOp).toEqual({ toolName: 'delete_service', service: 'media' });
 
     // Second poll no longer hands over the secret.
     const again = await pollTokenRequest(view.id);
@@ -120,7 +120,7 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
 
     const view = await submitTokenRequest({
       requestedScopes: ['destroy'], requestedTtlSecs: 300, reason: 'r',
-      requestedBy: 'token:wartung', oneShotOp: { toolName: 'delete_service', service: 'honcho' },
+      requestedBy: 'token:wartung', oneShotOp: { toolName: 'delete_service', service: 'media' },
     });
     await approveApproval(view.approvalId!);
     const secret = (await pollTokenRequest(view.id)).token!;
@@ -149,7 +149,7 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
     } as typeof import('@/lib/auth/tokenRequests') & typeof import('@/lib/approvals');
     const view = await submitTokenRequest({
       requestedScopes: ['destroy'], requestedTtlSecs: 30 * 24 * 3600, reason: 'r',
-      requestedBy: 'token:wartung', oneShotOp: { toolName: 'delete_service', service: 'honcho' },
+      requestedBy: 'token:wartung', oneShotOp: { toolName: 'delete_service', service: 'media' },
     });
     expect(view.requestedTtlSecs).toBe(ONE_SHOT_MAX_TTL_SECS);
     await approveApproval(view.approvalId!);
@@ -177,7 +177,7 @@ describe('one-shot owner-approved elevated token (#2245)', () => {
     const { listTokens } = await loadTokens();
     const view = await submitTokenRequest({
       requestedScopes: ['destroy'], requestedTtlSecs: 300, reason: 'r',
-      requestedBy: 'token:wartung', oneShotOp: { toolName: 'delete_service', service: 'honcho' },
+      requestedBy: 'token:wartung', oneShotOp: { toolName: 'delete_service', service: 'media' },
     });
     await approveApproval(view.approvalId!);
     expect(await listTokens()).toHaveLength(1);

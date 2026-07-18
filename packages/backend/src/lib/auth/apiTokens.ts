@@ -66,7 +66,7 @@ export interface ApiToken {
   // ELEVATED scope (destroy/exec) but is BOUND to exactly one op:
   //   - `toolName` — the only MCP tool this token may invoke.
   //   - `service`  — when present, the tool's target must match (e.g. only
-  //     `delete_service` on `honcho`), so the grant can't be redirected.
+  //     `delete_service` on `media`), so the grant can't be redirected.
   // The MCP gate refuses any call that doesn't match this binding. Combined
   // with `singleUse`, the elevation is exactly one approved op, once. Never
   // settable by an external caller — only the approved-mint path sets it.

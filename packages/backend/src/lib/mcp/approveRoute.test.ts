@@ -32,11 +32,11 @@ const human = async () => ({ user: 'admin', expires: new Date(Date.now() + 60_00
 function mcpApproval(id: string, extra: Record<string, unknown> = {}) {
   return {
     id,
-    service: 'honcho',
-    title: 'delete_service: honcho',
+    service: 'media',
+    title: 'delete_service: media',
     description: null,
-    payload: { toolName: 'delete_service', args: { name: 'honcho' }, caller: 'token:ci-bot' },
-    on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+    payload: { toolName: 'delete_service', args: { name: 'media' }, caller: 'token:ci-bot' },
+    on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
     on_reject: {},
     node: 'Local',
     created_at: new Date().toISOString(),

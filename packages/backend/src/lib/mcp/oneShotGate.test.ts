@@ -59,12 +59,12 @@ async function connect(opts?: Parameters<typeof createMcpServer>[0]) {
   return { client };
 }
 
-// A one-shot token: elevated destroy scope, bound to delete_service on honcho.
+// A one-shot token: elevated destroy scope, bound to delete_service on media.
 const ONE_SHOT_AUTH = {
   user: 'token:mcp-oneshot',
   scopes: ['destroy'] as const,
   tokenId: 'ost1',
-  oneShotOp: { toolName: 'delete_service', service: 'honcho' },
+  oneShotOp: { toolName: 'delete_service', service: 'media' },
   singleUse: true,
 };
 
@@ -78,7 +78,7 @@ describe('one-shot elevated token gate (#2245)', () => {
 
   it('runs the bound op inline (no re-parking) and BURNS the token after it succeeds', async () => {
     const { client } = await connect({ auth: { ...ONE_SHOT_AUTH, scopes: [...ONE_SHOT_AUTH.scopes] } });
-    const res = await client.callTool({ name: 'delete_service', arguments: { name: 'honcho' } });
+    const res = await client.callTool({ name: 'delete_service', arguments: { name: 'media' } });
     expect((res as { isError?: boolean }).isError).toBeFalsy();
     // The destructive op ran once, inline — it did NOT park for approval.
     expect(deleteService).toHaveBeenCalledTimes(1);
@@ -102,7 +102,7 @@ describe('one-shot elevated token gate (#2245)', () => {
     const { client } = await connect({ auth: { ...ONE_SHOT_AUTH, scopes: [...ONE_SHOT_AUTH.scopes] } });
     const res = await client.callTool({ name: 'delete_service', arguments: { name: 'immich' } });
     expect((res as { isError?: boolean }).isError).toBe(true);
-    expect((res.content as { text: string }[])[0].text).toMatch(/bound to "delete_service" on "honcho"/);
+    expect((res.content as { text: string }[])[0].text).toMatch(/bound to "delete_service" on "media"/);
     expect(deleteService).not.toHaveBeenCalled();
     expect(consumeSingleUseToken).not.toHaveBeenCalled();
     await client.close();
@@ -111,7 +111,7 @@ describe('one-shot elevated token gate (#2245)', () => {
   it('does NOT burn when the bound op reports a logical error (caller can retry within TTL)', async () => {
     deleteService.mockRejectedValueOnce(new Error('boom'));
     const { client } = await connect({ auth: { ...ONE_SHOT_AUTH, scopes: [...ONE_SHOT_AUTH.scopes] } });
-    const res = await client.callTool({ name: 'delete_service', arguments: { name: 'honcho' } });
+    const res = await client.callTool({ name: 'delete_service', arguments: { name: 'media' } });
     expect((res as { isError?: boolean }).isError).toBe(true);
     expect(consumeSingleUseToken).not.toHaveBeenCalled();
     await client.close();

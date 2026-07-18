@@ -63,9 +63,9 @@ describe('#2237 MCP dispatcher registered via the server-import seam on approve'
     // No dispatcher registered in this module graph yet — exactly the RED path.
     expect(registeredViaServerImport).toBe(false);
     const r = await submitApproval({
-      service: 'honcho',
-      title: 'delete_service: honcho',
-      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+      service: 'media',
+      title: 'delete_service: media',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
     });
     await expect(approveApproval(r.id)).rejects.toThrow(/dispatcher is not registered/);
     // The request must NOT be marked approved when the tool could not run.
@@ -78,15 +78,15 @@ describe('#2237 MCP dispatcher registered via the server-import seam on approve'
     expect(registeredViaServerImport).toBe(true);
 
     const r = await submitApproval({
-      service: 'honcho',
-      title: 'delete_service: honcho',
-      payload: { toolName: 'delete_service', args: { name: 'honcho' }, caller: 'token:ci-bot' },
-      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+      service: 'media',
+      title: 'delete_service: media',
+      payload: { toolName: 'delete_service', args: { name: 'media' }, caller: 'token:ci-bot' },
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
     });
     const res = await approveApproval(r.id);
 
     // The tool actually ran (the #2234 RED was that it never did).
-    expect(dispatchMcpTool).toHaveBeenCalledWith('delete_service', { name: 'honcho' });
+    expect(dispatchMcpTool).toHaveBeenCalledWith('delete_service', { name: 'media' });
     expect(res.request.status).toBe('approved');
     expect((await getApproval(r.id))?.status).toBe('approved');
   });
