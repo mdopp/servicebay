@@ -299,11 +299,6 @@ export const MCP_KERNEL_TOOLS: readonly string[] = [
   'get_system_info',
 ];
 
-/** True when `toolName` is in the always-on kernel (see MCP_KERNEL_TOOLS). */
-export function isKernelTool(toolName: string): boolean {
-  return MCP_KERNEL_TOOLS.includes(toolName);
-}
-
 /**
  * Whether a token holding `scopes` may SEE `toolName` in `tools/list` (#2325).
  * Visibility mirrors the scope gate: a tool is advertised only when the token
