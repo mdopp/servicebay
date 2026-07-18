@@ -14,6 +14,7 @@ import {
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getTemplates, getReadme, getTemplateYaml, getTemplateVariables } from '@/lib/registry';
 import { listAssists, getAssist, ASSIST_KINDS } from '@/lib/assists/catalog';
+import { buildServiceStandards, SERVICE_STANDARDS_FLAVORS } from './serviceStandards';
 import { listNodes, getNodeConnection } from '@/lib/nodes';
 import { verifyNodeConnection } from '@/lib/nodes/verify';
 import { agentManager } from '@/lib/agent/manager';
@@ -204,7 +205,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   list_nodes: 'read', list_services: 'read', list_containers: 'read',
   get_logs: 'read', get_service_files: 'read',
   list_templates: 'read', get_template_artifact: 'read',
-  list_assists: 'read', get_assist: 'read',
+  list_assists: 'read', get_assist: 'read', get_service_standards: 'read',
   get_system_info: 'read', get_network_graph: 'read', get_health_checks: 'read',
   get_gateway_status: 'read', get_proxy_routes: 'read', get_config: 'read',
   list_system_services: 'read',
@@ -967,6 +968,27 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
       const body = await getAssist(id);
       if (!body) return errorResult(`No assist found with id "${id}". Use list_assists to see available entries.`);
       return textResult(body);
+    },
+  );
+
+  // --- Get Service Standards (#2323) ---
+  // A curated *pointer* index (not full text) for building a new project. The
+  // `servicebay` flavor lists the platform ADRs a new service must respect
+  // (titles scanned from docs/adr/*.md at runtime so they don't drift), the
+  // enforced invariants + gate commands, the assists to read in full, and the
+  // template contract. The `generic` flavor returns platform-agnostic dev
+  // standards. Backing prose lives in the new-service-standards /
+  // generic-project-standards assists (single source of truth).
+  server.tool(
+    'get_service_standards',
+    'Fetch a curated pointer index of the standards for building a new project. flavor="servicebay" (default) returns the platform ADRs a new ServiceBay service must respect (with titles scanned live from docs/adr), the enforced invariants + gate commands, the assists to read in full via get_assist, and the template contract. flavor="generic" returns platform-agnostic dev standards (commit convention, release discipline, coverage floor, secret hygiene, scripts-over-prose). Use this FIRST when starting a new service/project so you build against the standards instead of re-deriving them.',
+    {
+      flavor: z.enum(SERVICE_STANDARDS_FLAVORS).optional().default('servicebay')
+        .describe('"servicebay" (default) for a new ServiceBay service; "generic" for platform-agnostic dev standards.'),
+    },
+    async ({ flavor }) => {
+      const standards = await buildServiceStandards(flavor);
+      return textResult(standards);
     },
   );
 

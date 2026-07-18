@@ -145,6 +145,7 @@ Claude Code) to see the live tool registry on your version.
 | Requests | `list_requests` (`type: access\|token`), `file_access_request`, `get_access_request_status`, `request_token`, `poll_token_request` |
 | Backups | `list_backups`, `run_backup`, `restore_backup` |
 | System | `list_nodes`, `get_system_info`, `get_network_graph`, `get_config`, `update_config`, `exec_command`, `get_channel`, `set_channel` |
+| Knowledge | `list_assists`, `get_assist`, `get_service_standards` (`flavor: servicebay\|generic`) |
 
 The three merged tools above (`manage_service`, `get_logs`,
 `get_template_artifact`) plus `list_requests` replaced nine (+2) narrower tools
@@ -155,6 +156,18 @@ scope: `get_logs` / `get_template_artifact` / `list_requests` are `read`,
 Sensitive config fields (`auth.passwordHash`, `oidc.clientSecret`, SMTP
 passwords) are redacted from `get_config` and write-allowlisted in
 `update_config`.
+
+`get_service_standards` (`read` scope) returns a curated *pointer* index for
+building a new project. `flavor: 'servicebay'` (default) yields four blocks —
+`mustRespectAdrs` (the platform ADRs a new service is bound by, with titles
+scanned live from `docs/adr/*.md` so they never drift), `enforcedInvariants`
+(pointer to `docs/ARCHITECTURE_INVARIANTS.md` + the gate commands and 70 %
+diff-coverage floor), `assistsToRead` (ids resolvable via `get_assist`), and
+`templateContract` (pointers to `docs/TEMPLATE_AUTHORING.md` + `templates/CLAUDE.md`).
+`flavor: 'generic'` yields platform-agnostic dev standards (commit convention,
+release discipline, coverage floor, secret hygiene, scripts-over-prose) with no
+ServiceBay ADRs or template details. Backing prose lives single-sourced in the
+`new-service-standards` / `generic-project-standards` assists.
 
 ### Channel switching
 
