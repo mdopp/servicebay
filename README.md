@@ -49,6 +49,8 @@ The control plane is exposed as 62 MCP tools. Hand Claude (or Claude Desktop, or
 
 You describe what you want; the LLM translates it into ServiceBay calls. No more "what's a Quadlet file?"
 
+The tool list is **scoped to the token** — `tools/list` advertises only what a token could actually call, in a deterministic, prompt-cache-safe order. Beyond driving the box, an agent can pull curated build standards (`get_service_standards`) and **feed knowledge back**: `propose_learning` submits an assist into ServiceBay's catalog, which an admin approves (behind a hard secret scan) — a central knowledge base that the agents improve.
+
 ### A network map that shows what's actually happening
 
 ServiceBay maintains a real-time **Digital Twin** of every container, service, proxy route, port, and DNS rewrite on your network — and renders it as an interactive [topology graph](docs/screenshots/network-map.png). At a glance:
@@ -79,7 +81,7 @@ Or skip the manual step entirely: *"Claude, write a template for Paperless-ngx b
 
 Letting an LLM into your homelab is irresponsible without guardrails. ServiceBay has:
 
-- **Scoped API tokens** — `read` / `lifecycle` / `mutate` / `destroy`. Per-client, revocable, hashed-at-rest.
+- **Scoped API tokens** — `read` / `lifecycle` / `mutate` / `destroy`, plus an off-ladder `propose` (submit-knowledge-only). Per-client, revocable, hashed-at-rest.
 - **`exec_command` denylist** — `rm -rf /`, `mkfs`, `dd of=/dev/sd*`, partition editors, fork bombs — refused unless explicitly enabled.
 - **Auto-snapshot before destructive ops** — every `delete_service` / `update_config` / `exec_command` triggers a labelled `pre-mutation:` system backup. One-click rewind.
 - **Soft-delete trash** — `delete_service` moves files to a 7-day trash bucket; restore in one click.
@@ -210,7 +212,10 @@ read paths like `list_nodes`, `list_services`, `get_logs`,
 `create_health_check`/`run_check_now`, `get_config`/`update_config`,
 `exec_command`. Sensitive fields (`auth.passwordHash`, `oidc.clientSecret`,
 SMTP/NPM passwords) are redacted in `get_config` and write-allowlisted in
-`update_config`.
+`update_config`. Knowledge paths let an agent read curated build standards
+(`get_service_standards`) and propose an assist back into the catalog
+(`propose_learning`, off-ladder `propose` scope) for admin approval.
+`tools/list` is scope-filtered — a token only sees the tools it can call.
 
 **Setup walk-through with `claude mcp add` syntax, env-var refresh, and
 troubleshooting:** [docs/MCP.md](docs/MCP.md). The same instructions are
