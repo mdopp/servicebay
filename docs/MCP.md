@@ -169,6 +169,49 @@ release discipline, coverage floor, secret hygiene, scripts-over-prose) with no
 ServiceBay ADRs or template details. Backing prose lives single-sourced in the
 `new-service-standards` / `generic-project-standards` assists.
 
+## Tool visibility is scoped to your token (#2325)
+
+`tools/list` returns **only the tools your token could actually call**. A tool
+is advertised iff its required scope (`TOOL_SCOPES` in
+`packages/backend/src/lib/mcp/server.ts`) is within your token's granted scopes,
+using the same implication ladder the gate uses (`destroy` implies `reboot` +
+`exec`; see `SCOPE_AUDIT.md`). So:
+
+- a **read-only** token sees only the `read`-tier tools — no
+  mutate/destroy/exec/lifecycle tools ever appear in its list;
+- a **lifecycle** token additionally sees `manage_service`, `run_backup`, … ;
+- a **cookie / session (operator)** client sees the full surface (cookie auth
+  carries all scopes by design).
+
+This is **visibility only** — it changes what's *advertised*, never what's
+*allowed*. Enforcement is unchanged: `safeHandler` remains the single authority,
+so a tool that a token can't see still exists and, if called by id, is refused
+at the scope gate (`Token scope '…' required for …`) — **not** with a
+"tool not found". Advertising less means fewer tokens in-context and fewer
+wrong picks for small models, plus least-privilege (don't advertise what you
+can't invoke).
+
+**Deterministic ordering.** The returned list is sorted by tool name and is
+stable per token across requests. Tool definitions render at prompt position 0
+(`tools → system → messages`), so a stable, deterministic order is what lets a
+client prompt-cache them: any add/remove/reorder invalidates that cache, and a
+scope-filtered list is cache-safe precisely because it's fixed per token and
+isn't rebuilt mid-session.
+
+### `defer_loading` kernel set
+
+A small **always-on core** is designated in `MCP_KERNEL_TOOLS`
+(`server.ts`): `list_services`, `list_containers`, `diagnose`, `get_logs`,
+`get_system_info` — all `read`-tier, so every token (down to read-only) sees the
+whole kernel. A client using the Anthropic **Tool Search Tool**
+(`tool_search_tool_regex_20251119` / `tool_search_tool_bm25_20251119`) can keep
+this kernel eagerly loaded and mark the rest `defer_loading: true`, lazy-loading
+a tool's schema only when it's needed. Because deferred schemas are **appended,
+not swapped**, the prompt cache stays intact. Enabling Tool Search is a
+**client-side decision** — ServiceBay doesn't force it; it just designates the
+kernel and keeps descriptions terse so the remaining surface is cheap to search
+and lazy-load.
+
 ### Channel switching
 
 `get_channel` and `set_channel` let an LLM (or the operator) flip the

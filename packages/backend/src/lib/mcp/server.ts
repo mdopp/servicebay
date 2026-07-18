@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import {
@@ -278,6 +279,46 @@ export function tokenHasScope(tokenScopes: readonly ApiScope[], required: ApiSco
   // Single-sourced scope-implication ladder lives in apiScope.ts (#2048) so
   // the delegated-mint subset check and this MCP gate can't drift.
   return scopeSatisfiedBy(tokenScopes, required);
+}
+
+/**
+ * `defer_loading` kernel set (#2325). A small always-on core that a client
+ * using the Anthropic Tool Search Tool keeps eagerly loaded; every other tool
+ * is a `defer_loading` candidate the client can lazy-load on demand. This is a
+ * *hint surface* only — we don't force Tool Search (client-side decision), we
+ * just designate + advertise the core so a client CAN lazy-load the rest
+ * (schemas append, not swap → prompt cache stays intact). Kept read-only so the
+ * core is safe to always advertise; it must stay a subset of the read tier so a
+ * read-only token still sees the whole kernel.
+ */
+export const MCP_KERNEL_TOOLS: readonly string[] = [
+  'list_services',
+  'list_containers',
+  'diagnose',
+  'get_logs',
+  'get_system_info',
+];
+
+/** True when `toolName` is in the always-on kernel (see MCP_KERNEL_TOOLS). */
+export function isKernelTool(toolName: string): boolean {
+  return MCP_KERNEL_TOOLS.includes(toolName);
+}
+
+/**
+ * Whether a token holding `scopes` may SEE `toolName` in `tools/list` (#2325).
+ * Visibility mirrors the scope gate: a tool is advertised only when the token
+ * could actually call it — a read-only token must not see mutate/destroy/exec
+ * tools. Enforcement is unchanged (`safeHandler` stays the authority); this only
+ * changes *visibility*. No auth (cookie/operator/internal dispatch) ⇒ all tools
+ * visible, matching the "cookie has all scopes" gate rule.
+ */
+export function isToolVisibleForScopes(
+  toolName: string,
+  scopes: readonly ApiScope[] | undefined,
+): boolean {
+  if (!scopes) return true;
+  const required = TOOL_SCOPES[toolName] ?? 'read';
+  return tokenHasScope(scopes, required);
 }
 
 /**
@@ -2108,5 +2149,44 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     },
   );
 
+  // Scope-filtered + deterministically-ordered tools/list (#2325).
+  //
+  // Enforcement is unchanged — every tool above is registered with its
+  // safeHandler, which remains the authority: a filtered-out tool called by id
+  // still hits the scope gate and is refused. This ONLY changes *visibility*:
+  //   - a read-only token's advertised list omits mutate/destroy/exec tools
+  //     (least-privilege + fewer wrong picks + fewer tokens), and
+  //   - the list is sorted by name so it's deterministic + stable per token
+  //     across requests (prompt-cache friendliness).
+  //
+  // We wrap the SDK's own list handler rather than rebuild the tool-definition
+  // serialization (zod→JSON-schema) so the shapes never drift from the SDK.
+  applyToolListView(baseServer, opts?.auth?.scopes);
+
   return server;
+}
+
+/**
+ * Override the low-level `tools/list` handler on `baseServer.server` to (1)
+ * hide tools the current token can't call and (2) sort the survivors by name
+ * (#2325). It delegates to the SDK's default handler (installed by the first
+ * `.tool()` registration) for the actual tool-definition serialization, then
+ * filters + sorts its result — so this stays robust to SDK schema changes.
+ */
+function applyToolListView(baseServer: McpServer, scopes: readonly ApiScope[] | undefined) {
+  // The low-level Server keeps request handlers in a private Map keyed by the
+  // method literal ("tools/list"). Read the SDK's default handler so we can
+  // delegate to it, then reinstall our filtering/sorting wrapper over it.
+  const lowLevel = baseServer.server as unknown as {
+    _requestHandlers: Map<string, (req: unknown, extra: unknown) => Promise<{ tools: { name: string }[] }>>;
+  };
+  const defaultHandler = lowLevel._requestHandlers.get('tools/list');
+  if (!defaultHandler) return; // no tools registered → nothing to view
+  baseServer.server.setRequestHandler(ListToolsRequestSchema, async (request, extra) => {
+    const full = await defaultHandler(request, extra);
+    const tools = full.tools
+      .filter(t => isToolVisibleForScopes(t.name, scopes))
+      .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    return { ...full, tools };
+  });
 }
