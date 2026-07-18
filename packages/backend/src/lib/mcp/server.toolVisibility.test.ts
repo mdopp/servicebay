@@ -138,6 +138,50 @@ describe('enforcement unchanged — visibility != authorization (#2325)', () => 
   });
 });
 
+describe('propose scope — independent, low-privilege capability (#2326)', () => {
+  it('a propose-only token sees propose_learning and NOT read/mutate tools', async () => {
+    const { client } = await connect({ auth: { user: 'token:proposer', scopes: ['propose'] } });
+    const names = (await client.listTools()).tools.map(t => t.name);
+    expect(names).toContain('propose_learning');
+    // propose is NOT on the read<…<exec ladder: a propose-only token sees no
+    // read/lifecycle/mutate/destroy/exec tools.
+    expect(names).not.toContain('list_services'); // read
+    expect(names).not.toContain('manage_service'); // lifecycle
+    expect(names).not.toContain('deploy_service'); // mutate
+    expect(names).not.toContain('delete_service'); // destroy
+    expect(names).not.toContain('exec_command'); // exec
+    // Every advertised tool must be a propose-tier tool.
+    for (const name of names) {
+      expect(TOOL_SCOPES[name] ?? 'read', `${name} advertised to propose-only token`).toBe('propose');
+    }
+  });
+
+  it('a read-only token does NOT see propose_learning', async () => {
+    const { client } = await connect({ auth: { user: 'token:ro', scopes: [...READ_ONLY] } });
+    const names = (await client.listTools()).tools.map(t => t.name);
+    expect(names).not.toContain('propose_learning');
+  });
+
+  it('a mutate token does NOT implicitly get propose (no ladder implication)', async () => {
+    const { client } = await connect({ auth: { user: 'token:m', scopes: ['read', 'mutate'] } });
+    const names = (await client.listTools()).tools.map(t => t.name);
+    expect(names).not.toContain('propose_learning');
+    expect(isToolVisibleForScopes('propose_learning', ['read', 'mutate', 'destroy', 'exec'])).toBe(false);
+  });
+
+  it('calling propose_learning without the propose scope is refused at the gate', async () => {
+    const { client } = await connect({ auth: { user: 'token:ro', scopes: [...READ_ONLY] } });
+    const res = await client.callTool({
+      name: 'propose_learning',
+      arguments: { title: 't', whenToUse: 'w', kind: 'guide', tags: [], body: 'b' },
+    });
+    expect(res.isError).toBe(true);
+    const text = (res.content as { text?: string }[])[0]?.text ?? '';
+    expect(text).toMatch(/scope 'propose' required/i);
+    expect(text).not.toMatch(/not found/i);
+  });
+});
+
 describe('isToolVisibleForScopes helper (#2325)', () => {
   it('mirrors the scope gate; undefined scopes ⇒ everything visible', () => {
     expect(isToolVisibleForScopes('deploy_service', ['read'])).toBe(false);

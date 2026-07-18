@@ -27,6 +27,7 @@ import matter from 'gray-matter';
 import { DATA_DIR } from '@/lib/dirs';
 import { logger } from '@/lib/logger';
 import { ASSIST_KINDS } from '@/lib/assists/catalog';
+import { SECRET_PATTERNS, scanForSecrets } from '@/lib/assists/secretScan';
 
 const TAG = 'assists:editor';
 
@@ -35,27 +36,16 @@ const PROPOSALS_DIR = () => path.join(LOCAL_ASSISTS_DIR(), '.proposals');
 const HISTORY_DIR = () => path.join(LOCAL_ASSISTS_DIR(), '.history');
 
 /**
- * High-signal committed-secret formats — the SAME rules as
- * `tests/backend/assist_consistency.test.ts` (kept in sync deliberately; that
- * test is the repo-scan backstop, this is the runtime propose-time gate). A
- * proposal whose body matches any of these is rejected before it can ever be
- * approved into the Local drop dir.
+ * Secret signatures now live in the SHARED `@/lib/assists/secretScan` module,
+ * imported here, by the #2326 s4 landing gate (`proposals.ts`), AND by the
+ * build-time backstop `tests/backend/assist_consistency.test.ts` — one source of
+ * truth, so the three scans can never drift. Re-exported for existing callers.
  */
-export const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
-  { name: 'PEM private key', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/ },
-  { name: 'ServiceBay token (sb_)', re: /\bsb_[a-z0-9]{6,}_[A-Za-z0-9]{20,}\b/ },
-  { name: 'AWS access key id', re: /\bAKIA[0-9A-Z]{16}\b/ },
-  { name: 'GitHub token', re: /\bgh[posru]_[A-Za-z0-9]{20,}\b/ },
-  { name: 'GitHub fine-grained PAT', re: /\bgithub_pat_[A-Za-z0-9_]{30,}\b/ },
-  { name: 'Slack token', re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
-];
+export { SECRET_PATTERNS };
 
 /** Name of the first secret pattern the text matches, or null if clean. */
 export function scanForSecret(text: string): string | null {
-  for (const { name, re } of SECRET_PATTERNS) {
-    if (re.test(text)) return name;
-  }
-  return null;
+  return scanForSecrets(text)[0] ?? null;
 }
 
 /**

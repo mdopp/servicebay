@@ -247,7 +247,7 @@ app.prepare().then(() => {
           if (session) {
             // Cookie auth retains full scopes for back-compat. Fresh
             // installs that want stricter behaviour use named tokens.
-            auth = { user: session.user, scopes: ['read', 'lifecycle', 'mutate', 'destroy'] };
+            auth = { user: session.user, scopes: ['read', 'lifecycle', 'mutate', 'destroy', 'propose'] };
           }
         }
         if (!auth) {

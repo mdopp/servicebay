@@ -14,7 +14,14 @@ import {
 } from '@/lib/manager';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getTemplates, getReadme, getTemplateYaml, getTemplateVariables } from '@/lib/registry';
-import { listAssists, getAssist, ASSIST_KINDS } from '@/lib/assists/catalog';
+import { listAssists, getAssist, ASSIST_KINDS, listAssistDrift } from '@/lib/assists/catalog';
+import {
+  submitProposal,
+  ProposalError,
+  listProposalsForReview,
+  getProposalForReview,
+  type ProposalStatus,
+} from '@/lib/assists/proposals';
 import { buildServiceStandards, SERVICE_STANDARDS_FLAVORS } from './serviceStandards';
 import { listNodes, getNodeConnection } from '@/lib/nodes';
 import { verifyNodeConnection } from '@/lib/nodes/verify';
@@ -185,6 +192,7 @@ const MUTATING_TOOLS = new Set([
   'update_config', 'exec_command', 'container_exec', 'refresh_agent',
   'set_boot_next_usb', 'reboot_node', 'factory_reset',
   'set_channel',
+  'propose_learning',
 ]);
 
 /**
@@ -200,6 +208,10 @@ const MUTATING_TOOLS = new Set([
  *   destroy    delete/restore/purge/factory_reset — irreversible state edits
  *   exec       exec_command — split off from `destroy` (#591) so a token
  *              can grant config writes without shell access
+ *   propose    propose_learning — an INDEPENDENT, low-privilege capability
+ *              scope (#2326), NOT on the read<…<exec ladder. A `propose`-only
+ *              token may submit knowledge proposals and nothing else; a
+ *              read/mutate/destroy token does NOT implicitly get `propose`.
  */
 export const TOOL_SCOPES: Record<string, ApiScope> = {
   // read
@@ -216,6 +228,15 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   get_unmanaged_bundles: 'read',
   get_channel: 'read',
   get_access_request_status: 'read',
+  // #2326 s3: admin reads of the learning-proposal review queue. `read`-scoped
+  // (like list_requests / get_access_request_status) — these only SURFACE
+  // pending proposals to an admin for review; approving/rejecting is an
+  // admin-only action on the dashboard (NOT an MCP tool), so a `propose`-scoped
+  // submitter can see nothing here and cannot approve their own proposal.
+  list_learning_proposals: 'read', get_learning_proposal: 'read',
+  // #2326 s5: drift-report — read-only view of landed local-assists that are
+  // not yet promoted to the repo (assists/). Surfaces the promotion backlog.
+  list_assist_drift: 'read',
   // Scoped-token request flow (#2139). A token *request* itself grants
   // nothing — it just files a pending item the admin must approve — so it
   // needs only the lowest scope (`read`). This is deliberate: a caller with
@@ -262,6 +283,10 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   // escape hatch, and is read-oriented per the issue, so it is deliberately
   // NOT in DESTRUCTIVE_TOOLS (no pre-mutation host snapshot).
   container_exec: 'exec',
+  // propose (#2326): the Rückkanal ingest. Its own INDEPENDENT low-privilege
+  // scope — a `propose`-only token sees + calls propose_learning and nothing
+  // else; a read/mutate/destroy token does NOT implicitly see or call it.
+  propose_learning: 'propose',
 };
 
 /**
@@ -1004,6 +1029,132 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
       const body = await getAssist(id);
       if (!body) return errorResult(`No assist found with id "${id}". Use list_assists to see available entries.`);
       return textResult(body);
+    },
+  );
+
+  // --- Propose Learning (#2326 slice 1) ---
+  // The Rückkanal ingest: a `propose`-scoped agent submits a proposed assist
+  // (frontmatter + body). Slice 1 validates + persists it as a PENDING proposal
+  // with an additive, namespaced id (`local/<slug>`) that may NOT shadow a
+  // built-in assist. It does NOT land the assist, judge it, or wire approval
+  // (slices 2–4). Its own `propose` scope means a propose-only token can submit
+  // knowledge and nothing else, and a read/mutate token can't submit at all.
+  server.tool(
+    'propose_learning',
+    'Propose a new assist (knowledge entry) to the ServiceBay catalog for admin review. Supply the assist frontmatter — title, whenToUse (one line describing when it applies), kind (guide | recipe | adr | template | checklist | footgun | snippet), tags — plus the markdown body. The submission is validated and queued as a PENDING proposal with a namespaced id `local/<slug>` derived from the title; it does NOT land or take effect until an admin approves it. Proposals are ADDITIVE-ONLY: a title whose slug collides with a built-in assist id is rejected — propose a companion, do not shadow a built-in (updating a built-in is a repo PR). STRONGLY ENCOURAGED: provide an honest `assessment` with genuine pros AND real cons/risks (not just upsides), plus a redundancy check — name any existing assist this duplicates or conflicts with (or "none"). The admin reviews proposals on the basis of your self-assessment; a candid assessment (including honest cons) is more useful than a sales pitch. Requires the `propose` scope.',
+    {
+      title: z.string().min(1).max(200).describe('Short human-readable title. The namespaced id `local/<slug>` is derived from this.'),
+      whenToUse: z.string().min(1).max(500).describe('One line telling an agent when this assist applies — drives self-selection.'),
+      kind: z.enum(ASSIST_KINDS).describe('Assist kind: guide | recipe | adr | template | checklist | footgun | snippet.'),
+      tags: z.array(z.string()).default([]).describe('Free-form tags for discovery.'),
+      body: z.string().min(1).describe('The assist body as markdown.'),
+      assessment: z.object({
+        pros: z.array(z.string()).describe('Genuine benefits or use-cases this assist addresses.'),
+        cons: z.array(z.string()).describe('Real drawbacks, risks, maintenance concerns, or scope limits. Be honest — list real ones, not "none".'),
+        redundancyNote: z.string().optional().describe('Does this duplicate or conflict with an existing assist? Name it (e.g. "servicebay-overview"), or write "none".'),
+      }).optional().describe('Honest self-assessment of this proposal. Strongly encouraged — the admin needs a fair basis, not a sales pitch.'),
+    },
+    async ({ title, whenToUse, kind, tags, body, assessment }) => {
+      try {
+        const proposal = await submitProposal(
+          { title, whenToUse, kind, tags, body, assessment },
+          opts?.auth?.user,
+        );
+        return textResult({
+          ok: true,
+          id: proposal.id,
+          assistId: proposal.assistId,
+          status: proposal.status,
+          note: 'Proposal queued as pending. It does not take effect until a ServiceBay admin approves it.',
+        });
+      } catch (e) {
+        if (e instanceof ProposalError) return errorResult(e.message);
+        return errorResult(`Error submitting proposal: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  // --- Learning-proposal review queue (#2326 s3) ---
+  // The admin side of the Rückkanal: surface PENDING proposals so an admin can
+  // review the frontmatter + body + submitter self-assessment before acting.
+  // These are `read`-scoped and READ-ONLY — the approve/reject DECISION is an
+  // admin-only action (frontend route, same auth as approving an access
+  // request), NOT an MCP tool. That is what keeps a `propose`-scoped submitter
+  // from approving their own proposal: they never get read here (no `read`
+  // scope) and there is no MCP approve surface at all.
+  server.tool(
+    'list_learning_proposals',
+    'List learning proposals (submitted via propose_learning) for admin review. Defaults to pending — the admin\'s review queue; pass status="approved", "rejected", or "all". Each entry carries the proposal frontmatter (title, whenToUse, kind, tags), the markdown body, the submitter self-assessment (pros/cons/redundancy, or null), and `siblingProposalIds` — other proposals that would land as the SAME namespaced id `local/<slug>` (proposals are additive-only and never shadow a built-in, so there is no built-in diff, but a same-id local proposal already existing is worth knowing). Reading a proposal does NOT approve it; approving/rejecting is an admin-only action on the dashboard.',
+    {
+      status: z.enum(['pending', 'approved', 'rejected', 'all']).optional().default('pending')
+        .describe('Filter by status. Default: pending (the review queue).'),
+    },
+    async ({ status }) => {
+      const proposals = await listProposalsForReview(status as ProposalStatus | 'all');
+      return textResult({
+        proposals: proposals.map(p => ({
+          id: p.id,
+          assistId: p.assistId,
+          status: p.status,
+          title: p.title,
+          whenToUse: p.whenToUse,
+          kind: p.kind,
+          tags: p.tags,
+          body: p.body,
+          assessment: p.assessment ?? null,
+          submittedBy: p.submittedBy,
+          submittedAt: p.submittedAt,
+          resolvedAt: p.resolvedAt,
+          resolvedBy: p.resolvedBy,
+          siblingProposalIds: p.siblingProposalIds,
+          hasSameIdProposal: p.siblingProposalIds.length > 0,
+        })),
+      });
+    },
+  );
+
+  server.tool(
+    'get_learning_proposal',
+    'Fetch one learning proposal by its id (as returned by propose_learning / list_learning_proposals) for admin review. Returns the full frontmatter, markdown body, submitter self-assessment (or null), status, and `siblingProposalIds` (other proposals sharing the same namespaced id). Read-only — approving/rejecting is an admin-only action on the dashboard, not this tool.',
+    {
+      id: z.string().min(1).describe('Proposal id.'),
+    },
+    async ({ id }) => {
+      const p = await getProposalForReview(id);
+      if (!p) return textResult({ id, status: 'not-found' as const });
+      return textResult({
+        id: p.id,
+        assistId: p.assistId,
+        status: p.status,
+        title: p.title,
+        whenToUse: p.whenToUse,
+        kind: p.kind,
+        tags: p.tags,
+        body: p.body,
+        assessment: p.assessment ?? null,
+        submittedBy: p.submittedBy,
+        submittedAt: p.submittedAt,
+        resolvedAt: p.resolvedAt,
+        resolvedBy: p.resolvedBy,
+        siblingProposalIds: p.siblingProposalIds,
+        hasSameIdProposal: p.siblingProposalIds.length > 0,
+      });
+    },
+  );
+
+  // --- List Assist Drift (#2326 s5) ---
+  // Read-only promotion-backlog view: landed local-assists (DATA_DIR/local-assists/landed/)
+  // that do NOT yet have a corresponding built-in entry in assists/. Mapping:
+  //   landed id `local/<slug>` ↔ built-in id `<slug>` (assists/<slug>.md).
+  // An entry already present as a built-in is omitted — nothing to promote.
+  // Side-effect-free; `read`-scoped so any read token can call it.
+  server.tool(
+    'list_assist_drift',
+    'List landed local-assists (submitted via propose_learning and approved) that do not yet have a corresponding built-in entry in the repo\'s assists/ directory. These are the promotion backlog — each entry is a runtime-only assist that a repo PR adding assists/<slug>.md would make permanent and ship in the image. Returns each entry\'s id (local/<slug>), title, kind, whenToUse, tags, and a promotionHint. Read-only and side-effect-free.',
+    {},
+    async () => {
+      const entries = await listAssistDrift();
+      return textResult({ drift: entries, count: entries.length });
     },
   );
 

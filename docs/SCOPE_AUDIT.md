@@ -16,6 +16,15 @@ the per-capability mapping #2050 asked to make authoritative.
 read  <  lifecycle  <  mutate  <  reboot  <  destroy  <  exec
 ```
 
+Plus one **independent, off-ladder** capability scope:
+
+- `propose` (#2326) — submit a learning proposal (`propose_learning`) and
+  **nothing else**. It is NOT on the blast-radius ladder above: no scope implies
+  it and it implies nothing, so a `propose`-only token can submit knowledge but
+  can't read/mutate/destroy, and a `read`/`mutate`/`destroy` token does **not**
+  implicitly gain `propose`. Grant it alone (least-privilege) or alongside
+  other scopes, and revoke it independently.
+
 Scopes are **not** automatically nested — holding `mutate` does **not** imply
 `read`. A token carries an explicit set, and `scopeSatisfiedBy(held, required)`
 checks membership with exactly two implication rules (the back-compat carve-outs
@@ -36,6 +45,7 @@ delegated child-mint subset check (`scopesAreSubset`, #2048) — one source of t
 | `reboot` | `reboot_node` — transient, recoverable host restart (#1765); split out so a token can operate+reboot **without** irreversible delete/wipe |
 | `destroy` | delete/restore/purge/factory_reset — **irreversible** state edits |
 | `exec` | `exec_command` / `container_exec` — arbitrary shell |
+| `propose` | `propose_learning` — submit a knowledge proposal (#2326); **off-ladder**, low-privilege, submit-only |
 
 ## Two enforcement surfaces
 
@@ -69,6 +79,7 @@ Source of truth is `TOOL_SCOPES`. Summary by tier (see `server.ts` for the full 
 | `reboot` | `reboot_node` |
 | `destroy` | `delete_service`, `delete_health_check`, `remove_proxy_route`, `restore_backup`, `purge_trashed_service`, `set_boot_next_usb`, `factory_reset` |
 | `exec` | `exec_command`, `container_exec` |
+| `propose` | `propose_learning` |
 
 **Scope-filtered visibility (#2325).** Surface (1) also *hides* what a token
 can't call: `tools/list` advertises only tools whose `TOOL_SCOPES` scope is
