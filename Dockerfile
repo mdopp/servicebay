@@ -1,5 +1,5 @@
-# Use node:20-slim for better compatibility
-FROM node:20-slim AS base
+# Use node:22-slim for better compatibility
+FROM node:22-slim AS base
 
 # Install build tools (python3, make, g++) required for native modules like node-pty
 RUN apt-get update && \
@@ -62,7 +62,7 @@ RUN npm ci --omit=dev
 
 # Production image, copy all the files and run next
 # Use clean slim image for runner
-FROM node:20-slim AS runner
+FROM node:22-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV production
