@@ -172,7 +172,7 @@ async function assertReadableRegularFile(
  * (true | absent ⇒ allowed; false ⇒ blocked).
  */
 const MUTATING_TOOLS = new Set([
-  'start_service', 'stop_service', 'restart_service',
+  'manage_service',
   'deploy_service', 'delete_service', 'rename_service', 'update_service_yaml',
   'restore_trashed_service', 'purge_trashed_service',
   'add_proxy_route', 'create_proxy_route', 'remove_proxy_route',
@@ -202,19 +202,18 @@ const MUTATING_TOOLS = new Set([
 export const TOOL_SCOPES: Record<string, ApiScope> = {
   // read
   list_nodes: 'read', list_services: 'read', list_containers: 'read',
-  get_service_logs: 'read', get_container_logs: 'read', get_service_files: 'read',
-  list_templates: 'read', get_template_readme: 'read', get_template_yaml: 'read',
-  get_template_variables: 'read',
+  get_logs: 'read', get_service_files: 'read',
+  list_templates: 'read', get_template_artifact: 'read',
   list_assists: 'read', get_assist: 'read',
   get_system_info: 'read', get_network_graph: 'read', get_health_checks: 'read',
   get_gateway_status: 'read', get_proxy_routes: 'read', get_config: 'read',
-  get_podman_logs: 'read', list_system_services: 'read',
+  list_system_services: 'read',
   list_backups: 'read', diagnose: 'read', verify_node_connection: 'read',
   verify_usb_boot: 'read',
   list_trashed_services: 'read',
   get_unmanaged_bundles: 'read',
   get_channel: 'read',
-  list_access_requests: 'read', get_access_request_status: 'read',
+  get_access_request_status: 'read',
   // Scoped-token request flow (#2139). A token *request* itself grants
   // nothing — it just files a pending item the admin must approve — so it
   // needs only the lowest scope (`read`). This is deliberate: a caller with
@@ -222,13 +221,13 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   // read-only token can ASK for a broader, short-lived grant that a human
   // signs off on. Making request_token require a high scope would defeat the
   // point (you'd need the very authority you're trying to request).
-  request_token: 'read', poll_token_request: 'read', list_token_requests: 'read',
+  request_token: 'read', poll_token_request: 'read', list_requests: 'read',
   // read-oriented file/disk tools (#1872) — jailed reads, no mutation
   read_file: 'read', list_dir: 'read', disk_usage: 'read',
   // install progress is a read-only poll of a job's state (#2141)
   get_install_progress: 'read',
   // lifecycle
-  start_service: 'lifecycle', stop_service: 'lifecycle', restart_service: 'lifecycle',
+  manage_service: 'lifecycle',
   run_check_now: 'lifecycle', refresh_agent: 'lifecycle',
   run_backup: 'lifecycle',
   set_channel: 'lifecycle',
@@ -528,8 +527,8 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         "To find an app's logs, resolve the names yourself instead of asking the user:",
         '1. `list_services` — find the owning service and its `associatedContainerIds`.',
         '2. `list_containers` — find the `<service>-<app>` container name (e.g. `media-jellyfin`).',
-        '3. `get_container_logs(id)` — fetch that container\'s logs.',
-        'For whole-unit (systemd) logs use `get_service_logs(name)` instead of per-container logs.',
+        '3. `get_logs(source="container", container=id)` — fetch that container\'s logs.',
+        'For whole-unit (systemd) logs use `get_logs(source="service", name=…)` instead of per-container logs.',
         '',
         'Always resolve service/container names and ids from `list_services` / `list_containers`',
         'rather than asking the user for them. Use `diagnose`, `get_health_checks`, and',
@@ -576,107 +575,79 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   });
 
   // --- List Containers ---
-  server.tool('list_containers', 'List running containers with image, state, ports. Container names follow `<service>-<app>` (e.g. `media-jellyfin`); use the resolved name with get_container_logs.', { node: nodeParam }, async ({ node }) => {
+  server.tool('list_containers', 'List running containers with image, state, ports. Container names follow `<service>-<app>` (e.g. `media-jellyfin`); use the resolved name with get_logs(source="container").', { node: nodeParam }, async ({ node }) => {
     const nodeName = await resolveNode(node);
     return textResult(getContainers(nodeName));
   });
 
-  // --- Get Service Logs ---
+  // --- Get Logs (#2324) — one read-scoped tool with a `source` discriminator ---
+  // Replaces get_service_logs / get_container_logs / get_podman_logs.
+  //   source='service'   → systemd journal for a whole service (the unit).
+  //   source='container' → container stdout/stderr (`<service>-<app>` name).
+  //   source='podman'    → raw podman daemon/system logs for the node.
   server.tool(
-    'get_service_logs',
-    'Fetch systemd journal logs for a whole service (the systemd unit). For a single app inside a multi-container service, use get_container_logs with the `<service>-<app>` name instead. Use `since` (Unix seconds) on subsequent calls to get only newer lines for a debug-loop pattern.',
+    'get_logs',
+    'Fetch logs from one of three sources via `source`. source="service": systemd journal for a whole service (the systemd unit) — pass `name`. source="container": container stdout/stderr — pass `container` as the `<service>-<app>` name (e.g. `media-jellyfin`), resolve it via list_containers. source="podman": raw podman daemon/system logs for the node. Use `since` (Unix seconds) on subsequent service/container calls to get only newer lines for a debug-loop pattern.',
     {
-      name: z.string().regex(/^[a-zA-Z0-9_.-]+$/, 'invalid service name').describe('Service name'),
+      source: z.enum(['service', 'container', 'podman']).describe('Which log source to read: service (systemd unit journal), container (podman container stdout/stderr), or podman (raw podman daemon/system logs).'),
       node: nodeParam,
-      lines: z.number().int().min(1).max(10000).optional().describe('Number of lines from the end (default 200)'),
-      since: z.number().int().optional().describe('Unix seconds — return only entries newer than this'),
+      name: z.string().regex(/^[a-zA-Z0-9_.-]+$/, 'invalid service name').optional().describe('Service name — required when source="service".'),
+      container: z.string().regex(/^[a-zA-Z0-9_.-]+$/, 'invalid container id').optional().describe('Container ID or `<service>-<app>` name — required when source="container".'),
+      lines: z.number().int().min(1).max(10000).optional().describe('service/container: number of lines from the end (default 200).'),
+      since: z.number().int().optional().describe('service/container: Unix seconds — return only entries newer than this.'),
     },
-    async ({ name, node, lines, since }) => {
+    async ({ source, node, name, container, lines, since }) => {
       const nodeName = await resolveNode(node);
+      if (source === 'podman') {
+        const logs = await ServiceManager.getPodmanLogs(nodeName);
+        return textResult(logs);
+      }
       try {
         const agent = agentManager.getAgent(nodeName);
-        const unit = name.match(/\.(service|scope|socket|timer)$/) ? name : `${name}.service`;
-        const args = [`--user`, `-u`, unit, `-n`, String(lines ?? 200), '--no-pager', '--output', 'short-iso'];
-        if (since) args.push('--since', `@${since}`);
-        const result = await agent.sendCommand('exec', { command: `journalctl ${args.join(' ')} 2>&1` });
+        let command: string;
+        if (source === 'service') {
+          if (!name) return errorResult('source="service" requires `name` (the service name).');
+          const unit = name.match(/\.(service|scope|socket|timer)$/) ? name : `${name}.service`;
+          const args = [`--user`, `-u`, unit, `-n`, String(lines ?? 200), '--no-pager', '--output', 'short-iso'];
+          if (since) args.push('--since', `@${since}`);
+          command = `journalctl ${args.join(' ')} 2>&1`;
+        } else {
+          if (!container) return errorResult('source="container" requires `container` (the `<service>-<app>` name).');
+          const args = [`--tail ${lines ?? 200}`, '--timestamps'];
+          if (since) args.push(`--since ${since}`);
+          command = `podman logs ${args.join(' ')} ${container} 2>&1`;
+        }
+        const result = await agent.sendCommand('exec', { command });
         return textResult({
-          // Strip credentials before handing journalctl output back to
-          // the MCP client (#321) — service journals catch any
-          // post-deploy line that prints rendered passwords plus
-          // anything the service itself dumps at startup.
+          // Strip credentials before handing log output back to the MCP
+          // client (#321) — journals/containers catch any post-deploy line
+          // that prints rendered passwords plus anything dumped at startup.
           stdout: redactLogText(result.stdout ?? ''),
           exitCode: result.code,
           fetchedAt: Math.floor(Date.now() / 1000),
         });
       } catch (err) {
-        return errorResult(`Error fetching service logs: ${err instanceof Error ? err.message : String(err)}`);
+        return errorResult(`Error fetching ${source === 'service' ? 'service' : 'container'} logs: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
   );
 
-  // --- Get Container Logs ---
+  // --- Manage Service (#2324) — one lifecycle-scoped tool with an `action`
+  // discriminator. Replaces start_service / stop_service / restart_service.
+  // Returns the post-action service status (same as the old tools). ---
   server.tool(
-    'get_container_logs',
-    'Fetch container stdout/stderr logs. `id` is the `<service>-<app>` container name (e.g. `media-jellyfin`); resolve it via list_containers. Use `since` (Unix seconds) on subsequent calls to get only newer lines for a debug-loop pattern.',
+    'manage_service',
+    'Start, stop, or restart a service via `action`. Returns the service status after the action (same shape the old start/stop/restart tools returned).',
     {
-      id: z.string().regex(/^[a-zA-Z0-9_.-]+$/, 'invalid container id').describe('Container ID or name'),
+      action: z.enum(['start', 'stop', 'restart']).describe('Lifecycle action to perform on the service.'),
+      name: z.string().describe('Service name'),
       node: nodeParam,
-      tail: z.number().int().min(1).max(10000).optional().describe('Number of lines from the end (default 200)'),
-      since: z.number().int().optional().describe('Unix seconds — return only lines newer than this'),
     },
-    async ({ id, node, tail, since }) => {
+    async ({ action, name, node }) => {
       const nodeName = await resolveNode(node);
-      try {
-        const agent = agentManager.getAgent(nodeName);
-        const args = [`--tail ${tail ?? 200}`, '--timestamps'];
-        if (since) args.push(`--since ${since}`);
-        const result = await agent.sendCommand('exec', { command: `podman logs ${args.join(' ')} ${id} 2>&1` });
-        return textResult({
-          // Same redaction as get_service_logs — see #321.
-          stdout: redactLogText(result.stdout ?? ''),
-          exitCode: result.code,
-          fetchedAt: Math.floor(Date.now() / 1000),
-        });
-      } catch (err) {
-        return errorResult(`Error fetching container logs: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    },
-  );
-
-  // --- Start Service ---
-  server.tool(
-    'start_service',
-    'Start a stopped service',
-    { name: z.string().describe('Service name'), node: nodeParam },
-    async ({ name, node }) => {
-      const nodeName = await resolveNode(node);
-      await ServiceManager.startService(nodeName, name);
-      const status = await ServiceManager.getServiceStatus(nodeName, name);
-      return textResult(status);
-    },
-  );
-
-  // --- Stop Service ---
-  server.tool(
-    'stop_service',
-    'Stop a running service',
-    { name: z.string().describe('Service name'), node: nodeParam },
-    async ({ name, node }) => {
-      const nodeName = await resolveNode(node);
-      await ServiceManager.stopService(nodeName, name);
-      const status = await ServiceManager.getServiceStatus(nodeName, name);
-      return textResult(status);
-    },
-  );
-
-  // --- Restart Service ---
-  server.tool(
-    'restart_service',
-    'Restart a service',
-    { name: z.string().describe('Service name'), node: nodeParam },
-    async ({ name, node }) => {
-      const nodeName = await resolveNode(node);
-      await ServiceManager.restartService(nodeName, name);
+      if (action === 'start') await ServiceManager.startService(nodeName, name);
+      else if (action === 'stop') await ServiceManager.stopService(nodeName, name);
+      else await ServiceManager.restartService(nodeName, name);
       const status = await ServiceManager.getServiceStatus(nodeName, name);
       return textResult(status);
     },
@@ -853,46 +824,29 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     return textResult(templates);
   });
 
-  // --- Get Template Readme ---
+  // --- Get Template Artifact (#2324) — one read-scoped tool with an
+  // `artifact` discriminator. Replaces get_template_readme / get_template_yaml
+  // / get_template_variables. ---
   server.tool(
-    'get_template_readme',
-    'Get the README/documentation for a deployment template',
+    'get_template_artifact',
+    'Get one artifact of a deployment template via `artifact`: "readme" (README/docs), "yaml" (the kube YAML), or "variables" (configurable variables).',
     {
+      artifact: z.enum(['readme', 'yaml', 'variables']).describe('Which template artifact to fetch.'),
       name: z.string().describe('Template name'),
-      type: z.enum(['template', 'stack']).optional().describe('Template type (default: template)'),
+      type: z.enum(['template', 'stack']).optional().describe('Template type (default: template) — only used for artifact="readme".'),
       source: z.string().optional().describe('Registry source'),
     },
-    async ({ name, type, source }) => {
-      const readme = await getReadme(name, type ?? 'template', source);
-      if (!readme) return errorResult(`No README found for template "${name}"`);
-      return textResult(readme);
-    },
-  );
-
-  // --- Get Template YAML ---
-  server.tool(
-    'get_template_yaml',
-    'Get the kube YAML content for a deployment template',
-    {
-      name: z.string().describe('Template name'),
-      source: z.string().optional().describe('Registry source'),
-    },
-    async ({ name, source }) => {
-      const yaml = await getTemplateYaml(name, source);
-      if (!yaml) return errorResult(`No YAML found for template "${name}"`);
-      return textResult(yaml);
-    },
-  );
-
-  // --- Get Template Variables ---
-  server.tool(
-    'get_template_variables',
-    'Get configurable variables for a deployment template',
-    {
-      name: z.string().describe('Template name'),
-      source: z.string().optional().describe('Registry source'),
-    },
-    async ({ name, source }) => {
+    async ({ artifact, name, type, source }) => {
+      if (artifact === 'readme') {
+        const readme = await getReadme(name, type ?? 'template', source);
+        if (!readme) return errorResult(`No README found for template "${name}"`);
+        return textResult(readme);
+      }
+      if (artifact === 'yaml') {
+        const yaml = await getTemplateYaml(name, source);
+        if (!yaml) return errorResult(`No YAML found for template "${name}"`);
+        return textResult(yaml);
+      }
       const vars = await getTemplateVariables(name, source);
       if (!vars) return errorResult(`No variables found for template "${name}"`);
       return textResult(vars);
@@ -1138,18 +1092,6 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     async ({ name }) => {
       const result = await verifyNodeConnection(name);
       return textResult(result);
-    },
-  );
-
-  // --- Get Podman Logs ---
-  server.tool(
-    'get_podman_logs',
-    'Get raw podman daemon/system logs',
-    { node: nodeParam },
-    async ({ node }) => {
-      const nodeName = await resolveNode(node);
-      const logs = await ServiceManager.getPodmanLogs(nodeName);
-      return textResult(logs);
     },
   );
 
@@ -2015,13 +1957,25 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   const normalizeStatus = (s: AccessRequest['status']): 'pending' | 'approved' | 'denied' =>
     s === 'resolved' ? 'approved' : s;
 
+  // --- List Requests (#2324) — Tier-2 merge. One read-scoped tool with a
+  // `type` discriminator over the two request lists that share the same call
+  // shape + status enum, differing only in their backing store:
+  //   type="access" → admin access/approval list (config.accessRequests)
+  //   type="token"  → scoped-token request lifecycle (auth/tokenRequests)
+  // Deliberately NOT merged with poll_token_request / get_access_request_status
+  // (those poll one id; poll_token_request is non-idempotent) — see #2324. ---
   server.tool(
-    'list_access_requests',
-    'List access/approval requests on the admin\'s central list. Defaults to pending only; pass status="approved", "denied", or "all".',
+    'list_requests',
+    'List pending/resolved requests via `type`: "access" (access/approval requests on the admin\'s central list) or "token" (scoped-token request lifecycle, request_token). Defaults to pending; pass status="approved", "denied", or "all". Token requests never return secrets — only metadata, granted scopes, expiry, and minted token id.',
     {
+      type: z.enum(['access', 'token']).describe('Which request list to read: access (approval requests) or token (scoped-token requests).'),
       status: z.enum(['pending', 'approved', 'denied', 'all']).optional().default('pending').describe('Filter by status. Default: pending.'),
     },
-    async ({ status }) => {
+    async ({ type, status }) => {
+      if (type === 'token') {
+        const requests = await listTokenRequests(status as TokenRequestStatus | 'all');
+        return textResult({ requests });
+      }
       const config = await getConfig();
       const all = config.accessRequests ?? [];
       const filtered = status === 'all' ? all : all.filter(r => normalizeStatus(r.status) === status);
@@ -2129,18 +2083,6 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     async ({ id }) => {
       const result = await pollTokenRequest(id);
       return textResult(result);
-    },
-  );
-
-  server.tool(
-    'list_token_requests',
-    'List scoped-token requests (request_token lifecycle) for admin/audit visibility. Defaults to pending; pass status="approved", "denied", or "all". Never returns token secrets — only the request metadata, granted scopes, expiry, and minted token id.',
-    {
-      status: z.enum(['pending', 'approved', 'denied', 'all']).optional().default('pending').describe('Filter by status. Default: pending.'),
-    },
-    async ({ status }) => {
-      const requests = await listTokenRequests(status as TokenRequestStatus | 'all');
-      return textResult({ requests });
     },
   );
 

@@ -64,7 +64,7 @@ Source of truth is `TOOL_SCOPES`. Summary by tier (see `server.ts` for the full 
 | Scope | Tools |
 |---|---|
 | `read` | `list_*`, `get_*`, `diagnose`, `read_file`, `list_dir`, `disk_usage`, `verify_node_connection`, `verify_usb_boot`, … |
-| `lifecycle` | `start_service`, `stop_service`, `restart_service`, `run_check_now`, `refresh_agent`, `run_backup`, `set_channel` |
+| `lifecycle` | `manage_service`, `run_check_now`, `refresh_agent`, `run_backup`, `set_channel` |
 | `mutate` | `deploy_service`, `update_service_yaml`, `rename_service`, `add_proxy_route`, `create_health_check`, `restore_trashed_service`, `file_access_request`, `update_config` |
 | `reboot` | `reboot_node` |
 | `destroy` | `delete_service`, `delete_health_check`, `remove_proxy_route`, `restore_backup`, `purge_trashed_service`, `set_boot_next_usb`, `factory_reset` |

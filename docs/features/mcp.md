@@ -55,7 +55,7 @@ short-lived, least-privilege token rather than being handed one — an admin
 approves it out-of-band.
 
 **How it works.** `packages/backend/src/lib/auth/tokenRequests.ts` +
-the MCP tools `request_token`, `poll_token_request`, `list_token_requests` (#2139):
+the MCP tools `request_token`, `poll_token_request`, `list_requests(type="token")` (#2139):
 
 1. The caller names the scopes it wants, a human reason, and a requested TTL —
    and gets back a **pending request id, not a token**.

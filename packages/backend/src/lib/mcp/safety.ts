@@ -54,7 +54,7 @@ async function mutationsAllowed(): Promise<boolean> {
  * Gate a mutating tool. Returns null if allowed; an error result otherwise.
  * Caller pattern:
  *
- *     const blocked = await guardMutation('start_service');
+ *     const blocked = await guardMutation('manage_service');
  *     if (blocked) return blocked;
  *     // ...do the mutation...
  */

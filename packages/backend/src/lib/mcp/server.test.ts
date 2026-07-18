@@ -5,7 +5,7 @@ import { createMcpServer, TOOL_SCOPES, tokenHasScope } from './server';
 import { ALL_SCOPES } from '@/lib/auth/apiScope';
 
 // #1732: the MCP server describes itself — a top-level `instructions` string
-// teaching the node → service → container model, and the four
+// teaching the node → service → container model, and the
 // service/container/log tools mention that model in their descriptions.
 // Verified end-to-end through the SDK initialize + tools/list handshake.
 async function connectClient() {
@@ -27,7 +27,7 @@ describe('createMcpServer self-description (#1732)', () => {
     expect(instructions).toMatch(/node\s*→\s*service\s*→\s*container/);
     // Tells the agent how to find an app's logs and to resolve names itself.
     expect(instructions).toMatch(/list_services/);
-    expect(instructions).toMatch(/get_container_logs/);
+    expect(instructions).toMatch(/get_logs/);
     expect(instructions).toMatch(/resolve.*names?.*yourself|rather than asking the user/i);
     await client.close();
   });
@@ -40,9 +40,70 @@ describe('createMcpServer self-description (#1732)', () => {
     expect(byName.list_services).toMatch(/container/i);
     expect(byName.list_services).toMatch(/associatedContainerIds/);
     expect(byName.list_containers).toMatch(/<service>-<app>/);
-    expect(byName.get_service_logs).toMatch(/get_container_logs/);
-    expect(byName.get_container_logs).toMatch(/<service>-<app>/);
+    // get_logs (#2324) is the merged reader — it explains the service vs
+    // container source and points at the `<service>-<app>` naming model.
+    expect(byName.get_logs).toMatch(/source/);
+    expect(byName.get_logs).toMatch(/<service>-<app>/);
     await client.close();
+  });
+});
+
+// #2324: consolidate 9 near-duplicate tools into 3 parameterised ones,
+// hard-replacing the old names. Each merged tool keeps its cluster's scope.
+describe('MCP tool consolidation (#2324)', () => {
+  const OLD_NAMES = [
+    'get_service_logs', 'get_container_logs', 'get_podman_logs',
+    'start_service', 'stop_service', 'restart_service',
+    'get_template_readme', 'get_template_yaml', 'get_template_variables',
+    // Tier-2 merged pair (list_requests):
+    'list_access_requests', 'list_token_requests',
+  ];
+
+  it('drops all 9 (+2 Tier-2) old tool names from the tool list', async () => {
+    const { client } = await connectClient();
+    const { tools } = await client.listTools();
+    const names = new Set(tools.map(t => t.name));
+    for (const old of OLD_NAMES) {
+      expect(names.has(old), `${old} must be gone (hard replace)`).toBe(false);
+    }
+    await client.close();
+  });
+
+  it('registers the 3 merged Tier-1 tools + Tier-2 list_requests', async () => {
+    const { client } = await connectClient();
+    const { tools } = await client.listTools();
+    const names = new Set(tools.map(t => t.name));
+    for (const merged of ['get_logs', 'manage_service', 'get_template_artifact', 'list_requests']) {
+      expect(names.has(merged), `${merged} must be registered`).toBe(true);
+    }
+    await client.close();
+  });
+
+  it('exposes the discriminator param on each merged tool', async () => {
+    const { client } = await connectClient();
+    const { tools } = await client.listTools();
+    const prop = (name: string, key: string) => {
+      const t = tools.find(x => x.name === name);
+      return (t?.inputSchema?.properties ?? {}) as Record<string, unknown>;
+    };
+    expect(prop('get_logs', 'source').source).toBeTruthy();
+    expect(prop('manage_service', 'action').action).toBeTruthy();
+    expect(prop('get_template_artifact', 'artifact').artifact).toBeTruthy();
+    expect(prop('list_requests', 'type').type).toBeTruthy();
+    await client.close();
+  });
+
+  it('keeps each merged tool in its cluster scope', () => {
+    // get_logs / get_template_artifact / list_requests stay read; the old
+    // members were all read. manage_service stays lifecycle.
+    expect(TOOL_SCOPES.get_logs).toBe('read');
+    expect(TOOL_SCOPES.get_template_artifact).toBe('read');
+    expect(TOOL_SCOPES.list_requests).toBe('read');
+    expect(TOOL_SCOPES.manage_service).toBe('lifecycle');
+    // The old names carry no scope entry anymore.
+    for (const old of OLD_NAMES) {
+      expect(TOOL_SCOPES[old], `${old} scope entry removed`).toBeUndefined();
+    }
   });
 });
 
@@ -116,7 +177,7 @@ describe('reboot scope split (#1765)', () => {
 
   it('lets an operate token reboot but refuses delete/factory_reset', () => {
     const operate = ['read', 'lifecycle', 'mutate', 'reboot'] as const;
-    expect(tokenHasScope(operate, TOOL_SCOPES.restart_service)).toBe(true);
+    expect(tokenHasScope(operate, TOOL_SCOPES.manage_service)).toBe(true);
     expect(tokenHasScope(operate, TOOL_SCOPES.reboot_node)).toBe(true);
     expect(tokenHasScope(operate, TOOL_SCOPES.delete_service)).toBe(false);
     expect(tokenHasScope(operate, TOOL_SCOPES.factory_reset)).toBe(false);

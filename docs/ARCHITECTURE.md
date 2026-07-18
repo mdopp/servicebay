@@ -75,7 +75,7 @@ A deeper structural pass surfaced seven additional issues beyond the original au
 
 ### Investigated but ruled out
 
-- **`get_container_logs` / `get_service_logs` command injection.** Zod regex `/^[a-zA-Z0-9_.-]+$/` admits no shell metacharacters; `lines`/`tail`/`since` are typed integers. Not exploitable.
+- **`get_logs` (service/container sources) command injection.** Zod regex `/^[a-zA-Z0-9_.-]+$/` on `name`/`container` admits no shell metacharacters; `lines`/`since` are typed integers. Not exploitable.
 - **MCP `update_config` prototype pollution.** Zod `.strict()` rejects unknown keys; `templateSettings` values are string-typed; `deepMerge` only recurses when both sides are objects, so a string `__proto__` assignment is a no-op.
 
 ## Overview
@@ -406,10 +406,10 @@ sequenceDiagram
 *   **Endpoint**: `POST /mcp` — handled directly in `server.ts` (intercepts the request before the Next.js handler) and bridged to `@modelcontextprotocol/sdk`'s `StreamableHTTPServerTransport`. Authentication is the same `session` cookie the UI uses, decoded via `getSessionFromCookieHeader`. No additional token surface.
 *   **Stateless**: a fresh `McpServer` + transport are created per request, both closed when the response stream ends. No long-lived sessions.
 *   **Tool surface** (`packages/backend/src/lib/mcp/server.ts`, 37 tools):
-    *   *Read*: `list_nodes`, `list_services`, `list_containers`, `get_container_logs`, `get_service_logs`, `get_system_info`, `get_network_graph`, `get_health_checks`, `get_gateway_status`, `get_proxy_routes`, `list_templates`, `get_template_readme`/`yaml`/`variables`, `verify_node_connection`, `get_podman_logs`, `list_system_services`, `get_config`.
-    *   *Mutate*: `start_service`/`stop_service`/`restart_service`, `deploy_service`/`update_service_yaml`/`delete_service`/`rename_service`, `add_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`/`list_backups`, `create_health_check`/`delete_health_check`/`run_check_now`, `update_config`, `exec_command`, `refresh_agent`.
+    *   *Read*: `list_nodes`, `list_services`, `list_containers`, `get_logs` (`source: service\|container\|podman`), `get_system_info`, `get_network_graph`, `get_health_checks`, `get_gateway_status`, `get_proxy_routes`, `list_templates`, `get_template_artifact` (`artifact: readme\|yaml\|variables`), `verify_node_connection`, `list_system_services`, `get_config`.
+    *   *Mutate*: `manage_service` (`action: start\|stop\|restart`), `deploy_service`/`update_service_yaml`/`delete_service`/`rename_service`, `add_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`/`list_backups`, `create_health_check`/`delete_health_check`/`run_check_now`, `update_config`, `exec_command`, `refresh_agent`.
 *   **SoT alignment**: all tools route through the same Digital Twin / `ServiceManager` / `HealthStore` paths the UI uses — no parallel mutation surface. `update_config` is allow-listed (`logLevel`, `serverName`, `domain`, `autoUpdate`, `templateSettings`); auth/OIDC/SMTP credentials are intentionally excluded so they always need a human in the loop.
-*   **Secret hygiene**: `get_config` redacts `auth.passwordHash`, `oidc.clientSecret`, `notifications.email.pass`. Inputs that flow into a shell command (container id, service name, domain) are constrained with regex schemas to prevent command injection through the `exec_command` / `get_container_logs` / `get_service_logs` paths.
+*   **Secret hygiene**: `get_config` redacts `auth.passwordHash`, `oidc.clientSecret`, `notifications.email.pass`. Inputs that flow into a shell command (container id, service name, domain) are constrained with regex schemas to prevent command injection through the `exec_command` / `get_logs` paths.
 
 ### 5. Network Graph Aggregation
 *   **Goal**: Visualize the relationships between Nodes, Services, and the Internet.

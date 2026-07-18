@@ -44,7 +44,7 @@ Don't reply to the surface. For each thread:
 
 If the comment makes a technical claim, or your reply would assert how the system behaves, **check the actual state first** — don't reason it out from how things "should" work. The dev env and the running box diverge, and a confident wrong answer to a careful contributor costs more trust than taking ten minutes to look.
 
-- Read the **code** that's actually in play, and — when the claim is about runtime/permissions/config/networking — inspect the **live box** (SSH via `build/fcos/servicebay-ssh/id_rsa`, or the `mcp__servicebay__*` tools: `exec_command`, `get_container_logs`, `diagnose`, `list_containers`). `reference_mcp_servicebay_access` has the connection paths and the reinstall gotchas.
+- Read the **code** that's actually in play, and — when the claim is about runtime/permissions/config/networking — inspect the **live box** (SSH via `build/fcos/servicebay-ssh/id_rsa`, or the `mcp__servicebay__*` tools: `exec_command`, `get_logs`, `diagnose`, `list_containers`). `reference_mcp_servicebay_access` has the connection paths and the reinstall gotchas.
 - Let the findings **change the answer**, including your own earlier framing. The #1311 case below is the cautionary tale: the obvious "set `UMASK=002` on the writers" fix was *wrong* — inspecting the box showed those services run as root with no umask knob, which flipped the recommendation to a default ACL. We'd have shipped bad advice without looking.
 - When the investigation overturns or sharpens what the **issue/PR body** says, fold the corrected facts back into the body (via `gh api -X PATCH repos/mdopp/servicebay/issues/<N> -F body=@file`) so the next reader starts from the truth — then reference it in the reply.
 
