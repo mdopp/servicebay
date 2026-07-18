@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.2.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.1.0...servicebay-v5.2.0) (2026-07-18)
+
+
+### Features
+
+* **mcp:** Assist-Katalog nativ über MCP Resources + Prompts (Epic [#2326](https://github.com/mdopp/servicebay/issues/2326) s6, schließt Epic) ([4f1c7f7](https://github.com/mdopp/servicebay/commit/4f1c7f71a969628e52ee1ac5cc7a320d1b46ab2e))
+* **mcp:** expose assist catalog as native MCP resources and prompts (epic [#2326](https://github.com/mdopp/servicebay/issues/2326) s6) ([9f0b8a3](https://github.com/mdopp/servicebay/commit/9f0b8a3e6411af18a87bf5cc036241cef9583c72))
+
 ## [5.1.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.0.1...servicebay-v5.1.0) (2026-07-18)
 
 
