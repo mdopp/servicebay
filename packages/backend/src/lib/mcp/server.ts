@@ -1290,7 +1290,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   // --- Exec Command ---
   server.tool(
     'exec_command',
-    'Execute a shell command on a node',
+    'LAST RESORT — run an arbitrary shell command on a node. It is a destructive-op escape hatch: calling it fires a destructive-op alert + an auto-snapshot, even for a harmless read. Reach for a read tool FIRST; only use exec_command when NO dedicated/read tool covers the task. Read-alternatives map: image / revision / state → list_containers (labels org.opencontainers.image.revision, org.opencontainers.image.version); container logs → get_container_logs, service/unit logs → get_service_logs; CPU / RAM / disk / uptime → get_system_info; read a file → read_file, a service\'s files → get_service_files; list services / containers → list_services / list_containers.',
     {
       command: z.string().describe('Shell command to execute'),
       node: nodeParam,
@@ -2095,7 +2095,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
 
   server.tool(
     'container_exec',
-    'Run a command inside a named container via `podman exec`, passing an argv array (no host shell string). Use this instead of an ad-hoc `exec_command podman exec …`. The container name is validated; args are passed as a list so the host shell never parses them. Non-destructive by default — scoped to one container, not the host.',
+    'LAST RESORT for in-container commands — run a command inside a named container via `podman exec`, passing an argv array (no host shell string). Prefer a read tool FIRST; only use container_exec when NO dedicated/read tool covers the task. Read-alternatives map: image / revision / state → list_containers (labels org.opencontainers.image.revision, org.opencontainers.image.version); container logs → get_container_logs, service/unit logs → get_service_logs; CPU / RAM / disk / uptime → get_system_info; read a file → read_file, a service\'s files → get_service_files; list services / containers → list_services / list_containers. Scoped to one container (not the host); the container name is validated and args pass as a list so the host shell never parses them.',
     {
       container: z.string().regex(/^[a-zA-Z0-9_.-]+$/, 'invalid container name').describe('Container name or id (e.g. media-jellyfin).'),
       args: z.array(z.string()).min(1).describe('Command + arguments as an argv array, e.g. ["cat", "/etc/os-release"]. Passed verbatim — no shell interpolation.'),
