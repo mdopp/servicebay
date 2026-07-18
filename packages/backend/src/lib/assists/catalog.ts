@@ -182,6 +182,18 @@ export async function listAssists(opts: ListAssistsOptions = {}): Promise<Assist
 }
 
 /**
+ * List the ids of the BUILT-IN assists only (the shipped `assists/` dir), NOT
+ * the Local drop-dir. Used by the learning-proposal id-governance (#2326) to
+ * reject any proposed id that would SHADOW a built-in — proposals are additive
+ * and namespaced (`local/<slug>`); updating a built-in is a repo PR, never a
+ * silent runtime override by id.
+ */
+export async function listBuiltinAssistIds(): Promise<string[]> {
+  const files = await readDirAssists(BUILTIN_ASSISTS_DIR());
+  return files.map(f => f.slice(0, -'.md'.length));
+}
+
+/**
  * Return the full raw markdown (frontmatter + body) of one assist, Local
  * overriding Built-in. Returns null for an unknown or unsafe id.
  */

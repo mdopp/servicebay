@@ -21,9 +21,14 @@
  *             implies `reboot` (see tokenHasScope).
  *   destroy   delete/restore/purge/factory_reset — irreversible state edits
  *   exec      exec_command — shell access
+ *   propose   submit a learning proposal (#2326) — an INDEPENDENT, low-privilege
+ *             capability scope, NOT part of the read<…<exec blast-radius ladder.
+ *             A `propose` token may submit knowledge proposals and NOTHING else;
+ *             read/mutate/destroy/etc. do NOT imply it, and it implies nothing.
+ *             Grant it alone (least-privilege) or alongside other scopes.
  */
-export type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'reboot' | 'destroy' | 'exec';
-export const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'reboot', 'destroy', 'exec'];
+export type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'reboot' | 'destroy' | 'exec' | 'propose';
+export const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'reboot', 'destroy', 'exec', 'propose'];
 
 /**
  * Whether a held scope set satisfies a single `required` scope, honoring the

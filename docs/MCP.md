@@ -145,7 +145,7 @@ Claude Code) to see the live tool registry on your version.
 | Requests | `list_requests` (`type: access\|token`), `file_access_request`, `get_access_request_status`, `request_token`, `poll_token_request` |
 | Backups | `list_backups`, `run_backup`, `restore_backup` |
 | System | `list_nodes`, `get_system_info`, `get_network_graph`, `get_config`, `update_config`, `exec_command`, `get_channel`, `set_channel` |
-| Knowledge | `list_assists`, `get_assist`, `get_service_standards` (`flavor: servicebay\|generic`) |
+| Knowledge | `list_assists`, `get_assist`, `get_service_standards` (`flavor: servicebay\|generic`), `propose_learning` (`propose` scope) |
 
 The three merged tools above (`manage_service`, `get_logs`,
 `get_template_artifact`) plus `list_requests` replaced nine (+2) narrower tools
@@ -168,6 +168,17 @@ diff-coverage floor), `assistsToRead` (ids resolvable via `get_assist`), and
 release discipline, coverage floor, secret hygiene, scripts-over-prose) with no
 ServiceBay ADRs or template details. Backing prose lives single-sourced in the
 `new-service-standards` / `generic-project-standards` assists.
+
+`propose_learning` (`propose` scope, #2326) is the knowledge **Rückkanal**: an
+agent submits a proposed assist — `title`, `whenToUse`, `kind` (guide | recipe |
+adr | template | checklist | footgun | snippet), `tags`, `body` — and it is
+queued as a **pending** proposal with a namespaced id `local/<slug>` (derived
+from the title). Proposals are **additive-only**: a slug that collides with a
+built-in assist id is rejected (propose a companion, don't shadow a built-in —
+updating a built-in is a repo PR). The submission does **not** take effect until
+an admin approves it (approval + landing arrive in later #2326 slices). `propose`
+is its own off-ladder scope (see `SCOPE_AUDIT.md`): a `propose`-only token can
+submit knowledge and nothing else, and a read/mutate token can't submit at all.
 
 ## Tool visibility is scoped to your token (#2325)
 

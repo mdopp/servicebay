@@ -15,6 +15,7 @@ import {
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getTemplates, getReadme, getTemplateYaml, getTemplateVariables } from '@/lib/registry';
 import { listAssists, getAssist, ASSIST_KINDS } from '@/lib/assists/catalog';
+import { submitProposal, ProposalError } from '@/lib/assists/proposals';
 import { buildServiceStandards, SERVICE_STANDARDS_FLAVORS } from './serviceStandards';
 import { listNodes, getNodeConnection } from '@/lib/nodes';
 import { verifyNodeConnection } from '@/lib/nodes/verify';
@@ -185,6 +186,7 @@ const MUTATING_TOOLS = new Set([
   'update_config', 'exec_command', 'container_exec', 'refresh_agent',
   'set_boot_next_usb', 'reboot_node', 'factory_reset',
   'set_channel',
+  'propose_learning',
 ]);
 
 /**
@@ -200,6 +202,10 @@ const MUTATING_TOOLS = new Set([
  *   destroy    delete/restore/purge/factory_reset — irreversible state edits
  *   exec       exec_command — split off from `destroy` (#591) so a token
  *              can grant config writes without shell access
+ *   propose    propose_learning — an INDEPENDENT, low-privilege capability
+ *              scope (#2326), NOT on the read<…<exec ladder. A `propose`-only
+ *              token may submit knowledge proposals and nothing else; a
+ *              read/mutate/destroy token does NOT implicitly get `propose`.
  */
 export const TOOL_SCOPES: Record<string, ApiScope> = {
   // read
@@ -262,6 +268,10 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   // escape hatch, and is read-oriented per the issue, so it is deliberately
   // NOT in DESTRUCTIVE_TOOLS (no pre-mutation host snapshot).
   container_exec: 'exec',
+  // propose (#2326): the Rückkanal ingest. Its own INDEPENDENT low-privilege
+  // scope — a `propose`-only token sees + calls propose_learning and nothing
+  // else; a read/mutate/destroy token does NOT implicitly see or call it.
+  propose_learning: 'propose',
 };
 
 /**
@@ -1004,6 +1014,43 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
       const body = await getAssist(id);
       if (!body) return errorResult(`No assist found with id "${id}". Use list_assists to see available entries.`);
       return textResult(body);
+    },
+  );
+
+  // --- Propose Learning (#2326 slice 1) ---
+  // The Rückkanal ingest: a `propose`-scoped agent submits a proposed assist
+  // (frontmatter + body). Slice 1 validates + persists it as a PENDING proposal
+  // with an additive, namespaced id (`local/<slug>`) that may NOT shadow a
+  // built-in assist. It does NOT land the assist, judge it, or wire approval
+  // (slices 2–4). Its own `propose` scope means a propose-only token can submit
+  // knowledge and nothing else, and a read/mutate token can't submit at all.
+  server.tool(
+    'propose_learning',
+    'Propose a new assist (knowledge entry) to the ServiceBay catalog for admin review. Supply the assist frontmatter — title, whenToUse (one line describing when it applies), kind (guide | recipe | adr | template | checklist | footgun | snippet), tags — plus the markdown body. The submission is validated and queued as a PENDING proposal with a namespaced id `local/<slug>` derived from the title; it does NOT land or take effect until an admin approves it. Proposals are ADDITIVE-ONLY: a title whose slug collides with a built-in assist id is rejected — propose a companion, do not shadow a built-in (updating a built-in is a repo PR). Requires the `propose` scope.',
+    {
+      title: z.string().min(1).max(200).describe('Short human-readable title. The namespaced id `local/<slug>` is derived from this.'),
+      whenToUse: z.string().min(1).max(500).describe('One line telling an agent when this assist applies — drives self-selection.'),
+      kind: z.enum(ASSIST_KINDS).describe('Assist kind: guide | recipe | adr | template | checklist | footgun | snippet.'),
+      tags: z.array(z.string()).default([]).describe('Free-form tags for discovery.'),
+      body: z.string().min(1).describe('The assist body as markdown.'),
+    },
+    async ({ title, whenToUse, kind, tags, body }) => {
+      try {
+        const proposal = await submitProposal(
+          { title, whenToUse, kind, tags, body },
+          opts?.auth?.user,
+        );
+        return textResult({
+          ok: true,
+          id: proposal.id,
+          assistId: proposal.assistId,
+          status: proposal.status,
+          note: 'Proposal queued as pending. It does not take effect until a ServiceBay admin approves it.',
+        });
+      } catch (e) {
+        if (e instanceof ProposalError) return errorResult(e.message);
+        return errorResult(`Error submitting proposal: ${e instanceof Error ? e.message : String(e)}`);
+      }
     },
   );
 
