@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.0.0](https://github.com/mdopp/servicebay/compare/servicebay-v4.166.1...servicebay-v5.0.0) (2026-07-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** the MCP tools get_service_logs, get_container_logs, get_podman_logs, start_service, stop_service, restart_service, get_template_readme, get_template_yaml, get_template_variables, list_access_requests and list_token_requests are removed. Use get_logs(source), manage_service(action), get_template_artifact(artifact) and list_requests(type) instead.
+
+### Features
+
+* **mcp:** add get_service_standards curated standards index tool ([eafee8f](https://github.com/mdopp/servicebay/commit/eafee8f324b4a1668fa678bdb5373121ebb70eb2)), closes [#2323](https://github.com/mdopp/servicebay/issues/2323)
+
+
+### Performance Improvements
+
+* **mcp:** scope-filter tools/list, sort deterministically, mark defer_loading kernel ([6cc3110](https://github.com/mdopp/servicebay/commit/6cc311000968598883cee3741df059b1ce623d61)), closes [#2325](https://github.com/mdopp/servicebay/issues/2325)
+
+
+### Code Refactoring
+
+* **mcp:** merge 9 near-duplicate tools into get_logs/manage_service/get_template_artifact ([d830827](https://github.com/mdopp/servicebay/commit/d8308275391b4925120955317f7a73360b83cb16)), closes [#2324](https://github.com/mdopp/servicebay/issues/2324)
+
 ## [4.166.1](https://github.com/mdopp/servicebay/compare/servicebay-v4.166.0...servicebay-v4.166.1) (2026-07-15)
 
 
