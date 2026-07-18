@@ -18,7 +18,7 @@ crash-looping, each service re-syncs its stored credential to the new password
 *in place* — no lockout, no re-typing.
 
 **Why it exists.** A generated secret ≠ the stored credential in a preserved DB
-(LLDAP, NPM, Honcho's Postgres). Before the self-heal, reinstall-over-data meant
+(LLDAP, NPM, Immich's Postgres). Before the self-heal, reinstall-over-data meant
 `invalid_client`, auth crash loops, or a locked-out admin UI.
 
 **How you observe it.** It's invisible in the happy path — you log in with the
@@ -38,9 +38,6 @@ per service is:
   previous-password fallback chain.
 - **AdGuard** — the `AdGuardHome.yaml.mustache` re-renders with the new bcrypt on
   every deploy and overwrites the on-disk YAML.
-- **Honcho (Postgres role)** — `templates/honcho/post-deploy.py` detects a
-  preserved `pgdata` and re-keys the role over the container's trusted local
-  socket (`ALTER ROLE honcho WITH PASSWORD …`).
 - **Immich / Audiobookshelf (OIDC secret)** — post-deploy re-stamps the stored
   client secret via the admin API, falling back to a no-token DB re-stamp.
 

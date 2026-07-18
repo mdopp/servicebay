@@ -389,7 +389,7 @@ function isDestroyTierTool(toolName: string): boolean {
  * A destroy-tier approval's `service` anchor for the operator's Approvals UI
  * (#2234). Most destructive tools name a target in `args.name` (delete_service,
  * delete_health_check) or `args.service` — use it when it's a single safe path
- * segment so the request reads e.g. "delete_service: honcho". Otherwise fall
+ * segment so the request reads e.g. "delete_service: media". Otherwise fall
  * back to a neutral "mcp" bucket (the approvals store re-validates either way).
  */
 const APPROVAL_SERVICE_RE = /^[a-zA-Z0-9_.-]+$/;
@@ -2257,7 +2257,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
       ttl_seconds: z.number().int().positive().max(MAX_TTL_SECS).describe(`Requested time-to-live in seconds (max ${MAX_TTL_SECS} = 30d). The admin can shorten it. A one-shot request is clamped to ${ONE_SHOT_MAX_TTL_SECS}s. The token auto-expires and is deleted from storage.`),
       one_shot_op: z.object({
         tool_name: z.string().trim().min(1).describe('The single MCP tool this one-shot token may invoke (e.g. "delete_service" or "exec_command"). Must be a destroy/exec-tier tool.'),
-        service: z.string().trim().optional().describe('Optional target service — when set, the token may only run the op against this service (e.g. delete_service on "honcho").'),
+        service: z.string().trim().optional().describe('Optional target service — when set, the token may only run the op against this service (e.g. delete_service on "media").'),
       }).optional().describe('Request a ONE-SHOT owner-approved ELEVATED token bound to this op instead of a standing grant. The request parks as an approval card; the ambient token gains nothing. On owner Approve, poll_token_request returns a single-use, short-TTL token authorizing exactly this op once.'),
     },
     async ({ scopes, reason, ttl_seconds, one_shot_op }) => {

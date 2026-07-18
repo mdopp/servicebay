@@ -337,13 +337,13 @@ describe('restart-target authorization (#1884)', () => {
 describe('mcp-tool re-dispatch action (#2234)', () => {
   it('approving an mcp approval re-dispatches the proposed tool and marks approved', async () => {
     const r = await submitApproval({
-      service: 'honcho',
-      title: 'delete_service: honcho',
-      payload: { toolName: 'delete_service', args: { name: 'honcho' }, caller: 'token:ci-bot' },
-      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+      service: 'media',
+      title: 'delete_service: media',
+      payload: { toolName: 'delete_service', args: { name: 'media' }, caller: 'token:ci-bot' },
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
     });
     const res = await approveApproval(r.id);
-    expect(dispatchMcpTool).toHaveBeenCalledWith('delete_service', { name: 'honcho' });
+    expect(dispatchMcpTool).toHaveBeenCalledWith('delete_service', { name: 'media' });
     expect(res.request.status).toBe('approved');
     expect((await getApproval(r.id))?.status).toBe('approved');
   });
@@ -351,9 +351,9 @@ describe('mcp-tool re-dispatch action (#2234)', () => {
   it('a failed tool dispatch propagates and leaves the request pending', async () => {
     dispatchMcpTool.mockRejectedValueOnce(new Error('tool blew up'));
     const r = await submitApproval({
-      service: 'honcho',
-      title: 'delete_service: honcho',
-      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+      service: 'media',
+      title: 'delete_service: media',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
     });
     await expect(approveApproval(r.id)).rejects.toThrow(/tool blew up/);
     // The request must NOT be marked approved when the tool failed to run.
@@ -362,9 +362,9 @@ describe('mcp-tool re-dispatch action (#2234)', () => {
 
   it('rejecting an mcp approval cancels it WITHOUT running the tool', async () => {
     const r = await submitApproval({
-      service: 'honcho',
-      title: 'delete_service: honcho',
-      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+      service: 'media',
+      title: 'delete_service: media',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
     });
     const res = await rejectApproval(r.id);
     expect(res.request.status).toBe('rejected');
@@ -374,14 +374,14 @@ describe('mcp-tool re-dispatch action (#2234)', () => {
 
   it('the approval persists across a reload of the store (survives restart)', async () => {
     const r = await submitApproval({
-      service: 'honcho',
-      title: 'delete_service: honcho',
-      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+      service: 'media',
+      title: 'delete_service: media',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
     });
     // Re-read from disk (fresh listApprovals call = what a restarted process does).
     const reloaded = await getApproval(r.id);
     expect(reloaded?.status).toBe('pending');
-    expect(reloaded?.on_approve.mcp).toEqual({ toolName: 'delete_service', args: { name: 'honcho' } });
+    expect(reloaded?.on_approve.mcp).toEqual({ toolName: 'delete_service', args: { name: 'media' } });
   });
 });
 
@@ -438,22 +438,22 @@ describe('concurrent store writes (#2239)', () => {
       on_approve: { move: { src: '/mnt/data/stacks/svc/draft', dst: '/mnt/data/stacks/svc/published' } },
     });
     const runner = await submitApproval({
-      service: 'honcho',
-      title: 'delete_service: honcho',
-      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+      service: 'media',
+      title: 'delete_service: media',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
     });
     const [mv, mc] = await Promise.all([approveApproval(mover.id), approveApproval(runner.id)]);
     expect(mv.request.status).toBe('approved');
     expect(mc.request.status).toBe('approved');
     expect('/mnt/data/stacks/svc/published' in fakeFs).toBe(true);
-    expect(dispatchMcpTool).toHaveBeenCalledWith('delete_service', { name: 'honcho' });
+    expect(dispatchMcpTool).toHaveBeenCalledWith('delete_service', { name: 'media' });
   });
 
   it('a persist failure AFTER the tool ran surfaces a clear "ran but not saved" error (client not stranded)', async () => {
     const r = await submitApproval({
-      service: 'honcho',
-      title: 'delete_service: honcho',
-      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+      service: 'media',
+      title: 'delete_service: media',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
     });
     // The destructive tool runs, THEN the final store write fails — the handler
     // must reject with a distinct message (not a raw ENOENT) so the UI leaves
@@ -461,7 +461,7 @@ describe('concurrent store writes (#2239)', () => {
     const renameSpy = vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('disk full'));
     await expect(approveApproval(r.id)).rejects.toThrow(/approved and executed, but saving the result failed/);
     // The tool DID run — the error is about persistence, not the action.
-    expect(dispatchMcpTool).toHaveBeenCalledWith('delete_service', { name: 'honcho' });
+    expect(dispatchMcpTool).toHaveBeenCalledWith('delete_service', { name: 'media' });
     renameSpy.mockRestore();
   });
 });
@@ -469,11 +469,11 @@ describe('concurrent store writes (#2239)', () => {
 describe('isSelfApproval — token cannot resolve its own proposal (#2244)', () => {
   const withCaller = (caller: unknown): ApprovalRequest => ({
     id: 'r1',
-    service: 'honcho',
-    title: 'delete_service: honcho',
+    service: 'media',
+    title: 'delete_service: media',
     description: null,
     payload: caller === undefined ? {} : { caller },
-    on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+    on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
     on_reject: {},
     node: 'box1',
     created_at: new Date().toISOString(),
@@ -509,19 +509,19 @@ describe('onNewApproval / submitApproval emit hook (#2268 part B)', () => {
     const off = onNewApproval(e => events.push(e));
     try {
       const created = await submitApproval({
-        service: 'honcho',
-        title: 'delete_service: honcho',
+        service: 'media',
+        title: 'delete_service: media',
         description: 'secret detail here',
         payload: { caller: 'token:solaris', secretToken: 'sb_should_not_leak' },
-        on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+        on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
         node: 'box1',
       });
       expect(events).toHaveLength(1);
       expect(events[0]).toEqual({
         type: 'new-approval',
         id: created.id,
-        kind: 'honcho',
-        summary: 'delete_service: honcho',
+        kind: 'media',
+        summary: 'delete_service: media',
         created_at: created.created_at,
       });
     } finally {
@@ -534,10 +534,10 @@ describe('onNewApproval / submitApproval emit hook (#2268 part B)', () => {
     const off = onNewApproval(e => events.push(e));
     try {
       await submitApproval({
-        service: 'honcho',
+        service: 'media',
         title: 'do the thing',
         payload: { caller: 'token:solaris', apiKey: 'sb_secret_value' },
-        on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+        on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
         node: 'box1',
       });
       const serialized = JSON.stringify(events[0]);
@@ -553,14 +553,14 @@ describe('onNewApproval / submitApproval emit hook (#2268 part B)', () => {
     const events: NewApprovalEvent[] = [];
     const off = onNewApproval(e => events.push(e));
     off();
-    await submitApproval({ service: 'honcho', title: 't', node: 'box1' });
+    await submitApproval({ service: 'media', title: 't', node: 'box1' });
     expect(events).toHaveLength(0);
   });
 
   it('a throwing listener does not fail the submit (approval is stored)', async () => {
     const off = onNewApproval(() => { throw new Error('boom'); });
     try {
-      const created = await submitApproval({ service: 'honcho', title: 't', node: 'box1' });
+      const created = await submitApproval({ service: 'media', title: 't', node: 'box1' });
       expect(await getApproval(created.id)).not.toBeNull();
     } finally {
       off();

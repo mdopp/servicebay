@@ -108,7 +108,7 @@ export const SUBDOMAIN_TEMPLATE: Readonly<Record<string, string>> = {
  * proxy hosts when the operator opted them in. They're probed iff their
  * proxy host carries `auth_request /authelia` (derived at runtime via
  * `hostHasForwardAuth`) — never by template presence. `ollama` (#1685) is
- * the first: it's installed by the external honcho/OSCAR stack and got a
+ * the first: it's installed by an external OSCAR-side stack and got a
  * forward-auth NPM host this run.
  */
 // Empty by operator decision: `ollama.dopp.cloud` is ADMIN-ONLY, not a family app.

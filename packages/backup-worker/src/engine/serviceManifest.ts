@@ -74,7 +74,7 @@ export interface ServiceBackupManifest {
 }
 
 /** Per-service config scope, transcribed from the table in #1190 and extended
- *  in #2153 (lldap/vaultwarden/radicale/jellyfin/honcho/file-share + authelia
+ *  in #2153 (lldap/vaultwarden/radicale/jellyfin/file-share + authelia
  *  db.sqlite3). Kept in sync with the backend copy; the coverage contract that
  *  gates new template volumes lives on the backend side
  *  (scripts/check-backup-coverage.ts + EXCLUDED_BULK_VOLUMES). */
@@ -193,14 +193,6 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     data: ['metadata', 'cache'],
   },
   {
-    // Honcho (#2153): app config on /data (honcho/data). Its Postgres store is a
-    // separate volume, excluded + rekey-reconciled (#2165), not NAS-restored.
-    service: 'honcho',
-    dataSubdir: 'honcho/data',
-    include: ['config.json'],
-    exclude: [],
-  },
-  {
     // File-share (#2153): the Samba passdb + FileBrowser db/config that DEFINE
     // the shares. The shared files themselves (file-share/data) are bulk, excluded.
     service: 'file-share',
@@ -230,7 +222,6 @@ export const EXCLUDED_BULK_VOLUMES: Readonly<Record<string, string>> = {
   JELLYFIN_MEDIA_PATH: 'The media library itself — multi-TB, lives on the RAID.',
   'immich/upload': 'Immich photo/video library — multi-GB blobs, RAID-resident.',
   'file-share/data': 'The shared household files — bulk user data on the RAID.',
-  'honcho/pgdata': 'Postgres data dir — reconciled by reinstall-over-data rekey (#2165), not NAS-restored.',
   'immich/pgdata': 'Immich Postgres data dir — RAID-resident, rekey-reconciled, not NAS-restored.',
 };
 

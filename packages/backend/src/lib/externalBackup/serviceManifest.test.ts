@@ -20,7 +20,7 @@ describe('service backup manifests', () => {
       expect.arrayContaining([
         'home-assistant', 'authelia', 'adguard', 'syncthing', 'hermes',
         // #2153 — previously unprotected services now covered.
-        'lldap', 'vaultwarden', 'radicale', 'jellyfin', 'honcho', 'file-share',
+        'lldap', 'vaultwarden', 'radicale', 'jellyfin', 'file-share',
       ]),
     );
   });

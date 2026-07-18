@@ -148,7 +148,7 @@ export interface ServiceBackupManifest {
 /**
  * Per-service config scope, transcribed from the table in #1190 and extended in
  * #2153 to close the coverage gap (lldap / vaultwarden / radicale / jellyfin /
- * honcho / file-share / authelia db.sqlite3). Every template that declares a
+ * file-share / authelia db.sqlite3). Every template that declares a
  * persistent `{{DATA_DIR}}/…` volume must either appear here (a manifest entry)
  * or be listed in `EXCLUDED_BULK_VOLUMES` below — enforced by
  * `scripts/check-backup-coverage.ts` so a new template can't silently opt out.
@@ -376,18 +376,6 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     data: ['metadata', 'cache'],
   },
   {
-    // Honcho (#2153) — AI memory service. The app's config-grade state lives on
-    // its /data volume (`honcho/data/`). Its Postgres store is a SEPARATE volume
-    // (`honcho/pgdata/`) that is bulk + credential-coupled: it's excluded here
-    // (EXCLUDED_BULK_VOLUMES) and reconciled by the reinstall-over-pgdata rekey
-    // work (#2165), not restored from a NAS tarball. The pg password is an
-    // env-injected secret, not a file, so there is nothing to strip here.
-    service: 'honcho',
-    dataSubdir: 'honcho/data',
-    include: ['config.json'],
-    exclude: [],
-  },
-  {
     // File-share (#2153) — the config that defines the shares, NOT the shared
     // files. Data lives under `file-share/`: `samba-private/` holds the Samba
     // passdb (user accounts + password hashes — kept verbatim, they can't be
@@ -427,7 +415,6 @@ export const EXCLUDED_BULK_VOLUMES: Readonly<Record<string, string>> = {
   'file-share/data': 'The shared household files — bulk user data on the RAID.',
   // Postgres data dirs: credential-coupled, reconciled by rekey (#2165), not
   // restored from a NAS tarball.
-  'honcho/pgdata': 'Postgres data dir — reconciled by reinstall-over-data rekey (#2165), not NAS-restored.',
   'immich/pgdata': 'Immich Postgres data dir — RAID-resident, rekey-reconciled, not NAS-restored.',
 };
 

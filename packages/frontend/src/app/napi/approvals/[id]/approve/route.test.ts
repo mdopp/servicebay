@@ -52,11 +52,11 @@ import { POST } from './route';
 
 const proposal = (caller: string): ApprovalRequest => ({
   id: 'r1',
-  service: 'honcho',
-  title: 'delete_service: honcho',
+  service: 'media',
+  title: 'delete_service: media',
   description: null,
   payload: { caller },
-  on_approve: { mcp: { toolName: 'delete_service', args: { name: 'honcho' } } },
+  on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
   on_reject: {},
   node: 'box1',
   created_at: new Date().toISOString(),

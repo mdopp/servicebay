@@ -127,7 +127,7 @@ describe('delegated-admin-from-authelia-session — session-driven mint (#2275)'
 
   it('rejects an unknown/too-broad action (narrow capability guard)', async () => {
     const res = await POST(
-      req({ 'remote-user': 'alice', 'remote-groups': 'admins' }, { action: 'delete_service', target: 'honcho' }),
+      req({ 'remote-user': 'alice', 'remote-groups': 'admins' }, { action: 'delete_service', target: 'media' }),
     );
     expect(res.status).toBe(400);
     const body = await res.json();
