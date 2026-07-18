@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.1.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.0.1...servicebay-v5.1.0) (2026-07-18)
+
+
+### Features
+
+* **mcp:** add local-assist drift report for promotion visibility (epic [#2326](https://github.com/mdopp/servicebay/issues/2326) s5) ([ce93cc4](https://github.com/mdopp/servicebay/commit/ce93cc4278ba18a1f6315a1ac55bf5d180715b81))
+* **mcp:** add propose scope and propose_learning tool (epic [#2326](https://github.com/mdopp/servicebay/issues/2326) s1) ([b0120ec](https://github.com/mdopp/servicebay/commit/b0120ec9d4dbdc25b28cb53730c31baac147fd20))
+* **mcp:** add submitter self-assessment to propose_learning (epic [#2326](https://github.com/mdopp/servicebay/issues/2326) s2) ([66a9bad](https://github.com/mdopp/servicebay/commit/66a9badac3211bc38bb14af54b24c3526bc552f0))
+* **mcp:** land approved learning proposals to local-assists behind a secret-scan gate (epic [#2326](https://github.com/mdopp/servicebay/issues/2326) s4) ([65fd9fb](https://github.com/mdopp/servicebay/commit/65fd9fb13e913c22f0d0a6f2d53d78a6ade0ab6f))
+* **mcp:** Learnings-Rückkanal — propose_learning + Approval + Landing (Epic [#2326](https://github.com/mdopp/servicebay/issues/2326) s1–s5) ([dd6332a](https://github.com/mdopp/servicebay/commit/dd6332a53187d198dcf3638c339987132b0483c7))
+* **mcp:** wire learning-proposal approval onto access-request queue (epic [#2326](https://github.com/mdopp/servicebay/issues/2326) s3) ([89bedd3](https://github.com/mdopp/servicebay/commit/89bedd32f29cdff0a538e53fb5d560612fcf64e7))
+
 ## [5.0.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.0.0...servicebay-v5.0.1) (2026-07-18)
 
 
