@@ -39,6 +39,7 @@ import { syncRegistries } from './lib/registry';
 import { reconcileLanIp } from './lib/lanIp';
 import { lazyInitializeExpiry as initBootstrapTokenExpiry } from './lib/mcp/bootstrapToken';
 import { createMcpServer } from './lib/mcp/server';
+import { registerAssistPrompts } from './lib/mcp/assistCatalog';
 import { isMcpApprovePath, handleMcpApproveRequest } from './lib/mcp/approveRoute';
 import { scheduleBackup } from './lib/backup/service';
 import { scheduleExternalNasBackup } from './lib/externalBackup/producer';
@@ -266,6 +267,11 @@ app.prepare().then(() => {
         // Stateless: create a fresh server + transport per request, with
         // the auth context closed over so each tool call can scope-check.
         const mcpServer = createMcpServer({ auth });
+        // Register the curated actionable guides as MCP prompts (#2326 s6). The
+        // async prompt half needs a catalog snapshot, so it's wired here at the
+        // transport boundary before connect; resources are already registered
+        // synchronously inside createMcpServer.
+        await registerAssistPrompts(mcpServer.__baseServer);
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         await mcpServer.connect(transport);
         const body = await collectBody(req);

@@ -15,6 +15,7 @@ import {
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getTemplates, getReadme, getTemplateYaml, getTemplateVariables } from '@/lib/registry';
 import { listAssists, getAssist, ASSIST_KINDS, listAssistDrift } from '@/lib/assists/catalog';
+import { registerAssistResources } from './assistCatalog';
 import {
   submitProposal,
   ProposalError,
@@ -608,7 +609,20 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
       baseServer.tool(name, desc, schema, safeHandler(name, handler, opts?.auth)),
     connect: baseServer.connect.bind(baseServer),
     close: baseServer.close.bind(baseServer),
+    // The underlying McpServer, exposed so the transport boundary can register
+    // the async half of the assist catalog (prompts) — see registerAssistCatalog
+    // (#2326 s6). Resources are registered synchronously below.
+    __baseServer: baseServer,
   };
+
+  // --- Native assist-catalog distribution (#2326 s6) ---
+  // Expose the SAME assist catalog (list_assists/get_assist stay, additive) as
+  // MCP-native resources so any client can list + read assists without our tool
+  // names. Read-tier knowledge: assists carry no secrets (secret-scan gate) and
+  // are already readable via the read-scoped tools, so this adds no privilege.
+  // Resources register synchronously (template defers enumeration); the prompt
+  // half is async and wired at the transport boundary via registerAssistCatalog.
+  registerAssistResources(baseServer);
 
   // --- List Nodes ---
   server.tool('list_nodes', 'List all registered nodes with connection status and resources', {}, async () => {

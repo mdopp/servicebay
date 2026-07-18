@@ -200,6 +200,31 @@ the promotion backlog. Each entry carries a `promotionHint`; making a runtime
 assist permanent (shipped in the image) is a later manual repo PR that adds the
 file.
 
+### Native distribution: assists as MCP resources + prompts (#2326 s6)
+
+The assist catalog is ALSO exposed over MCP's **native** primitives, so a client
+can discover + load knowledge without knowing our tool names (`list_assists` /
+`get_assist` stay unchanged — this is purely **additive**):
+
+- **Resources.** Every assist — built-in and landed local — is an MCP
+  **Resource** under an `assist://<id>` URI (`text/markdown`), served via a
+  ResourceTemplate whose list callback enumerates the catalog **live** (the same
+  `listAssists` loader the tools use), so newly-landed local-assists appear
+  without a restart. Each resource's `source` (Built-in/Local) and `kind` ride
+  in the description + `_meta`. Read a resource to get the full assist markdown.
+- **Prompts.** The curated **actionable** subset (kinds `guide` / `recipe` /
+  `checklist` / `adr` — e.g. `servicebay-overview`, `create-service`,
+  `new-service-architecture`) is exposed as MCP **Prompts** (`assist_<id>`), each
+  returning the assist content as a prompt message so a client can invoke an
+  operational how-to by name. `footgun` / `snippet` / `template` kinds stay
+  resources-only (reference/gotcha material, not a runnable walkthrough).
+
+Registering a resource/prompt makes the SDK advertise the `resources` /
+`prompts` capabilities automatically. Reading assists is read-tier knowledge —
+assists carry no secrets by contract (the secret-scan gate) and are already
+readable via the read-scoped tools — so the native surface introduces no new
+privilege. The mapping lives in `packages/backend/src/lib/mcp/assistCatalog.ts`.
+
 ## Tool visibility is scoped to your token (#2325)
 
 `tools/list` returns **only the tools your token could actually call**. A tool
