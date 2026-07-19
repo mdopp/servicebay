@@ -47,6 +47,14 @@ vi.mock('@/lib/auth/internalToken', () => ({
   getInternalApiToken: vi.fn(() => 'internal-test-token'),
 }));
 
+// #2343 — remove_proxy_route config-only path reads/writes config directly.
+const getConfigMock = vi.fn(async () => ({ reverseProxy: { hosts: [{ domain: 'ws-test.dopp.cloud', service: 'ws-test', forwardPort: 19999 }] } }));
+const updateConfigMock = vi.fn(async (..._a: unknown[]) => undefined);
+vi.mock('@/lib/config', () => ({
+  getConfig: (...a: unknown[]) => getConfigMock(...(a as [])),
+  updateConfig: (...a: unknown[]) => updateConfigMock(...a),
+}));
+
 // --- Install lib mocks (#2141) ---
 const assembleManifest = vi.fn(async () => ({
   items: [{ name: 'vaultwarden', checked: true }],
@@ -105,6 +113,10 @@ beforeEach(() => {
   getCurrentJob.mockResolvedValue(null);
   startJob.mockReset();
   fetchMock.mockReset();
+  getConfigMock.mockReset();
+  getConfigMock.mockResolvedValue({ reverseProxy: { hosts: [{ domain: 'ws-test.dopp.cloud', service: 'ws-test', forwardPort: 19999 }] } });
+  updateConfigMock.mockReset();
+  updateConfigMock.mockResolvedValue(undefined);
   // realpath (jail guard) + mkdir + chown all succeed by default.
   execSafe.mockImplementation(async (argv: string[]) => {
     if (argv[0] === 'realpath') return { stdout: argv[argv.length - 1], stderr: '', code: 0 };
@@ -324,5 +336,112 @@ describe('get_install_progress (#2141)', () => {
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toMatch(/No install job found/);
     await client.close();
+  });
+});
+
+// #2343 — remove_proxy_route can now delete the LIVE NPM host (removeNpmHost),
+// reusing the DELETE /api/system/nginx/proxy-hosts endpoint (the same path the
+// diagnose delete_route remediation + uninstall use), which removes the NPM
+// host AND drops the config entry together (drift-free).
+describe('remove_proxy_route removeNpmHost (#2343)', () => {
+  it('stays config-only (backward-compatible) without the flag: no NPM fetch', async () => {
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'remove_proxy_route',
+      arguments: { domain: 'ws-test.dopp.cloud' },
+    });
+    expect(res.isError).toBeFalsy();
+    // Config entry dropped …
+    expect(updateConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ reverseProxy: expect.objectContaining({ hosts: [] }) }),
+    );
+    // … and NPM was never contacted (no drift-creation attempt against a live host).
+    expect(fetchMock).not.toHaveBeenCalled();
+    const text = (res.content as { text: string }[])[0].text;
+    expect(text).toMatch(/"npmHostRemoved": false/);
+    await client.close();
+  });
+
+  it('errors config-only when the domain is not in config', async () => {
+    getConfigMock.mockResolvedValue({ reverseProxy: { hosts: [] } });
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'remove_proxy_route',
+      arguments: { domain: 'nope.dopp.cloud' },
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/No proxy route found/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await client.close();
+  });
+
+  it('with removeNpmHost:true, DELETEs the live NPM host via the shared endpoint (host + config both gone)', async () => {
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify({ removed: true, domain: 'ws-test.dopp.cloud', id: 7 }), { status: 200 }),
+    );
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'remove_proxy_route',
+      arguments: { domain: 'ws-test.dopp.cloud', removeNpmHost: true },
+    });
+    expect(res.isError).toBeFalsy();
+    const [url, init] = fetchMock.mock.calls[0];
+    // Same endpoint the diagnose delete_route remediation / uninstall use — the
+    // route deletes NPM + drops config together, so we don't re-implement it.
+    expect(String(url)).toMatch(/\/api\/system\/nginx\/proxy-hosts\?domain=ws-test\.dopp\.cloud$/);
+    expect((init as RequestInit).method).toBe('DELETE');
+    const headers = new Headers((init as RequestInit).headers);
+    expect(headers.get('x-sb-internal-token')).toBe('internal-test-token');
+    // We route the config-drop through the endpoint (drift-free), so the tool
+    // itself doesn't also write config directly.
+    expect(updateConfigMock).not.toHaveBeenCalled();
+    const text = (res.content as { text: string }[])[0].text;
+    expect(text).toMatch(/"npmHostRemoved": true/);
+    await client.close();
+  });
+
+  it('when NPM has no such host (404 not_found), still clears the config entry (no lingering drift)', async () => {
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify({ removed: false, reason: 'not_found' }), { status: 404 }),
+    );
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'remove_proxy_route',
+      arguments: { domain: 'ws-test.dopp.cloud', removeNpmHost: true },
+    });
+    expect(res.isError).toBeFalsy();
+    // Config reconciled even though the live host was already gone.
+    expect(updateConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ reverseProxy: expect.objectContaining({ hosts: [] }) }),
+    );
+    const text = (res.content as { text: string }[])[0].text;
+    expect(text).toMatch(/"npmHostRemoved": false/);
+    await client.close();
+  });
+
+  it('surfaces an NPM delete failure as an error', async () => {
+    fetchMock.mockImplementation(async () =>
+      new Response(JSON.stringify({ error: 'NPM API returned 502' }), { status: 502 }),
+    );
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'remove_proxy_route',
+      arguments: { domain: 'ws-test.dopp.cloud', removeNpmHost: true },
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/Failed to remove NPM host/);
+    await client.close();
+  });
+});
+
+// #2343 / #2325 — remove_proxy_route is destroy-scoped: a non-destroy token
+// must NOT see it in the scope-filtered tools/list nor be able to call it.
+describe('remove_proxy_route scope (#2343)', () => {
+  it('is destroy-scoped and hidden from a read/mutate token', async () => {
+    const { TOOL_SCOPES, isToolVisibleForScopes } = await import('./server');
+    expect(TOOL_SCOPES.remove_proxy_route).toBe('destroy');
+    expect(isToolVisibleForScopes('remove_proxy_route', ['read'])).toBe(false);
+    expect(isToolVisibleForScopes('remove_proxy_route', ['mutate'])).toBe(false);
+    expect(isToolVisibleForScopes('remove_proxy_route', ['destroy'])).toBe(true);
   });
 });

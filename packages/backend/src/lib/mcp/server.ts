@@ -1554,21 +1554,60 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     },
   );
 
+  // #2343 — remove_proxy_route is config-only by default, but with
+  // `removeNpmHost:true` it also deletes the LIVE NPM host (symmetry with
+  // create_proxy_route). It routes through the same DELETE
+  // /api/system/nginx/proxy-hosts endpoint the diagnose `delete_route`
+  // remediation and the uninstall capability use — that endpoint deletes the
+  // NPM host AND drops it from config.reverseProxy.hosts in one step, so both
+  // sides stay drift-free (no config-entry-gone-but-live-host-lingers). We do
+  // NOT re-implement the NPM deletion here.
   server.tool(
     'remove_proxy_route',
-    'Remove a reverse-proxy route entry from ServiceBay config (does not remove from NPM — do that in the UI).',
+    'Remove a reverse-proxy route. By default (removeNpmHost=false) this only drops the ServiceBay config entry and does NOT touch NPM. Set removeNpmHost=true to also delete the LIVE Nginx Proxy Manager host — this is the dedicated, destroy-scoped way to clean up a dangling route (one whose forward target has no backing service) end-to-end, so both the config entry AND the live host go away together (no config↔NPM drift). Read get_proxy_routes / run diagnose first to confirm the route is genuinely dangling before removing it — the live-host deletion is permanent.',
     {
       domain: z.string().regex(/^[a-zA-Z0-9.-]+$/, 'invalid domain').describe('Public domain to remove'),
+      removeNpmHost: z.boolean().optional().default(false).describe('When true, also delete the live NPM proxy host (not just the config entry). Uses the same server path as the diagnose "Delete route" remediation, removing the host from NPM and dropping it from config together. Default false (config-only, backward-compatible).'),
+      node: nodeParam,
     },
-    async ({ domain }) => {
-      const config = await getConfig();
-      const hosts = config.reverseProxy?.hosts ?? [];
-      const filtered = hosts.filter(h => h.domain !== domain);
-      if (filtered.length === hosts.length) {
-        return errorResult(`No proxy route found for domain "${domain}"`);
+    async ({ domain, removeNpmHost, node }) => {
+      if (!removeNpmHost) {
+        // Config-only (backward-compatible): drop the entry, leave NPM alone.
+        const config = await getConfig();
+        const hosts = config.reverseProxy?.hosts ?? [];
+        const filtered = hosts.filter(h => h.domain !== domain);
+        if (filtered.length === hosts.length) {
+          return errorResult(`No proxy route found for domain "${domain}"`);
+        }
+        await updateConfig({ reverseProxy: { ...config.reverseProxy, hosts: filtered } });
+        return textResult({ action: 'removed', domain, npmHostRemoved: false });
       }
-      await updateConfig({ reverseProxy: { ...config.reverseProxy, hosts: filtered } });
-      return textResult({ action: 'removed', domain });
+      // Live removal: reuse the shared DELETE endpoint (deletes the NPM host
+      // AND drops it from config.reverseProxy.hosts — drift-free).
+      try {
+        const qs = new URLSearchParams({ domain });
+        if (node) qs.set('node', node);
+        const res = await loopbackFetch(`/api/system/nginx/proxy-hosts?${qs.toString()}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 404 && (data as { reason?: string }).reason === 'not_found') {
+          // NPM had no such host. Still reconcile config so we don't leave a
+          // stale config entry behind (drift-free either way).
+          const config = await getConfig();
+          const hosts = config.reverseProxy?.hosts ?? [];
+          const filtered = hosts.filter(h => h.domain !== domain);
+          if (filtered.length !== hosts.length) {
+            await updateConfig({ reverseProxy: { ...config.reverseProxy, hosts: filtered } });
+          }
+          return textResult({ action: 'removed', domain, npmHostRemoved: false, note: 'No live NPM host found for this domain; config entry cleared if present.' });
+        }
+        if (!res.ok) {
+          const msg = (data as { error?: string }).error ?? `HTTP ${res.status}`;
+          return errorResult(`Failed to remove NPM host for ${domain}: ${msg}`);
+        }
+        return textResult({ action: 'removed', domain, npmHostRemoved: true, note: 'Live NPM host and config entry both removed. Confirm via get_proxy_routes (gone from liveHosts and routes).' });
+      } catch (e) {
+        return errorResult(`Error removing proxy route: ${e instanceof Error ? e.message : String(e)}`);
+      }
     },
   );
 

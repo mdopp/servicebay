@@ -119,6 +119,7 @@ not listed here reject Bearer tokens (cookie/internal-token only).
 | `/api/system/channel` | POST | `mutate` | set release channel |
 | `/api/system/boot/usb-next` | POST/DELETE | `mutate` | set/clear firmware BootNext |
 | `/api/system/disk-import/*` | GET/POST | `mutate` | scan/plan/apply a drive import (file moves into canonical folders = additive) |
+| `/api/system/nginx/proxy-hosts` | POST | `mutate` | create/update a live NPM proxy host (additive; the `create_proxy_route` tool path) |
 | `/api/system/external-backup/register` | POST | `mutate` | register a NAS backup source (config write) |
 | `/api/system/external-backup/target` | POST | `mutate` | write NAS target config |
 | `/api/system/external-backup/delete` | POST | `mutate` | delete one NAS archive file |
@@ -127,6 +128,7 @@ not listed here reject Bearer tokens (cookie/internal-token only).
 | `/api/system/templates/prune-orphans` | DELETE | `destroy` | delete orphan template dirs |
 | `/api/settings/backups/restore` | POST | `destroy` | restore the box config over current state |
 | `/api/system/external-backup/restore` | POST | `destroy` | restore a service's data dir from NAS — clobbers a live service's data when `force` (corrected from `lifecycle`, #2050) |
+| `/api/system/nginx/proxy-hosts` | DELETE | `destroy` | delete a live NPM proxy host by domain + drop its config entry (drift-free); the `remove_proxy_route` `removeNpmHost:true` path and the diagnose `delete_route` remediation (#2343) |
 | `/api/system/stacks/[name]/wipe` | DELETE | `destroy` | wipe a stack's data |
 
 The delegated-mint route `/api/system/api-tokens/delegate` is **not** in this table:
