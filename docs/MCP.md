@@ -153,6 +153,18 @@ in #2324 — a **breaking change** to the tool surface. Each stays in its origin
 scope: `get_logs` / `get_template_artifact` / `list_requests` are `read`,
 `manage_service` is `lifecycle`.
 
+The proxy tools split by how far they push. `add_proxy_route` only records a
+config entry (a later manual sync pushes it). `create_proxy_route` pushes a
+complete NPM host live. `remove_proxy_route` is symmetric with those: by default
+(`removeNpmHost:false`) it just drops the config entry, but with
+`removeNpmHost:true` (`destroy` scope) it also deletes the **live** NPM host —
+routing through the same `DELETE /api/system/nginx/proxy-hosts` path the diagnose
+`delete_route` remediation uses, which removes the NPM host **and** the config
+entry together, so there's no config↔NPM drift. That's the end-to-end way to
+clean up a dangling route (one whose forward target has no backing service)
+over MCP without the admin UI or `exec_command` — confirm it's genuinely dangling
+via `get_proxy_routes` / `diagnose` first, since the live deletion is permanent.
+
 Sensitive config fields (`auth.passwordHash`, `oidc.clientSecret`, SMTP
 passwords) are redacted from `get_config` and write-allowlisted in
 `update_config`.
