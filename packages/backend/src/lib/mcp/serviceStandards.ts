@@ -152,6 +152,12 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
         'npm run lint        # zero errors; do not raise the warning count',
       ],
       diffCoverageFloor: '70% on changed lines',
+      testGate:
+        'CI must gate image publish on a green test job (build/publish needs: test); a build-only CI is non-compliant. New service targets >= 85% total coverage with thread/async coverage on. See get_assist("testing-and-ci-gate").',
+    },
+    reportGapsBack: {
+      note: 'Reporting a standards gap is itself a standard. If you had to guess, were corrected, or found a missing/ambiguous/wrong standard while building, close the loop: file a mdopp/servicebay issue with the `standards-gap` label and, if you worked out the answer, propose an assist/docs update (a Local assist drop is a fine first home, then it gets promoted to a built-in). See get_assist("report-standards-gaps").',
+      assist: 'report-standards-gaps',
     },
     assistsToRead: {
       note: 'Fetch full text via get_assist(id); use list_assists to read each whenToUse and self-select.',
@@ -159,6 +165,13 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
         { id: 'new-service-architecture', why: 'Recommended defaults (language, structure, libraries, tests, storage, secrets) + the ADRs a new service must respect.' },
         { id: 'create-service', why: 'Concrete recipe to build and deploy a service repo behind SSO.' },
         { id: 'servicebay-overview', why: 'What the platform is and how the pieces fit together.' },
+        { id: 'testing-and-ci-gate', why: 'Required standard: a real test suite, thread-aware coverage, and CI that gates image publish on green tests (build-only CI is non-compliant).' },
+        { id: 'long-running-process', why: 'Standard for any operation over ~10s: server-owned durable job, reconnect via the server (not localStorage), survive restart, observable + cancelable.' },
+        { id: 'data-authority', why: 'Consume the canonical index (Jellyfin/Immich/Radicale) instead of re-scanning; one writer per store or an explicit coordination model.' },
+        { id: 'recipe-roll-new-image-to-running-service', why: 'How to actually run a freshly-pushed image on an installed service (pull + restart), and the pinned-tag-vs-:latest versioning expectation.' },
+        { id: 'report-standards-gaps', why: 'Convention: report missing/ambiguous/wrong standards back so the catalog improves from real friction.' },
+        { id: 'footgun-cross-service-uid-writes', why: 'Footgun: container->host uid mapping, foreign ownership, and locks when writing another service’s store.' },
+        { id: 'footgun-local-template-write-uid', why: 'Footgun: Local templates must be placed as uid 1000 or write_file EACCES leaves a root-owned stray dir.' },
         { id: 'footgun-forward-auth-acme-collision', why: 'Footgun: forward-auth vs ACME cert collision.' },
         { id: 'footgun-subdomain-needs-public-domain', why: 'Footgun: a public subdomain needs a public domain.' },
       ],

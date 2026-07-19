@@ -101,6 +101,32 @@ describe('get_service_standards — servicebay flavor (#2323)', () => {
     // The single-source backing checklist itself is resolvable.
     expect(await getAssist('new-service-standards')).not.toBeNull();
   });
+
+  it('surfaces the service-builder standards-gap fixes (#2344 #2345)', async () => {
+    const s = await buildServiceStandards('servicebay');
+    const block = s.assistsToRead as { ids: { id: string }[] };
+    const ids = block.ids.map(i => i.id);
+    // #2345 testing/CI-gate + #2344 gaps are all wired into the index.
+    for (const id of [
+      'testing-and-ci-gate',
+      'long-running-process',
+      'data-authority',
+      'recipe-roll-new-image-to-running-service',
+      'report-standards-gaps',
+      'footgun-cross-service-uid-writes',
+      'footgun-local-template-write-uid',
+    ]) {
+      expect(ids, `assistsToRead includes ${id}`).toContain(id);
+    }
+    // The 'report gaps back' convention is surfaced at build start.
+    const rg = s.reportGapsBack as { assist: string; note: string };
+    expect(rg.assist).toBe('report-standards-gaps');
+    expect(rg.note).toContain('standards-gap');
+    // The build-gates-on-tests + 85% expectation is recorded on the invariants block.
+    const inv = s.enforcedInvariants as { testGate: string };
+    expect(inv.testGate).toContain('needs: test');
+    expect(inv.testGate).toContain('85%');
+  });
 });
 
 describe('get_service_standards — generic flavor (#2323)', () => {
