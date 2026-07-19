@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.3.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.2.1...servicebay-v5.3.0) (2026-07-19)
+
+
+### Features
+
+* **mcp:** close service-builder standards gaps + promote testing/CI-gate standard ([#2344](https://github.com/mdopp/servicebay/issues/2344) [#2345](https://github.com/mdopp/servicebay/issues/2345)) ([cfe8c73](https://github.com/mdopp/servicebay/commit/cfe8c73f6cd4b2c9e7290b6514323e7e79e4d6b4))
+* **mcp:** NPM-Host-Removal + Service-Builder-Standards schließen ([#2343](https://github.com/mdopp/servicebay/issues/2343) [#2344](https://github.com/mdopp/servicebay/issues/2344) [#2345](https://github.com/mdopp/servicebay/issues/2345)) ([57bb4df](https://github.com/mdopp/servicebay/commit/57bb4df29a6f327d58624a1dc03532995f34716d))
+* **mcp:** remove the live NPM host over MCP (delete_proxy_host / remove_proxy_route removeNpmHost) ([#2343](https://github.com/mdopp/servicebay/issues/2343)) ([b4a0822](https://github.com/mdopp/servicebay/commit/b4a08221454c6d3615a310db9154a3de1d9aafbf))
+
 ## [5.2.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.2.0...servicebay-v5.2.1) (2026-07-18)
 
 
