@@ -20,6 +20,15 @@ Two rules of thumb: **:root IS dark** (the admin UI's default is dark; a
 color literals** — reference `--surface` / `--accent` / `--status-ok`, never a
 hard-coded hex, so a theme change is one place.
 
+> Inside ServiceBay's own frontend (`packages/frontend/`) this second rule is
+> **machine-enforced**, not just advisory: the `sb/no-raw-color-literal` and
+> `sb/no-raw-ui-primitive` ESLint rules flag raw colour literals (hex / `rgb()` /
+> `hsl()` / raw Tailwind ramps like `text-blue-500`) and raw
+> `<button>`/`<table>`/`<input>` in favour of the `@/components/ui` primitives +
+> `@theme` tokens (`components/ui/` itself is exempt). See
+> `docs/ARCHITECTURE_INVARIANTS.md` § *UI-primitive and design-token reuse*
+> (#2353). Adopt the same discipline in your own service and drift stays out.
+
 ## Palette (dark default)
 
 Surfaces, borders, and text — the chrome:

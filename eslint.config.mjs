@@ -142,6 +142,132 @@ const servicebayPlugin = {
         };
       },
     },
+    // -----------------------------------------------------------------------
+    // #2353 — UI-primitive + design-token reuse. The frontend ships a
+    // hand-rolled design system (packages/frontend/src/components/ui/:
+    // Button/Card/Field/DataTable/Badge/StatusDot/SectionHeading/PageScroll)
+    // and semantic tokens (globals.css @theme inline, Tailwind v4). These two
+    // rules fire at the decision point (editor/CI) when someone inlines what
+    // should be a primitive or a token. Both are scoped to
+    // packages/frontend/src and EXEMPT components/ui/ (the primitives wrap the
+    // raw elements + intentionally map raw colours to tokens internally). See
+    // docs/ARCHITECTURE_INVARIANTS.md § ui-primitive-and-design-token-reuse.
+    //
+    // ROLLOUT: introduced at "warn" (not "error"). A one-shot fix was
+    // infeasible — the raw-colour rule alone fires ~3100 times across ~85
+    // files, and rewriting each to a semantic token while keeping every
+    // component visually identical is far past a single unit's safe blast
+    // radius. warn keeps the 0-error gate green while surfacing every new + old
+    // violation. RATCHET PLAN: burn the count down file-by-file (lint-sweep
+    // units), then flip each rule to "error" once its class is at 0 — never
+    // loosen. TODO(#2353): ratchet no-raw-color-literal → error after the
+    // colour-token migration; ratchet no-raw-ui-primitive → error after the
+    // <button>/<table>/<input> migration.
+    "no-raw-ui-primitive": {
+      meta: {
+        type: "suggestion",
+        docs: {
+          description:
+            "Use @/components/ui primitives instead of raw <button>/<table>/<input>/<select>/<textarea> in the frontend.",
+        },
+        schema: [],
+        messages: {
+          raw: "Raw <{{tag}}> in a frontend surface. Use the {{primitive}} primitive from @/components/ui instead (components/ui/ is exempt). See docs/ARCHITECTURE_INVARIANTS.md § ui-primitive-and-design-token-reuse.",
+        },
+      },
+      create(context) {
+        // tag → primitive it should be replaced with.
+        const PRIMITIVE = {
+          button: "Button",
+          table: "DataTable",
+          input: "Field",
+          select: "Field",
+          textarea: "Field",
+        };
+        return {
+          JSXOpeningElement(node) {
+            const name = node.name;
+            if (name.type !== "JSXIdentifier") return;
+            // Lowercase name === intrinsic (raw DOM) element; a custom
+            // component (Button, DataTable) is PascalCase and fine.
+            const primitive = PRIMITIVE[name.name];
+            if (!primitive) return;
+            context.report({
+              node,
+              messageId: "raw",
+              data: { tag: name.name, primitive },
+            });
+          },
+        };
+      },
+    },
+    "no-raw-color-literal": {
+      meta: {
+        type: "suggestion",
+        docs: {
+          description:
+            "Use @theme semantic tokens (text-accent, bg-surface, status ramp, …) instead of raw colour literals (hex / rgb() / hsl() / raw Tailwind numeric colour utilities like text-blue-500) in the frontend.",
+        },
+        schema: [],
+        messages: {
+          hex: "Raw colour literal `{{value}}`. Use a semantic @theme token (accent / surface / border / text / status-* / on-accent) from globals.css instead of a hard-coded hex/rgb/hsl. See docs/ARCHITECTURE_INVARIANTS.md § ui-primitive-and-design-token-reuse.",
+          tailwind:
+            "Raw Tailwind colour utility `{{value}}`. Use a semantic token utility (text-accent, bg-surface, text-status-ok, border-border, …) mapped in globals.css @theme instead of a numeric colour ramp. See docs/ARCHITECTURE_INVARIANTS.md § ui-primitive-and-design-token-reuse.",
+        },
+      },
+      create(context) {
+        // Raw hex (#rgb / #rrggbb / #rrggbbaa) and rgb()/hsl() function
+        // literals embedded in a string.
+        const HEX = /#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/;
+        const RGB_HSL = /\b(?:rgba?|hsla?)\s*\(/;
+        // Raw Tailwind numeric colour utility: {prefix}-{palette}-{n}, e.g.
+        // text-blue-500, bg-gray-800, border-red-400, hover:ring-emerald-500/40.
+        const PALETTE =
+          "slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose";
+        const PREFIX =
+          "text|bg|border|ring|from|to|via|divide|outline|decoration|shadow|fill|stroke|accent|caret|placeholder";
+        // Allow modifiers + arbitrary opacity suffix. Word-boundary at the
+        // start so `border-border` etc. don't match (palette list is explicit).
+        const TAILWIND = new RegExp(
+          `(?:^|[\\s"'\`:])(?:(?:${PREFIX})-(?:${PALETTE})-[0-9]{2,3})(?:/[0-9]{1,3})?\\b`,
+        );
+        function check(value, node) {
+          if (typeof value !== "string") return;
+          if (HEX.test(value)) {
+            context.report({
+              node,
+              messageId: "hex",
+              data: { value: (value.match(HEX) || [value])[0] },
+            });
+            return;
+          }
+          if (RGB_HSL.test(value)) {
+            context.report({
+              node,
+              messageId: "hex",
+              data: { value: (value.match(RGB_HSL) || [value])[0] },
+            });
+            return;
+          }
+          const tw = value.match(TAILWIND);
+          if (tw) {
+            context.report({
+              node,
+              messageId: "tailwind",
+              data: { value: tw[0].trim() },
+            });
+          }
+        }
+        return {
+          Literal(node) {
+            if (typeof node.value === "string") check(node.value, node);
+          },
+          TemplateElement(node) {
+            check(node.value.cooked ?? node.value.raw, node);
+          },
+        };
+      },
+    },
     "no-fe-backend-import": {
       meta: {
         type: "problem",
@@ -310,6 +436,24 @@ const eslintConfig = defineConfig([
     ],
     rules: {
       "no-console": "error",
+    },
+  },
+  {
+    // #2353 — UI-primitive + design-token reuse, scoped to the frontend
+    // application surfaces and EXEMPTING the primitives themselves
+    // (components/ui/ wraps the raw elements + maps raw colours to tokens
+    // internally). Introduced at "warn" during rollout; ratchet each rule to
+    // "error" once its violation class is at 0 (see the rule comment + the
+    // invariant doc). Test files are exempt so fixtures/markup snapshots don't
+    // trip the colour rule.
+    files: ["packages/frontend/src/**/*.{ts,tsx,js,jsx}"],
+    ignores: [
+      "packages/frontend/src/components/ui/**",
+      "**/*.test.{ts,tsx,js,jsx}",
+    ],
+    rules: {
+      "sb/no-raw-ui-primitive": "warn",
+      "sb/no-raw-color-literal": "warn",
     },
   },
   {

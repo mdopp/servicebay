@@ -27,6 +27,7 @@
     "disk-import": "tsx scripts/disk-import.ts",
     "check:invariants": "tsx scripts/check-invariants.ts",
     "check:backup-coverage": "tsx scripts/check-backup-coverage.ts",
+    "check:frontend-dup": "tsx scripts/check-frontend-dup.ts",
     "check:deps": "depcruise --config .dependency-cruiser.cjs packages/frontend/src packages/backend/src",
     "check:arch": "npm run check:invariants && npm run check:backup-coverage && npm run check:deps",
     "prepare": "husky || true",

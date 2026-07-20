@@ -19,7 +19,8 @@
  *
  * The mapping lives here — a small, pure-ish data layer over the catalog — so it
  * is unit-testable directly without spinning up the full MCP server + a
- * transport. `server.ts` calls `registerAssistCatalog(server)` to wire it.
+ * transport. `server.ts` calls `registerAssistResources` synchronously and
+ * `registerAssistPrompts` at the transport boundary to wire both surfaces.
  *
  * Scope/visibility (#2325 consistency): reading assists is read-tier knowledge.
  * Assists carry no secrets by contract (the secret-scan gate,
@@ -193,13 +194,3 @@ export async function registerAssistPrompts(server: McpServer): Promise<void> {
   }
 }
 
-/**
- * Register the full assist catalog (resources + prompts) on `server`. Async
- * because the prompt half needs a catalog snapshot; call it after
- * `createMcpServer(...).__baseServer` at the transport boundary (where an await
- * is available) so every MCP client gets both native surfaces.
- */
-export async function registerAssistCatalog(server: McpServer): Promise<void> {
-  registerAssistResources(server);
-  await registerAssistPrompts(server);
-}
