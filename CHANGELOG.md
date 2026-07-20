@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.5.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.4.0...servicebay-v5.5.0) (2026-07-20)
+
+
+### Features
+
+* Frontend-Komponentisierung erzwingen + auffindbar machen ([#2352](https://github.com/mdopp/servicebay/issues/2352) [#2353](https://github.com/mdopp/servicebay/issues/2353) [#2354](https://github.com/mdopp/servicebay/issues/2354)) ([b7c92a3](https://github.com/mdopp/servicebay/commit/b7c92a3ebd6b0aa8658742da3a42385c2789f75f))
+* **frontend:** component catalog route + frontend duplicate-JSX report ([#2354](https://github.com/mdopp/servicebay/issues/2354)) ([87d122a](https://github.com/mdopp/servicebay/commit/87d122a6f7a01548fdc44dbbb844c9b884ad16a4))
+* **lint:** enforce ui-primitive + design-token reuse in the frontend ([#2353](https://github.com/mdopp/servicebay/issues/2353)) ([db68748](https://github.com/mdopp/servicebay/commit/db687489df81d4b63436379b64d4d10402155fde))
+
+
+### Bug Fixes
+
+* **build:** remove dead registerAssistCatalog export so knip pre-commit passes ([#2352](https://github.com/mdopp/servicebay/issues/2352)) ([14bf294](https://github.com/mdopp/servicebay/commit/14bf294f834d023a87734df6827e0ec0a8dc9e9f))
+
 ## [5.4.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.3.0...servicebay-v5.4.0) (2026-07-20)
 
 
