@@ -610,7 +610,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
     connect: baseServer.connect.bind(baseServer),
     close: baseServer.close.bind(baseServer),
     // The underlying McpServer, exposed so the transport boundary can register
-    // the async half of the assist catalog (prompts) — see registerAssistCatalog
+    // the async half of the assist catalog (prompts) via registerAssistPrompts
     // (#2326 s6). Resources are registered synchronously below.
     __baseServer: baseServer,
   };
@@ -621,7 +621,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   // names. Read-tier knowledge: assists carry no secrets (secret-scan gate) and
   // are already readable via the read-scoped tools, so this adds no privilege.
   // Resources register synchronously (template defers enumeration); the prompt
-  // half is async and wired at the transport boundary via registerAssistCatalog.
+  // half is async and wired at the transport boundary via registerAssistPrompts.
   registerAssistResources(baseServer);
 
   // --- List Nodes ---
