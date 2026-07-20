@@ -59,6 +59,15 @@ it's a Solaris capability. State this choice explicitly in the design.
 The app should be: **stateless-restartable** (all state on a mounted volume),
 **config-by-env**, and **health-observable**.
 
+## User-facing UI
+- If the service has a frontend, **adopt the ServiceBay design language** so it
+  reads as native even on its own subdomain: copy the real design tokens
+  (palette + accent, radii, typography, spacing) and implement the UX baseline —
+  a styled large-tap-target file picker (not the native `<input type=file>`),
+  **real streaming progress** for long ops (not a bare spinner; reconnect by
+  server job id, not localStorage), responsive/mobile layout, and visible focus
+  states. See `service-ui-design-standard`.
+
 ## Recommended libraries
 - Lean over heavy: a minimal web framework + a good HTTP client, not a kitchen
   sink. (Python: `fastapi`+`uvicorn`+`httpx`. Node: `fastify`+`undici`. Go: std
