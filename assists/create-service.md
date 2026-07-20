@@ -84,5 +84,9 @@ with an SSL connect error (000).
 - Assist `new-service-architecture` — recommended language/structure/libraries/
   tests/storage/secrets before you design. Assists `servicebay-overview` +
   `solaris-overview` — what the platforms are.
+- Assist `service-ui-design-standard` — if the service has a frontend, adopt
+  ServiceBay's design tokens (palette/accent, radii, typography, spacing) + the
+  UX baseline (styled large file picker, streaming progress, responsive/mobile,
+  focus states) so it looks and behaves like ServiceBay.
 - `docs/TEMPLATE_AUTHORING.md`, `templates/CLAUDE.md` — the full template contract.
 - Worked examples in-repo: `templates/file-share/` (forward-auth), `templates/vaultwarden/` (OIDC).

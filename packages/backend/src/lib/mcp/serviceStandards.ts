@@ -167,6 +167,7 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
         { id: 'servicebay-overview', why: 'What the platform is and how the pieces fit together.' },
         { id: 'testing-and-ci-gate', why: 'Required standard: a real test suite, thread-aware coverage, and CI that gates image publish on green tests (build-only CI is non-compliant).' },
         { id: 'long-running-process', why: 'Standard for any operation over ~10s: server-owned durable job, reconnect via the server (not localStorage), survive restart, observable + cancelable.' },
+        { id: 'service-ui-design-standard', why: 'UI/design standard for a user-facing service: real ServiceBay design tokens (palette/accent, radii, typography, spacing) + UX baseline (styled large file picker, streaming progress, responsive/mobile, focus states) so the service looks and behaves like ServiceBay.' },
         { id: 'data-authority', why: 'Consume the canonical index (Jellyfin/Immich/Radicale) instead of re-scanning; one writer per store or an explicit coordination model.' },
         { id: 'recipe-roll-new-image-to-running-service', why: 'How to actually run a freshly-pushed image on an installed service (pull + restart), and the pinned-tag-vs-:latest versioning expectation.' },
         { id: 'report-standards-gaps', why: 'Convention: report missing/ambiguous/wrong standards back so the catalog improves from real friction.' },
