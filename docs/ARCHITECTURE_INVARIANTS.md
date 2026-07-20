@@ -179,6 +179,34 @@ count down file-by-file via lint-sweep units, then flip each rule to `error`
 once its class reaches 0 — forward-only, never loosen. The `TODO(#2353)` in
 `eslint.config.mjs` tracks the two flips (colour-literal, ui-primitive).
 
+### Component discovery + duplicate detection (#2354)
+
+Two companions to the reuse rules above — *you can only reuse what you can
+find, and only extract what you can see*:
+
+- **Component catalog — `/dev/components`** (`packages/frontend/src/app/(dashboard)/dev/components/page.tsx`).
+  A living gallery that renders every `@/components/ui` primitive in its key
+  states, driven off the barrel. Lightweight in-app route (no Storybook — the
+  CLAUDE.md ethos of not adding a heavy dependency), gated **dev-only**: the
+  whole `(dashboard)` group already sits behind the single-admin session, and
+  the page additionally `notFound()`s under a production build. When you add a
+  primitive to `@/components/ui`, add its gallery entry here — the catalog test
+  (`tests/frontend/ComponentCatalog.test.tsx`) asserts one section per primitive.
+
+- **Frontend duplicate-JSX report — `npm run check:frontend-dup`**
+  (`scripts/check-frontend-dup.ts`). A self-hosted copy-paste detector for
+  `packages/frontend/src` (the "same Card rendered 5× inline" smell), flagging
+  repeated normalized-line windows as extraction candidates. **A tsx/node-only
+  script, not jscpd** — same house pattern as `check-diff-coverage.ts`, no new
+  dependency for what ~120 LOC of line-shingle hashing does. **Report-only:**
+  it prints clusters and exits 0 (mirrors the #2353 lint WARN staging + the
+  semgrep/audit report-only tiering) so mature-tree duplication doesn't hard-
+  fail the build. Runs non-blocking in CI's `invariants` job. **Ratchet plan:**
+  dedupe the flagged surfaces into `@/components/ui` primitives, then flip the
+  gate blocking with `npm run check:frontend-dup -- --strict` (or lower
+  `MIN_LINES`) — forward-only. It is deliberately **not** part of `check:arch`
+  so the per-issue fast gate stays green.
+
 ---
 
 ## What this rubric does *not* enforce

@@ -192,6 +192,12 @@ jobs:
         if: steps.cache-npm.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run check:invariants
+      # Frontend copy-paste / duplicate-JSX report (#2354). Report-only
+      # (mirrors the #2353 lint-rule WARN staging + the semgrep/audit tiering):
+      # prints extraction candidates to the CI log but never blocks the merge.
+      # Ratchet to blocking with `-- --strict` once the frontend is deduped.
+      - name: Frontend duplicate-JSX report (report-only)
+        run: npm run check:frontend-dup || true
 
   depcruise:
     runs-on: ubuntu-latest
