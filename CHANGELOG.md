@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.4.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.3.0...servicebay-v5.4.0) (2026-07-20)
+
+
+### Features
+
+* **mcp:** add ServiceBay UI/design standard assist + wire into get_service_standards ([#2344](https://github.com/mdopp/servicebay/issues/2344)) ([76c9f07](https://github.com/mdopp/servicebay/commit/76c9f0725313720b84206863c613c7aa470c8f5e))
+
+
+### Bug Fixes
+
+* **autoloop:** waitForDevImage matches OCI revision label, not image tag ([#2348](https://github.com/mdopp/servicebay/issues/2348)) ([d6ed1ef](https://github.com/mdopp/servicebay/commit/d6ed1ef322cbba06f3b1cd0c42aee7ff2d152a2a))
+
 ## [5.3.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.2.1...servicebay-v5.3.0) (2026-07-19)
 
 
