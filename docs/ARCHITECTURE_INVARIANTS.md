@@ -147,6 +147,40 @@ Frontend reaches the backend exclusively through:
 
 ---
 
+### UI-primitive and design-token reuse (#2353)
+
+The frontend ships a hand-rolled design system — the primitives under
+`packages/frontend/src/components/ui/`
+(`Button`/`Card`/`Field`/`DataTable`/`Badge`/`StatusDot`/`SectionHeading`/`PageScroll`,
+imported from `@/components/ui`) and the semantic token layer in
+`packages/frontend/src/app/globals.css` (`@theme inline`: `accent`, `surface`,
+`border`, `text`, the `status-*` ramp, `on-accent`, radius/spacing scales,
+Tailwind v4). Two ESLint rules keep new UI on those rails instead of
+re-authoring raw elements + hard-coded colours (which caused drift + duplicates):
+
+- **`sb/no-raw-ui-primitive`**: forbids raw JSX `<button>` (→ `Button`),
+  `<table>` (→ `DataTable`), and `<input>`/`<select>`/`<textarea>` (→ `Field`)
+  in frontend surfaces. The message names the primitive to use.
+- **`sb/no-raw-color-literal`**: forbids raw colour literals — hex
+  (`#rrggbb`), `rgb()/hsl()`, and raw Tailwind numeric colour utilities
+  (`text-/bg-/border-/ring-/from-/to-{palette}-{n}` like `text-blue-500`) — in
+  favour of the semantic `@theme` token utilities.
+
+Both are **scoped to `packages/frontend/src/**` and EXEMPT
+`packages/frontend/src/components/ui/**`** (the primitives legitimately wrap the
+raw elements and map raw colours to tokens internally) plus `*.test.*`.
+
+**Severity is `warn` during rollout.** A one-shot fix was infeasible: the
+colour rule alone fires ~3,100 times across ~85 files, and rewriting each to a
+token while keeping every component visually identical is far past one unit's
+safe blast radius. `warn` keeps the 0-error lint gate green while surfacing
+every new + legacy violation in the editor and CI. **Ratchet plan:** burn the
+count down file-by-file via lint-sweep units, then flip each rule to `error`
+once its class reaches 0 — forward-only, never loosen. The `TODO(#2353)` in
+`eslint.config.mjs` tracks the two flips (colour-literal, ui-primitive).
+
+---
+
 ## What this rubric does *not* enforce
 
 These are still LLM-review territory. If you're booking another architect-review pass, scope it to these:
