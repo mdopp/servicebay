@@ -25,24 +25,47 @@
 import { execFileSync } from 'node:child_process';
 import { getChannel, setChannel, waitHealth, mcpExec } from './autoloop-box';
 
-/** The image ref the box reports running, or '' if it can't be read. */
-async function runningImage(): Promise<string> {
+/**
+ * Does the running image's OCI revision label identify `sha`?
+ *
+ * The label (`org.opencontainers.image.revision`) is the **full 40-char git
+ * SHA** baked into the image at build time. The harness usually knows the
+ * **short** SHA, so we prefix-match: the label must START WITH the expected sha
+ * (short or full). This is *not* a substring test — the earlier bug compared
+ * the image TAG (`ghcr.io/mdopp/servicebay:dev`, which never contains a SHA),
+ * so `:dev` alone must NOT count as a match. Exported for unit tests.
+ */
+export function revisionMatchesSha(revisionLabel: string, sha: string): boolean {
+  const label = revisionLabel.trim().toLowerCase();
+  const want = sha.trim().toLowerCase();
+  // A git SHA is hex; guard against a tag string (e.g. "…:dev" or "dev")
+  // sneaking through as a match. An empty want would prefix-match anything.
+  if (!want || !/^[0-9a-f]{7,40}$/.test(want)) return false;
+  if (!/^[0-9a-f]{7,40}$/.test(label)) return false;
+  return label.startsWith(want);
+}
+
+/** The OCI revision label (full git SHA) of the running `servicebay` container,
+ *  or '' if it can't be read. This is the SHA baked into the image, NOT the tag
+ *  (`{{.Config.Image}}` returns the tag name, which never carries a SHA). */
+async function runningRevision(): Promise<string> {
   try {
-    const { stdout } = await mcpExec("podman inspect --format '{{.Config.Image}}' servicebay 2>/dev/null | tail -1");
+    const { stdout } = await mcpExec(
+      'podman inspect --format \'{{index .Config.Labels "org.opencontainers.image.revision"}}\' servicebay 2>/dev/null | tail -1',
+    );
     return stdout.trim();
   } catch {
     return '';
   }
 }
 
-/** Poll the box's running image until it contains `sha`, bounded. Returns true
- *  once the `:dev` image for this SHA is live. */
+/** Poll the box's running-image revision label until it matches `sha`, bounded.
+ *  Returns true once the `:dev` image built from this SHA is live. */
 async function waitForDevImage(sha: string, timeoutSec: number): Promise<boolean> {
   const deadline = Date.now() + timeoutSec * 1000;
-  const short = sha.slice(0, 8);
   while (Date.now() < deadline) {
-    const img = await runningImage();
-    if (img.includes(short) || img.includes(sha)) return true;
+    const revision = await runningRevision();
+    if (revisionMatchesSha(revision, sha)) return true;
     await new Promise(r => setTimeout(r, 20000));
   }
   return false;
@@ -80,7 +103,7 @@ async function main(): Promise<void> {
     reachedDev = await waitForDevImage(sha, imageTimeout);
     if (reachedDev) await waitHealth(180);
     if (!reachedDev) {
-      probeOutput = `:dev image for ${sha} did not land within ${imageTimeout}s`;
+      probeOutput = `expected :dev image with revision ${sha} did not appear within ${imageTimeout}s (image build likely stuck)`;
     } else {
       // Run the agent-supplied probes against the box on :dev.
       try {
