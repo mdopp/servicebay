@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.5.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.5.0...servicebay-v5.5.1) (2026-07-23)
+
+
+### Bug Fixes
+
+* **radicale:** caldav-Proxy beim Re-Deploy auf Loopback reconcilen — vervollständigt [#2357](https://github.com/mdopp/servicebay/issues/2357) ([#2364](https://github.com/mdopp/servicebay/issues/2364)) ([7d7900d](https://github.com/mdopp/servicebay/commit/7d7900db45d4f42c851ae17884d994be2dbfa2d3))
+* **radicale:** reconcile existing caldav proxy host to loopback on redeploy (completes [#2357](https://github.com/mdopp/servicebay/issues/2357)) ([#2364](https://github.com/mdopp/servicebay/issues/2364)) ([9f73a88](https://github.com/mdopp/servicebay/commit/9f73a8879276e117d18464b797429050619259f6))
+* **template:** bind radicale DAV port to loopback so it isn't LAN-exposed ([#2357](https://github.com/mdopp/servicebay/issues/2357)) ([4d92d43](https://github.com/mdopp/servicebay/commit/4d92d43ff7b779df07e08af9ea4d6fc4ae96e1c6))
+* **template:** Radicale-DAV-Port an Loopback binden — nicht mehr LAN-exposed ([#2357](https://github.com/mdopp/servicebay/issues/2357)) ([cc6ce2e](https://github.com/mdopp/servicebay/commit/cc6ce2e899aee02b534aee3794c2c4e65e97f0be))
+
 ## [5.5.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.4.0...servicebay-v5.5.0) (2026-07-20)
 
 
