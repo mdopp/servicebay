@@ -6,7 +6,7 @@
   "dependencies": {
     "@servicebay/api-client": "*",
     "@servicebay/disk-import-worker": "*",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.0.1",
     "elkjs": "^0.12.0",
     "gray-matter": "^4.0.3",
     "jose": "^6.2.3",
