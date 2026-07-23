@@ -1105,6 +1105,157 @@ class MediaScript(unittest.TestCase):
             )
             self.assertFalse(os.path.isfile(cfg_path))
 
+    def test_jellyfin_enable_music_providers_music_only_and_merges(self):
+        """The music library gets EnableInternetProviders=true + the two
+        fetchers; non-music libraries are untouched; the POST is a
+        read-modify-write that preserves existing LibraryOptions."""
+        m = load_script("media")
+        import urllib.request, json
+        folders = [
+            {"Name": "Music", "ItemId": "id-music", "CollectionType": "music",
+             "LibraryOptions": {"EnableRealtimeMonitor": False, "KeepExisting": "yes"}},
+            {"Name": "Movies", "ItemId": "id-movies", "CollectionType": "movies",
+             "LibraryOptions": {}},
+        ]
+        posts: list[dict] = []
+        outer = self
+
+        def urlopen(req, *a, **k):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if req.get_method() == "POST" and "/Library/VirtualFolders/LibraryOptions" in url:
+                posts.append(json.loads(req.data.decode()))
+                return outer._resp(204, "")
+            return outer._resp(204, "{}")
+
+        with mock.patch.object(urllib.request, "urlopen", urlopen):
+            m.jellyfin_enable_music_providers("http://jf", "tok", folders)
+
+        # Only the music library is POSTed.
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0]["Id"], "id-music")
+        opts = posts[0]["LibraryOptions"]
+        self.assertTrue(opts["EnableInternetProviders"])
+        # Existing settings preserved (read-modify-write, not a bare object).
+        self.assertEqual(opts["KeepExisting"], "yes")
+        self.assertFalse(opts["EnableRealtimeMonitor"])
+        types = {t["Type"]: t for t in opts["TypeOptions"]}
+        self.assertEqual(set(types), {"MusicArtist", "MusicAlbum"})
+        for t in types.values():
+            self.assertEqual(t["MetadataFetchers"], ["TheAudioDB", "MusicBrainz"])
+
+    def test_jellyfin_enable_music_providers_idempotent(self):
+        """Re-running posts the same EnableInternetProviders + fetchers."""
+        m = load_script("media")
+        import urllib.request, json
+        folders = [
+            {"Name": "Music", "ItemId": "id-music", "CollectionType": "music",
+             "LibraryOptions": {}},
+        ]
+        posts: list[dict] = []
+        outer = self
+
+        def urlopen(req, *a, **k):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if req.get_method() == "POST" and "/Library/VirtualFolders/LibraryOptions" in url:
+                posts.append(json.loads(req.data.decode()))
+                return outer._resp(204, "")
+            return outer._resp(204, "{}")
+
+        with mock.patch.object(urllib.request, "urlopen", urlopen):
+            m.jellyfin_enable_music_providers("http://jf", "tok", folders)
+            m.jellyfin_enable_music_providers("http://jf", "tok", folders)
+
+        self.assertEqual(len(posts), 2)
+        self.assertEqual(posts[0]["LibraryOptions"], posts[1]["LibraryOptions"])
+
+    def test_jellyfin_enable_music_providers_failsoft(self):
+        """A raising HTTP call is swallowed — the deploy is never blocked."""
+        m = load_script("media")
+        import urllib.request
+        folders = [
+            {"Name": "Music", "ItemId": "id-music", "CollectionType": "music",
+             "LibraryOptions": {}},
+        ]
+        # No matching response → URLError inside request_json → non-2xx, no raise.
+        with mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory({})):
+            m.jellyfin_enable_music_providers("http://jf", "tok", folders)  # must not raise
+
+    def test_jellyfin_lrclib_repo_added_then_install(self):
+        """ensure_jellyfin_lrclib_plugin registers the LrcLib community repo (when
+        absent) and then requests the package install."""
+        m = load_script("media")
+        import urllib.request, json
+        repo_posts: list[list] = []
+        install_called: list[str] = []
+        outer = self
+
+        def urlopen(req, *a, **k):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            meth = req.get_method()
+            if meth == "GET" and url.endswith("/Repositories"):
+                return outer._resp(200, json.dumps([
+                    {"Name": "Jellyfin Stable", "Url": "https://repo.jellyfin.org/manifest.json", "Enabled": True},
+                ]))
+            if meth == "POST" and url.endswith("/Repositories"):
+                repo_posts.append(json.loads(req.data.decode()))
+                return outer._resp(204, "")
+            if meth == "POST" and "/Packages/Installed/" in url:
+                install_called.append(url)
+                return outer._resp(204, "")
+            return outer._resp(204, "{}")
+
+        with mock.patch.object(urllib.request, "urlopen", urlopen):
+            ok = m.ensure_jellyfin_lrclib_plugin("http://jf", "tok")
+
+        self.assertTrue(ok)
+        # The existing repo is preserved and the LrcLib manifest is appended.
+        self.assertEqual(len(repo_posts), 1)
+        urls = {r["Url"] for r in repo_posts[0]}
+        self.assertIn(m.JELLYFIN_LRCLIB_REPO_URL, urls)
+        self.assertIn("https://repo.jellyfin.org/manifest.json", urls)
+        # The package install was requested.
+        self.assertTrue(any("/Packages/Installed/" in u for u in install_called))
+
+    def test_jellyfin_lrclib_repo_skipped_when_present(self):
+        """When the LrcLib manifest is already registered, no repo POST is made;
+        only the install is requested (idempotent on a redeploy)."""
+        m = load_script("media")
+        import urllib.request, json
+        repo_posts: list = []
+        install_called: list[str] = []
+        outer = self
+
+        def urlopen(req, *a, **k):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            meth = req.get_method()
+            if meth == "GET" and url.endswith("/Repositories"):
+                return outer._resp(200, json.dumps([
+                    {"Name": "LrcLib", "Url": m.JELLYFIN_LRCLIB_REPO_URL, "Enabled": True},
+                ]))
+            if meth == "POST" and url.endswith("/Repositories"):
+                repo_posts.append(json.loads(req.data.decode()))
+                return outer._resp(204, "")
+            if meth == "POST" and "/Packages/Installed/" in url:
+                install_called.append(url)
+                return outer._resp(204, "")
+            return outer._resp(204, "{}")
+
+        with mock.patch.object(urllib.request, "urlopen", urlopen):
+            ok = m.ensure_jellyfin_lrclib_plugin("http://jf", "tok")
+
+        self.assertTrue(ok)
+        self.assertEqual(repo_posts, [])  # repo already present → no add
+        self.assertTrue(install_called)
+
+    def test_jellyfin_lrclib_failsoft(self):
+        """If the repositories can't be read, log-and-continue: returns False,
+        never raises (the deploy must not be blocked)."""
+        m = load_script("media")
+        import urllib.request
+        with mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory({})):
+            ok = m.ensure_jellyfin_lrclib_plugin("http://jf", "tok")  # must not raise
+        self.assertFalse(ok)
+
 
 class HomeAssistantScript(unittest.TestCase):
     """The HA post-deploy is gated on Z-Wave device presence (skips
