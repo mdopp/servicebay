@@ -350,13 +350,52 @@ async function findProxyHostByDomain(baseUrl: string, token: string, domain: str
 }
 
 /**
- * #1178 — When a proxy host already exists for a domain but its
+ * Pure decision for `reconcileProxyHostUpstream`: does the existing NPM
+ * host's forward target already match what the installer wants, or must it
+ * be re-pointed? Exported so the "re-point an existing host's upstream on
+ * redeploy" behaviour can be unit-tested without mocking NPM's HTTP API.
+ *
+ * Two callers rely on it:
+ *   - #1178 — a new template takes over a domain (hermes-webui → open-webui
+ *     at chat.<domain>): the port changes.
+ *   - #2364 — a template's port publish moves from the LAN IP to loopback
+ *     (radicale's `loopbackOnly: true`, completing #2357): the host changes
+ *     from 192.168.178.100 → 127.0.0.1 on the SAME port. Without this, a
+ *     redeploy of an EXISTING radicale left caldav.<domain> forwarding to
+ *     the now-closed LAN address → 502.
+ *
+ * The reconcile PUT (below) sends ONLY `forward_host`/`forward_port`, so it
+ * NEVER touches exposure (access_list), auth (advanced_config / forward-auth)
+ * or the bound cert (certificate_id) — the security posture is preserved.
+ * The decision is idempotent: when live already equals expected it returns
+ * `false` (no PUT), so re-running on an already-loopback host is a no-op.
+ */
+export function decideUpstreamReconcile(
+    expectedHost: string,
+    expectedPort: number,
+    currentHost: string | undefined,
+    currentPort: number | undefined,
+): { changed: false } | { changed: true; from: string; to: string } {
+    if (currentHost === expectedHost && currentPort === expectedPort) {
+        return { changed: false };
+    }
+    return {
+        changed: true,
+        from: `${currentHost ?? '?'}:${currentPort ?? '?'}`,
+        to: `${expectedHost}:${expectedPort}`,
+    };
+}
+
+/**
+ * #1178 / #2364 — When a proxy host already exists for a domain but its
  * `forward_host` / `forward_port` no longer match what the installer
- * requested (e.g. \`hermes-webui\` replaces \`open-webui\` at
- * \`chat.<domain>\` — same URL, different upstream port), update the
- * existing host's target rather than leaving the stale upstream in
- * place. Returns true when an update was made; false when no change
- * was needed.
+ * requested — a new template taking over a domain (\`hermes-webui\`
+ * replaces \`open-webui\` at \`chat.<domain>\`, #1178) OR a port publish
+ * moving from the LAN IP to loopback (radicale's \`loopbackOnly: true\`,
+ * #2364/#2357) — update the existing host's target rather than leaving the
+ * stale upstream in place. Returns true when an update was made; false when
+ * no change was needed. Only the forward target is PUT, so exposure / auth /
+ * cert are preserved (see \`decideUpstreamReconcile\`).
  *
  * Live finding 2026-05-27 on core@192.168.178.100: \`open-webui\` had
  * registered \`chat.dopp.cloud → 127.0.0.1:8080\`; \`hermes-webui\`'s
@@ -374,7 +413,7 @@ async function reconcileProxyHostUpstream(
     currentHost: string | undefined,
     currentPort: number | undefined,
 ): Promise<boolean> {
-    if (currentHost === expectedHost && currentPort === expectedPort) return false;
+    if (!decideUpstreamReconcile(expectedHost, expectedPort, currentHost, currentPort).changed) return false;
     try {
         const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts/${hostId}`, {
             method: 'PUT',

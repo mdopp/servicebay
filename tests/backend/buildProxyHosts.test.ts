@@ -265,4 +265,34 @@ describe('buildProxyHosts', () => {
     // forwardHost to the node's LAN IP.
     expect(photos?.forwardHost).toBeUndefined();
   });
+
+  it('builds the radicale caldav host public + loopback-targeted, no Authelia (#2364/#2357)', () => {
+    // Redeploy from radicale template v2: RADICALE_SUBDOMAIN declares
+    // exposure=public + loopbackOnly=true + proxyPort=RADICALE_PORT.
+    // The built host must (a) forward to 127.0.0.1 (so the retarget from
+    // the closed LAN IP reconciles on redeploy, completing #2357),
+    // (b) resolve the port from RADICALE_PORT, and (c) stay `public` with
+    // NO forward-auth/Authelia block — CalDAV clients speak HTTP Basic and
+    // can't SSO, so the security posture (public + Basic auth) is preserved.
+    const { hosts } = buildProxyHosts([
+      v('PUBLIC_DOMAIN', 'example.com'),
+      v('RADICALE_PORT', '5232'),
+      v(
+        'RADICALE_SUBDOMAIN',
+        'caldav',
+        subdomain('public', 'RADICALE_PORT', {
+          loopbackOnly: true,
+          templateName: 'radicale',
+          proxyConfig: { block_exploits: true, ssl_forced: true },
+        }),
+      ),
+    ]);
+    const caldav = hosts.find(h => h.domain === 'caldav.example.com');
+    expect(caldav).toBeDefined();
+    expect(caldav?.forwardHost).toBe('127.0.0.1');
+    expect(caldav?.forwardPort).toBe(5232);
+    expect(caldav?.exposure).toBe('public');
+    // No Authelia forward-auth was injected — Basic-auth is the front.
+    expect(caldav?.proxyConfig?.advanced_config ?? '').not.toMatch(/auth_request|authelia/i);
+  });
 });
