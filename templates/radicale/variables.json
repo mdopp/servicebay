@@ -24,6 +24,7 @@
     "default": "caldav",
     "exposure": "public",
     "proxyPort": "RADICALE_PORT",
+    "loopbackOnly": true,
     "proxyConfig": {
       "block_exploits": true,
       "ssl_forced": true

@@ -6,7 +6,7 @@ metadata:
     app: radicale
   annotations:
     servicebay.label: "Calendar & Contacts"
-    servicebay.schema-version: "1"
+    servicebay.schema-version: "2"
     servicebay.ports: "{{RADICALE_PORT}}/tcp"
     # caldav.<domain> goes through nginx; auth is the SSO front.
     servicebay.dependencies: "nginx,auth"
@@ -98,8 +98,18 @@ spec:
       - name: RADICALE_CONFIG
         value: /config/config
     ports:
+      # Bind the published DAV port to the host LOOPBACK only (#2357).
+      # Without `hostIP` podman publishes on 0.0.0.0, so Radicale's HTTP
+      # API (household calendars + address books) is reachable directly
+      # on the LAN at <lan-ip>:{{RADICALE_PORT}}, bypassing the nginx
+      # reverse proxy that fronts caldav.<domain> (TLS + single entry
+      # point). nginx runs on hostNetwork, so it still reaches this port
+      # via 127.0.0.1 — the `loopbackOnly: true` flag on
+      # RADICALE_SUBDOMAIN (variables.json) points the proxy target at
+      # 127.0.0.1:{{RADICALE_PORT}} accordingly.
       - containerPort: {{RADICALE_PORT}}
         hostPort: {{RADICALE_PORT}}
+        hostIP: 127.0.0.1
     volumeMounts:
       - mountPath: /data
         name: radicale-data
