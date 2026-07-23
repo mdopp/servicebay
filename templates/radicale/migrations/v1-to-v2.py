@@ -17,10 +17,25 @@ runs on hostNetwork and now forwards `caldav.<domain>` to
 RADICALE_SUBDOMAIN in variables.json), so the public subdomain keeps
 working while the direct-on-LAN path is closed.
 
+The existing `caldav.<domain>` NPM host is retargeted AUTOMATICALLY by
+ServiceBay's core reconcile — this migration does NOT touch the proxy
+itself (#2364, completing #2357). On every deploy the install runner
+runs `ensureProxyHosts`, which walks the stack variables through
+`buildProxyHosts`: RADICALE_SUBDOMAIN's `loopbackOnly: true` makes it
+emit `forwardHost: 127.0.0.1`, and the proxy-hosts endpoint's
+existing-host branch (`reconcileProxyHostUpstream` /
+`decideUpstreamReconcile`) re-points the live host's forward target
+from the old LAN IP (`192.168.178.100:{{RADICALE_PORT}}`, now closed)
+to `127.0.0.1:{{RADICALE_PORT}}`. That reconcile PUTs ONLY the forward
+target, so exposure (public), auth (Radicale Basic — no Authelia) and
+the bound cert are untouched, and it is idempotent (a no-op once the
+host is already loopback). No manual proxy edit is needed.
+
 What this script does:
-  - Inform the operator that the DAV port is now loopback-bound and
-    that `caldav.<domain>` is unaffected. It is read-only — no data
-    moves (Radicale's collections live on /data, untouched).
+  - Inform the operator that the DAV port is now loopback-bound, that
+    `caldav.<domain>` is retargeted to loopback automatically by the
+    core reconcile (no manual proxy edit), and that no data moves
+    (Radicale's collections live on /data, untouched). It is read-only.
   - Exit 0. Migration scripts MUST exit 0 to let the deploy continue.
 
 Environment available (set by ServiceManager.runMigrationScript):
@@ -45,6 +60,10 @@ def main() -> int:
     print("  It is no longer published on 0.0.0.0, so it can't be hit directly")
     print("  on the LAN — access goes through the nginx reverse proxy at")
     print("  caldav.<domain> (TLS), which now forwards to 127.0.0.1.")
+    print(f"  ServiceBay retargets the existing caldav.<domain> proxy host to")
+    print(f"  127.0.0.1:{port} automatically on this deploy (core reconcile,")
+    print("  #2364) — no manual proxy edit; exposure (public), Basic auth and")
+    print("  the cert are preserved.")
     print("  No data is moved; Radicale's collections under /data are untouched.")
     return 0
 
