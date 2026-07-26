@@ -69,3 +69,9 @@ real secrets**: no private keys, API tokens, passwords, or `sb_` box tokens.
 - A build-time scan (`tests/backend/assist_consistency.test.ts`) fails the suite
   on known secret signatures in `assists/` and `templates/`. It is a backstop,
   not a licence to be careless — assume it won't catch every shape.
+
+
+## Solaris System Architecture & Naming Directives
+- See  for binding guidelines.
+- Stack identity is **Solaris** (). Legacy hermes path references are deprecated.
+- All container-to-container connections must use container DNS service names (e.g. , ).
