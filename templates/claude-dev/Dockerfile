@@ -4,10 +4,10 @@
 # .github/workflows/claude-dev-image.yml. The `claude-dev` stack
 # template references that tag.
 #
-# Built FROM node:20-bookworm-slim so the Node version matches the
-# repo's `engines.node` (20.x) — native npm modules compiled inside a
+# Built FROM node:22-bookworm-slim so the Node version matches the
+# repo's `engines.node` (22.x) — native npm modules compiled inside a
 # session are ABI-compatible with what CI builds against.
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 # Toolchain:
 #   - openssh-server/-client : SSH in (mobile app) + host-key gen

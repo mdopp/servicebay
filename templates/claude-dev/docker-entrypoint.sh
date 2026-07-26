@@ -133,19 +133,43 @@ EOF
   fi
 fi
 
-# Start the long-lived `claude` tmux session as the dev user BEFORE we
-# exec sshd, so it's already running before anyone connects (incl. after
-# a container restart — `claude --continue` then resumes the prior
-# conversation from the persisted ~/.claude on /workspace). The tmux
-# server daemonizes, so sshd stays PID 1 — do NOT regress that. Idempotent:
-# `has-session` skips re-creating it if one somehow already exists. The
-# session runs as `dev` with /workspace as $HOME so its working dir + any
-# `claude` auth/history match an interactive login's.
-if su -s /bin/bash dev -c 'tmux has-session -t claude' 2>/dev/null; then
-  echo "claude-dev: tmux session 'claude' already running."
+# Auto-start Claude in every git checkout under /workspace BEFORE we exec
+# sshd, so live sessions are already running before anyone connects (incl.
+# after a container restart, when the tmux server is gone with the old
+# process). The deterministic mechanics live in `start-claude`; here we just
+# discover the repos and hand them off. Each repo gets its own tmux window
+# with Remote Control on and NAMED AFTER THE DIRECTORY (start-claude passes
+# `--remote-control <dir>`), so it shows up labelled in the Claude mobile
+# app / web; `--continue` resumes that repo's prior conversation from the
+# persisted ~/.claude on /workspace, and `--allow-dangerously-skip-permissions`
+# lets the session run unattended. start-claude skips any repo whose window
+# already exists, so this is idempotent. Runs as `dev` with /workspace as
+# $HOME so working dir + auth/history match an interactive login. tmux
+# daemonizes, so sshd stays PID 1 — do NOT regress that. CLAUDE_START_NO_ATTACH
+# stops start-claude from trying to attach a terminal we don't have here.
+#
+# A git checkout is a top-level dir under /workspace holding a `.git` entry.
+# The `*/` glob skips the hidden dirs (~/.ssh, ~/.claude) and per-user homes
+# (home/ has no .git), so only real project checkouts are picked up.
+repos=()
+for d in "$DEV_HOME"/*/; do
+  [ -e "${d}.git" ] && repos+=("$(basename "$d")")
+done
+
+if [ "${#repos[@]}" -gt 0 ]; then
+  su -s /bin/bash dev -c "cd '$DEV_HOME' && HOME='$DEV_HOME' CLAUDE_START_NO_ATTACH=1 \
+      start-claude --continue --allow-dangerously-skip-permissions -- ${repos[*]}" \
+    || echo "claude-dev: WARNING — autostart of Claude sessions reported an error." >&2
+  echo "claude-dev: auto-started Claude in ${#repos[@]} git repo(s): ${repos[*]}"
 else
-  su -s /bin/bash dev -c "cd '$DEV_HOME' && HOME='$DEV_HOME' tmux new-session -d -s claude"
-  echo "claude-dev: started detached tmux session 'claude' for user 'dev'."
+  # Fresh volume with no checkouts yet — still start an empty `claude` tmux
+  # session so interactive logins have something to attach to.
+  if su -s /bin/bash dev -c 'tmux has-session -t claude' 2>/dev/null; then
+    echo "claude-dev: tmux session 'claude' already running."
+  else
+    su -s /bin/bash dev -c "cd '$DEV_HOME' && HOME='$DEV_HOME' tmux new-session -d -s claude"
+    echo "claude-dev: no git repos under $DEV_HOME yet — started empty tmux session 'claude' for user 'dev'."
+  fi
 fi
 
 mkdir -p /run/sshd
