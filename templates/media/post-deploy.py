@@ -617,6 +617,118 @@ def ensure_jellyfin_ldap_plugin(
     return True
 
 
+# ── Jellyfin music metadata providers + LrcLib lyrics (durable on reinstall) ──
+
+
+# TheAudioDB + MusicBrainz are BUNDLED metadata providers (no plugin install);
+# enabling them on the Music library makes Jellyfin fetch artist/album art +
+# tags. These are the fetcher ids Jellyfin uses for the MusicArtist/MusicAlbum
+# item types.
+_MUSIC_METADATA_FETCHERS = ["TheAudioDB", "MusicBrainz"]
+_MUSIC_IMAGE_FETCHERS = ["TheAudioDB"]
+
+
+def jellyfin_enable_music_providers(base_url: str, token: str, folders: object) -> None:
+    """Turn on internet metadata providers (TheAudioDB + MusicBrainz) for every
+    `music` library, so artist/album art + tags are fetched. Read-modify-write:
+    each library's EXISTING LibraryOptions (from GET /Library/VirtualFolders) is
+    preserved and only the provider fields are merged in, then POSTed back via
+    /Library/VirtualFolders/LibraryOptions.
+
+    Best-effort + idempotent: re-asserts the same values every deploy, so a fresh
+    reinstall never loses the music-metadata config. A failure just logs a note;
+    it never blocks the deploy."""
+    if not isinstance(folders, list):
+        return
+    auth = {"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'}
+    type_options = [
+        {
+            "Type": item_type,
+            "MetadataFetchers": list(_MUSIC_METADATA_FETCHERS),
+            "MetadataFetcherOrder": list(_MUSIC_METADATA_FETCHERS),
+            "ImageFetchers": list(_MUSIC_IMAGE_FETCHERS),
+            "ImageFetcherOrder": list(_MUSIC_IMAGE_FETCHERS),
+        }
+        for item_type in ("MusicArtist", "MusicAlbum")
+    ]
+    for folder in folders:
+        if not isinstance(folder, dict) or folder.get("CollectionType") != "music":
+            continue
+        item_id = folder.get("ItemId")
+        if not item_id:
+            continue
+        # Read-modify-write: keep the library's existing options, merge providers.
+        options = dict(folder.get("LibraryOptions") or {})
+        options["EnableInternetProviders"] = True
+        options["TypeOptions"] = type_options
+        code, _ = request_json(
+            "POST", f"{base_url}/Library/VirtualFolders/LibraryOptions",
+            {"Id": item_id, "LibraryOptions": options},
+            extra_headers=auth,
+        )
+        name = folder.get("Name", item_id)
+        if code in (200, 204):
+            log(f"   ✅ Jellyfin music metadata providers enabled for '{name}' (TheAudioDB + MusicBrainz).")
+        else:
+            log(f"   (note) Could not enable music metadata providers for '{name}' (HTTP {code}); "
+                "set them in Dashboard → Libraries → (Music) → Metadata downloaders.")
+
+
+# LrcLib is a COMMUNITY-repo plugin (lyrics provider). Its manifest is not in
+# Jellyfin's default catalog, so the plugin repository has to be registered
+# before the package install can resolve it.
+JELLYFIN_LRCLIB_REPO_NAME = "LrcLib"
+JELLYFIN_LRCLIB_REPO_URL = (
+    "https://raw.githubusercontent.com/dishmoth/jellyfin-plugin-lrclib/main/manifest.json"
+)
+JELLYFIN_LRCLIB_PACKAGE = "LrcLib"
+
+
+def ensure_jellyfin_lrclib_plugin(base_url: str, token: str) -> bool:
+    """Register the LrcLib community plugin repository (if not already present)
+    and request the LrcLib package install, so Jellyfin can fetch lyrics. (The
+    Solaris engine reading those lyrics is a separate ticket.)
+
+    Best-effort + idempotent: the repo-add is skipped when the manifest URL is
+    already registered, and Jellyfin no-ops a re-install of a present plugin. A
+    failure just logs a breadcrumb (operator can add it from Dashboard → Plugins
+    → Catalog) and continues — it never blocks the deploy."""
+    auth = {"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'}
+
+    # 1. Ensure the community plugin repository is registered.
+    code, repos = request_json("GET", f"{base_url}/Repositories", None, extra_headers=auth)
+    if code not in (200, 204) or not isinstance(repos, list):
+        log(f"   (note) Could not read Jellyfin plugin repositories (HTTP {code}); "
+            "add LrcLib from Dashboard → Plugins → Catalog if lyrics are missing.")
+        return False
+    have_repo = any(
+        isinstance(r, dict) and r.get("Url") == JELLYFIN_LRCLIB_REPO_URL for r in repos
+    )
+    if not have_repo:
+        merged = [r for r in repos if isinstance(r, dict)]
+        merged.append({
+            "Name": JELLYFIN_LRCLIB_REPO_NAME,
+            "Url": JELLYFIN_LRCLIB_REPO_URL,
+            "Enabled": True,
+        })
+        code, _ = request_json("POST", f"{base_url}/Repositories", merged, extra_headers=auth)
+        if code not in (200, 204):
+            log(f"   (note) Could not register the LrcLib plugin repository (HTTP {code}); "
+                "add it from Dashboard → Plugins → Catalog if lyrics are missing.")
+            return False
+        log("   ✅ Jellyfin LrcLib plugin repository registered.")
+
+    # 2. Request the package install (idempotent — Jellyfin no-ops a re-install).
+    pkg = urllib.parse.quote(JELLYFIN_LRCLIB_PACKAGE)
+    code, _ = request_json("POST", f"{base_url}/Packages/Installed/{pkg}", None, extra_headers=auth)
+    if code in (200, 204):
+        log("   ✅ Jellyfin LrcLib plugin install requested (lyrics provider).")
+        return True
+    log(f"   (note) Could not request LrcLib plugin install via API (HTTP {code}); "
+        "install 'LrcLib' from Dashboard → Plugins → Catalog if lyrics are missing.")
+    return False
+
+
 def main() -> int:
     host = env("HOST", "<server-ip>")
 
@@ -669,6 +781,15 @@ def main() -> int:
                     jellyfin_base, jf_token,
                     public_lib_guids, libs["private_by_user"],  # type: ignore[arg-type]
                 )
+                # Enable music metadata providers (TheAudioDB + MusicBrainz) on
+                # the Music library + register the LrcLib lyrics plugin, so a
+                # fresh reinstall never loses them. Best-effort, never blocks.
+                _, folders = request_json(
+                    "GET", f"{jellyfin_base}/Library/VirtualFolders", None,
+                    extra_headers={"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{jf_token}"'},
+                )
+                jellyfin_enable_music_providers(jellyfin_base, jf_token, folders)
+                ensure_jellyfin_lrclib_plugin(jellyfin_base, jf_token)
 
         # ── Jellyfin → LLDAP SSO (#1718) ──────────────────────────────
         # Wire the LDAP-Auth plugin against LLDAP so the family signs in
