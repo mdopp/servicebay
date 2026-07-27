@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.6.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.5.1...servicebay-v5.6.0) (2026-07-27)
+
+
+### Features
+
+* **claude-dev:** Node 22 base image + boot-autostart Claude per git repo ([a213927](https://github.com/mdopp/servicebay/commit/a21392735d00ada916e8771f8081c62a0655f5a0))
+* **claude-dev:** Node 22 base image + boot-autostart Claude per git repo ([ae0b8da](https://github.com/mdopp/servicebay/commit/ae0b8da608165db04c00c9b2a323673dac9722d2))
+* **template:** media — enable Jellyfin music metadata providers + LrcLib on deploy ([5cb74f4](https://github.com/mdopp/servicebay/commit/5cb74f4b3c0dab689286ebe44976fa42709ba177))
+
 ## [5.5.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.5.0...servicebay-v5.5.1) (2026-07-23)
 
 
