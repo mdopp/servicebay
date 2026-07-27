@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.7.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.7.0...servicebay-v5.7.1) (2026-07-27)
+
+
+### Bug Fixes
+
+* **media:** stop burning the 5-min first-run timeout on Jellyfin redeploys ([cf47771](https://github.com/mdopp/servicebay/commit/cf47771507654bd471df7bcba6689fcb80acf01d)), closes [#2375](https://github.com/mdopp/servicebay/issues/2375)
+* **templates:** media — Jellyfin post-deploy first-setup 401 race ([#2375](https://github.com/mdopp/servicebay/issues/2375)) ([e80ca3c](https://github.com/mdopp/servicebay/commit/e80ca3cae09c2eeadd4b9153be0df606040a1079))
+
 ## [5.7.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.6.0...servicebay-v5.7.0) (2026-07-27)
 
 
