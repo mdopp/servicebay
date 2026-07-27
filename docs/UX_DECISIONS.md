@@ -508,25 +508,36 @@ Landed in #1470 (2026-06-01). Closes #1453 (verifySso), #1454 (auto-run post-ins
 
 ---
 
-## Disk-import "Import data" card: review gate + non-blocking actions[]
+## Disk-import "Import data": review gate + non-blocking ambiguity
 
-**Decision.** The disk-import flow (Settings → Sharing → "Import data") is
-**device → scan → review → CONFIRM → apply**. The scan mounts the USB
-**read-only**, sorts everything deterministically, and writes **nothing** — it
-returns a plan + a `sessionId`. The apply route refuses unless it is handed back
-that `sessionId` (a plan scanned in this process) **and** an explicit
-`confirmed: true`. There is no path to apply an unreviewed plan.
+**Decision.** The disk-import flow (the "Import data" launch tile → its own
+`/disk-import` page) is **device → scan → review → CONFIRM → apply**. The scan
+launches a resource-capped worker container that mounts the USB **read-only**,
+sorts everything deterministically, and writes **nothing** outside its own out dir
+— it returns a `runId` plus the plan the page reviews. The apply route refuses
+unless it is handed back that `runId` (the scan whose plan was reviewed, and still
+the active run) **and** an explicit `confirmed: true`. There is no path to apply an
+unreviewed plan — an admin `mutate` session alone is not enough, so a stray
+duplicate POST, a second tab holding a stale `runId`, or a naive automated retry is
+refused rather than starting an import.
 
-**Unavoidable input surfaces as `actions[]`, and never blocks.** Folders the
+The `runId` is the worker-container era's `sessionId`: the pre-#1949 in-process
+session store is retired (it OOM'd the control plane), so the proof-of-review is
+now the run handle itself, which only a caller that polled *this* run's status can
+produce. Both halves are checked in `startApplyFlow` (the service is the authority)
+*and* at the route's body schema, where `confirmed` is a literal `true`.
+
+**Unavoidable input surfaces as advisory notes, and never blocks.** Folders the
 classifier can't place (music vs audiobook, an unknown extension) and target
-conflicts (two different files → same path) are surfaced as Diagnose-style
-`actions[]` in the review. Each carries a **safe default** (ambiguous → filed
-under `documents/`; conflict → newer file wins, older parked in `_superseded/`,
-nothing deleted), so the import runs fine if the user resolves none of them. The
-card says so explicitly ("These don't block the import"). This is the UX
-philosophy (`feedback_ux_philosophy`): self-heal/auto-sort silently, ask only for
-the two genuinely unavoidable inputs — *which device* and *the confirm* — and
-treat ambiguity as advisory follow-ups, not a wall.
+conflicts (two different files → same path) surface in the in-page review — the
+per-folder routing tree plus advisory notes on renames/conflicts — never as a
+prompt that has to be answered. Each carries a **safe default** (ambiguous → filed
+under `documents/`; same-name clash → disambiguated `01 (2).mp3`; conflict → newer
+file imported, older parked in `_superseded/`, nothing deleted), so the import runs
+fine if the user resolves none of them, and the page says so explicitly. This is
+the UX philosophy (`feedback_ux_philosophy`): self-heal/auto-sort silently, ask
+only for the two genuinely unavoidable inputs — *which device* and *the confirm* —
+and treat ambiguity as advisory follow-ups, not a wall.
 
 **Why.** This is the product feature for families migrating off the cloud, run by
 non-experts. A blocking question per ambiguous folder would stall a 50k-file
@@ -535,15 +546,23 @@ explicit confirm gives the same safety as the CLI's review gate (#1696) without 
 wall of prompts.
 
 **Where enforced.**
-- `packages/backend/src/lib/diskImport/service.ts` — the in-process review-gate
-  store (`scanDevice` → `sessionId`; `applyImportPlan` requires it) + `actions[]`
-  derivation.
+- `packages/backend/src/lib/diskImport/service.ts` — `launchScan` mints the `runId`;
+  `startApplyFlow` is the review gate (refuses an unconfirmed apply, and refuses a
+  `runId` that isn't the active run) before any state is touched.
+- `packages/frontend/src/app/api/system/disk-import/replanBody.ts` — `parseApplyBody`
+  / `applyBodySchema`: `runId` required non-empty, `confirmed` a literal `true`, an
+  absent body a refusal (unlike the lenient `parseReplanBody` the preview routes use).
 - `packages/frontend/src/app/api/system/disk-import/{list-devices,scan,apply}/route.ts`
-  — thin wiring over the service; apply requires `sessionId` + `confirmed: true`.
-- `packages/frontend/src/app/(dashboard)/settings/_lib/sections/DiskImportSection.tsx`
-  — the card; ambiguous items render as a non-blocking advisory list.
+  — thin wiring over the service; apply requires `runId` + `confirmed: true`.
+- `packages/frontend/src/app/(dashboard)/disk-import/page.tsx` — the launch tile +
+  in-page review; it sends the polled `runId` with the confirm, and renames/conflicts
+  render as non-blocking advisory notes.
+- Tests: `service.test.ts` "startApplyFlow review gate (#2383)" and
+  `replanBody.test.ts` pin both halves.
 
-Landed in #1697 (disk-import epic #1698; engine #1693, host-apply #1694).
+Landed in #1697 (disk-import epic #1698; engine #1693, host-apply #1694). Re-based on
+the worker container in #1949/#1953/#1972/#2009, which dropped the review gate in the
+rewrite — restored (as `runId` + `confirmed`) in #2383.
 
 ---
 

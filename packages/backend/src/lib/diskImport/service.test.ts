@@ -80,13 +80,16 @@ describe('runApplyFlow teardown (#1982) + async flow (#2009)', () => {
   });
 });
 
+/** The review-gate proof the route derives from the apply body (#2383). */
+const CONFIRMED = { runId: RUN.runId, confirmed: true };
+
 describe('startApplyFlow pre-flight (#2009)', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('throws promptly when there is no active run, without touching apply/re-plan', async () => {
     vi.mocked(getActiveRun).mockResolvedValue(null as never);
 
-    await expect(startApplyFlow(exec, 1000)).rejects.toThrow('no active run');
+    await expect(startApplyFlow(exec, 1000, CONFIRMED)).rejects.toThrow('no active run');
     expect(applyImport).not.toHaveBeenCalled();
     expect(replanImport).not.toHaveBeenCalled();
   });
@@ -96,7 +99,7 @@ describe('startApplyFlow pre-flight (#2009)', () => {
     vi.mocked(replanImport).mockResolvedValue(42 as never);
     vi.mocked(applyImport).mockResolvedValue({ copied: 0 } as never);
 
-    await startApplyFlow(exec, 1000, { explicit: { docs: { owner: 'mdopp' } } } as never);
+    await startApplyFlow(exec, 1000, CONFIRMED, { explicit: { docs: { owner: 'mdopp' } } } as never);
 
     // The re-plan launch happens before the route returns (preUpdatedAt captured).
     expect(replanImport).toHaveBeenCalledWith(
@@ -105,6 +108,50 @@ describe('startApplyFlow pre-flight (#2009)', () => {
     // The heavy continuation is fire-and-forget — let its microtasks settle.
     await new Promise(r => setImmediate(r));
     expect(waitForReplanDone).toHaveBeenCalledWith({ runId: RUN.runId, preUpdatedAt: 42 });
+  });
+});
+
+// The locked UX decision (docs/UX_DECISIONS.md) is device → scan → review → CONFIRM
+// → apply with NO path to apply an unreviewed plan. The #1949-#2009 worker-container
+// rewrite dropped the gate (apply only required that *some* active run existed);
+// these pin it back: the caller must hand back the reviewed run's runId + an explicit
+// confirm, and neither half may be skipped.
+describe('startApplyFlow review gate (#2383)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getActiveRun).mockResolvedValue(RUN as never);
+    vi.mocked(applyImport).mockResolvedValue({ copied: 0 } as never);
+  });
+
+  it('refuses an unconfirmed apply without even reading the active run', async () => {
+    await expect(startApplyFlow(exec, 1000, { runId: RUN.runId, confirmed: false })).rejects.toThrow(
+      /apply refused .*not confirmed/,
+    );
+    expect(getActiveRun).not.toHaveBeenCalled();
+    expect(applyImport).not.toHaveBeenCalled();
+    expect(replanImport).not.toHaveBeenCalled();
+  });
+
+  it('refuses a confirm for a runId that is not the active run (stale tab / blind caller)', async () => {
+    await expect(startApplyFlow(exec, 1000, { runId: 'some-other-run', confirmed: true })).rejects.toThrow(
+      /apply refused .*not the active run/,
+    );
+    expect(applyImport).not.toHaveBeenCalled();
+    expect(replanImport).not.toHaveBeenCalled();
+  });
+
+  it('refuses an empty runId (the pre-#2383 shape: no proof of review at all)', async () => {
+    await expect(startApplyFlow(exec, 1000, { runId: '', confirmed: true })).rejects.toThrow('apply refused');
+    expect(applyImport).not.toHaveBeenCalled();
+  });
+
+  it('applies when the confirmed runId matches the active run', async () => {
+    await startApplyFlow(exec, 1000, { runId: RUN.runId, confirmed: true });
+
+    // No rules → no re-plan; the background flow runs the host apply.
+    expect(replanImport).not.toHaveBeenCalled();
+    await new Promise(r => setImmediate(r));
+    expect(applyImport).toHaveBeenCalledOnce();
   });
 });
 

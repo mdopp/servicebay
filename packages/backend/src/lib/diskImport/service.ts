@@ -136,6 +136,24 @@ export async function replanRun(exec: SafeExec, request: ReplanRequest): Promise
 }
 
 /**
+ * Proof-of-review for an apply (#2383), enforcing the locked UX decision in
+ * `docs/UX_DECISIONS.md`: the flow is device → scan → review → CONFIRM → apply, and
+ * there is no path to apply an unreviewed plan.
+ *
+ * `runId` is the worker-container era's `sessionId`: it is minted by
+ * {@link launchScan} for one scan and only ever reaches a caller that polled THIS
+ * run's status (i.e. saw the review), so it is the structural evidence that the plan
+ * being applied is the one that was reviewed. `confirmed` is the operator's explicit
+ * "Import now" — the second of the two unavoidable inputs (which device, the confirm).
+ */
+export interface ApplyConfirmation {
+  /** The runId of the scan whose plan was reviewed (must be the active run). */
+  runId: string;
+  /** The explicit operator confirm; anything but `true` refuses the apply. */
+  confirmed: boolean;
+}
+
+/**
  * START the apply of the active run and return PROMPTLY (#2009). When `request` is
  * given, the detached re-plan is LAUNCHED synchronously (so the page immediately
  * sees the re-plan run) — but neither the multi-minute re-plan nor the host-apply is
@@ -143,16 +161,35 @@ export async function replanRun(exec: SafeExec, request: ReplanRequest): Promise
  * polls status.json. Replaces the old synchronous `applyRun` that blocked the POST
  * for the whole re-plan + copy (risking proxy/browser timeouts on a big disk).
  *
- * Throws only on the fast pre-flight failures (no active run / re-plan launch
- * failed); everything after is reported through status.json (`error` phase).
+ * `confirm` is the REVIEW GATE (#2383) — checked here, not just at the route, because
+ * this facade is the authority and the routes are thin wiring. A caller that never
+ * saw the review (stray duplicate POST, naive automated retry, a second tab holding a
+ * stale runId) is refused before any state is touched.
+ *
+ * Throws only on the fast pre-flight failures (unconfirmed / stale-or-missing runId /
+ * no active run / re-plan launch failed); everything after is reported through
+ * status.json (`error` phase).
  */
 export async function startApplyFlow(
   exec: SafeExec,
   shareGid: number,
+  confirm: ApplyConfirmation,
   request?: ReplanRequest,
 ): Promise<void> {
+  // Cheapest half of the gate first — no state read for an unconfirmed caller.
+  if (!confirm.confirmed) {
+    throw new Error('disk-import: apply refused — the reviewed plan was not confirmed (confirmed:true)');
+  }
   const run = await getActiveRun();
   if (!run) throw new Error('disk-import: no active run to apply');
+  if (confirm.runId !== run.runId) {
+    // The caller is confirming some OTHER (finished/aborted/never-seen) scan — its
+    // review does not apply to the plan currently on disk, so refuse rather than
+    // silently apply the wrong plan.
+    throw new Error(
+      `disk-import: apply refused — confirmed run ${JSON.stringify(confirm.runId)} is not the active run (${run.runId}); re-review the current plan`,
+    );
+  }
   // #2000/#2009: launch the re-plan (detached) BEFORE returning, so the routing
   // rules are in flight and the page sees `planning`. preUpdatedAt lets the flow
   // tell the re-plan's `done` apart from the prior scan's. Skipped with no rules.

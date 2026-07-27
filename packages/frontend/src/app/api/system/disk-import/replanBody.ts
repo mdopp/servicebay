@@ -38,6 +38,26 @@ export const replanBodySchema = z
 
 export type ReplanBody = z.infer<typeof replanBodySchema>;
 
+/**
+ * The APPLY body: the re-plan rules PLUS the review-gate proof (#2383) — the
+ * `runId` of the scan whose plan was reviewed and an explicit `confirmed: true`.
+ * The gate is the locked UX decision in `docs/UX_DECISIONS.md`
+ * (device → scan → review → CONFIRM → apply): apply is only ever the confirm of a
+ * plan that was scanned in this process and shown to the caller. `confirmed` is a
+ * `literal(true)` — `false`/absent fails the schema rather than falling through.
+ */
+export const applyBodySchema = replanBodySchema.extend({
+  runId: z.string().min(1),
+  confirmed: z.literal(true),
+});
+
+export interface ApplyBody {
+  /** Proof-of-review handed to `startApplyFlow` (its `ApplyConfirmation`). */
+  confirm: { runId: string; confirmed: true };
+  /** The re-plan request, or `undefined` to apply the auto-sorted plan unchanged. */
+  replan: ReplanRequest | undefined;
+}
+
 /** Map the validated body to the worker's {@link ReplanRequest} wire shape. The
  *  zod enums validate the values at runtime; the cast narrows the inferred
  *  `string` to the engine's literal-union types (`Disposition`/`Owner`). */
@@ -63,4 +83,28 @@ export async function parseReplanBody(req: NextRequest): Promise<ReplanRequest |
   // No rules and no root default → nothing to re-plan; apply the auto-sorted plan.
   if (Object.keys(parsed.rules).length === 0 && !parsed.rootDefault) return undefined;
   return toReplanRequest(parsed);
+}
+
+const NEEDS_CONFIRM =
+  'disk-import: apply refused — needs a JSON body with the reviewed run\'s runId and confirmed:true';
+
+/**
+ * Parse the APPLY body (#2383). Unlike {@link parseReplanBody} an absent/non-JSON
+ * body is a REFUSAL, not "apply the auto-sorted plan": the review gate requires the
+ * caller to hand back the reviewed `runId` + `confirmed: true`, so a bare POST
+ * (a stray duplicate submit, a naive retry, a second tab) can no longer start an
+ * import. The rules half stays optional — no rules means "apply the plan as
+ * auto-sorted", which is still a reviewed plan.
+ */
+export async function parseApplyBody(req: NextRequest): Promise<ApplyBody> {
+  const ct = req.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) throw new Error(NEEDS_CONFIRM);
+  const text = await req.text();
+  if (!text.trim()) throw new Error(NEEDS_CONFIRM);
+  const parsed = applyBodySchema.parse(JSON.parse(text));
+  const noRules = Object.keys(parsed.rules).length === 0 && !parsed.rootDefault;
+  return {
+    confirm: { runId: parsed.runId, confirmed: parsed.confirmed },
+    replan: noRules ? undefined : toReplanRequest(parsed),
+  };
 }
