@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.7.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.7.1...servicebay-v5.7.2) (2026-07-27)
+
+
+### Bug Fixes
+
+* **ci:** resolve check-invariants + depcruise gates against workspace paths ([3a16baf](https://github.com/mdopp/servicebay/commit/3a16baf8599e67a79de87bdb997f425114ba6870)), closes [#2379](https://github.com/mdopp/servicebay/issues/2379)
+* **disk-import:** restore the review gate the apply route documented ([0a9b71a](https://github.com/mdopp/servicebay/commit/0a9b71a15be161677f33559bc539281ab795d442)), closes [#2383](https://github.com/mdopp/servicebay/issues/2383)
+* **mcp:** point agent docs at the current get_logs and manage_service names ([370c604](https://github.com/mdopp/servicebay/commit/370c604be6c75f817f47b69c6d4921f92baf586e)), closes [#2382](https://github.com/mdopp/servicebay/issues/2382)
+
 ## [5.7.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.7.0...servicebay-v5.7.1) (2026-07-27)
 
 
