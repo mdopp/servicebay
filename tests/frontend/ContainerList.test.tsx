@@ -8,6 +8,15 @@ import ContainerList from '@/components/ContainerList';
 vi.mock('@/hooks/useDigitalTwin', () => ({
   useDigitalTwin: vi.fn()
 }));
+vi.mock('@/hooks/useContainerActions', () => ({
+  useContainerActions: () => ({
+    openActions: vi.fn(),
+    closeActions: vi.fn(),
+    overlay: null,
+    isOpen: false,
+  }),
+}));
+vi.mock('@/hooks/useEscapeKey', () => ({ useEscapeKey: () => {} }));
 
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
@@ -48,12 +57,12 @@ describe('ContainerList', () => {
 
         render(<ContainerList />);
 
-        // Check if both containers are rendered
-        expect(screen.getByText('123456789012')).toBeDefined();
+        // Check if both containers are rendered as cards (name + image + node).
+        expect(screen.getByText('web')).toBeDefined();
         expect(screen.getByText('nginx:latest')).toBeDefined();
         expect(screen.getByText('Local')).toBeDefined();
 
-        expect(screen.getByText('abcdef123456')).toBeDefined();
+        expect(screen.getByText('cache')).toBeDefined();
         expect(screen.getByText('redis:alpine')).toBeDefined();
         expect(screen.getByText('Remote')).toBeDefined();
     });

@@ -98,10 +98,23 @@ export const AUTHELIA_LOCATION_HEADERS = [
  * Authelia validates the scheme in `X-Original-URL` — anything other
  * than `https://` triggers *"Target URL has an insecure scheme 'http',
  * only the 'https' and 'wss' schemes are supported so session cookies
- * can be transmitted securely"* and a 400. So this snippet is only
- * useful on hosts that actually serve traffic over HTTPS (= have a
- * cert bound). For cert-less LAN-only hosts, gate auth differently
- * (or don't gate at all).
+ * can be transmitted securely"* and a 400. nginx maps that unexpected
+ * auth-request status to a 500 (`auth request unexpected status: 400`),
+ * so the browser gets a 500 instead of a login redirect.
+ *
+ * #2368 — the subrequest MUST therefore send a hardcoded `https://`
+ * scheme, NOT `$scheme`. `$scheme` is the *client's* transport, so a
+ * plain-HTTP request (a LAN browser hitting `http://<host>/`, or the
+ * platform's own `domain` health probe, which fetches port 80) made
+ * `X-Original-URL` carry `http://…` → Authelia 400 → nginx 500. That is
+ * exactly what stranded `paperless.dopp.cloud`: identical to the working
+ * https-only hosts (files/sync) in every other respect, it 500'd only
+ * because it was also reached over http. Hardcoding `https` is safe and
+ * scheme-agnostic for identity: Authelia never connects to the URL, it
+ * only parses it to match the `access_control` domain rule and set the
+ * `?rd=` return target, and the session cookie is scoped to the parent
+ * domain regardless of transport. For an https client `$scheme` was
+ * already `https`, so this is a no-op there and a strict fix for http.
  *
  * `error_page 401 =302 $redirect` converts the 401 back to a 302 the
  * browser can follow; `$redirect` is captured from
@@ -127,7 +140,10 @@ const AUTHELIA_FORWARD_AUTH_CORE = [
   '    proxy_pass http://127.0.0.1:{{AUTHELIA_PORT}}/api/authz/auth-request;',
   '    proxy_pass_request_body off;',
   '    proxy_set_header Content-Length "";',
-  '    proxy_set_header X-Original-URL $scheme://$http_host$request_uri;',
+  // #2368 — hardcode https (NOT $scheme): Authelia 400s a non-https
+  // X-Original-URL → nginx 500. A plain-http client/probe would otherwise
+  // send http:// here. See the endpoint docstring above.
+  '    proxy_set_header X-Original-URL https://$http_host$request_uri;',
   '    proxy_set_header X-Original-Method $request_method;',
   '    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
   '    proxy_set_header X-Real-IP $remote_addr;',

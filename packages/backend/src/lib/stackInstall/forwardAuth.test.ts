@@ -46,6 +46,21 @@ describe('expandForwardAuthSentinel', () => {
     expect(expandForwardAuthSentinel(undefined)).toBeUndefined();
   });
 
+  // #2368 — the auth-request subrequest must send a HARDCODED https scheme in
+  // X-Original-URL. Authelia 400s any non-https scheme; nginx maps that to a
+  // 500. Using `$scheme` (the client's transport) 500'd paperless.dopp.cloud
+  // whenever it was reached over plain http (a LAN browser or the platform's
+  // own port-80 domain health probe). https is scheme-agnostic for identity
+  // (Authelia only parses the URL to match its access_control domain rule).
+  it('sends X-Original-URL with a hardcoded https scheme, never $scheme (#2368)', () => {
+    const out = renderForwardAuthAdvancedConfig(AUTHELIA_FORWARD_AUTH_SENTINEL, '9091')!;
+    expect(out).toContain('proxy_set_header X-Original-URL https://$http_host$request_uri;');
+    // The regression: a $scheme-derived scheme would be `http` on a plain-http
+    // request → Authelia 400 → nginx 500. It must not survive anywhere in the
+    // auth-request block.
+    expect(out).not.toContain('X-Original-URL $scheme://');
+  });
+
   // #2143 — the acme-challenge bypass duplicates NPM's own on LE hosts.
   it('emits the acme-challenge bypass by default (LAN / cert-less hosts)', () => {
     const out = expandForwardAuthSentinel(AUTHELIA_FORWARD_AUTH_SENTINEL)!;
