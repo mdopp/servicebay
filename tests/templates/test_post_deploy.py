@@ -1329,6 +1329,71 @@ class MediaScript(unittest.TestCase):
             ok = m.ensure_jellyfin_lrclib_plugin("http://jf", "tok")  # must not raise
         self.assertFalse(ok)
 
+    # ── #2282: a redeploy actually REACHES the music steps ────────────────
+
+    def test_main_redeploy_reaches_music_providers_and_lrclib(self):
+        """#2282 + #2375: on a redeploy of an already-initialized Jellyfin,
+        main() must walk past the first-run guard and actually reach the music
+        block — POSTing EnableInternetProviders=true for the music library and
+        requesting the LrcLib install.
+
+        The unit tests above prove those two functions do the right thing when
+        *called*; this pins the wiring that calls them. The 401-forever race made
+        jellyfin_run_first_setup report not-ready, so `if ready:` was False and
+        the whole block (providers, LrcLib, DLNA, libraries, user access) was
+        silently skipped on every redeploy — green tests, nothing enabled on the
+        box."""
+        m = load_script("media")
+        import urllib.request
+        m.JELLYFIN_READY_INTERVAL = 0
+        provider_posts: list[dict] = []
+        lrclib_installs: list[str] = []
+        outer = self
+
+        def urlopen(req, *a, **k):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            meth = req.get_method()
+            if "/System/Info/Public" in url:
+                # Redeploy: the wizard was completed on a previous install.
+                return outer._resp(200, json.dumps({"StartupWizardCompleted": True}))
+            if meth == "POST" and "/Users/AuthenticateByName" in url:
+                return outer._resp(200, json.dumps({"AccessToken": "tok"}))
+            if meth == "POST" and "/Library/VirtualFolders/LibraryOptions" in url:
+                provider_posts.append(json.loads(req.data.decode()))
+                return outer._resp(204, "")
+            if meth == "GET" and "/Library/VirtualFolders" in url:
+                return outer._resp(200, json.dumps([
+                    {"Name": "Music", "ItemId": "id-music", "CollectionType": "music",
+                     "LibraryOptions": {}},
+                ]))
+            if meth == "GET" and url.endswith("/Repositories"):
+                return outer._resp(200, json.dumps([]))
+            if meth == "POST" and "/Packages/Installed/" in url:
+                lrclib_installs.append(url)
+                return outer._resp(204, "")
+            return outer._resp(204, "{}")
+
+        env = {
+            "HOST": "10.0.0.5",
+            "JELLYFIN_ADMIN_USER": "admin",
+            "JELLYFIN_ADMIN_PASSWORD": "pw",
+            # No media root on disk and no LLDAP password → library provisioning
+            # and the LDAP wiring skip themselves; the music block must not.
+            "JELLYFIN_MEDIA_PATH": "/nonexistent-media-root",
+        }
+        with mock.patch.object(urllib.request, "urlopen", urlopen), run_with_env(env):
+            rc, out = capture_main(m)
+
+        self.assertEqual(rc, 0)
+        # The first-run guard short-circuited instead of walking the wizard.
+        self.assertIn("startup wizard already completed", out)
+        # Criterion: the music library got EnableInternetProviders=true.
+        self.assertEqual(len(provider_posts), 1)
+        self.assertEqual(provider_posts[0]["Id"], "id-music")
+        self.assertTrue(provider_posts[0]["LibraryOptions"]["EnableInternetProviders"])
+        # Criterion: the LrcLib install was requested.
+        self.assertTrue(any(m.JELLYFIN_LRCLIB_PACKAGE in u for u in lrclib_installs))
+
     # ── #2369: built-in DLNA server enabled by default ────────────────────
 
     def test_jellyfin_dlna_server_installs_plugin_and_enables_server(self):
