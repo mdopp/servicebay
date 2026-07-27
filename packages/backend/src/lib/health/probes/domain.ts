@@ -23,6 +23,28 @@ import { registerProbe } from './registry';
 import { getConfig } from '../../config';
 import { resolveDnsRouting, type DnsRoutingPayload } from './dnsRouting';
 
+/**
+ * #2368 — KNOWN BLIND SPOT for forward-auth (Authelia-gated) hosts.
+ *
+ * This probe fetches `http://<lanIp>:80/` anonymously and treats any 2xx/3xx
+ * as healthy. That correctly catches a *hard* failure (a forward-auth
+ * misconfig surfaces as nginx 500 → this throws), but it does NOT reflect two
+ * softer states on a gated host:
+ *   1. An anonymous request that returns `200` — on a gated host the healthy
+ *      answer is a redirect to the auth domain; a bare 200 means auth wasn't
+ *      enforced on this scheme, yet the probe reads it "ok".
+ *   2. A scheme-dependent auth failure that only manifests on the scheme real
+ *      users hit. `paperless.dopp.cloud` 500'd authenticated **https** traffic
+ *      (Authelia rejected a non-https X-Original-URL) while this port-80 probe
+ *      kept reporting `HTTP 200` — the root cause was fixed in
+ *      `stackInstall/forwardAuth.ts`, but the probe itself still can't tell a
+ *      gated host is broken unless it returns a 5xx.
+ * Closing this properly needs the check to know a host is forward-auth gated
+ * (thread a flag from the route/config into `domainConfig`) and then assert an
+ * anonymous request redirects to the auth domain rather than returning 200.
+ * Tracked as a follow-up; not done here to avoid false-reds on the ~20 live
+ * domain checks. See issue #2368.
+ */
 async function checkNpmRouting(lanIp: string, target: string, expectedScheme?: string) {
   const url = `http://${lanIp}:80/`;
   const controller = new AbortController();
