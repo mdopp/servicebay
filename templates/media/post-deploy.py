@@ -729,6 +729,65 @@ def ensure_jellyfin_lrclib_plugin(base_url: str, token: str) -> bool:
     return False
 
 
+# ── Jellyfin built-in DLNA server (durable on reinstall, #2369) ──────────────
+
+# Jellyfin ≥10.9 ships DLNA as the catalog plugin "DLNA" ("Adds DLNA capability
+# to Jellyfin"), whose manifest is in the DEFAULT Jellyfin repository — so a
+# plain package install resolves it without registering a repo (unlike LrcLib).
+# Older cores compile DLNA in; the install then no-ops and the config write
+# below is what turns the server on. The named-configuration key is "dlna".
+JELLYFIN_DLNA_PACKAGE = "DLNA"
+
+
+def ensure_jellyfin_dlna_server(base_url: str, token: str) -> bool:
+    """Enable Jellyfin's built-in DLNA server by default so LAN TVs / DLNA
+    clients can browse the libraries straight from the TV without any manual
+    Dashboard step (#2369). Two best-effort halves:
+
+      1. Request the DLNA plugin install (idempotent — Jellyfin no-ops a
+         re-install of a present plugin; a core with DLNA built in no-ops too).
+      2. Read-modify-write the `dlna` named configuration: GET the current
+         DlnaOptions, flip `EnableServer` on, POST it back — every other DLNA
+         option is preserved, exactly like `jellyfin_enable_music_providers`
+         merges into a library's existing LibraryOptions.
+
+    Best-effort + idempotent: re-asserts EnableServer=true every deploy, so a
+    fresh reinstall never loses it. A failure just logs a breadcrumb (operator
+    can flip it in Dashboard → DLNA); it never blocks the deploy."""
+    auth = {"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'}
+
+    # 1. Request the DLNA plugin install (idempotent — no-ops if already present
+    #    or built into the core). Resolves from the default catalog.
+    pkg = urllib.parse.quote(JELLYFIN_DLNA_PACKAGE)
+    code, _ = request_json(
+        "POST", f"{base_url}/Packages/Installed/{pkg}", None, extra_headers=auth,
+    )
+    if code in (200, 204):
+        log("   ✅ Jellyfin DLNA plugin install requested.")
+    else:
+        log(f"   (note) Could not request DLNA plugin install via API ({render_http_code(code)}); "
+            "if DLNA is missing, install 'DLNA' from Dashboard → Plugins → Catalog.")
+
+    # 2. Read-modify-write the DLNA named configuration to enable the server.
+    code, options = request_json(
+        "GET", f"{base_url}/System/Configuration/dlna", None, extra_headers=auth,
+    )
+    if code not in (200, 204) or not isinstance(options, dict):
+        log(f"   (note) Could not read Jellyfin DLNA configuration ({render_http_code(code)}); "
+            "enable the DLNA server from Dashboard → DLNA if LAN TVs can't see Jellyfin.")
+        return False
+    options["EnableServer"] = True
+    code, _ = request_json(
+        "POST", f"{base_url}/System/Configuration/dlna", options, extra_headers=auth,
+    )
+    if code in (200, 204):
+        log("   ✅ Jellyfin built-in DLNA server enabled (LAN TVs/DLNA clients can browse).")
+        return True
+    log(f"   (note) Could not enable the Jellyfin DLNA server ({render_http_code(code)}); "
+        "enable it from Dashboard → DLNA if LAN TVs can't see Jellyfin.")
+    return False
+
+
 def main() -> int:
     host = env("HOST", "<server-ip>")
 
@@ -790,6 +849,9 @@ def main() -> int:
                 )
                 jellyfin_enable_music_providers(jellyfin_base, jf_token, folders)
                 ensure_jellyfin_lrclib_plugin(jellyfin_base, jf_token)
+                # Enable the built-in DLNA server by default so LAN TVs /
+                # DLNA clients can browse Jellyfin with no manual step (#2369).
+                ensure_jellyfin_dlna_server(jellyfin_base, jf_token)
 
         # ── Jellyfin → LLDAP SSO (#1718) ──────────────────────────────
         # Wire the LDAP-Auth plugin against LLDAP so the family signs in

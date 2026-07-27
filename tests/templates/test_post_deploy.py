@@ -1256,6 +1256,81 @@ class MediaScript(unittest.TestCase):
             ok = m.ensure_jellyfin_lrclib_plugin("http://jf", "tok")  # must not raise
         self.assertFalse(ok)
 
+    # ── #2369: built-in DLNA server enabled by default ────────────────────
+
+    def test_jellyfin_dlna_server_installs_plugin_and_enables_server(self):
+        """ensure_jellyfin_dlna_server requests the DLNA plugin install AND
+        read-modify-writes the `dlna` named configuration to flip EnableServer
+        on, preserving every other DLNA option (#2369)."""
+        m = load_script("media")
+        import urllib.request, json
+        install_called: list[str] = []
+        config_posts: list[dict] = []
+        outer = self
+
+        def urlopen(req, *a, **k):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            meth = req.get_method()
+            if meth == "POST" and "/Packages/Installed/" in url:
+                install_called.append(url)
+                return outer._resp(204, "")
+            if meth == "GET" and url.endswith("/System/Configuration/dlna"):
+                # Existing DlnaOptions with a non-default field to prove RMW.
+                return outer._resp(200, json.dumps(
+                    {"EnableServer": False, "EnablePlayTo": True, "BlastAliveMessageIntervalSeconds": 30}))
+            if meth == "POST" and url.endswith("/System/Configuration/dlna"):
+                config_posts.append(json.loads(req.data.decode()))
+                return outer._resp(204, "")
+            return outer._resp(204, "{}")
+
+        with mock.patch.object(urllib.request, "urlopen", urlopen):
+            ok = m.ensure_jellyfin_dlna_server("http://jf", "tok")
+
+        self.assertTrue(ok)
+        # The DLNA plugin install was requested.
+        self.assertTrue(any(u.endswith("/Packages/Installed/DLNA") for u in install_called))
+        # The config POST enabled the server and preserved the other options.
+        self.assertEqual(len(config_posts), 1)
+        self.assertTrue(config_posts[0]["EnableServer"])
+        self.assertTrue(config_posts[0]["EnablePlayTo"])
+        self.assertEqual(config_posts[0]["BlastAliveMessageIntervalSeconds"], 30)
+
+    def test_jellyfin_dlna_server_idempotent(self):
+        """Re-running posts the same EnableServer=true config (self-healing on
+        every redeploy)."""
+        m = load_script("media")
+        import urllib.request, json
+        config_posts: list[dict] = []
+        outer = self
+
+        def urlopen(req, *a, **k):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            meth = req.get_method()
+            if meth == "GET" and url.endswith("/System/Configuration/dlna"):
+                return outer._resp(200, json.dumps({"EnableServer": False}))
+            if meth == "POST" and url.endswith("/System/Configuration/dlna"):
+                config_posts.append(json.loads(req.data.decode()))
+                return outer._resp(204, "")
+            return outer._resp(204, "{}")
+
+        with mock.patch.object(urllib.request, "urlopen", urlopen):
+            m.ensure_jellyfin_dlna_server("http://jf", "tok")
+            m.ensure_jellyfin_dlna_server("http://jf", "tok")
+
+        self.assertEqual(len(config_posts), 2)
+        self.assertEqual(config_posts[0], config_posts[1])
+        self.assertTrue(config_posts[0]["EnableServer"])
+
+    def test_jellyfin_dlna_server_failsoft(self):
+        """If the DLNA config can't be read (endpoint absent / unreachable),
+        log-and-continue: returns False, never raises (the deploy must not be
+        blocked by a DLNA hiccup)."""
+        m = load_script("media")
+        import urllib.request
+        with mock.patch.object(urllib.request, "urlopen", fake_urlopen_factory({})):
+            ok = m.ensure_jellyfin_dlna_server("http://jf", "tok")  # must not raise
+        self.assertFalse(ok)
+
 
 class HomeAssistantScript(unittest.TestCase):
     """The HA post-deploy is gated on Z-Wave device presence (skips
