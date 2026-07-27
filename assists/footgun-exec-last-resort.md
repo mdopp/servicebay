@@ -28,12 +28,17 @@ Consult this read-alternatives map before you type an exec call:
 | You want | Use this read tool |
 |---|---|
 | image / revision / state | `list_containers` — labels `org.opencontainers.image.revision`, `org.opencontainers.image.version` |
-| container logs | `get_container_logs` |
-| service / unit (systemd) logs | `get_service_logs` |
+| container logs | `get_logs(source="container")` — `container` = the `<service>-<app>` name |
+| service / unit (systemd) logs | `get_logs(source="service")` — `name` = the service |
+| raw podman daemon logs | `get_logs(source="podman")` |
 | CPU / RAM / disk / uptime | `get_system_info` |
 | read a file | `read_file` |
 | a service's files | `get_service_files` |
 | list services / containers | `list_services` / `list_containers` |
+
+Lifecycle actions have a dedicated tool too — start / stop / restart a service
+with `manage_service(action="start"|"stop"|"restart")`, never
+`exec_command systemctl …`.
 
 Only use `exec_command` / `container_exec` when **no** dedicated/read tool covers
 the task (binary/huge files, or a genuine host/in-container action). `read_file`
