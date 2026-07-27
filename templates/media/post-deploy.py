@@ -89,6 +89,13 @@ REQUEST_TIMEOUT = 30.0
 JELLYFIN_READY_TIMEOUT = 5 * 60
 JELLYFIN_READY_INTERVAL = 5
 
+# Bounded window for the "is the startup wizard already done?" probe
+# (#2375). Much shorter than JELLYFIN_READY_TIMEOUT: this only has to
+# outlast a container restart's Kestrel-not-listening-yet gap, and on a
+# genuinely fresh install every second spent here is wasted before the
+# real first-run wait starts.
+JELLYFIN_WIZARD_PROBE_TIMEOUT = 60
+
 # Pod-container names. Podman names a Pod's containers `<pod>-<container>`;
 # this pod is `media`, the container is `jellyfin` (see template.yml).
 # Used by the Jellyfin LDAP plugin restart (#1718).
@@ -142,32 +149,72 @@ JELLYFIN_AUTH_HEADER = (
 )
 
 
-def jellyfin_wait_default_user(base_url: str) -> bool:
-    """Poll `GET /Startup/FirstUser` until it returns 200.
+def jellyfin_wizard_completed(base_url: str) -> bool:
+    """Probe `GET /System/Info/Public` over a bounded window and report
+    whether Jellyfin's first-run wizard is already completed.
 
-    That endpoint runs the UserManager's async init pass — which creates
-    Jellyfin's default user — *before* responding. A successful GET
-    therefore both confirms Jellyfin is up AND guarantees the default
-    user exists. `POST /Startup/User` does NOT initialize the
-    UserManager; it just calls `GetFirstUser()` and returns 404
-    ("NotFound") when no user exists yet. So without this wait the admin
-    seed races first-run init and Jellyfin answers 404.
+    Retried rather than single-shot (#2375). A redeploy that changes the
+    pod's topology fully restarts the container, so Kestrel can still be
+    coming up when the first probe fires. A single missed probe used to
+    fall through to `jellyfin_wait_default_user`, whose /Startup/FirstUser
+    poll can never return 200 on an already-initialized server — burning
+    the whole JELLYFIN_READY_TIMEOUT and silently skipping every step
+    gated behind first-setup (music providers, plugins, libraries, user
+    access).
 
-    Phase 3C retired the install runner's per-template readiness probe
-    that used to do this wait, so it has to live back in this script
-    (#809). Returns True once ready, False if the deadline passes."""
+    A 200 answer is authoritative in *both* directions: a false
+    `StartupWizardCompleted` means this really is a fresh install, so
+    return immediately and let the first-run walk proceed instead of
+    idling out the probe window. Returns False when the window elapses
+    without any usable answer."""
+    started = time.time()
+    while True:
+        code, info = request_json("GET", f"{base_url}/System/Info/Public", timeout=10)
+        if code == 200 and isinstance(info, dict):
+            return bool(info.get("StartupWizardCompleted"))
+        if time.time() - started >= JELLYFIN_WIZARD_PROBE_TIMEOUT:
+            return False
+        time.sleep(JELLYFIN_READY_INTERVAL)
+
+
+def jellyfin_wait_default_user(base_url: str) -> str:
+    """Poll `GET /Startup/FirstUser` until Jellyfin's first-run state is
+    settled. Returns one of:
+
+      - `"ready"`             — 200: the default user now exists.
+      - `"already_completed"` — 401/403: the route is locked down, i.e.
+        the wizard finished long ago and there is nothing to wait for.
+      - `"timeout"`           — the deadline passed with neither.
+
+    A 200 runs the UserManager's async init pass — which creates
+    Jellyfin's default user — *before* responding, so it both confirms
+    Jellyfin is up AND guarantees the default user exists. `POST
+    /Startup/User` does NOT initialize the UserManager; it just calls
+    `GetFirstUser()` and returns 404 ("NotFound") when no user exists
+    yet. So without this wait the admin seed races first-run init and
+    Jellyfin answers 404. Phase 3C retired the install runner's
+    per-template readiness probe that used to do this wait, so it has to
+    live back in this script (#809).
+
+    The 401 case is a *positive* signal, not a transient failure (#2375):
+    Jellyfin locks the /Startup/* routes behind auth once
+    `IsStartupWizardCompleted` is true in system.xml, so on an
+    already-initialized server this endpoint answers 401 forever and the
+    poll was structurally guaranteed to burn the full 5-minute budget."""
     started = time.time()
     last_beat = 0.0
     while time.time() - started < JELLYFIN_READY_TIMEOUT:
         code, _ = request_json("GET", f"{base_url}/Startup/FirstUser", timeout=10)
         if code == 200:
-            return True
+            return "ready"
+        if code in (401, 403):
+            return "already_completed"
         elapsed = time.time() - started
         if elapsed - last_beat >= 10:
             log(f"Waiting for Jellyfin to finish first-run init ({int(elapsed)}s elapsed)...")
             last_beat = elapsed
         time.sleep(JELLYFIN_READY_INTERVAL)
-    return False
+    return "timeout"
 
 
 def jellyfin_run_first_setup(base_url: str, admin_user: str, admin_password: str, tz: str) -> bool:
@@ -177,15 +224,22 @@ def jellyfin_run_first_setup(base_url: str, admin_user: str, admin_password: str
     leaving Jellyfin half-configured."""
     # Idempotent guard: if the public info already says wizard is done,
     # skip — this lets the post-deploy re-run without resetting admin.
-    code, info = request_json("GET", f"{base_url}/System/Info/Public", timeout=10)
-    if code == 200 and isinstance(info, dict) and info.get("StartupWizardCompleted"):
+    # Probed over a bounded window, not once, so a container restart's
+    # startup gap can't push a redeploy onto the first-run path (#2375).
+    if jellyfin_wizard_completed(base_url):
         log("ℹ️ Jellyfin startup wizard already completed — leaving the existing admin.")
         return True
 
     # Wait for Jellyfin's UserManager to finish initializing before
     # touching any /Startup/* endpoint (#809) — POST /Startup/User 404s
     # until the default user exists.
-    if not jellyfin_wait_default_user(base_url):
+    state = jellyfin_wait_default_user(base_url)
+    if state == "already_completed":
+        # 401 on /Startup/FirstUser ⇒ the wizard is done and the route is
+        # locked; the guard above just didn't get a clean answer in time.
+        log("ℹ️ Jellyfin: /Startup/FirstUser is locked down (HTTP 401) — the startup wizard is already completed; leaving the existing admin.")
+        return True
+    if state != "ready":
         log(f"⚠️ Jellyfin: /Startup/FirstUser never returned 200 within {JELLYFIN_READY_TIMEOUT // 60} min — install-blocking. Open the Jellyfin web UI and finish the setup wizard manually.")
         return False
 
