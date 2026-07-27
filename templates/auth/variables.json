@@ -1,12 +1,12 @@
 {
   "LLDAP_PORT": {
     "type": "text",
-    "description": "LLDAP Web UI port",
+    "description": "LLDAP Web UI port — bound to the host loopback (127.0.0.1) since template v3, so it is only reachable on the box itself or via the Authelia-gated ldap.<domain> proxy host (#2380).",
     "default": "17170"
   },
   "LLDAP_LDAP_PORT": {
     "type": "text",
-    "description": "LDAP protocol port",
+    "description": "LDAP protocol port — still bound to every host interface. It cannot be loopback-bound: isolated pods (radicale, media/Jellyfin LDAP-Auth) reach it via host.containers.internal, which rootless podman/pasta maps to the host's LAN address, not loopback. Restricting it needs host-level packet filtering — tracked as #2388.",
     "default": "3890"
   },
   "LLDAP_BASE_DN": {
@@ -24,10 +24,11 @@
   },
   "LLDAP_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for LLDAP Web UI. Gated by Authelia forward-auth (admin group, two-factor per Authelia's access_control rules). Without the forward-auth block, the LLDAP UI is reachable at the nginx layer by any logged-in family user — the admin-only Authelia rule never fires because nginx never makes the auth_request subrequest (#878).",
+    "description": "Subdomain for LLDAP Web UI. Gated by Authelia forward-auth (admin group, two-factor per Authelia's access_control rules). Without the forward-auth block, the LLDAP UI is reachable at the nginx layer by any logged-in family user — the admin-only Authelia rule never fires because nginx never makes the auth_request subrequest (#878). That case is about a misconfigured proxy; the separate direct-on-LAN bypass (a LAN host hitting <lan-ip>:LLDAP_PORT and never touching nginx at all) is closed in template v3 by binding LLDAP's HTTP server to 127.0.0.1 plus the loopbackOnly flag below (#2380). The raw LDAP port has the same direct-on-LAN shape and is NOT closed here — it needs host-level packet filtering, tracked as #2388.",
     "default": "ldap",
     "exposure": "internal",
     "proxyPort": "LLDAP_PORT",
+    "loopbackOnly": true,
     "proxyConfig": {
       "block_exploits": true,
       "ssl_forced": true,

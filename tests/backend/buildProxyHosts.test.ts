@@ -295,4 +295,41 @@ describe('buildProxyHosts', () => {
     // No Authelia forward-auth was injected — Basic-auth is the front.
     expect(caldav?.proxyConfig?.advanced_config ?? '').not.toMatch(/auth_request|authelia/i);
   });
+
+  it('builds the auth ldap host internal + loopback-targeted, forward-auth intact (#2380)', () => {
+    // Redeploy from auth template v3: LLDAP's HTTP server binds 127.0.0.1
+    // (LLDAP_HTTP_HOST), so LLDAP_SUBDOMAIN declares loopbackOnly=true —
+    // the same shape radicale got in #2357/#2364. The built host must
+    // (a) forward to 127.0.0.1 so the existing ldap.<domain> host reconciles
+    // off the now-closed LAN address on redeploy (#2364), (b) resolve the
+    // port from LLDAP_PORT, and (c) KEEP the Authelia forward-auth block —
+    // unlike radicale's Basic-auth CalDAV host, the LLDAP admin UI's only
+    // gate IS forward-auth, so losing it here would trade a LAN bypass for
+    // an any-logged-in-user bypass (#878).
+    const { hosts } = buildProxyHosts([
+      v('PUBLIC_DOMAIN', 'example.com'),
+      v('AUTHELIA_PORT', '9091'),
+      v('LLDAP_PORT', '17170'),
+      v(
+        'LLDAP_SUBDOMAIN',
+        'ldap',
+        subdomain('internal', 'LLDAP_PORT', {
+          loopbackOnly: true,
+          templateName: 'auth',
+          proxyConfig: {
+            block_exploits: true,
+            ssl_forced: true,
+            advanced_config: '__authelia_forward_auth__',
+          },
+        }),
+      ),
+    ]);
+    const ldap = hosts.find(h => h.domain === 'ldap.example.com');
+    expect(ldap).toBeDefined();
+    expect(ldap?.forwardHost).toBe('127.0.0.1');
+    expect(ldap?.forwardPort).toBe(17170);
+    expect(ldap?.exposure).toBe('internal');
+    // The forward-auth sentinel expanded — the admin-group/2FA gate survives.
+    expect(ldap?.proxyConfig?.advanced_config ?? '').toContain('auth_request /authelia;');
+  });
 });

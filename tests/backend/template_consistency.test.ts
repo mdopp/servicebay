@@ -365,6 +365,89 @@ describe('Home Assistant base configuration.yaml ships the include wiring', () =
   });
 });
 
+// ─── 3b2. Auth template: LLDAP web UI bound to loopback (#2380) ─────────────
+describe('Auth template: LLDAP HTTP port is loopback-bound (#2380)', () => {
+  const auth = templates.find(t => t.name === 'auth')!;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const lldapContainer = (): any => {
+    const view: Record<string, string> = {};
+    for (const v of catalogVars) view[v] = `stub-${v.toLowerCase()}`;
+    for (const [name, meta] of Object.entries(auth.variables)) {
+      if (meta && typeof meta === 'object' && 'default' in meta && typeof meta.default === 'string') {
+        view[name] = meta.default;
+      }
+    }
+    const rendered = Mustache.render(auth.yamlContent, view);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pod = yaml.loadAll(rendered).find((d: any) => d?.kind === 'Pod') as any;
+    return (pod?.spec?.containers ?? []).find((c: { name: string }) => c.name === 'lldap');
+  };
+
+  it('binds LLDAP_HTTP_HOST to 127.0.0.1 so the admin UI/API is not LAN-reachable', () => {
+    // The auth pod is hostNetwork: true, so LLDAP's default http_host of
+    // 0.0.0.0 means EVERY host interface — the admin web UI and
+    // /api/graphql answered at <lan-ip>:17170 without ever passing through
+    // nginx, and therefore without Authelia's admin-group + 2FA gate.
+    // A hostNetwork pod publishes no ports, so unlike radicale's
+    // `hostIP: 127.0.0.1` (#2357) the bind address must come from the app's
+    // own config. This is the assertion that keeps it there.
+    const env: { name: string; value: string }[] = lldapContainer()?.env ?? [];
+    expect(env.find(e => e.name === 'LLDAP_HTTP_HOST')?.value).toBe('127.0.0.1');
+  });
+
+  it('leaves the raw LDAP port bound to every interface (out of scope, #2388)', () => {
+    // Deliberate scope boundary, not an oversight: isolated pods reach the
+    // LDAP port through host.containers.internal, which rootless
+    // podman/pasta maps to the host's LAN address rather than loopback, so
+    // an LLDAP_LDAP_HOST=127.0.0.1 here would break radicale's ldap_uri and
+    // Jellyfin's LDAP-Auth plugin. Closing that half needs host-level
+    // packet filtering (#2388). If someone "completes" #2380 by adding the
+    // var, this test is the tripwire that says read #2388 first.
+    const env: { name: string; value: string }[] = lldapContainer()?.env ?? [];
+    expect(env.map(e => e.name)).not.toContain('LLDAP_LDAP_HOST');
+    expect(auth.variables.LLDAP_LDAP_PORT.description).toMatch(/#2388/);
+  });
+
+  it('points ldap.<domain> at the loopback while keeping forward-auth', () => {
+    // nginx runs on hostNetwork, so `loopbackOnly` (forwardHost 127.0.0.1)
+    // is what keeps the proxied route working — and re-points an EXISTING
+    // host off the now-closed LAN address on redeploy (#2364). The
+    // forward-auth sentinel must survive: it is the only gate left.
+    expect(auth.variables.LLDAP_SUBDOMAIN.loopbackOnly).toBe(true);
+    expect(auth.variables.LLDAP_SUBDOMAIN.proxyPort).toBe('LLDAP_PORT');
+    expect(auth.variables.LLDAP_SUBDOMAIN.proxyConfig.advanced_config)
+      .toBe('__authelia_forward_auth__');
+  });
+
+  it('schema-version is bumped to 3 with a CHANGELOG section and a v2-to-v3 migration', () => {
+    expect(auth.yamlContent).toMatch(/servicebay\.schema-version:\s*"3"/);
+    const changelog = fs.readFileSync(path.join(TEMPLATES_DIR, 'auth', 'CHANGELOG.md'), 'utf-8');
+    expect(changelog).toMatch(/##\s*v3\b.*\(breaking\)/);
+    const mig = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'auth', 'migrations', 'v2-to-v3.py'), 'utf-8',
+    );
+    // Informational hop — it must not touch LLDAP's users.db or any data.
+    expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);
+    expect(mig).toMatch(/untouched/i);
+  });
+
+  it('the smoke script no longer expects LLDAP on the box LAN address', () => {
+    // scripts/smoke/sso-verify.sh ran ~9 LLDAP API curls at
+    // http://$HOST:$LLDAP_PORT. Those break the moment the bind moves, so
+    // they now tunnel over SSH to the box's loopback (`lldap_api`). The one
+    // remaining use of the LAN address is the NEGATIVE probe asserting the
+    // port is refused there.
+    const smoke = fs.readFileSync(
+      path.join(REPO_ROOT, 'scripts', 'smoke', 'sso-verify.sh'), 'utf-8',
+    );
+    expect(smoke).toMatch(/lldap_api\(\)/);
+    expect(smoke).toMatch(/http:\/\/127\.0\.0\.1:\$\{LLDAP_PORT\}/);
+    // No `curl ... "http://$HOST:$LLDAP_PORT/api/..."`-style API call left.
+    expect(smoke).not.toMatch(/\$HOST:\$LLDAP_PORT\/(api|auth)\b/);
+  });
+});
+
 // ─── 3c. Media template retires Audiobookshelf for fresh installs (#1725) ───
 describe('Media template: Audiobookshelf retired for fresh installs (#1725)', () => {
   const media = templates.find(t => t.name === 'media')!;

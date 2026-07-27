@@ -3,7 +3,9 @@
 #
 # Drives the full operator-realistic flow:
 #   1. Box health  — every Quadlet service is `active`, every container is Up.
-#   2. LLDAP admin — admin login + GraphQL handshake against :17170.
+#   2. LLDAP admin — admin login + GraphQL handshake against :17170. Since
+#                    auth template v3 (#2380) that port is bound to the box's
+#                    loopback, so these calls tunnel over SSH (see lldap_api).
 #   3. User CRUD   — create a fresh test user, set its password via the
 #                    in-container `lldap_set_password` binary, join it to
 #                    the `family` group.
@@ -69,6 +71,35 @@ ssh_cmd() {
       "$SSH_USER@$HOST" "$@"
 }
 
+# POST to LLDAP's HTTP API *over SSH*, against the box's own loopback.
+#
+# Since auth template v3 (#2380) LLDAP binds its HTTP server to 127.0.0.1
+# (LLDAP_HTTP_HOST), so `http://$HOST:$LLDAP_PORT/...` from this machine is
+# refused by design — that is exactly the exposure the fix closed, and
+# section 2 asserts it stays closed. The two remaining ways in are the box's
+# loopback and the nginx-fronted `ldap.$DOMAIN`; the proxy host is Authelia
+# forward-auth-gated (admins group + 2FA) and can't carry LLDAP's own bearer
+# token, so the API checks below take the loopback path. It's the same path
+# nginx itself uses, and this script already has SSH to the box.
+#
+#   $1 = request path (e.g. /api/graphql or /auth/simple/login)
+#   $2 = JSON request body (piped to the remote curl's stdin, so no quoting
+#        of GraphQL payloads through the remote shell)
+#   $3 = optional bearer token for the Authorization header
+lldap_api() {
+  local path="$1" body="$2" token="${3:-}"
+  local auth_hdr=""
+  [[ -n "$token" ]] && auth_hdr="-H 'Authorization: Bearer ${token}'"
+  printf '%s' "$body" | ssh_cmd \
+    "curl -fsS -X POST 'http://127.0.0.1:${LLDAP_PORT}${path}' \
+       -H 'Content-Type: application/json' ${auth_hdr} --data-binary @-"
+}
+
+# Same, but never fails the caller (used in the always-runs cleanup trap).
+lldap_api_quiet() {
+  lldap_api "$@" > /dev/null 2>&1 || true
+}
+
 # Curl wrapper that pins SNI to the box's IP via --resolve, since the
 # operator running this from outside the LAN may not have *.dopp.cloud
 # in their resolver.
@@ -100,11 +131,9 @@ cleanup() {
   local rc=$?
   if [[ -n "$LLDAP_ADMIN_TOKEN" && $KEEP_USER -eq 0 ]]; then
     for u in "$TEST_USER" "$ADMIN_TEST_USER"; do
-      curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
-        -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"query\":\"mutation { deleteUser(userId: \\\"$u\\\") { ok } }\"}" \
-        > /dev/null 2>&1 || true
+      lldap_api_quiet /api/graphql \
+        "{\"query\":\"mutation { deleteUser(userId: \\\"$u\\\") { ok } }\"}" \
+        "$LLDAP_ADMIN_TOKEN"
     done
     info "test users $TEST_USER + $ADMIN_TEST_USER deleted"
   elif [[ $KEEP_USER -eq 1 ]]; then
@@ -148,9 +177,26 @@ if [[ -z "$LLDAP_ADMIN_PASS" ]]; then
 fi
 pass "LLDAP admin password read from container env"
 
-LLDAP_ADMIN_TOKEN=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/auth/simple/login" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"admin\",\"password\":\"$LLDAP_ADMIN_PASS\"}" \
+# #2380 — the exposure this fix closed: LLDAP's HTTP port must NOT answer on
+# the box's LAN address. Asserted from THIS machine, which is the adversary's
+# position. A response here means the loopback bind regressed. Only meaningful
+# off-box: run against a loopback $HOST and the port is *supposed* to answer.
+if [[ "$HOST" == "127.0.0.1" || "$HOST" == "localhost" || "$HOST" == "::1" ]]; then
+  info "skipping the LAN-exposure probe — \$HOST is loopback, so :$LLDAP_PORT answering is expected"
+else
+  set +e
+  lan_probe_code=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" \
+                        "http://$HOST:$LLDAP_PORT/" 2>/dev/null)
+  set -e
+  if [[ -z "$lan_probe_code" || "$lan_probe_code" == "000" ]]; then
+    pass "LLDAP HTTP port $LLDAP_PORT refused at $HOST (loopback-bound, #2380)"
+  else
+    fail "LLDAP HTTP port $LLDAP_PORT answered HTTP $lan_probe_code at $HOST — the admin UI/API is LAN-reachable, bypassing Authelia (#2380 regressed; check LLDAP_HTTP_HOST in templates/auth/template.yml and re-deploy auth)"
+  fi
+fi
+
+LLDAP_ADMIN_TOKEN=$(lldap_api /auth/simple/login \
+  "{\"username\":\"admin\",\"password\":\"$LLDAP_ADMIN_PASS\"}" \
   | python3 -c "import json,sys; print(json.load(sys.stdin).get('token',''))")
 if [[ -z "$LLDAP_ADMIN_TOKEN" ]]; then
   fail "LLDAP admin login returned no token"
@@ -159,10 +205,8 @@ fi
 pass "LLDAP admin /auth/simple/login → JWT"
 
 # Family + admins group ids must exist — Authelia rules key off both.
-GROUP_IDS=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
-  -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"query":"{ groups { id displayName } }"}' \
+GROUP_IDS=$(lldap_api /api/graphql \
+  '{"query":"{ groups { id displayName } }"}' "$LLDAP_ADMIN_TOKEN" \
   | python3 -c "
 import json, sys
 gs = json.load(sys.stdin)['data']['groups']
@@ -189,10 +233,8 @@ pass "'admins' group exists (id=$ADMINS_GID)"
 # 403 at the door. The auth template's post-deploy.py grants this
 # at install — flagging it here catches drift if someone removes
 # the membership manually.
-admin_groups=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
-  -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"query":"{ user(userId: \"admin\") { groups { displayName } } }"}' \
+admin_groups=$(lldap_api /api/graphql \
+  '{"query":"{ user(userId: \"admin\") { groups { displayName } } }"}' "$LLDAP_ADMIN_TOKEN" \
   | python3 -c "import json,sys; print(','.join(g.get('displayName','') for g in (json.load(sys.stdin).get('data',{}).get('user',{}).get('groups',[]))))")
 if [[ ",${admin_groups}," == *",admins,"* ]]; then
   pass "LLDAP 'admin' user is in 'admins' (Authelia admin-domain login enabled)"
@@ -203,10 +245,9 @@ fi
 # -------------------- 3. user lifecycle --------------------
 section "3/8 · User lifecycle — create + set password + group-add"
 
-create_resp=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
-  -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"query\":\"mutation { createUser(user: { id: \\\"$TEST_USER\\\", email: \\\"$TEST_USER@$DOMAIN\\\", displayName: \\\"Smoke Test\\\" }) { id } }\"}")
+create_resp=$(lldap_api /api/graphql \
+  "{\"query\":\"mutation { createUser(user: { id: \\\"$TEST_USER\\\", email: \\\"$TEST_USER@$DOMAIN\\\", displayName: \\\"Smoke Test\\\" }) { id } }\"}" \
+  "$LLDAP_ADMIN_TOKEN")
 vlog "createUser: $create_resp"
 if echo "$create_resp" | grep -q "\"id\":\"$TEST_USER\""; then
   pass "createUser($TEST_USER)"
@@ -226,10 +267,9 @@ else
   exit 1
 fi
 
-group_resp=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
-  -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"query\":\"mutation { addUserToGroup(userId: \\\"$TEST_USER\\\", groupId: $FAMILY_GID) { ok } }\"}")
+group_resp=$(lldap_api /api/graphql \
+  "{\"query\":\"mutation { addUserToGroup(userId: \\\"$TEST_USER\\\", groupId: $FAMILY_GID) { ok } }\"}" \
+  "$LLDAP_ADMIN_TOKEN")
 if echo "$group_resp" | grep -q '"ok":true'; then
   pass "addUserToGroup($TEST_USER, family)"
 else
@@ -238,9 +278,8 @@ fi
 
 # Verify the user can log into LLDAP itself with its new password —
 # isolates "password storage broken" from "Authelia config broken".
-user_token=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/auth/simple/login" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"$TEST_USER\",\"password\":\"$TEST_PASS\"}" \
+user_token=$(lldap_api /auth/simple/login \
+  "{\"username\":\"$TEST_USER\",\"password\":\"$TEST_PASS\"}" \
   | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('token',''))")
 if [[ -n "$user_token" ]]; then
   pass "LLDAP login as $TEST_USER → JWT (groups: family)"
@@ -249,10 +288,9 @@ else
 fi
 
 # Mirror lifecycle for the admin-group test user used by section 7.
-create_admin=$(curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
-  -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"query\":\"mutation { createUser(user: { id: \\\"$ADMIN_TEST_USER\\\", email: \\\"$ADMIN_TEST_USER@$DOMAIN\\\", displayName: \\\"Smoke Admin\\\" }) { id } }\"}")
+create_admin=$(lldap_api /api/graphql \
+  "{\"query\":\"mutation { createUser(user: { id: \\\"$ADMIN_TEST_USER\\\", email: \\\"$ADMIN_TEST_USER@$DOMAIN\\\", displayName: \\\"Smoke Admin\\\" }) { id } }\"}" \
+  "$LLDAP_ADMIN_TOKEN")
 if echo "$create_admin" | grep -q "\"id\":\"$ADMIN_TEST_USER\""; then
   pass "createUser($ADMIN_TEST_USER)"
 else
@@ -269,11 +307,9 @@ ssh_cmd "podman exec auth-lldap /app/lldap_set_password \
 # session — without family, Authelia's catch-all wouldn't match and
 # the admin would be locked out of user apps).
 for GID in "$FAMILY_GID" "$ADMINS_GID"; do
-  curl -fsS -X POST "http://$HOST:$LLDAP_PORT/api/graphql" \
-    -H "Authorization: Bearer $LLDAP_ADMIN_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{\"query\":\"mutation { addUserToGroup(userId: \\\"$ADMIN_TEST_USER\\\", groupId: $GID) { ok } }\"}" \
-    > /dev/null
+  lldap_api /api/graphql \
+    "{\"query\":\"mutation { addUserToGroup(userId: \\\"$ADMIN_TEST_USER\\\", groupId: $GID) { ok } }\"}" \
+    "$LLDAP_ADMIN_TOKEN" > /dev/null
 done
 pass "addUserToGroup($ADMIN_TEST_USER, family + admins)"
 

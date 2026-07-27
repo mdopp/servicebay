@@ -4,7 +4,7 @@ LLDAP + Authelia in a single pod. Authelia depends on LLDAP for its user/group d
 
 ## Containers
 
-1. **LLDAP** — Lightweight LDAP server. Web UI at `:17170` for user/group management, LDAP socket on `:3890`.
+1. **LLDAP** — Lightweight LDAP server. Web UI + GraphQL API on `:17170`, bound to the host loopback only (#2380) so it is reached through `https://ldap.<your-domain>` rather than directly on the LAN. LDAP socket on `:3890` (still bound to every interface — isolated pods bind against it via `host.containers.internal`; restricting it is tracked as #2388).
 2. **Authelia** — SSO portal + OIDC identity provider. Reads the user directory from LLDAP via `localhost:3890`.
 
 ## Variables
