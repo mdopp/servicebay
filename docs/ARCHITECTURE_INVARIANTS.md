@@ -47,19 +47,20 @@ Thresholds are **deliberate decisions**, not aspirational defaults. Two paths:
 
 | Invariant | Current | Threshold | Enforced by |
 |---|---:|---:|---|
-| Max file LOC | 2,523 | 2,600 | `check-invariants.ts:MAX_FILE_LOC` |
-| Files > 2,000 LOC | 4 | (untracked) | future |
+| Max file LOC (frontend) | 2,144 | 2,200 | `check-invariants.ts:MAX_FILE_LOC` |
+| Max file LOC (backend) | 2,391 | 2,400 | `check-invariants.ts:MAX_BACKEND_FILE_LOC` |
+| Files > 2,000 LOC | 3 | (untracked) | future |
 | Functions > 150 LOC | 1+ | (untracked) | future |
 
-**File-size ceiling.** The largest current file is `OnboardingWizard.tsx` at 2,523 LOC. Cap pinned at 2,600 (small slack). Ratchet target: 1,500 once the four 2k-LOC files (`OnboardingWizard`, `NetworkDashboard`, `ServicesDashboard`, `NetworkService`) are split per the audit follow-ups.
+**File-size ceiling.** Two roots, two pins. Frontend: largest is `NetworkDashboard.tsx` at 2,144 LOC, cap 2,200. Backend: largest is `lib/mcp/server.ts` at 2,391 LOC, cap 2,400 — the backend root was **not walked at all** until #2379, so this ceiling is newly enforced rather than loosened. Ratchet target: one shared 1,500 cap once `NetworkDashboard`, `ServicesDashboard` and `mcp/server.ts` (#2384) are split per the audit follow-ups.
 
 ### Type safety
 
 | Invariant | Current | Threshold | Enforced by |
 |---|---:|---:|---|
-| `as any` in security paths | 3 | 3 | `check-invariants.ts:SECURITY_AS_ANY_BUDGET` |
+| `as any` in security paths | 0 | 0 | `check-invariants.ts:SECURITY_AS_ANY_BUDGET` |
 
-**Security paths**: `packages/backend/src/lib/auth/**`, `packages/backend/src/lib/mcp/**`, `packages/backend/src/lib/agent/executor.ts`, `packages/frontend/src/proxy.ts`. Non-test only. The three current casts are error-augmentation in `executor.ts`. Ratchet target: 0.
+**Security paths**: `packages/backend/src/lib/auth/**`, `packages/backend/src/lib/mcp/**`, `packages/backend/src/lib/agent/executor.ts`, `packages/frontend/src/proxy.ts`. Non-test only. Ratchet target reached — the budget is 0, so any new cast in these paths fails CI. `SECURITY_PATHS` in the script must stay repo-relative and match this list: it carried pre-workspace-split `src/...` paths until #2379, which made the check resolve zero files and pass vacuously.
 
 ### Coupling
 
