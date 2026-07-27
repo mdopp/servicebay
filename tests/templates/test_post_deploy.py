@@ -968,6 +968,79 @@ class MediaScript(unittest.TestCase):
         )
         self.assertLess(get_first, post_user)
 
+    # ── #2375: redeploy of an already-initialized Jellyfin ───────────────
+
+    def test_jellyfin_wizard_guard_retries_instead_of_falling_through(self):
+        """#2375: the StartupWizardCompleted guard is probed over a bounded
+        window, not once. A pod-topology change fully restarts the container,
+        so Kestrel can still be coming up when the first probe fires. The
+        guard must retry and short-circuit on the delayed "wizard already
+        completed" answer, never falling through to the /Startup/FirstUser
+        wait (which can only 401 on an already-initialized server)."""
+        m = load_script("media")
+        m.JELLYFIN_WIZARD_PROBE_TIMEOUT = 30
+        m.JELLYFIN_READY_INTERVAL = 0  # don't actually sleep between probes
+        import urllib.error
+        import urllib.request
+
+        calls: list[str] = []
+        probes = {"n": 0}
+        outer = self
+
+        def urlopen(req, *_a, **_kw):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            calls.append(url)
+            if "/System/Info/Public" in url:
+                probes["n"] += 1
+                if probes["n"] < 3:
+                    # Kestrel not listening yet right after the restart.
+                    raise urllib.error.URLError("connection refused")
+                return outer._resp(200, json.dumps({"StartupWizardCompleted": True}))
+            raise urllib.error.URLError(f"unmocked URL: {url}")
+
+        with mock.patch.object(urllib.request, "urlopen", urlopen):
+            ok = m.jellyfin_run_first_setup("http://jf", "admin", "pw", "Europe/Berlin")
+
+        self.assertTrue(ok)
+        self.assertEqual(probes["n"], 3)  # retried, not single-shot
+        # Never fell through to the first-run path.
+        self.assertFalse(any("/Startup/FirstUser" in u for u in calls))
+        self.assertFalse(any("/Startup/Configuration" in u for u in calls))
+
+    def test_jellyfin_first_user_401_means_already_past_first_run(self):
+        """#2375: once the wizard is completed Jellyfin locks /Startup/* down
+        and /Startup/FirstUser answers 401 forever — never 200. If the
+        public-info guard gets no usable answer inside its window, the
+        first-user wait must read that 401 as "already past first-run" and
+        return True promptly, instead of polling to JELLYFIN_READY_TIMEOUT and
+        reporting not-ready (which silently skips music providers, the LrcLib
+        plugin, DLNA, libraries and user access on that redeploy)."""
+        m = load_script("media")
+        m.JELLYFIN_WIZARD_PROBE_TIMEOUT = 0  # guard window already elapsed
+        m.JELLYFIN_READY_INTERVAL = 0
+        import urllib.error
+        import urllib.request
+
+        calls: list[str] = []
+
+        def urlopen(req, *_a, **_kw):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            calls.append(url)
+            if "/System/Info/Public" in url:
+                raise urllib.error.URLError("connection refused")
+            if "/Startup/FirstUser" in url:
+                raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)  # type: ignore[arg-type]
+            raise urllib.error.URLError(f"unmocked URL: {url}")
+
+        with mock.patch.object(urllib.request, "urlopen", urlopen):
+            ok = m.jellyfin_run_first_setup("http://jf", "admin", "pw", "Europe/Berlin")
+
+        self.assertTrue(ok)
+        # Exactly one FirstUser probe — the 401 ends the wait, no 5-min poll.
+        self.assertEqual(len([u for u in calls if "/Startup/FirstUser" in u]), 1)
+        # And no first-run walk was attempted against a locked-down server.
+        self.assertFalse(any("/Startup/Configuration" in u for u in calls))
+
     # ── #1718: Jellyfin LDAP-Auth plugin → LLDAP ─────────────────────────
 
     def test_jellyfin_ldap_config_rendered_with_lldap_bind(self):
