@@ -87,7 +87,12 @@ echo "start-claude: started ${#started[@]} session(s): ${started[*]}"
 echo "start-claude: windows in tmux '$SESSION': $(tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | paste -sd' ' -)"
 
 # Land the user in the sessions: attach from outside tmux, or switch to the
-# first new window when already inside it.
+# first new window when already inside it. Skipped when CLAUDE_START_NO_ATTACH
+# is set — the boot-time autostart (docker-entrypoint.sh) has no terminal to
+# attach to and must return so the entrypoint can go on to exec sshd.
+if [ -n "${CLAUDE_START_NO_ATTACH:-}" ]; then
+  exit 0
+fi
 if [ -n "${TMUX:-}" ]; then
   tmux select-window -t "$SESSION:${started[0]}" 2>/dev/null || true
 else

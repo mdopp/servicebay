@@ -30,7 +30,7 @@ spec:
   hostNetwork: true
   containers:
   # Built from templates/claude-dev/Dockerfile and published by
-  # .github/workflows/claude-dev-image.yml. The image carries Node 20,
+  # .github/workflows/claude-dev-image.yml. The image carries Node 22,
   # npm, @anthropic-ai/claude-code, git, the GitHub CLI, the native-
   # module build deps (make/gcc/python3), the podman client, and an SSH
   # server. We do NOT override command:/args: — the image's entrypoint

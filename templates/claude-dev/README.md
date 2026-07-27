@@ -112,7 +112,19 @@ start-claude --allow-dangerously-skip-permissions servicebay solbay
 - Re-running skips a directory that already has a live window — safe to call
   again to add more.
 - Switch between them with `Ctrl-b w` (window list) or `Ctrl-b <n>`.
-- It's launched **manually** by design — logging in does not auto-start Claude.
+- The container also runs this **automatically at boot** (see below); call it
+  by hand to add more directories or use different flags.
+
+### Auto-start at boot
+
+On container start the entrypoint auto-launches one Claude per **git checkout**
+under `/workspace` (any top-level dir with a `.git`), each with `--continue
+--allow-dangerously-skip-permissions` and Remote Control named after the
+directory — so every repo's session comes back up labelled in the mobile app /
+web without logging in. Hidden dirs (`~/.ssh`, `~/.claude`) and per-user homes
+are skipped. A fresh volume with no checkouts yet just gets an empty `claude`
+tmux session to attach to; clone a repo and restart (or run `start-claude`) to
+bring it up.
 
 ## Persistent session (tmux)
 
@@ -124,9 +136,9 @@ box, and the next connection lands right back in it.
 
 - Re-attach manually (or from a non-login shell): `tmux new -A -s claude`
 - Detach without killing it: `Ctrl-b d` (the session stays live).
-- After a container restart, the entrypoint re-creates the session;
-  `claude --continue` resumes the prior conversation from the persisted
-  `~/.claude` on `/workspace`.
+- After a container restart, the entrypoint re-launches Claude per git repo
+  (see "Auto-start at boot"); `--continue` resumes each repo's prior
+  conversation from the persisted `~/.claude` on `/workspace`.
 
 A non-interactive `podman exec` (scripts, health probes) is **not**
 attached, so automation isn't trapped in tmux.
