@@ -8,7 +8,10 @@ metadata:
     servicebay.label: "Sign-In Gate"
     # v2 (#1737): authelia container now waits for LLDAP's LDAP socket before
     # starting, eliminating the fatal startup-race crash. No data move.
-    servicebay.schema-version: "2"
+    # v3 (#2380): LLDAP's HTTP port (admin web UI + GraphQL API) is bound to
+    # the host loopback instead of 0.0.0.0. No data move; requires a re-deploy
+    # so podman recreates the pod from this manifest.
+    servicebay.schema-version: "3"
     servicebay.tier: "infrastructure"
     # post-deploy.py calls /api/system/lldap/* and /api/system/authelia/*.
     # Pin the API versions (#588) so core refuses to invoke this script if
@@ -54,8 +57,36 @@ spec:
         value: "admin"
       - name: LLDAP_HTTP_PORT
         value: "{{LLDAP_PORT}}"
+      # Bind LLDAP's HTTP server (admin web UI + /api/graphql) to the host
+      # LOOPBACK only (#2380). LLDAP defaults `http_host` to 0.0.0.0, and
+      # because this pod is `hostNetwork: true` that means EVERY host
+      # interface — so the identity store's admin surface answered directly
+      # at <lan-ip>:{{LLDAP_PORT}}, never touching nginx and therefore never
+      # touching Authelia's forward-auth (admin group + 2FA), no matter how
+      # correctly forward-auth is configured. FCoS ships no firewall.
+      #
+      # This is the hostNetwork equivalent of radicale's `hostIP: 127.0.0.1`
+      # port publish (#2357): a hostNetwork pod publishes no ports, so the
+      # bind address has to come from the app's own config. Same downstream
+      # half as #2357 though — nginx runs on hostNetwork, so it still reaches
+      # this port via 127.0.0.1, and the `loopbackOnly: true` flag on
+      # LLDAP_SUBDOMAIN (variables.json) points ldap.<domain>'s forward
+      # target at 127.0.0.1:{{LLDAP_PORT}} (and re-points an EXISTING host on
+      # redeploy via the core reconcile, #2364).
+      #
+      # ServiceBay's own container runs with host networking and its LLDAP
+      # client talks to http://localhost:{{LLDAP_PORT}}; post-deploy.py and
+      # the migrations run in the HOST netns (ADR 0007). Both keep working.
+      - name: LLDAP_HTTP_HOST
+        value: "127.0.0.1"
       - name: LLDAP_LDAP_PORT
         value: "{{LLDAP_LDAP_PORT}}"
+      # DELIBERATELY NOT SET: `LLDAP_LDAP_HOST`. The raw LDAP port stays on
+      # 0.0.0.0 — isolated (non-hostNetwork) pods reach it through
+      # `host.containers.internal`, which rootless podman/pasta maps to the
+      # host's LAN address rather than loopback, so a loopback bind would
+      # break radicale's ldap_uri and Jellyfin's LDAP-Auth plugin. Closing
+      # that half needs host-level packet filtering and is tracked as #2388.
       - name: LLDAP_FORCE_LDAP_USER_PASS_RESET
         value: "{{LLDAP_FORCE_LDAP_USER_PASS_RESET}}"
     ports:
