@@ -68,16 +68,31 @@ const isTestFile = (p: string) => /\.test\.(ts|tsx)$/.test(p) || p.includes('/te
 // ---------------------------------------------------------------------------
 const MAX_FILE_LOC = 2_200;
 
+// Backend ceiling, pinned separately (#2379). The walk used to cover only
+// `packages/frontend/src`, so nothing in `packages/backend/src` was ever
+// measured — `lib/mcp/server.ts` sat at 2,391 LOC unnoticed. Newly enforced
+// here at 2,400 (pinned to that file + small slack); this is a tightening
+// from "unbounded", not a loosening of the frontend cap.
+// Ratchet target: 2,200 (single shared ceiling) once mcp/server.ts is split
+// into per-tool-group modules (#2384); then 1,500 with the frontend ratchet.
+const MAX_BACKEND_FILE_LOC = 2_400;
+
 async function checkFileSize() {
-    const files = await walk(SRC, isTs);
-    for (const file of files) {
-        const content = await readFile(file, 'utf-8');
-        const loc = content.split('\n').length;
-        if (loc > MAX_FILE_LOC) {
-            violations.push({
-                check: 'file-size',
-                detail: `${path.relative(REPO_ROOT, file)} = ${loc} LOC (max ${MAX_FILE_LOC})`,
-            });
+    const roots: { root: string; max: number }[] = [
+        { root: SRC, max: MAX_FILE_LOC },
+        { root: BACKEND_SRC, max: MAX_BACKEND_FILE_LOC },
+    ];
+    for (const { root, max } of roots) {
+        const files = await walk(root, isTs);
+        for (const file of files) {
+            const content = await readFile(file, 'utf-8');
+            const loc = content.split('\n').length;
+            if (loc > max) {
+                violations.push({
+                    check: 'file-size',
+                    detail: `${path.relative(REPO_ROOT, file)} = ${loc} LOC (max ${max})`,
+                });
+            }
         }
     }
 }
@@ -85,15 +100,19 @@ async function checkFileSize() {
 // ---------------------------------------------------------------------------
 // 2. Security-path `as any` budget.
 //
-// Counts non-test `as any` casts in security-critical modules. Pinned to
-// the current count (3, all in executor.ts error augmentation). New `as
-// any` in these paths needs an explicit ratchet bump + justification.
+// Counts non-test `as any` casts in security-critical modules. Budget is 0 —
+// new `as any` in these paths needs an explicit ratchet bump + justification.
+//
+// Paths are repo-relative and must stay that way (#2379): they used to be
+// written as pre-workspace-split `src/...`, which no longer exists, so every
+// `stat()` below threw and the loop `continue`d — the check silently measured
+// zero files. Keep these in sync with docs/ARCHITECTURE_INVARIANTS.md.
 // ---------------------------------------------------------------------------
 const SECURITY_PATHS = [
-    'src/lib/auth',
-    'src/lib/mcp',
-    'src/lib/agent/executor.ts',
-    'src/proxy.ts',
+    'packages/backend/src/lib/auth',
+    'packages/backend/src/lib/mcp',
+    'packages/backend/src/lib/agent/executor.ts',
+    'packages/frontend/src/proxy.ts',
 ];
 const SECURITY_AS_ANY_BUDGET = 0;
 
@@ -159,7 +178,8 @@ async function checkBackendAnyBudget() {
         if (isTestFile(file)) continue;
         const rel = path.relative(REPO_ROOT, file);
         // Skip files counted by the security ratchet so we don't double-count.
-        if (SECURITY_PATHS.some(p => rel.startsWith(`packages/backend/${p}`) || rel === `packages/backend/${p}`)) {
+        // SECURITY_PATHS are already repo-relative (#2379) — compare directly.
+        if (SECURITY_PATHS.some(p => rel === p || rel.startsWith(`${p}/`))) {
             continue;
         }
         const content = await readFile(file, 'utf-8');

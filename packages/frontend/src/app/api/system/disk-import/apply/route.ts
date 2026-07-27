@@ -3,7 +3,7 @@ import { startApplyFlow } from '@/lib/diskImport/service';
 import { withApiHandler } from '@/lib/api/handler';
 import { apiError } from '@/lib/api/errors';
 import { makeExec, resolveNode, SHARE_GID } from '../wiring';
-import { parseReplanBody } from '../replanBody';
+import { parseApplyBody } from '../replanBody';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,14 +27,19 @@ export const dynamic = 'force-dynamic';
  * fires the apply, and the page polls status.json to completion. The route no longer
  * blocks for the whole copy (which risked NPM/Authelia/browser timeouts on a big
  * disk); the applied count + Immich note land in status.json, not the response.
+ *
+ * #2383: the body MUST carry the REVIEW GATE — the `runId` of the scan whose plan was
+ * reviewed plus `confirmed: true` (the locked device → scan → review → CONFIRM → apply
+ * decision in docs/UX_DECISIONS.md). A bare/unconfirmed POST is a 400, so holding an
+ * admin `mutate` session is not on its own enough to start an import.
  */
 export const POST = withApiHandler(
   { tokenScope: 'mutate' },
   async ({ request }) => {
     try {
       const node = resolveNode();
-      const replanReq = await parseReplanBody(request);
-      await startApplyFlow(makeExec(node), SHARE_GID, replanReq);
+      const { confirm, replan } = await parseApplyBody(request);
+      await startApplyFlow(makeExec(node), SHARE_GID, confirm, replan);
       return NextResponse.json({ ok: true });
     } catch (e) {
       return apiError(e, { tag: 'api:system:disk-import:apply', status: 400, exposeMessage: true });

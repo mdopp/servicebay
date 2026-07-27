@@ -1,36 +1,8 @@
 {
-  "ABS_PORT": {
-    "type": "text",
-    "description": "Port for the Audiobookshelf web UI + API",
-    "default": "13378"
-  },
-  "ABS_ADMIN_USER": {
-    "type": "text",
-    "description": "Audiobookshelf root admin username",
-    "default": "root"
-  },
-  "ABS_ADMIN_PASSWORD": {
-    "type": "secret",
-    "description": "Audiobookshelf root admin password — auto-generated. ServiceBay calls /init after deploy to skip the first-launch wizard."
-  },
   "TZ": {
     "type": "text",
-    "description": "Timezone (used for podcast download schedules + Jellyfin metadata)",
+    "description": "Timezone (used for Jellyfin metadata + scheduled library scans)",
     "default": "Europe/Berlin"
-  },
-  "ABS_AUDIOBOOKS_PATH": {
-    "type": "text",
-    "description": "Host path to your audiobook library. Defaults to the file-share Samba volume. Folder name is lowercase by convention (matches `notes/` + `podcasts/` siblings) per #1018.",
-    "default": "/mnt/data/stacks/file-share/data/audiobooks"
-  },
-  "ABS_PODCASTS_PATH": {
-    "type": "text",
-    "description": "Host path where Audiobookshelf will download podcast episodes. Lowercase by convention — see #1018.",
-    "default": "/mnt/data/stacks/file-share/data/podcasts"
-  },
-  "ABS_OIDC_SECRET": {
-    "type": "secret",
-    "description": "OIDC client secret for Audiobookshelf ↔ Authelia. Auto-generated; surfaced in the install log so you can paste it into ABS Settings → Authentication → OIDC."
   },
   "ABS_SUBDOMAIN": {
     "type": "subdomain",

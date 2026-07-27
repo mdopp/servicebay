@@ -22,7 +22,7 @@ So a CI push to `:latest` sits unused until you explicitly pull *and* restart.
 1. **Pull the new image** on the box (over MCP: `container_exec` / `exec_command`
    a `podman pull <image>:<tag>`, or re-run `install_template` which re-pulls).
 2. **Restart the service** so the running pod recreates onto the newly-pulled
-   image (`restart_service`).
+   image (`manage_service(action="restart")`).
 3. **Verify the running digest** matches what CI published (`podman inspect
    --format '{{.Image}}'` on the container, or compare digests) — don't assume
    the restart picked it up.

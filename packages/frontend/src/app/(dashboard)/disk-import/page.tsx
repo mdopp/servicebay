@@ -156,10 +156,21 @@ function useDiskImportRun(selected: string, onAfterAbort: () => void) {
   // passed (#2000) servicebay launches the detached re-plan first, then the apply
   // runs in the background. The status poll reflects `planning` → `applying` →
   // `done`; `flowActive` keeps the tile on progress for the whole flow.
+  // The body always carries the review gate (#2383): the runId of the run whose plan
+  // this page just reviewed + the operator's explicit confirm (this click).
   const apply = async (rules?: Record<string, Rule>, rootDefault?: Rule) => {
+    const runId = run?.runId;
+    if (!runId) {
+      setError('Nothing to import yet — scan a disk first');
+      return;
+    }
     setError('');
     setFlowActive(true);
-    const err = await postAction('/api/system/disk-import/apply', rules ? { rules, rootDefault } : undefined);
+    const err = await postAction('/api/system/disk-import/apply', {
+      runId,
+      confirmed: true,
+      ...(rules ? { rules, rootDefault } : {}),
+    });
     if (err) {
       setError(err);
       setFlowActive(false);

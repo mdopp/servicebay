@@ -63,13 +63,14 @@ module.exports = {
             name: 'lib-no-import-app',
             severity: 'error',
             comment:
-                'src/lib is the reusable kernel. Importing from src/app inverts the layering and ' +
+                'packages/backend/src/lib is the reusable kernel. Importing from the Next.js app ' +
+                'layer (packages/frontend/src/app) inverts the layering and ' +
                 'breaks the "lib is depended-on, never depends-on UI" invariant. Fully tight ' +
                 'after #600 — runner.ts now imports getTemplate* directly from registry, ' +
                 'mcp/server.ts calls runDiagnose() in src/lib/diagnose/, and the client hook ' +
                 'useStackInstall moved out of src/lib to src/hooks/.',
             from: { path: '^packages/backend/src/lib/' },
-            to: { path: '^src/app/' },
+            to: { path: '^packages/frontend/src/app/' },
         },
         {
             name: 'lib-no-import-components',

@@ -393,6 +393,20 @@ describe('Media template: Audiobookshelf retired for fresh installs (#1725)', ()
     expect(JSON.stringify(pod)).not.toMatch(/audiobookshelf-config|abs-audiobooks|abs-podcasts/);
   });
 
+  it('declares no orphaned ABS_* variables (#2381)', () => {
+    // #1725/#1730 retired Audiobookshelf but left its variables declared, so
+    // the install/edit wizard kept rendering "Abs Admin Password" &c. for a
+    // container the pod no longer runs (#2381). Every declared variable must
+    // be live: referenced by template.yml/post-deploy.py, or — for
+    // `type: subdomain` — consumed structurally by buildProxyHosts.
+    // `ABS_SUBDOMAIN` is the one legitimate survivor: it declares the
+    // `books.<domain>` proxy host that v6 repointed to JELLYFIN_PORT.
+    const absVars = Object.keys(media.variables).filter(n => n.startsWith('ABS_'));
+    expect(absVars).toEqual(['ABS_SUBDOMAIN']);
+    expect(media.variables.ABS_SUBDOMAIN.type).toBe('subdomain');
+    expect(media.variables.ABS_SUBDOMAIN.proxyPort).toBe('JELLYFIN_PORT');
+  });
+
   it('schema-version is bumped to 6 with a matching CHANGELOG section', () => {
     expect(media.yamlContent).toMatch(/servicebay\.schema-version:\s*"6"/);
     const changelog = fs.readFileSync(path.join(TEMPLATES_DIR, 'media', 'CHANGELOG.md'), 'utf-8');
