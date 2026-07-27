@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.7.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.6.0...servicebay-v5.7.0) (2026-07-27)
+
+
+### Features
+
+* **dashboards:** unify container-list UIs into one shared component ([e269eac](https://github.com/mdopp/servicebay/commit/e269eac230958f5425ba0c6d9c97aa26a8961494)), closes [#2367](https://github.com/mdopp/servicebay/issues/2367)
+* **media:** enable Jellyfin built-in DLNA server by default ([45d253a](https://github.com/mdopp/servicebay/commit/45d253ab766cc6a68bfcc2556c7e85aefcea4daf)), closes [#2369](https://github.com/mdopp/servicebay/issues/2369)
+
+
+### Bug Fixes
+
+* **backend:** force https scheme in Authelia forward-auth X-Original-URL ([6e3beef](https://github.com/mdopp/servicebay/commit/6e3beef6f784e02714d4e29668a58d7f834a62ba)), closes [#2368](https://github.com/mdopp/servicebay/issues/2368)
+
 ## [5.6.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.5.1...servicebay-v5.6.0) (2026-07-27)
 
 
