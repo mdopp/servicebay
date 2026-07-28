@@ -3,6 +3,7 @@ import path from 'path';
 import { CheckConfig, CheckResult } from './types';
 import { DATA_DIR } from '../dirs';
 import { logger } from '../logger';
+import { atomicWriteFileSync } from '../util/atomicWrite';
 
 const CONFIG_DIR = DATA_DIR;
 const CHECKS_FILE = path.join(CONFIG_DIR, 'checks.json');
@@ -98,9 +99,14 @@ export class HealthStore {
   }
 
   /** Persist checks.json and invalidate the read cache so a same-process
-   *  read-after-write can't serve stale data within mtime granularity. */
+   *  read-after-write can't serve stale data within mtime granularity.
+   *
+   *  Atomic (tmp → fsync → rename, #2414): checks.json is the operator's
+   *  configured health checks — persistent user data, not a cache — so a
+   *  crash mid-write must leave the previous file intact rather than
+   *  truncated. */
   private static writeChecks(checks: CheckConfig[]) {
-    fs.writeFileSync(CHECKS_FILE, JSON.stringify(checks, null, 2));
+    atomicWriteFileSync(CHECKS_FILE, JSON.stringify(checks, null, 2));
     checksCache.entry = null;
   }
 
@@ -158,7 +164,7 @@ export class HealthStore {
   private static writeResults(checkId: string, results: CheckResult[]) {
     const resultFile = path.join(RESULTS_DIR, `${checkId}.json`);
     try {
-      fs.writeFileSync(resultFile, JSON.stringify(results, null, 2));
+      atomicWriteFileSync(resultFile, JSON.stringify(results, null, 2));
       resultsCache.delete(checkId);
     } catch (e) {
       logger.error('HealthStore', `Failed to save result for ${checkId}:`, e);
