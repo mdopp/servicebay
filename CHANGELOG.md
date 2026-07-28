@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.8.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.7.3...servicebay-v5.8.0) (2026-07-28)
+
+
+### Features
+
+* **services:** force-update action to re-pull a service image ([3efe10e](https://github.com/mdopp/servicebay/commit/3efe10eb4c8ec6e452a52b80467596b1929d5d0f)), closes [#2397](https://github.com/mdopp/servicebay/issues/2397)
+
+
+### Bug Fixes
+
+* **autoloop:** confirm the dev-verify flip-back across the restart window ([d09ad95](https://github.com/mdopp/servicebay/commit/d09ad953765630fc61b3a26fa09acc57af11600b)), closes [#2387](https://github.com/mdopp/servicebay/issues/2387)
+* **backend:** refuse LAN access to LLDAP's raw LDAP port via host nftables ([e75f5ca](https://github.com/mdopp/servicebay/commit/e75f5ca6b97677ad934a693ec6ec6f6504158d93)), closes [#2388](https://github.com/mdopp/servicebay/issues/2388)
+* **frontend:** visibility-aware connection status instead of a raw socket boolean ([f00387c](https://github.com/mdopp/servicebay/commit/f00387ce827368356456059c4b1089576ab64790)), closes [#2398](https://github.com/mdopp/servicebay/issues/2398)
+* **health:** attribute domain checks and per-stack diagnose rows to their service ([7fdfe35](https://github.com/mdopp/servicebay/commit/7fdfe35940d02c1dfab89a1764e94a22eb54d5c7)), closes [#2394](https://github.com/mdopp/servicebay/issues/2394)
+* **services:** give the service page one labelled action surface ([9bbc20d](https://github.com/mdopp/servicebay/commit/9bbc20d6a11444291320532bc2cf40fbefa801e5)), closes [#2393](https://github.com/mdopp/servicebay/issues/2393)
+* **services:** point the Logs quick action at a real log view ([f9219f3](https://github.com/mdopp/servicebay/commit/f9219f3f1fd66b623d524da3afe1b143d0113f52)), closes [#2391](https://github.com/mdopp/servicebay/issues/2391)
+* **services:** show the real target node on a service's Settings tab ([d9b4c17](https://github.com/mdopp/servicebay/commit/d9b4c17903fc06bed163b2b7f0db1331d393f96a)), closes [#2392](https://github.com/mdopp/servicebay/issues/2392)
+* **unmanaged:** surface hand-rolled Quadlet units in the unmanaged scan ([90a3eb6](https://github.com/mdopp/servicebay/commit/90a3eb64ed4aec6b92b00a023ee8db903730bd66)), closes [#2395](https://github.com/mdopp/servicebay/issues/2395)
+
 ## [5.7.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.7.2...servicebay-v5.7.3) (2026-07-27)
 
 
