@@ -1,12 +1,13 @@
 import { headers } from 'next/headers';
 import { Settings } from 'lucide-react';
 import ServiceBayLogo from '@/components/ServiceBayLogo';
-import { getConfig, getAdminBaseUrl } from '@/lib/config';
+import { getConfig, getAdminBaseUrl, ConfigReadError, type AppConfig } from '@/lib/config';
 import { buildPortalCards } from '@/lib/portal/services';
 import { isPortalBlockedForRequest } from '@/lib/portal/lanGate';
 import { verifyAutheliaSession } from '@/lib/portal/auth';
 import PortalGrid from './PortalGrid';
 import PortalLanOnlyNotice from './PortalLanOnlyNotice';
+import PortalUnavailableNotice from './PortalUnavailableNotice';
 import PortalLogoutLink from './PortalLogoutLink';
 import PortalUserChip from './PortalUserChip';
 import AccessRequestStatusCTA from './AccessRequestStatusCTA';
@@ -41,7 +42,20 @@ export const dynamic = 'force-dynamic';
  */
 export default async function PortalPage() {
   const hdrs = await headers();
-  const config = await getConfig();
+
+  // #2399 made `getConfig()` throw `ConfigReadError` instead of quietly
+  // returning defaults. This page is anonymous and family-facing, so a
+  // transient read blip must not bubble to the operator-facing app-root
+  // error screen (#2421) — and it must not fall through to rendering the
+  // grid either: without the config we can't tell whether `portalLanOnly`
+  // is on, so listing services would leak them past a closed gate.
+  let config: AppConfig;
+  try {
+    config = await getConfig();
+  } catch (error) {
+    if (!(error instanceof ConfigReadError)) throw error;
+    return <PortalUnavailableNotice />;
+  }
 
   // LAN-only gate (#1456): behind NPM the RSC's TCP peer is always
   // loopback, so passing '127.0.0.1' makes the resolver trust the
