@@ -14,14 +14,23 @@
  * CI without any extra deps beyond what's already in node 20.
  *
  * To recalibrate after a deliberate change, edit the constants at the
- * top of each check and reference the PR/issue that authorized it.
+ * top of each check and reference the PR/issue that authorized it, then run
+ * `npm run check:invariants -- --write-docs` to regenerate the threshold block
+ * in docs/ARCHITECTURE_INVARIANTS.md (drift there is a violation, #2427).
+ *
+ * Two of the checks are *meta* — they guard the gates rather than the code:
+ * `gate-path-resolves` (every path a gate config names must match a real file,
+ * #2379/#2428) and `ci-runs-every-check-script` (every local `check:*` gate
+ * must run in CI, #2429). Both failure modes report green.
  */
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const SRC = path.join(REPO_ROOT, 'packages', 'frontend', 'src');
 const BACKEND_SRC = path.join(REPO_ROOT, 'packages', 'backend', 'src');
+
+const WRITE_DOCS = process.argv.includes('--write-docs');
 
 interface Violation {
     check: string;
@@ -29,6 +38,17 @@ interface Violation {
 }
 
 const violations: Violation[] = [];
+
+/**
+ * Measured-at-HEAD values, printed on every run.
+ *
+ * #2427: these are deliberately NOT written into
+ * docs/ARCHITECTURE_INVARIANTS.md. A measurement stored in a doc is stale the
+ * next time anyone merges — which is exactly how that doc came to assert three
+ * wrong file names / counts. The doc keeps the (generated) thresholds; the
+ * numbers live here, one command away.
+ */
+const measurements: string[] = [];
 
 async function walk(dir: string, filter: (p: string) => boolean): Promise<string[]> {
     const out: string[] = [];
@@ -75,11 +95,15 @@ const isTestFile = (p: string) => /\.test\.(ts|tsx)$/.test(p) || p.includes('/te
 const MAX_FILE_LOC = 2_200;
 
 async function checkFileSize() {
+    let over2000 = 0;
     for (const root of [SRC, BACKEND_SRC]) {
         const files = await walk(root, isTs);
+        let largest = { file: '(none)', loc: 0 };
         for (const file of files) {
             const content = await readFile(file, 'utf-8');
             const loc = content.split('\n').length;
+            if (loc > 2_000) over2000++;
+            if (loc > largest.loc) largest = { file: path.relative(REPO_ROOT, file), loc };
             if (loc > MAX_FILE_LOC) {
                 violations.push({
                     check: 'file-size',
@@ -87,7 +111,11 @@ async function checkFileSize() {
                 });
             }
         }
+        measurements.push(
+            `largest file in ${path.relative(REPO_ROOT, root)}: ${largest.file} (${largest.loc} LOC, max ${MAX_FILE_LOC})`,
+        );
     }
+    measurements.push(`files over 2,000 LOC: ${over2000}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +147,13 @@ async function checkSecurityAnyBudget() {
             const s = await stat(abs);
             files = s.isDirectory() ? await walk(abs, isTs) : [abs];
         } catch {
+            // #2428: a listed security path that does not resolve is a
+            // VIOLATION, not a silent skip — the pre-#2379 `continue` here is
+            // exactly how this gate measured zero files while reporting green.
+            violations.push({
+                check: 'security-as-any-budget',
+                detail: `${target} is listed in SECURITY_PATHS but does not exist — repoint it (do not drop it).`,
+            });
             continue;
         }
         for (const file of files) {
@@ -131,6 +166,7 @@ async function checkSecurityAnyBudget() {
             }
         }
     }
+    measurements.push(`\`as any\` in security paths: ${count} (budget ${SECURITY_AS_ANY_BUDGET})`);
     if (count > SECURITY_AS_ANY_BUDGET) {
         violations.push({
             check: 'security-as-any-budget',
@@ -182,6 +218,7 @@ async function checkBackendAnyBudget() {
             offenders.push(`${rel} (${hits})`);
         }
     }
+    measurements.push(`\`as any\` in packages/backend/src outside security paths: ${count} (budget ${BACKEND_AS_ANY_BUDGET})`);
     if (count > BACKEND_AS_ANY_BUDGET) {
         violations.push({
             check: 'backend-as-any-budget',
@@ -197,11 +234,21 @@ async function checkBackendAnyBudget() {
 // literals with ${...} are the shell-injection foot-gun documented in the
 // audit. Ratcheted to 0 in #602 — every previous offender swept; the
 // ESLint rule is now `error` everywhere.
+//
+// #2428: this walked `SRC` (the frontend) only, while essentially every
+// `executor.exec` call site in the repo lives under `packages/backend/src`.
+// The #2379 sweep repointed the other aggregate checks at both roots and
+// missed this one — so the check `.semgrep.yml` names as "the single source of
+// truth" for the aggregate count scanned none of the code it exists to guard.
+// Both roots now, like `checkFileSize` / `checkTwinFanIn`.
 // ---------------------------------------------------------------------------
 const EXEC_TEMPLATE_LITERAL_MAX = 0;
 
 async function checkExecTemplateLiterals() {
-    const files = await walk(SRC, isTs);
+    const files = [
+        ...await walk(SRC, isTs),
+        ...await walk(BACKEND_SRC, isTs),
+    ];
     let count = 0;
     const offenders: string[] = [];
     for (const file of files) {
@@ -216,6 +263,10 @@ async function checkExecTemplateLiterals() {
             offenders.push(`${path.relative(REPO_ROOT, file)} (${hits})`);
         }
     }
+    measurements.push(
+        `executor.exec template-literal call sites: ${count} across ${files.length} files in ` +
+        `${[SRC, BACKEND_SRC].map(r => path.relative(REPO_ROOT, r)).join(' + ')} (max ${EXEC_TEMPLATE_LITERAL_MAX})`,
+    );
     if (count > EXEC_TEMPLATE_LITERAL_MAX) {
         violations.push({
             check: 'exec-template-literal',
@@ -249,6 +300,10 @@ async function checkWithApiHandlerAdoption() {
         if (/\bwithApiHandler(Params)?\s*[<(]/.test(content)) adopted++;
     }
     const ratio = adopted / routeFiles.length;
+    measurements.push(
+        `withApiHandler adoption: ${adopted}/${routeFiles.length} route.ts files ` +
+        `(${(ratio * 100).toFixed(1)}%, floor ${(MIN_WITH_API_HANDLER_RATIO * 100).toFixed(0)}%)`,
+    );
     if (ratio < MIN_WITH_API_HANDLER_RATIO) {
         violations.push({
             check: 'with-api-handler-adoption',
@@ -260,9 +315,9 @@ async function checkWithApiHandlerAdoption() {
 // ---------------------------------------------------------------------------
 // 5. Singleton fan-in to DigitalTwinStore.
 //
-// 35 direct getInstance() consumers today. Architecture audit ARCH-05ff
-// flags that this should go through a reader API. Ratcheted to 0 now that
-// all Next.js route call-sites use repository.ts selectors (#841, #842).
+// Architecture audit ARCH-05ff flags that reads should go through a reader
+// API. Ratcheted to 0 now that all Next.js route call-sites use repository.ts
+// selectors (#841, #842) — the run prints the measured count.
 //
 // Scans both `src/` (Next.js routes / pages / components) and
 // `packages/backend/src/` (extracted backend library). The store itself
@@ -291,6 +346,7 @@ async function checkTwinFanIn() {
         const hits = content.match(/\bDigitalTwinStore\.getInstance\(\)/g)?.length ?? 0;
         count += hits;
     }
+    measurements.push(`DigitalTwinStore.getInstance() call sites: ${count} (max ${TWIN_GETINSTANCE_MAX})`);
     if (count > TWIN_GETINSTANCE_MAX) {
         violations.push({
             check: 'twin-singleton-fan-in',
@@ -363,12 +419,323 @@ async function checkDurableStateAtomicWrites() {
             }
         }
     }
+    measurements.push(
+        `bare fs.writeFile/writeFileSync in the ${DURABLE_STATE_MODULES.length} durable-state modules: ` +
+        `${count} (budget ${DURABLE_STATE_BARE_WRITE_BUDGET})`,
+    );
     if (count > DURABLE_STATE_BARE_WRITE_BUDGET) {
         violations.push({
             check: 'durable-state-atomic-write',
             detail: `${count} bare fs.writeFile/writeFileSync call(s) in durable-state modules (budget ${DURABLE_STATE_BARE_WRITE_BUDGET}). Use atomicWriteFile / atomicWriteFileSync from packages/backend/src/lib/util/atomicWrite.ts — a bare write truncates the file a crash lands in. Offenders: ${offenders.join(', ')}`,
         });
     }
+}
+
+// ---------------------------------------------------------------------------
+// 7. Every path a gate config names must resolve to a non-empty file set.
+//
+// This is the regression guard for the whole class of bug behind #2379 and
+// #2428: a quality gate whose paths point at a tree that no longer exists
+// scans nothing, finds nothing, and reports GREEN. The green is
+// indistinguishable from a real pass — the failure mode is invisible by
+// construction, which is why it survived a workspace split, a postmortem,
+// and a follow-up sweep.
+//
+// Covered here:
+//   - every glob under a `paths:` block in `.semgrep.yml`
+//   - the depcruise roots passed on the `check:deps` command line
+// `SECURITY_PATHS` and `DURABLE_STATE_MODULES` carry the same assertion inside
+// their own checks (a listed path that does not resolve is a violation there).
+//
+// Glob semantics deliberately follow gitignore / Semgrepignore v2 — the
+// interpretation semgrep is migrating to, and the one that makes
+// `src/lib/systemBackup.ts` (anchored at the repo root) resolve to nothing.
+// Matching the FUTURE semantics is the point: a path that only works under
+// semgrep's legacy unanchored matching is already broken, it just hasn't
+// been told yet.
+// ---------------------------------------------------------------------------
+
+/** Paths that name a real but untracked directory — never walked, always present. */
+const GATE_PATH_EXEMPT = new Set(['node_modules/']);
+
+const REPO_SKIP_DIRS = new Set([
+    'node_modules', '.git', '.next', 'dist', 'dist-server', 'coverage', 'out',
+]);
+
+/** Every repo-relative file path, minus build output and vendored trees. */
+async function walkRepoFiles(dir: string, out: string[] = []): Promise<string[]> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+            if (REPO_SKIP_DIRS.has(entry.name) || entry.name.endsWith('-worktree')) continue;
+            await walkRepoFiles(full, out);
+        } else if (entry.isFile()) {
+            out.push(path.relative(REPO_ROOT, full));
+        }
+    }
+    return out;
+}
+
+/**
+ * gitignore-style glob → RegExp over repo-relative paths.
+ *
+ * - a trailing `/` means "directory" (match anything beneath it)
+ * - a `/` anywhere else anchors the pattern at the repo root
+ * - a pattern with no `/` matches at any depth
+ * - `*` / `?` do not cross `/`; `**` does
+ */
+export function gateGlobToRegExp(glob: string): RegExp {
+    let g = glob.trim();
+    const dirOnly = g.endsWith('/');
+    if (dirOnly) g = g.slice(0, -1);
+    const rooted = g.startsWith('/');
+    if (rooted) g = g.slice(1);
+    const anchored = rooted || g.includes('/');
+    let re = '';
+    for (let i = 0; i < g.length; i++) {
+        const c = g[i];
+        if (c === '*' && g[i + 1] === '*') {
+            i++;
+            if (g[i + 1] === '/') {
+                i++;
+                re += '(?:.*/)?';
+            } else {
+                re += '.*';
+            }
+        } else if (c === '*') {
+            re += '[^/]*';
+        } else if (c === '?') {
+            re += '[^/]';
+        } else {
+            re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+        }
+    }
+    return new RegExp(`${anchored ? '^' : '(?:^|.*/)'}${re}${dirOnly ? '/' : '(?:$|/)'}`);
+}
+
+interface GateGlob {
+    source: string;
+    label: string;
+    glob: string;
+}
+
+/**
+ * Pull every glob under a `paths:` block out of `.semgrep.yml`.
+ *
+ * Line-based on purpose — the house rule is `node:`-only scripts with no new
+ * dependency, and this file is ours (stable 4-space indentation, no anchors,
+ * no flow-style sequences).
+ */
+export function extractSemgrepPathGlobs(yaml: string): GateGlob[] {
+    const out: GateGlob[] = [];
+    let rule = '(top-level)';
+    let pathsIndent = -1;
+    let kind: string | null = null;
+    for (const raw of yaml.split('\n')) {
+        if (!raw.trim() || raw.trimStart().startsWith('#')) continue;
+        const indent = raw.length - raw.trimStart().length;
+        const id = /^\s*-?\s*id:\s*(\S+)/.exec(raw);
+        if (id) rule = id[1];
+        if (pathsIndent >= 0 && indent <= pathsIndent) {
+            pathsIndent = -1;
+            kind = null;
+        }
+        if (/^\s*paths:\s*$/.test(raw)) {
+            pathsIndent = indent;
+            kind = null;
+            continue;
+        }
+        if (pathsIndent < 0) continue;
+        const k = /^\s*(include|exclude):\s*$/.exec(raw);
+        if (k) {
+            kind = k[1];
+            continue;
+        }
+        const item = /^\s*-\s*(.+?)\s*$/.exec(raw);
+        if (item && kind) {
+            out.push({
+                source: '.semgrep.yml',
+                label: `${rule} paths.${kind}`,
+                glob: item[1].replace(/^['"]|['"]$/g, ''),
+            });
+        }
+    }
+    return out;
+}
+
+/** The positional roots `check:deps` hands depcruise (everything after `--config <file>`). */
+export function extractDepcruiseRoots(script: string): string[] {
+    const tokens = script.trim().split(/\s+/);
+    const roots: string[] = [];
+    for (let i = 1; i < tokens.length; i++) {
+        if (tokens[i] === '--config') {
+            i++;
+            continue;
+        }
+        if (tokens[i].startsWith('-')) continue;
+        roots.push(tokens[i]);
+    }
+    return roots;
+}
+
+async function checkGatePathsResolve() {
+    const files = await walkRepoFiles(REPO_ROOT);
+    const pkg = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf-8')) as {
+        scripts: Record<string, string>;
+    };
+
+    const globs: GateGlob[] = [
+        ...extractSemgrepPathGlobs(await readFile(path.join(REPO_ROOT, '.semgrep.yml'), 'utf-8')),
+        ...extractDepcruiseRoots(pkg.scripts['check:deps'] ?? '').map(root => ({
+            source: 'package.json',
+            label: 'check:deps root',
+            glob: root.endsWith('/') ? root : `${root}/`,
+        })),
+    ];
+
+    for (const g of globs) {
+        if (GATE_PATH_EXEMPT.has(g.glob)) continue;
+        const re = gateGlobToRegExp(g.glob);
+        if (files.some(f => re.test(f))) continue;
+        violations.push({
+            check: 'gate-path-resolves',
+            detail: `${g.source} — ${g.label}: \`${g.glob}\` matches no tracked file. A gate that scans nothing passes vacuously (#2379, #2428). Repoint it at the current tree, or delete the entry if it is genuinely obsolete.`,
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. Every local `check:*` gate runs in CI.
+//
+// #2429: `check:arch` is the documented "run everything" gate and chains
+// invariants → backup-coverage → deps. CI reimplemented that chain as separate
+// jobs and dropped the middle one, so `check:backup-coverage` — the only gate
+// between "a template ships a new persistent volume" and "the box loses that
+// data on a disk-loss reinstall" — passed locally and ran nowhere that gates a
+// merge. Symmetric to check 7: there, a gate scans nothing; here, a gate runs
+// nowhere. Both look green.
+//
+// An aggregator (`check:arch`) is satisfied when every `npm run` it chains is
+// itself covered — CI is free to run the members as parallel jobs instead of
+// the chain.
+// ---------------------------------------------------------------------------
+const WORKFLOW_DIR = path.join(REPO_ROOT, '.github', 'workflows');
+
+async function checkCiRunsEveryCheckScript() {
+    const pkg = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf-8')) as {
+        scripts: Record<string, string>;
+    };
+    const scripts = pkg.scripts ?? {};
+
+    const workflowFiles = (await readdir(WORKFLOW_DIR)).filter(f => /\.ya?ml$/.test(f));
+    const workflowText = (
+        await Promise.all(workflowFiles.map(f => readFile(path.join(WORKFLOW_DIR, f), 'utf-8')))
+    ).join('\n');
+
+    const runsInCi = (name: string) => new RegExp(`npm run ${name.replace(/[:]/g, '[:]')}(?![\\w:-])`).test(workflowText);
+
+    const satisfied = (name: string, depth = 0): boolean => {
+        if (runsInCi(name)) return true;
+        if (depth > 2) return false;
+        const members = [...(scripts[name] ?? '').matchAll(/npm run ([\w:-]+)/g)].map(m => m[1]);
+        return members.length > 0 && members.every(m => satisfied(m, depth + 1));
+    };
+
+    for (const name of Object.keys(scripts)) {
+        if (!name.startsWith('check:')) continue;
+        if (satisfied(name)) continue;
+        violations.push({
+            check: 'ci-runs-every-check-script',
+            detail: `package.json script \`${name}\` is never run under .github/workflows/ — a local-only gate is a gate that does not gate. Add it to a CI job (or chain it from one that already runs).`,
+        });
+    }
+
+    // The reverse drift: a workflow that invokes a script the manifest no
+    // longer defines fails the job at run time, not at review time.
+    for (const [, name] of workflowText.matchAll(/npm run ([\w:-]+)/g)) {
+        if (scripts[name]) continue;
+        violations.push({
+            check: 'ci-runs-every-check-script',
+            detail: `.github/workflows/ runs \`npm run ${name}\`, which is not a script in package.json.`,
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 9. docs/ARCHITECTURE_INVARIANTS.md's numbers are generated, not typed.
+//
+// #2427: the doc carried a hand-maintained measurement table ("largest backend
+// file is lib/network/service.ts at 2,046 LOC", "files > 2,000 LOC: 2", the
+// twin fan-in threshold as "35/40" when the enforced constant was 0). Nothing
+// verified any of it, so it drifted on any normal day of merges and an agent
+// orienting from it got false statements about the code.
+//
+// The fix is structural, not a re-type: the doc's THRESHOLDS are generated from
+// the constants above, and drift is a build failure. Regenerate with
+// `npm run check:invariants -- --write-docs`.
+//
+// The MEASURED values are deliberately not written to the doc at all — they
+// change with every merge, so any file that stores them is stale by
+// construction. `npm run check:invariants` prints them instead.
+// ---------------------------------------------------------------------------
+const INVARIANTS_DOC = path.join(REPO_ROOT, 'docs', 'ARCHITECTURE_INVARIANTS.md');
+const DOC_BEGIN = '<!-- BEGIN GENERATED: thresholds — do not edit by hand -->';
+const DOC_END = '<!-- END GENERATED: thresholds -->';
+
+function renderThresholdBlock(): string {
+    const rows: [string, string, string][] = [
+        ['Max file LOC (each source root)', 'MAX_FILE_LOC', MAX_FILE_LOC.toLocaleString('en-US')],
+        ['`as any` in security paths', 'SECURITY_AS_ANY_BUDGET', String(SECURITY_AS_ANY_BUDGET)],
+        ['`as any` in `packages/backend/src` outside security paths', 'BACKEND_AS_ANY_BUDGET', String(BACKEND_AS_ANY_BUDGET)],
+        ['`executor.exec` template-literal call sites', 'EXEC_TEMPLATE_LITERAL_MAX', String(EXEC_TEMPLATE_LITERAL_MAX)],
+        ['`withApiHandler` adoption across `route.ts` files', 'MIN_WITH_API_HANDLER_RATIO', `${(MIN_WITH_API_HANDLER_RATIO * 100).toFixed(0)}%`],
+        ['`DigitalTwinStore.getInstance()` call sites', 'TWIN_GETINSTANCE_MAX', String(TWIN_GETINSTANCE_MAX)],
+        ['Bare `fs.writeFile`/`writeFileSync` in durable-state modules', 'DURABLE_STATE_BARE_WRITE_BUDGET', String(DURABLE_STATE_BARE_WRITE_BUDGET)],
+    ];
+    const lines = [
+        DOC_BEGIN,
+        '',
+        '| Invariant | Constant in `scripts/check-invariants.ts` | Threshold |',
+        '|---|---|---:|',
+        ...rows.map(([what, constant, value]) => `| ${what} | \`${constant}\` | ${value} |`),
+        '',
+        `Source roots walked: ${[SRC, BACKEND_SRC].map(r => `\`${path.relative(REPO_ROOT, r)}\``).join(', ')}.`,
+        '',
+        `Security paths (\`SECURITY_PATHS\`): ${SECURITY_PATHS.map(p => `\`${p}\``).join(', ')}.`,
+        '',
+        `Durable-state modules (\`DURABLE_STATE_MODULES\`): ${DURABLE_STATE_MODULES.map(p => `\`${p}\``).join(', ')}.`,
+        '',
+        '_Generated from the constants — run `npm run check:invariants -- --write-docs` after changing one. For the **measured** values at HEAD run `npm run check:invariants`: they are deliberately not stored here, because a hand-maintained measurement table is stale the next time anyone merges (#2427)._',
+        '',
+        DOC_END,
+    ];
+    return lines.join('\n');
+}
+
+async function syncOrCheckThresholdDoc() {
+    const doc = await readFile(INVARIANTS_DOC, 'utf-8');
+    const start = doc.indexOf(DOC_BEGIN);
+    const end = doc.indexOf(DOC_END);
+    if (start < 0 || end < 0) {
+        violations.push({
+            check: 'invariants-doc-generated-block',
+            detail: `docs/ARCHITECTURE_INVARIANTS.md is missing the generated threshold markers (${DOC_BEGIN} … ${DOC_END}).`,
+        });
+        return;
+    }
+    const current = doc.slice(start, end + DOC_END.length);
+    const expected = renderThresholdBlock();
+    if (current === expected) return;
+    if (WRITE_DOCS) {
+        await writeFile(INVARIANTS_DOC, doc.slice(0, start) + expected + doc.slice(end + DOC_END.length), 'utf-8');
+        console.log('Rewrote the generated threshold block in docs/ARCHITECTURE_INVARIANTS.md.');
+        return;
+    }
+    violations.push({
+        check: 'invariants-doc-generated-block',
+        detail: 'docs/ARCHITECTURE_INVARIANTS.md\'s generated threshold block is out of date with the constants in scripts/check-invariants.ts. Run `npm run check:invariants -- --write-docs`.',
+    });
 }
 
 // Retired in Phase 3.3 (#764). The three FE↔BE ratchet counts
@@ -390,7 +757,16 @@ async function main() {
         checkWithApiHandlerAdoption(),
         checkTwinFanIn(),
         checkDurableStateAtomicWrites(),
+        checkGatePathsResolve(),
+        checkCiRunsEveryCheckScript(),
+        syncOrCheckThresholdDoc(),
     ]);
+
+    // #2427: the measured values are printed, never stored. The doc keeps the
+    // generated thresholds; anything that changes on a normal merge lives here.
+    console.log('Architecture invariants — measured at HEAD:');
+    for (const m of measurements.sort()) console.log(`  · ${m}`);
+    console.log('');
 
     if (violations.length === 0) {
         console.log('Architecture invariants: all checks passed.');
@@ -405,7 +781,13 @@ async function main() {
     process.exit(1);
 }
 
-main().catch(err => {
-    console.error('check-invariants crashed:', err);
-    process.exit(2);
-});
+// Run only when invoked as the CLI. `gateGlobToRegExp` /
+// `extractSemgrepPathGlobs` / `extractDepcruiseRoots` are imported by
+// tests/scripts/gate-config-truth.test.ts, which must not trigger a full run
+// (and a `process.exit`) just by importing them.
+if (/check-invariants\.ts$/.test(process.argv[1] ?? '')) {
+    main().catch(err => {
+        console.error('check-invariants crashed:', err);
+        process.exit(2);
+    });
+}
