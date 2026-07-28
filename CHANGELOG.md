@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.7.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.7.2...servicebay-v5.7.3) (2026-07-27)
+
+
+### Bug Fixes
+
+* **auth:** bind LLDAP web UI to loopback so it isn't LAN-exposed ([56ddc21](https://github.com/mdopp/servicebay/commit/56ddc21ac7814d82b24286cb3405791165f19989)), closes [#2380](https://github.com/mdopp/servicebay/issues/2380)
+* **templates:** auth — loopback-bind LLDAP web UI, close hostNetwork exposure ([#2380](https://github.com/mdopp/servicebay/issues/2380)) ([b2eb6ec](https://github.com/mdopp/servicebay/commit/b2eb6ec7373eaad87afa23ec8efb6a67642652dd))
+
 ## [5.7.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.7.1...servicebay-v5.7.2) (2026-07-27)
 
 
