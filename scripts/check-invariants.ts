@@ -299,6 +299,78 @@ async function checkTwinFanIn() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 6. Durable-state files are written atomically.
+//
+// `config.json` and `checks.json` under DATA_DIR are the operator's data, not
+// caches: losing one re-onboards the box or drops every configured health
+// check. A bare `fs.writeFile`/`writeFileSync` truncates the target before the
+// new bytes land, so a power cut / OOM-kill / container stop mid-write leaves
+// the file permanently half-written. `lib/util/atomicWrite.ts` is the only
+// sanctioned way to touch them (tmp → fsync → rename: a crash leaves the
+// ORIGINAL intact).
+//
+// #2414: `config/transformer.ts` — the boot-time normalizer that runs before
+// the first `getConfig()` on every backend start — wrote config.json bare while
+// `config.ts` next door already used `atomicWriteFile`. Two writers, two
+// durability contracts, on the one file whose loss is unrecoverable from the UI.
+// This check is the ratchet that keeps the second writer from coming back.
+//
+// The budget is 0 and the list is forward-only: add a module when it starts
+// owning durable DATA_DIR state; never delete one to make a bare write pass.
+// `lib/util/atomicWrite.ts` is deliberately absent — it IS the primitive, and
+// its own `writeFileSync` is the fsync'd temp-file write.
+// ---------------------------------------------------------------------------
+const DURABLE_STATE_MODULES = [
+    'packages/backend/src/lib/config.ts',
+    'packages/backend/src/lib/config/transformer.ts',
+    'packages/backend/src/lib/health/store.ts',
+];
+const DURABLE_STATE_BARE_WRITE_BUDGET = 0;
+
+// `fs.writeFile(` / `fsSync.writeFileSync(` (namespace import) and the bare
+// `writeFile(` / `writeFileSync(` named-import form. The `(?<![.\w])` guard
+// keeps `atomicWriteFile(`, `atomicWriteFileSync(` and `executor.writeFile(`
+// (a remote/agent write, not a local durable-state one) out of the count.
+const BARE_WRITE_RE = /\bfs\w*\.writeFile(?:Sync)?\s*\(|(?<![.\w])writeFile(?:Sync)?\s*\(/g;
+
+async function checkDurableStateAtomicWrites() {
+    let count = 0;
+    const offenders: string[] = [];
+    for (const target of DURABLE_STATE_MODULES) {
+        const abs = path.join(REPO_ROOT, target);
+        let files: string[];
+        try {
+            const s = await stat(abs);
+            files = s.isDirectory() ? await walk(abs, isTs) : [abs];
+        } catch {
+            // Unlike the older checks, a missing entry is a VIOLATION, not a
+            // silent skip (#2379): a moved/renamed module must not quietly
+            // disable its own durability gate.
+            violations.push({
+                check: 'durable-state-atomic-write',
+                detail: `${target} is listed as a durable-state module but does not exist — update DURABLE_STATE_MODULES to its new path (do not drop it).`,
+            });
+            continue;
+        }
+        for (const file of files) {
+            if (isTestFile(file)) continue;
+            const content = await readFile(file, 'utf-8');
+            const hits = content.match(BARE_WRITE_RE)?.length ?? 0;
+            if (hits > 0) {
+                count += hits;
+                offenders.push(`${path.relative(REPO_ROOT, file)} (${hits})`);
+            }
+        }
+    }
+    if (count > DURABLE_STATE_BARE_WRITE_BUDGET) {
+        violations.push({
+            check: 'durable-state-atomic-write',
+            detail: `${count} bare fs.writeFile/writeFileSync call(s) in durable-state modules (budget ${DURABLE_STATE_BARE_WRITE_BUDGET}). Use atomicWriteFile / atomicWriteFileSync from packages/backend/src/lib/util/atomicWrite.ts — a bare write truncates the file a crash lands in. Offenders: ${offenders.join(', ')}`,
+        });
+    }
+}
+
 // Retired in Phase 3.3 (#764). The three FE↔BE ratchet counts
 // (`fe-template-lib-imports`, `fe-backend-imports`, `fe-install-helpers`)
 // became vacuous once Phase 3.2 (#763) moved the FE dirs out of `src/`,
@@ -317,6 +389,7 @@ async function main() {
         checkExecTemplateLiterals(),
         checkWithApiHandlerAdoption(),
         checkTwinFanIn(),
+        checkDurableStateAtomicWrites(),
     ]);
 
     if (violations.length === 0) {

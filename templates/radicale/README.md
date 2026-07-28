@@ -27,7 +27,9 @@ CalDAV/CardDAV clients (DAVx⁵, Thunderbird, iOS, macOS, Outlook) send HTTP Bas
 3. Radicale BIND-DN checks `uid=<username>,ou=people,<base-dn>` against LLDAP
 4. Match → request authorized; user reads/writes their own collections at `/<username>/`
 
-The `[rights] type = owner_only` policy enforces that user X can only see/edit collections at `/X/`. To share a calendar between users, put the principal-collection-set together via the Radicale web UI.
+The `[rights] type = from_file` policy (ruleset at `/config/rights`, written into the pod on every deploy) enforces that user X can only see/edit collections at `/X/` — the same rule the built-in `owner_only` module applies, plus read access to the root collection so `.well-known` discovery works. To share a calendar between users, put the principal-collection-set together via the Radicale web UI.
+
+The one exception in the shipped ruleset: a service account named `solaris` — the household automation account, if you run one — may also read/write exactly two collections under any user, `/<user>/solaris` (calendar) and `/<user>/solaris-contacts` (address book). That is how the automation writes a resident's shared calendar/contacts into their own tree, where they read it as themselves. It cannot touch their other collections or their principal root, and on a box with no such LLDAP user it grants nothing. Edit the `write-config` initContainer in `template.yml` to change the ruleset — a hand-edit on the running pod is wiped on the next re-render.
 
 ## Setup
 

@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { logger } from '../logger';
+import { atomicWriteFile } from '../util/atomicWrite';
 
 interface JsonRecord {
     [key: string]: unknown;
@@ -95,7 +96,11 @@ export class ConfigTransformer {
         }
 
         await this.createBackup();
-        await fs.writeFile(this.configPath, JSON.stringify(configData, null, 2));
+        // Atomic (tmp → fsync → rename): this runs at boot, before the first
+        // getConfig(), on the one file whose loss re-onboards the box. A plain
+        // writeFile interrupted by a power cut / OOM-kill / container stop
+        // truncates config.json permanently (#2414).
+        await atomicWriteFile(this.configPath, JSON.stringify(configData, null, 2));
         logger.info('ConfigTransformer', `Config normalized at ${this.configPath}`);
         return true;
     }

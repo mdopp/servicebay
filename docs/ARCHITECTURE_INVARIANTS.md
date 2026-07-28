@@ -99,6 +99,18 @@ Thresholds are **deliberate decisions**, not aspirational defaults. Two paths:
 
 **Service test gate — 70% diff-coverage floor, ≥85% total target, build-gates-on-tests (#2345).** A ServiceBay *service* (shipped as a template, built in its own repo) is held to the same test discipline the platform holds itself to: the box must never run code that did not pass tests at threshold. A new/changed service must ship a real test suite (Python: `pytest` — unit + TestClient API tests + the SSO-guard check + bad-input-is-4xx-not-500), measure coverage over the app package with **thread/async coverage on** (`concurrency=["thread"]`, or background-job code reads false-low), hold the platform's **70% diff-coverage floor** and target **≥85% total**, and — critically — its **CI must gate image publish on a green test job** (the build/publish job `needs:` the test job; a build-only CI is non-compliant). This is a service-repo standard (enforced in that repo's CI, not in this repo's `check:arch`); it is canonical here so `get_service_standards` and box-verify can hold a service to it. Full checklist: `assists/testing-and-ci-gate.md`.
 
+### Durable state (crash safety)
+
+| Invariant | Current | Threshold | Enforced by |
+|---|---:|---:|---|
+| Bare `fs.writeFile`/`writeFileSync` in durable-state modules | 0 | 0 | `check-invariants.ts:DURABLE_STATE_BARE_WRITE_BUDGET` |
+
+**Durable-state writes are atomic (#2414).** `config.json` and `checks.json` under `DATA_DIR` are the operator's data, not caches: losing `config.json` re-onboards the box (domain, auth and service config gone, wizard opens on a configured box), losing `checks.json` drops every configured health check. A bare `fs.writeFile`/`writeFileSync` truncates the target *before* the new bytes land, so a power cut / OOM-kill / container stop mid-write destroys the file permanently. `packages/backend/src/lib/util/atomicWrite.ts` is the only sanctioned writer — `atomicWriteFile` (async) and `atomicWriteFileSync` (sync twin, for the stores whose public API is sync) both do tmp → fsync → rename, so a crash leaves the *original* intact.
+
+The modules held to this are listed in `DURABLE_STATE_MODULES` (`check-invariants.ts`): `packages/backend/src/lib/config.ts`, `packages/backend/src/lib/config/transformer.ts`, `packages/backend/src/lib/health/store.ts`. The list is repo-relative and **forward-only** — add a module when it starts owning durable `DATA_DIR` state; never delete one to make a bare write pass. Unlike the older path-based checks, a listed path that does **not** resolve is itself a violation, so a move/rename can't silently disable the gate the way the pre-#2379 `SECURITY_PATHS` did. `atomicWrite.ts` is deliberately not on the list — it *is* the primitive. Crash behaviour is proved by fault injection in `tests/backend/durable_write_crash_safety.test.ts` (each survival case is paired with a control that performs the pre-fix truncate-then-partial-write and must destroy the file).
+
+Explicitly out of scope: `health/store.ts` result files and `health/bootState.ts` are caches, cheap to rebuild — `writeResults` rides the atomic helper anyway because it shares the module, `bootState.ts` does not.
+
 ### Security boundaries (pattern enforcement)
 
 Enforced by `.semgrep.yml`. ERROR severity = build-blocking; WARNING = reported only.

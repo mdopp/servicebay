@@ -456,6 +456,160 @@ describe('Auth template: LLDAP HTTP port is loopback-bound (#2380)', () => {
   });
 });
 
+// ─── 3b3. Radicale template: rights ruleset is baked in (#2411) ─────────────
+describe('Radicale template: rights ruleset (#2411)', () => {
+  const radicale = templates.find(t => t.name === 'radicale')!;
+
+  /** Render the pod and return the write-config initContainer's shell script. */
+  const initScript = (): string => {
+    const view: Record<string, string> = {};
+    for (const v of catalogVars) view[v] = `stub-${v.toLowerCase()}`;
+    for (const [name, meta] of Object.entries(radicale.variables)) {
+      if (meta && typeof meta === 'object' && 'default' in meta && typeof meta.default === 'string') {
+        view[name] = meta.default;
+      }
+    }
+    const rendered = Mustache.render(radicale.yamlContent, view);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pod = yaml.loadAll(rendered).find((d: any) => d?.kind === 'Pod') as any;
+    const init = (pod?.spec?.initContainers ?? []).find((c: { name: string }) => c.name === 'write-config');
+    return (init?.args ?? []).join('\n');
+  };
+
+  /** Pull one `cat > <file> <<'EOF' … EOF` heredoc body out of that script. */
+  const heredoc = (file: string): string => {
+    const lines = initScript().split('\n');
+    const start = lines.findIndex(l => l.startsWith(`cat > ${file} <<`));
+    expect(start, `no heredoc writing ${file} in the write-config initContainer`).toBeGreaterThanOrEqual(0);
+    const end = lines.indexOf('EOF', start + 1);
+    expect(end, `unterminated heredoc for ${file}`).toBeGreaterThan(start);
+    return lines.slice(start + 1, end).join('\n');
+  };
+
+  /** Minimal INI parse of a Radicale rights file, preserving section order. */
+  const rules = (): { name: string; user: string; collection: string; permissions: string }[] => {
+    const out: { name: string; user: string; collection: string; permissions: string }[] = [];
+    for (const raw of heredoc('/config/rights').split('\n')) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const section = line.match(/^\[(.+)\]$/);
+      if (section) {
+        out.push({ name: section[1], user: '', collection: '', permissions: '' });
+        continue;
+      }
+      const kv = line.match(/^([a-z]+)\s*:\s*(.*)$/);
+      if (!kv || out.length === 0) continue;
+      const cur = out[out.length - 1];
+      if (kv[1] === 'user') cur.user = kv[2];
+      else if (kv[1] === 'collection') cur.collection = kv[2];
+      else if (kv[1] === 'permissions') cur.permissions = kv[2];
+    }
+    return out;
+  };
+
+  /**
+   * Evaluate the ruleset the way Radicale's `from_file` rights backend does:
+   * fullmatch the `user` pattern against the login, substitute that match's
+   * capture groups into the `collection` pattern's `{N}` placeholders,
+   * fullmatch it against the sanitised path — FIRST matching section wins,
+   * everything else is a 403. `''` means no access.
+   */
+  const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const authorization = (user: string, collectionPath: string): string => {
+    const path = collectionPath.replace(/^\/+|\/+$/g, '');
+    for (const rule of rules()) {
+      const userMatch = new RegExp(`^(?:${rule.user})$`).exec(user);
+      if (!userMatch) continue;
+      const pattern = rule.collection.replace(/\{(\d+)\}/g, (_m, i: string) =>
+        escapeRe(userMatch[Number(i) + 1] ?? ''));
+      if (new RegExp(`^(?:${pattern})$`).test(path)) return rule.permissions;
+    }
+    return '';
+  };
+
+  it('points [rights] at the generated /config/rights file instead of owner_only', () => {
+    // owner_only is a built-in module with no way to express a single
+    // cross-principal exception, so the household sync account had to be
+    // granted by hand on the running pod — where /config is an in-pod
+    // emptyDir, so the next `podman kube play --replace` wiped it.
+    const config = heredoc('/config/config');
+    expect(config).toMatch(/^\[rights\]$/m);
+    expect(config).toMatch(/^type = from_file$/m);
+    expect(config).toMatch(/^file = \/config\/rights$/m);
+    expect(config).not.toMatch(/^type = owner_only$/m);
+  });
+
+  it('seeds /config/rights from the pod manifest, so it survives a re-render', () => {
+    // The whole point of #2411: the ruleset is part of the manifest the
+    // initContainer replays on EVERY deploy. If this heredoc ever moves
+    // back out to a host file or a live patch, the rule silently reverts
+    // the next time AutoUpdate=registry pulls an image.
+    expect(rules().map(r => r.name)).toEqual([
+      'root', 'owner', 'solaris-subcal', 'solaris-contacts',
+    ]);
+    for (const r of rules()) {
+      expect(r.permissions, `section [${r.name}] declares no permissions`).not.toBe('');
+    }
+  });
+
+  it('reproduces owner_only for a normal resident', () => {
+    // [root] + [owner] must be behaviourally equivalent to the module they
+    // replace: read on the root collection (so .well-known discovery still
+    // resolves a principal), full access to your own subtree, nothing else.
+    expect(authorization('mdopp', '/')).toBe('R');
+    expect(authorization('mdopp', '/mdopp/')).toBe('RrWw');
+    expect(authorization('mdopp', '/mdopp/calendar/')).toBe('RrWw');
+    expect(authorization('mdopp', '/mdopp/solaris/')).toBe('RrWw');
+    expect(authorization('mdopp', '/mdopp/solaris-contacts/')).toBe('RrWw');
+    expect(authorization('mdopp', '/mdopp/calendar/event.ics')).toBe('RrWw');
+    // …and no reach into another resident's tree, at any depth.
+    expect(authorization('mdopp', '/alice/')).toBe('');
+    expect(authorization('mdopp', '/alice/calendar/')).toBe('');
+    expect(authorization('alice', '/mdopp/solaris-contacts/')).toBe('');
+  });
+
+  it('lets the solaris account write the shared calendar AND address book', () => {
+    // The address-book half is the fix (#2411): before it, all three
+    // plausible paths failed — /<resident>/solaris-contacts/ 403 (the
+    // calendar rule matches `…/solaris` exactly), /<resident>/solaris/…
+    // 403 (a calendar is a leaf), and /solaris/contacts/ landed in the
+    // service account's own tree, which the resident may not read.
+    expect(authorization('solaris', '/mdopp/solaris/')).toBe('RrWw');
+    expect(authorization('solaris', '/mdopp/solaris-contacts/')).toBe('RrWw');
+    expect(authorization('solaris', '/mdopp/solaris-contacts/card.vcf')).toBe('RrWw');
+    // Lower-case letters are the ones that matter for MKCOL/MKCALENDAR on a
+    // calendar/address-book collection; upper-case covers plain collections.
+    expect(authorization('solaris', '/mdopp/solaris-contacts/')).toContain('w');
+  });
+
+  it('keeps the solaris account out of everything else', () => {
+    // The grant stays two named collections wide. A resident's own
+    // calendars, their principal root, and any other solaris-prefixed name
+    // are all still 403 — which is why this is two explicit sections rather
+    // than a widened `solaris(-[a-z]+)?` pattern.
+    expect(authorization('solaris', '/mdopp/')).toBe('');
+    expect(authorization('solaris', '/mdopp/eb58abcb-1234-5678-9abc-def012345678/')).toBe('');
+    expect(authorization('solaris', '/mdopp/calendar/')).toBe('');
+    expect(authorization('solaris', '/mdopp/contacts/')).toBe('');
+    expect(authorization('solaris', '/mdopp/solaris-secrets/')).toBe('');
+    expect(authorization('solaris', '/alice/')).toBe('');
+    // Its own principal subtree is still its own — via [owner], like anyone.
+    expect(authorization('solaris', '/solaris/')).toBe('RrWw');
+  });
+
+  it('schema-version is bumped to 3 with a CHANGELOG section and a v2-to-v3 migration', () => {
+    expect(radicale.yamlContent).toMatch(/servicebay\.schema-version:\s*"3"/);
+    const changelog = fs.readFileSync(path.join(TEMPLATES_DIR, 'radicale', 'CHANGELOG.md'), 'utf-8');
+    expect(changelog).toMatch(/##\s*v3\b.*\(breaking\)/);
+    const mig = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'radicale', 'migrations', 'v2-to-v3.py'), 'utf-8',
+    );
+    // Config-only hop — no collection may be moved, renamed or deleted.
+    expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);
+    expect(mig).toMatch(/untouched/i);
+  });
+});
+
 // ─── 3c. Media template retires Audiobookshelf for fresh installs (#1725) ───
 describe('Media template: Audiobookshelf retired for fresh installs (#1725)', () => {
   const media = templates.find(t => t.name === 'media')!;
