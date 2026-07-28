@@ -8,7 +8,7 @@
  * headline renders and the cards are real navigation links (href to
  * /services and /status), which is the whole point of the fix.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import OverviewDashboard, { systemStatusView, lastUpdatedView } from './OverviewDashboard';
 import { ToastProvider } from '@/providers/ToastProvider';
@@ -48,14 +48,29 @@ const UP_TO_DATE_STATUS = {
   config: { autoUpdate: { enabled: false, schedule: '' } },
 };
 
+/** An operator who has already saved a window → the #2396 nudge stays hidden. */
+const CONFIGURED_UPDATE_WINDOW = {
+  enabled: true,
+  days: ['Sat'],
+  startTime: '03:00',
+  lengthMinutes: 120,
+  applyTo: { os: true, containers: true, servicebay: false },
+};
+
 /** Route-aware fetch: the consolidated Updates section (#2082) mounts the
  *  ServiceBay updater card (GET /api/system/update) alongside the image-updates
- *  banner, so the mock must answer the updater endpoint with a valid status. */
+ *  banner, so the mock must answer the updater endpoint with a valid status.
+ *  `/api/system/update-window` (the #2396 nudge) is matched FIRST — it is a
+ *  prefix-superset of `/api/system/update` and would otherwise be answered with
+ *  the updater's payload. Default: a configured window, i.e. no nudge. */
 function routedFetch(extra: (url: string) => unknown | undefined) {
   return vi.fn(async (url: string) => {
     const u = typeof url === 'string' ? url : '';
     const override = extra(u);
     if (override !== undefined) return override;
+    if (u.includes('/api/system/update-window')) {
+      return { ok: true, json: async () => ({ window: CONFIGURED_UPDATE_WINDOW }) };
+    }
     if (u.includes('/api/system/update')) {
       return { ok: true, json: async () => UP_TO_DATE_STATUS };
     }
@@ -148,7 +163,9 @@ describe('OverviewDashboard render', () => {
     // AND an image update is pending (the banner's trigger) — both must sit in
     // the single Updates area, each with its button.
     vi.stubGlobal('fetch', routedFetch(url => {
-      if (url.includes('/api/system/update')) {
+      // Guard against `/api/system/update-window` (#2396) — it is a superset of
+      // this prefix and must keep falling through to the routed default.
+      if (url.includes('/api/system/update') && !url.includes('/api/system/update-window')) {
         return {
           ok: true,
           json: async () => ({
@@ -220,6 +237,44 @@ describe('OverviewDashboard render', () => {
     expect(html).not.toMatch(/(border|bg|text)-blue-\d/);
     // Token accent present for the "update available" state.
     expect(html).toMatch(/accent/);
+  });
+
+  it('nudges about per-container auto-update inside the Updates section when no window is set (#2396)', async () => {
+    vi.stubGlobal('fetch', routedFetch(url => {
+      if (url.includes('/api/system/update-window')) {
+        return { ok: true, json: async () => ({ window: null }) };
+      }
+      return undefined;
+    }));
+
+    render(
+      <ToastProvider>
+        <OverviewDashboard />
+      </ToastProvider>,
+    );
+
+    const nudge = await screen.findByText(/not auto-updating yet/i);
+    // It lives in the SAME Updates section as the ServiceBay updater card —
+    // that adjacency is the fix: the two mechanisms are read side by side.
+    const section = nudge.closest('section');
+    expect(section).not.toBeNull();
+    expect(section!.textContent).toMatch(/ServiceBay Updates/);
+    expect(section!.textContent).toMatch(/separate from ServiceBay's own\s+updates/i);
+    // And it points at the one setting that changes it.
+    const link = screen.getByRole('link', { name: /auto-update window/i });
+    expect(link.getAttribute('href')).toBe('/settings/system#update-window');
+  });
+
+  it('shows no auto-update nudge once a window is configured (#2396)', async () => {
+    // Default routedFetch → a saved window.
+    render(
+      <ToastProvider>
+        <OverviewDashboard />
+      </ToastProvider>,
+    );
+    // Wait for the Updates section to settle, then assert the nudge never appears.
+    expect(await screen.findByText(/ServiceBay Updates/)).toBeDefined();
+    await waitFor(() => expect(screen.queryByText(/not auto-updating yet/i)).toBeNull());
   });
 
   it('renders the System-status tile linking to Status→System (#2096) with split disk + Last updated (#2104)', () => {
