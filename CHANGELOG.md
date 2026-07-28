@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.10.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.10.0...servicebay-v5.10.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **backend:** post-deploy scripts run verbatim, not through Mustache ([#2415](https://github.com/mdopp/servicebay/issues/2415)) ([0a5f5e1](https://github.com/mdopp/servicebay/commit/0a5f5e10b2d4657f209534eaed220f701a242dd3))
+* **config:** route durable-state writes through atomicWriteFile ([864618b](https://github.com/mdopp/servicebay/commit/864618b6d1f0aae266fb827fe450ec70e945dd98)), closes [#2414](https://github.com/mdopp/servicebay/issues/2414)
+* **install:** ship post-deploy.py verbatim, never Mustache-rendered ([cd59b7b](https://github.com/mdopp/servicebay/commit/cd59b7bf06148daa317841c5ecd74a0bb5d940a2)), closes [#2415](https://github.com/mdopp/servicebay/issues/2415)
+* **radicale:** bake the rights ruleset into the template, add a solaris address book ([8f52e32](https://github.com/mdopp/servicebay/commit/8f52e32e74443db7983cd580607473d326b16a49)), closes [#2411](https://github.com/mdopp/servicebay/issues/2411)
+* **templates,backend:** radicale rights model + durable-write corruption hardening ([#2411](https://github.com/mdopp/servicebay/issues/2411) [#2414](https://github.com/mdopp/servicebay/issues/2414)) ([33611c6](https://github.com/mdopp/servicebay/commit/33611c6c02e33fc96aa3ab8b35a22f356c08cd67))
+
 ## [5.10.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.9.0...servicebay-v5.10.0) (2026-07-28)
 
 
