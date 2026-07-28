@@ -31,9 +31,28 @@ RUN apt-get update && \
         openssh-client python3-paramiko procps iproute2 ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# Install runtime deps — this rebuilds native modules for Node 20.
+# Install runtime deps — this rebuilds native modules for the container's Node.
 COPY package.json package-lock.json ./
+# Workspace package manifests — `npm ci` against a workspace root needs
+# each member's package.json present so it can resolve their deps too.
+# Without these copies, runtime modules listed in packages/*/package.json
+# (ssh2, better-sqlite3, node-pty, etc. after #767) silently drop out of
+# the image and the custom server crashes on first import (#2422 — the
+# production Dockerfile got this fix, Dockerfile.dev never did).
+COPY packages/api-client/package.json ./packages/api-client/package.json
+COPY packages/backend/package.json ./packages/backend/package.json
+COPY packages/frontend/package.json ./packages/frontend/package.json
+COPY packages/disk-import-worker/package.json ./packages/disk-import-worker/package.json
+COPY packages/backup-worker/package.json ./packages/backup-worker/package.json
 RUN npm ci --omit=dev && npm cache clean --force
+# npm deoptimizes hoisting for some packages (nodemailer today) and leaves
+# them under packages/*/node_modules. dist-server/server.cjs require()s them
+# as externals and node resolves those from /app/node_modules only — it never
+# looks in packages/backend/node_modules. Merge them up (no-clobber, so a
+# hoisted copy always wins), same as the production Dockerfile's runner stage.
+RUN set -e; for d in packages/*/node_modules; do \
+      if [ -d "$d" ]; then cp -rn "$d/." node_modules/; fi; \
+    done
 
 # Pre-built artifacts from the host. `dev-container.sh` ensures these exist.
 COPY packages/frontend/.next ./packages/frontend/.next

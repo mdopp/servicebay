@@ -17,6 +17,9 @@ name: CI
 #   semgrep     — security & coupling patterns (executor.exec template literals,
 #                 tar extraction bypass, eval/Function, SSRF-prone fetches,
 #                 missing withApiHandler)
+#   dev-image   — builds Dockerfile.dev (the `scripts/dev-container.sh` image)
+#                 and smoke-checks that the backend runtime deps load and the
+#                 bundled server boots without a missing-module crash (#2422)
 #
 # ANY failure blocks merge. Adoption-ratio floors and per-file ratchets in the
 # config files mean today's debt passes — new regressions do not.
@@ -340,3 +343,66 @@ jobs:
       # unusable — the exact failure that would break the release build.
       - name: package-lock.json in sync with manifests (strict, matches Docker npm ci)
         run: npm ci --dry-run --no-audit --no-fund
+
+  # Dev-container image build (#2422). Nothing in CI ever built Dockerfile.dev,
+  # so it rotted silently: its `npm ci` copied only the ROOT manifests, the
+  # `workspaces: ["packages/*"]` glob resolved to nothing, and the dev image
+  # shipped without ssh2 / better-sqlite3 / node-pty / nodemailer — every
+  # `scripts/dev-container.sh up` crash-looped on "Cannot find module 'ssh2'".
+  # This job builds the image the same way dev-container.sh does (host build
+  # first, then `docker build -f Dockerfile.dev`) and then asserts the thing
+  # that actually broke: the backend runtime deps resolve inside the image and
+  # the bundled server boots without a missing-module crash. Build-only — the
+  # dev image is never pushed or published.
+  dev-image:
+    runs-on: ubuntu-latest
+    if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Cache node modules
+        id: cache-npm
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+          # Node version is part of the key: native modules (e.g. better-sqlite3)
+          # are compiled against a specific Node ABI. Without it, a cache built on
+          # Node 20 (ABI 115) is reused on Node 22 (ABI 127), causing ERR_DLOPEN_FAILED.
+          key: node-modules-v3-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies
+        if: steps.cache-npm.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
+      # Dockerfile.dev deliberately skips the in-container Next build and copies
+      # prebuilt .next/ + dist-server/ from the build context — scripts/dev-container.sh
+      # runs exactly this on the host before invoking the engine.
+      - name: Host build (.next + dist-server)
+        run: npm run build
+      - name: Build dev image
+        run: docker build -f Dockerfile.dev -t servicebay:dev .
+      # The rot this job exists to catch: these four live in
+      # packages/backend/package.json, not the root manifest, and the bundled
+      # server resolves them from /app/node_modules only.
+      - name: Backend runtime deps load inside the image
+        run: |
+          docker run --rm servicebay:dev node -e \
+            "for (const m of ['better-sqlite3','node-pty','nodemailer','ssh2']) { require(m); console.log('ok', m); }"
+      - name: Bundled server boots without a missing-module crash
+        run: |
+          docker run -d --name sb-dev-smoke \
+            -e AUTH_SECRET=0000000000000000000000000000000000000000000000000000000000000000 \
+            servicebay:dev
+          sleep 25
+          docker logs sb-dev-smoke > boot.log 2>&1 || true
+          docker rm -f sb-dev-smoke > /dev/null || true
+          cat boot.log
+          # Only the missing-module class fails this step. The dev container has
+          # no host sshd to reach in CI, so agent/SSH errors in the log are
+          # expected and must not turn the job red.
+          if grep -qE "Cannot find module|MODULE_NOT_FOUND" boot.log; then
+            echo "::error::dev image boots with a missing module — see log above"
+            exit 1
+          fi
