@@ -16,7 +16,7 @@ import {
 import { logger, type Check, type ServiceViewModel } from '@servicebay/api-client';
 import type { RowStatus } from '@/components/HealthChecks';
 import { useToast } from '@/providers/ToastProvider';
-import { Card, StatusDot, type StatusState } from '@/components/ui';
+import { Card, SectionHeading, StatusDot, type StatusState } from '@/components/ui';
 import { useServiceHealth, overallHealth, serviceBaseName } from './serviceHealth';
 
 const DOT_META: Record<RowStatus, { state: StatusState; label: string; text: string }> = {
@@ -64,6 +64,11 @@ function formatUptime(seconds?: number): string | null {
  * — so there is exactly one source of truth for "what is this service and what
  * can I do with it." A service is the grouping unit
  * (feedback_services_are_the_grouping_unit).
+ *
+ * This is the ONE "act on this service from anywhere" surface (#2393): its row
+ * is a labelled `Quick actions` section like every other section on the page,
+ * and it is the single home of the quick Restart — the Actions tab no longer
+ * duplicates it, it owns the *full* lifecycle/data/danger surface instead.
  */
 export default function ServiceDetailSummary({
   service,
@@ -192,6 +197,11 @@ function SummaryHeader({
 const ACTION_CLS =
   'inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-card border border-border text-text hover:bg-surface-2 transition-colors';
 
+/**
+ * The page's ONE quick-action row (#2393). Labelled with the same
+ * <SectionHeading> every other section on the Operate page uses ("Lifecycle",
+ * "Data", "Configuration", …) instead of the old bare, unlabelled button row.
+ */
 function SummaryActions({
   openUrl,
   logsHref,
@@ -206,26 +216,29 @@ function SummaryActions({
   onRestart: () => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-2">
-      {openUrl && (
-        <a href={openUrl} target="_blank" rel="noopener noreferrer" className={ACTION_CLS}>
-          <ExternalLink size={14} /> Open
-        </a>
-      )}
-      <button type="button" onClick={onRestart} disabled={restarting} className={`${ACTION_CLS} disabled:opacity-60`}>
-        {restarting ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />} Restart
-      </button>
-      {/* Always a real link (right-click / new-tab still work, and the href is
-          the cross-page route to the log view). When the host page owns a log
-          view, the click is handled in place instead of navigating. */}
-      <Link
-        href={logsHref}
-        onClick={onShowLogs && (e => { e.preventDefault(); onShowLogs(); })}
-        className={ACTION_CLS}
-      >
-        <ScrollText size={14} /> Logs
-      </Link>
-    </div>
+    <section className="space-y-2" aria-label="Quick actions">
+      <SectionHeading as="h3">Quick actions</SectionHeading>
+      <div className="flex flex-wrap gap-2">
+        {openUrl && (
+          <a href={openUrl} target="_blank" rel="noopener noreferrer" className={ACTION_CLS}>
+            <ExternalLink size={14} /> Open
+          </a>
+        )}
+        <button type="button" onClick={onRestart} disabled={restarting} className={`${ACTION_CLS} disabled:opacity-60`}>
+          {restarting ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />} Restart
+        </button>
+        {/* Always a real link (right-click / new-tab still work, and the href is
+            the cross-page route to the log view). When the host page owns a log
+            view, the click is handled in place instead of navigating. */}
+        <Link
+          href={logsHref}
+          onClick={onShowLogs && (e => { e.preventDefault(); onShowLogs(); })}
+          className={ACTION_CLS}
+        >
+          <ScrollText size={14} /> Logs
+        </Link>
+      </div>
+    </section>
   );
 }
 

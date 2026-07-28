@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { PlayCircle, Power, RotateCw, RefreshCw, Trash2, DatabaseBackup, Loader2 } from 'lucide-react';
+import { PlayCircle, Power, RefreshCw, Trash2, DatabaseBackup, Loader2 } from 'lucide-react';
 import { logger, type ServiceViewModel } from '@servicebay/api-client';
 import ActionProgressModal from '@/components/ActionProgressModal';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -12,8 +12,14 @@ import { Button, SectionHeading } from '@/components/ui';
 /**
  * Actions tab of a service's Operate page (#1957). The lifecycle controls that
  * used to live behind the Services-dashboard "Actions" modal, co-located with
- * the service's Health and Settings: start / stop / restart / update, back up
- * config to NAS, and delete.
+ * the service's Health and Settings: start / stop / update, back up config to
+ * NAS, and delete.
+ *
+ * Restart deliberately does NOT appear here (#2393). The page header's
+ * "Quick actions" section — rendered on *every* tab, including this one — is
+ * the single home of Restart, so a second copy in this grid was a duplicate of
+ * a control already on screen. This tab owns the actions that have no quick
+ * equivalent.
  */
 export default function OperateActionsTab({
   service,
@@ -30,14 +36,14 @@ export default function OperateActionsTab({
   const baseName = serviceName.replace(/\.(service|scope|socket|timer)$/, '');
   const nodeParam = service.nodeName && service.nodeName !== 'Local' ? service.nodeName : '';
 
-  const [currentAction, setCurrentAction] = useState<'start' | 'stop' | 'restart' | null>(null);
+  const [currentAction, setCurrentAction] = useState<'start' | 'stop' | null>(null);
   const [actionModalOpen, setActionModalOpen] = useState(false);
   const [runningAction, setRunningAction] = useState<string | null>(null);
   const [backingUp, setBackingUp] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteInFlight, setDeleteInFlight] = useState(false);
 
-  const openLifecycle = useCallback((action: 'start' | 'stop' | 'restart') => {
+  const openLifecycle = useCallback((action: 'start' | 'stop') => {
     setCurrentAction(action);
     setActionModalOpen(true);
   }, []);
@@ -117,11 +123,12 @@ export default function OperateActionsTab({
     // that read 'deplaziert'.
     <div className="space-y-6 max-w-xl">
       <section className="space-y-3" aria-label="Lifecycle actions">
-        <SectionHeading as="h3">Lifecycle</SectionHeading>
+        <SectionHeading as="h3" description="Restart lives in Quick actions at the top of this page">
+          Lifecycle
+        </SectionHeading>
         <div className="grid grid-cols-2 gap-2">
           <ActionButton onClick={() => openLifecycle('start')} icon={<PlayCircle size={16} />} label="Start" />
           <ActionButton onClick={() => openLifecycle('stop')} icon={<Power size={16} />} label="Stop" />
-          <ActionButton onClick={() => openLifecycle('restart')} icon={<RotateCw size={16} />} label="Restart" />
           <ActionButton onClick={runUpdate} running={runningAction === 'update'} icon={<RefreshCw size={16} />} label="Update & Restart" />
         </div>
       </section>
@@ -149,8 +156,7 @@ export default function OperateActionsTab({
         actionModalOpen={actionModalOpen}
         onActionClose={() => setActionModalOpen(false)}
         onActionComplete={() => {
-          const past = currentAction === 'stop' ? 'stopped' : currentAction === 'start' ? 'started' : 'restarted';
-          addToast('success', `Service ${past} successfully`);
+          addToast('success', `Service ${currentAction === 'stop' ? 'stopped' : 'started'} successfully`);
         }}
         deleteOpen={deleteOpen}
         deleteInFlight={deleteInFlight}
@@ -175,7 +181,7 @@ function OperateActionModals({
 }: {
   service: ServiceViewModel;
   serviceName: string;
-  currentAction: 'start' | 'stop' | 'restart' | null;
+  currentAction: 'start' | 'stop' | null;
   actionModalOpen: boolean;
   onActionClose: () => void;
   onActionComplete: () => void;

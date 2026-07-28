@@ -128,6 +128,19 @@ describe('ServiceDetailSummary', () => {
     expect(handled).toBe(false); // preventDefault() — no navigation
   });
 
+  it('labels the quick-action row with a SectionHeading like every other section (#2393)', async () => {
+    global.fetch = mockChecks([]);
+    renderSummary(<ServiceDetailSummary service={svc()} />);
+    await waitFor(() => expect(screen.getByText('No health checks for this service.')).toBeDefined());
+
+    const heading = screen.getByRole('heading', { name: 'Quick actions' });
+    expect(heading).toBeDefined();
+    // the actions live inside the labelled section, not in a bare floating row
+    const section = heading.closest('section')!;
+    expect(section.getAttribute('aria-label')).toBe('Quick actions');
+    expect(section.querySelector('button')).not.toBeNull();
+  });
+
   it('Restart POSTs the service action and reports success', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();

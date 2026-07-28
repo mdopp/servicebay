@@ -32,14 +32,23 @@ function svc(over: Partial<ServiceViewModel> = {}): ServiceViewModel {
 describe('OperateActionsTab (#2078 layout)', () => {
   it('renders the lifecycle actions as uniform buttons under section headings', () => {
     render(<OperateActionsTab service={svc()} />);
-    for (const label of ['Start', 'Stop', 'Restart', 'Update & Restart', 'Back up config to NAS']) {
-      // exact name match — 'Restart' must not also match 'Update & Restart'
+    for (const label of ['Start', 'Stop', 'Update & Restart', 'Back up config to NAS']) {
+      // exact name match — 'Update & Restart' must not be matched by 'Restart'
       expect(screen.getByRole('button', { name: label })).toBeDefined();
     }
     // section headings group them (Lifecycle / Data / Danger zone)
     expect(screen.getByText('Lifecycle')).toBeDefined();
     expect(screen.getByText('Data')).toBeDefined();
     expect(screen.getByText('Danger zone')).toBeDefined();
+  });
+
+  it('does not duplicate the summary Quick actions Restart (#2393)', () => {
+    render(<OperateActionsTab service={svc()} />);
+    // The page header's "Quick actions" section owns Restart and is rendered on
+    // every tab, so a second copy here was a duplicate of an on-screen control.
+    expect(screen.queryByRole('button', { name: 'Restart' })).toBeNull();
+    // …and the tab says where it went, rather than silently dropping it.
+    expect(screen.getByText(/Restart lives in Quick actions/)).toBeDefined();
   });
 
   it('renders Delete service as a danger-variant Button (no ad-hoc red box)', () => {
