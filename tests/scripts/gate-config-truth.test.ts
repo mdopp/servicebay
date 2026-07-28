@@ -190,7 +190,11 @@ describe('#2427 — the invariants doc states nothing that is wrong at HEAD', ()
       encoding: 'utf-8',
     })
       .split('\n')
-      .filter(Boolean);
+      .filter(Boolean)
+      // This spec quotes the needle verbatim, so once it was committed
+      // `git grep` started matching the spec itself and the gate went red on
+      // its own text. Drop the self-match; it is an assertion, not an import.
+      .filter(p => p !== 'tests/scripts/gate-config-truth.test.ts');
     expect(mustacheImporters).toEqual([
       'packages/backend/src/lib/template/render.ts',
       'tests/backend/template_consistency.test.ts',
