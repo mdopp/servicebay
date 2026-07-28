@@ -48,6 +48,15 @@ vi.mock('@/lib/logger', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+// #2394 — the enriched rows now resolve per-item findings back to the owning
+// stack via the digital twin. Empty by default (every row stays box-wide, the
+// #2080 behaviour); the attribution test seeds it.
+const twin: { services: unknown[]; containers: unknown[] } = { services: [], containers: [] };
+vi.mock('@/lib/store/repository', () => ({
+  getServices: () => twin.services,
+  getContainers: () => twin.containers,
+}));
+
 import {
   DIAGNOSE_INTERVAL_SECONDS,
   diagnoseCheckId,
@@ -70,6 +79,8 @@ const probe = (over: Partial<DiagnoseProbe>): DiagnoseProbe => ({
 beforeEach(() => {
   store.results.clear();
   runDiagnoseMock.mockReset();
+  twin.services = [];
+  twin.containers = [];
 });
 
 describe('diagnose check ids', () => {
@@ -155,5 +166,59 @@ describe('getDiagnoseChecksEnriched', () => {
 
   it('returns no rows before any diagnose run', () => {
     expect(getDiagnoseChecksEnriched()).toEqual([]);
+  });
+
+  // #2394 — a crash_loop row naming only `media-jellyfin` is the media stack's
+  // problem, so it lands on media's Health tab instead of the generic box-wide
+  // list. A row spanning two stacks (or none) keeps its box-wide home.
+  it('attributes a single-stack crash_loop row to its owning service', async () => {
+    twin.services = [{ name: 'media.service' }];
+    twin.containers = [{ id: 'c1', names: ['media-jellyfin'], labels: { PODMAN_SYSTEMD_UNIT: 'media.service' } }];
+    runDiagnoseMock.mockResolvedValue({
+      node: 'Local',
+      probes: [probe({
+        id: 'crash_loop',
+        status: 'warn',
+        label: 'Containers stable',
+        detail: '1 of 6 container(s) may be in a restart loop.',
+        items: [{ id: 'media-jellyfin', label: 'media-jellyfin', detail: 'Restarting', status: 'warn' }],
+      } as Partial<DiagnoseProbe>)],
+    });
+    await runDiagnoseChecks('Local');
+
+    const row = getDiagnoseChecksEnriched()[0];
+    expect(row.serviceName).toBe('media');
+    expect(row.boxWide).toBe(false);
+  });
+
+  it('keeps a node-level diagnose row box-wide and unattributed', async () => {
+    twin.services = [{ name: 'media.service' }, { name: 'paperless.service' }];
+    twin.containers = [
+      { id: 'c1', names: ['media-jellyfin'], labels: { PODMAN_SYSTEMD_UNIT: 'media.service' } },
+      { id: 'c2', names: ['paperless-web'], labels: { PODMAN_SYSTEMD_UNIT: 'paperless.service' } },
+    ];
+    runDiagnoseMock.mockResolvedValue({
+      node: 'Local',
+      probes: [
+        // two stacks affected → box-level story
+        probe({
+          id: 'crash_loop',
+          status: 'warn',
+          label: 'Containers stable',
+          detail: '2 looping',
+          items: [{ id: 'media-jellyfin', label: 'a' }, { id: 'paperless-web', label: 'b' }],
+        } as Partial<DiagnoseProbe>),
+        // genuinely platform-level: DNS/TLS infra is never attributed
+        probe({ id: 'dns_routing', status: 'fail', label: 'DNS routing', detail: 'broken' }),
+      ],
+    });
+    await runDiagnoseChecks('Local');
+
+    const rows = getDiagnoseChecksEnriched();
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.boxWide).toBe(true);
+      expect(row.serviceName).toBeUndefined();
+    }
   });
 });

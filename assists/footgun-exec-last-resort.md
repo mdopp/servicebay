@@ -38,7 +38,11 @@ Consult this read-alternatives map before you type an exec call:
 
 Lifecycle actions have a dedicated tool too — start / stop / restart a service
 with `manage_service(action="start"|"stop"|"restart")`, never
-`exec_command systemctl …`.
+`exec_command systemctl …`. Rolling a new image onto a running service is a
+lifecycle action as well: `manage_service(action="force-update")` re-checks the
+registry, re-pulls, recreates the containers and reports the digests — use it
+instead of `exec_command podman pull …` + a restart (see the
+`recipe-roll-new-image-to-running-service` assist).
 
 Only use `exec_command` / `container_exec` when **no** dedicated/read tool covers
 the task (binary/huge files, or a genuine host/in-container action). `read_file`

@@ -9,12 +9,10 @@
  *   - the **registry** digest: what the registry currently publishes for that
  *     same tag, read from `podman manifest inspect <image>`.
  *
- * The registry side intentionally REUSES updater.ts's `extractImageDigest`
- * (the multi-arch manifest-list → linux/amd64 digest extraction) and the same
- * `podman manifest inspect` convention, generalised here from the hard-coded
- * `:latest` ServiceBay image to an arbitrary image ref. `extractImageDigest`
- * applies equally to the single-image `podman inspect` document (it falls back
- * to the config/`Digest` field), so both sides share one parser.
+ * Both reads (in `podmanDigest.ts`, re-exported here) REUSE updater.ts's
+ * `extractImageDigest` — the multi-arch manifest-list → linux/amd64 extraction
+ * — generalised from the hard-coded `:latest` ServiceBay image to an arbitrary
+ * image ref on an arbitrary node.
  *
  * A null digest on either side means "unknown" (registry unreachable, image
  * not pulled, podman error). We never treat unknown as "no update" with a
@@ -22,14 +20,26 @@
  * `true` when both digests are known AND differ (memory
  * feedback_dont_mask_failures).
  */
-import { getExecutor } from '@/lib/executor';
 import { getConfig } from '@/lib/config';
 import { getTemplateYaml } from '@/lib/registry';
 import { collectImagesToPull } from '@/lib/install/runner';
-import { extractImageDigest } from '@/lib/updater';
+import {
+  getRegistryImageDigest,
+  getRunningImageDigest,
+  isUpdateAvailable,
+} from '@/lib/podmanDigest';
 import { logger } from '@/lib/logger';
 
-const INSPECT_TIMEOUT_MS = 30 * 1000;
+// The two digest reads + the comparison rule live in the leaf module
+// `podmanDigest.ts`: the service layer (services/forceUpdate.ts, #2397) must be
+// able to read digests, and importing THIS module from there closed a
+// dependency cycle through the install runner below. Re-exported so every
+// existing importer of `@/lib/imageDigest` keeps working unchanged.
+export {
+  getRegistryImageDigest,
+  getRunningImageDigest,
+  isUpdateAvailable,
+} from '@/lib/podmanDigest';
 
 /**
  * Throttle knobs for the installed-services fan-out (#1952, the "lighter, just
@@ -83,61 +93,6 @@ export interface ServiceImageUpdate {
   registryDigest: string | null;
   /** True iff both digests are known and differ. Unknown → false, never crash. */
   updateAvailable: boolean;
-}
-
-/**
- * The single comparison rule. An update is available only when we know BOTH
- * digests and they differ. A missing/unknown digest on either side is NOT an
- * update (we can't prove a change) — exported so the unit tests can cover the
- * running==registry / differ / missing cases without any podman.
- */
-export function isUpdateAvailable(
-  runningDigest: string | null | undefined,
-  registryDigest: string | null | undefined,
-): boolean {
-  if (!runningDigest || !registryDigest) return false;
-  return runningDigest !== registryDigest;
-}
-
-/**
- * Resolve the digest the **registry** currently serves for `image`. Mirrors
- * updater.ts's `getRemoteImageDigest` (same `podman manifest inspect` +
- * `extractImageDigest`), generalised to an arbitrary image ref. Cheap: the
- * manifest is a few KB, not the layers. Returns null on any error — callers
- * treat null as "unknown", never "unchanged".
- */
-export async function getRegistryImageDigest(image: string): Promise<string | null> {
-  try {
-    const executor = getExecutor('Local');
-    const { stdout } = await executor.execArgv(['podman', 'manifest', 'inspect', image], {
-      timeoutMs: INSPECT_TIMEOUT_MS,
-    });
-    return extractImageDigest(JSON.parse(stdout));
-  } catch (e) {
-    logger.warn('imageDigest', `getRegistryImageDigest(${image}) failed: ${e instanceof Error ? e.message : String(e)}`);
-    return null;
-  }
-}
-
-/**
- * Resolve the digest of the locally-pulled image the service is **running**,
- * via `podman inspect <image>`. `extractImageDigest` reads the single-image
- * inspect document's config/`Digest` field. Returns null on any error.
- */
-export async function getRunningImageDigest(image: string): Promise<string | null> {
-  try {
-    const executor = getExecutor('Local');
-    const { stdout } = await executor.execArgv(['podman', 'inspect', image], {
-      timeoutMs: INSPECT_TIMEOUT_MS,
-    });
-    const parsed = JSON.parse(stdout);
-    // `podman inspect` returns an array (one entry per matched object).
-    const doc = Array.isArray(parsed) ? parsed[0] : parsed;
-    return extractImageDigest(doc);
-  } catch (e) {
-    logger.warn('imageDigest', `getRunningImageDigest(${image}) failed: ${e instanceof Error ? e.message : String(e)}`);
-    return null;
-  }
 }
 
 /**

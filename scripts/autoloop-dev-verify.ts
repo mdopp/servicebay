@@ -10,7 +10,7 @@
  * the probes throw, hang, or the agent dies (CLAUDE.md "Deterministic → scripts;
  * LLMs coordinate + evaluate").
  *
- *   tsx scripts/autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900]
+ *   tsx scripts/autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900] [--flipback-timeout 900]
  *
  * The probe script runs while the box is on `:dev @ <sha>`; its stdout/stderr +
  * exit code are captured and returned. Emits one machine-readable last line:
@@ -71,13 +71,129 @@ async function waitForDevImage(sha: string, timeoutSec: number): Promise<boolean
   return false;
 }
 
+// ---------- flip-back confirmation (#2387) ----------
+
+/** Box I/O the flip-back confirmation needs, injected so the retry/tolerance
+ *  logic is unit-testable without a real box. Mirrors the `autoloop-box`
+ *  helpers of the same names. */
+export interface FlipBackDeps {
+  setChannel: (target: 'latest') => Promise<void>;
+  waitHealth: (timeoutSec: number) => Promise<boolean>;
+  getChannel: () => Promise<string | null>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+}
+
+export interface FlipBackResult {
+  flippedBack: boolean;
+  /** The last channel the box *actually* reported. `null` means it never
+   *  answered at all within the budget — a genuinely unreachable box, not a
+   *  transient read during a restart. */
+  channel: string | null;
+  /** How many times the flip POST was (re-)issued, and how many times the
+   *  channel was polled — diagnostics for the emitted result line. */
+  reissues: number;
+  polls: number;
+  detail: string;
+}
+
+/** Defaults: at least as generous as the flip-to-`:dev` side of the run
+ *  (`waitHealth(180)` + `waitForDevImage(900)` + `waitHealth(180)`). */
+export const FLIP_BACK_TIMEOUT_SEC = 900;
+const FLIP_BACK_REISSUE_SEC = 180;
+const FLIP_BACK_POLL_SEC = 15;
+const FLIP_BACK_HEALTH_SEC = 180;
+
+/**
+ * Flip the box back to `:latest` and **confirm** it, tolerating the whole
+ * restart-in-progress window (#2387).
+ *
+ * The old shape was 3 fast rounds of `setChannel → waitHealth(180) →
+ * getChannel`, each round treating one bad read as a verdict. That produced
+ * false `flippedBack:false` hard alerts on a box that had genuinely landed on
+ * `:latest`, because mid-restart the box lies in two distinct ways:
+ *  - `getChannel()` returns `null` (connection refused / 5xx while the new
+ *    container comes up), and
+ *  - `getChannel()` returns the **stale** `"dev"` (the outgoing container still
+ *    answers `/api/system/channel` after the flip POST is accepted — and
+ *    `waitHealth` happily reports "up" from that same outgoing container, so it
+ *    provides no settle time at all).
+ * Both were terminal in the old loop, and a `setChannel` throw (admin login
+ * against a restarting box) burned a whole round with **no** delay, so all three
+ * rounds could be spent in seconds.
+ *
+ * Here neither shape is a verdict: they're "not yet". We poll `getChannel()`
+ * until it reports `latest`, re-issuing the flip POST every
+ * `reissueEverySec`, until the overall budget expires. Only budget exhaustion
+ * is a verdict — so a box **genuinely stuck on `:dev`** still returns
+ * `flippedBack:false` (with `channel:"dev"`), and a box that never answers at
+ * all still returns `flippedBack:false` (with `channel:null`). Both keep exit 5
+ * a trustworthy hard alert.
+ */
+export async function confirmFlipBack(
+  deps: FlipBackDeps,
+  opts: { timeoutSec?: number; reissueEverySec?: number; pollEverySec?: number; healthWaitSec?: number } = {},
+): Promise<FlipBackResult> {
+  const timeoutSec = opts.timeoutSec ?? FLIP_BACK_TIMEOUT_SEC;
+  const reissueEverySec = opts.reissueEverySec ?? FLIP_BACK_REISSUE_SEC;
+  const pollEverySec = opts.pollEverySec ?? FLIP_BACK_POLL_SEC;
+  const healthWaitSec = opts.healthWaitSec ?? FLIP_BACK_HEALTH_SEC;
+
+  const deadline = deps.now() + timeoutSec * 1000;
+  let lastIssuedAt = Number.NEGATIVE_INFINITY;
+  let channel: string | null = null;
+  let reissues = 0;
+  let polls = 0;
+
+  while (deps.now() < deadline) {
+    if (deps.now() - lastIssuedAt >= reissueEverySec * 1000) {
+      lastIssuedAt = deps.now();
+      try {
+        await deps.setChannel('latest');
+        reissues++;
+      } catch {
+        // Admin login / POST against a restarting box throws. NOT a verdict —
+        // the previous POST may already have been accepted; keep confirming.
+      }
+      // Give the async restart room, bounded by what's left of the budget.
+      const remainingSec = Math.ceil((deadline - deps.now()) / 1000);
+      if (remainingSec > 0) await deps.waitHealth(Math.min(healthWaitSec, remainingSec));
+    }
+
+    polls++;
+    const observed = await deps.getChannel();
+    if (observed !== null) channel = observed; // remember the last REAL read
+    if (observed === 'latest') {
+      return { flippedBack: true, channel: 'latest', reissues, polls, detail: `confirmed :latest after ${polls} poll(s)` };
+    }
+    if (deps.now() >= deadline) break;
+    await deps.sleep(pollEverySec * 1000);
+  }
+
+  return {
+    flippedBack: false,
+    channel,
+    reissues,
+    polls,
+    detail:
+      channel === null
+        ? `box never reported a channel within ${timeoutSec}s (${polls} poll(s), ${reissues} flip POST(s)) — may be stranded on :dev`
+        : `box still reports :${channel} after ${timeoutSec}s (${polls} poll(s), ${reissues} flip POST(s)) — stranded on :${channel}`,
+  };
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const sha = argv.find(a => !a.startsWith('--'));
   const probeScript = argv[argv.indexOf('--probe-script') + 1];
   const imageTimeout = argv.includes('--image-timeout') ? Number(argv[argv.indexOf('--image-timeout') + 1]) : 900;
+  const flipBackTimeout = argv.includes('--flipback-timeout')
+    ? Number(argv[argv.indexOf('--flipback-timeout') + 1])
+    : FLIP_BACK_TIMEOUT_SEC;
   if (!sha || !probeScript || probeScript.startsWith('--')) {
-    console.error('usage: autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900]');
+    console.error(
+      'usage: autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900] [--flipback-timeout 900]',
+    );
     process.exit(2);
   }
 
@@ -117,19 +233,27 @@ async function main(): Promise<void> {
     }
   } finally {
     // STRUCTURAL INVARIANT: always flip back to :latest, whatever happened above.
-    let channel: string | null = null;
-    for (let i = 0; i < 3; i++) {
-      try {
-        await setChannel('latest');
-        await waitHealth(180);
-        channel = await getChannel();
-        if (channel === 'latest') break;
-      } catch {
-        /* retry */
-      }
-    }
-    const flippedBack = channel === 'latest';
-    emit({ reachedDev, probeExit, flippedBack, channel, probeOutput: probeOutput.slice(0, 4000) });
+    // Confirmation tolerates the full restart window (#2387) — a null/stale
+    // read is "not yet", only budget exhaustion is a verdict.
+    const back = await confirmFlipBack(
+      {
+        setChannel: target => setChannel(target),
+        waitHealth: timeoutSec => waitHealth(timeoutSec),
+        getChannel,
+        sleep: ms => new Promise(r => setTimeout(r, ms)),
+        now: () => Date.now(),
+      },
+      { timeoutSec: flipBackTimeout },
+    );
+    const { flippedBack, channel } = back;
+    emit({
+      reachedDev,
+      probeExit,
+      flippedBack,
+      channel,
+      flipBack: { reissues: back.reissues, polls: back.polls, detail: back.detail },
+      probeOutput: probeOutput.slice(0, 4000),
+    });
     if (!flippedBack) process.exit(5); // box may be stranded on :dev — hard alert
     if (!reachedDev) process.exit(2);
     process.exit(0);

@@ -396,17 +396,25 @@ describe('Auth template: LLDAP HTTP port is loopback-bound (#2380)', () => {
     expect(env.find(e => e.name === 'LLDAP_HTTP_HOST')?.value).toBe('127.0.0.1');
   });
 
-  it('leaves the raw LDAP port bound to every interface (out of scope, #2388)', () => {
-    // Deliberate scope boundary, not an oversight: isolated pods reach the
-    // LDAP port through host.containers.internal, which rootless
-    // podman/pasta maps to the host's LAN address rather than loopback, so
-    // an LLDAP_LDAP_HOST=127.0.0.1 here would break radicale's ldap_uri and
-    // Jellyfin's LDAP-Auth plugin. Closing that half needs host-level
-    // packet filtering (#2388). If someone "completes" #2380 by adding the
-    // var, this test is the tripwire that says read #2388 first.
+  it('leaves the raw LDAP port bound to every interface, and closes it at the HOST firewall instead (#2388)', () => {
+    // The bind stays 0.0.0.0 on purpose, and that is still a tripwire:
+    // isolated pods reach this port through host.containers.internal,
+    // which rootless podman/pasta maps to the host's LAN address rather
+    // than loopback, so an LLDAP_LDAP_HOST=127.0.0.1 here would break
+    // radicale's ldap_uri and Jellyfin's LDAP-Auth plugin. If someone
+    // "completes" #2380 by adding the var, read #2388 first.
     const env: { name: string; value: string }[] = lldapContainer()?.env ?? [];
     expect(env.map(e => e.name)).not.toContain('LLDAP_LDAP_HOST');
     expect(auth.variables.LLDAP_LDAP_PORT.description).toMatch(/#2388/);
+    // #2388 closes the LAN half outside the pod: the port variable opts
+    // into the host nftables filter, which drops connections arriving on
+    // a physical interface while accepting the ones arriving on `lo`
+    // (where the pasta-proxied pod path lands). Dropping this flag
+    // silently re-opens the LAN exposure with no other failing test.
+    expect(auth.variables.LLDAP_LDAP_PORT.blockLanAccess).toBe(true);
+    // The web-UI port must NOT carry it — that one is loopback-bound
+    // already (#2380), so a host rule would be redundant privileged state.
+    expect(auth.variables.LLDAP_PORT.blockLanAccess).toBeUndefined();
   });
 
   it('points ldap.<domain> at the loopback while keeping forward-auth', () => {

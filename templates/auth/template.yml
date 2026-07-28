@@ -85,8 +85,16 @@ spec:
       # 0.0.0.0 — isolated (non-hostNetwork) pods reach it through
       # `host.containers.internal`, which rootless podman/pasta maps to the
       # host's LAN address rather than loopback, so a loopback bind would
-      # break radicale's ldap_uri and Jellyfin's LDAP-Auth plugin. Closing
-      # that half needs host-level packet filtering and is tracked as #2388.
+      # break radicale's ldap_uri and Jellyfin's LDAP-Auth plugin.
+      #
+      # The LAN-reachability half is closed OUTSIDE the pod instead (#2388):
+      # LLDAP_LDAP_PORT carries `blockLanAccess: true` in variables.json, and
+      # ServiceBay renders a host nftables rule that drops connections to this
+      # port arriving on a physical interface while accepting the ones that
+      # arrive on `lo` — which is where the pasta-proxied pod path lands,
+      # because pasta re-opens the connection to one of the host's OWN
+      # addresses and the kernel routes that over loopback. No pod change and
+      # no schema bump: the bind is unchanged, only host state is added.
       - name: LLDAP_FORCE_LDAP_USER_PASS_RESET
         value: "{{LLDAP_FORCE_LDAP_USER_PASS_RESET}}"
     ports:

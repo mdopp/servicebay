@@ -59,6 +59,24 @@ describe('checkBelongsToService (#2080 structural attribution)', () => {
     expect(checkBelongsToService(check({ target: 'immich', name: 'photos' }), 'jellyfin')).toBe(false);
   });
 
+  // #2394 — the backend now resolves a domain check / an item-bearing diagnose
+  // row to its owning stack and stamps `serviceName`. That stamp is
+  // authoritative in BOTH directions: the check belongs to that service, and
+  // never falls through to the id/target heuristics for any other.
+  it('honours the backend-stamped serviceName over every other shape', () => {
+    const domainCheck = check({ id: 'domain:media.dopp.cloud', name: 'Domain — media.dopp.cloud', type: 'domain', target: 'media.dopp.cloud', serviceName: 'media' });
+    expect(checkBelongsToService(domainCheck, 'media')).toBe(true);
+    expect(checkBelongsToService(domainCheck, 'paperless')).toBe(false);
+    // systemd-suffixed stamp still resolves to the bare base name
+    expect(checkBelongsToService(check({ serviceName: 'media.service' }), 'media')).toBe(true);
+    // an attributed diagnose row lands on its owning service, not box-wide
+    const crashLoop = check({ id: 'diagnose:crash_loop', target: 'crash_loop', serviceName: 'media' });
+    expect(checkBelongsToService(crashLoop, 'media')).toBe(true);
+    expect(checkBelongsToService(crashLoop, 'jellyfin')).toBe(false);
+    // a stamp for another service wins over an id-prefix coincidence
+    expect(checkBelongsToService(check({ id: 'jellyfin-api', serviceName: 'media' }), 'jellyfin')).toBe(false);
+  });
+
   it('never attributes a box-wide check to a service', () => {
     expect(checkBelongsToService(check({ id: 'diagnose:cert_expiry', target: 'cert_expiry', boxWide: true }), 'jellyfin')).toBe(false);
     expect(checkBelongsToService(check({ type: 'cert_expiry', target: 'Local' }), 'jellyfin')).toBe(false);
@@ -79,6 +97,22 @@ describe('isBoxWideCheck (#2080)', () => {
   it('does NOT flag a normal per-service check', () => {
     expect(isBoxWideCheck(check({ type: 'service', target: 'jellyfin' }))).toBe(false);
     expect(isBoxWideCheck(check({ type: 'http', target: 'jellyfin' }))).toBe(false);
+  });
+
+  // #2394 — `domain` was hard-coded box-wide, so every `domain:<host>` check
+  // sat in the generic list even though the host maps 1:1 to a service.
+  it('files an attributed check with its service, not the box-wide list', () => {
+    expect(isBoxWideCheck(check({ id: 'domain:media.dopp.cloud', type: 'domain', target: 'media.dopp.cloud', serviceName: 'media' }))).toBe(false);
+    expect(isBoxWideCheck(check({ id: 'diagnose:crash_loop', boxWide: false, serviceName: 'media' }))).toBe(false);
+  });
+
+  it('keeps an UNCLAIMED domain check box-wide rather than hiding it', () => {
+    // Nothing on the box owns the route → an orphan domain IS a box-level
+    // finding. It must stay visible somewhere, not vanish from every tab.
+    expect(isBoxWideCheck(check({ id: 'domain:stale.dopp.cloud', type: 'domain', target: 'stale.dopp.cloud' }))).toBe(true);
+    expect(isBoxWideCheck(check({ type: 'letsdebug', target: 'stale.dopp.cloud' }))).toBe(true);
+    // …and DNS/TLS infra is never attributed in the first place.
+    expect(isBoxWideCheck(check({ type: 'dns_routing', target: 'media.dopp.cloud' }))).toBe(true);
   });
 });
 

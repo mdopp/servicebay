@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Activity, Settings as SettingsIcon, Zap, Box, ArrowLeft, RefreshCw } from 'lucide-react';
@@ -9,7 +9,7 @@ import { useOperateService } from '../../../settings/services/_lib/useOperateSer
 import OperateHealthTab from '../../../settings/services/_lib/OperateHealthTab';
 import OperateSettingsTab from '../../../settings/services/_lib/OperateSettingsTab';
 import OperateActionsTab from '../../../settings/services/_lib/OperateActionsTab';
-import OperateContainersTab from './OperateContainersTab';
+import OperateContainersTab, { type ContainersDrawerRequest } from './OperateContainersTab';
 import ServiceDetailSummary from '@/components/serviceDetail/ServiceDetailSummary';
 import { Card, PageScroll } from '@/components/ui';
 
@@ -73,12 +73,33 @@ function OperateBody({ service }: { service: ServiceViewModel }) {
   const initialTab = searchParams.get('tab');
   const [tab, setTab] = useState<OperateTab>(isTab(initialTab) ? initialTab : 'health');
 
+  // "Logs" is a real log view, not a tab link (#2391). `?drawer=logs[&container=]`
+  // opens the container log panel on arrival (that's the cross-page link other
+  // surfaces use), and the summary's Logs quick action re-fires it in place from
+  // whichever tab the user is on — the nonce makes a repeat click re-open a
+  // drawer that was closed.
+  const [logsRequest, setLogsRequest] = useState<ContainersDrawerRequest | null>(() =>
+    searchParams.get('drawer') === 'logs'
+      ? { containerId: searchParams.get('container') ?? undefined, mode: 'logs', nonce: 1 }
+      : null,
+  );
+
+  const showLogs = useCallback(() => {
+    setTab('containers');
+    setLogsRequest(prev => ({
+      containerId: prev?.containerId,
+      mode: 'logs',
+      nonce: (prev?.nonce ?? 0) + 1,
+    }));
+  }, []);
+
   return (
     <>
       {/* The shared per-service detail — identical to the one shown in the
-          network-map node sidebar, so the two never drift. */}
+          network-map node sidebar, so the two never drift. It carries the
+          page's one labelled quick-action row (#2393). */}
       <Card padding="lg">
-        <ServiceDetailSummary service={service} showOperateLink={false} />
+        <ServiceDetailSummary service={service} showOperateLink={false} onShowLogs={showLogs} />
       </Card>
 
       <div className="flex border-b border-border">
@@ -100,7 +121,7 @@ function OperateBody({ service }: { service: ServiceViewModel }) {
       <div>
         {tab === 'health' && <OperateHealthTab service={service} />}
         {tab === 'settings' && <OperateSettingsTab service={service} />}
-        {tab === 'containers' && <OperateContainersTab service={service} />}
+        {tab === 'containers' && <OperateContainersTab service={service} initialDrawer={logsRequest} />}
         {tab === 'actions' && <OperateActionsTab service={service} deletedHref="/services" />}
       </div>
     </>

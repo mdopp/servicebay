@@ -15,6 +15,11 @@ export function serviceBaseName(service: Pick<ServiceViewModel, 'id' | 'name'>):
  * (`cert_expiry`, `lan_ip_drift`, `npm_auth`, `cert_request_failure`,
  * `nginx_config_valid`, `dns_routing`). These always target `Local` or a bare
  * domain, never a service name, so they belong in the box-wide bucket.
+ *
+ * `domain` / `letsdebug` are the *fallback* entry for a domain nothing on the
+ * box claims (#2394). A domain that DOES map to a service arrives with
+ * `serviceName` stamped by the backend and is attributed before this set is
+ * ever consulted — see `isBoxWideCheck`.
  */
 const BOX_WIDE_CHECK_TYPES = new Set<Check['type']>([
   'agent',
@@ -37,8 +42,16 @@ const BOX_WIDE_CHECK_TYPES = new Set<Check['type']>([
  * any check explicitly targeting the `Local` node. Box-wide checks are never
  * force-attributed to a service; the Operate Health tab lists them in a
  * clearly-labelled "Box-wide" section so they're surfaced honestly, not hidden.
+ *
+ * #2394: a backend-stamped `serviceName` settles it outright — the check has a
+ * proven owner (a `domain:` check whose host maps to that stack's proxy route,
+ * a `crash_loop`/`failed_units`/`post_deploy_failed` row whose items all name
+ * that stack), so it is that service's problem and must not also be listed as
+ * everybody's. Only genuinely platform-level checks — DNS/TLS infra, the
+ * agent/gateway singletons, USB serial, `/mnt/data` — reach the box-wide set.
  */
 export function isBoxWideCheck(check: Check): boolean {
+  if (check.serviceName) return false;
   if (check.boxWide) return true;
   if (typeof check.id === 'string' && check.id.startsWith('diagnose:')) return true;
   if (BOX_WIDE_CHECK_TYPES.has(check.type)) return true;
@@ -57,11 +70,20 @@ export function isBoxWideCheck(check: Check): boolean {
  * over-matched (a one-letter service swept up everything) and never caught
  * box-wide rows, which is why the tab read "1 ok". Shared by the Operate
  * Health tab and the service-detail summary so the two surfaces agree.
+ *
+ * #2394 adds one more structural shape ahead of the rest: a backend-stamped
+ * `serviceName` (see `lib/health/checkAttribution.ts`). It is authoritative in
+ * both directions — the check belongs to that service and to no other — so a
+ * stamped check never falls through to the id/target heuristics below.
  */
 export function checkBelongsToService(check: Check, baseName: string): boolean {
-  if (isBoxWideCheck(check)) return false;
   const needle = baseName.toLowerCase();
   if (!needle) return false;
+  const attributed = (check.serviceName || '')
+    .toLowerCase()
+    .replace(/\.(service|scope|socket|timer)$/, '');
+  if (attributed) return attributed === needle;
+  if (isBoxWideCheck(check)) return false;
   const target = (check.target || '').toLowerCase().replace(/\.(service|scope|socket|timer)$/, '');
   const id = (check.id || '').toLowerCase();
   const name = (check.name || '').toLowerCase();

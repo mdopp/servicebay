@@ -16,10 +16,15 @@ setup — `npm test` exercises them all.
 
 ## 1. Add a new MCP tool
 
-MCP tools live in `packages/backend/src/lib/mcp/server.ts`. Each tool is
-one `server.tool(...)` call that the safety layer wraps automatically
-(scope check, audit log, redaction). You write the handler; you do not
-write auth or audit code.
+MCP tools live in `packages/backend/src/lib/mcp/tools/`, one module per
+tool group (`serviceTools.ts`, `proxyTools.ts`, `fileTools.ts`, …), each
+exporting a `registerXTools({ server })` that `createMcpServer`
+(`lib/mcp/server.ts`) calls. Add your tool to the group it belongs to; a
+genuinely new group gets its own module plus one call in `createMcpServer`.
+Each tool is one `server.tool(...)` call that the safety layer wraps
+automatically (scope check, audit log, redaction) — the `server` you are
+handed is already wrapped, so you write the handler and never write auth or
+audit code.
 
 **The recipe:**
 
@@ -50,7 +55,7 @@ server.tool(
 );
 ```
 
-Scopes (from `lib/mcp/scope.ts`): `read` | `lifecycle` | `mutate` |
+Scopes (from `lib/mcp/toolPolicy.ts`, the `TOOL_SCOPES` map): `read` | `lifecycle` | `mutate` |
 `destroy` | `exec`. A token with scope `lifecycle` can call any tool
 whose handler is annotated with `lifecycle` *or weaker* (`read`).
 Picking the lowest scope that covers the operation is the rule — don't
@@ -61,8 +66,8 @@ allowlist/denylist in `lib/mcp/safety.ts`. New tools that wrap arbitrary
 shell should join that allowlist explicitly rather than route around
 it. See `safety.ts` for the pattern.
 
-**Worked example:** `lib/mcp/server.ts:257` (`list_nodes`) for a
-read tool; `lib/mcp/server.ts` `manage_service` for the
+**Worked example:** `lib/mcp/tools/nodeTools.ts` (`list_nodes`) for a
+read tool; `lib/mcp/tools/serviceTools.ts` (`manage_service`) for the
 mutating-with-scope + discriminator pattern.
 
 **Testing:** add a case to `lib/mcp/safety.test.ts` if the tool wraps

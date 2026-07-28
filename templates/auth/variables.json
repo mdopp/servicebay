@@ -6,8 +6,9 @@
   },
   "LLDAP_LDAP_PORT": {
     "type": "text",
-    "description": "LDAP protocol port — still bound to every host interface. It cannot be loopback-bound: isolated pods (radicale, media/Jellyfin LDAP-Auth) reach it via host.containers.internal, which rootless podman/pasta maps to the host's LAN address, not loopback. Restricting it needs host-level packet filtering — tracked as #2388.",
-    "default": "3890"
+    "description": "LDAP protocol port. Still bound to every host interface — it cannot be loopback-bound, because isolated pods (radicale, media/Jellyfin LDAP-Auth) reach it via host.containers.internal, which rootless podman/pasta maps to the host's LAN address rather than loopback. LAN devices are instead refused at the HOST firewall via the blockLanAccess flag below (#2388): ServiceBay installs an nftables rule that drops connections arriving on a physical interface while leaving loopback and the pasta-proxied pod path (which lands on lo) untouched.",
+    "default": "3890",
+    "blockLanAccess": true
   },
   "LLDAP_BASE_DN": {
     "type": "text",
@@ -24,7 +25,7 @@
   },
   "LLDAP_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for LLDAP Web UI. Gated by Authelia forward-auth (admin group, two-factor per Authelia's access_control rules). Without the forward-auth block, the LLDAP UI is reachable at the nginx layer by any logged-in family user — the admin-only Authelia rule never fires because nginx never makes the auth_request subrequest (#878). That case is about a misconfigured proxy; the separate direct-on-LAN bypass (a LAN host hitting <lan-ip>:LLDAP_PORT and never touching nginx at all) is closed in template v3 by binding LLDAP's HTTP server to 127.0.0.1 plus the loopbackOnly flag below (#2380). The raw LDAP port has the same direct-on-LAN shape and is NOT closed here — it needs host-level packet filtering, tracked as #2388.",
+    "description": "Subdomain for LLDAP Web UI. Gated by Authelia forward-auth (admin group, two-factor per Authelia's access_control rules). Without the forward-auth block, the LLDAP UI is reachable at the nginx layer by any logged-in family user — the admin-only Authelia rule never fires because nginx never makes the auth_request subrequest (#878). That case is about a misconfigured proxy; the separate direct-on-LAN bypass (a LAN host hitting <lan-ip>:LLDAP_PORT and never touching nginx at all) is closed in template v3 by binding LLDAP's HTTP server to 127.0.0.1 plus the loopbackOnly flag below (#2380). The raw LDAP port had the same direct-on-LAN shape; it cannot be loopback-bound, so it is closed one layer down instead — see LLDAP_LDAP_PORT's blockLanAccess flag (#2388).",
     "default": "ldap",
     "exposure": "internal",
     "proxyPort": "LLDAP_PORT",

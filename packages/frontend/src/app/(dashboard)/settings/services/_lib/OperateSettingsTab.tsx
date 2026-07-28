@@ -91,11 +91,19 @@ export default function OperateSettingsTab({ service }: { service: ServiceViewMo
         Configuration
       </SectionHeading>
       <Card padding="lg">
+        {/*
+          Target Node shows the node the service actually runs on (#2392).
+          'Local' is a real entry in the node list (nodes.ts
+          buildDefaultLocalNode), so on a single-node box the select must show
+          "Local" — blanking it here left the field permanently empty. The
+          `?node=` API convention (omit the param for Local) is a separate
+          concern and stays as-is in load() above.
+        */}
         <ServiceForm
           key={`${serviceName}-${service.nodeName || 'Local'}`}
           initialData={initialData}
           isEdit
-          defaultNode={service.nodeName && service.nodeName !== 'Local' ? service.nodeName : ''}
+          defaultNode={service.nodeName || 'Local'}
           onClose={load}
           variant="embedded"
         />

@@ -153,9 +153,14 @@ function extractFileContent(res: unknown): string {
  * Returns a deduped Set so callers can iterate without re-pulling
  * the same image twice if it appears in both initContainers and
  * containers.
+ *
+ * Exported for `forceUpdate.ts` (#2397), which needs the same
+ * pod-spec → image-refs answer for the operator-triggered force
+ * update. One walker, two callers — the force-update path must not
+ * drift from what the restart path pulls.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function collectImagesFromKubeYaml(parsed: any): Set<string> {
+export function collectImagesFromKubeYaml(parsed: any): Set<string> {
     const images = new Set<string>();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const walk = (obj: any) => {

@@ -89,6 +89,40 @@ describe('OperateHealthTab (#2080 attribution)', () => {
     expect(within(boxWide).getByText('Self-diagnose: TLS certificates')).toBeDefined();
   });
 
+  // #2394 — a `domain:` check for the service's OWN verified domain used to be
+  // hard-classified box-wide. It now arrives with the backend-stamped
+  // `serviceName` and must render in the service's own list, while genuinely
+  // platform-level rows (DNS/TLS infra, storage) stay in the box-wide section.
+  it('shows the service own domain check on its Health tab, not the box-wide list', async () => {
+    global.fetch = mockChecks([
+      row({ id: 'domain:media.dopp.cloud', name: 'Domain — media.dopp.cloud', type: 'domain', target: 'media.dopp.cloud', serviceName: 'media', status: 'ok' }),
+      // another stack's domain — attributed elsewhere, so it appears nowhere here
+      row({ id: 'domain:paperless.dopp.cloud', name: 'Domain — paperless.dopp.cloud', type: 'domain', target: 'paperless.dopp.cloud', serviceName: 'paperless', status: 'ok' }),
+      // an orphan route nothing claims stays box-wide (visible, not hidden)
+      row({ id: 'domain:stale.dopp.cloud', name: 'Domain — stale.dopp.cloud', type: 'domain', target: 'stale.dopp.cloud', status: 'fail' }),
+      // this stack's crash_loop diagnose row, attributed by its items
+      row({ id: 'diagnose:crash_loop', name: 'Self-diagnose: Containers stable', boxWide: false, serviceName: 'media', status: 'fail' }),
+      // genuinely platform-level — stays box-wide
+      row({ id: 'diagnose:dns_routing', name: 'Self-diagnose: DNS routing', boxWide: true, status: 'ok' }),
+      row({ id: 'diagnose:disk', name: 'Self-diagnose: Storage (/mnt/data)', boxWide: true, status: 'ok' }),
+    ]);
+
+    render(<OperateHealthTab service={svc({ name: 'media.service', displayName: 'Media', verifiedDomains: ['media.dopp.cloud'] })} />);
+
+    await waitFor(() => expect(screen.getByText('Domain — media.dopp.cloud')).toBeDefined());
+    const boxWide = screen.getByLabelText('Box-wide health checks');
+    // the service's own domain + crash_loop rows are NOT in the box-wide section
+    expect(within(boxWide).queryByText('Domain — media.dopp.cloud')).toBeNull();
+    expect(within(boxWide).queryByText('Self-diagnose: Containers stable')).toBeNull();
+    expect(screen.getByText('Self-diagnose: Containers stable')).toBeDefined();
+    // only true platform-level checks remain box-wide (plus the orphan route)
+    expect(within(boxWide).getByText('Self-diagnose: DNS routing')).toBeDefined();
+    expect(within(boxWide).getByText('Self-diagnose: Storage (/mnt/data)')).toBeDefined();
+    expect(within(boxWide).getByText('Domain — stale.dopp.cloud')).toBeDefined();
+    // another stack's domain check never shows on this tab
+    expect(screen.queryByText('Domain — paperless.dopp.cloud')).toBeNull();
+  });
+
   // #2078 migration: rows render via design-system primitives (StatusDot per
   // check, no ad-hoc green-500/red-500 icon-box literals).
   it('renders check status via the StatusDot primitive, not raw colour literals', async () => {

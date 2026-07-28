@@ -83,9 +83,15 @@ describe('assist catalog frontmatter', () => {
 // --- MCP tool-name drift (#2382) ---------------------------------------------
 // Agent-facing prose that names a removed tool is worse than no prose: the agent
 // gets tool-not-found on its first call and falls back to the destructive
-// exec_command path the doc exists to steer it away from. server.ts is the
-// source of truth for which names exist; these docs must only name those.
-const MCP_SERVER = path.join(REPO_ROOT, 'packages', 'backend', 'src', 'lib', 'mcp', 'server.ts');
+// exec_command path the doc exists to steer it away from. The `lib/mcp/tools/`
+// group modules are the source of truth for which names exist (#2384 moved the
+// registrations there out of server.ts); these docs must only name those.
+const MCP_TOOLS_DIR = path.join(REPO_ROOT, 'packages', 'backend', 'src', 'lib', 'mcp', 'tools');
+const mcpToolSources = () =>
+  fs.readdirSync(MCP_TOOLS_DIR)
+    .filter(f => f.endsWith('.ts') && !f.endsWith('.test.ts'))
+    .map(f => fs.readFileSync(path.join(MCP_TOOLS_DIR, f), 'utf-8'))
+    .join('\n');
 
 /** Tools removed by past consolidations whose verb prefix is also gone, so the
  *  heuristic below can't infer them (kept in sync with the OLD_NAMES list in
@@ -98,7 +104,7 @@ function snakeTokens(text: string): string[] {
 }
 
 describe('MCP tool-name drift in agent-facing docs', () => {
-  const src = fs.readFileSync(MCP_SERVER, 'utf-8');
+  const src = mcpToolSources();
   const registered = new Set([...src.matchAll(/server\.tool\(\s*'([a-z0-9_]+)'/g)].map(m => m[1]));
   // First segment of every registered name ("get", "list", "manage", …). A
   // `get_*`/`list_*` token that isn't registered is a stale tool name, not prose.
@@ -106,9 +112,13 @@ describe('MCP tool-name drift in agent-facing docs', () => {
   const isStale = (tok: string) =>
     !registered.has(tok) && (verbs.has(tok.split('_')[0]) || RETIRED_TOOLS.includes(tok));
 
-  it('extracted the registered tool list from server.ts', () => {
+  it('extracted the registered tool list from the tool-group modules', () => {
     expect(registered.size).toBeGreaterThan(40);
     expect(registered.has('get_logs')).toBe(true);
+    // get_logs lives in logTools.ts and manage_service in serviceTools.ts, so
+    // seeing both proves the scan really walks the whole directory rather than
+    // one module (a single-file read would still clear the >40 bar).
+    expect(registered.has('manage_service')).toBe(true);
   });
 
   it('CLAUDE.md and the assists only name registered MCP tools', () => {

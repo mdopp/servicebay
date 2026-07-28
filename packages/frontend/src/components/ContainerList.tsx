@@ -40,8 +40,14 @@ interface ContainerListProps {
   groups?: ContainerListGroup[];
   /** Render the owning service/bundle badge on each row (Status view). */
   showParentBadge?: boolean;
-  /** Open a drawer on mount for a container id (Status view URL params). */
-  initialDrawer?: { containerId: string; mode: 'logs' | 'terminal' } | null;
+  /**
+   * Open a drawer for a container id (Status view URL params; the service
+   * Operate page's "Logs" quick action). `nonce` is part of the
+   * already-handled key (#2391), so asking for the *same* drawer again — a
+   * second click on Logs after the user closed it — re-opens it instead of
+   * being swallowed by the one-shot guard.
+   */
+  initialDrawer?: { containerId: string; mode: 'logs' | 'terminal'; nonce?: number } | null;
 }
 
 function primaryName(c: ContainerListItem): string {
@@ -106,15 +112,16 @@ export default function ContainerList({ containers, groups, showParentBadge, ini
   // Open a drawer from a caller-supplied container id (Status URL params).
   useEffect(() => {
     if (!initialDrawer || !allContainers.length) return;
-    if (handledInitial === initialDrawer.containerId) return;
+    const requestKey = `${initialDrawer.nonce ?? 0}:${initialDrawer.mode}:${initialDrawer.containerId}`;
+    if (handledInitial === requestKey) return;
     const found = allContainers.find(
       c => c.id === initialDrawer.containerId || c.id?.startsWith(initialDrawer.containerId),
     );
     if (found) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot URL→state sync, guarded by handledInitial
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot request→state sync, guarded by handledInitial
       setDrawerContainer(found);
       setDrawerMode(initialDrawer.mode);
-      setHandledInitial(initialDrawer.containerId);
+      setHandledInitial(requestKey);
     }
   }, [initialDrawer, allContainers, handledInitial]);
 

@@ -65,32 +65,25 @@ const isTestFile = (p: string) => /\.test\.(ts|tsx)$/.test(p) || p.includes('/te
 // dropped from 2,672 → ~1,300 LOC. Next-biggest survivor is
 // NetworkDashboard.tsx at 2,114 — held at 2,200 here until that split
 // lands so the ratchet keeps pressure on the remaining four files.
+//
+// The backend root shares this ceiling. It briefly had its own, looser pin
+// (MAX_BACKEND_FILE_LOC = 2,400, #2379) because the newly-measured
+// `lib/mcp/server.ts` sat at 2,391 LOC; #2384 split that file into
+// `lib/mcp/tools/*` per tool group, so the separate pin is gone and both
+// roots are back on one number. Ratchet target: 1,500 with the frontend.
 // ---------------------------------------------------------------------------
 const MAX_FILE_LOC = 2_200;
 
-// Backend ceiling, pinned separately (#2379). The walk used to cover only
-// `packages/frontend/src`, so nothing in `packages/backend/src` was ever
-// measured — `lib/mcp/server.ts` sat at 2,391 LOC unnoticed. Newly enforced
-// here at 2,400 (pinned to that file + small slack); this is a tightening
-// from "unbounded", not a loosening of the frontend cap.
-// Ratchet target: 2,200 (single shared ceiling) once mcp/server.ts is split
-// into per-tool-group modules (#2384); then 1,500 with the frontend ratchet.
-const MAX_BACKEND_FILE_LOC = 2_400;
-
 async function checkFileSize() {
-    const roots: { root: string; max: number }[] = [
-        { root: SRC, max: MAX_FILE_LOC },
-        { root: BACKEND_SRC, max: MAX_BACKEND_FILE_LOC },
-    ];
-    for (const { root, max } of roots) {
+    for (const root of [SRC, BACKEND_SRC]) {
         const files = await walk(root, isTs);
         for (const file of files) {
             const content = await readFile(file, 'utf-8');
             const loc = content.split('\n').length;
-            if (loc > max) {
+            if (loc > MAX_FILE_LOC) {
                 violations.push({
                     check: 'file-size',
-                    detail: `${path.relative(REPO_ROOT, file)} = ${loc} LOC (max ${max})`,
+                    detail: `${path.relative(REPO_ROOT, file)} = ${loc} LOC (max ${MAX_FILE_LOC})`,
                 });
             }
         }
