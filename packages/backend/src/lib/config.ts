@@ -788,14 +788,88 @@ export function redactSensitiveConfig<T>(config: T): T {
   return transformConfig(config, SENSITIVE_KEYS, () => REDACTED_SENTINEL) as T;
 }
 
+/**
+ * Config-read resilience (#2399).
+ *
+ * `getConfig()` used to swallow *every* read failure and return
+ * `DEFAULT_CONFIG`. But `DEFAULT_CONFIG` has no gateway and no
+ * `setupCompleted`, which `checkOnboardingStatus()` reads as "this box has
+ * never been set up" — so one momentary EIO/ESTALE/EACCES blip (or a torn
+ * read) on the data volume force-opened the onboarding wizard on a fully
+ * configured box, and finishing that wizard would have written defaults
+ * over the real config.
+ *
+ * "The file genuinely isn't there yet" and "the read failed" are therefore
+ * now different outcomes:
+ *   - absence confirmed by a second look → `DEFAULT_CONFIG` (the unchanged
+ *     fresh-install path)
+ *   - anything else → bounded retry, then throw `ConfigReadError`
+ * Failing loudly is the right call: no caller can tell a lying read from a
+ * fresh box, so returning "unconfigured" on their behalf is the bug.
+ */
+const CONFIG_READ_ATTEMPTS = 3;
+const CONFIG_READ_RETRY_MS = 25;
+
+/** Thrown when `config.json` exists (or may exist) but couldn't be read. */
+export class ConfigReadError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options as ErrorOptions | undefined);
+    this.name = 'ConfigReadError';
+  }
+}
+
+const errnoCode = (error: unknown): string | undefined =>
+  typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined;
+
+/**
+ * An ENOENT from `readFile` is only trustworthy once a follow-up `stat`
+ * agrees the file is gone. A transient ENOENT is exactly the lie #2399 is
+ * about, and it is otherwise indistinguishable from a fresh install.
+ */
+async function configFileConfirmedAbsent(): Promise<boolean> {
+  try {
+    await fs.stat(CONFIG_PATH);
+    return false;
+  } catch (error) {
+    return errnoCode(error) === 'ENOENT';
+  }
+}
+
 export async function getConfig(): Promise<AppConfig> {
   let rawConfig: unknown = {};
-  try {
-    const content = await fs.readFile(CONFIG_PATH, 'utf-8');
-    rawConfig = JSON.parse(content);
-  } catch {
-    // If file is missing or corrupt, return defaults
-    return DEFAULT_CONFIG;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= CONFIG_READ_ATTEMPTS; attempt += 1) {
+    try {
+      const content = await fs.readFile(CONFIG_PATH, 'utf-8');
+      rawConfig = JSON.parse(content);
+      lastError = undefined;
+      break;
+    } catch (error) {
+      lastError = error;
+      if (errnoCode(error) === 'ENOENT' && await configFileConfirmedAbsent()) {
+        // Fresh install: there really is no config file. Defaults are the truth.
+        return DEFAULT_CONFIG;
+      }
+      if (attempt < CONFIG_READ_ATTEMPTS) {
+        logger.warn('config', `Config read attempt ${attempt}/${CONFIG_READ_ATTEMPTS} failed, retrying:`, error);
+        await new Promise(resolve => setTimeout(resolve, CONFIG_READ_RETRY_MS * attempt));
+      }
+    }
+  }
+
+  if (lastError !== undefined) {
+    logger.error(
+      'config',
+      `Config read failed after ${CONFIG_READ_ATTEMPTS} attempts — refusing to report this box as unconfigured:`,
+      lastError,
+    );
+    throw new ConfigReadError(
+      `Failed to read ${CONFIG_PATH} after ${CONFIG_READ_ATTEMPTS} attempts`,
+      { cause: lastError },
+    );
   }
 
   // Decrypt sensitive fields. transformConfig uses decrypt which
