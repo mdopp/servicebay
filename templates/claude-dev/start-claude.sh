@@ -57,7 +57,10 @@ done
 started=()
 for d in "${dirs[@]}"; do
   if [ -d "$d" ]; then
-    path="$(cd "$d" && pwd)"
+    # `cd -- ` so a directory whose name starts with a dash (the boot-time
+    # autostart feeds this loop shared-workspace-writable basenames) is a
+    # path, not an option to `cd`.
+    path="$(cd -- "$d" && pwd)"
   else
     echo "start-claude: skipping '$d' — not a directory (looked under $PWD)" >&2
     continue

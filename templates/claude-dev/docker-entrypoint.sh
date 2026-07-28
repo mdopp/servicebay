@@ -11,6 +11,89 @@ SSH_PORT="${CLAUDE_DEV_SSH_PORT:-2222}"
 DEV_HOME=/workspace
 HOSTKEY_DIR="$DEV_HOME/.ssh/host_keys"
 
+# ---------------------------------------------------------------------------
+# Helpers. Everything below the sourcing guard is the boot sequence, which is
+# root-only and ends in `exec sshd`; these three functions hold the parts that
+# handle UNTRUSTED input (shared-workspace directory names) or a SECRET (the
+# LLDAP bind password), so they are defined up here and exercised directly by
+# tests/templates/claude_dev_entrypoint_test.sh.
+# ---------------------------------------------------------------------------
+
+# Run `su` as the `dev` user with an explicit argv vector.
+#
+# The `--` before the user name is LOAD-BEARING, not decoration: util-linux
+# `su` parses its arguments with a PERMUTING getopt, so options are still
+# recognised *after* the user operand. Without the `--`, a checkout named
+# `-c` would be re-read as su's own `--command` and replace the command su
+# runs; `-s` would pick the shell. `--` stops option parsing, so every
+# following word is a plain positional the su'd shell sees as "$0", "$1", …
+# and never re-parses (#2418).
+su_dev() {
+  local script="$1"; shift
+  su -s /bin/bash -c "$script" -- dev claude-dev "$@"
+}
+
+# Discover git checkouts under $DEV_HOME into the global `repos` array.
+#
+# A checkout is a top-level dir holding a `.git` entry. The `*/` glob skips
+# hidden dirs (~/.ssh, ~/.claude) and the per-user homes (home/ has no .git),
+# so only real project checkouts are picked up.
+#
+# /workspace is group-writable by `devshare` (see the chown below), so these
+# basenames are ATTACKER-CONTROLLED: a filename may hold any byte but `/` and
+# NUL. They are therefore only ever handled as array elements — never spliced
+# into a string that a second shell re-parses.
+discover_repos() {
+  local d
+  repos=()
+  for d in "$DEV_HOME"/*/; do
+    [ -e "${d}.git" ] || continue
+    repos+=("$(basename -- "$d")")
+  done
+}
+
+# Hand the discovered repo list to `start-claude` as an argv array.
+# $DEV_HOME and every repo name cross the su boundary as positional
+# parameters; the only shell source here is the literal single-quoted script,
+# which contains no interpolation at all.
+autostart_claude() {
+  su_dev '
+    if [ "$#" -lt 2 ]; then
+      echo "claude-dev: autostart received no arguments across the su boundary." >&2
+      exit 1
+    fi
+    dev_home="$1"; shift
+    cd "$dev_home" || exit 1
+    export HOME="$dev_home" CLAUDE_START_NO_ATTACH=1
+    exec start-claude --continue --allow-dangerously-skip-permissions -- "$@"
+  ' "$DEV_HOME" "$@"
+}
+
+# List the uids of the LLDAP group members allowed to log in.
+#
+# The bind password goes to ldapsearch through a mode-0600 file (`-y`), never
+# on the command line (`-w`), where any user on the box could read it out of
+# /proc/<pid>/cmdline. `printf '%s'`, not `echo`: ldapsearch takes the file's
+# ENTIRE contents as the password, a trailing newline included.
+ldap_group_members() {
+  local pwfile
+  pwfile="$(mktemp)"
+  chmod 600 "$pwfile"
+  printf '%s' "$LLDAP_ADMIN_PASSWORD" > "$pwfile"
+  ldapsearch -x -LLL -o ldif-wrap=no \
+    -H "$ldap_uri" -D "$admin_dn" -y "$pwfile" \
+    -b "$group_dn" '(objectClass=*)' member 2>/dev/null \
+    | sed -n 's/^member: uid=\([^,]*\),.*/\1/p' | sort -u
+  rm -f "$pwfile"
+}
+
+# Sourcing guard: `CLAUDE_DEV_ENTRYPOINT_LIB=1 source docker-entrypoint.sh`
+# stops here with the helpers defined, so the regression test can exercise
+# them without the root-only boot sequence below.
+if [ -n "${CLAUDE_DEV_ENTRYPOINT_LIB:-}" ]; then
+  return 0
+fi
+
 # /workspace is a fresh, root-owned bind mount on first install. It's a
 # SHARED working area: the `dev` break-glass user plus every provisioned LDAP
 # user (e.g. mdopp) collaborate on the same checkouts here. Own it
@@ -100,10 +183,7 @@ EOF
     # the persistent /workspace volume.
     install -d -o root -g root -m 0755 "$DEV_HOME/home"
     groupadd -f ldapusers
-    members="$(ldapsearch -x -LLL -o ldif-wrap=no \
-                 -H "$ldap_uri" -D "$admin_dn" -w "$LLDAP_ADMIN_PASSWORD" \
-                 -b "$group_dn" '(objectClass=*)' member 2>/dev/null \
-               | sed -n 's/^member: uid=\([^,]*\),.*/\1/p' | sort -u)"
+    members="$(ldap_group_members)"
     provisioned=0
     for u in $members; do
       case "$u" in admin|root|dev|''|*[!a-z0-9_-]*) continue;; esac
@@ -148,26 +228,22 @@ fi
 # daemonizes, so sshd stays PID 1 — do NOT regress that. CLAUDE_START_NO_ATTACH
 # stops start-claude from trying to attach a terminal we don't have here.
 #
-# A git checkout is a top-level dir under /workspace holding a `.git` entry.
-# The `*/` glob skips the hidden dirs (~/.ssh, ~/.claude) and per-user homes
-# (home/ has no .git), so only real project checkouts are picked up.
-repos=()
-for d in "$DEV_HOME"/*/; do
-  [ -e "${d}.git" ] && repos+=("$(basename "$d")")
-done
+# Repo discovery + the su hand-off live in `discover_repos` / `autostart_claude`
+# at the top of this file — the directory names are shared-workspace-writable,
+# so they must reach `start-claude` as argv, never as shell source (#2418).
+discover_repos
 
 if [ "${#repos[@]}" -gt 0 ]; then
-  su -s /bin/bash dev -c "cd '$DEV_HOME' && HOME='$DEV_HOME' CLAUDE_START_NO_ATTACH=1 \
-      start-claude --continue --allow-dangerously-skip-permissions -- ${repos[*]}" \
+  autostart_claude "${repos[@]}" \
     || echo "claude-dev: WARNING — autostart of Claude sessions reported an error." >&2
   echo "claude-dev: auto-started Claude in ${#repos[@]} git repo(s): ${repos[*]}"
 else
   # Fresh volume with no checkouts yet — still start an empty `claude` tmux
   # session so interactive logins have something to attach to.
-  if su -s /bin/bash dev -c 'tmux has-session -t claude' 2>/dev/null; then
+  if su_dev 'tmux has-session -t claude' 2>/dev/null; then
     echo "claude-dev: tmux session 'claude' already running."
   else
-    su -s /bin/bash dev -c "cd '$DEV_HOME' && HOME='$DEV_HOME' tmux new-session -d -s claude"
+    su_dev 'cd "$1" && HOME="$1" tmux new-session -d -s claude' "$DEV_HOME"
     echo "claude-dev: no git repos under $DEV_HOME yet — started empty tmux session 'claude' for user 'dev'."
   fi
 fi
