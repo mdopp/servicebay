@@ -141,3 +141,51 @@ describe('post_deploy_failed.rerun_post_deploy', () => {
     expect(mockConfig.servicePostDeploy?.vault?.exitCode).toBe(5);
   });
 });
+
+/**
+ * #2404 follow-up. The probe's items go out over the `diagnose` MCP tool as
+ * well as the dashboard, and the stdout it excerpts is the same stream the
+ * wizard emits `__SB_CREDENTIAL__ {json}` banners on — live passwords and
+ * bearer tokens. The error lines an operator needs must survive; the banner
+ * must not. Every value below is an obviously-fake placeholder.
+ */
+describe('post_deploy_failed probe excerpt (#2404 follow-up)', () => {
+  const banner = `__SB_CREDENTIAL__ ${JSON.stringify({
+    service: 'vault',
+    username: 'admin',
+    password: 'CANARY-fake-probe-excerpt-pw',
+    importance: 'critical',
+  })}`;
+
+  it('drops credential-banner lines from the surfaced tail', async () => {
+    const { checkPostDeployFailed } = await import('./postDeployFailed');
+    mockConfig = {
+      servicePostDeploy: {
+        vault: {
+          exitCode: 5,
+          lastRunAt: '2026-05-09T00:00:00Z',
+          stdoutTail: `starting seed...\n${banner}\n[ERROR] LLDAP refused connection`,
+        },
+      },
+    };
+    const result = await checkPostDeployFailed();
+    const detail = result.items?.[0]?.detail ?? '';
+    expect(detail).not.toContain('__SB_CREDENTIAL__');
+    expect(detail).not.toContain('CANARY-fake-probe-excerpt-pw');
+    expect(detail).toContain('LLDAP refused connection');
+  });
+
+  it('still reports the failure when the banner was the only tail line', async () => {
+    const { checkPostDeployFailed } = await import('./postDeployFailed');
+    mockConfig = {
+      servicePostDeploy: {
+        vault: { exitCode: 5, lastRunAt: '2026-05-09T00:00:00Z', stdoutTail: banner },
+      },
+    };
+    const result = await checkPostDeployFailed();
+    expect(result.status).toBe('warn');
+    const detail = result.items?.[0]?.detail ?? '';
+    expect(detail).toMatch(/exit 5/);
+    expect(detail).not.toContain('CANARY-fake-probe-excerpt-pw');
+  });
+});

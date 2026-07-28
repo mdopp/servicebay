@@ -58,7 +58,35 @@ const CANARY = {
   backupSmbPassword: 'CANARY-fake-smb-pw-18',
   templateSettingToken: 'CANARY-fake-plex-claim-token-19',
   futureAccessToken: 'CANARY-fake-future-field-apikey-20',
+  // #2404 follow-up: credentials embedded in captured post-deploy stdout.
+  postDeployNpmPassword: 'CANARY-fake-npm-postdeploy-pw-21',
+  postDeployAdguardPassword: 'CANARY-fake-adguard-postdeploy-pw-22',
+  postDeployBearerToken: 'CANARY-fake-engine-bearer-token-23',
+  migrationSecret: 'CANARY-fake-migration-emitted-secret-24',
+  futureTailSecret: 'CANARY-fake-future-tail-secret-25',
 };
+
+/**
+ * `post-deploy.py` emits credential banners as `__SB_CREDENTIAL__ {json}` lines
+ * on stdout (docs/TEMPLATE_LOGGING.md); `persistPostDeployResult` then stores
+ * the last ~1KB of that stdout verbatim in `servicePostDeploy[svc].stdoutTail`.
+ * This builds a tail of exactly that shape — the leak box-verify found.
+ */
+function credentialTail(service: string, username: string, password: string): string {
+  const blob = JSON.stringify({
+    service,
+    url: `https://${service}.example.test`,
+    username,
+    password,
+    importance: 'critical',
+    notes: 'Seeded by post-deploy.',
+  });
+  return [
+    `[${service}] waiting for container to become healthy…`,
+    `__SB_CREDENTIAL__ ${blob}`,
+    `[${service}] post-deploy finished`,
+  ].join('\n');
+}
 
 /** Substrings that must never survive into the tool output. */
 const CANARY_NEEDLES = [
@@ -181,8 +209,45 @@ function buildFixture(): AppConfig {
       keycloak: { schemaVersion: 2, installedAt: '2026-07-01T00:00:00Z' },
       vaultwarden: { schemaVersion: 1, installedAt: '2026-07-02T00:00:00Z' },
     },
+    // Captured post-deploy stdout. `passbolt` is the service-name-shaped
+    // negative (its NAME contains "pass"); the other three carry real-shaped
+    // `__SB_CREDENTIAL__` banners inside the tail string, which is how live
+    // credentials survived the key-name-only scrub.
     servicePostDeploy: {
       passbolt: { lastRunAt: '2026-07-20T00:00:00Z', exitCode: 0, stdoutTail: 'seed ok' },
+      nginx: {
+        lastRunAt: '2026-07-21T00:00:00Z',
+        exitCode: 0,
+        stdoutTail: credentialTail('nginx', 'npm-admin@example.test', CANARY.postDeployNpmPassword),
+      },
+      adguard: {
+        lastRunAt: '2026-07-22T00:00:00Z',
+        exitCode: 1,
+        stdoutTail: credentialTail('adguard', 'admin', CANARY.postDeployAdguardPassword),
+      },
+      honcho: {
+        lastRunAt: '2026-07-23T00:00:00Z',
+        exitCode: 0,
+        stdoutTail: `__SB_CREDENTIAL__ ${JSON.stringify({
+          service: 'Honcho engine',
+          url: 'env: HONCHO_BEARER',
+          username: '—',
+          password: CANARY.postDeployBearerToken,
+          importance: 'system',
+        })}`,
+      },
+    },
+    // Migration-script stdout is captured the same way, into the same key name.
+    serviceMigrations: {
+      immich: [
+        {
+          ranAt: '2026-07-24T00:00:00Z',
+          fromVersion: 1,
+          toVersion: 2,
+          exitCode: 0,
+          stdoutTail: credentialTail('immich', 'api', CANARY.migrationSecret),
+        },
+      ],
     },
     accessRequests: [
       {
@@ -203,6 +268,9 @@ function buildFixture(): AppConfig {
     futureIntegration: {
       endpoint: 'https://api.example.test',
       accessToken: CANARY.futureAccessToken,
+      // Neither a secret-shaped key nor `stdoutTail` — only the VALUE gives it
+      // away. The marker backstop is what has to catch this one.
+      lastRunSummary: credentialTail('future-service', 'svc', CANARY.futureTailSecret),
     },
   } as unknown as AppConfig;
 }
@@ -359,10 +427,12 @@ describe('get_config secret scrubbing (#2404)', () => {
   it('does not redact service-name-keyed records whose name contains a secret word', async () => {
     const { parsed } = await callGetConfig(buildFixture());
     expect(at(parsed, 'installedTemplates.keycloak')).toEqual({ schemaVersion: 2, installedAt: '2026-07-01T00:00:00Z' });
+    // `passbolt` survives as a record (the key is a service name, not a secret);
+    // only its captured stdout is withheld.
     expect(at(parsed, 'servicePostDeploy.passbolt')).toEqual({
       lastRunAt: '2026-07-20T00:00:00Z',
       exitCode: 0,
-      stdoutTail: 'seed ok',
+      stdoutTail: REDACTED_SENTINEL,
     });
   });
 
@@ -389,6 +459,80 @@ describe('get_config secret scrubbing (#2404)', () => {
   });
 });
 
+/**
+ * #2404 follow-up — the key-name scrubber shipped, then box-verify found live
+ * credentials still leaving the box inside `servicePostDeploy[*].stdoutTail`:
+ * captured `post-deploy.py` stdout, whose KEY name is innocuous but whose
+ * string CONTENT embeds `__SB_CREDENTIAL__ {json}` banners with usable
+ * passwords and bearer tokens. Same shape applies to
+ * `serviceMigrations[*][].stdoutTail`.
+ */
+describe('get_config withholds captured script output (#2404 follow-up)', () => {
+  it('leaves no __SB_CREDENTIAL__ marker anywhere in the serialized output', async () => {
+    const { text } = await callGetConfig(buildFixture());
+    expect(text).not.toContain('__SB_CREDENTIAL__');
+  });
+
+  it('withholds every servicePostDeploy stdoutTail, secret-bearing or not', async () => {
+    const { parsed } = await callGetConfig(buildFixture());
+    const records = parsed.servicePostDeploy as Record<string, Record<string, unknown>>;
+    expect(Object.keys(records).sort()).toEqual(['adguard', 'honcho', 'nginx', 'passbolt']);
+    for (const [service, record] of Object.entries(records)) {
+      expect(record.stdoutTail, `servicePostDeploy.${service}.stdoutTail`).toBe(REDACTED_SENTINEL);
+    }
+  });
+
+  it('keeps lastRunAt and exitCode so "did post-deploy succeed" is still answerable', async () => {
+    const { parsed } = await callGetConfig(buildFixture());
+    expect(at(parsed, 'servicePostDeploy.nginx.lastRunAt')).toBe('2026-07-21T00:00:00Z');
+    expect(at(parsed, 'servicePostDeploy.nginx.exitCode')).toBe(0);
+    expect(at(parsed, 'servicePostDeploy.adguard.lastRunAt')).toBe('2026-07-22T00:00:00Z');
+    expect(at(parsed, 'servicePostDeploy.adguard.exitCode')).toBe(1);
+    expect(at(parsed, 'servicePostDeploy.passbolt.exitCode')).toBe(0);
+  });
+
+  it('withholds migration-script stdoutTail but keeps the version delta', async () => {
+    const { parsed } = await callGetConfig(buildFixture());
+    const entries = at(parsed, 'serviceMigrations.immich') as Array<Record<string, unknown>>;
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual({
+      ranAt: '2026-07-24T00:00:00Z',
+      fromVersion: 1,
+      toVersion: 2,
+      exitCode: 0,
+      stdoutTail: REDACTED_SENTINEL,
+    });
+  });
+
+  it('catches a credential banner in a field whose key is not secret-shaped', async () => {
+    const { parsed } = await callGetConfig(buildFixture());
+    expect(at(parsed, 'futureIntegration.lastRunSummary')).toBe(REDACTED_SENTINEL);
+  });
+
+  it('redacts a PEM private key found in a string value at any key', async () => {
+    const fixture = buildFixture() as unknown as Record<string, unknown>;
+    fixture.someNote = '-----BEGIN OPENSSH PRIVATE KEY-----\nCANARY-fake-pem-in-a-note\n-----END OPENSSH PRIVATE KEY-----';
+    const { parsed, text } = await callGetConfig(fixture as unknown as AppConfig);
+    expect(parsed.someNote).toBe(REDACTED_SENTINEL);
+    expect(text).not.toContain('PRIVATE KEY-----');
+  });
+
+  it('leaves an ordinary stdout tail-free record untouched', async () => {
+    const fixture = buildFixture();
+    fixture.servicePostDeploy = { media: { lastRunAt: '2026-07-25T00:00:00Z', exitCode: 0 } };
+    const { parsed } = await callGetConfig(fixture);
+    expect(at(parsed, 'servicePostDeploy.media')).toEqual({
+      lastRunAt: '2026-07-25T00:00:00Z',
+      exitCode: 0,
+    });
+  });
+
+  it('announces the withholding in the tool description', async () => {
+    const description = tools.get('get_config')?.description ?? '';
+    expect(description).toMatch(/stdoutTail/);
+  });
+});
+
 describe('isSecretKey (#2404)', () => {
   it.each([
     'password', 'passwd', 'pass', 'passphrase', 'passwordHash',
@@ -410,6 +554,9 @@ describe('isSecretKey (#2404)', () => {
     'schemaVersion', 'dayOfWeek', 'installedTemplates', 'servicePostDeploy',
     'templateSettings', 'publicDomain', 'lanIpHistory', 'accessRequests',
     'importance', 'notes', 'savedAt', 'allowDangerousExec', 'bypass',
+    // Why the follow-up fix needs its own layer: the key name is innocuous,
+    // only the captured stdout it holds is dangerous.
+    'stdoutTail', 'ranAt', 'fromVersion', 'exitCode', 'lastRunAt',
   ])('does not treat %s as secret', async (key) => {
     const { isSecretKey } = await import('./configTools');
     expect(isSecretKey(key)).toBe(false);
