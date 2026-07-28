@@ -31,6 +31,21 @@ export const SECRET_PATTERNS: readonly SecretPattern[] = [
   { name: 'GitHub token', re: /\bgh[posru]_[A-Za-z0-9]{20,}\b/ },
   { name: 'GitHub fine-grained PAT', re: /\bgithub_pat_[A-Za-z0-9_]{30,}\b/ },
   { name: 'Slack token', re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
+  // Authelia stores a cleartext OIDC client secret as `$plaintext$<secret>`
+  // (see `extractPlaintextSecret` in the oidc-clients route). A committed one
+  // is a real credential every install would share — exactly the #2417 bug,
+  // where `templates/auth/configuration.yml.mustache` shipped a literal
+  // `client_secret` for the admin panel's own OIDC client on every box in the
+  // world and none of the shapes above matched it. (The offending value lives
+  // in the regression case in `secretScan.test.ts`, not repeated here.)
+  //
+  // Deliberately narrow so the legitimate ways of WRITING about one still
+  // pass: a Mustache placeholder (`$plaintext${{VAR}}`) and a doc angle-
+  // bracket stand-in (`$plaintext$<your-secret>`, used in the immich and
+  // vaultwarden READMEs) both start with a character outside the secret
+  // alphabet. The 8-char floor keeps short illustrative values in prose
+  // (`$plaintext$abc`) from tripping it.
+  { name: 'Authelia plaintext OIDC client secret', re: /\$plaintext\$[A-Za-z0-9_-]{8,}/ },
 ];
 
 /**

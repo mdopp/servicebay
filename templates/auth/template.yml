@@ -11,7 +11,11 @@ metadata:
     # v3 (#2380): LLDAP's HTTP port (admin web UI + GraphQL API) is bound to
     # the host loopback instead of 0.0.0.0. No data move; requires a re-deploy
     # so podman recreates the pod from this manifest.
-    servicebay.schema-version: "3"
+    # v4 (#2417): the `servicebay` OIDC client's client_secret is generated per
+    # install (SERVICEBAY_OIDC_SECRET) instead of the hardcoded literal every
+    # box shipped. The deploy rotates it and ServiceBay adopts the new value
+    # into config.oidc.clientSecret. No data move.
+    servicebay.schema-version: "4"
     servicebay.tier: "infrastructure"
     # post-deploy.py calls /api/system/lldap/* and /api/system/authelia/*.
     # Pin the API versions (#588) so core refuses to invoke this script if

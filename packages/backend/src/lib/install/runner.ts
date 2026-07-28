@@ -528,22 +528,26 @@ export function buildRenderedSentinelError(itemName: string, sentinelSecrets: st
  * Mutates the matching `extraFiles` entry in place. Best-effort: any failure
  * to read the existing config leaves the fresh render untouched (the
  * post-deploy `ensureOidcClients` reconcile is the backstop) — never throws.
+ *
+ * Returns the on-disk config text it read (or null when there is none / it
+ * couldn't be read), so the caller can run the #2417 rotation pre-flight
+ * against it without paying for a second `read_file` round-trip.
  */
 export async function preserveAutheliaOidcClients(
   jobId: string,
   node: string | undefined,
   extraFiles: { path: string; content: string }[],
-): Promise<void> {
+): Promise<string | null> {
   // Authelia's config is the only `configuration.yml` the auth stack writes.
   const cf = extraFiles.find(f => f.path.endsWith('/configuration.yml') || f.path.endsWith('configuration.yml'));
-  if (!cf) return;
+  if (!cf) return null;
 
   try {
     const { agentManager } = await import('@/lib/agent/manager');
     const agent = await agentManager.ensureAgent(node || 'Local');
     const readRes = await agent.sendCommand('read_file', { path: cf.path }).catch(() => null);
     const existing = readRes ? (readRes.content || readRes.stdout || '') : '';
-    if (!existing) return; // fresh install — nothing on disk to preserve
+    if (!existing) return null; // fresh install — nothing on disk to preserve
 
     const { mergeAutheliaOidcClients } = await import('@/lib/capabilities/autheliaClientMerge');
     const merged = mergeAutheliaOidcClients(cf.content, existing);
@@ -551,8 +555,10 @@ export async function preserveAutheliaOidcClients(
       cf.content = merged;
       await log(jobId, 'ℹ️ Preserved existing Authelia OIDC client registrations across the auth redeploy (#1724).');
     }
+    return existing;
   } catch (e) {
     await log(jobId, `⚠️ Could not preserve existing Authelia OIDC clients (${e instanceof Error ? e.message : String(e)}); the post-deploy reconcile will re-register this install's clients.`);
+    return null;
   }
 }
 
@@ -724,7 +730,19 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   // each stack is individually redeployed. Before writing the auth config, read
   // the current on-disk `configuration.yml` and merge back any clients the
   // fresh render doesn't own — preserving each client's secret (no rotation).
-  await preserveAutheliaOidcClients(jobId, input.node, extraFiles);
+  const existingAutheliaConfig = await preserveAutheliaOidcClients(jobId, input.node, extraFiles);
+
+  // #2417 — the `servicebay` OIDC client (the admin panel's own "Login with
+  // Authelia") is the ONE client whose secret this deploy is allowed to
+  // rotate: it is owned by the fresh render, so the upgrade off the old
+  // hardcoded literal replaces it. That rotation briefly desynchronises the
+  // SSO button, which is only tolerable because the local admin
+  // username/password login is a second, non-OIDC door. Assert that door
+  // exists BEFORE anything is written — a throw here aborts the deploy with
+  // the box untouched, which is strictly safer than rotating the only
+  // credential the operator has.
+  const { assertServicebayOidcRotationSafe } = await import('@/lib/capabilities/servicebayOidcSecret');
+  await assertServicebayOidcRotationSafe(extraFiles, existingAutheliaConfig);
 
   // Optional per-template post-deploy.py — server runs it after the unit
   // starts; output streams back via `progress` events. Parsed below for
@@ -887,6 +905,20 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
       await log(jobId, attempt > 1
         ? `✅ ${item.name} deployed on attempt ${attempt}/${MAX_DEPLOY_ATTEMPTS}.`
         : `✅ ${item.name} deployed (containers may still be starting in background).`);
+
+      // #2417 — now that Authelia's configuration.yml is actually on disk,
+      // copy the `servicebay` client secret it holds into ServiceBay's own
+      // `config.oidc.clientSecret`, so the admin panel posts the value the
+      // token endpoint will accept. Deliberately AFTER the deploy succeeded:
+      // a deploy that died before the config landed must leave the box's
+      // existing (consistent) pair alone rather than half-migrate it.
+      // No-op for every stack other than `auth`; never throws.
+      {
+        const { reconcileServicebayOidcSecret } = await import('@/lib/capabilities/servicebayOidcSecret');
+        const r = await reconcileServicebayOidcSecret(input.node, extraFiles);
+        if (r?.outcome === 'changed') await log(jobId, `🔑 ${r.message}`);
+        else if (r?.outcome === 'skipped') await log(jobId, `⚠️ ${r.message}`);
+      }
       return true;
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));

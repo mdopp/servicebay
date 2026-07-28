@@ -428,8 +428,7 @@ describe('Auth template: LLDAP HTTP port is loopback-bound (#2380)', () => {
       .toBe('__authelia_forward_auth__');
   });
 
-  it('schema-version is bumped to 3 with a CHANGELOG section and a v2-to-v3 migration', () => {
-    expect(auth.yamlContent).toMatch(/servicebay\.schema-version:\s*"3"/);
+  it('ships a CHANGELOG section and a v2-to-v3 migration for the loopback bind', () => {
     const changelog = fs.readFileSync(path.join(TEMPLATES_DIR, 'auth', 'CHANGELOG.md'), 'utf-8');
     expect(changelog).toMatch(/##\s*v3\b.*\(breaking\)/);
     const mig = fs.readFileSync(
@@ -453,6 +452,49 @@ describe('Auth template: LLDAP HTTP port is loopback-bound (#2380)', () => {
     expect(smoke).toMatch(/http:\/\/127\.0\.0\.1:\$\{LLDAP_PORT\}/);
     // No `curl ... "http://$HOST:$LLDAP_PORT/api/..."`-style API call left.
     expect(smoke).not.toMatch(/\$HOST:\$LLDAP_PORT\/(api|auth)\b/);
+  });
+
+  // ─── #2417: the servicebay OIDC client's secret is per-install ──────────
+  //
+  // This client guards the admin panel itself. A literal here is a credential
+  // every box on earth shares, and `mergeAutheliaOidcClients`'s no-rotate rule
+  // means it never self-heals. These assertions are the ratchet: the literal
+  // cannot come back, and the variable that replaced it cannot be quietly
+  // dropped or downgraded to a non-secret.
+  it('renders the servicebay OIDC client_secret from a per-install secret variable', () => {
+    const mustache = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'auth', 'configuration.yml.mustache'), 'utf-8',
+    );
+    // The client is still declared…
+    expect(mustache).toMatch(/client_id:\s*'servicebay'/);
+    // …but its secret is a placeholder, not a value.
+    expect(mustache).toMatch(/client_secret:\s*'\$plaintext\$\{\{SERVICEBAY_OIDC_SECRET\}\}'/);
+    // No `$plaintext$<literal>` anywhere in the rendered config.
+    expect(mustache).not.toMatch(/\$plaintext\$[A-Za-z0-9_-]/);
+
+    // Declared as a generated secret, like every sibling SSO template's.
+    expect(auth.variables.SERVICEBAY_OIDC_SECRET?.type).toBe('secret');
+    // `noAutoGenerate` would leave it EMPTY, rendering an empty client_secret
+    // — Authelia would then accept any secret for this client.
+    expect(auth.variables.SERVICEBAY_OIDC_SECRET?.noAutoGenerate).toBeFalsy();
+    expect(auth.variables.SERVICEBAY_OIDC_SECRET?.default).toBeUndefined();
+  });
+
+  it('schema-version is bumped to 4 with a CHANGELOG section and a v3-to-v4 migration', () => {
+    // Without the bump, an existing box never re-renders configuration.yml and
+    // keeps the published secret forever.
+    expect(auth.yamlContent).toMatch(/servicebay\.schema-version:\s*"4"/);
+    const changelog = fs.readFileSync(path.join(TEMPLATES_DIR, 'auth', 'CHANGELOG.md'), 'utf-8');
+    expect(changelog).toMatch(/##\s*v4\b.*\(breaking\)/);
+    const mig = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'auth', 'migrations', 'v3-to-v4.py'), 'utf-8',
+    );
+    // Informational hop: the rotation is structural (the re-render owns it),
+    // so this script must not move data or try to write either side itself —
+    // a script that flipped ServiceBay's copy here would lead the file instead
+    // of following it, which is the ordering that CAN strand a box.
+    expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);
+    expect(mig).toMatch(/break-glass|LOCAL admin/i);
   });
 });
 

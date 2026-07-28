@@ -104,7 +104,7 @@ identity_providers:
     clients:
       - client_id: 'servicebay'
         client_name: 'ServiceBay'
-        client_secret: '$plaintext$servicebay-oidc-secret'
+        client_secret: '$plaintext${{SERVICEBAY_OIDC_SECRET}}'
         public: false
         authorization_policy: 'two_factor'
         redirect_uris:
