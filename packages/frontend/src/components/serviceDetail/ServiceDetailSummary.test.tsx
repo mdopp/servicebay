@@ -104,6 +104,30 @@ describe('ServiceDetailSummary', () => {
     expect(screen.queryByText('Open')).toBeNull();
   });
 
+  it('links Logs at the container log view, not the same-page health tab (#2391)', async () => {
+    global.fetch = mockChecks([]);
+    renderSummary(<ServiceDetailSummary service={svc()} />);
+    await waitFor(() => expect(screen.getByText('No health checks for this service.')).toBeDefined());
+
+    const logs = screen.getByText('Logs').closest('a')!;
+    expect(logs.getAttribute('href')).toBe('/services/jellyfin.service?tab=containers&drawer=logs');
+    expect(logs.getAttribute('href')).not.toContain('tab=health');
+  });
+
+  it('calls onShowLogs in place instead of navigating when the host page owns a log view (#2391)', async () => {
+    global.fetch = mockChecks([]);
+    const onShowLogs = vi.fn();
+    renderSummary(<ServiceDetailSummary service={svc()} showOperateLink={false} onShowLogs={onShowLogs} />);
+    await waitFor(() => expect(screen.getByText('No health checks for this service.')).toBeDefined());
+
+    const logs = screen.getByText('Logs').closest('a')!;
+    // still a real link (new-tab / cross-page route), but the click is handled here
+    expect(logs.getAttribute('href')).toBe('/services/jellyfin.service?tab=containers&drawer=logs');
+    const handled = fireEvent.click(logs);
+    expect(onShowLogs).toHaveBeenCalledTimes(1);
+    expect(handled).toBe(false); // preventDefault() — no navigation
+  });
+
   it('Restart POSTs the service action and reports success', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();

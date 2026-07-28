@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import type { ServiceViewModel } from '@servicebay/api-client';
 
 // #2077 regression guard: the per-service Operate page MUST own a scroll region,
 // because the dashboard <main> (app/(dashboard)/layout.tsx) is overflow-hidden.
@@ -7,18 +8,59 @@ import { render } from '@testing-library/react';
 // bottom with no scrollbar. We assert the rendered page root carries the
 // canonical PageScroll chain (min-h-0 + overflow-y-auto) — the exact classes
 // that the load-bearing fix depends on.
+//
+// #2391: the summary's "Logs" quick action must reach a real log view from
+// whichever tab it is clicked on, and `?drawer=logs` must do the same on arrival
+// from another page.
 
+const params = { current: new URLSearchParams() };
 vi.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => params.current,
 }));
 
-// Render the loading state — it still mounts the PageScroll root, which is the
-// only thing we need to assert, and avoids constructing a full ServiceViewModel.
+const operate = { current: { service: null as ServiceViewModel | null, loading: true } };
 vi.mock('../../../settings/services/_lib/useOperateServices', () => ({
-  useOperateService: () => ({ service: null, loading: true }),
+  useOperateService: () => operate.current,
+}));
+
+vi.mock('../../../settings/services/_lib/OperateHealthTab', () => ({ default: () => <div>health-tab</div> }));
+vi.mock('../../../settings/services/_lib/OperateSettingsTab', () => ({ default: () => <div>settings-tab</div> }));
+vi.mock('../../../settings/services/_lib/OperateActionsTab', () => ({ default: () => <div>actions-tab</div> }));
+
+vi.mock('@/components/serviceDetail/ServiceDetailSummary', () => ({
+  default: ({ onShowLogs }: { onShowLogs?: () => void }) => (
+    <button onClick={onShowLogs}>quick-logs</button>
+  ),
+}));
+
+const containersTabProps = vi.fn();
+vi.mock('./OperateContainersTab', () => ({
+  default: (props: Record<string, unknown>) => {
+    containersTabProps(props);
+    return <div>containers-tab</div>;
+  },
 }));
 
 import OperatePage from './OperatePage';
+
+function svc(over: Partial<ServiceViewModel> = {}): ServiceViewModel {
+  return {
+    name: 'immich.service',
+    displayName: 'Immich',
+    yamlBasename: null,
+    kubeBasename: null,
+    active: true,
+    type: 'kube',
+    ports: [],
+    ...over,
+  };
+}
+
+beforeEach(() => {
+  params.current = new URLSearchParams();
+  operate.current = { service: null, loading: true };
+  containersTabProps.mockClear();
+});
 
 describe('OperatePage scroll container (#2077)', () => {
   it('renders a single canonical scroll region (min-h-0 + overflow-y-auto)', () => {
@@ -31,5 +73,57 @@ describe('OperatePage scroll container (#2077)', () => {
     expect(scrollers.length).toBeGreaterThanOrEqual(1);
     // and it fills the shell so it can scroll inside the overflow-hidden <main>
     expect(scrollers[0].className).toContain('h-full');
+  });
+});
+
+describe('OperatePage Logs quick action (#2391)', () => {
+  it('switches to the Containers tab and asks it for the log drawer, from the default tab', () => {
+    operate.current = { service: svc(), loading: false };
+    render(<OperatePage name="immich" />);
+
+    // starts on Health, no drawer requested
+    expect(screen.getByText('health-tab')).toBeDefined();
+    expect(containersTabProps).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('quick-logs'));
+
+    expect(screen.getByText('containers-tab')).toBeDefined();
+    expect(containersTabProps.mock.calls.at(-1)![0].initialDrawer).toEqual({
+      containerId: undefined,
+      mode: 'logs',
+      nonce: 1,
+    });
+  });
+
+  it('works from a non-default tab too (the old ?tab=health link was a same-page no-op)', () => {
+    params.current = new URLSearchParams('tab=actions');
+    operate.current = { service: svc(), loading: false };
+    render(<OperatePage name="immich" />);
+    expect(screen.getByText('actions-tab')).toBeDefined();
+
+    fireEvent.click(screen.getByText('quick-logs'));
+    expect(screen.getByText('containers-tab')).toBeDefined();
+    expect(containersTabProps.mock.calls.at(-1)![0].initialDrawer).toMatchObject({ mode: 'logs' });
+  });
+
+  it('re-fires with a fresh nonce so a second click re-opens a closed drawer', () => {
+    operate.current = { service: svc(), loading: false };
+    render(<OperatePage name="immich" />);
+
+    fireEvent.click(screen.getByText('quick-logs'));
+    fireEvent.click(screen.getByText('quick-logs'));
+    expect(containersTabProps.mock.calls.at(-1)![0].initialDrawer).toMatchObject({ nonce: 2 });
+  });
+
+  it('honours a ?drawer=logs&container= deep link on arrival from another page', () => {
+    params.current = new URLSearchParams('tab=containers&drawer=logs&container=abc123');
+    operate.current = { service: svc(), loading: false };
+    render(<OperatePage name="immich" />);
+
+    expect(containersTabProps.mock.calls.at(-1)![0].initialDrawer).toEqual({
+      containerId: 'abc123',
+      mode: 'logs',
+      nonce: 1,
+    });
   });
 });

@@ -68,11 +68,19 @@ function formatUptime(seconds?: number): string | null {
 export default function ServiceDetailSummary({
   service,
   showOperateLink = true,
+  onShowLogs,
   className = '',
 }: {
   service: ServiceViewModel;
   /** Hide the "Open full Operate page" link when already ON the Operate page. */
   showOperateLink?: boolean;
+  /**
+   * Open this service's container logs in place (#2391). Supplied by the
+   * Operate page, which can switch to its Containers tab and pop the log
+   * drawer from ANY tab; surfaces without a log view (the network-map sidebar)
+   * omit it and the control falls back to `logsHref`, a cross-page link.
+   */
+  onShowLogs?: () => void;
   className?: string;
 }) {
   const { counts, checks, loading } = useServiceHealth(service);
@@ -80,7 +88,10 @@ export default function ServiceDetailSummary({
 
   const serviceName = service.id || service.name;
   const operateHref = `/services/${encodeURIComponent(serviceName)}`;
-  const logsHref = `${operateHref}?tab=health`;
+  // The Containers tab is where the real log viewer (ContainerLogsPanel) lives
+  // — the Health tab never showed log output, so the old `?tab=health` target
+  // was a same-page no-op (#2391).
+  const logsHref = `${operateHref}?tab=containers&drawer=logs`;
   const openUrl = primaryServiceUrl(service);
   const meta = DOT_META[service.active ? overallHealth(counts) : 'unknown'];
   const subtitle = buildSubtitle(service, openUrl);
@@ -88,7 +99,13 @@ export default function ServiceDetailSummary({
   return (
     <div className={`space-y-3 ${className}`}>
       <SummaryHeader displayName={service.displayName} active={service.active} meta={meta} subtitle={subtitle} />
-      <SummaryActions openUrl={openUrl} logsHref={logsHref} restarting={restarting} onRestart={handleRestart} />
+      <SummaryActions
+        openUrl={openUrl}
+        logsHref={logsHref}
+        onShowLogs={onShowLogs}
+        restarting={restarting}
+        onRestart={handleRestart}
+      />
       <HealthRollup checks={checks} counts={counts} loading={loading} />
       {showOperateLink && (
         <Link
@@ -178,11 +195,13 @@ const ACTION_CLS =
 function SummaryActions({
   openUrl,
   logsHref,
+  onShowLogs,
   restarting,
   onRestart,
 }: {
   openUrl: string | null;
   logsHref: string;
+  onShowLogs?: () => void;
   restarting: boolean;
   onRestart: () => void;
 }) {
@@ -196,7 +215,14 @@ function SummaryActions({
       <button type="button" onClick={onRestart} disabled={restarting} className={`${ACTION_CLS} disabled:opacity-60`}>
         {restarting ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />} Restart
       </button>
-      <Link href={logsHref} className={ACTION_CLS}>
+      {/* Always a real link (right-click / new-tab still work, and the href is
+          the cross-page route to the log view). When the host page owns a log
+          view, the click is handled in place instead of navigating. */}
+      <Link
+        href={logsHref}
+        onClick={onShowLogs && (e => { e.preventDefault(); onShowLogs(); })}
+        className={ACTION_CLS}
+      >
         <ScrollText size={14} /> Logs
       </Link>
     </div>
