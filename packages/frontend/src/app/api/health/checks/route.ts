@@ -6,14 +6,35 @@ import { v4 as uuidv4 } from 'uuid';
 import { withApiHandler } from '@/lib/api/handler';
 import { HealthCheckTarget, NodeName } from '@/lib/api/schemas';
 import { getDiagnoseChecksEnriched } from '@/lib/diagnose/diagnoseChecks';
+import { buildServiceAttributionIndex, resolveDomainCheckService } from '@/lib/health/checkAttribution';
 import { isKnownLocalSystemTarget } from '@/lib/health/ssrfGuard';
 
 export const GET = withApiHandler({}, async () => {
   const checks = HealthStore.getChecks();
+  // #2394: one attribution index per node touched by this batch (built from
+  // the in-memory twin, so it costs no agent round trip). A `domain` check's
+  // host / upstream port maps 1:1 to the service NPM forwards it to, so it
+  // belongs on that service's Health tab rather than the box-wide list.
+  const attribution = new Map<string, ReturnType<typeof buildServiceAttributionIndex>>();
+  const indexFor = (nodeName: string) => {
+    let index = attribution.get(nodeName);
+    if (!index) {
+      index = buildServiceAttributionIndex(nodeName);
+      attribution.set(nodeName, index);
+    }
+    return index;
+  };
   // Enrich with last result
   const enrichedChecks = checks.map(check => {
     const results = HealthStore.getResults(check.id);
     const lastResult = results[0];
+    const serviceName = check.type === 'domain'
+      ? resolveDomainCheckService(
+          check.target,
+          check.domainConfig?.upstreamPort,
+          indexFor(check.nodeName || 'Local'),
+        )
+      : null;
 
     // Get last 20 results for sparkline/heartbeat
     const history = results.slice(0, 20).map(r => ({
@@ -32,6 +53,10 @@ export const GET = withApiHandler({}, async () => {
       // been silent for reasons other than being new. Lets the UI read a
       // brand-new check as "not run yet" instead of a suspicious blank.
       pending: isCheckPending(check.created_at, Boolean(lastResult)),
+      // #2394: absent when nothing on the box claims the domain — an orphan
+      // route IS a box-level finding, so it keeps its box-wide home instead
+      // of silently disappearing from every tab.
+      ...(serviceName ? { serviceName } : {}),
       history
     };
   });

@@ -38,6 +38,7 @@ import {
   encodeDiagnoseMessage,
   decodeDiagnoseMessage,
 } from '@/lib/diagnose/persistDiagnoseResults';
+import { buildServiceAttributionIndex, resolveDiagnoseProbeService } from '@/lib/health/checkAttribution';
 import { logger } from '@/lib/logger';
 
 // Re-export the id/status/message helpers from the leaf so existing
@@ -88,17 +89,28 @@ export async function runDiagnoseChecks(
  * probes that have a persisted result appear — a fresh box shows none
  * until the first daily run (or an on-demand run) lands.
  */
-export function getDiagnoseChecksEnriched() {
+export function getDiagnoseChecksEnriched(nodeName = 'Local') {
   // We can't enumerate probe ids without running the suite, so we list
   // every persisted result whose id carries the diagnose prefix. The
   // store keys results by check_id on disk; HealthStore doesn't expose a
   // "list result files" API, so we reconstruct from the on-disk result
   // listing via getResultCheckIds.
   const ids = HealthStore.getResultCheckIds().filter(isDiagnoseCheckId);
+  // #2394: one twin read for the whole batch — the per-item findings of
+  // crash_loop / failed_units / post_deploy_failed name a container, unit
+  // or service, so a row whose items all belong to ONE stack is that
+  // stack's problem, not the box's.
+  const attribution = buildServiceAttributionIndex(nodeName);
   return ids.map(id => {
     const results = HealthStore.getResults(id);
     const last = results[0];
     const decoded = decodeDiagnoseMessage(last?.message);
+    const probeId = id.slice(DIAGNOSE_CHECK_ID_PREFIX.length);
+    const serviceName = resolveDiagnoseProbeService(
+      probeId,
+      decoded?.items as { id?: string }[] | undefined,
+      attribution,
+    );
     const history = results.slice(0, 20).map(r => ({
       status: r.status,
       latency: r.latency ?? 0,
@@ -108,7 +120,7 @@ export function getDiagnoseChecksEnriched() {
       id,
       name: decoded?.label ? `Self-diagnose: ${decoded.label}` : id,
       type: 'script' as const,
-      target: id.slice(DIAGNOSE_CHECK_ID_PREFIX.length),
+      target: probeId,
       interval: DIAGNOSE_INTERVAL_SECONDS,
       enabled: true,
       created_at: new Date(0).toISOString(),
@@ -118,11 +130,15 @@ export function getDiagnoseChecksEnriched() {
       // Surface the four-way diagnose status + self-repair payload for
       // the row's badge / popup (the popup slice consumes `diagnose`).
       diagnose: decoded ?? undefined,
-      // #2080: every diagnose probe is box-wide (it inspects the node — TLS,
-      // DNS, SSO, storage, the engine — not a single stack). Mark it so the
+      // #2080: a diagnose probe inspects the node — TLS, DNS, SSO, storage,
+      // the engine — not a single stack, so by default it is box-wide and the
       // per-service Health tab files it under "Box-wide" instead of trying to
       // substring-match it onto a service (which always failed → empty tab).
-      boxWide: true,
+      // #2394: except when the row's own items resolve to exactly one stack
+      // (a crash-looping `media-jellyfin`, a failed `paperless.service`) —
+      // then it belongs on that service's tab, not the generic list.
+      boxWide: serviceName === null,
+      ...(serviceName ? { serviceName } : {}),
       history,
     };
   });

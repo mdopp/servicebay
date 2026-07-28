@@ -237,4 +237,18 @@ export interface Check extends CheckConfig {
    * a service base name, leaving the tab reading "1 ok".
    */
   boxWide?: boolean;
+  /**
+   * Base name of the service this check belongs to (#2394), stamped by the
+   * backend when the check's own identifiers resolve to one — a `domain`
+   * check whose host/upstream port maps to a service's proxy route, or a
+   * `diagnose:<probeId>` row whose per-item findings all name containers /
+   * units of a single stack. Same mechanism as {@link boxWide}: the backend
+   * owns the structural identity, the frontend just reads it, so ownership
+   * is never re-derived by string-matching in the browser.
+   *
+   * Set ⇒ the check is NOT box-wide; it belongs on that service's Health
+   * tab. Absent ⇒ unchanged #2080 behaviour (structural per-service match,
+   * else the box-wide section). See `lib/health/checkAttribution.ts`.
+   */
+  serviceName?: string;
 }
