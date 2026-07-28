@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { useSocket } from '@/hooks/useSocket';
+import { useEffect, useRef } from 'react';
+import { useConnectionStatus } from '@/hooks/useConnectionStatus';
 import { useInstallMonitor } from '@/hooks/useInstallMonitor';
 import { useToast } from '@/providers/ToastProvider';
 
@@ -22,48 +22,46 @@ import { useToast } from '@/providers/ToastProvider';
  * its sticky toast are suppressed whenever an install job is active: a
  * succeeding `/api/install/progress` poll is a positive liveness signal that
  * outranks a momentarily-down socket.
+ *
+ * The "is it actually down?" judgement is NOT made here — it belongs to
+ * `useConnectionStatus`, which turns the raw transport boolean into
+ * online/reconnecting/offline with a per-cycle, visibility-aware grace window
+ * (#2398). This component renders the `offline` state and nothing else; a
+ * routine mobile app-switch never reaches it.
  */
 export default function OfflineBanner() {
-  const { isConnected } = useSocket();
+  const { status, hasEverConnected } = useConnectionStatus();
   const { state: installState } = useInstallMonitor();
   const installActive = installState !== null;
   const { addToast, removeToast } = useToast();
   const toastIdRef = useRef<string | null>(null);
-  // A short grace so the first-mount "connecting" phase doesn't flash the
-  // banner; after it elapses, any disconnect shows immediately. (Set from a
-  // timer callback, not synchronously in the effect body.)
-  const hasConnectedRef = useRef(false);
-  const [graceOver, setGraceOver] = useState(false);
+
+  const offline = status === 'offline' && !installActive;
 
   useEffect(() => {
-    const t = setTimeout(() => setGraceOver(true), 2500);
-    return () => clearTimeout(t);
-  }, []);
-
-  useEffect(() => {
-    // A live install poll proves the box is reachable — clear any sticky
-    // "Connection lost" toast and stay quiet even while the socket is
-    // momentarily down (#1504).
-    if (isConnected || installActive) {
-      if (toastIdRef.current) {
-        removeToast(toastIdRef.current);
-        toastIdRef.current = null;
-        if (isConnected) addToast('success', 'Reconnected', 'Live updates resumed.', 3000);
+    // The sticky toast is the *drop* narrative ("lost … reconnected"), so it
+    // only applies once the connection has actually been live at least once —
+    // a page that never connected gets the banner, not a "lost it" story.
+    if (offline && hasEverConnected) {
+      if (!toastIdRef.current) {
+        toastIdRef.current = addToast(
+          'warning',
+          'Connection lost',
+          'Live updates paused. Trying to reconnect…',
+          0,
+        );
       }
-      if (isConnected) hasConnectedRef.current = true;
       return;
     }
-    if (!hasConnectedRef.current) return; // initial connecting phase, not a drop
-    if (toastIdRef.current) return; // already showing the sticky toast
-    toastIdRef.current = addToast(
-      'warning',
-      'Connection lost',
-      'Live updates paused. Trying to reconnect…',
-      0,
-    );
-  }, [isConnected, installActive, addToast, removeToast]);
+    // Back online, or the install poll proves the box is reachable after all
+    // (#1504) — drop the sticky toast, and celebrate only a real reconnect.
+    if (toastIdRef.current) {
+      removeToast(toastIdRef.current);
+      toastIdRef.current = null;
+      if (status === 'online') addToast('success', 'Reconnected', 'Live updates resumed.', 3000);
+    }
+  }, [offline, status, hasEverConnected, addToast, removeToast]);
 
-  const offline = !isConnected && graceOver && !installActive;
   if (!offline) return null;
 
   return (

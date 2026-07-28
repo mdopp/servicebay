@@ -1,15 +1,28 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { renderHook } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Capture the fake socket's event handlers so the test can fire them.
-const handlers: Record<string, (arg?: any) => void> = {};
+// Capture the fake socket's event handlers so the test can fire them. Several
+// listeners share an event (the hook's own, plus the singleton's recovery
+// wiring), so keep a list per event and mirror `off` faithfully — RTL's
+// auto-cleanup unmounts between tests, which unregisters the per-hook ones and
+// leaves the singleton's in place, exactly as in the browser.
+const handlers: Record<string, ((arg?: any) => void)[]> = {};
 const fakeSocket = {
   connected: false,
-  on: vi.fn((event: string, cb: (arg?: any) => void) => { handlers[event] = cb; }),
-  off: vi.fn(),
+  /** socket.io's "will auto-reconnect on its own" flag. */
+  active: true,
+  on: vi.fn((event: string, cb: (arg?: any) => void) => {
+    (handlers[event] ||= []).push(cb);
+  }),
+  off: vi.fn((event: string, cb: (arg?: any) => void) => {
+    handlers[event] = (handlers[event] || []).filter((h) => h !== cb);
+  }),
   connect: vi.fn(),
   disconnect: vi.fn(),
+};
+const fire = (event: string, arg?: any) => {
+  for (const h of [...(handlers[event] || [])]) h(arg);
 };
 vi.mock('socket.io-client', () => ({
   default: vi.fn(() => fakeSocket),
@@ -19,8 +32,8 @@ import { useSocket } from '@/hooks/useSocket';
 
 describe('useSocket — connect_error handling', () => {
   beforeEach(() => {
-    for (const k of Object.keys(handlers)) delete handlers[k];
     fakeSocket.connected = false;
+    fakeSocket.active = true;
     fakeSocket.connect.mockClear();
     fakeSocket.disconnect.mockClear();
   });
@@ -35,16 +48,16 @@ describe('useSocket — connect_error handling', () => {
     try {
       renderHook(() => useSocket());
       // The hook must subscribe to connect_error.
-      expect(handlers.connect_error).toBeDefined();
+      expect(handlers.connect_error?.length).toBeGreaterThan(0);
 
       // A transient network connect_error must NOT redirect — Socket.IO
       // keeps retrying on its own.
-      handlers.connect_error(new Error('xhr poll error'));
+      fire('connect_error', new Error('xhr poll error'));
       expect(window.location.href).toBe('');
 
       // The server auth-middleware rejection ('unauthorized') — e.g. a
       // stale session cookie after a reinstall — bounces to /login.
-      handlers.connect_error(new Error('unauthorized'));
+      fire('connect_error', new Error('unauthorized'));
       expect(window.location.href).toBe('/login');
     } finally {
       Object.defineProperty(window, 'location', {
@@ -61,7 +74,7 @@ describe('useSocket — connect_error handling', () => {
 
     try {
       renderHook(() => useSocket());
-      handlers.connect_error(new Error('unauthorized'));
+      fire('connect_error', new Error('unauthorized'));
       // Must NOT have been replaced — staying on /login lets the user log in.
       expect(window.location.href).toBe('http://x/login');
     } finally {
@@ -89,6 +102,63 @@ describe('useSocket — connect_error handling', () => {
       vi.advanceTimersByTime(3000);
       expect(fakeSocket.disconnect).toHaveBeenCalled();
       expect(fakeSocket.connect).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('exposes the disconnect reason so the UI can judge how alarming it is (#2398)', () => {
+    const { result } = renderHook(() => useSocket());
+    expect(result.current.disconnectReason).toBeNull();
+
+    act(() => { fire('disconnect', 'transport close'); });
+    expect(result.current.isConnected).toBe(false);
+    expect(result.current.disconnectReason).toBe('transport close');
+
+    act(() => { fire('connect'); });
+    expect(result.current.isConnected).toBe(true);
+    expect(result.current.disconnectReason).toBeNull();
+  });
+
+  it('re-dials the moment the tab becomes visible again (#2398)', () => {
+    renderHook(() => useSocket());
+    fakeSocket.connected = false;
+    fakeSocket.connect.mockClear();
+
+    // A mobile OS freezes a backgrounded tab's socket; waiting out socket.io's
+    // backoff is what let the banner beat the reconnect to the screen.
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    expect(fakeSocket.connect).toHaveBeenCalled();
+
+    // …and no pointless re-dial when the socket is already up.
+    fakeSocket.connected = true;
+    fakeSocket.connect.mockClear();
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    expect(fakeSocket.connect).not.toHaveBeenCalled();
+  });
+
+  it('owns the retry when socket.io will not reconnect on its own (#2398)', () => {
+    vi.useFakeTimers();
+    try {
+      renderHook(() => useSocket());
+      fakeSocket.connected = false;
+      fakeSocket.connect.mockClear();
+
+      // `active: false` = the server closed us out; socket.io stops retrying
+      // and the page would stay dead until a reload.
+      fakeSocket.active = false;
+      act(() => { fire('disconnect', 'io server disconnect'); });
+      expect(fakeSocket.connect).not.toHaveBeenCalled(); // not instantly — brief settle
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(fakeSocket.connect).toHaveBeenCalled();
+
+      // A teardown we asked for is left alone. (Stay under the 3s
+      // stalled-initial-connect kick, which is a different recovery.)
+      fakeSocket.connect.mockClear();
+      act(() => { fire('disconnect', 'io client disconnect'); });
+      act(() => { vi.advanceTimersByTime(1500); });
+      expect(fakeSocket.connect).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
