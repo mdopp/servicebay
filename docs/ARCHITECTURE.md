@@ -31,7 +31,7 @@ A modular / KISS / DRY / SoT review of the codebase plus a security pass. Open f
 - **One renderer.** All Mustache rendering passes through `packages/backend/src/lib/install/runner.ts`. One health-check runner (`packages/backend/src/lib/health/runner.ts:CheckRunner.run`) dispatches by type internally — no parallel implementations.
 - **Core stays out of template internals.** `tests/backend/template_consistency.test.ts:564-614` allows exactly one template-name branch in the install engine (`isSelected('nginx')` in `packages/backend/src/lib/stackInstall/postInstall.ts:366`, for the NPM-credentials tri-state UI prompt that can't live in a template script). Every other deploy path is template-agnostic.
 - **Login rate limiting** is SQLite-backed sliding window, survives restarts (`packages/backend/src/lib/auth/rateLimit.ts`).
-- **MCP scope enforcement** is real — every tool is mapped to `read|lifecycle|mutate|destroy` and bearer tokens are checked server-side (`packages/backend/src/lib/mcp/server.ts:74-98`).
+- **MCP scope enforcement** is real — every tool is mapped to `read|lifecycle|mutate|destroy` and bearer tokens are checked server-side (`TOOL_SCOPES` in `packages/backend/src/lib/mcp/toolPolicy.ts`).
 
 ### Coupling leaks (architecture issues)
 
@@ -405,7 +405,7 @@ sequenceDiagram
 *   **Goal**: Let an external LLM (Claude, OpenAI, etc.) drive ServiceBay end-to-end via the [Model Context Protocol](https://modelcontextprotocol.io).
 *   **Endpoint**: `POST /mcp` — handled directly in `server.ts` (intercepts the request before the Next.js handler) and bridged to `@modelcontextprotocol/sdk`'s `StreamableHTTPServerTransport`. Authentication is either the same `session` cookie the UI uses (decoded via `getSessionFromCookieHeader`) or a named `sb_` API token carrying explicit scopes.
 *   **Stateless**: a fresh `McpServer` + transport are created per request, both closed when the response stream ends. No long-lived sessions.
-*   **Tool surface** (`packages/backend/src/lib/mcp/server.ts`, 62 tools):
+*   **Tool surface** (`packages/backend/src/lib/mcp/tools/`, one module per tool group, 62 tools):
     *   *Read*: `list_nodes`, `list_services`, `list_containers`, `get_logs` (`source: service\|container\|podman`), `get_system_info`, `get_network_graph`, `get_health_checks`, `get_gateway_status`, `get_proxy_routes`, `list_templates`, `get_template_artifact` (`artifact: readme\|yaml\|variables`), `verify_node_connection`, `list_system_services`, `get_config`.
     *   *Mutate*: `manage_service` (`action: start\|stop\|restart`), `deploy_service`/`update_service_yaml`/`delete_service`/`rename_service`, `add_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`/`list_backups`, `create_health_check`/`delete_health_check`/`run_check_now`, `update_config`, `exec_command`, `refresh_agent`.
     *   *Knowledge*: `list_assists`/`get_assist`, `get_service_standards` (curated build-standards index), and the learning-feedback loop — `propose_learning` (off-ladder `propose` scope; submits an additive `local/<slug>` assist proposal that an admin approves behind a secret scan), reviewed via `list_learning_proposals`/`get_learning_proposal` and tracked for promotion via `list_assist_drift`.

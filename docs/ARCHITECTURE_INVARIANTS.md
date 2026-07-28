@@ -48,11 +48,11 @@ Thresholds are **deliberate decisions**, not aspirational defaults. Two paths:
 | Invariant | Current | Threshold | Enforced by |
 |---|---:|---:|---|
 | Max file LOC (frontend) | 2,144 | 2,200 | `check-invariants.ts:MAX_FILE_LOC` |
-| Max file LOC (backend) | 2,391 | 2,400 | `check-invariants.ts:MAX_BACKEND_FILE_LOC` |
-| Files > 2,000 LOC | 3 | (untracked) | future |
+| Max file LOC (backend) | 2,046 | 2,200 | `check-invariants.ts:MAX_FILE_LOC` |
+| Files > 2,000 LOC | 2 | (untracked) | future |
 | Functions > 150 LOC | 1+ | (untracked) | future |
 
-**File-size ceiling.** Two roots, two pins. Frontend: largest is `NetworkDashboard.tsx` at 2,144 LOC, cap 2,200. Backend: largest is `lib/mcp/server.ts` at 2,391 LOC, cap 2,400 — the backend root was **not walked at all** until #2379, so this ceiling is newly enforced rather than loosened. Ratchet target: one shared 1,500 cap once `NetworkDashboard`, `ServicesDashboard` and `mcp/server.ts` (#2384) are split per the audit follow-ups.
+**File-size ceiling.** Two roots, **one** pin (2,200). Frontend: largest is `NetworkDashboard.tsx` at 2,144 LOC. Backend: largest is `lib/network/service.ts` at 2,046 LOC. The backend root was **not walked at all** until #2379, which enforced it behind a temporary, looser `MAX_BACKEND_FILE_LOC` (2,400) pinned to `lib/mcp/server.ts` at 2,391; #2384 split that file into `lib/mcp/tools/*` (one module per tool group, 382 LOC left in `server.ts`) and the separate backend pin was deleted, so both roots share `MAX_FILE_LOC` again. Ratchet target: one shared 1,500 cap once `NetworkDashboard` and `network/service.ts` are split per the audit follow-ups.
 
 ### Type safety
 

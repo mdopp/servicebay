@@ -53,7 +53,7 @@ ServiceBay gates a token at two independent layers, and **both** consult the sam
 ladder:
 
 1. **MCP tools** — every tool name maps to a required scope in `TOOL_SCOPES`
-   (`packages/backend/src/lib/mcp/server.ts`). The dispatcher checks
+   (`packages/backend/src/lib/mcp/toolPolicy.ts`). The dispatcher checks
    `tokenHasScope(auth.scopes, TOOL_SCOPES[tool] ?? 'read')` before any tool runs.
    This map is centralized and complete by construction — every tool has a row.
 
@@ -163,6 +163,6 @@ capability warrants other than the `restore` case above.
 Regenerate this audit from:
 
 - `packages/backend/src/lib/auth/apiScope.ts` — ladder + `scopeSatisfiedBy`/`scopesAreSubset`
-- `packages/backend/src/lib/mcp/server.ts` — `TOOL_SCOPES`, `tokenHasScope`
+- `packages/backend/src/lib/mcp/toolPolicy.ts` — `TOOL_SCOPES`, `tokenHasScope`
 - `packages/backend/src/lib/api/requireSession.ts` + `handler.ts` — the `tokenScope` opt-in mechanism
 - the REST routes: `grep -rln "tokenScope:" packages/frontend/src/app --include=route.ts`

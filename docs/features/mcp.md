@@ -12,7 +12,7 @@ surface is and why it's safe*.
 ## 62 scoped MCP tools
 
 **What it does.** The tool registry in
-`packages/backend/src/lib/mcp/server.ts` exposes **62 tools** covering the same
+`packages/backend/src/lib/mcp/tools/` exposes **62 tools** covering the same
 Digital-Twin / `ServiceManager` / `HealthStore` paths the UI uses — no parallel
 mutation surface. Highlights beyond the read/lifecycle basics:
 

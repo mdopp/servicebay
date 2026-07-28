@@ -241,7 +241,7 @@ privilege. The mapping lives in `packages/backend/src/lib/mcp/assistCatalog.ts`.
 
 `tools/list` returns **only the tools your token could actually call**. A tool
 is advertised iff its required scope (`TOOL_SCOPES` in
-`packages/backend/src/lib/mcp/server.ts`) is within your token's granted scopes,
+`packages/backend/src/lib/mcp/toolPolicy.ts`) is within your token's granted scopes,
 using the same implication ladder the gate uses (`destroy` implies `reboot` +
 `exec`; see `SCOPE_AUDIT.md`). So:
 
