@@ -1,11 +1,12 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import ServiceBayLogo from '@/components/ServiceBayLogo';
-import { getConfig } from '@/lib/config';
+import { getConfig, ConfigReadError, type AppConfig } from '@/lib/config';
 import { isPortalBlockedForRequest } from '@/lib/portal/lanGate';
 import { verifyAutheliaSession } from '@/lib/portal/auth';
 import AccessRequestStatusCTA from '../AccessRequestStatusCTA';
 import PortalLanOnlyNotice from '../PortalLanOnlyNotice';
+import PortalUnavailableNotice from '../PortalUnavailableNotice';
 import RequestAccessDeepLink from './RequestAccessDeepLink';
 
 export const revalidate = 0;
@@ -34,7 +35,18 @@ export const dynamic = 'force-dynamic';
  */
 export default async function PortalRequestAccessPage() {
   const hdrs = await headers();
-  const config = await getConfig();
+
+  // Same degrade as `/portal` (#2421): `getConfig()` throws `ConfigReadError`
+  // since #2399, and this route is anonymous too — show the portal's
+  // temporarily-unavailable notice rather than the operator-facing app-root
+  // error screen, and never open the form behind an unknown LAN gate.
+  let config: AppConfig;
+  try {
+    config = await getConfig();
+  } catch (error) {
+    if (!(error instanceof ConfigReadError)) throw error;
+    return <PortalUnavailableNotice />;
+  }
 
   // LAN-only gate (#1456): behind NPM the RSC's TCP peer is always
   // loopback, so passing '127.0.0.1' makes the resolver trust the

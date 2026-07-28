@@ -9,6 +9,9 @@
  *     proxy registration never landed → invalid_client or no route.
  *   - `restore`: a NAS auto-restore that failed, so the service came up on
  *     default config while the operator believes their state was restored.
+ *   - `host-firewall`: the boot-time LAN-block reconcile threw (#2420).
+ *     Box-level rather than per-service, but the same shape of silent
+ *     half-state: the #2388 rule did not apply and only a log line said so.
  *
  * Symmetric with `post_deploy_failed`: each standing failure is one item
  * with a retry/reconcile action so the operator can recover it long after
@@ -25,10 +28,18 @@ import {
   listHandlerFailures,
   clearHandlerFailure,
   handlerFailureKey,
+  type InstallHandlerFailureRecord,
 } from '@/lib/install/handlerFailures';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
 
 export const PROBE_ID = 'install_handler_failed';
+
+/** What each record kind reads as in the row detail. */
+const KIND_LABEL: Record<InstallHandlerFailureRecord['kind'], string> = {
+  capability: 'capability registration',
+  restore: 'NAS restore',
+  'host-firewall': 'host firewall reconcile (LAN block)',
+};
 
 export interface InstallHandlerFailedResult {
   status: 'ok' | 'warn' | 'info';
@@ -48,9 +59,7 @@ export async function checkInstallHandlerFailed(): Promise<InstallHandlerFailedR
   const items: ProbeItem[] = failures.map(f => ({
     id: handlerFailureKey(f.kind, f.service),
     label: f.service,
-    detail:
-      `${f.kind === 'restore' ? 'NAS restore' : 'capability registration'} failed at ` +
-      `${new Date(f.lastFailedAt).toLocaleString()} — ${f.message}`,
+    detail: `${KIND_LABEL[f.kind]} failed at ${new Date(f.lastFailedAt).toLocaleString()} — ${f.message}`,
     status: 'warn',
     actionIds: ['retry_install_handler', 'dismiss_install_handler'],
   }));
@@ -65,13 +74,15 @@ export async function checkInstallHandlerFailed(): Promise<InstallHandlerFailedR
 }
 
 /** Parse `${kind}:${service}` back into its parts. */
-function parseItemId(itemId: string): { kind: 'capability' | 'restore'; service: string } | null {
+function parseItemId(
+  itemId: string,
+): { kind: InstallHandlerFailureRecord['kind']; service: string } | null {
   const idx = itemId.indexOf(':');
   if (idx < 0) return null;
   const kind = itemId.slice(0, idx);
   const service = itemId.slice(idx + 1);
-  if ((kind !== 'capability' && kind !== 'restore') || !service) return null;
-  return { kind, service };
+  if (!(kind in KIND_LABEL) || !service) return null;
+  return { kind: kind as InstallHandlerFailureRecord['kind'], service };
 }
 
 /** Re-run the capability registration for a service by reconciling its OIDC
@@ -148,11 +159,36 @@ async function retryRestore(service: string): Promise<ProbeActionResult> {
   return { ok: true, message: `Restored ${service} config from the NAS.`, refresh: true };
 }
 
+/** Re-run the host-firewall reconcile that failed at boot (#2420). The
+ *  reconcile is idempotent and clears its own record on success, so this
+ *  is just "try again now" — with the outcome reported either way rather
+ *  than swallowed into a log line like the boot path used to do. */
+async function retryHostFirewall(): Promise<ProbeActionResult> {
+  // Lazy import: keeps the executor/registry graph out of the probe's
+  // module load, same as the restore path above.
+  const { reconcileHostFirewallOnBoot } = await import('@/lib/capabilities/hostFirewall');
+  try {
+    await reconcileHostFirewallOnBoot();
+  } catch (e) {
+    return {
+      ok: false,
+      message: `Host firewall reconcile still failing: ${e instanceof Error ? e.message : String(e)}`,
+      refresh: true,
+    };
+  }
+  return {
+    ok: true,
+    message: 'Re-applied the host firewall rule. Run diagnose again to confirm the rule is loaded.',
+    refresh: true,
+  };
+}
+
 async function retryInstallHandler({ itemId }: { itemId?: string }): Promise<ProbeActionResult> {
   if (!itemId) return { ok: false, message: 'No service supplied.', refresh: false };
   const parsed = parseItemId(itemId);
   if (!parsed) return { ok: false, message: `Unrecognized item id: ${itemId}`, refresh: false };
   try {
+    if (parsed.kind === 'host-firewall') return await retryHostFirewall();
     return parsed.kind === 'restore'
       ? await retryRestore(parsed.service)
       : await retryCapability(parsed.service);
@@ -178,7 +214,7 @@ registerProbeAction(
     id: 'retry_install_handler',
     label: 'Retry',
     description:
-      'Re-runs the failed install step for this service — re-registers its Authelia OIDC client (fixes SSO invalid_client) or re-restores its config from the NAS. Idempotent: already-completed work is skipped. Clears the warning on success.',
+      'Re-runs the failed step for this row — re-registers the Authelia OIDC client (fixes SSO invalid_client), re-restores config from the NAS, or re-applies the host firewall LAN block. Idempotent: already-completed work is skipped. Clears the warning on success.',
   },
   retryInstallHandler,
 );

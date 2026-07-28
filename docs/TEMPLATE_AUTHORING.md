@@ -172,8 +172,11 @@ What each `type` does generically (no per-template code needed):
   them.
 
 `templates/settings.json` declares a few global variables (`DATA_DIR`,
-`LLDAP_HOST`, `LLDAP_LDAP_PORT`, `LLDAP_BASE_DN`) that every template
-can reference without re-declaring.
+`LLDAP_HOST`, `LLDAP_LDAP_PORT`, `LLDAP_BASE_DN`, `PUBLIC_DOMAIN`,
+`LAN_IP`, `HOST_GATEWAY_IP`) that every template can reference without
+re-declaring — and **must not** re-declare: a per-template copy of a
+global is how five different `PUBLIC_DOMAIN` descriptions drifted apart
+(#2425). Reference `{{PUBLIC_DOMAIN}}` and leave the declaration alone.
 
 ### Wiring SSO end-to-end
 

@@ -20,7 +20,12 @@ Responsibilities:
      same container only exposes 80/443/81 externally. The external-settings
      file is read by zwave-js-ui on every boot; we only write it when it's
      missing AND the operator has not already configured a serverPort via
-     the UI (stored in settings.json under `zwave.serverPort`).
+     the UI (stored in settings.json under `zwave.serverPort`). Since
+     template v7 (#2416) the server is also pinned to `serverHost`
+     127.0.0.1 — the protocol is unauthenticated and this pod is
+     `hostNetwork: true`, so a wildcard bind handed every LAN device raw
+     control of the Z-Wave mesh. An existing settings file carrying the old
+     wildcard bind is re-pinned in place on every deploy.
 
   3. **auth_oidc custom component** — downloads the pinned release tarball
      of the `auth_oidc` HA custom component (#493) and drops it into
@@ -50,7 +55,16 @@ UDEV_RULE_DIR = "/etc/udev/rules.d"
 UDEV_RULE_FILE = "99-zwave.rules"
 
 ZWAVEJS_WS_PORT = 3001
-ZWAVEJS_WS_HOST = "0.0.0.0"
+# Loopback since template v7 (#2416). The Z-Wave JS control websocket speaks
+# the raw zwave-js server protocol with NO authentication of its own — anything
+# that can open it can actuate every paired device, door locks included. Under
+# `hostNetwork: true` a 0.0.0.0 bind meant every LAN host could. Home Assistant
+# shares this pod and its zwave_js config entry connects to
+# `ws://localhost:3001`, so nothing legitimate loses reach.
+ZWAVEJS_WS_HOST = "127.0.0.1"
+# Wildcard binds we will rewrite in place on an existing settings file. An
+# operator who deliberately pinned some OTHER address is left alone (warned).
+ZWAVEJS_WS_WILDCARD_HOSTS = ("", "0.0.0.0", "::", "[::]", "*")
 ZWAVE_CONTAINER_NAME = "home-assistant-zwave-js"
 REQUEST_TIMEOUT = 10.0
 
@@ -190,6 +204,102 @@ def _zwave_ui_has_serverport() -> bool:
     return bool(stored.get("zwave", {}).get("serverPort"))
 
 
+def _ws_host_verdict(host: object) -> str:
+    """Classify a stored zwave-js `serverHost` value: 'pinned' (already the
+    loopback), 'wildcard' (absent or an every-interface bind — rewrite it), or
+    'operator' (a deliberate specific address — leave it, warn)."""
+    if host == ZWAVEJS_WS_HOST:
+        return "pinned"
+    if host is None or str(host).strip() in ZWAVEJS_WS_WILDCARD_HOSTS:
+        return "wildcard"
+    return "operator"
+
+
+def _warn_operator_ws_host(where: str, host: object) -> None:
+    log(f"   ⚠️ {where} pins serverHost={host!r} (not a wildcard) — leaving it alone.")
+    log(f"      Set it to {ZWAVEJS_WS_HOST} to keep port {ZWAVEJS_WS_PORT} off the LAN (#2416).")
+
+
+def repair_zwave_external_settings_host(path: str) -> bool:
+    """Re-pin `serverHost` to the loopback in an EXISTING external-settings
+    file (#2416).
+
+    The v6-to-v7 migration does this once for installs that predate the
+    loopback bind, but a file carrying the old wildcard bind can also arrive
+    later — a restored backup, a hand-edited store, a v7 install rolled back
+    and forward again. This runs on every deploy so the pin converges instead
+    of depending on a one-shot hop. Returns True iff the file changed (caller
+    restarts zwave-js)."""
+    name = os.path.basename(path)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            current = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        log(f"   ⚠️ Could not read {path}: {exc}. Leaving it untouched.")
+        return False
+    if not isinstance(current, dict):
+        log(f"   ⚠️ {name} is not a JSON object — leaving it untouched.")
+        return False
+
+    host = current.get("serverHost")
+    verdict = _ws_host_verdict(host)
+    if verdict == "pinned":
+        log(f"   {name} already in place — serverHost={host}.")
+        return False
+    if verdict == "operator":
+        _warn_operator_ws_host(name, host)
+        return False
+
+    current["serverHost"] = ZWAVEJS_WS_HOST
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(current, fh, indent=2)
+            fh.write("\n")
+    except OSError as exc:
+        log(f"   ⚠️ Could not rewrite {path}: {exc}. Port {ZWAVEJS_WS_PORT} stays LAN-reachable.")
+        return False
+    log(f"   re-pinned {name}: serverHost {host!r} → {ZWAVEJS_WS_HOST} (#2416)")
+    return True
+
+
+def repair_zwave_ui_settings_host() -> bool:
+    """Same loopback pin for the OTHER authoritative file (#2416).
+
+    When the operator pinned `zwave.serverPort` in the UI, ServiceBay leaves
+    the external-settings file unwritten and zwave-js-ui's own settings.json
+    governs the WS server — including its bind address, which the UI has no
+    field for and therefore leaves unset (= every interface). Merge the
+    loopback in so that install shape is covered too. Returns True iff the
+    file changed."""
+    path = _zwave_settings_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            settings = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(settings, dict) or not isinstance(settings.get("zwave"), dict):
+        return False
+
+    host = settings["zwave"].get("serverHost")
+    verdict = _ws_host_verdict(host)
+    if verdict == "pinned":
+        return False
+    if verdict == "operator":
+        _warn_operator_ws_host("settings.json", host)
+        return False
+
+    settings["zwave"]["serverHost"] = ZWAVEJS_WS_HOST
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(settings, fh, indent=2)
+            fh.write("\n")
+    except OSError as exc:
+        log(f"   ⚠️ Could not rewrite {path}: {exc}. Port {ZWAVEJS_WS_PORT} stays LAN-reachable.")
+        return False
+    log(f"   re-pinned settings.json: zwave.serverHost {host!r} → {ZWAVEJS_WS_HOST} (#2416)")
+    return True
+
+
 def ensure_zwave_external_settings() -> bool:
     """Seed the JSON file zwave-js-ui reads via ZWAVE_EXTERNAL_SETTINGS.
     Returns True iff a file was just written (caller restarts the
@@ -198,11 +308,10 @@ def ensure_zwave_external_settings() -> bool:
     reboot)."""
     path = _zwave_external_settings_path()
     if os.path.isfile(path):
-        log(f"   {os.path.basename(path)} already in place — leaving untouched.")
-        return False
+        return repair_zwave_external_settings_host(path)
     if _zwave_ui_has_serverport():
         log("   Existing UI-configured serverPort found in settings.json — not overriding.")
-        return False
+        return repair_zwave_ui_settings_host()
 
     desired = {
         "serverEnabled": True,

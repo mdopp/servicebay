@@ -16,21 +16,41 @@
 # only patched when its current shape differs from the target. A
 # host that's already correct logs `(no change)` and skips.
 #
+# TARGET — there is no default box (#2426). This script mutates proxy
+# hosts on YOUR install; it resolves host + domain in this order:
+#   1. --host / --domain flags
+#   2. SB_HOST / SB_DOMAIN environment variables
+#   3. STATIC_IP / PUBLIC_DOMAIN from build/fcos/install-settings.env
+#      (written by `sb build`; the same file scripts/fcos-diagnose.sh reads)
+# If neither resolves, the script exits 2 with a usage error rather than
+# aiming a PUT at somebody else's LAN address.
+#
 # Usage:
-#   scripts/maintenance/repair-admin-proxy-hosts.sh                    # heal & report
+#   SB_HOST=10.0.0.42 SB_DOMAIN=example.com scripts/maintenance/repair-admin-proxy-hosts.sh
+#   scripts/maintenance/repair-admin-proxy-hosts.sh --host 10.0.0.42 --domain example.com
 #   scripts/maintenance/repair-admin-proxy-hosts.sh --dry-run          # what would change
-#   scripts/maintenance/repair-admin-proxy-hosts.sh --host 10.0.0.42   # different box
 #   scripts/maintenance/repair-admin-proxy-hosts.sh --no-cert          # forward-auth only
 #
 # Requires: SSH access to the box (build/fcos/servicebay-ssh/id_rsa)
 # + curl + python3.
 set -euo pipefail
 
-HOST="${SB_HOST:-192.168.178.100}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+SETTINGS_FILE="${SB_SETTINGS_FILE:-$REPO_ROOT/build/fcos/install-settings.env}"
+
+# Pull a KEY=value out of install-settings.env (quoted or bare), empty if absent.
+settings_value() {
+  [[ -f "$SETTINGS_FILE" ]] || { echo ""; return 0; }
+  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*[\"']\\?\\([^\"'[:space:]#]*\\).*/\\1/p" \
+    "$SETTINGS_FILE" | head -1
+}
+
+HOST="${SB_HOST:-$(settings_value STATIC_IP)}"
+DOMAIN="${SB_DOMAIN:-$(settings_value PUBLIC_DOMAIN)}"
 SB_PORT="${SB_PORT:-5888}"
 SB_ADMIN_USER="${SB_ADMIN_USER:-admin}"
 SB_ADMIN_PASS="${SB_ADMIN_PASS:-}"
-DOMAIN="${SB_DOMAIN:-dopp.cloud}"
 SSH_KEY="${SB_SSH_KEY:-build/fcos/servicebay-ssh/id_rsa}"
 SSH_USER="${SB_SSH_USER:-core}"
 DRY_RUN=0
@@ -42,10 +62,22 @@ while [[ $# -gt 0 ]]; do
     --no-cert) NO_CERT=1; shift ;;
     --host) HOST="$2"; shift 2 ;;
     --domain) DOMAIN="$2"; shift 2 ;;
-    --help|-h) sed -n '2,25p' "$0"; exit 0 ;;
+    --help|-h) sed -n '2,37p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+# No silent fallback to one particular deployment (#2426) — this script
+# writes to NPM, so a bad default would reconfigure a stranger's proxy.
+usage_error() {
+  echo "✗ $1" >&2
+  echo "  Set it via the flag, the env var, or $SETTINGS_FILE:" >&2
+  echo "    SB_HOST=<box-ip> SB_DOMAIN=<your-domain> $0" >&2
+  echo "    $0 --host <box-ip> --domain <your-domain>" >&2
+  exit 2
+}
+[[ -n "$HOST" ]] || usage_error "no target host — set SB_HOST, pass --host, or build an ISO first so $SETTINGS_FILE exists."
+[[ -n "$DOMAIN" ]] || usage_error "no public domain — set SB_DOMAIN, pass --domain, or build an ISO first so $SETTINGS_FILE exists."
 
 RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; OFF=$'\033[0m'
 ssh_cmd() { ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$SSH_USER@$HOST" "$@"; }

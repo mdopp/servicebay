@@ -15,10 +15,11 @@
   },
   "ZWAVE_JS_SUBDOMAIN": {
     "type": "subdomain",
-    "description": "Subdomain for the Z-Wave JS UI. Internal exposure — gets a real LE cert (Authelia forward-auth needs https) but NPM binds the LAN-only access list, so it's not reachable from outside the LAN.",
+    "description": "Subdomain for the Z-Wave JS UI. Internal exposure — gets a real LE cert (Authelia forward-auth needs https) but NPM binds the LAN-only access list, so it's not reachable from outside the LAN. The forward-auth block only gates the nginx path; until template v7 nothing made nginx the only path, so the Z-Wave admin panel also answered directly at <box-lan-ip>:8091 and skipped Authelia entirely (#2416, same shape as LLDAP's #2380). v7 binds zwave-js-ui's web server to 127.0.0.1 via the HOST env var in template.yml, and the loopbackOnly flag below points this proxy host's forward target at 127.0.0.1:8091 so the proxied route keeps working.",
     "default": "zwave",
     "exposure": "internal",
     "proxyPort": "8091",
+    "loopbackOnly": true,
     "proxyConfig": {
       "allow_websocket_upgrade": true,
       "block_exploits": true,

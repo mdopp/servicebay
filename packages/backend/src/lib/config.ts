@@ -569,9 +569,11 @@ export interface ServicePostDeployRecord {
  * `installHandlerFailures` on `AppConfig` for the keying convention.
  */
 export interface InstallHandlerFailureRecord {
-  /** What failed: a capability handler emit, or a NAS auto-restore. Drives
-   *  which retry action the diagnose probe offers. */
-  kind: 'capability' | 'restore';
+  /** What failed: a capability handler emit, a NAS auto-restore, or the
+   *  boot-time host-firewall reconcile (#2420 — box-level, not a service,
+   *  but it needs the same standing-finding + retry channel). Drives which
+   *  retry action the diagnose probe offers. */
+  kind: 'capability' | 'restore' | 'host-firewall';
   /** The service/template the failure affects (e.g. `immich`). */
   service: string;
   /** Human-readable cause (handler name + message, or the restore error). */

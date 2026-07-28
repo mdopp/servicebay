@@ -25,7 +25,7 @@ runs `ensureProxyHosts`, which walks the stack variables through
 emit `forwardHost: 127.0.0.1`, and the proxy-hosts endpoint's
 existing-host branch (`reconcileProxyHostUpstream` /
 `decideUpstreamReconcile`) re-points the live host's forward target
-from the old LAN IP (`192.168.178.100:{{RADICALE_PORT}}`, now closed)
+from the old LAN IP (`<LAN_IP>:{{RADICALE_PORT}}`, now closed)
 to `127.0.0.1:{{RADICALE_PORT}}`. That reconcile PUTs ONLY the forward
 target, so exposure (public), auth (Radicale Basic — no Authelia) and
 the bound cert are untouched, and it is idempotent (a no-op once the

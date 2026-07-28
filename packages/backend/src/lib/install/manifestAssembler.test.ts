@@ -131,6 +131,45 @@ describe('assembleManifest', () => {
     expect(v.global).toBe(true);
   });
 
+  it('resolves PUBLIC_DOMAIN when NO template declares it and the global has an empty default (#2425)', async () => {
+    // Post-#2425 shape: PUBLIC_DOMAIN lives once in templates/settings.json
+    // with `default: ""` (LAN_IP's precedent), and no template's
+    // variables.json redeclares it. Both wizard paths must still land a
+    // value — the prefill (OnboardingWizard passes `stackDomain`) and the
+    // reverseProxy fallback — and neither may be a hardcoded domain.
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', [], '    # {{PUBLIC_DOMAIN}}'));
+    getTemplateVariables.mockResolvedValue({});
+    getTemplateSettingsSchema.mockResolvedValue({
+      PUBLIC_DOMAIN: { default: '', description: 'Base public domain for this box' },
+    });
+    getConfig.mockResolvedValue({ templateSettings: {} });
+
+    const prefill = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      prefilled: { PUBLIC_DOMAIN: 'stack.example' },
+      templateSource: 'Built-in',
+    });
+    const fromWizard = prefill.variables.find(v => v.name === 'PUBLIC_DOMAIN')!;
+    expect(fromWizard.value).toBe('stack.example');
+    expect(fromWizard.global).toBe(true);
+
+    getConfig.mockResolvedValue({ templateSettings: {}, reverseProxy: { publicDomain: 'box.example' } });
+    const fallback = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      templateSource: 'Built-in',
+    });
+    expect(fallback.variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value).toBe('box.example');
+
+    // Nothing configured anywhere → empty, never a leftover default. An
+    // empty PUBLIC_DOMAIN is the documented LAN-only mode (UX_PHILOSOPHY).
+    getConfig.mockResolvedValue({ templateSettings: {} });
+    const bare = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      templateSource: 'Built-in',
+    });
+    expect(bare.variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value).toBe('');
+  });
+
   it('pre-fills PUBLIC_DOMAIN from reverseProxy.publicDomain when templateSettings is empty (#1252)', async () => {
     getTemplateYaml.mockResolvedValue(tmplYaml('svc', [], '    # {{PUBLIC_DOMAIN}}'));
     getTemplateVariables.mockResolvedValue({ PUBLIC_DOMAIN: { type: 'text' } });

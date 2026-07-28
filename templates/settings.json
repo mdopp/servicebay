@@ -14,8 +14,12 @@
       "description": "LLDAP LDAP protocol port"
     },
     "LLDAP_BASE_DN": {
-      "default": "dc=dopp,dc=cloud",
-      "description": "LDAP base distinguished name"
+      "default": "",
+      "description": "LDAP base distinguished name, e.g. dc=example,dc=com. No default — it must match the DN your LLDAP was initialised with."
+    },
+    "PUBLIC_DOMAIN": {
+      "default": "",
+      "description": "Base public domain for this box, e.g. example.com. Services are exposed at <service>.<this domain>; enter the bare domain, not a subdomain. Declared ONCE here rather than per-template (#2425) — templates just reference {{PUBLIC_DOMAIN}}. No default: the wizard prefills it from the domain you enter during onboarding, and the install runner falls back to config.reverseProxy.publicDomain."
     },
     "LAN_IP": {
       "default": "",

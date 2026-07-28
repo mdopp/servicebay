@@ -280,16 +280,124 @@ WantedBy=multi-user.target
 `;
 }
 
-/** Resolve nft's absolute path — systemd needs one and it is not the same on every distro. */
-async function resolveNftBin(executor: Executor): Promise<string> {
+/**
+ * Locate nft, or report that the host genuinely doesn't have it.
+ *
+ * "Not on the agent's PATH" is not the same as "absent" — Fedora ships
+ * nft in `/usr/sbin`, which a non-login shell may not carry — so a
+ * missing `command -v` falls back to checking the default path itself.
+ * Returns null only when neither resolves, which is the one case where
+ * applying the rule cannot possibly work (#2420).
+ */
+async function findNftBin(executor: Executor): Promise<string | null> {
   try {
     const { stdout } = await executor.execArgv(['sh', '-c', 'command -v nft']);
     const first = stdout.trim().split('\n')[0]?.trim();
     if (first && first.startsWith('/')) return first;
   } catch {
-    /* fall through to the default */
+    /* not on PATH — fall through to the default path probe */
   }
-  return DEFAULT_NFT_BIN;
+  try {
+    if (await executor.exists(DEFAULT_NFT_BIN)) return DEFAULT_NFT_BIN;
+  } catch {
+    /* treat an unanswerable probe as absent */
+  }
+  return null;
+}
+
+/** Resolve nft's absolute path — systemd needs one and it is not the same on every distro. */
+async function resolveNftBin(executor: Executor): Promise<string> {
+  return (await findNftBin(executor)) ?? DEFAULT_NFT_BIN;
+}
+
+/**
+ * What the host's packet filter ACTUALLY looks like right now (#2420).
+ *
+ * Everything here is read back from the kernel/systemd rather than
+ * inferred from whether {@link reconcileHostFirewall} returned without
+ * throwing — a reconcile can report success and still leave the rule
+ * absent (unit masked out-of-band, table deleted by hand, a boot where
+ * the call never ran at all). A security control that is only ever
+ * "assumed applied" is the failure mode #2388 has.
+ */
+export interface HostFirewallState {
+  /** `nft` exists on the host (PATH or the distro default path). */
+  nftAvailable: boolean;
+  /** `table inet servicebay_lanblock` is present in the LIVE ruleset. */
+  tableLoaded: boolean;
+  /** Ports the live table's set actually holds. Empty when not loaded. */
+  loadedPorts: number[];
+  /** `systemctl is-enabled` verdict for the boot unit (`enabled`, `disabled`, `not-found`, …). */
+  unitEnabled: string;
+  /** `systemctl is-active` verdict (`active`, `inactive`, `failed`, …). */
+  unitActive: string;
+  /** Why the ruleset query failed, when the reason was NOT "no such table". */
+  error?: string;
+}
+
+/** nft prints an `inet_service` set as `elements = { 3890, 9999 }`, wrapping
+ *  across lines once it gets long — hence the greedy-to-`}` capture. */
+const ELEMENTS_RE = /elements\s*=\s*\{([^}]*)\}/;
+
+/**
+ * Pull the port numbers out of `nft list table` output. Exported for
+ * the diagnose probe's tests: this parse is the only thing standing
+ * between "the rule is loaded" and "we hope the rule is loaded".
+ */
+export function parseNftPorts(listing: string): number[] {
+  const match = ELEMENTS_RE.exec(listing);
+  if (!match) return [];
+  const ports = match[1]
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => /^\d+$/.test(s))
+    .map(Number);
+  return [...new Set(ports)].sort((a, b) => a - b);
+}
+
+/** Read one systemd verdict word. `is-enabled`/`is-active` exit non-zero
+ *  for every not-good answer, so the word is what we want, not the code. */
+async function systemdVerdict(executor: Executor, verb: string): Promise<string | null> {
+  try {
+    const { stdout } = await executor.execArgv([
+      'sh', '-c', `systemctl ${verb} ${UNIT_NAME} 2>/dev/null || true`,
+    ]);
+    const word = stdout.trim().split('\n').pop()?.trim();
+    return word || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ask the host what is actually loaded. Never throws — every failure
+ * becomes a field on {@link HostFirewallState} so the caller (the
+ * `host_firewall_rule` probe) can tell "no nft binary" from "table
+ * missing" from "couldn't ask" and word its finding accordingly.
+ */
+export async function inspectHostFirewall(executor: Executor): Promise<HostFirewallState> {
+  const nftBin = await findNftBin(executor);
+  const state: HostFirewallState = {
+    nftAvailable: nftBin !== null,
+    tableLoaded: false,
+    loadedPorts: [],
+    unitEnabled: (await systemdVerdict(executor, 'is-enabled')) ?? 'unknown',
+    unitActive: (await systemdVerdict(executor, 'is-active')) ?? 'unknown',
+  };
+  if (!nftBin) return state;
+
+  try {
+    const { stdout } = await executor.execArgv(['sudo', nftBin, 'list', 'table', 'inet', NFT_TABLE]);
+    state.tableLoaded = true;
+    state.loadedPorts = parseNftPorts(stdout);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    // nft says "No such file or directory" when the TABLE is absent —
+    // that's the expected negative, not an error worth quoting at the
+    // operator. Anything else (sudo refused, agent down) is.
+    if (!/no such file or directory|does not exist/i.test(message)) state.error = message;
+  }
+  return state;
 }
 
 /** Agent writes /tmp (its own user can), then `sudo install` places it root-owned. */

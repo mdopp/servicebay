@@ -21,6 +21,7 @@ import { checkLanIpChanged } from '@/lib/diagnose/probes/lanIpChanged';
 import { checkRouterDnsNotPointing } from '@/lib/diagnose/probes/routerDnsNotPointing';
 import { checkPostDeployFailed } from '@/lib/diagnose/probes/postDeployFailed';
 import { checkInstallHandlerFailed } from '@/lib/diagnose/probes/installHandlerFailed';
+import { checkHostFirewallRule } from '@/lib/diagnose/probes/hostFirewallRule';
 import { checkMediaLibraryAccess } from '@/lib/diagnose/probes/mediaLibraryAccess';
 import { checkProxyRouteMissing } from '@/lib/diagnose/probes/proxyRouteMissing';
 import { checkNginxOnlineFailed } from '@/lib/diagnose/probes/nginxOnlineFailed';
@@ -92,6 +93,7 @@ const PROBE_GROUP: Record<string, ProbeGroup> = {
   router_dns_not_pointing: 'dns-network',
   adguard_rewrites_missing: 'dns-network',
   domain_resolves_to_box: 'dns-network',
+  host_firewall_rule: 'dns-network',
   // TLS certificates
   cert_expiry: 'tls',
   // Login / SSO
@@ -1029,6 +1031,30 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     probes.push({
       id: 'install_handler_failed',
       label: 'Install capability/restore',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 15a2) Host firewall LAN block actually loaded (#2420). Every other
+  //     signal in this area reports on a return value; this one reads the
+  //     live `nft` ruleset back, so a reconcile that "succeeded" while the
+  //     rule is absent (hand-deleted table, disabled boot unit, no nft
+  //     binary) still shows up as a concrete failure with a Re-apply.
+  try {
+    const hfw = await checkHostFirewallRule();
+    probes.push({
+      id: 'host_firewall_rule',
+      label: 'On-box-only ports',
+      status: hfw.status,
+      detail: hfw.detail,
+      hint: hfw.hint,
+      _items: hfw.items,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'host_firewall_rule',
+      label: 'On-box-only ports',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

@@ -397,17 +397,46 @@ def main() -> int:
 # these helpers do one job (read ServiceBay's email config, rewrite
 # the notifier block on disk, signal reload) and nothing else.
 
-# Path conventions:
-#   - ServiceBay's config.json lives on host at /mnt/data/servicebay/config.json
-#     (DATA_ROOT in install-fedora-coreos.sh). Post-deploy runs on the host
-#     as the user that owns this script; that's root on Fedora CoreOS.
-#   - Authelia's configuration.yml is at
-#     /mnt/data/stacks/auth/authelia-config/configuration.yml — written by the
-#     mustache rendering step before this script runs.
+# Path conventions (#2424 — resolved from DATA_DIR, never hardcoded, same as
+# `authelia_db_path()` above and every sibling template's post-deploy):
+#   - Authelia's configuration.yml sits under the `authelia-config` hostPath
+#     mount declared in template.yml (the auth/authelia-config dir under
+#     DATA_DIR) —
+#     written by the mustache rendering step before this script runs.
+#   - ServiceBay's own config.json is NOT under DATA_DIR: the box layout is
+#     `<DATA_ROOT>/servicebay` and `<DATA_ROOT>/stacks` as SIBLINGS, and the
+#     baked config points the DATA_DIR template variable at `<DATA_ROOT>/stacks`
+#     (see tools/sb/internal/build/assets/fedora-coreos.bu). So the ServiceBay
+#     root is DATA_DIR's parent when DATA_DIR is the `stacks` dir, else DATA_DIR
+#     itself (the bare `/mnt/data` default used in dev). Both candidates are
+#     probed so neither layout silently no-ops.
 #   - Authelia hot-reloads SIGHUP, but with podman quadlet the cleanest
 #     reload signal is `systemctl --user restart auth` (the pod) — sub-second.
-SB_CONFIG_PATH = "/mnt/data/servicebay/config.json"
-AUTHELIA_CONFIG_PATH = "/mnt/data/stacks/auth/authelia-config/configuration.yml"
+
+
+def data_dir() -> str:
+    """The operator's template data root, as the install runner exports it."""
+    return env("DATA_DIR", "/mnt/data")
+
+
+def authelia_config_path() -> str:
+    """Host path of Authelia's rendered configuration.yml. Must track the
+    `authelia-config` hostPath mount in template.yml
+    (`{{DATA_DIR}}/auth/authelia-config`)."""
+    return os.path.join(data_dir(), "auth", "authelia-config", "configuration.yml")
+
+
+def sb_config_path_candidates() -> list[str]:
+    """Host paths where ServiceBay's own config.json may live, most likely
+    first. `<DATA_ROOT>/servicebay` is a sibling of the stacks dir DATA_DIR
+    points at, so the parent is tried before DATA_DIR itself."""
+    base = data_dir()
+    roots = [os.path.dirname(base.rstrip("/")), base]
+    seen: list[str] = []
+    for root in roots:
+        if root and root not in seen:
+            seen.append(root)
+    return [os.path.join(root, "servicebay", "config.json") for root in seen]
 
 
 def _sb_email_config(sb_api: str):
@@ -440,14 +469,15 @@ def _sb_email_config(sb_api: str):
             pass
 
     # Path 2: read config.json directly off disk.
-    try:
-        with open(SB_CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        em = (cfg.get("notifications") or {}).get("email") or {}
-        if em.get("host") and em.get("user") and em.get("pass") and em.get("from"):
-            return em
-    except Exception:
-        pass
+    for path in sb_config_path_candidates():
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            em = (cfg.get("notifications") or {}).get("email") or {}
+            if em.get("host") and em.get("user") and em.get("pass") and em.get("from"):
+                return em
+        except Exception:
+            continue
 
     return None
 
@@ -520,14 +550,15 @@ def rewrite_authelia_smtp_notifier(sb_api: str) -> None:
         log("ℹ️ No SMTP config found in ServiceBay settings — leaving Authelia's filesystem notifier in place. Configure email in Settings → Notifications + redeploy auth to enable Authelia email.")
         return
 
+    config_path = authelia_config_path()
     try:
-        with open(AUTHELIA_CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             current = f.read()
     except FileNotFoundError:
-        log(f"⚠️ Authelia config not at {AUTHELIA_CONFIG_PATH} — skipping notifier rewrite.")
+        log(f"⚠️ Authelia config not at {config_path} — skipping notifier rewrite.")
         return
     except Exception as e:
-        log(f"⚠️ Couldn't read {AUTHELIA_CONFIG_PATH}: {e} — skipping notifier rewrite.")
+        log(f"⚠️ Couldn't read {config_path}: {e} — skipping notifier rewrite.")
         return
 
     new_block = _smtp_notifier_block(em)
@@ -543,7 +574,7 @@ def rewrite_authelia_smtp_notifier(sb_api: str) -> None:
             start = i
             break
     if start is None:
-        log(f"⚠️ No `notifier:` block found in {AUTHELIA_CONFIG_PATH} — appending one. Authelia config may need manual review.")
+        log(f"⚠️ No `notifier:` block found in {config_path} — appending one. Authelia config may need manual review.")
         new_content = current.rstrip("\n") + "\n\n" + new_block
     else:
         end = len(lines)
@@ -560,11 +591,11 @@ def rewrite_authelia_smtp_notifier(sb_api: str) -> None:
 
     # Atomic write (temp + rename) so a partial write can't leave Authelia
     # with malformed YAML that crashes the pod.
-    tmp_path = AUTHELIA_CONFIG_PATH + ".tmp"
+    tmp_path = config_path + ".tmp"
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(new_content)
-        os.replace(tmp_path, AUTHELIA_CONFIG_PATH)
+        os.replace(tmp_path, config_path)
     except Exception as e:
         log(f"⚠️ Failed to write updated Authelia config: {e} — leaving original in place.")
         try: os.unlink(tmp_path)

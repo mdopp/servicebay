@@ -26,7 +26,13 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }));
 vi.mock('next/headers', () => ({ headers: headersMock }));
-vi.mock('@/lib/config', () => ({ getConfig, getAdminBaseUrl: () => null }));
+// Spread the real module so `ConfigReadError` (which both pages branch on
+// since #2421) stays the genuine class; only the reads are stubbed.
+vi.mock('@/lib/config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/config')>()),
+  getConfig,
+  getAdminBaseUrl: () => null,
+}));
 vi.mock('@/lib/portal/auth', () => ({ verifyAutheliaSession }));
 vi.mock('@/lib/portal/services', () => ({ buildPortalCards }));
 // The LAN gate itself is NOT mocked — both routes must run the real

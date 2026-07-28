@@ -94,10 +94,31 @@ describe('preserveAutheliaOidcClients (#1724)', () => {
   it('is fail-soft: an agent error leaves the fresh render unchanged (never throws)', async () => {
     ensureAgentMock.mockRejectedValue(new Error('agent offline'));
     const extraFiles = [{ path: '/mnt/data/stacks/auth/configuration.yml', content: RENDERED }];
+    // Resolves to null, not the on-disk text: the caller's #2417 rotation
+    // pre-flight must treat "couldn't read it" as "nothing known on disk"
+    // rather than mistaking an unreadable box for a rotation.
     await expect(
       preserveAutheliaOidcClients('job-1', 'Local', extraFiles),
-    ).resolves.toBeUndefined();
+    ).resolves.toBeNull();
     expect(extraFiles[0].content).toBe(RENDERED);
+  });
+
+  it('returns the on-disk text it read, for the caller to reuse (#2417)', async () => {
+    // Saves a second read_file round-trip: the rotation pre-flight compares
+    // this against the fresh render to decide whether the servicebay client's
+    // secret is actually changing on this deploy.
+    sendCommandMock.mockResolvedValue({ content: EXISTING_WITH_IMMICH });
+    const extraFiles = [{ path: '/mnt/data/stacks/auth/configuration.yml', content: RENDERED }];
+    await expect(
+      preserveAutheliaOidcClients('job-1', 'Local', extraFiles),
+    ).resolves.toBe(EXISTING_WITH_IMMICH);
+  });
+
+  it('returns null for a non-auth deploy (no configuration.yml in extraFiles)', async () => {
+    const extraFiles = [{ path: '/mnt/data/stacks/immich/immich.env', content: 'X=1' }];
+    await expect(
+      preserveAutheliaOidcClients('job-1', 'Local', extraFiles),
+    ).resolves.toBeNull();
   });
 
   it('tolerates a read_file rejection (uses empty existing, no merge)', async () => {

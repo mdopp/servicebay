@@ -1,5 +1,55 @@
 # auth template changelog
 
+## v4 (breaking)
+
+**The `servicebay` OIDC client secret is now generated per install (#2417).**
+
+Required action: **re-deploy** the `auth` service. The rotation happens during
+that deploy; nothing on disk moves.
+
+Authelia's `servicebay` OIDC client — the one behind ServiceBay's own
+"Login with Authelia" button — shipped a **hardcoded** `client_secret` baked
+into `configuration.yml.mustache`. Every install in the world had the same
+value, and anyone could read it out of the public repository. That client is
+`authorization_policy: two_factor` and redirects to the admin panel, so the
+secret guarding the box's control plane was a published constant. Every other
+SSO-wired template (`HA_OIDC_SECRET`, `IMMICH_SSO_SECRET`,
+`VAULTWARDEN_SSO_SECRET`) already did this correctly; this one was the outlier.
+
+v4 adds `SERVICEBAY_OIDC_SECRET`, a `type: "secret"` variable generated once
+per box, stored encrypted in `config.installedSecrets`, and reused verbatim on
+every later deploy.
+
+**How the two sides stay in agreement.** The secret has to match in two places
+or the SSO button fails with `invalid_client`: Authelia's `configuration.yml`,
+and ServiceBay's own `config.oidc.clientSecret` (the value the callback route
+posts to the token endpoint). There is no transaction spanning both, so the
+ordering is chosen so that no failure can lock anyone out:
+
+1. The fresh render owns the `servicebay` client, so the new value replaces the
+   old literal in `configuration.yml`. (`mergeAutheliaOidcClients` never rotates
+   an *incrementally registered* client's secret — the #1559 invariant — and
+   `servicebay` is the one deliberate exception, because this template declares
+   it.) Other services' clients are preserved untouched, secrets included.
+2. **Only after** that file has landed and the pod is back does ServiceBay read
+   the secret back out of it and copy it into `config.oidc.clientSecret`.
+
+ServiceBay follows the file; it never leads it. So a deploy that fails before
+the config lands changes nothing — the box keeps its old, still-consistent pair
+and SSO keeps working. A crash in the narrow window between the two steps leaves
+a mismatch that is recoverable, not sticky: the copy is idempotent and re-runs
+on every `auth` deploy.
+
+**Break-glass.** `/login` also offers a local admin username/password form that
+has nothing to do with OIDC — that is the second door, and it is unaffected by
+this change. ServiceBay refuses to start the rotation at all (aborting the
+deploy before writing anything) on a box that has neither a stored admin
+password hash nor `SERVICEBAY_PASSWORD` set, since SSO would then be the only
+way in.
+
+Existing browser sessions stay valid; only new SSO logins use the new secret.
+Other services' users are unaffected.
+
 ## v3 (breaking)
 
 **LLDAP's admin web UI bound to loopback — no longer LAN-exposed (#2380).**

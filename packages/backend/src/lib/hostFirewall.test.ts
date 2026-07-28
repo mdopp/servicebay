@@ -28,11 +28,60 @@ import {
   renderUnit,
   reconcileHostFirewall,
   removeHostFirewall,
+  inspectHostFirewall,
+  parseNftPorts,
   NEVER_FILTER_PORTS,
   NFT_TABLE,
   UNIT_NAME,
 } from './hostFirewall';
 import type { Executor } from './interfaces';
+
+/** What `nft list table inet servicebay_lanblock` prints for `ports`. */
+const NFT_LISTING = (ports: number[]) => `table inet ${NFT_TABLE} {
+\tset on_box_only_ports {
+\t\ttype inet_service
+\t\tcomment "ports a template declared blockLanAccess on"
+\t\telements = { ${ports.join(', ')} }
+\t}
+
+\tchain input {
+\t\ttype filter hook input priority filter; policy accept;
+\t\ttcp dport @on_box_only_ports jump on_box_gate
+\t}
+}`;
+
+/** Executor stub for the read-back path (#2420): every host answer is a knob. */
+function inspectExecutor(opts: {
+  nftOnPath?: boolean;
+  nftAtDefault?: boolean;
+  listing?: string;
+  listError?: string;
+  isActive?: string;
+  isEnabled?: string;
+} = {}) {
+  const argvCalls: string[][] = [];
+  const executor = {
+    execArgv: vi.fn(async (argv: string[]) => {
+      argvCalls.push(argv);
+      const cmd = argv.join(' ');
+      if (cmd === 'sh -c command -v nft') {
+        if (opts.nftOnPath === false) throw new Error('command failed: exit 1');
+        return { stdout: '/usr/sbin/nft\n', stderr: '' };
+      }
+      if (cmd.includes('systemctl is-active')) return { stdout: `${opts.isActive ?? 'inactive'}\n`, stderr: '' };
+      if (cmd.includes('systemctl is-enabled')) return { stdout: `${opts.isEnabled ?? 'disabled'}\n`, stderr: '' };
+      if (cmd.includes('list table')) {
+        if (opts.listError) throw new Error(opts.listError);
+        if (opts.listing === undefined) throw new Error('No such file or directory');
+        return { stdout: opts.listing, stderr: '' };
+      }
+      return { stdout: '', stderr: '' };
+    }),
+    writeFile: vi.fn(async () => undefined),
+    exists: vi.fn(async () => opts.nftAtDefault ?? false),
+  } as unknown as Executor;
+  return { executor, argvCalls };
+}
 
 /** Minimal Executor stub recording every call. */
 function fakeExecutor(opts: { failArgv?: RegExp; unitExists?: boolean; tableExists?: boolean } = {}) {
@@ -347,5 +396,71 @@ describe('removeHostFirewall (#2388)', () => {
     const { executor, argvCalls } = fakeExecutor({ unitExists: true, tableExists: true, failArgv: /systemctl disable/ });
     await expect(removeHostFirewall(executor)).resolves.toBeUndefined();
     expect(joined(argvCalls)).toContain(`sudo /usr/sbin/nft delete table inet ${NFT_TABLE}`);
+  });
+});
+
+/**
+ * Reading the host back (#2420). These cover the "we assumed instead of
+ * asking" gap: the reconcile can return success while the kernel holds
+ * nothing, so `inspectHostFirewall` must report what is actually loaded
+ * and must distinguish "no nft" / "no table" / "couldn't ask".
+ */
+describe('parseNftPorts (#2420)', () => {
+  it('reads the set elements out of a real listing', () => {
+    expect(parseNftPorts(NFT_LISTING([3890]))).toEqual([3890]);
+  });
+
+  it('handles a multi-port, line-wrapped set', () => {
+    const wrapped = `table inet ${NFT_TABLE} {
+\tset on_box_only_ports {
+\t\ttype inet_service
+\t\telements = { 3890, 9999,
+\t\t\t     10000 }
+\t}
+}`;
+    expect(parseNftPorts(wrapped)).toEqual([3890, 9999, 10000]);
+  });
+
+  it('returns nothing for a table listing with no set (never a false "loaded")', () => {
+    expect(parseNftPorts(`table inet ${NFT_TABLE} {\n\tchain input {\n\t}\n}`)).toEqual([]);
+  });
+});
+
+describe('inspectHostFirewall (#2420)', () => {
+  it('reports the ports the LIVE ruleset holds, plus the unit verdicts', async () => {
+    const { executor } = inspectExecutor({ listing: NFT_LISTING([3890]), isActive: 'active', isEnabled: 'enabled' });
+    await expect(inspectHostFirewall(executor)).resolves.toEqual({
+      nftAvailable: true,
+      tableLoaded: true,
+      loadedPorts: [3890],
+      unitEnabled: 'enabled',
+      unitActive: 'active',
+    });
+  });
+
+  it('reports table-absent as not-loaded, not as an error', async () => {
+    const { executor } = inspectExecutor({ listError: 'No such file or directory' });
+    const state = await inspectHostFirewall(executor);
+    expect(state).toMatchObject({ nftAvailable: true, tableLoaded: false, loadedPorts: [] });
+    expect(state.error).toBeUndefined();
+  });
+
+  it('flags a genuinely unanswerable query so it cannot pass as "loaded"', async () => {
+    const { executor } = inspectExecutor({ listError: 'sudo: a password is required' });
+    const state = await inspectHostFirewall(executor);
+    expect(state.tableLoaded).toBe(false);
+    expect(state.error).toContain('sudo');
+  });
+
+  it('reports nft as unavailable when it is neither on PATH nor at the default path', async () => {
+    const { executor } = inspectExecutor({ nftOnPath: false, nftAtDefault: false });
+    const state = await inspectHostFirewall(executor);
+    expect(state).toMatchObject({ nftAvailable: false, tableLoaded: false });
+  });
+
+  it('falls back to the default path when nft is off the agent PATH', async () => {
+    const { executor, argvCalls } = inspectExecutor({ nftOnPath: false, nftAtDefault: true, listing: NFT_LISTING([3890]) });
+    await expect(inspectHostFirewall(executor)).resolves.toMatchObject({ nftAvailable: true, loadedPorts: [3890] });
+    expect(joined(argvCalls).some(c => c.startsWith('sudo /usr/sbin/nft list table'))).toBe(true);
   });
 });

@@ -35,7 +35,7 @@ identity_providers:
     clients:
       - client_id: 'servicebay'
         client_name: 'ServiceBay'
-        client_secret: '$plaintext$servicebay-oidc-secret'
+        client_secret: '$plaintext$sbNEW'
         redirect_uris:
           - 'https://admin.example.com/api/auth/oidc/callback'
 `;
@@ -48,7 +48,7 @@ identity_providers:
     clients:
       - client_id: 'servicebay'
         client_name: 'ServiceBay'
-        client_secret: '$plaintext$servicebay-oidc-secret'
+        client_secret: '$plaintext$sbOLD'
         redirect_uris:
           - 'https://admin.example.com/api/auth/oidc/callback'
       - client_id: 'immich'
@@ -77,13 +77,34 @@ describe('mergeAutheliaOidcClients (#1724)', () => {
   });
 
   it('lets the fresh render win for a shared client_id (servicebay baseline)', () => {
-    // On-disk servicebay carries a stale secret; the render is authoritative.
-    const staleDisk = ON_DISK.replace('$plaintext$servicebay-oidc-secret', '$plaintext$STALE');
-    const merged = mergeAutheliaOidcClients(RENDERED, staleDisk);
+    // On-disk servicebay carries the OLD secret; the render is authoritative.
+    const merged = mergeAutheliaOidcClients(RENDERED, ON_DISK);
     const sb = clientsOf(merged).find(c => c.client_id === 'servicebay')!;
-    expect(sb.client_secret).toBe('$plaintext$servicebay-oidc-secret');
+    expect(sb.client_secret).toBe('$plaintext$sbNEW');
     // and exactly one servicebay entry — no duplicate
     expect(ids(merged).filter(i => i === 'servicebay')).toHaveLength(1);
+  });
+
+  /**
+   * #2417 — this is the load-bearing asymmetry, so assert it as its own case
+   * rather than leaning on the general "render wins" rule.
+   *
+   * The module's headline property is that it NEVER rotates an already-
+   * registered client's secret (#1559). `servicebay` is the ONE deliberate
+   * exception: because the auth template's mustache declares that client, the
+   * fresh render owns it, and the per-install `SERVICEBAY_OIDC_SECRET` replaces
+   * whatever was on disk — which is exactly the mechanism that migrates an
+   * existing box off the old hardcoded literal. If this ever flipped to
+   * "preserve", the upgrade would silently no-op and every install would keep
+   * the world-readable secret forever.
+   */
+  it('DOES rotate servicebay while preserving every other client secret', () => {
+    const merged = mergeAutheliaOidcClients(RENDERED, ON_DISK);
+    const byId = Object.fromEntries(clientsOf(merged).map(c => [c.client_id, c]));
+    expect(byId.servicebay.client_secret).toBe('$plaintext$sbNEW');   // rotated
+    expect(byId.servicebay.client_secret).not.toBe('$plaintext$sbOLD');
+    expect(byId.immich.client_secret).toBe('$plaintext$immich-real-secret');       // untouched
+    expect(byId.vaultwarden.client_secret).toBe('$plaintext$vault-real-secret');   // untouched
   });
 
   it('is idempotent — re-running yields no duplicate clients', () => {
