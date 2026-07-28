@@ -283,6 +283,18 @@ if __name__ == "__main__":
   on POSTs to `SB_API_URL`; without it the same-origin guard
   rejects the call (see `auth/post-deploy.py` for the canonical
   pattern).
+- `LAN_IP` / `OPERATOR_EMAIL` — best-effort server-side context (the
+  LAN address rootless podman forwards to, and the operator's
+  notification address). Unset if ServiceBay doesn't know them.
+
+The env is the **only** channel. The script body ships to the box
+**verbatim** — it is *not* Mustache-rendered (#2415), so `{{VAR}}` in a
+script is dead text, not a substitution. Read `os.environ` instead.
+The upside: podman/docker `--format '{{.Image}}'` Go templates, Helm
+and Jinja snippets, and Python f-string `{{…}}` escapes all survive
+intact. (Rendering used to delete every unrecognised `{{…}}` silently,
+turning a `--format` string into `--format '|'` — which podman answers
+with exit 0, so it read as "empty field" for five debugging rounds.)
 
 #### Output protocol
 
@@ -353,6 +365,12 @@ versions behind. See #352 phase 3.
 The script protocol is identical to `post-deploy.py` (env file →
 `source` → `python3`, stdout streamed live to the install log)
 with two important differences:
+
+> **One asymmetry to know about:** unlike `post-deploy.py`, migration
+> bodies are still Mustache-rendered before they run, so an unrecognised
+> `{{…}}` is deleted (#2435 tracks removing that). Read your values from
+> `os.environ` and don't put Go-template/Jinja/Helm syntax in a migration
+> until it's closed.
 
 1. **Migrations are fail-fast.** A non-zero exit aborts the deploy
    *before* the new yaml lands — the existing service keeps running

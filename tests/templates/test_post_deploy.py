@@ -2514,5 +2514,101 @@ class ImmichScript(unittest.TestCase):
         self.assertIn("admin row pre-dates this install", out)
 
 
+class VerbatimScriptBodies(unittest.TestCase):
+    """#2415 — post-deploy.py bodies are no longer Mustache-rendered.
+
+    Every `{{…}}` left in a first-party script is either prose (a
+    docstring/comment naming the template.yml placeholder) or a Python
+    f-string brace escape. None of them was ever a value-delivery
+    mechanism: the values arrive through the process environment
+    (`postDeployEnv` in packages/backend/src/lib/install/runner.ts).
+    These cases pin that down site by site, so a future author can't
+    quietly start depending on a render pass that no longer happens.
+    """
+
+    # The seven `{{…}}` sites across templates/*/post-deploy.py, and the
+    # env var that actually carries the value (None = prose only).
+    SITES = [
+        ("auth", "DATA_DIR"),            # authelia_db_path() docstring
+        ("auth", None),                  # f-string escape: subject "[Authelia] {title}"
+        ("nginx", "DATA_DIR"),           # npm_db_path() docstring
+        ("file-share", "DATA_DIR"),      # _notes_dir() docstring
+        ("home-assistant", "DATA_DIR"),  # _ha_config_dir() docstring
+        ("home-assistant", "ZWAVE_DEVICE"),  # udev/zwave.port docstring
+        ("immich", None),                # comment: podman --format '{{.State}}'
+    ]
+
+    def test_all_seven_sites_are_accounted_for(self):
+        """Guard the inventory: if a new `{{…}}` appears in a post-deploy
+        script, this fails until someone confirms it doesn't need a render."""
+        found = []
+        for script in sorted(TEMPLATES_DIR.glob("*/post-deploy.py")):
+            text = script.read_text(encoding="utf-8")
+            found.extend([script.parent.name] * text.count("{{"))
+        self.assertEqual(
+            sorted(found),
+            sorted(name for name, _ in self.SITES),
+            "post-deploy.py `{{…}}` inventory changed — confirm the new site "
+            "reads its value from os.environ, then update SITES.",
+        )
+
+    def test_data_dir_paths_resolve_from_the_environment(self):
+        """The four DATA_DIR docstring sites: the path helper next to each
+        docstring reads DATA_DIR from os.environ, with a sane default."""
+        cases = [
+            ("auth", "authelia_db_path", ("auth", "authelia-data", "db.sqlite3")),
+            ("nginx", "npm_db_path", ("nginx-proxy-manager", "data", "database.sqlite")),
+            ("file-share", "_notes_dir", ("file-share", "data", "notes")),
+            ("home-assistant", "_ha_config_dir", ("home-assistant", "homeassistant")),
+        ]
+        for template, fn_name, tail in cases:
+            with self.subTest(template=template):
+                m = load_script(template)
+                fn = getattr(m, fn_name)
+                with run_with_env({"DATA_DIR": "/srv/from-env"}):
+                    self.assertEqual(fn(), os.path.join("/srv/from-env", *tail))
+                # Unset → documented fallback, never an empty path.
+                with run_with_env({}):
+                    self.assertEqual(fn(), os.path.join("/mnt/data", *tail))
+
+    def test_zwave_device_resolves_from_the_environment(self):
+        """home-assistant's `{{ZWAVE_DEVICE}}` docstring names the
+        template.yml mount; the script itself reads the value from env."""
+        m = load_script("home-assistant")
+        with run_with_env({"ZWAVE_DEVICE": "/dev/ttyACM0"}):
+            self.assertEqual(m.env("ZWAVE_DEVICE"), "/dev/ttyACM0")
+        with run_with_env({}):
+            self.assertEqual(m.env("ZWAVE_DEVICE"), "")
+
+    def test_authelia_smtp_subject_keeps_its_title_placeholder(self):
+        """The one site the render pass actively BROKE: `{{title}}` is an
+        f-string escape producing Authelia's own `{title}` token. Mustache
+        deleted it, deploying `subject: "[Authelia] "`."""
+        m = load_script("auth")
+        block = m._smtp_notifier_block({
+            "host": "smtp.gmail.com",
+            "port": 587,
+            "secure": False,
+            "user": "me@example.com",
+            "pass": "p",
+            "from": "me@example.com",
+        })
+        self.assertIn('subject: "[Authelia] {title}"', block)
+        self.assertNotIn('subject: "[Authelia] "', block)
+
+    def test_go_template_format_strings_survive_in_a_script_body(self):
+        """The mdopp/solarisbay#1092 shape, asserted on the Python side:
+        a script may embed a podman/docker Go-template format string and
+        it must still be there when the file is read for execution."""
+        sample = "'{{.Image}}|{{index .Config.Labels \"org.opencontainers.image.revision\"}}'"
+        # Compiles as valid Python source with the tags intact (the runner
+        # ships exactly these bytes; see runner.test.ts for the transport).
+        compile(f"FMT = {sample}\n", "<sample>", "exec")
+        scope: dict[str, Any] = {}
+        exec(f"FMT = {sample}\n", scope)  # noqa: S102 - fixed literal
+        self.assertIn("{{.Image}}", scope["FMT"])
+        self.assertNotEqual(scope["FMT"].strip("'"), "|")
+
+
 if __name__ == "__main__":
     unittest.main()

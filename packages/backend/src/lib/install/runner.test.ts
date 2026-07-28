@@ -8,6 +8,8 @@
  * The twin is mocked the same way `stackRunner.test.ts` does it, so the
  * gate reads deterministic fixtures instead of a live digital twin.
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const twinStub: {
@@ -35,7 +37,18 @@ vi.mock('@/lib/auth/internalToken', () => ({
   getInternalApiToken: () => 'test-token',
 }));
 
-import { isServiceReady, waitForDependencies, ensureProxyHosts, authDynamicVars } from './runner';
+// #2415 — post-deploy.py bodies must reach the box byte-identical. The
+// registry is the source of the raw script; stub it so the test controls
+// the exact bytes going in.
+const postDeployScriptMock = vi.fn<(name: string, source?: string) => Promise<string | null>>();
+vi.mock('@/lib/registry', () => ({
+  getTemplatePostDeployScript: (name: string, source?: string) => postDeployScriptMock(name, source),
+  getTemplateMigrationScripts: vi.fn(),
+  getTemplateYaml: vi.fn(),
+  syncRegistries: vi.fn(),
+}));
+
+import { isServiceReady, waitForDependencies, ensureProxyHosts, authDynamicVars, loadPostDeployScript } from './runner';
 import type { StackVariable } from '@/lib/stackInstall/postInstall';
 
 const fetchSpy = vi.spyOn(globalThis, 'fetch');
@@ -153,5 +166,69 @@ describe('ensureProxyHosts', () => {
   it('no-ops when there are no subdomain-typed variables', async () => {
     await ensureProxyHosts('job1', [{ name: 'PUBLIC_DOMAIN', value: 'dopp.cloud' }], undefined);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('loadPostDeployScript — script bodies ship verbatim (#2415)', () => {
+  beforeEach(() => {
+    postDeployScriptMock.mockReset();
+  });
+
+  it('returns the raw script byte-identical, foreign {{…}} expressions intact', async () => {
+    // The exact shape that cost mdopp/solarisbay#1092 five debugging
+    // rounds: Mustache deleted both Go-template tags, leaving `--format '|'`,
+    // which podman answers with `|` and exit 0.
+    const raw = [
+      '#!/usr/bin/env python3',
+      'import os, subprocess',
+      'FMT = \'{{.Image}}|{{index .Config.Labels "org.opencontainers.image.revision"}}\'',
+      'HOST = os.environ.get("HOST", "localhost")',
+      'JINJA = "{{ ansible_hostname }}"',
+      'HELM = "{{ .Values.image.tag }}"',
+      'SUBJECT = f\'subject: "[Authelia] {{title}}"\'',
+      'print(subprocess.run(["podman", "inspect", "--format", FMT]))',
+    ].join('\n');
+    postDeployScriptMock.mockResolvedValue(raw);
+
+    const out = await loadPostDeployScript('solaris', 'Built-in');
+
+    // Byte-identical — no substitution, no deletion, no re-encoding.
+    expect(out).toBe(raw);
+    expect(out).toContain('{{.Image}}');
+    expect(out).toContain('{{index .Config.Labels "org.opencontainers.image.revision"}}');
+    expect(out).toContain('{{ ansible_hostname }}');
+    expect(out).toContain('{{ .Values.image.tag }}');
+    expect(out).toContain('{{title}}');
+    // The pre-#2415 behaviour: every unknown tag rendered to empty.
+    expect(out).not.toContain("--format '|'");
+    expect(postDeployScriptMock).toHaveBeenCalledWith('solaris', 'Built-in');
+  });
+
+  it('leaves a known ServiceBay variable name alone too — env is the only channel', async () => {
+    // `HOST`/`DATA_DIR` ARE in the render view, so the old code would have
+    // substituted them into the source. Scripts read them from os.environ.
+    const raw = 'BASE = os.environ.get("DATA_DIR", "/mnt/data")  # not {{DATA_DIR}}\n';
+    postDeployScriptMock.mockResolvedValue(raw);
+    expect(await loadPostDeployScript('auth')).toBe(raw);
+  });
+
+  it('returns undefined when the template ships no script or the fetch fails', async () => {
+    postDeployScriptMock.mockResolvedValue(null);
+    expect(await loadPostDeployScript('nginx')).toBeUndefined();
+    postDeployScriptMock.mockResolvedValue('');
+    expect(await loadPostDeployScript('nginx')).toBeUndefined();
+    postDeployScriptMock.mockRejectedValue(new Error('registry unreachable'));
+    await expect(loadPostDeployScript('nginx')).resolves.toBeUndefined();
+  });
+
+  it('the deploy call site never re-introduces a render pass', () => {
+    // Guards the seam: the behavioural test above only proves the loader is
+    // a pass-through, not that `deployItem` stopped wrapping it.
+    const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+    const assignment = src.match(/const postDeployScript = .*/);
+    expect(assignment?.[0]).toBe(
+      'const postDeployScript = await loadPostDeployScript(item.name, input.templateSource);',
+    );
+    expect(src).not.toMatch(/postDeployScript\s*=\s*renderTemplate/);
   });
 });
