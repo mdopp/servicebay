@@ -513,6 +513,12 @@ export default function OnboardingWizard() {
         // No setup needed — clear any stale draft.
         clearPersistedWizardState();
       }
+    }).catch(err => {
+      // The status read failed (e.g. getConfig() couldn't read config.json —
+      // it now throws instead of returning defaults, #2399). "Unknown" must
+      // never be treated as "needs setup": leave the wizard closed and the
+      // draft untouched rather than slamming the modal over a configured box.
+      console.error('[OnboardingWizard] Failed to read onboarding status:', err);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

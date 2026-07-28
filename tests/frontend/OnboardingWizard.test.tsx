@@ -283,6 +283,25 @@ describe('OnboardingWizard', () => {
         });
     });
 
+    // #2399 — getConfig() no longer swallows a transient config-read failure
+    // into DEFAULT_CONFIG, so checkOnboardingStatus can now reject. "Unknown"
+    // must never be treated as "needs setup" on an already-configured box.
+    it('does not force-open when the onboarding-status read fails', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        (checkOnboardingStatus as any).mockRejectedValue(
+            Object.assign(new Error('Failed to read /app/data/config.json after 3 attempts'), { name: 'ConfigReadError' }),
+        );
+
+        render(<OnboardingWizard />);
+
+        await waitFor(() => {
+            expect(consoleError).toHaveBeenCalled();
+        });
+        expect(screen.queryByText(/Welcome to ServiceBay/i)).toBeNull();
+        expect(screen.queryByText(/Install Services/i)).toBeNull();
+        consoleError.mockRestore();
+    });
+
     it('renders welcome screen if setup is needed', async () => {
         (checkOnboardingStatus as any).mockResolvedValue(needsSetupStatus);
 
