@@ -10,6 +10,47 @@ operator's installed schema-version and the current one and surfaces them
 in the re-deploy dialog. Each `(breaking)` section needs an explicit
 acknowledgement before the deploy can proceed.
 
+## v3 (breaking)
+
+**Rights model swapped from `owner_only` to `from_file` (#2411).**
+
+Radicale's access rules used to be the built-in `owner_only` module: every
+authenticated user may touch their own `/<user>/` tree and nothing else. That
+module cannot express a single cross-principal exception, so the household
+automation account (`solaris`) had no way to write the shared calendar and
+address book it maintains for each resident — and the rule that granted it had
+to be hand-patched onto the running pod, where every re-render (an
+`AutoUpdate=registry` image pull re-running `podman kube play --replace`) wiped
+it again.
+
+The `[rights]` section now reads `type = from_file` with `file = /config/rights`,
+and the pod's `write-config` initContainer seeds that ruleset alongside
+`/config/config` on every deploy — so it is part of the manifest and survives a
+re-render. The ruleset is:
+
+| Section | Who | What it grants |
+|---|---|---|
+| `[root]` | any authenticated user | read the root collection (`.well-known` discovery) |
+| `[owner]` | any authenticated user | full read/write on their OWN `/<user>/` subtree |
+| `[solaris-subcal]` | `solaris` only | read/write `<resident>/solaris` (shared calendar) |
+| `[solaris-contacts]` | `solaris` only | read/write `<resident>/solaris-contacts` (shared address book) |
+
+`[root]` + `[owner]` together are the equivalent of the old `owner_only`
+module, so **a normal user's access is unchanged**: they still see exactly
+their own collections, and no user can read another user's tree. The two
+`solaris` sections are the only additions — a service account named `solaris`
+(if one exists in LLDAP) can read/write those two named collections under any
+principal, and nothing else. On a box with no such LLDAP account they grant
+nothing.
+
+Required action: **re-deploy** the radicale service so the initContainer writes
+the new `/config/rights` and Radicale starts with `from_file`. Existing installs
+keep `owner_only` until the pod is recreated. If you hand-edited
+`/config/rights` on a running pod, note that it is now generated from the
+template on every deploy — that copy is replaced (which is the point: a
+hand-patched file did not survive a re-render either). Collections on `/data`
+are untouched.
+
 ## v2 (breaking)
 
 **DAV port bound to loopback — no longer LAN-exposed (#2357).**

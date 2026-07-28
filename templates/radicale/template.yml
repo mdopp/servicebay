@@ -6,7 +6,7 @@ metadata:
     app: radicale
   annotations:
     servicebay.label: "Calendar & Contacts"
-    servicebay.schema-version: "2"
+    servicebay.schema-version: "3"
     servicebay.ports: "{{RADICALE_PORT}}/tcp"
     # caldav.<domain> goes through nginx; auth is the SSO front.
     servicebay.dependencies: "nginx,auth"
@@ -68,13 +68,71 @@ spec:
         filesystem_folder = /data/collections
 
         [rights]
-        type = owner_only
+        # Ruleset lives in /config/rights, written by the second heredoc
+        # below. `owner_only` (the old value) cannot express the one
+        # cross-principal grant the household needs (#2411), and the
+        # equivalent of it is re-expressed as the [root]/[owner] rules there.
+        type = from_file
+        file = /config/rights
 
         [web]
         type = internal
 
         [logging]
         level = info
+        EOF
+        # The rights ruleset, seeded here for the same reason as the config
+        # above: it is part of the pod manifest, so every `podman kube play
+        # --replace` re-creates it. Kept as a live-patched file on the box it
+        # was silently reverted to `owner_only` every time AutoUpdate=registry
+        # pulled a new image and re-rendered the unit from the template
+        # (#2411). Radicale's from_file contract: first matching section
+        # wins; `{0}` is the first capture group of that section's `user`
+        # pattern; upper-case permissions apply to plain collections,
+        # lower-case to calendar/address-book collections and their items.
+        cat > /config/rights <<'EOF'
+        # Any authenticated user may READ the root collection, so
+        # /.well-known/{caldav,carddav} -> `/` principal discovery keeps
+        # working. This is what the built-in `owner_only` module returns for
+        # the root path.
+        [root]
+        user: (.+)
+        collection:
+        permissions: R
+
+        # Owner-only base: every authenticated user has full read/write over
+        # their OWN principal subtree - and nothing else. (Equivalent to the
+        # built-in `owner_only` module.)
+        [owner]
+        user: (.+)
+        collection: {0}(/.*)?
+        permissions: RrWw
+
+        # The `solaris` service account may ADDITIONALLY read/write ONLY the
+        # `solaris` calendar under ANY resident's principal - the per-resident
+        # calendar the deadlines/tasks sync writes. It reaches
+        # `<resident>/solaris` + its items, but NOT the resident's other
+        # calendars nor the principal root: no shared password, no broad
+        # access.
+        [solaris-subcal]
+        user: solaris
+        collection: [^/]+/solaris(/.*)?
+        permissions: RrWw
+
+        # Same deal for contacts: the CardDAV address book that sync writes
+        # per resident lives at `<resident>/solaris-contacts` (#2411). Without
+        # this the account had nowhere to put an address book - the calendar
+        # rule matches `.../solaris` exactly, a calendar is a leaf so nothing
+        # nests under it, and the account's own `/solaris/...` tree is exactly
+        # the one the resident may not read.
+        # Deliberately a second rule rather than widening the pattern above to
+        # `solaris(-[a-z]+)?`: every collection this service account may touch
+        # is then named explicitly, and `<resident>/solaris-<anything-else>`
+        # stays a 403.
+        [solaris-contacts]
+        user: solaris
+        collection: [^/]+/solaris-contacts(/.*)?
+        permissions: RrWw
         EOF
     volumeMounts:
       - mountPath: /config
