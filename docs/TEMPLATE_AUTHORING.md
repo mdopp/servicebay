@@ -301,6 +301,18 @@ seeding (LLDAP, FileBrowser, ABS), follow the pattern in the existing
 scripts: 5-minute deadline, 10-second heartbeat log, sleep between
 retries. The agent budget is 20 minutes, so leave slack.
 
+You do **not** need a wait loop for your own pod's *unit* to exist,
+though. When a re-deploy changes the rendered spec, core restarts the
+unit and then waits for systemd to report it back up as a **new**
+activation (up to 3 minutes) before invoking `post-deploy.py` (#2406) —
+so `podman` queries against your own containers aren't racing a
+teardown. The install log says which happened: either `<name> restart
+settled after Ns` or an explicit `did not report active within Ns`
+warning if the bound was hit (post-deploy still runs in that case).
+A wait loop is still the right tool for *application* readiness (the
+HTTP endpoint answering, the DB migrated) — the unit being active only
+means the containers were started.
+
 ### `CHANGELOG.md`
 
 Optional but strongly recommended. Each `## v{N}` H2 section is one
