@@ -1,6 +1,6 @@
 ---
 title: Rolling a new image onto an already-running service (:latest update flow)
-whenToUse: CI pushed a new image for an installed service and you need the box to actually run it — a plain restart didn't pick up the new build, and install_template re-pulled but didn't restart.
+whenToUse: CI pushed a new image for an installed service and you need the box to actually run it — a plain restart didn't pick up the new build, and install_template re-pulled but didn't restart. Also covers a stuck/stale image that keeps coming back on the old layers.
 kind: recipe
 tags: [image, rollout, update, latest, podman, pull, restart, deploy, versioning]
 ---
@@ -18,16 +18,33 @@ new build on their own:
 
 So a CI push to `:latest` sits unused until you explicitly pull *and* restart.
 
-## The flow — pull, then restart
+## The flow — one action does all of it
+`manage_service(action="force-update", name="<service>")` re-checks the
+registry, re-pulls every image the service declares, and force-removes its
+containers so the unit *cannot* come back up on the cached image. It returns a
+per-image report with `before` / `registry` / `after` digests, so you can see
+whether anything actually moved instead of assuming it did. The operator
+equivalent is **Force update** on the service's Actions tab. Neither depends on
+`podman-auto-update.timer`, which stays masked until an update window is
+configured.
+
+- `changed: true` → a new image landed and the containers were recreated on it.
+- `stale: true` → the registry serves a newer digest but the local image did not
+  change. Retry with `fresh: true` (UI: the **Fresh pull** button that appears)
+  — that deletes the local image before pulling. An image another service is
+  also running is kept rather than deleted out from under it.
+
+Then **box-verify** the feature end-to-end (health 200, unauth → 302, feature
+works). Green CI is not "the box runs it", and neither is a green pull.
+
+## Doing it by hand (older boxes / no ServiceBay control plane)
 1. **Pull the new image** on the box (over MCP: `container_exec` / `exec_command`
    a `podman pull <image>:<tag>`, or re-run `install_template` which re-pulls).
-2. **Restart the service** so the running pod recreates onto the newly-pulled
-   image (`manage_service(action="restart")`).
+2. **Recreate the container** — `podman rm -f <container>` *then* start the unit.
+   A plain restart reuses the existing container and keeps the old image.
 3. **Verify the running digest** matches what CI published (`podman inspect
    --format '{{.Image}}'` on the container, or compare digests) — don't assume
    the restart picked it up.
-4. **Box-verify** the feature end-to-end afterwards (health 200, unauth → 302,
-   feature works). Green CI is not "the box runs it."
 
 ## Versioning expectation for external service images (ADR 0003 tension)
 ServiceBay's own releases go through release-please + tags (ADR 0003). A

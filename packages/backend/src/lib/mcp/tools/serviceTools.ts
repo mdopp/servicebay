@@ -22,17 +22,28 @@ export function registerServiceTools({ server }: ToolRegistration) {
 
   // --- Manage Service (#2324) — one lifecycle-scoped tool with an `action`
   // discriminator. Replaces start_service / stop_service / restart_service.
-  // Returns the post-action service status (same as the old tools). ---
+  // Returns the post-action service status (same as the old tools).
+  // #2397 added `force-update`: a restart never re-checks the registry, so a
+  // freshly pushed `:latest` needed a manual `podman pull` + recreate dance
+  // (assists/recipe-roll-new-image-to-running-service.md). That dance is now
+  // this action, and it reports the digests so a no-op is visibly a no-op. ---
   server.tool(
     'manage_service',
-    'Start, stop, or restart a service via `action`. Returns the service status after the action (same shape the old start/stop/restart tools returned).',
+    'Start, stop, restart, or force-update a service via `action`. start/stop/restart return the service status after the action (same shape the old start/stop/restart tools returned). `force-update` re-checks the registry, re-pulls each image the service declares, and force-recreates its containers so the unit cannot come back up on the cached image — use it instead of a `podman pull` + restart by hand, and note that a plain `restart` never re-checks the registry. It returns a JSON report with per-image before/registry/after digests; if `stale` is true the local image still is not the one the registry serves — retry with `fresh: true`, which deletes the local image before re-pulling.',
     {
-      action: z.enum(['start', 'stop', 'restart']).describe('Lifecycle action to perform on the service.'),
+      action: z.enum(['start', 'stop', 'restart', 'force-update']).describe('Lifecycle action to perform on the service.'),
       name: z.string().describe('Service name'),
+      fresh: z
+        .boolean()
+        .optional()
+        .describe('`force-update` only: delete the local image first and pull it from scratch. The fallback for a genuinely stuck image — a shared image another service is running is kept, not deleted.'),
       node: nodeParam,
     },
-    async ({ action, name, node }) => {
+    async ({ action, name, fresh, node }) => {
       const nodeName = await resolveNode(node);
+      if (action === 'force-update') {
+        return textResult(await ServiceManager.forceUpdateService(nodeName, name, { fresh }));
+      }
       if (action === 'start') await ServiceManager.startService(nodeName, name);
       else if (action === 'stop') await ServiceManager.stopService(nodeName, name);
       else await ServiceManager.restartService(nodeName, name);

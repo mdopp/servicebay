@@ -29,6 +29,7 @@
 
 import { ServiceListing } from './serviceListing';
 import { ServiceLifecycle } from './serviceLifecycle';
+import { forceUpdateService } from './forceUpdate';
 
 // ServiceInfo + ServiceListing + ServiceLifecycle are not re-exported
 // — consumers go through the ServiceManager facade. Anyone needing
@@ -65,6 +66,9 @@ export class ServiceManager {
     static purgeTrash = ServiceLifecycle.purgeTrash;
     static renameService = ServiceLifecycle.renameService;
     static updateAndRestartService = ServiceLifecycle.updateAndRestartService;
+    /** #2397 — operator-triggered registry re-check + re-pull + recreate.
+     *  Lives in its own module (forceUpdate.ts) rather than serviceLifecycle. */
+    static forceUpdateService = forceUpdateService;
     static updateServiceDescription = ServiceLifecycle.updateServiceDescription;
     static prePullImages = ServiceLifecycle.prePullImages;
 }

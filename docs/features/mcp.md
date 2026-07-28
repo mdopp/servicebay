@@ -33,7 +33,8 @@ mutation surface. Highlights beyond the read/lifecycle basics:
   assists to read, the template contract) for an agent building a new service.
 
 Several formerly-narrow tools were **consolidated** in 5.0.0 (a breaking change
-to the surface): `manage_service` (`action: start|stop|restart`), `get_logs`
+to the surface): `manage_service` (`action: start|stop|restart`, plus `force-update` since
+#2397), `get_logs`
 (`source: service|container|podman`), `get_template_artifact`
 (`artifact: readme|yaml|variables`), and `list_requests` (`type: access|token`)
 replaced eleven older per-verb tools.

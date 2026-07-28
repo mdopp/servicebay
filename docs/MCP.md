@@ -3,7 +3,8 @@
 ServiceBay exposes a [Model Context Protocol](https://modelcontextprotocol.io)
 server at `/mcp` so an AI assistant — Claude Code, Claude Desktop, or anything
 else that speaks MCP — can drive your homelab directly. Available tools include
-`list_services`, `manage_service` (start/stop/restart via an `action`),
+`list_services`, `manage_service` (start/stop/restart/force-update via an
+`action`),
 `get_logs` (service/container/podman via a `source`), `update_service_yaml`,
 `add_proxy_route`, `run_backup`, `get_health_checks`, `exec_command`, and ~30
 others. Sensitive fields (`auth.passwordHash`, SMTP/OIDC secrets) are redacted
@@ -137,7 +138,7 @@ Claude Code) to see the live tool registry on your version.
 
 | Category | Tools |
 |----------|-------|
-| Services | `list_services`, `manage_service` (`action: start\|stop\|restart`), `deploy_service`, `update_service_yaml`, `delete_service`, `rename_service` |
+| Services | `list_services`, `manage_service` (`action: start\|stop\|restart\|force-update`), `deploy_service`, `update_service_yaml`, `delete_service`, `rename_service` |
 | Containers / logs | `list_containers`, `get_logs` (`source: service\|container\|podman`) |
 | Templates | `list_templates`, `get_template_artifact` (`artifact: readme\|yaml\|variables`), `install_template` |
 | Health | `get_health_checks`, `create_health_check`, `delete_health_check`, `run_check_now` |
