@@ -661,6 +661,11 @@ app.prepare().then(() => {
           const { reconcileHostFirewallOnBoot } = await import('./lib/capabilities/hostFirewall');
           await reconcileHostFirewallOnBoot();
         } catch (err) {
+          // Log only — `reconcileHostFirewallOnBoot` has already persisted
+          // the failure into `config.installHandlerFailures`, so diagnose
+          // shows a standing finding with a Retry instead of this line
+          // being the only trace (#2420). The `host_firewall_rule` probe
+          // independently re-checks the live ruleset either way.
           logger.warn('Server', `Host firewall reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       })();

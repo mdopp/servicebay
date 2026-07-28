@@ -17,6 +17,7 @@ import './routerDnsNotPointing';
 import './danglingProxy';
 import './postDeployFailed';
 import './installHandlerFailed';
+import './hostFirewallRule';
 import './crashLoop';
 import './proxyRouteMissing';
 import './nginxOnlineFailed';

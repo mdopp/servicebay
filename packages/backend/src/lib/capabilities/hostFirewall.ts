@@ -27,13 +27,27 @@
 import { getConfig } from '@/lib/config';
 import { getExecutor } from '@/lib/executor';
 import { getTemplateVariables } from '@/lib/registry';
-import { collectLanBlockedPorts, reconcileHostFirewall, type PortVarDeclaration } from '@/lib/hostFirewall';
+import {
+  collectLanBlockedPorts,
+  reconcileHostFirewall,
+  type LanBlockPlan,
+  type PortVarDeclaration,
+} from '@/lib/hostFirewall';
+import { recordHandlerFailure, clearHandlerFailure } from '@/lib/install/handlerFailures';
 import { logger } from '@/lib/logger';
 import type { CapabilityBus } from './bus';
 import type { FeatureInstalledEvent, FeatureUninstalledEvent, HandlerResult } from './types';
 import type { StackVariable } from '@/lib/stackInstall/types';
 
 const HANDLER_NAME = 'host-firewall.lan-block';
+
+/**
+ * `service` key the boot-reconcile failure is recorded under. Not a real
+ * service — the host firewall is box-level — but the standing-failure
+ * store is keyed `${kind}:${service}` and this is what the operator sees
+ * as the row label.
+ */
+export const BOOT_FAILURE_SERVICE = 'host-firewall';
 
 interface ReconcileOpts {
   /** Template to fold in even if `installedTemplates` doesn't list it yet (fresh install). */
@@ -45,11 +59,13 @@ interface ReconcileOpts {
 }
 
 /**
- * Recompute the desired filtered-port set from config + the template
- * registry and push it to the host. Exported so the boot path can call
- * the same code (see `reconcileHostFirewallOnBoot`).
+ * Compute the DESIRED filtered-port set from config + the template
+ * registry, without touching the host. Split out of
+ * {@link reconcileFromConfig} so the `host_firewall_rule` diagnose probe
+ * can ask "what should be filtered?" and compare it against what the
+ * kernel actually has loaded (#2420) without re-applying anything.
  */
-export async function reconcileFromConfig(opts: ReconcileOpts = {}): Promise<void> {
+export async function planLanBlockedPorts(opts: ReconcileOpts = {}): Promise<LanBlockPlan> {
   const config = await getConfig();
 
   const installed = new Set(Object.keys(config.installedTemplates ?? {}));
@@ -71,7 +87,16 @@ export async function reconcileFromConfig(opts: ReconcileOpts = {}): Promise<voi
     if (v.value) values[v.name] = v.value;
   }
 
-  const plan = collectLanBlockedPorts({ installedTemplates, declarations, values });
+  return collectLanBlockedPorts({ installedTemplates, declarations, values });
+}
+
+/**
+ * Recompute the desired filtered-port set from config + the template
+ * registry and push it to the host. Exported so the boot path can call
+ * the same code (see `reconcileHostFirewallOnBoot`).
+ */
+export async function reconcileFromConfig(opts: ReconcileOpts = {}): Promise<void> {
+  const plan = await planLanBlockedPorts(opts);
   for (const reason of plan.skipped) {
     logger.warn('CapabilityBus', `[${HANDLER_NAME}] skipped ${reason}`);
   }
@@ -109,9 +134,28 @@ export function handleUninstalled(event: FeatureUninstalledEvent): Promise<Handl
  * redeployed), and it self-heals a host where the unit or the table was
  * removed by hand. Idempotent, so a boot with nothing to do converges to
  * a couple of no-op probes.
+ *
+ * A failure here used to be a log line and nothing else, so the #2388
+ * LAN block could silently not apply on a box that depends entirely on
+ * this path (#2420). It now lands in `config.installHandlerFailures` —
+ * the same store the capability-bus path writes through `runner.ts` —
+ * so the `install_handler_failed` probe surfaces it with a retry, and
+ * the error still propagates so the caller's log line is unchanged.
  */
 export async function reconcileHostFirewallOnBoot(): Promise<void> {
-  await reconcileFromConfig();
+  try {
+    await reconcileFromConfig();
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    await recordHandlerFailure({
+      kind: 'host-firewall',
+      service: BOOT_FAILURE_SERVICE,
+      message: `boot reconcile: ${message}`,
+    });
+    throw e;
+  }
+  // Converged — drop any record a previous boot left standing.
+  await clearHandlerFailure('host-firewall', BOOT_FAILURE_SERVICE);
 }
 
 export function registerHostFirewallHandlers(bus: CapabilityBus): void {

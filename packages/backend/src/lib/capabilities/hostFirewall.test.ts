@@ -11,6 +11,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const reconcileMock = vi.fn();
 const getConfigMock = vi.fn();
 const getTemplateVariablesMock = vi.fn();
+const recordFailureMock = vi.fn();
+const clearFailureMock = vi.fn();
+
+vi.mock('@/lib/install/handlerFailures', () => ({
+  recordHandlerFailure: (...a: unknown[]) => recordFailureMock(...a),
+  clearHandlerFailure: (...a: unknown[]) => clearFailureMock(...a),
+}));
 
 vi.mock('@/lib/config', () => ({ getConfig: () => getConfigMock() }));
 vi.mock('@/lib/executor', () => ({ getExecutor: () => ({ tag: 'executor' }) }));
@@ -25,7 +32,13 @@ vi.mock('@/lib/hostFirewall', async () => {
   return { ...actual, reconcileHostFirewall: (...a: unknown[]) => reconcileMock(...a) };
 });
 
-import { handleInstalled, handleUninstalled, reconcileHostFirewallOnBoot } from './hostFirewall';
+import {
+  handleInstalled,
+  handleUninstalled,
+  reconcileHostFirewallOnBoot,
+  planLanBlockedPorts,
+  BOOT_FAILURE_SERVICE,
+} from './hostFirewall';
 import type { TemplateManifest } from '@/lib/template/contract';
 
 const MANIFEST: TemplateManifest = { label: 'Sign-In Gate', tier: 'infrastructure', schemaVersion: 3, dependencies: [] };
@@ -131,5 +144,38 @@ describe('host-firewall boot reconcile (#2388)', () => {
   it('propagates a failure to the caller, which logs it', async () => {
     reconcileMock.mockRejectedValue(new Error('agent down'));
     await expect(reconcileHostFirewallOnBoot()).rejects.toThrow(/agent down/);
+  });
+});
+
+/**
+ * #2420 — a boot reconcile that fails must leave a standing finding, not
+ * just a log line. It writes the same `installHandlerFailures` store the
+ * capability-bus path uses via `runner.ts`, so `install_handler_failed`
+ * surfaces it with a Retry.
+ */
+describe('host-firewall boot reconcile — failure is surfaced (#2420)', () => {
+  it('records a standing failure the diagnose probe can read', async () => {
+    reconcileMock.mockRejectedValue(new Error('sudo: a password is required'));
+    await expect(reconcileHostFirewallOnBoot()).rejects.toThrow(/password/);
+    expect(recordFailureMock).toHaveBeenCalledWith({
+      kind: 'host-firewall',
+      service: BOOT_FAILURE_SERVICE,
+      message: expect.stringContaining('boot reconcile: sudo: a password is required'),
+    });
+    expect(clearFailureMock).not.toHaveBeenCalled();
+  });
+
+  it('clears the record once a later boot converges', async () => {
+    await reconcileHostFirewallOnBoot();
+    expect(recordFailureMock).not.toHaveBeenCalled();
+    expect(clearFailureMock).toHaveBeenCalledWith('host-firewall', BOOT_FAILURE_SERVICE);
+  });
+});
+
+describe('planLanBlockedPorts (#2420)', () => {
+  it('reports the desired port set without touching the host', async () => {
+    const plan = await planLanBlockedPorts();
+    expect(plan.ports).toEqual([3890]);
+    expect(reconcileMock).not.toHaveBeenCalled();
   });
 });
