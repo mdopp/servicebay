@@ -26,11 +26,6 @@
     "type": "secret",
     "description": "OIDC client secret for Vaultwarden ↔ Authelia. Auto-generated; the wizard wires it into both the SSO_CLIENT_SECRET env and Authelia's clients[] entry."
   },
-  "PUBLIC_DOMAIN": {
-    "type": "text",
-    "description": "Public domain (used to build the SSO authority URL https://auth.<domain>)",
-    "default": "dopp.cloud"
-  },
   "VAULTWARDEN_SUBDOMAIN": {
     "type": "subdomain",
     "description": "Subdomain for Vaultwarden",

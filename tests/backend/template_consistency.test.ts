@@ -252,6 +252,60 @@ describe('Template variables are declared', () => {
   }
 });
 
+// ─── 2b. …and every declared variable is actually used ──────────────────────
+//
+// The mirror image of rule 2, and the guard #2425 asked for. A template that
+// DECLARES a variable it never renders makes the wizard collect a value that
+// goes nowhere — `templates/nginx/variables.json`'s PUBLIC_DOMAIN was exactly
+// that (declared, referenced in no nginx file, deleted in #2425), and the
+// orphaned `ABS_*` variables of #2381 were the same shape one release earlier.
+// Without an assertion, an orphan reappears silently on the next edit.
+describe('Declared template variables are used', () => {
+  /** Files inside a template dir that can legitimately consume a variable:
+   *  the pod manifest, companion mustache configs, and the host-side
+   *  post-deploy / entrypoint scripts (which read them as env vars, not as
+   *  `{{...}}`). Deliberately EXCLUDES `variables.json` itself (the
+   *  declaration is not a use) and the `migrations/` + `*.md` files (a
+   *  historical note naming a retired variable must not keep it alive). */
+  const USE_BEARING_EXT = /\.(ya?ml|mustache|py|sh|conf|json)$/;
+
+  function usageBlob(templateName: string): string {
+    const dir = path.join(TEMPLATES_DIR, templateName);
+    const parts: string[] = [];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      if (entry.name === 'variables.json') continue;
+      if (!USE_BEARING_EXT.test(entry.name)) continue;
+      parts.push(fs.readFileSync(path.join(dir, entry.name), 'utf-8'));
+    }
+    return parts.join('\n');
+  }
+
+  for (const t of templates) {
+    it(`${t.name}: every declared variable is rendered or read somewhere`, () => {
+      const blob = usageBlob(t.name);
+      const orphans = Object.entries(t.variables)
+        // `type: subdomain` vars are consumed STRUCTURALLY by the platform
+        // (buildProxyHosts turns them into NPM proxy hosts) rather than by a
+        // `{{...}}` reference, so absence from the template's own files is
+        // expected and correct — see media's ABS_SUBDOMAIN (#2381).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .filter(([, spec]) => (spec as any)?.type !== 'subdomain')
+        .map(([name]) => name)
+        .filter(name => !blob.includes(name));
+
+      expect(
+        orphans,
+        `${t.name}: ${orphans.length} declared-but-unused variable(s):\n  ${orphans.join(', ')}\n\n` +
+        `The wizard would collect a value that nothing consumes. Either reference it in ` +
+        `${t.name}/template.yml, a *.mustache config or post-deploy.py — or delete the ` +
+        `declaration from ${t.name}/variables.json. If it is a shared global (PUBLIC_DOMAIN, ` +
+        `DATA_DIR, LLDAP_*), declare it ONCE in templates/settings.json instead (#2425).`,
+      ).toEqual([]);
+    });
+  }
+});
+
 // ─── 3. Each template renders to a valid Pod ────────────────────────────────
 describe('Templates render to valid Pod manifests', () => {
   /** Build a Mustache view that supplies a value for every variable referenced

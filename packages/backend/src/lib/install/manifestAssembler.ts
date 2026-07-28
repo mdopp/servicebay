@@ -190,7 +190,7 @@ async function hostHasNvidiaCdi(): Promise<boolean> {
  */
 const GLOBAL_VAR_HELP: Record<string, string> = {
   PUBLIC_DOMAIN:
-    'Base public domain for this box (e.g. dopp.cloud). Services are ' +
+    'Base public domain for this box (e.g. example.com). Services are ' +
     'exposed at <service>.<this domain>. Enter the bare domain, not a ' +
     'subdomain.',
 };

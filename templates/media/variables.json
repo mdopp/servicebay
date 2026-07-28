@@ -36,11 +36,6 @@
     "description": "Host path mounted at /media (read-only). Defaults to the file-share volume so Music/, Movies/, TV/ etc. dropped into the Samba share appear in Jellyfin's library scan.",
     "default": "/mnt/data/stacks/file-share/data"
   },
-  "PUBLIC_DOMAIN": {
-    "type": "text",
-    "description": "Public domain (used to build the JELLYFIN_PublishedServerUrl env that mobile apps probe for backend URLs).",
-    "default": "dopp.cloud"
-  },
   "LLDAP_LDAP_PORT": {
     "type": "text",
     "description": "LLDAP LDAP-protocol port — Jellyfin's LDAP-Auth plugin binds LLDAP here for SSO (#1718). Inherited from the auth template.",

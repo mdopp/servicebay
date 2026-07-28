@@ -27,7 +27,7 @@ After deploy:
   - Old `${DATA_DIR}/media/navidrome` is renamed to
     `${DATA_DIR}/media/navidrome.bak`. Operator deletes when ready.
   - Jellyfin starts on JELLYFIN_PORT (default 8096); the
-    `music.dopp.cloud` proxy host now forwards there.
+    `music.<PUBLIC_DOMAIN>` proxy host now forwards there.
   - Symfonium users need to re-pair (delete old connection, add new
     via Quick Connect; Jellyfin backend, not Subsonic). Plays /
     favorites from Navidrome are NOT carried over.

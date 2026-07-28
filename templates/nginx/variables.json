@@ -23,11 +23,6 @@
     "description": "Admin UI port",
     "default": "81"
   },
-  "PUBLIC_DOMAIN": {
-    "type": "text",
-    "description": "Public domain for all services (e.g. dopp.cloud)",
-    "default": "dopp.cloud"
-  },
   "NPM_SUBDOMAIN": {
     "type": "subdomain",
     "description": "Subdomain for Nginx Proxy Manager admin. Internal exposure — gets a real LE cert (without it nginx serves the default cert and the SNI handshake fails with 'unrecognized name'), NPM binds the LAN-only access list so it isn't reachable from outside the LAN, and Authelia forward-auth gates it on top because NPM exposes proxy-host edit (#878).",

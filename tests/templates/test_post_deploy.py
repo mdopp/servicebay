@@ -464,6 +464,88 @@ class AuthScript(unittest.TestCase):
         self.assertIn("disable_startup_check: true", block)
         self.assertNotIn("disable_startup_check: false", block)
 
+    def test_config_paths_track_data_dir_instead_of_a_hardcoded_root(self):
+        """#2424: the two notifier paths were module-level literals pinned to
+        one deployment's `/mnt/data...` root, so on any install with a
+        non-default DATA_DIR the SMTP wiring silently no-opped. They must now
+        derive from DATA_DIR, like `authelia_db_path()` in the same file."""
+        m = load_script("auth")
+        with run_with_env({"DATA_DIR": "/srv/pool/stacks"}):
+            self.assertEqual(
+                m.authelia_config_path(),
+                "/srv/pool/stacks/auth/authelia-config/configuration.yml",
+            )
+            # ServiceBay's own config.json is a SIBLING of the stacks dir, so
+            # the parent is probed first, then DATA_DIR itself (bare-/mnt/data
+            # dev layout). Neither candidate is a hardcoded literal.
+            self.assertEqual(
+                m.sb_config_path_candidates(),
+                ["/srv/pool/servicebay/config.json", "/srv/pool/stacks/servicebay/config.json"],
+            )
+        src = (TEMPLATES_DIR / "auth" / "post-deploy.py").read_text()
+        self.assertNotIn('"/mnt/data/servicebay/config.json"', src)
+        self.assertNotIn('"/mnt/data/stacks/auth/authelia-config/configuration.yml"', src)
+
+    def test_smtp_notifier_is_wired_on_a_non_default_data_dir(self):
+        """End-to-end for #2424: with DATA_DIR pointed somewhere other than the
+        default, `rewrite_authelia_smtp_notifier` must FIND ServiceBay's email
+        config on disk and REWRITE Authelia's filesystem notifier to smtp.
+        Before the fix this printed 'Authelia config not at ...' and did
+        nothing while the UI reported email as configured."""
+        import tempfile
+        m = load_script("auth")
+        with tempfile.TemporaryDirectory() as root:
+            # Box layout: <root>/servicebay (ServiceBay) + <root>/stacks (DATA_DIR).
+            data_dir = os.path.join(root, "stacks")
+            sb_dir = os.path.join(root, "servicebay")
+            authelia_dir = os.path.join(data_dir, "auth", "authelia-config")
+            os.makedirs(sb_dir)
+            os.makedirs(authelia_dir)
+            with open(os.path.join(sb_dir, "config.json"), "w", encoding="utf-8") as fh:
+                json.dump({"notifications": {"email": {
+                    "host": "smtp.example.com", "port": 587, "secure": False,
+                    "user": "box@example.com", "pass": "s3cret", "from": "box@example.com",
+                }}}, fh)
+            cfg = os.path.join(authelia_dir, "configuration.yml")
+            with open(cfg, "w", encoding="utf-8") as fh:
+                fh.write("theme: light\n\nnotifier:\n  filesystem:\n    filename: /data/notification.txt\n\nserver:\n  address: 'tcp://:9091'\n")
+
+            # No SB_API_TOKEN → the API path is skipped and the on-disk
+            # fallback (the half that #2424 broke) is what runs.
+            with run_with_env({"DATA_DIR": data_dir}):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    m.rewrite_authelia_smtp_notifier("http://127.0.0.1:5888")
+                out = buf.getvalue()
+
+            self.assertNotIn("skipping notifier rewrite", out)
+            self.assertIn("Rewrote Authelia notifier", out)
+            with open(cfg, encoding="utf-8") as fh:
+                written = fh.read()
+            self.assertIn("submission://smtp.example.com:587", written)
+            self.assertIn("username: 'box@example.com'", written)
+            self.assertNotIn("filesystem:", written)
+            # The surrounding config survives the splice untouched.
+            self.assertIn("theme: light", written)
+            self.assertIn("address: 'tcp://:9091'", written)
+
+    def test_smtp_notifier_finds_config_on_a_bare_data_dir_layout(self):
+        """The dev/default layout has no `stacks` level: DATA_DIR and the
+        servicebay dir share a parent. The second candidate covers it."""
+        import tempfile
+        m = load_script("auth")
+        with tempfile.TemporaryDirectory() as data_dir:
+            os.makedirs(os.path.join(data_dir, "servicebay"))
+            with open(os.path.join(data_dir, "servicebay", "config.json"), "w", encoding="utf-8") as fh:
+                json.dump({"notifications": {"email": {
+                    "host": "smtp.example.com", "port": 465, "secure": True,
+                    "user": "box@example.com", "pass": "s3cret", "from": "box@example.com",
+                }}}, fh)
+            with run_with_env({"DATA_DIR": data_dir}):
+                em = m._sb_email_config("http://127.0.0.1:5888")
+            self.assertIsNotNone(em)
+            self.assertEqual(em["host"], "smtp.example.com")
+
 
 class FileShareScript(unittest.TestCase):
     def test_samba_credential_emitted_when_password_set(self):
@@ -2577,10 +2659,11 @@ class VerbatimScriptBodies(unittest.TestCase):
     quietly start depending on a render pass that no longer happens.
     """
 
-    # The seven `{{…}}` sites across templates/*/post-deploy.py, and the
+    # The eight `{{…}}` sites across templates/*/post-deploy.py, and the
     # env var that actually carries the value (None = prose only).
     SITES = [
         ("auth", "DATA_DIR"),            # authelia_db_path() docstring
+        ("auth", "DATA_DIR"),            # authelia_config_path() docstring (#2424)
         ("auth", None),                  # f-string escape: subject "[Authelia] {title}"
         ("nginx", "DATA_DIR"),           # npm_db_path() docstring
         ("file-share", "DATA_DIR"),      # _notes_dir() docstring
@@ -2589,7 +2672,7 @@ class VerbatimScriptBodies(unittest.TestCase):
         ("immich", None),                # comment: podman --format '{{.State}}'
     ]
 
-    def test_all_seven_sites_are_accounted_for(self):
+    def test_all_sites_are_accounted_for(self):
         """Guard the inventory: if a new `{{…}}` appears in a post-deploy
         script, this fails until someone confirms it doesn't need a render."""
         found = []
@@ -2604,10 +2687,11 @@ class VerbatimScriptBodies(unittest.TestCase):
         )
 
     def test_data_dir_paths_resolve_from_the_environment(self):
-        """The four DATA_DIR docstring sites: the path helper next to each
+        """The DATA_DIR docstring sites: the path helper next to each
         docstring reads DATA_DIR from os.environ, with a sane default."""
         cases = [
             ("auth", "authelia_db_path", ("auth", "authelia-data", "db.sqlite3")),
+            ("auth", "authelia_config_path", ("auth", "authelia-config", "configuration.yml")),
             ("nginx", "npm_db_path", ("nginx-proxy-manager", "data", "database.sqlite")),
             ("file-share", "_notes_dir", ("file-share", "data", "notes")),
             ("home-assistant", "_ha_config_dir", ("home-assistant", "homeassistant")),

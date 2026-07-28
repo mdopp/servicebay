@@ -15,28 +15,48 @@
 #                    expect HTTP 2xx/3xx and (where it's a stable string)
 #                    a recognisable HTML title or content signature.
 #   6. Access ctl  — confirm the `family` user is REJECTED by admin-only
-#                    domains (admin.dopp.cloud, nginx.dopp.cloud, ...).
+#                    domains (admin.<domain>, nginx.<domain>, ...).
 #   7. Cleanup     — delete the test user (always, even on failure).
 #
 # Exit 0 ⇔ every check passed. Exit 1 with a per-step PASS/FAIL summary
 # otherwise.
 #
+# TARGET — there is no default box (#2426). This script points at YOUR
+# install; it resolves host + domain in this order:
+#   1. --host / --domain flags
+#   2. SB_HOST / SB_DOMAIN environment variables
+#   3. STATIC_IP / PUBLIC_DOMAIN from build/fcos/install-settings.env
+#      (written by `sb build`; the same file scripts/fcos-diagnose.sh reads)
+# If neither resolves, the script exits 2 with a usage error rather than
+# probing somebody else's LAN address.
+#
 # Usage:
-#   scripts/smoke/sso-verify.sh                    # uses defaults below
+#   SB_HOST=10.0.0.42 SB_DOMAIN=example.com scripts/smoke/sso-verify.sh
+#   scripts/smoke/sso-verify.sh --host 10.0.0.42 --domain example.com
 #   scripts/smoke/sso-verify.sh --keep-user        # leaves the test user
 #                                                    in place for poking
-#   scripts/smoke/sso-verify.sh --host 10.0.0.42   # different host
 #   scripts/smoke/sso-verify.sh --verbose          # log every curl
 #
 # Requires: ssh key at build/fcos/servicebay-ssh/id_rsa (the same one the
 # rest of the repo's tooling uses), bash, curl, openssl, python3.
 set -euo pipefail
 
-# -------------------- defaults --------------------
-HOST="${SB_HOST:-192.168.178.100}"
+# -------------------- target resolution --------------------
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+SETTINGS_FILE="${SB_SETTINGS_FILE:-$REPO_ROOT/build/fcos/install-settings.env}"
+
+# Pull a KEY=value out of install-settings.env (quoted or bare), empty if absent.
+settings_value() {
+  [[ -f "$SETTINGS_FILE" ]] || { echo ""; return 0; }
+  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*[\"']\\?\\([^\"'[:space:]#]*\\).*/\\1/p" \
+    "$SETTINGS_FILE" | head -1
+}
+
+HOST="${SB_HOST:-$(settings_value STATIC_IP)}"
+DOMAIN="${SB_DOMAIN:-$(settings_value PUBLIC_DOMAIN)}"
 SB_PORT="${SB_PORT:-5888}"
 LLDAP_PORT="${LLDAP_PORT:-17170}"
-DOMAIN="${SB_DOMAIN:-dopp.cloud}"
 SSH_KEY="${SB_SSH_KEY:-build/fcos/servicebay-ssh/id_rsa}"
 SSH_USER="${SB_SSH_USER:-core}"
 KEEP_USER=0
@@ -50,10 +70,22 @@ while [[ $# -gt 0 ]]; do
     --host) HOST="$2"; shift 2 ;;
     --domain) DOMAIN="$2"; shift 2 ;;
     --help|-h)
-      sed -n '2,30p' "$0"; exit 0 ;;
+      sed -n '2,40p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+# No silent fallback to one particular deployment (#2426) — a contributor
+# running this must aim it at their own box, not a stranger's LAN address.
+usage_error() {
+  echo "✗ $1" >&2
+  echo "  Set it via the flag, the env var, or $SETTINGS_FILE:" >&2
+  echo "    SB_HOST=<box-ip> SB_DOMAIN=<your-domain> $0" >&2
+  echo "    $0 --host <box-ip> --domain <your-domain>" >&2
+  exit 2
+}
+[[ -n "$HOST" ]] || usage_error "no target host — set SB_HOST, pass --host, or build an ISO first so $SETTINGS_FILE exists."
+[[ -n "$DOMAIN" ]] || usage_error "no public domain — set SB_DOMAIN, pass --domain, or build an ISO first so $SETTINGS_FILE exists."
 
 # -------------------- helpers --------------------
 RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; OFF=$'\033[0m'
@@ -101,7 +133,7 @@ lldap_api_quiet() {
 }
 
 # Curl wrapper that pins SNI to the box's IP via --resolve, since the
-# operator running this from outside the LAN may not have *.dopp.cloud
+# operator running this from outside the LAN may not have *.<domain>
 # in their resolver.
 RESOLVE_FLAGS=""
 build_resolve_flags() {
@@ -351,15 +383,15 @@ declare -A USER_APPS=(
   # Hermes' dashboard is uvicorn-backed and rejects requests whose Host
   # header doesn't match its bind address — caught here as HTTP 400 with
   # `{"detail":"Invalid Host header. ..."}` when NPM forwards
-  # `Host: hermes.dopp.cloud` without the `proxy_set_header Host
+  # `Host: hermes.<domain>` without the `proxy_set_header Host
   # 127.0.0.1:9119;` rewrite from the template's advanced_config. Signature
   # is the literal dashboard title so the test also catches a "200 with
   # wrong content" regression (proxy half-broken).
   [hermes]="Hermes Agent"
-  # ollama.dopp.cloud intentionally not checked: the ollama template
+  # ollama.<domain> intentionally not checked: the ollama template
   # ships no auth of its own and the wizard requires explicit opt-in
   # to expose it via NPM. Bare default installs have no proxy host
-  # for ollama.dopp.cloud, so probing it would false-fail. See #1180.
+  # for ollama.<domain>, so probing it would false-fail. See #1180.
 )
 
 for h in "${!USER_APPS[@]}"; do
@@ -394,17 +426,17 @@ section "6/8 · Access control — family user MUST NOT reach admin domains"
 # user should get redirected back to /auth (302) or refused (403 from
 # Authelia's verify endpoint), NOT 200 from the upstream app.
 #
-# `admin.dopp.cloud` is intentionally NOT in this list: ServiceBay
+# `admin.<domain>` is intentionally NOT in this list: ServiceBay
 # has its own login on the application layer, and stacking Authelia
 # forward-auth on top would double-login the operator whose recovery
 # path goes through this UI. The HTML shell at `/` is reachable on
-# admin.dopp.cloud but every API call returns 401 without a
+# admin.<domain> but every API call returns 401 without a
 # ServiceBay session — covered by integration tests on the
 # ServiceBay app itself, not by this smoke test.
 for h in nginx dns ldap; do
   body=$(mktemp -t sb-smoke-svc.XXXXXX)
   # Single follow-on response — don't chase redirects, so a 302 back
-  # to auth.dopp.cloud is the SUCCESS signal here.
+  # to auth.<domain> is the SUCCESS signal here.
   set +e
   code=$(curl -ks $RESOLVE_FLAGS -b "$COOKIE_JAR" \
               --max-redirs 0 \

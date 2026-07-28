@@ -81,11 +81,6 @@
     "description": "LLDAP host — always localhost when bundled with Authelia in the auth pod.",
     "default": "localhost"
   },
-  "PUBLIC_DOMAIN": {
-    "type": "text",
-    "description": "Public domain for access rules (e.g. dopp.cloud)",
-    "default": "dopp.cloud"
-  },
   "LLDAP_FORCE_LDAP_USER_PASS_RESET": {
     "type": "text",
     "description": "Dynamic self-healing flag for resetting admin password during install-time drift",
