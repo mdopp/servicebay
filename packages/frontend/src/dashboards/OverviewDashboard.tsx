@@ -9,6 +9,7 @@ import { useCoreHealth } from '@/hooks/useCoreHealth';
 import { useImageUpdates, type ServiceImageUpdate } from '@/hooks/useImageUpdates';
 import { useServiceActions } from '@/hooks/useServiceActions';
 import ImageUpdatesPendingBanner from '@/components/ImageUpdatesPendingBanner';
+import AutoUpdateWindowNudge from '@/components/AutoUpdateWindowNudge';
 import ServiceBayUpdateCard from '@/components/ServiceBayUpdateCard';
 import PendingApprovalsCard from '@/components/PendingApprovalsCard';
 import { Card, SectionHeading, StatusDot } from '@/components/ui';
@@ -306,10 +307,17 @@ export default function OverviewDashboard() {
             per-service image updates (#1860/#2069) together, each with its own
             trigger. The image banner renders nothing when no images are pending,
             but the SB updater card always shows current version + Check Now, so
-            the section is never empty. */}
+            the section is never empty.
+
+            The nudge (#2396) sits directly under the SB updater card because
+            that card is where the confusion starts: its "Auto-Updates" toggle
+            is about ServiceBay itself, NOT about the service containers, whose
+            image refresh stays locked until an update window is configured. It
+            renders nothing once `config.updateWindow` exists. */}
         <section className="space-y-3">
           <SectionHeading description="Keep ServiceBay and your services up to date">Updates</SectionHeading>
           <ServiceBayUpdateCard />
+          <AutoUpdateWindowNudge />
           <ImageUpdatesPendingBanner updates={imageUpdates} onUpdate={handleUpdateAll} />
         </section>
 
