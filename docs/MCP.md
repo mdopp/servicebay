@@ -166,9 +166,12 @@ clean up a dangling route (one whose forward target has no backing service)
 over MCP without the admin UI or `exec_command` — confirm it's genuinely dangling
 via `get_proxy_routes` / `diagnose` first, since the live deletion is permanent.
 
-Sensitive config fields (`auth.passwordHash`, `oidc.clientSecret`, SMTP
-passwords) are redacted from `get_config` and write-allowlisted in
-`update_config`.
+Sensitive config fields are redacted from `get_config` by key name at any depth
+(#2404) — passwords, secrets, tokens, keys, hashes and credentials alike, so
+gateway/LLDAP/AdGuard/NPM credentials and every future per-service secret are
+covered — and `installedSecrets` / `installManifest.credentials` are replaced
+with an entry count rather than returned. Writes are separately
+write-allowlisted in `update_config`.
 
 `get_service_standards` (`read` scope) returns a curated *pointer* index for
 building a new project. `flavor: 'servicebay'` (default) yields four blocks —

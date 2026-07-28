@@ -210,9 +210,10 @@ read paths like `list_nodes`, `list_services`, `get_logs`,
 `manage_service` (start/stop/restart), `update_service_yaml`,
 `add_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`,
 `create_health_check`/`run_check_now`, `get_config`/`update_config`,
-`exec_command`. Sensitive fields (`auth.passwordHash`, `oidc.clientSecret`,
-SMTP/NPM passwords) are redacted in `get_config` and write-allowlisted in
-`update_config`. Knowledge paths let an agent read curated build standards
+`exec_command`. `get_config` redacts every secret-shaped field by key name at
+any depth (passwords, secrets, tokens, keys, hashes) and omits the stored
+credential collections outright; `update_config` is separately
+write-allowlisted. Knowledge paths let an agent read curated build standards
 (`get_service_standards`) and propose an assist back into the catalog
 (`propose_learning`, off-ladder `propose` scope) for admin approval.
 `tools/list` is scope-filtered — a token only sees the tools it can call.

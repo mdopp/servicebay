@@ -56,9 +56,11 @@ remains the single enforcement authority. See [docs/MCP.md](../MCP.md) for detai
 **What it does.** Tools are mapped to `read | lifecycle | mutate | destroy`
 scopes, checked server-side against bearer tokens
 ([ARCHITECTURE.md audit](../ARCHITECTURE.md), "MCP scope enforcement"). Tokens are
-named, per-client, revocable, and hashed at rest. `get_config` redacts
-`auth.passwordHash` / `oidc.clientSecret` / SMTP passwords; `update_config` is
-write-allowlisted so auth/OIDC/SMTP credentials always need a human.
+named, per-client, revocable, and hashed at rest. `get_config` redacts every
+secret-shaped field by key name at any depth (#2404) and drops the
+`installedSecrets` / `installManifest.credentials` collections entirely;
+`update_config` is write-allowlisted so auth/OIDC/SMTP credentials always need
+a human.
 
 Additional safety rails (see the README "Safety rails" section):
 
