@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { writeFileSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -7,6 +8,8 @@ import {
   parseWorkerArgs,
   runWorker,
   fingerprintFileContent,
+  hashFileContent,
+  HASH_CHUNK_BYTES,
   WorkerArgError,
   type WorkerIO,
   type WorkerOptions,
@@ -203,6 +206,61 @@ describe('fingerprintFileContent (#1995)', () => {
       const fM = fingerprintFileContent(rec(path.join(dir, 'bigM'), size));
       expect(f1).toBe(f2);
       expect(f1).not.toBe(fM); // middle sample catches a mid-file difference
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('hashFileContent (#2423 — chunked, digest-identical)', () => {
+  const rec = (sourcePath: string, size: number): ImportRecord =>
+    ({ sourcePath, size, mtimeMs: 0 }) as ImportRecord;
+
+  /** The implementation this replaced: one eager readFileSync into one update(). */
+  const eagerHash = (p: string): string =>
+    createHash('sha256').update(readFileSync(p)).digest('hex');
+
+  it('matches the eager readFileSync digest across every chunk boundary', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'sb-hash-'));
+    try {
+      // Empty, sub-chunk, exactly-a-chunk, chunk±1 and multi-chunk-with-remainder:
+      // a byte-identical digest at each of these pins the chunk-boundary handling.
+      const sizes = [
+        0,
+        1,
+        4096,
+        HASH_CHUNK_BYTES - 1,
+        HASH_CHUNK_BYTES,
+        HASH_CHUNK_BYTES + 1,
+        2 * HASH_CHUNK_BYTES,
+        2 * HASH_CHUNK_BYTES + 12345,
+      ];
+      for (const size of sizes) {
+        const p = path.join(dir, `f-${size}`);
+        // Non-uniform bytes: a chunk mixed up (or dropped) would change the digest.
+        const bytes = Buffer.allocUnsafe(size);
+        for (let i = 0; i < size; i += 1) bytes[i] = (i * 31 + (i >> 13)) & 0xff;
+        writeFileSync(p, bytes);
+        expect(hashFileContent(rec(p, size)), `size ${size}`).toBe(eagerHash(p));
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('is order-sensitive: one flipped byte in the last partial chunk changes the digest', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'sb-hash-'));
+    try {
+      const size = HASH_CHUNK_BYTES + 17;
+      const base = Buffer.alloc(size, 0x41);
+      const tweaked = Buffer.from(base);
+      tweaked[size - 1] = 0x42;
+      writeFileSync(path.join(dir, 'a'), base);
+      writeFileSync(path.join(dir, 'b'), tweaked);
+      const ha = hashFileContent(rec(path.join(dir, 'a'), size));
+      const hb = hashFileContent(rec(path.join(dir, 'b'), size));
+      expect(ha).toBe(eagerHash(path.join(dir, 'a')));
+      expect(ha).not.toBe(hb);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

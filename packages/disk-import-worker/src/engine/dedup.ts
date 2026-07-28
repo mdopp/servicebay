@@ -280,7 +280,9 @@ interface KeyInfo {
  *    false match is one file not COPIED (still safe on the disk), never data loss.
  *  - the ONLY full hash is for a record whose target is already in the catalog
  *    (a delta/re-run), because the catalog stores full sha256 (`h:` key). A first
- *    import has an empty catalog, so it does ZERO full reads.
+ *    import has an empty catalog, so it does ZERO full reads. That full read is
+ *    CHUNKED by the resolver (`hashFileContent`, O(1MB) peak), so even a
+ *    multi-GB cataloged movie cannot OOM the `--memory=1g` worker (#2423).
  * Progress is reported across the fingerprint pass (the dominant I/O) so a large
  * plan shows live progress and never looks hung.
  */
