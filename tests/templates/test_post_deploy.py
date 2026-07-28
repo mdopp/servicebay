@@ -1527,7 +1527,11 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertTrue(os.path.isfile(seeded), f"expected file at {seeded}")
             with open(seeded) as fh:
                 data = json.load(fh)
-            self.assertEqual(data, {"serverEnabled": True, "serverPort": 3001, "serverHost": "0.0.0.0"})
+            # serverHost is the LOOPBACK since template v7 (#2416): port 3001
+            # speaks the raw zwave-js protocol with no auth, and this pod is
+            # hostNetwork, so 0.0.0.0 handed every LAN device direct control of
+            # the mesh. HA is in the same pod and uses ws://localhost:3001.
+            self.assertEqual(data, {"serverEnabled": True, "serverPort": 3001, "serverHost": "127.0.0.1"})
 
             # Second run: file exists, must not be touched + must log skip.
             mtime_before = os.path.getmtime(seeded)
@@ -1541,9 +1545,50 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertIn("already in place", out2)
             self.assertEqual(os.path.getmtime(seeded), mtime_before)
 
+    def test_repins_wildcard_ws_host_on_a_pre_v7_install(self):
+        """#2416: the seeder only writes sb-external-settings.json when it is
+        MISSING, so every pre-v7 install already has one saying 0.0.0.0 and
+        would keep port 3001 LAN-reachable forever. An existing file carrying
+        a wildcard bind must be re-pinned in place (the migration does it once
+        at the hop; this is the every-deploy convergence for a restored
+        backup). A DELIBERATE non-wildcard address is left alone."""
+        import tempfile
+
+        m = load_script("home-assistant")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            zwave_dir = os.path.join(tmp, "home-assistant", "zwave-js")
+            os.makedirs(zwave_dir, exist_ok=True)
+            path = os.path.join(zwave_dir, "sb-external-settings.json")
+            with open(path, "w") as fh:
+                json.dump({"serverEnabled": True, "serverPort": 3001, "serverHost": "0.0.0.0"}, fh)
+
+            with run_with_env({"DATA_DIR": tmp}):
+                changed = m.ensure_zwave_external_settings()
+            # True → the caller restarts zwave-js so the new bind takes effect
+            # on this deploy rather than at the next reboot.
+            self.assertTrue(changed)
+            with open(path) as fh:
+                self.assertEqual(json.load(fh)["serverHost"], "127.0.0.1")
+
+            # Idempotent: a second pass finds it pinned and writes nothing.
+            with run_with_env({"DATA_DIR": tmp}):
+                self.assertFalse(m.ensure_zwave_external_settings())
+
+            # Operator-chosen address survives (warned, not overridden).
+            with open(path, "w") as fh:
+                json.dump({"serverEnabled": True, "serverPort": 3001, "serverHost": "10.1.2.3"}, fh)
+            with run_with_env({"DATA_DIR": tmp}):
+                self.assertFalse(m.ensure_zwave_external_settings())
+            with open(path) as fh:
+                self.assertEqual(json.load(fh)["serverHost"], "10.1.2.3")
+
     def test_skips_external_settings_when_ui_serverport_already_set(self):
         """If settings.json already has a `zwave.serverPort`, the operator
-        chose it via the UI — don't override silently."""
+        chose it via the UI — don't override silently. The loopback bind is
+        still merged in, because in that install shape settings.json is what
+        governs the WS server and the UI has no field for its bind address
+        (#2416)."""
         import tempfile
         import urllib.error
         import urllib.request
@@ -1553,7 +1598,8 @@ class HomeAssistantScript(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             zwave_dir = os.path.join(tmp, "home-assistant", "zwave-js")
             os.makedirs(zwave_dir, exist_ok=True)
-            with open(os.path.join(zwave_dir, "settings.json"), "w") as fh:
+            settings_path = os.path.join(zwave_dir, "settings.json")
+            with open(settings_path, "w") as fh:
                 json.dump({"zwave": {"serverPort": 8888}}, fh)
 
             env = {"HA_OIDC_AUTH_VERSION": "v0.6.0", "DATA_DIR": tmp}
@@ -1566,6 +1612,11 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIn("UI-configured serverPort", out)
             self.assertFalse(os.path.isfile(os.path.join(zwave_dir, "sb-external-settings.json")))
+            with open(settings_path) as fh:
+                stored = json.load(fh)
+            # The operator's port is untouched; only the bind address is pinned.
+            self.assertEqual(stored["zwave"]["serverPort"], 8888)
+            self.assertEqual(stored["zwave"]["serverHost"], "127.0.0.1")
 
     def test_zwave_port_settings_written_on_fresh_store(self):
         """`ensure_zwave_port_settings` must seed zwave.port and default

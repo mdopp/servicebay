@@ -10,6 +10,73 @@ operator's installed schema-version and the current one and surfaces
 them in the re-deploy dialog. Each `(breaking)` section needs an
 explicit acknowledgement before the deploy can proceed.
 
+## v7 (breaking) — #2416
+
+**Z-Wave and Matter admin/control ports bound to loopback — no longer
+LAN-exposed.**
+
+Required action: **re-deploy** the `home-assistant` service so podman
+recreates the pod from the v7 manifest. Existing installs keep the old
+every-interface binds until the pod is recreated — the running containers
+were started from the v6 manifest and do not auto-rebind.
+
+This pod runs `hostNetwork: true`, so an app that binds `0.0.0.0` binds
+every host interface, and Fedora CoreOS ships with no firewall enabled.
+Three ports in this pod did exactly that, and none of them carries usable
+authentication of its own:
+
+* **8091 — Z-Wave JS UI.** The admin panel: include/exclude nodes, read
+  the network security keys, actuate any paired device. `zwave.<domain>`
+  is gated by Authelia forward-auth, but that only gates the *nginx*
+  path — nothing made nginx the only path, so any LAN device could open
+  `http://<box-lan-ip>:8091/` directly. Same bypass as LLDAP's #2380.
+* **3001 — the raw Z-Wave JS server protocol.** No subdomain, no
+  healthcheck, no SSO gate, and it was not declared anywhere: an
+  unauthenticated websocket giving direct control of every paired Z-Wave
+  device, door locks included.
+* **5580 — python-matter-server's control websocket.** Same shape for
+  Matter devices, and it was missing from `servicebay.ports` entirely, so
+  the network map never showed it.
+
+v7 binds all three to `127.0.0.1`: `HOST=127.0.0.1` on the zwave-js
+container, `--listen-address 127.0.0.1` on matter-server, and
+`serverHost: "127.0.0.1"` in the Z-Wave WS server settings that
+`post-deploy.py` seeds. 5580 is now declared in `servicebay.ports`
+alongside the other two.
+
+Home Assistant's own port **8123 is unchanged** — it keeps its own login
+plus the Authelia OIDC provider, and is published at `home.<domain>`.
+
+Nothing you use breaks:
+
+* `zwave.<domain>` keeps working. nginx also runs on `hostNetwork`, so it
+  still reaches 8091 over the loopback, and `ZWAVE_JS_SUBDOMAIN` now
+  carries `loopbackOnly: true` so the proxy host forwards to
+  `127.0.0.1:8091`. An existing `zwave.<domain>` host is re-pointed
+  automatically on this deploy by ServiceBay's core reconcile (#2364) —
+  no manual proxy edit, and exposure, forward-auth and the cert are
+  preserved.
+* Home Assistant is a container in this same pod, so it shares the host
+  netns. Its Z-Wave JS integration already connects to
+  `ws://localhost:3001` and its Matter integration to
+  `ws://localhost:5580/ws`. No re-pairing, no reconfiguration.
+* Matter commissioning and device traffic are untouched:
+  `--listen-address` binds only the websocket API server, never the
+  CHIP/Matter stack.
+
+Port 3001's bind address lives on disk (in the WS server settings the
+post-deploy seeds), not in the pod manifest, and the seeder only writes
+that file when it is missing. So `migrations/v6-to-v7.py` rewrites the
+stored `serverHost` in place — an install predating the fix is closed by
+this deploy with no manual edit. A `serverHost` you deliberately pinned to
+a specific address is left alone (the migration warns instead of
+overriding it).
+
+After the re-deploy, `curl http://<box-lan-ip>:8091/` and a websocket
+connect to `<box-lan-ip>:3001` / `<box-lan-ip>:5580` are all refused from
+another LAN host, while `https://zwave.<domain>/` still serves normally
+and HA's Z-Wave and Matter integrations stay connected.
+
 ## v6
 
 **Z-Wave JS WS server pinned via `ZWAVE_EXTERNAL_SETTINGS`.**

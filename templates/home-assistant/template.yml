@@ -6,12 +6,22 @@ metadata:
     app: home-assistant
   annotations:
     servicebay.label: "Smart Home (Home Assistant)"
-    servicebay.schema-version: "6"
+    # v7 (#2416): every admin/control port in this pod except Home
+    # Assistant's own 8123 is bound to the host loopback. No data move;
+    # requires a re-deploy so podman recreates the pod from this manifest.
+    servicebay.schema-version: "7"
     # Home Assistant is reached at home.<domain> via nginx and
     # authenticates via Authelia.
     servicebay.dependencies: "nginx,auth"
     servicebay.config-mount: "/config"
-    servicebay.ports: "8123/tcp,8091/tcp,3001/tcp"
+    # 8123 = Home Assistant (own login + OIDC, public via home.<domain>).
+    # 8091 = Z-Wave JS UI, 3001 = the raw Z-Wave JS control websocket,
+    # 5580 = python-matter-server's control websocket. Those three carry no
+    # usable auth of their own and are loopback-bound since v7 (#2416); 5580
+    # was previously undeclared here entirely, which hid it from the network
+    # map. See tests/backend/template_consistency.test.ts § "hostNetwork
+    # templates expose no unguarded admin/control port".
+    servicebay.ports: "8123/tcp,8091/tcp,3001/tcp,5580/tcp"
     # Continuous health probe (#628). `/manifest.json` is the PWA
     # manifest — unauthenticated, served once HA's HTTP listener is up.
     # Avoids the /api token requirement of the regular /api endpoint.
@@ -61,6 +71,26 @@ spec:
     # tab, so deleting the file is the escape hatch for manual control.
     - name: ZWAVE_EXTERNAL_SETTINGS
       value: "/usr/src/app/store/sb-external-settings.json"
+    # Bind zwave-js-ui's web UI + REST API to the host LOOPBACK only
+    # (#2416). zwave-js-ui's `HOST` env var defaults to empty, which its
+    # express server reads as "every IPv4 and IPv6 interface" — and because
+    # this pod is `hostNetwork: true` that means every host interface. The
+    # Z-Wave admin panel (include/exclude nodes, read the network security
+    # keys, actuate any paired device — door locks included) therefore
+    # answered directly at <lan-ip>:8091, never touching nginx and so never
+    # touching the Authelia forward-auth on zwave.<domain>. FCoS ships no
+    # firewall.
+    #
+    # Same shape as LLDAP's LLDAP_HTTP_HOST (#2380) and the hostNetwork
+    # equivalent of radicale's `hostIP: 127.0.0.1` publish (#2357): a
+    # hostNetwork pod publishes no ports, so the bind address has to come
+    # from the app's own config. nginx also runs on hostNetwork, so it still
+    # reaches this port over the loopback, and `loopbackOnly: true` on
+    # ZWAVE_JS_SUBDOMAIN (variables.json) points zwave.<domain>'s forward
+    # target at 127.0.0.1:8091 — re-pointing an EXISTING host off the now
+    # closed LAN address on redeploy via the core reconcile (#2364).
+    - name: HOST
+      value: "127.0.0.1"
     volumeMounts:
     - mountPath: /usr/src/app/store
       name: zwave-config
@@ -74,6 +104,34 @@ spec:
   # 3. Matter Server
   - name: matter-server
     image: ghcr.io/home-assistant-libs/python-matter-server:stable
+    # Bind the Matter control websocket (5580) to the host LOOPBACK only
+    # (#2416). python-matter-server's `--listen-address` defaults to None,
+    # which aiohttp reads as "any IPv4 and IPv6 address" — under
+    # `hostNetwork: true` that is every host interface, and the websocket
+    # carries NO authentication: anything that can open it can commission,
+    # read and actuate every paired Matter device.
+    #
+    # `--listen-address` binds ONLY the websocket API server
+    # (`MultiHostTCPSite(host=self.listen_addresses, port=self.port)`); it is
+    # never passed to the CHIP/Matter stack, whose own operational sockets and
+    # mDNS discovery keep using the real interfaces. So Matter commissioning
+    # and device traffic are unaffected — see `--primary-interface` for the
+    # knob that *would* touch the SDK. Home Assistant lives in this same pod
+    # and its matter config entry connects to `ws://localhost:5580/ws`, so it
+    # is unaffected too.
+    #
+    # `args` REPLACES the image's CMD (the ENTRYPOINT stays `matter-server`),
+    # so the image's own default arguments have to be repeated verbatim here.
+    # Upstream CMD as of this bump:
+    #   ["--storage-path", "/data", "--paa-root-cert-dir", "/data/credentials"]
+    # If a future :stable changes them, mirror the change here.
+    args:
+    - "--storage-path"
+    - "/data"
+    - "--paa-root-cert-dir"
+    - "/data/credentials"
+    - "--listen-address"
+    - "127.0.0.1"
     env:
     - name: TZ
       value: "{{TZ}}"

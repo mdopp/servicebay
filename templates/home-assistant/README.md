@@ -18,8 +18,27 @@ This stack combines the core smart-home components into a single pod:
 *   **ZWAVE_DEVICE**: Absolute path to the USB device (e.g., `/dev/serial/by-id/usb-0658_0200-if00`)
 
 ## Ports
-*   Home Assistant: `http://<server-ip>:8123`
-*   Z-Wave JS UI: `http://<server-ip>:8091`
+
+The pod runs on the host network, so an app that binds `0.0.0.0` is reachable
+from every LAN device with no proxy and no SSO in front of it. Since template
+**v7 (#2416)** only Home Assistant itself is exposed that way — it has its own
+login. Everything else is bound to the host loopback and reached either through
+the reverse proxy or from inside the pod:
+
+| Port | Service | Bind | How you reach it |
+|------|---------|------|------------------|
+| 8123 | Home Assistant | all interfaces | `https://home.<domain>` (or `http://<server-ip>:8123`); HA's own login + Authelia OIDC |
+| 8091 | Z-Wave JS UI | `127.0.0.1` (`HOST` env) | `https://zwave.<domain>` — LAN-only proxy host, Authelia forward-auth |
+| 3001 | Z-Wave JS control websocket | `127.0.0.1` (`serverHost` setting) | Home Assistant only, over `ws://localhost:3001` |
+| 5580 | Matter server websocket | `127.0.0.1` (`--listen-address`) | Home Assistant only, over `ws://localhost:5580/ws` |
+
+Ports 3001 and 5580 are unauthenticated control channels — anything that can
+open them can actuate every paired Z-Wave/Matter device — which is why they are
+loopback-only. Binding the Matter websocket to the loopback does **not** affect
+Matter commissioning or device traffic: `--listen-address` binds only the
+websocket API server, never the CHIP/Matter stack (that is
+`--primary-interface`). mDNS/UPnP/Thread discovery keeps using the real
+interfaces.
 
 ## SSO (Authelia)
 

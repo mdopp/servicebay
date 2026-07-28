@@ -456,6 +456,333 @@ describe('Auth template: LLDAP HTTP port is loopback-bound (#2380)', () => {
   });
 });
 
+// ─── 3b2a. hostNetwork templates expose no unguarded admin/control port ─────
+describe('hostNetwork templates: every declared TCP port is guarded (#2416)', () => {
+  // A `hostNetwork: true` pod publishes no ports — whatever its containers
+  // bind, they bind on EVERY host interface, and Fedora CoreOS ships no
+  // firewall. So every TCP port such a template declares in
+  // `servicebay.ports` is LAN-reachable by default, with nginx (and with it
+  // Authelia) bypassed entirely. That is one bug class hit three times on
+  // three templates: #2380 (LLDAP web UI), #2388 (raw LDAP port), #2416
+  // (Z-Wave JS UI + its raw control websocket + the Matter websocket).
+  //
+  // This test turns the class into a structural rule. A declared TCP port
+  // passes only if it is:
+  //   (a) covered by a `loopbackOnly: true` subdomain variable — nginx also
+  //       runs on hostNetwork, so it forwards to 127.0.0.1 and the app is
+  //       expected to bind the loopback (we check the template ships such a
+  //       bind, which is exactly the half #2380 was missing); or
+  //   (b) covered by a `blockLanAccess: true` port variable — the host
+  //       nftables rule for ports that CANNOT be loopback-bound (#2388); or
+  //   (c) listed in HOST_NETWORK_PORT_POLICY below with a written reason,
+  //       and — for a port claimed loopback-bound without a proxy host — a
+  //       `bind` proof pointing at the config that actually binds it.
+  //
+  // Adding a port to a hostNetwork template without doing one of those three
+  // fails this suite. Deleting the guard from an existing one does too.
+  interface PortPolicy {
+    policy: 'loopback-bound' | 'lan-exposed';
+    why: string;
+    /** `loopback-bound` only: file (relative to the template dir) + pattern
+     *  proving the bind is actually configured, not just asserted here. */
+    bind?: { file: string; pattern: RegExp };
+  }
+
+  const HOST_NETWORK_PORT_POLICY: Record<string, PortPolicy> = {
+    // — Ports that are meant to answer on the LAN, each with its own auth —
+    'adguard:8083': {
+      policy: 'lan-exposed',
+      why: 'AdGuard Home admin UI. Its own login (post-deploy sets the admin '
+        + 'password) and it is the console for the box DNS server, which has to '
+        + 'stay reachable when the proxy is down.',
+    },
+    'adguard:53': {
+      policy: 'lan-exposed',
+      why: 'DNS over TCP. Serving the LAN is the entire job of the service — '
+        + 'every device on the network resolves through it.',
+    },
+    'auth:9091': {
+      policy: 'lan-exposed',
+      why: 'The Authelia portal itself — it IS the login surface, so gating it '
+        + 'behind itself is circular. Every app redirects here.',
+    },
+    'claude-dev:2222': {
+      policy: 'lan-exposed',
+      why: 'sshd. Authenticated by SSH key / LLDAP bind, not by the proxy; '
+        + 'nginx cannot proxy raw SSH.',
+    },
+    'file-share:22000': {
+      policy: 'lan-exposed',
+      why: 'Syncthing sync protocol. Peers connect device-to-device over TLS '
+        + 'with device-ID authentication; loopback would break every peer.',
+    },
+    'file-share:139': {
+      policy: 'lan-exposed',
+      why: 'SMB (NetBIOS session). LAN file sharing is the point of the '
+        + 'service; Samba authenticates users itself.',
+    },
+    'file-share:445': {
+      policy: 'lan-exposed',
+      why: 'SMB. Same as 139 — LAN by design, Samba-authenticated.',
+    },
+    'file-share:8088': {
+      policy: 'lan-exposed',
+      why: 'FileBrowser. Runs in proxy-auth mode (auth.method=proxy with '
+        + 'Remote-User), so a direct LAN request without the forward-auth header '
+        + 'is rejected 403. It cannot be loopback-bound because NPM reaches it '
+        + 'from its own pod netns.',
+    },
+    'home-assistant:8123': {
+      policy: 'lan-exposed',
+      why: 'Home Assistant itself. Has its own login plus the Authelia OIDC '
+        + 'provider, is published at home.<domain>, and the companion apps talk '
+        + 'to it directly on the LAN.',
+    },
+    'nginx:80': { policy: 'lan-exposed', why: 'The reverse proxy — this is the front door.' },
+    'nginx:443': { policy: 'lan-exposed', why: 'The reverse proxy — this is the front door.' },
+    'nginx:81': {
+      policy: 'lan-exposed',
+      why: "NPM's admin UI. Own login, and it is the recovery console for the "
+        + 'proxy itself, so it must survive a broken proxy config.',
+    },
+
+    // — Loopback-bound ports with no proxy host of their own (#2416) —
+    'home-assistant:3001': {
+      policy: 'loopback-bound',
+      why: 'Raw Z-Wave JS server protocol — no authentication of any kind, so '
+        + 'LAN reach means LAN control of every paired device, door locks '
+        + 'included. Home Assistant shares this pod and connects over '
+        + 'ws://localhost:3001, so nothing legitimate needs the LAN path.',
+      bind: { file: 'post-deploy.py', pattern: /^ZWAVEJS_WS_HOST = "127\.0\.0\.1"$/m },
+    },
+    'home-assistant:5580': {
+      policy: 'loopback-bound',
+      why: "python-matter-server's control websocket — likewise unauthenticated. "
+        + 'Home Assistant connects over ws://localhost:5580/ws. --listen-address '
+        + 'binds only the websocket API server, never the CHIP/Matter stack, so '
+        + 'commissioning and device traffic are unaffected.',
+      bind: { file: 'template.yml', pattern: /- "--listen-address"\n\s*- "127\.0\.0\.1"/ },
+    },
+  };
+
+  /** A YAML *value* (not a comment) binding something to the loopback. */
+  const LOOPBACK_BIND = /(value:\s*"127\.0\.0\.1|^\s*-\s*"127\.0\.0\.1)/m;
+
+  /** Render a template with variable defaults, like the sibling suites do. */
+  const renderPod = (t: TemplateInfo): // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  any => {
+    const view: Record<string, string> = {};
+    for (const v of catalogVars) view[v] = `stub-${v.toLowerCase()}`;
+    for (const [name, meta] of Object.entries(t.variables)) {
+      if (meta && typeof meta === 'object' && 'default' in meta && typeof meta.default === 'string') {
+        view[name] = meta.default;
+      }
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return yaml.loadAll(Mustache.render(t.yamlContent, view)).find((d: any) => d?.kind === 'Pod');
+  };
+
+  /** Resolve a subdomain's proxyPort to a number (literal or via variable). */
+  const resolvePort = (t: TemplateInfo, proxyPort: string | undefined): number | null => {
+    if (!proxyPort) return null;
+    if (/^\d+$/.test(proxyPort)) return parseInt(proxyPort, 10);
+    const local = t.variables[proxyPort];
+    const fromLocal = local && typeof local === 'object' ? local.default : undefined;
+    if (typeof fromLocal === 'string' && /^\d+$/.test(fromLocal)) return parseInt(fromLocal, 10);
+    for (const other of templates) {
+      const meta = other.variables[proxyPort];
+      const d = meta && typeof meta === 'object' ? meta.default : undefined;
+      if (typeof d === 'string' && /^\d+$/.test(d)) return parseInt(d, 10);
+    }
+    return null;
+  };
+
+  const hostNetworkTemplates = templates.filter(t => renderPod(t)?.spec?.hostNetwork === true);
+
+  it('there is at least one hostNetwork template to check', () => {
+    // Guards against the rule silently becoming a no-op if rendering breaks.
+    expect(hostNetworkTemplates.length).toBeGreaterThan(0);
+  });
+
+  for (const t of hostNetworkTemplates) {
+    it(`${t.name}: every declared TCP port is loopback-bound, firewalled, or reasoned`, () => {
+      const pod = renderPod(t);
+      const declared: string = pod?.metadata?.annotations?.['servicebay.ports'] ?? '';
+      const tcpPorts = declared.split(',')
+        .map(p => p.trim())
+        .filter(p => p.toLowerCase().endsWith('/tcp'))
+        .map(p => parseInt(p.split('/')[0], 10))
+        .filter(p => Number.isFinite(p));
+
+      // Ports a `loopbackOnly` subdomain or a `blockLanAccess` variable covers.
+      const loopbackPorts = new Set<number>();
+      const firewalledPorts = new Set<number>();
+      for (const meta of Object.values(t.variables)) {
+        if (!meta || typeof meta !== 'object') continue;
+        if (meta.loopbackOnly) {
+          const p = resolvePort(t, meta.proxyPort);
+          if (p !== null) loopbackPorts.add(p);
+        }
+        if (meta.blockLanAccess && typeof meta.default === 'string' && /^\d+$/.test(meta.default)) {
+          firewalledPorts.add(parseInt(meta.default, 10));
+        }
+      }
+
+      const offenders: string[] = [];
+      for (const port of tcpPorts) {
+        if (firewalledPorts.has(port)) continue;
+        if (loopbackPorts.has(port)) {
+          // The proxy half is declared; assert the app-bind half exists too —
+          // that is precisely the half #2380 shipped without.
+          expect(
+            t.yamlContent,
+            `${t.name}: a subdomain declares loopbackOnly for port ${port}, but `
+            + `${t.name}/template.yml never binds anything to 127.0.0.1. The proxy `
+            + `would forward to a loopback nothing listens on, and the LAN path `
+            + `would still be open.`,
+          ).toMatch(LOOPBACK_BIND);
+          continue;
+        }
+        const policy = HOST_NETWORK_PORT_POLICY[`${t.name}:${port}`];
+        if (!policy) {
+          offenders.push(
+            `${t.name}:${port} — hostNetwork pod, so this port answers on every `
+            + `host interface with no proxy and no SSO in front of it.`,
+          );
+          continue;
+        }
+        expect(policy.why.length, `${t.name}:${port} policy needs a written reason`).toBeGreaterThan(20);
+        if (policy.policy === 'loopback-bound') {
+          expect(
+            policy.bind,
+            `${t.name}:${port} claims loopback-bound — give it a bind proof so the `
+            + `claim is checked rather than asserted.`,
+          ).toBeTruthy();
+          const proof = fs.readFileSync(path.join(TEMPLATES_DIR, t.name, policy.bind!.file), 'utf-8');
+          expect(
+            proof,
+            `${t.name}:${port} is declared loopback-bound but `
+            + `templates/${t.name}/${policy.bind!.file} no longer configures that bind `
+            + `(${policy.bind!.pattern}). The port is LAN-reachable again.`,
+          ).toMatch(policy.bind!.pattern);
+        }
+      }
+
+      expect(
+        offenders,
+        `${t.name}: unguarded admin/control port(s) on a hostNetwork pod:\n  `
+        + `${offenders.join('\n  ')}\n\n`
+        + `Close it one of three ways:\n`
+        + `  1. Bind the app to 127.0.0.1 in template.yml and add \`loopbackOnly: true\`\n`
+        + `     to the subdomain variable that proxies it (prior art: auth #2380,\n`
+        + `     home-assistant #2416).\n`
+        + `  2. If it cannot be loopback-bound, add \`blockLanAccess: true\` to the port\n`
+        + `     variable so ServiceBay installs the host nftables rule (prior art: #2388).\n`
+        + `  3. If it genuinely has to answer on the LAN, add an entry to\n`
+        + `     HOST_NETWORK_PORT_POLICY in this file saying why, and what authenticates it.`,
+      ).toEqual([]);
+    });
+  }
+});
+
+// ─── 3b2b. Home Assistant: Z-Wave + Matter control ports loopback (#2416) ───
+describe('Home Assistant template: Z-Wave and Matter ports are loopback-bound (#2416)', () => {
+  const ha = templates.find(t => t.name === 'home-assistant')!;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const container = (name: string): any => {
+    const view: Record<string, string> = {};
+    for (const v of catalogVars) view[v] = `stub-${v.toLowerCase()}`;
+    for (const [n, meta] of Object.entries(ha.variables)) {
+      if (meta && typeof meta === 'object' && 'default' in meta && typeof meta.default === 'string') {
+        view[n] = meta.default;
+      }
+    }
+    const rendered = Mustache.render(ha.yamlContent, view);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pod = yaml.loadAll(rendered).find((d: any) => d?.kind === 'Pod') as any;
+    return (pod?.spec?.containers ?? []).find((c: { name: string }) => c.name === name);
+  };
+
+  const postDeploy = (): string =>
+    fs.readFileSync(path.join(TEMPLATES_DIR, 'home-assistant', 'post-deploy.py'), 'utf-8');
+
+  it('binds the Z-Wave JS UI web server to 127.0.0.1 via HOST', () => {
+    // The pod is hostNetwork: true and zwave-js-ui reads an empty HOST as
+    // "every IPv4 and IPv6 interface", so the admin panel — add/remove nodes,
+    // read the network security keys — answered at <lan-ip>:8091 without ever
+    // passing through nginx, and therefore without Authelia's forward-auth.
+    const env: { name: string; value: string }[] = container('zwave-js')?.env ?? [];
+    expect(env.find(e => e.name === 'HOST')?.value).toBe('127.0.0.1');
+  });
+
+  it('points zwave.<domain> at the loopback while keeping forward-auth', () => {
+    // nginx runs on hostNetwork, so `loopbackOnly` (forwardHost 127.0.0.1) is
+    // what keeps the proxied route working — and re-points an EXISTING host
+    // off the now-closed LAN address on redeploy (#2364). The forward-auth
+    // sentinel must survive: it is the only gate left.
+    expect(ha.variables.ZWAVE_JS_SUBDOMAIN.loopbackOnly).toBe(true);
+    expect(ha.variables.ZWAVE_JS_SUBDOMAIN.proxyPort).toBe('8091');
+    expect(ha.variables.ZWAVE_JS_SUBDOMAIN.proxyConfig.advanced_config)
+      .toBe('__authelia_forward_auth__');
+  });
+
+  it('seeds the raw Z-Wave control websocket on 127.0.0.1, not 0.0.0.0', () => {
+    // Port 3001 speaks the zwave-js server protocol with no auth at all — LAN
+    // reach is LAN control of every paired device. HA lives in this same pod
+    // and connects over ws://localhost:3001, so the loopback bind costs it
+    // nothing. The bind lives in post-deploy's seeded settings file, not in
+    // the pod manifest, which is why it needs its own assertion.
+    expect(postDeploy()).toMatch(/^ZWAVEJS_WS_HOST = "127\.0\.0\.1"$/m);
+    expect(postDeploy()).toMatch(/ws:\/\/localhost:\{ZWAVEJS_WS_PORT\}/);
+  });
+
+  it('re-pins an existing settings file that still carries a wildcard bind', () => {
+    // The seeder only writes the external-settings file when it is MISSING, so
+    // every pre-v7 install already has one saying 0.0.0.0. Without an in-place
+    // repair the bind constant above would never reach those boxes.
+    const src = postDeploy();
+    expect(src).toMatch(/def repair_zwave_external_settings_host\(/);
+    expect(src).toMatch(/def repair_zwave_ui_settings_host\(/);
+    expect(src).toMatch(/ZWAVEJS_WS_WILDCARD_HOSTS/);
+  });
+
+  it('binds the Matter websocket to 127.0.0.1 without touching the CHIP stack', () => {
+    // `args` REPLACES the image CMD, so the image's own defaults have to be
+    // repeated — dropping them would start matter-server with no storage path.
+    const args: string[] = container('matter-server')?.args ?? [];
+    expect(args).toEqual([
+      '--storage-path', '/data',
+      '--paa-root-cert-dir', '/data/credentials',
+      '--listen-address', '127.0.0.1',
+    ]);
+  });
+
+  it('declares the Matter websocket port so the network map can see it', () => {
+    // 5580 was bound on every interface AND undeclared, so it was invisible.
+    expect(ha.yamlContent).toMatch(/servicebay\.ports:\s*"8123\/tcp,8091\/tcp,3001\/tcp,5580\/tcp"/);
+  });
+
+  it('schema-version is bumped to 7 with a CHANGELOG section and a v6-to-v7 migration', () => {
+    expect(ha.yamlContent).toMatch(/servicebay\.schema-version:\s*"7"/);
+    const changelog = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'home-assistant', 'CHANGELOG.md'), 'utf-8',
+    );
+    expect(changelog).toMatch(/##\s*v7\b.*\(breaking\)/);
+    const mig = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'home-assistant', 'migrations', 'v6-to-v7.py'), 'utf-8',
+    );
+    // Config-only hop: it rewrites one JSON key and must not move or delete
+    // anything on disk (HA's /config, the zwave-js store, matter-server data).
+    expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);
+    expect(mig).toMatch(/untouched/i);
+    // Unlike auth's v2-to-v3 this hop is NOT informational — 3001's bind is
+    // on-disk state the seeder will not rewrite, so the migration must.
+    expect(mig).toMatch(/serverHost/);
+    expect(mig).toMatch(/def migrate_zwave_ws_bind\(/);
+  });
+});
+
 // ─── 3b3. Radicale template: rights ruleset is baked in (#2411) ─────────────
 describe('Radicale template: rights ruleset (#2411)', () => {
   const radicale = templates.find(t => t.name === 'radicale')!;
