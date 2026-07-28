@@ -11,6 +11,10 @@
  * Phase 4D (#632): replaces the install runner's hardcoded
  * `registerOidcClients` / NPM bootstrap / proxy-host / AdGuard calls
  * with `bus.emit(...)`.
+ * #2388: host firewall (nftables) for ports a template declares
+ * `blockLanAccess` on — the one case where a loopback bind is not
+ * available (LLDAP's raw LDAP port, reached by isolated pods through
+ * pasta).
  */
 import { logger } from '@/lib/logger';
 import { getCapabilityBus } from './bus';
@@ -18,6 +22,7 @@ import { registerAutheliaHandlers } from './authelia';
 import { registerNginxHandlers } from './nginx';
 import { registerAdguardHandlers } from './adguard';
 import { registerCredentialsHandlers } from './credentials';
+import { registerHostFirewallHandlers } from './hostFirewall';
 
 export function initCapabilities(): void {
   const bus = getCapabilityBus();
@@ -25,6 +30,8 @@ export function initCapabilities(): void {
   registerNginxHandlers(bus);
   registerAdguardHandlers(bus);
   registerCredentialsHandlers(bus);
+  // #2388 — host nftables filtering for ports declaring `blockLanAccess`.
+  registerHostFirewallHandlers(bus);
   const counts = (['feature.installing', 'feature.installed', 'feature.uninstalling', 'feature.uninstalled'] as const)
     .map(k => `${k}=${bus.list(k).length}`)
     .join(' ');

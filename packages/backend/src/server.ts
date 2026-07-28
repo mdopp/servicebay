@@ -650,6 +650,19 @@ app.prepare().then(() => {
         } catch (err) {
           logger.warn('Server', `Auto-update lock setup failed: ${err instanceof Error ? err.message : String(err)}`);
         }
+
+        // Host firewall re-assert (#2388), same deferred window and same
+        // idempotent shape. Its own try/catch so neither host-side task
+        // can skip the other. This is what closes the LAN-reachability
+        // gap on a box whose stack was installed BEFORE the template
+        // declared `blockLanAccess` — otherwise the rule would wait for a
+        // redeploy the operator has no other reason to run.
+        try {
+          const { reconcileHostFirewallOnBoot } = await import('./lib/capabilities/hostFirewall');
+          await reconcileHostFirewallOnBoot();
+        } catch (err) {
+          logger.warn('Server', `Host firewall reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
       })();
     }, 30_000);
 

@@ -127,7 +127,8 @@ Map of variable name to metadata. Recognized fields:
       "scopes": ["openid", "profile", "email"],
       "clientSecretVar": "MY_SSO_SECRET"  // optional — env-wired SSO
     },
-    "bcryptSource": "ADMIN_PASSWORD"  // for type=bcrypt — name of the var to hash
+    "bcryptSource": "ADMIN_PASSWORD",  // for type=bcrypt — name of the var to hash
+    "blockLanAccess": true   // port vars only — refuse LAN access at the host firewall
   }
 }
 ```
@@ -149,6 +150,26 @@ What each `type` does generically (no per-template code needed):
   template and registered with Authelia in one POST. When
   `clientSecretVar` is set, the secret is wired into the container
   env (e.g. `SSO_CLIENT_SECRET`) automatically — no UI paste needed.
+- **`blockLanAccess` on a port var** — ServiceBay installs a host
+  nftables rule that refuses connections to that port arriving on a
+  physical interface, while still accepting loopback and the
+  pasta-proxied path isolated pods use via `host.containers.internal`
+  (#2388). Applied/removed by the `host-firewall.lan-block` capability
+  handler on install/uninstall and re-asserted at boot; mechanics in
+  `packages/backend/src/lib/hostFirewall.ts`.
+
+  **Reach for a loopback bind first.** A `hostNetwork: true` pod on
+  Fedora CoreOS (no firewall enabled) exposes every port it binds on
+  `0.0.0.0` to the LAN, and the cheap fix is to bind `127.0.0.1` in the
+  app's own config (`hostIP: 127.0.0.1` for a published port, #2357;
+  `LLDAP_HTTP_HOST`, #2380) — no privileged host state needed. Use
+  `blockLanAccess` only when that isn't available, i.e. when a pod on a
+  bridge network must reach the port through
+  `host.containers.internal`, which pasta maps to the host's LAN
+  address rather than loopback (#817/#837). LLDAP's raw LDAP port is
+  the motivating case. SSH, the reverse-proxy and ServiceBay's own
+  ports are on a hard never-filter list and the flag is ignored for
+  them.
 
 `templates/settings.json` declares a few global variables (`DATA_DIR`,
 `LLDAP_HOST`, `LLDAP_LDAP_PORT`, `LLDAP_BASE_DN`) that every template

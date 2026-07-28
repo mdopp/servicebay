@@ -888,6 +888,26 @@ export interface VariableMeta {
    * needs to switch to `host.containers.internal`.)
    */
   loopbackOnly?: boolean;
+  /**
+   * For a variable whose value is a **port number**: refuse LAN-sourced
+   * connections to that port at the HOST firewall (nftables), while
+   * leaving on-box access — loopback plus the pasta-proxied path isolated
+   * pods use via `host.containers.internal` — working (#2388).
+   *
+   * Use this only when a loopback bind is NOT available. Binding the app
+   * to `127.0.0.1` (radicale's `hostIP`, #2357; LLDAP's
+   * `LLDAP_HTTP_HOST`, #2380) is always the better answer because it
+   * needs no privileged host state. The motivating exception is LLDAP's
+   * raw LDAP port: isolated pods reach it through
+   * `host.containers.internal`, which rootless podman/pasta maps to the
+   * host's LAN address rather than loopback, so a loopback bind breaks
+   * radicale's `ldap_uri` and Jellyfin's LDAP-Auth plugin (#817/#837).
+   *
+   * Mechanics + the never-filter guard live in `lib/hostFirewall.ts`; the
+   * rule is applied/removed by the `host-firewall.lan-block` capability
+   * handler on install/uninstall and re-asserted at boot.
+   */
+  blockLanAccess?: boolean;
   /** OIDC client to register with Authelia when this service is deployed */
   oidcClient?: OidcClientConfig;
   /** For bcrypt type: name of another variable whose plaintext gets bcrypt-hashed */
