@@ -24,11 +24,13 @@ interface BundleBuildInput {
   files: Record<string, WatchedFile>;
   /**
    * Base names (the `installedTemplates` keys) of services ServiceBay
-   * installed on this node. A running unit whose base name is in this set
-   * is treated as managed even when it isn't backed by a `.kube`/pod —
-   * #1733: a single-container `.container` Quadlet (the ollama GPU fixup
-   * from #1026) has no pod manifest, so without this it falls through to
-   * the Standalone/unmanaged bundle despite being a declared service.
+   * installed on this node — the authority on what is actually managed.
+   * A unit in this set is managed even when it isn't backed by a
+   * `.kube`/pod (#1733: the single-container `.container` ollama GPU fixup
+   * from #1026 has no pod manifest); a Quadlet-backed unit that is NOT in
+   * this set (nor a `<template>-<suffix>` sidecar of one) is hand-rolled and
+   * IS surfaced as unmanaged (#2395). Omit the set (or pass an empty one) to
+   * fall back to trusting the agent's Quadlet flag alone.
    */
   installedTemplates?: Set<string>;
 }
@@ -484,14 +486,36 @@ export const buildServiceBundlesForNode = ({ nodeName, services = [], containers
   const containerMap = new Map<string, EnrichedContainer>();
   containers.forEach(container => containerMap.set(container.id, container));
 
-  // #1733: a unit is managed if the agent flagged it (.kube/.container) OR
-  // its base name is one ServiceBay installed (installedTemplates). The
-  // latter catches a single-container .container Quadlet (ollama GPU fixup)
-  // running under an older agent, or any managed service with no pod.
+  // Two different questions get conflated in `svc.isManaged` (#1733/#2395).
+  //
+  // `svc.isManaged` is the agent's `is_managed` (agent.py): it only answers
+  // "is this unit backed by a real .kube/.container Quadlet?" — NOT "did
+  // ServiceBay install it". A hand-rolled Quadlet the operator wrote
+  // themselves answers YES, so short-circuiting on it hid every hand-rolled
+  // unit from the unmanaged scan (#2395). `installedTemplates`
+  // (config.installedTemplates keys) is ServiceBay's own record of what it
+  // installed, so that is the authority when we have it.
+  //
+  // Order matters:
+  //  1. base name in installedTemplates -> managed even with no Quadlet flag
+  //     (#1733: a single-container .container Quadlet like the ollama GPU
+  //     fixup has no pod, and older agents don't flag it at all).
+  //  2. not Quadlet-backed and not an installed template -> unmanaged.
+  //  3. Quadlet-backed but no matching template -> managed only if it looks
+  //     like a `<template>-<suffix>` sidecar unit a template's post-deploy
+  //     wrote (solaris-whisper.container et al. from the solaris stack);
+  //     otherwise it is hand-rolled and must reach the unmanaged scan.
+  //
+  // With no installedTemplates at all (twin not seeded yet, or a box that
+  // predates the #353 install stamp) we know nothing, so we keep trusting
+  // the Quadlet flag — the pre-#2395 behaviour — rather than declaring every
+  // service on the box unmanaged.
   const isManagedUnit = (svc: ServiceUnit): boolean => {
-    if (svc.isManaged) return true;
-    if (!installedTemplates || installedTemplates.size === 0) return false;
-    return installedTemplates.has(svc.name.replace(/\.service$/, ''));
+    const baseName = svc.name.replace(/\.service$/, '');
+    if (!installedTemplates || installedTemplates.size === 0) return Boolean(svc.isManaged);
+    if (installedTemplates.has(baseName)) return true;
+    if (!svc.isManaged) return false;
+    return Array.from(installedTemplates).some(template => baseName.startsWith(`${template}-`));
   };
 
   const drafts = new Map<string, ServiceBundle>();

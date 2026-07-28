@@ -117,7 +117,18 @@ export interface ServiceUnit {
   active?: boolean;
   isReverseProxy?: boolean;
   isServiceBay?: boolean;
-  isManaged?: boolean; // True if backed by a .kube/.container Quadlet (ServiceBay Stack), or whose base name is in config.installedTemplates (#1733 — single-container GPU Quadlets like ollama.container).
+  /**
+   * True if backed by a `.kube`/`.container` Quadlet, or whose base name is in
+   * config.installedTemplates (#1733 — single-container GPU Quadlets like
+   * ollama.container).
+   *
+   * NOT proof ServiceBay installed it (#2395): the agent's `is_managed` only
+   * inspects the unit's file extension, so a hand-rolled Quadlet the operator
+   * wrote themselves is flagged `isManaged: true` too. Anything deciding
+   * "did ServiceBay install this" must cross-check `config.installedTemplates`
+   * — see `isManagedUnit` in `lib/unmanaged/bundleBuilder.ts`.
+   */
+  isManaged?: boolean;
   isPrimaryProxy?: boolean; // Managed by TwinStore (Consistency)
   associatedContainerIds?: string[]; // IDs of containers managed by this service (SINGLE SOURCE OF TRUTH)
   ports?: PortMapping[];
