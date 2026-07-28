@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.10.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.9.0...servicebay-v5.10.0) (2026-07-28)
+
+
+### Features
+
+* **frontend:** portal deep-link + fix(backend): post-deploy restart race ([#2405](https://github.com/mdopp/servicebay/issues/2405) [#2406](https://github.com/mdopp/servicebay/issues/2406)) ([01e8c92](https://github.com/mdopp/servicebay/commit/01e8c92f247a638f5fe61bc4f8e72e293efa3f86))
+* **portal:** add deep-linkable /portal/requests route ([c27b063](https://github.com/mdopp/servicebay/commit/c27b063ec2cbd82bc2762cd5557b1d92e6421309)), closes [#2405](https://github.com/mdopp/servicebay/issues/2405)
+
+
+### Bug Fixes
+
+* **services:** wait for the restarted unit before running post-deploy ([1a6880d](https://github.com/mdopp/servicebay/commit/1a6880d4d2d1df39de0a66b596968d14b784c3d1)), closes [#2406](https://github.com/mdopp/servicebay/issues/2406)
+
 ## [5.9.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.8.0...servicebay-v5.9.0) (2026-07-28)
 
 
