@@ -110,6 +110,11 @@ Extra env vars beyond what `post-deploy.py` gets:
   represents (e.g. `1` / `2` for `v1-to-v2.py`).
 - `OLD_DATA_DIR` / `NEW_DATA_DIR` — both default to `DATA_DIR`.
 
+Both script types share one body contract: the file ships to the box
+**verbatim** (never Mustache-rendered — #2415, #2435), so `{{VAR}}` in a
+script is prose. Read values from `os.environ`; Go-template/Jinja/Helm
+`{{…}}` and f-string brace escapes are safe to write.
+
 ### Cross-template data moves
 
 If data is moving *into* a different template (a container split out

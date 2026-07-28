@@ -48,7 +48,7 @@ vi.mock('@/lib/registry', () => ({
   syncRegistries: vi.fn(),
 }));
 
-import { isServiceReady, waitForDependencies, ensureProxyHosts, authDynamicVars, loadPostDeployScript } from './runner';
+import { isServiceReady, waitForDependencies, ensureProxyHosts, authDynamicVars, loadPostDeployScript, buildMigrationSteps } from './runner';
 import type { StackVariable } from '@/lib/stackInstall/postInstall';
 
 const fetchSpy = vi.spyOn(globalThis, 'fetch');
@@ -230,5 +230,74 @@ describe('loadPostDeployScript — script bodies ship verbatim (#2415)', () => {
       'const postDeployScript = await loadPostDeployScript(item.name, input.templateSource);',
     );
     expect(src).not.toMatch(/postDeployScript\s*=\s*renderTemplate/);
+  });
+});
+
+describe('buildMigrationSteps — migration bodies ship verbatim (#2435)', () => {
+  const step = (over: Partial<{ filename: string; fromVersion: number; toVersion: number; content: string }> = {}) => ({
+    filename: 'v1-to-v2.py',
+    fromVersion: 1,
+    toVersion: 2,
+    content: '#!/usr/bin/env python3\n',
+    ...over,
+  });
+
+  it('returns each body byte-identical, foreign {{…}} expressions intact', () => {
+    // Same shape as the post-deploy case above — and a migration is the
+    // worst place to lose it: fail-fast, runs before the new manifest
+    // lands, touches operator data.
+    const raw = [
+      '#!/usr/bin/env python3',
+      'import os, subprocess',
+      'FMT = \'{{.Image}}|{{index .Config.Labels "org.opencontainers.image.revision"}}\'',
+      'DATA = os.environ.get("NEW_DATA_DIR", "/mnt/data")',
+      'JINJA = "{{ ansible_hostname }}"',
+      'HELM = "{{ .Values.image.tag }}"',
+      'SUBJECT = f\'subject: "[Authelia] {{title}}"\'',
+      'print(subprocess.run(["podman", "inspect", "--format", FMT]))',
+    ].join('\n');
+
+    const out = buildMigrationSteps([step({ content: raw })]);
+
+    expect(out).toHaveLength(1);
+    expect(out[0].content).toBe(raw);
+    expect(out[0].content).toContain('{{.Image}}');
+    expect(out[0].content).toContain('{{index .Config.Labels "org.opencontainers.image.revision"}}');
+    expect(out[0].content).toContain('{{ ansible_hostname }}');
+    expect(out[0].content).toContain('{{ .Values.image.tag }}');
+    expect(out[0].content).toContain('{{title}}');
+    // The pre-#2435 behaviour: every unknown tag rendered to empty.
+    expect(out[0].content).not.toContain("--format '|'");
+  });
+
+  it('leaves known ServiceBay variable names alone too — env is the only channel', () => {
+    // `DATA_DIR`/`LLDAP_PORT` ARE wizard variables, so the old render
+    // pass substituted them into the source. The first-party migrations
+    // only ever mention them as docstring prose; the scripts read
+    // os.environ. Both must survive as written.
+    const raw = [
+      '"""Moves `{{DATA_DIR}}/auth/lldap` and re-points `127.0.0.1:{{LLDAP_PORT}}`."""',
+      'BASE = os.environ.get("DATA_DIR", "/mnt/data")',
+    ].join('\n');
+    expect(buildMigrationSteps([step({ content: raw })])[0].content).toBe(raw);
+  });
+
+  it('preserves the chain order and hop metadata across a multi-version hop', () => {
+    const chain = [
+      step({ filename: 'v1-to-v2.py', fromVersion: 1, toVersion: 2, content: 'a\n' }),
+      step({ filename: 'v2-to-v3.py', fromVersion: 2, toVersion: 3, content: 'b {{X}}\n' }),
+      step({ filename: 'v3-to-v4.py', fromVersion: 3, toVersion: 4, content: 'c\n' }),
+    ];
+    expect(buildMigrationSteps(chain)).toEqual(chain);
+    expect(buildMigrationSteps([])).toEqual([]);
+  });
+
+  it('the deploy call site never re-introduces a render pass', () => {
+    // Guards the seam: the mapper is a pass-through, but `deployItem`
+    // must not wrap it (this is exactly how the bug survived #2415).
+    const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+    expect(src).toMatch(/migrations = buildMigrationSteps\(result\.chain\);/);
+    expect(src).not.toMatch(/renderTemplate\(s\.content/);
+    expect(src).not.toMatch(/migrations\s*=\s*renderTemplate/);
   });
 });

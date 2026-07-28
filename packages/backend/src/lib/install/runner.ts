@@ -32,6 +32,7 @@ import {
   getTemplateMigrationScripts,
   getTemplateYaml,
   syncRegistries,
+  type TemplateMigrationScript,
 } from '@/lib/registry';
 import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
 import { parseTemplateManifest } from '@/lib/template/contract';
@@ -565,6 +566,11 @@ export async function preserveAutheliaOidcClients(
 /**
  * Load a template's `post-deploy.py` **verbatim** — never Mustache-rendered (#2415).
  *
+ * ONE contract covers both Python script types a template can ship —
+ * `post-deploy.py` (here) and `migrations/v{N}-to-v{N+1}.py`
+ * (`buildMigrationSteps` below): the body goes to the box byte-identical
+ * and values travel through the process environment only.
+ *
  * Template values reach the script through its process environment
  * (`postDeployEnv` in `deployItem`: every wizard variable plus HOST,
  * LAN_IP and OPERATOR_EMAIL), so a text-substitution pass over the
@@ -593,6 +599,37 @@ export async function loadPostDeployScript(
   } catch {
     return undefined; // template ships no script — fine
   }
+}
+
+/**
+ * Shape a selected migration chain into the deploy payload, bodies
+ * **verbatim** — never Mustache-rendered (#2435).
+ *
+ * Same contract as `loadPostDeployScript` above, for the same reasons:
+ * Mustache deletes every `{{…}}` it doesn't recognise, and splicing raw
+ * values into Python source is a syntax hazard. Migrations are the
+ * *worst* place for either failure mode — they are fail-fast, they run
+ * before the new manifest lands, and they touch operator data.
+ *
+ * The env channel is identical plus the hop metadata: the deploy sends
+ * `postDeployEnv` (every wizard variable, HOST, LAN_IP, OPERATOR_EMAIL)
+ * whenever a chain is present, and
+ * `ServiceManager.buildMigrationEnvLines` adds `SB_NODE`, `SB_API_URL`,
+ * `SB_API_TOKEN`, `OLD_DATA_DIR`/`NEW_DATA_DIR` and
+ * `OLD_SCHEMA_VERSION`/`NEW_SCHEMA_VERSION`.
+ *
+ * Keep this a pass-through. If a migration needs a value, read it from
+ * `os.environ` — do not reintroduce rendering.
+ */
+export function buildMigrationSteps(
+  chain: TemplateMigrationScript[],
+): { filename: string; fromVersion: number; toVersion: number; content: string }[] {
+  return chain.map(s => ({
+    filename: s.filename,
+    fromVersion: s.fromVersion,
+    toVersion: s.toVersion,
+    content: s.content,
+  }));
 }
 
 /** Deploy a single template via /api/services?stream=1. Returns true on
@@ -750,8 +787,10 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   // travel via `postDeployEnv` below, not by text substitution (#2415).
   const postDeployScript = await loadPostDeployScript(item.name, input.templateSource);
 
-  // Migration chain — discover via upgrade-preview, render any selected
-  // steps with Mustache. Best-effort: a fetch failure here shouldn't
+  // Migration chain — discover via upgrade-preview; selected steps ship
+  // VERBATIM, same contract as post-deploy.py above: values travel via
+  // the env, not by text substitution (#2435). Best-effort: a fetch
+  // failure here shouldn't
   // block the deploy — if migrations are actually needed and we skipped
   // them, the new container will fail to start and diagnose will surface it.
   let migrations: { filename: string; fromVersion: number; toVersion: number; content: string }[] | undefined;
@@ -774,12 +813,7 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
           throw new Error(msg);
         }
         if (result.chain.length > 0) {
-          migrations = result.chain.map(s => ({
-            filename: s.filename,
-            fromVersion: s.fromVersion,
-            toVersion: s.toVersion,
-            content: renderTemplate(s.content, view),
-          }));
+          migrations = buildMigrationSteps(result.chain);
         }
       }
     }

@@ -18,6 +18,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'node:child_process';
 import { describe, it, expect } from 'vitest';
@@ -250,5 +251,104 @@ describe('Template migration scripts — discovery via getTemplateMigrationScrip
     const { getTemplateMigrationScripts } = await import('@/lib/registry');
     const scripts = await getTemplateMigrationScripts('adguard', 'Built-in');
     expect(scripts).toEqual([]);
+  });
+});
+
+describe('Template migration scripts — bodies ship verbatim (#2435)', () => {
+  // The runner used to Mustache-render every migration body before it was
+  // written to the box, so an unrecognised `{{…}}` (podman/docker Go
+  // templates, Helm, Jinja, Python f-string escapes) was silently deleted.
+  // These cases walk the REAL pipeline — discovery → chain selection →
+  // deploy payload — and assert the bytes never change.
+
+  async function payloadFor(template: string, from: number, to: number) {
+    const { getTemplateMigrationScripts } = await import('@/lib/registry');
+    const { selectMigrationChain } = await import('@/lib/stackInstall/migrations');
+    const { buildMigrationSteps } = await import('@/lib/install/runner');
+    const scripts = await getTemplateMigrationScripts(template, 'Built-in');
+    const result = selectMigrationChain(from, to, scripts);
+    if (!result.ok) throw new Error(`chain for ${template} v${from}→v${to} not ok: ${result.reason}`);
+    return buildMigrationSteps(result.chain);
+  }
+
+  it('every first-party migration reaches the deploy payload byte-identical', async () => {
+    // One hop at a time: schema-version history is not always contiguous
+    // (a bump can ship without a migration), so walk each declared hop.
+    let checked = 0;
+    for (const t of templatesWithMigrations) {
+      for (const m of t.migrations) {
+        if (m.fromVersion < 0) continue;
+        const chain = await payloadFor(t.templateName, m.fromVersion, m.toVersion);
+        const step = chain.find(s => s.filename === m.filename);
+        expect(step, `${t.templateName}: ${m.filename} missing from the payload`).toBeDefined();
+        const onDisk = fs.readFileSync(m.fullPath, 'utf-8');
+        expect(step!.content, `templates/${t.templateName}/migrations/${m.filename} was altered in transit`).toBe(onDisk);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it('docstring {{…}} references survive — they are prose, not substitutions', async () => {
+    // auth's v2→v3 docstring names `{{LLDAP_PORT}}`; the render pass used
+    // to rewrite it to the wizard's value (or delete it when unset).
+    const chain = await payloadFor('auth', 2, 3);
+    const v2to3 = chain.find(s => s.filename === 'v2-to-v3.py');
+    expect(v2to3?.content).toContain('{{LLDAP_PORT}}');
+  });
+
+  it('a Go-template format string in a migration body would survive the payload', async () => {
+    // The mdopp/solarisbay#1092 shape, asserted on the transport that
+    // ships migrations. `{{.Image}}` is not a wizard variable, so the old
+    // render pass deleted it and left `--format '|'`.
+    const { buildMigrationSteps } = await import('@/lib/install/runner');
+    const body = `subprocess.run(["podman", "inspect", "--format", '{{.Image}}|{{index .Config.Labels "x"}}'])\n`;
+    const [step] = buildMigrationSteps([
+      { filename: 'v1-to-v2.py', fromVersion: 1, toVersion: 2, content: body },
+    ]);
+    expect(step.content).toBe(body);
+    expect(step.content).not.toContain("--format '|'");
+  });
+
+  // Executing a real migration end-to-end needs python3; CI has it (the
+  // py_compile case above relies on it), local runs skip when it's absent.
+  const HAS_PYTHON = spawnSync('python3', ['-c', 'pass'], { encoding: 'utf-8' }).status === 0;
+  (HAS_PYTHON ? it : it.skip)('a real hop still executes correctly unrendered (home-assistant v6→v7)', async () => {
+    // Runs the exact bytes the deploy payload carries, with the env the
+    // migration runner sets (`buildMigrationEnvLines` in serviceLifecycle).
+    const chain = await payloadFor('home-assistant', 6, 7);
+    const step = chain.find(s => s.filename === 'v6-to-v7.py');
+    expect(step).toBeDefined();
+
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-migration-'));
+    try {
+      const store = path.join(tmp, 'home-assistant', 'zwave-js');
+      fs.mkdirSync(store, { recursive: true });
+      const settings = path.join(store, 'sb-external-settings.json');
+      // The v6 install shape the hop exists to fix: WS server on 0.0.0.0.
+      fs.writeFileSync(settings, JSON.stringify({ serverHost: '0.0.0.0', serverPort: 3001 }, null, 2));
+
+      const scriptPath = path.join(tmp, 'v6-to-v7.py');
+      fs.writeFileSync(scriptPath, step!.content);
+      const env = {
+        ...process.env,
+        DATA_DIR: tmp,
+        OLD_DATA_DIR: tmp,
+        NEW_DATA_DIR: tmp,
+        OLD_SCHEMA_VERSION: String(step!.fromVersion),
+        NEW_SCHEMA_VERSION: String(step!.toVersion),
+      };
+      const run = spawnSync('python3', [scriptPath], { encoding: 'utf-8', env });
+      expect(run.status, run.stderr).toBe(0);
+      expect(JSON.parse(fs.readFileSync(settings, 'utf-8')).serverHost).toBe('127.0.0.1');
+
+      // Idempotent by contract — the second run is a no-op, still exit 0.
+      const again = spawnSync('python3', [scriptPath], { encoding: 'utf-8', env });
+      expect(again.status, again.stderr).toBe(0);
+      expect(again.stdout).toContain('already pinned');
+      expect(JSON.parse(fs.readFileSync(settings, 'utf-8')).serverHost).toBe('127.0.0.1');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
