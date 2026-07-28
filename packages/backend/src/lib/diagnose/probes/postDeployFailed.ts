@@ -25,6 +25,13 @@ import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../
 
 const PROBE_ID = 'post_deploy_failed';
 
+/**
+ * The wizard's credential-banner marker (`docs/TEMPLATE_LOGGING.md`). Lines
+ * carrying it hold live passwords/tokens and must never ride out in a probe
+ * item's detail text.
+ */
+const CREDENTIAL_MARKER = '__SB_CREDENTIAL__';
+
 export interface PostDeployFailedResult {
   status: 'ok' | 'warn' | 'info';
   detail: string;
@@ -54,7 +61,17 @@ export async function checkPostDeployFailed(): Promise<PostDeployFailedResult> {
     // says "exit 1" and the operator has to open the service detail
     // to find the actual error — usually 2-3 lines that name the
     // missing env var / failed API call / etc. directly.
-    const tail = (r.stdoutTail ?? '').trim();
+    //
+    // Credential banners are dropped first (#2404 follow-up): the same
+    // stdout also carries the wizard's `__SB_CREDENTIAL__ {json}` lines
+    // with live passwords/tokens, and this probe's items go out over the
+    // `diagnose` MCP tool as well as the dashboard. The error lines an
+    // operator actually needs survive; only the banner lines are dropped.
+    const tail = (r.stdoutTail ?? '')
+      .split('\n')
+      .filter(line => !line.includes(CREDENTIAL_MARKER))
+      .join('\n')
+      .trim();
     const tailExcerpt = tail
       ? '\n' + tail.split('\n').slice(-3).join('\n').slice(-240)
       : '';
