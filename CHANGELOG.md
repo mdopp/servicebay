@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.9.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.8.0...servicebay-v5.9.0) (2026-07-28)
+
+
+### Features
+
+* **dashboard:** nudge that service containers do not auto-update yet ([b79a8ae](https://github.com/mdopp/servicebay/commit/b79a8ae6aef4e3c75859046d185d31e85722b1b5)), closes [#2396](https://github.com/mdopp/servicebay/issues/2396)
+
+
+### Bug Fixes
+
+* **backend:** config — distinguish transient read failure from a fresh install ([#2399](https://github.com/mdopp/servicebay/issues/2399)) ([4787a2a](https://github.com/mdopp/servicebay/commit/4787a2a1b2dc41aa8b6170fb4e6645976939dbab))
+* **backend:** config — strip stdoutTail-embedded credentials from get_config ([#2404](https://github.com/mdopp/servicebay/issues/2404) follow-up) ([738d310](https://github.com/mdopp/servicebay/commit/738d3106efbe006a9a7e1cfe4b6a127a7ce4bd3d))
+* **backend:** config secret-leak scrubber + auto-update window nudge ([#2404](https://github.com/mdopp/servicebay/issues/2404) [#2396](https://github.com/mdopp/servicebay/issues/2396)) ([f809a2e](https://github.com/mdopp/servicebay/commit/f809a2e99e8a249fc5d7e69ca44f9fed54284ecf))
+* **mcp:** scrub every secret-shaped field from get_config ([7bf3dab](https://github.com/mdopp/servicebay/commit/7bf3dab86ac279be2ee910d2035bbf7af0f496df)), closes [#2404](https://github.com/mdopp/servicebay/issues/2404)
+* **mcp:** withhold captured script stdout from get_config ([e2a21b5](https://github.com/mdopp/servicebay/commit/e2a21b5d1138cb9426a835478b682c783f36e573)), closes [#2404](https://github.com/mdopp/servicebay/issues/2404)
+
 ## [5.8.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.7.3...servicebay-v5.8.0) (2026-07-28)
 
 
