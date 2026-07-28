@@ -556,6 +556,39 @@ export async function preserveAutheliaOidcClients(
   }
 }
 
+/**
+ * Load a template's `post-deploy.py` **verbatim** — never Mustache-rendered (#2415).
+ *
+ * Template values reach the script through its process environment
+ * (`postDeployEnv` in `deployItem`: every wizard variable plus HOST,
+ * LAN_IP and OPERATOR_EMAIL), so a text-substitution pass over the
+ * script body buys nothing and costs a lot:
+ *
+ *   - Mustache DELETES every `{{…}}` it doesn't recognise as a known
+ *     variable. That silently ate a `podman inspect --format
+ *     '{{.Image}}|{{index .Config.Labels "…"}}'` down to `--format '|'`,
+ *     which podman answers with `|` and exit 0 — indistinguishable from
+ *     "field is empty" (mdopp/solarisbay#1092: five debugging rounds
+ *     chasing a race that never existed). Go templates, Helm, Jinja and
+ *     Python f-string `{{…}}` escapes are all in the blast radius.
+ *   - Splicing a raw value into Python *source* is a correctness hazard
+ *     in its own right: a quote, apostrophe or newline in the value
+ *     breaks the script's syntax. `os.environ` has no such failure mode.
+ *
+ * Keep this a pass-through. If a script needs a value, add it to
+ * `postDeployEnv` — do not reintroduce rendering.
+ */
+export async function loadPostDeployScript(
+  name: string,
+  source?: string,
+): Promise<string | undefined> {
+  try {
+    return (await getTemplatePostDeployScript(name, source)) || undefined;
+  } catch {
+    return undefined; // template ships no script — fine
+  }
+}
+
 /** Deploy a single template via /api/services?stream=1. Returns true on
  *  successful deploy, false on terminal failure. Retries transient
  *  failures up to MAX_DEPLOY_ATTEMPTS. */
@@ -695,12 +728,9 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
 
   // Optional per-template post-deploy.py — server runs it after the unit
   // starts; output streams back via `progress` events. Parsed below for
-  // `__SB_CREDENTIAL__ {json}` markers.
-  let postDeployScript: string | undefined;
-  try {
-    const raw = await getTemplatePostDeployScript(item.name, input.templateSource);
-    if (raw) postDeployScript = renderTemplate(raw, view);
-  } catch { /* template ships no script — fine */ }
+  // `__SB_CREDENTIAL__ {json}` markers. The body ships VERBATIM: values
+  // travel via `postDeployEnv` below, not by text substitution (#2415).
+  const postDeployScript = await loadPostDeployScript(item.name, input.templateSource);
 
   // Migration chain — discover via upgrade-preview, render any selected
   // steps with Mustache. Best-effort: a fetch failure here shouldn't
