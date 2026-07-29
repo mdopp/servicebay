@@ -181,15 +181,15 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-      <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
-        <div className="p-6 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center">
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+      <div className="bg-surface border border-border rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+        <div className="p-6 border-b border-border flex justify-between items-center">
+          <h3 className="text-xl font-bold text-foreground flex items-center gap-2">
             {template.type === 'stack'
-              ? <Layers className="text-purple-600 dark:text-purple-400" />
-              : <Folder className="text-blue-600 dark:text-blue-400" />}
+              ? <Layers className="text-accent" />
+              : <Folder className="text-accent" />}
             Install {template.type === 'stack' ? 'Stack' : 'Template'}: {template.name}
           </h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
+          <button onClick={onClose} className="text-muted hover:text-foreground">
             <X size={24} />
           </button>
         </div>
@@ -198,24 +198,24 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
           {(phase === 'idle' || (phase === 'configure' && selectItems.length === 0)) && template.type === 'stack' && (
             <div>
               {selectItems.length === 0 ? (
-                <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 rounded border border-yellow-200 dark:border-yellow-800">
+                <div className="p-4 bg-surface-2 text-status-warn rounded border border-border">
                   No service definitions found in this stack&apos;s README.
                   <br/>
                   <small>Expected format: <code>- [x] service-name</code></small>
                 </div>
               ) : (
                 <>
-                  <p className="mb-4 text-gray-600 dark:text-gray-400">Select the services you want to include:</p>
+                  <p className="mb-4 text-muted">Select the services you want to include:</p>
                   <div className="space-y-2 mb-6">
                     {selectItems.map((item, i) => (
-                      <label key={item.name} className="flex items-center gap-3 p-3 border border-gray-200 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer transition-colors">
+                      <label key={item.name} className="flex items-center gap-3 p-3 border border-border rounded hover:bg-surface-2 cursor-pointer transition-colors">
                         <input
                           type="checkbox"
                           checked={item.checked}
                           onChange={() => handleToggle(i)}
-                          className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
+                          className="w-5 h-5 text-accent rounded focus:ring-accent"
                         />
-                        <span className="font-medium text-gray-900 dark:text-gray-200">{item.name}</span>
+                        <span className="font-medium text-foreground">{item.name}</span>
                       </label>
                     ))}
                   </div>
@@ -264,26 +264,26 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
                 if (!domain || subdomains.length === 0) return null;
                 return (
                   <div className="space-y-3">
-                    <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-sm space-y-2">
-                      <p className="font-medium text-blue-800 dark:text-blue-200">1. Configure DNS</p>
-                      <p className="text-blue-700 dark:text-blue-300">
+                    <div className="p-3 bg-surface-2 rounded border border-border text-sm space-y-2">
+                      <p className="font-medium text-status-info">1. Configure DNS</p>
+                      <p className="text-foreground">
                         Point these domains to your server IP:
                       </p>
-                      <div className="font-mono text-xs text-blue-600 dark:text-blue-400 space-y-0.5">
+                      <div className="font-mono text-xs text-muted space-y-0.5">
                         {subdomains.map(sv => (
                           <div key={sv.name}>{sv.value}.{domain}</div>
                         ))}
                       </div>
                     </div>
-                    <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800 text-sm space-y-2">
-                      <p className="font-medium text-amber-800 dark:text-amber-200">2. SSL Certificates</p>
-                      <p className="text-amber-700 dark:text-amber-300">
+                    <div className="p-3 bg-surface-2 rounded border border-border text-sm space-y-2">
+                      <p className="font-medium text-status-warn">2. SSL Certificates</p>
+                      <p className="text-foreground">
                         Open Nginx Proxy Manager and add Let&apos;s Encrypt SSL certificates for each proxy host.
                       </p>
                     </div>
-                    <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 text-sm space-y-2">
-                      <p className="font-medium text-gray-800 dark:text-gray-200">3. Access Restrictions (optional)</p>
-                      <p className="text-gray-600 dark:text-gray-400">
+                    <div className="p-3 bg-surface-2 rounded border border-border text-sm space-y-2">
+                      <p className="font-medium text-foreground">3. Access Restrictions (optional)</p>
+                      <p className="text-muted">
                         Add IP-based access lists in NPM for admin-only services (Nginx Admin, AdGuard).
                       </p>
                     </div>
@@ -294,15 +294,15 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
           )}
         </div>
 
-        <div className="p-6 border-t border-gray-200 dark:border-gray-800 flex justify-end gap-3 bg-gray-50 dark:bg-gray-900/50 rounded-b-lg">
+        <div className="p-6 border-t border-border flex justify-end gap-3 bg-surface-muted rounded-b-lg">
           {phase === 'idle' && template.type === 'stack' && (
             <>
-              <button onClick={onClose} className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded transition-colors">Cancel</button>
+              <button onClick={onClose} className="px-4 py-2 text-foreground hover:bg-surface-2 rounded transition-colors">Cancel</button>
               <button
                 onClick={() => { void advanceToConfigure(); }}
                 disabled={!allUpgradesReady || advancing}
                 title={!allUpgradesReady && checkedItems.length > 0 ? 'Acknowledge the breaking-change banner(s) above to continue.' : undefined}
-                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
+                className="px-4 py-2 bg-accent text-on-accent rounded hover:bg-accent-strong disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
               >
                 Continue
               </button>
@@ -312,26 +312,26 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
             <>
               <button
                 onClick={() => template.type === 'stack' ? controller.reset() : onClose()}
-                className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded transition-colors"
+                className="px-4 py-2 text-foreground hover:bg-surface-2 rounded transition-colors"
               >
                 {template.type === 'stack' ? 'Back' : 'Cancel'}
               </button>
               <button
                 onClick={() => { void controller.runInstall({ node: selectedNode }); }}
                 disabled={!selectedNode}
-                className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 bg-status-ok text-on-accent rounded hover:opacity-90 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Install
               </button>
             </>
           )}
           {phase === 'installing' && (
-            <button disabled className="px-4 py-2 bg-gray-400 text-white rounded cursor-not-allowed">Installing...</button>
+            <button disabled className="px-4 py-2 bg-border text-muted rounded cursor-not-allowed">Installing...</button>
           )}
           {phase === 'done' && (
             <button
               onClick={() => { onClose(); router.push('/'); }}
-              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium transition-colors"
+              className="px-4 py-2 bg-accent text-on-accent rounded hover:bg-accent-strong font-medium transition-colors"
             >
               Go to Dashboard
             </button>
@@ -339,7 +339,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
           {phase === 'error' && (
             <button
               onClick={onClose}
-              className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 font-medium transition-colors"
+              className="px-4 py-2 bg-border text-foreground rounded hover:opacity-80 font-medium transition-colors"
             >
               Close
             </button>
