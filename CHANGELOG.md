@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.0...servicebay-v5.11.1) (2026-07-29)
+
+
+### Bug Fixes
+
+* **backup-worker:** stop staging following symlinks out of a service data dir ([9469bad](https://github.com/mdopp/servicebay/commit/9469bad6f6a02a22d508f7cc0677b84266e02bc1)), closes [#2454](https://github.com/mdopp/servicebay/issues/2454)
+* **backup:** replace raw UI primitives with design-system components per sb/no-raw-ui-primitive ([cca5c87](https://github.com/mdopp/servicebay/commit/cca5c87c40ed91ddd167c8be2aa809fd68bf9935))
+* **disk-import:** replace raw color literals with semantic design tokens ([d8ee1e5](https://github.com/mdopp/servicebay/commit/d8ee1e5074acd3e77cebffc5464bf9c08c93d8a3))
+* **home-assistant:** reject tar-slip entries and verify the auth_oidc download ([9283c53](https://github.com/mdopp/servicebay/commit/9283c5361e0e0835d603c7475a8a02e0cb01bf72)), closes [#2453](https://github.com/mdopp/servicebay/issues/2453)
+* **install-flow:** replace raw color literals with semantic design tokens ([8cc98ee](https://github.com/mdopp/servicebay/commit/8cc98ee800a3411c919c1784d1150ef0f36d1971))
+* **lint-ratchet:** replace raw color literals in PublicDomainSection with semantic tokens ([e6b4bda](https://github.com/mdopp/servicebay/commit/e6b4bda02b99790a4e896b4bc1731cae24006a4a))
+* MCP identifier validation, HA tar-slip, backup symlink-escape (security) + lint sweeps ([e688384](https://github.com/mdopp/servicebay/commit/e68838449ce8e2e736fb170ede919160d1c39a97))
+* **mcp:** validate service/trash identifiers before they reach shell exec ([ce2d1c2](https://github.com/mdopp/servicebay/commit/ce2d1c211b298eca6c291fb48b2d111a56b46578)), closes [#2452](https://github.com/mdopp/servicebay/issues/2452)
+
 ## [5.11.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.10.4...servicebay-v5.11.0) (2026-07-29)
 
 
