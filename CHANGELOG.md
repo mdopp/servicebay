@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.10.4...servicebay-v5.11.0) (2026-07-29)
+
+
+### Features
+
+* browser-verify capability + lint-ratchet color-literal burn-down ([7acb95b](https://github.com/mdopp/servicebay/commit/7acb95bae42252e0204a361f2534555109b47325))
+* **scripts:** provision headless Chromium root-free so verify units stop deferring ([0bccd81](https://github.com/mdopp/servicebay/commit/0bccd8172cbb4eea2bace4d96b548ed7054e6d3c)), closes [#2445](https://github.com/mdopp/servicebay/issues/2445)
+
+
+### Bug Fixes
+
+* **dashboards:** extract MiniMap color literals into reusable constants ([466baff](https://github.com/mdopp/servicebay/commit/466baffdfacb56951bb68eccbc760de755c15bcd))
+* **dashboards:** replace raw color literals with semantic design tokens in ServicesDashboard ([75dbe1b](https://github.com/mdopp/servicebay/commit/75dbe1befd0d80d7ef46cb95dfcab352e452cfbc))
+* **frontend:** replace raw color literals in ServiceForm with semantic design tokens ([c1b3c8d](https://github.com/mdopp/servicebay/commit/c1b3c8d3d8647b8deb61aa250027902c76b0eea0))
+* **frontend:** replace raw color literals with semantic design tokens in HealthChecks ([460ac06](https://github.com/mdopp/servicebay/commit/460ac060ab23f88fbf3cea161d243424901adf5d))
+* **frontend:** replace raw color literals with semantic tokens in StacksStep ([8c4a685](https://github.com/mdopp/servicebay/commit/8c4a6852ee80ac779462d6dda015cf241f4b286d))
+
 ## [5.10.4](https://github.com/mdopp/servicebay/compare/servicebay-v5.10.3...servicebay-v5.10.4) (2026-07-29)
 
 
