@@ -195,23 +195,23 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
   return (
         <div className="h-full flex flex-col relative">
             {variant === 'page' && (
-                <div className="flex justify-between items-center mb-6 p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+                <div className="flex justify-between items-center mb-6 p-4 border-b border-border bg-surface dark:bg-surface/50">
                     <div className="flex items-center gap-4">
-                            <button onClick={handleBack} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
-                                    <ArrowLeft size={24} className="text-gray-600 dark:text-gray-300" />
+                            <button onClick={handleBack} className="p-2 hover:bg-surface-2 dark:hover:bg-surface-2 rounded-full transition-colors">
+                                    <ArrowLeft size={24} className="text-muted dark:text-muted" />
                             </button>
-                            <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">Monitor: {serviceName}</h1>
+                            <h1 className="text-xl font-bold text-foreground dark:text-foreground">Monitor: {serviceName}</h1>
                     </div>
                     <div className="flex items-center gap-3">
                             {backupMsg && (
-                                <span className={`text-sm ${backupMsg.ok ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                                <span className={`text-sm ${backupMsg.ok ? 'text-status-ok dark:text-status-ok' : 'text-status-fail dark:text-status-fail'}`}>
                                     {backupMsg.text}
                                 </span>
                             )}
                             <button
                                     onClick={handleBackupConfig}
                                     disabled={backingUp}
-                                    className="px-3 py-2 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors disabled:opacity-50"
+                                    className="px-3 py-2 flex items-center gap-2 text-sm text-muted dark:text-muted bg-surface dark:bg-surface-2 border border-border dark:border-border rounded hover:bg-surface-2 dark:hover:bg-surface-2 shadow-sm transition-colors disabled:opacity-50"
                                     title="Back up this service's config to the FritzBox NAS"
                             >
                                     <DatabaseBackup size={18} className={backingUp ? 'animate-pulse' : ''} /> Back up config
@@ -219,7 +219,7 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
                             <button
                                     onClick={fetchLogs}
                                     disabled={loading}
-                                    className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors"
+                                    className="p-2 text-muted dark:text-muted bg-surface dark:bg-surface-2 border border-border dark:border-border rounded hover:bg-surface-2 dark:hover:bg-surface-2 shadow-sm transition-colors"
                                     title="Refresh"
                             >
                                     <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
@@ -229,44 +229,44 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
             )}
 
             <div className={`flex-1 flex flex-col min-h-0 ${variant === 'embedded' ? 'p-0' : 'p-6'}`}>
-      <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
-        <div className="flex border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 shrink-0">
+      <div className="bg-surface dark:bg-surface rounded-lg border border-border dark:border-border shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
+        <div className="flex border-b border-border dark:border-border bg-surface dark:bg-surface/50 shrink-0">
             <button
-            className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'status' ? 'bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-600 dark:border-t-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+            className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'status' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
             onClick={() => setActiveTab('status')}
             >
             <Activity size={16} /> Status
             </button>
             <button
-            className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'service' ? 'bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-600 dark:border-t-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+            className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'service' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
             onClick={() => setActiveTab('service')}
             >
             <Terminal size={16} /> Service Logs
             </button>
             <button
-            className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'container-logs' ? 'bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-600 dark:border-t-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+            className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'container-logs' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
             onClick={() => setActiveTab('container-logs')}
             >
             <Box size={16} /> Container Logs & Info
             </button>
             <button
-            className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'network' ? 'bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-600 dark:border-t-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+            className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'network' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
             onClick={() => setActiveTab('network')}
             >
             <FileJson size={16} /> Raw Data / Config
             </button>
         </div>
 
-        <div className="bg-[#2d2d2d] dark:bg-black p-4 flex-1 overflow-y-auto">
+        <div className="bg-surface-muted dark:bg-surface-muted p-4 flex-1 overflow-y-auto">
             {activeTab === 'status' && (
-            <pre className="text-sm font-mono text-green-400 whitespace-pre-wrap">
+            <pre className="text-sm font-mono text-status-ok whitespace-pre-wrap">
                 {status || 'Loading status...'}
             </pre>
             )}
             {activeTab === 'service' && (
-            <pre className="text-sm font-mono text-gray-300 whitespace-pre-wrap">
+            <pre className="text-sm font-mono text-muted whitespace-pre-wrap">
                 {logs?.serviceLogs || (
-                    <div className="text-gray-400 italic">
+                    <div className="text-subtle italic">
                         <p>No service logs available.</p>
                         <p className="text-xs mt-2">Checking journalctl for unit: {serviceName.match(/\.(service|scope|socket|timer)$/) ? serviceName : `${serviceName}.service`}</p>
                     </div>
@@ -278,14 +278,14 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
                     {networkData ? (
                         <>
                             {/* Raw Data Only */}
-                            <pre className="text-xs font-mono text-gray-400 whitespace-pre-wrap break-all bg-black">
+                            <pre className="text-xs font-mono text-subtle whitespace-pre-wrap break-all bg-surface">
                                 {JSON.stringify(networkData.rawData, null, 2)}
                             </pre>
                         </>
                     ) : (
-                        <div className="text-gray-400 italic">
+                        <div className="text-subtle italic">
                             <p className="mb-2">No network data found for this service.</p>
-                            <div className="text-xs text-gray-500 border border-gray-700 p-2 rounded bg-black/50">
+                            <div className="text-xs text-muted border border-border p-2 rounded bg-surface-2">
                                 <p>Troubleshooting:</p>
                                 <ul className="list-disc ml-4 space-y-1 mt-1">
                                     <li>If the service is inactive, it will not appear in the network graph.</li>
@@ -302,15 +302,15 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
                     {logs?.podmanPs && logs.podmanPs.length > 0 ? (
                         <>
                             <div className="mb-4">
-                                <h4 className="text-gray-400 text-sm font-bold mb-2">Related Containers</h4>
+                                <h4 className="text-subtle text-sm font-bold mb-2">Related Containers</h4>
                                 <ContainerList containers={logs.podmanPs} />
                             </div>
-                            
+
                             <div>
                                 <div className="flex items-center justify-between mb-2">
-                                    <h4 className="text-gray-400 text-sm font-bold">Container Logs</h4>
-                                    <select 
-                                        className="bg-gray-700 text-white text-sm rounded border border-gray-600 p-1"
+                                    <h4 className="text-subtle text-sm font-bold">Container Logs</h4>
+                                    <select
+                                        className="bg-surface-2 text-foreground text-sm rounded border border-border p-1"
                                         value={selectedContainerId || ''}
                                         onChange={(e) => setSelectedContainerId(e.target.value)}
                                     >
@@ -321,15 +321,15 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
                                         ))}
                                     </select>
                                 </div>
-                                <pre className="text-sm font-mono text-gray-300 whitespace-pre-wrap bg-black p-4 rounded border border-gray-700 min-h-[300px]">
+                                <pre className="text-sm font-mono text-muted whitespace-pre-wrap bg-surface p-4 rounded border border-border min-h-[300px]">
                                     {containerLogs || 'Select a container to view logs.'}
                                 </pre>
                             </div>
                         </>
                     ) : (
-                        <div className="text-gray-400 italic">
+                        <div className="text-subtle italic">
                              <p className="mb-2">No running containers found matching this service.</p>
-                             <div className="text-xs text-gray-500 border border-gray-700 p-2 rounded bg-black/50">
+                             <div className="text-xs text-muted border border-border p-2 rounded bg-surface-2">
                                 <p>Possible reasons:</p>
                                 <ul className="list-disc ml-4 space-y-1 mt-1">
                                     <li>The service has not started any containers yet.</li>
