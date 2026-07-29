@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.10.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.10.2...servicebay-v5.10.3) (2026-07-29)
+
+
+### Bug Fixes
+
+* gate truth, test determinism, verbatim migrations, disk-import OOM, NPM cred prompt ([aa92451](https://github.com/mdopp/servicebay/commit/aa9245124ccd764f8fdcd1544a99827d1137d248))
+
 ## [5.10.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.10.1...servicebay-v5.10.2) (2026-07-28)
 
 
