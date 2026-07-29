@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { fetchTemplates, syncAllRegistries } from '@/app/actions';
 import { Template } from '@servicebay/api-client';
 import RegistryBrowser from '@/components/RegistryBrowser';
 import { Loader2, RefreshCw, DownloadCloud } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
+import { useToast } from '@/providers/ToastProvider';
 
 interface RegistryDashboardProps {
     variant?: 'page' | 'embedded';
@@ -16,6 +17,7 @@ export default function RegistryDashboard({ variant = 'page' }: RegistryDashboar
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const isFetchingRef = useRef(false);
+  const { addToast } = useToast();
 
   const loadData = async () => {
     if (isFetchingRef.current) return;
@@ -30,19 +32,32 @@ export default function RegistryDashboard({ variant = 'page' }: RegistryDashboar
     }
   };
 
+  // A rejected load used to be swallowed by try/finally: the spinner cleared
+  // and the operator was left staring at an empty registry with no clue
+  // anything failed. Report it like every sibling dashboard does (#2462). The
+  // handler sits here rather than inside `loadData` so the mount effect doesn't
+  // reach a synchronous setState-in-catch (react-hooks/set-state-in-effect).
+  const refresh = useCallback(() => {
+    void loadData().catch(e =>
+      addToast('error', 'Failed to load registry', e instanceof Error ? e.message : String(e)),
+    );
+  }, [addToast]);
+
   const handleSync = async () => {
       setSyncing(true);
       try {
           await syncAllRegistries();
           await loadData();
+      } catch (e) {
+          addToast('error', 'Registry sync failed', e instanceof Error ? e.message : String(e));
       } finally {
           setSyncing(false);
       }
   };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    refresh();
+  }, [refresh]);
 
   const actionButtons = (
     <div className="flex items-center gap-2">
@@ -55,7 +70,7 @@ export default function RegistryDashboard({ variant = 'page' }: RegistryDashboar
             {syncing ? 'Syncing...' : 'Sync Registries'}
         </button>
         <button 
-            onClick={loadData}
+            onClick={refresh}
             className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors"
             title="Refresh"
         >

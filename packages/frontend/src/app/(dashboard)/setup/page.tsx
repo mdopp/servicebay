@@ -327,6 +327,7 @@ export default function SetupPage() {
   const [logs, setLogs] = useState('');
   const [loading, setLoading] = useState(true);
   const [finishing, setFinishing] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
   const [logsCollapsed, setLogsCollapsed] = useState(false);
   const logsOffsetRef = useRef(0);
   const logViewRef = useRef<HTMLPreElement>(null);
@@ -388,10 +389,15 @@ export default function SetupPage() {
 
   const handleFinish = async () => {
     setFinishing(true);
+    setFinishError(null);
     try {
       await completeStackSetup();
       router.push('/services');
       router.refresh();
+    } catch (e) {
+      // Without this the spinner just stopped: no error, no navigation, and no
+      // way for the operator to tell whether setup completed (#2460).
+      setFinishError(e instanceof Error ? e.message : String(e));
     } finally {
       setFinishing(false);
     }
@@ -468,6 +474,12 @@ export default function SetupPage() {
       </header>
 
       <div className="flex-1 overflow-auto p-6 space-y-4">
+        {finishError && (
+          <div role="alert" className="p-3 rounded-card border border-status-fail/20 bg-status-fail/10 text-sm text-status-fail">
+            Couldn&apos;t finish setup: {finishError}. Setup is still pending — try Finish again.
+          </div>
+        )}
+
         {job.error && (
           <div className="p-3 rounded-card border border-status-fail/20 bg-status-fail/10 text-sm text-status-fail">
             {job.error}

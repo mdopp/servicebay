@@ -50,6 +50,35 @@
   --accent-strong: #2563eb;    /* blue-600 — hover/active */
   --on-accent: #ffffff;        /* text/icon on an accent fill */
 
+  /* --- Network topology visualization (#2430) --- */
+  --edge-default: rgba(148, 163, 184, 0.2);  /* faint slate for default edges */
+  --edge-down: #ef4444;                       /* red-500 for down edges */
+  --edge-declared: #64748b;                   /* slate-600 for declared edges */
+  --edge-observed: #3b82f6;                   /* blue-500 for observed edges */
+  --edge-inferred: #a855f7;                   /* violet-500 for inferred edges */
+  --minimap-container: #60a5fa;               /* blue-400 */
+  --minimap-service: #c084fc;                 /* purple-400 */
+  --minimap-unmanaged-service: #fbbf24;       /* amber-400 */
+  --minimap-pod: #f472b6;                     /* pink-400 */
+  --minimap-proxy: #34d399;                   /* emerald-400 */
+  --minimap-router: #fb923c;                  /* orange-400 */
+  --minimap-gateway: #fb923c;                 /* orange-400 */
+  --minimap-internet: #9ca3af;                /* gray-400 */
+  --minimap-link: #22d3ee;                    /* cyan-400 */
+  --minimap-device: #818cf8;                  /* indigo-400 */
+  --minimap-group: transparent;
+  --minimap-container-stroke: #2563eb;        /* blue-600 */
+  --minimap-service-stroke: #9333ea;          /* purple-600 */
+  --minimap-unmanaged-service-stroke: #d97706; /* amber-600 */
+  --minimap-pod-stroke: #db2777;              /* pink-600 */
+  --minimap-router-stroke: #ea580c;           /* orange-600 */
+  --minimap-gateway-stroke: #ea580c;          /* orange-600 */
+  --minimap-internet-stroke: #4b5563;         /* slate-700 */
+  --minimap-proxy-stroke: #059669;            /* emerald-600 */
+  --minimap-link-stroke: #0891b2;             /* cyan-600 */
+  --minimap-device-stroke: #4f46e5;           /* indigo-600 */
+  --minimap-group-stroke: #d1d5db;            /* gray-300 */
+
   /* --- Radius: ONE canonical semantic scale (was rounded-lg vs -xl ad-hoc).
      Named distinctly (chip/card/panel) so primitives standardize on these and
      the existing numeric rounded-sm/-lg utilities keep their defaults. --- */

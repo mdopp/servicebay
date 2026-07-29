@@ -163,7 +163,7 @@ function getNodeTypeInfo(data: GraphNodeData) {
 export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
     const isCollapsed = data.collapsed;
     const onToggle = data.onToggle;
-    const { isGroup, isExpandable, effectiveType, isManagedService, isUnmanagedService, isServiceType, isMissing, isGateway } = getNodeTypeInfo(data);
+    const { isGroup, isExpandable, effectiveType, isManagedService, isUnmanagedService, isServiceType, isMissing } = getNodeTypeInfo(data);
 
   // Decide whether to render as the "Opened Group Frame" or the "Node Card"
   const renderAsExpandedGroup = isExpandable && !isCollapsed;
@@ -177,16 +177,16 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
   const usesDns = data.metadata?.usesDns === true;
 
   const getTypeColors = (): Record<string, string> => ({
-    container: 'border-blue-400 dark:border-blue-600 bg-blue-100 dark:bg-blue-900/40',
-    service: 'border-purple-400 dark:border-purple-600 bg-purple-100 dark:bg-purple-900/40',
-    'unmanaged-service': 'border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-900/30',
-    pod: 'border-pink-400 dark:border-pink-600 bg-pink-100 dark:bg-pink-900/40',
-    router: 'border-orange-400 dark:border-orange-600 bg-orange-100 dark:bg-orange-600/60',
-    internet: 'border-gray-400 dark:border-gray-600 bg-gray-100 dark:bg-gray-800/60',
-    proxy: 'border-emerald-400 dark:border-emerald-600 bg-emerald-100 dark:bg-emerald-900/40',
-    gateway: 'border-orange-400 dark:border-orange-600 bg-orange-100 dark:bg-orange-800/50',
-    link: 'border-cyan-400 dark:border-cyan-600 bg-cyan-100 dark:bg-cyan-900/40',
-    device: 'border-indigo-400 dark:border-indigo-600 bg-indigo-100 dark:bg-indigo-900/40',
+    container: 'border-border bg-surface-2',
+    service: 'border-border bg-surface-2',
+    'unmanaged-service': 'border-border bg-surface-2',
+    pod: 'border-border bg-surface-2',
+    router: 'border-border bg-surface-2',
+    internet: 'border-border bg-surface-2',
+    proxy: 'border-border bg-surface-2',
+    gateway: 'border-border bg-surface-2',
+    link: 'border-border bg-surface-2',
+    device: 'border-border bg-surface-2',
   });
 
   const typeLabels: Record<string, string> = {
@@ -203,8 +203,8 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
 
   const typeColors = getTypeColors();
   const nodeColor = isMissing
-      ? 'border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/20 border-dashed'
-      : (typeColors[effectiveType] || 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900');
+      ? 'border-border bg-surface-muted border-dashed'
+      : (typeColors[effectiveType] || 'border-border bg-surface');
 
       // Pre-calculate effective ports to use in IP extraction if data.ports is empty
       // (e.g. Pod Nodes which inherit ports from children)
@@ -363,10 +363,10 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
 
   if (data.type === 'internet') {
       return (
-        <div className="flex flex-col items-center justify-center w-32 h-32 rounded-full bg-blue-50 dark:bg-blue-900/20 border-4 border-blue-200 dark:border-blue-800 shadow-lg relative group">
-            <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-blue-400 !-right-1.5" />
-            <Globe className="w-12 h-12 text-blue-500 dark:text-blue-400 mb-1" />
-            <span className="font-bold text-sm text-blue-700 dark:text-blue-300 uppercase tracking-wider">Internet</span>
+        <div className="flex flex-col items-center justify-center w-32 h-32 rounded-full bg-surface-2 border-4 border-border shadow-lg relative group">
+            <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-accent !-right-1.5" />
+            <Globe className="w-12 h-12 text-accent mb-1" />
+            <span className="font-bold text-sm text-accent uppercase tracking-wider">Internet</span>
         </div>
       );
   }
@@ -389,57 +389,33 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
           : 'min-w-[320px] h-auto'
     }`}>
       {/* Handles for connecting */}
-      <Handle type="target" position={targetPos} className="!w-3 !h-3 !bg-blue-400" />
-      <Handle type="source" position={sourcePos} className="!w-3 !h-3 !bg-blue-400" />
+      <Handle type="target" position={targetPos} className="!w-3 !h-3 !bg-accent" />
+      <Handle type="source" position={sourcePos} className="!w-3 !h-3 !bg-accent" />
       
       {renderAsExpandedGroup ? (
           /* Render as "Expanded Group Frame" */
-         <div className={`w-full h-full rounded-xl border-2 flex flex-col justify-between p-2 pl-2 transition-all group-border ${
-             // Explicit Group Stylings to ensure visibility
-             isServiceType
-                 ? (isUnmanagedService
-                     ? 'border-amber-400/50 dark:border-amber-500/50 bg-amber-50/50 dark:bg-amber-900/10'
-                     : 'border-purple-400/50 dark:border-purple-500/50 bg-purple-50/50 dark:bg-purple-900/10')
-                 : effectiveType === 'pod' ? 'border-pink-400/50 dark:border-pink-500/50 bg-pink-50/50 dark:bg-pink-900/10'
-                 : effectiveType === 'proxy' ? 'border-emerald-400/50 dark:border-emerald-500/50 bg-emerald-50/50 dark:bg-emerald-900/10'
-                 : 'border-gray-300 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/10'
-         }`}>
+         <div className={`w-full h-full rounded-xl border-2 flex flex-col justify-between p-2 pl-2 transition-all group-border border-border/50 bg-surface-2/30`}>
             <div className="flex justify-between items-start w-full pointer-events-none">
-                <div className={`self-start px-3 py-1.5 rounded-md text-sm font-bold uppercase tracking-wider border shadow-sm flex items-center gap-2 pointer-events-auto ${
-                    isGateway 
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900 dark:text-emerald-300 dark:border-emerald-800' 
-                        : (effectiveType !== 'group' && typeColors[effectiveType] 
-                            ? typeColors[effectiveType].replace('bg-', 'bg-opacity-20 bg-').replace('border-', 'border-opacity-50 border-') 
-                            : 'bg-white text-gray-600 border-gray-200 dark:bg-gray-900 dark:text-gray-400 dark:border-gray-700')
-                } ${
-                    // Ensure text color is set for specific types if not already
-                    isServiceType
-                        ? (isUnmanagedService
-                            ? 'text-amber-700 dark:text-amber-300'
-                            : 'text-purple-700 dark:text-purple-300')
-                        : effectiveType === 'pod' ? 'text-pink-700 dark:text-pink-300'
-                        : effectiveType === 'proxy' ? 'text-emerald-700 dark:text-emerald-300'
-                        : ''
-                }`}>
+                <div className={`self-start px-3 py-1.5 rounded-md text-sm font-bold uppercase tracking-wider border shadow-sm flex items-center gap-2 pointer-events-auto bg-surface-2 text-text border-border`}>
                     <button
                         onClick={(e) => { e.stopPropagation(); onToggle?.(id); }}
-                        className="mr-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded p-0.5 text-gray-500"
+                        className="mr-1 hover:bg-border rounded p-0.5 text-muted"
                         title="Collapse Group"
                     >
-                        <LayoutGrid size={14} /> 
+                        <LayoutGrid size={14} />
                     </button>
                     {data.status && (
-                        <div className={`w-2.5 h-2.5 rounded-full ${data.status === 'up' ? 'bg-green-500' : 'bg-red-500'}`} />
+                        <div className={`w-2.5 h-2.5 rounded-full ${data.status === 'up' ? 'bg-status-ok' : 'bg-status-fail'}`} />
                     )}
                     {data.label}
                     {/* Visual Tag for Pod/Service */}
                     {(isServiceType || effectiveType === 'pod') ? (
-                        <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-white/50 dark:bg-black/20 border border-black/10 dark:border-white/10 uppercase tracking-wider font-extrabold opacity-80">
+                        <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-surface border border-border uppercase tracking-wider font-extrabold opacity-80">
                             {effectiveType === 'pod' ? 'Pod' : (isUnmanagedService ? 'Bundle' : 'Service')}
                         </span>
                     ) : null}
                     {data.node && data.node !== 'local' && (
-                        <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                        <span className="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-surface-2 text-text border border-border">
                             {data.node}
                         </span>
                     )}
@@ -449,7 +425,7 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                 {portMap.length > 0 && !['service', 'pod', 'proxy', 'unmanaged-service'].includes(effectiveType) && (
                     <div className="flex flex-col gap-1 items-end">
                         {globalIp && (
-                             <div className="text-[10px] font-mono text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 mb-0.5 self-end" title="Host IP">
+                             <div className="text-[10px] font-mono text-muted bg-surface-2 px-1.5 py-0.5 rounded border border-border mb-0.5 self-end" title="Host IP">
                                 {globalIp}
                              </div>
                         )}
@@ -467,18 +443,18 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                             const showIpInTag = !globalIp && p.ip && p.showIp;
 
                             return (
-                                <div key={idx} className="px-2 py-0.5 rounded text-[10px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 shadow-sm flex items-center gap-1">
-                                    <a 
+                                <div key={idx} className="px-2 py-0.5 rounded text-[10px] font-mono bg-surface-2 text-text border border-border shadow-sm flex items-center gap-1">
+                                    <a
                                         href={`http://${hostname}:${p.host}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="hover:text-blue-500 hover:underline"
+                                        className="hover:text-accent hover:underline"
                                         onClick={(e) => e.stopPropagation()}
                                     >
                                         {showIpInTag ? `${p.ip}:${p.host}` : `:${p.host}`}
                                     </a>
                                     {p.container && (
-                                        <span className="text-gray-400 dark:text-gray-500">
+                                        <span className="text-muted">
                                             (to :{p.container})
                                         </span>
                                     )}
@@ -492,13 +468,13 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
      ) : (
         /* Render as "Standard Node" (Card) - used for Leaf Nodes AND Collapsed Groups */
         <div className={`w-full h-full rounded-xl border shadow-sm hover:shadow-md transition-all p-4 flex flex-col gap-3 ${nodeColor}`}>
-            <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800/50 pb-2">
-                <div className="font-bold text-lg text-gray-900 dark:text-gray-100 truncate pr-2 flex items-center gap-2" title={data.label}>
+            <div className="flex items-center justify-between border-b border-border pb-2">
+                <div className="font-bold text-lg text-text truncate pr-2 flex items-center gap-2" title={data.label}>
                     {/* Add Expand Button if Expandable & Collapsed */}
                     {isExpandable && (
                         <button
                             onClick={(e) => { e.stopPropagation(); onToggle?.(id); }}
-                            className="hover:bg-gray-100 dark:hover:bg-gray-700 rounded p-1 text-gray-500 transition-colors"
+                            className="hover:bg-border rounded p-1 text-muted transition-colors"
                             title="Expand Group"
                         >
                             <ChevronDown size={16} className="-rotate-90" />
@@ -511,7 +487,7 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                     {behindAuth && (
                         <span
                             data-testid="badge-behind-auth"
-                            className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                            className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-surface-2 text-text border border-border"
                             title="Hinter Authelia/LLDAP (SSO)"
                         >
                             <Lock size={10} /> SSO
@@ -520,7 +496,7 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                     {usesDns && (
                         <span
                             data-testid="badge-uses-dns"
-                            className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800"
+                            className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-surface-2 text-text border border-border"
                             title="DNS über AdGuard"
                         >
                             <Globe size={10} /> DNS
@@ -529,25 +505,25 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
 
                     {/* Host IP moved to Header */}
                     {globalIp && (
-                         <div className="text-[10px] font-mono font-bold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 px-1.5 py-0.5 rounded border border-gray-100 dark:border-gray-800 ml-1" title="Host IP">
+                         <div className="text-[10px] font-mono font-bold text-muted bg-surface-2 px-1.5 py-0.5 rounded border border-border ml-1" title="Host IP">
                             {globalIp}
                          </div>
                     )}
                 </div>
                 {data.status && (
-                    <div className={`w-3 h-3 rounded-full shrink-0 ${data.status === 'up' ? 'bg-green-500' : 'bg-red-500'}`} />
+                    <div className={`w-3 h-3 rounded-full shrink-0 ${data.status === 'up' ? 'bg-status-ok' : 'bg-status-fail'}`} />
                 )}
             </div>
             
             <div className="flex-1 flex flex-col gap-2 min-h-0">
                 <div className="flex gap-2">
                   {data.subLabel && !['router', 'service', 'pod', 'proxy', 'unmanaged-service'].includes(effectiveType) && (
-                      <div className="text-xs text-gray-500 dark:text-gray-400 font-mono bg-white/50 dark:bg-black/20 px-2 py-1 rounded break-all" title={data.subLabel}>
+                      <div className="text-xs text-muted font-mono bg-surface px-2 py-1 rounded break-all" title={data.subLabel}>
                           {data.subLabel}
                       </div>
                   )}
                   {!!data.metadata?.pod && (typeof data.metadata.pod === 'string' || typeof data.metadata.pod === 'number') && (
-                     <div className="text-xs text-pink-600 dark:text-pink-400 font-mono bg-pink-50 dark:bg-pink-900/20 border border-pink-200 dark:border-pink-800/30 px-2 py-1 rounded break-all flex items-center gap-1">
+                     <div className="text-xs text-text font-mono bg-surface-2 border border-border px-2 py-1 rounded break-all flex items-center gap-1">
                         <span className="opacity-50 text-[10px]">POD:</span> {data.metadata.pod as React.ReactNode}
                      </div>
                   )}
@@ -558,19 +534,19 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                     <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                         {details.map((d, i) => d.value && (
                             <div key={i} className={`flex flex-col min-w-0 ${d.full ? 'col-span-2' : ''}`}>
-                                <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold">{d.label}</span>
+                                <span className="text-[10px] text-muted uppercase tracking-wider font-semibold">{d.label}</span>
                                 {d.label === 'URL' ? (
-                                    <a 
-                                        href={String(d.value)} 
-                                        target="_blank" 
-                                        rel="noopener noreferrer" 
-                                        className="text-sm text-blue-600 dark:text-blue-400 font-medium break-words hover:underline" 
+                                    <a
+                                        href={String(d.value)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-sm text-accent font-medium break-words hover:underline"
                                         onClick={(e) => e.stopPropagation()}
                                     >
                                         {d.value}
                                     </a>
                                 ) : (
-                                    <span className="text-sm text-gray-800 dark:text-gray-200 font-medium break-words" title={String(d.value)}>{d.value}</span>
+                                    <span className="text-sm text-text font-medium break-words" title={String(d.value)}>{d.value}</span>
                                 )}
                             </div>
                         ))}
@@ -579,8 +555,8 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
 
                 {/* Verified Domains List (Filtered for Proxies/Services) */}
                 {displayDomains.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-gray-100 dark:border-gray-800/50">
-                        <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold block mb-1">
+                    <div className="mt-2 pt-2 border-t border-border">
+                        <span className="text-[10px] text-muted uppercase tracking-wider font-semibold block mb-1">
                             {effectiveType === 'proxy' && 'Routed Domains'}
                             {effectiveType !== 'proxy' && 'Verified Domains'}
                         </span>
@@ -599,11 +575,11 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         onClick={(e) => e.stopPropagation()}
-                                        className="flex items-center gap-2 text-xs font-mono text-blue-600 dark:text-blue-400 hover:underline px-1.5 py-1 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-100 dark:border-blue-800/30 transition-colors"
+                                        className="flex items-center gap-2 text-xs font-mono text-accent hover:underline px-1.5 py-1 bg-surface-2 rounded border border-border transition-colors"
                                     >
                                         {looksLikeDomain
                                             ? <DomainHealthDot domain={bareDomain} />
-                                            : <div className="w-1.5 h-1.5 rounded-full bg-gray-400 shrink-0" />}
+                                            : <div className="w-1.5 h-1.5 rounded-full bg-border shrink-0" />}
                                         <span className="truncate" title={domain}>{domain}</span>
                                     </a>
                                 );
@@ -613,39 +589,39 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                 )}
 
                 {data.hostname && (
-                    <div className="text-xs text-gray-500 dark:text-gray-400 font-mono bg-white/50 dark:bg-black/20 px-2 py-1 rounded break-all flex items-center gap-1" title="Hostname">
+                    <div className="text-xs text-muted font-mono bg-surface px-2 py-1 rounded break-all flex items-center gap-1" title="Hostname">
                         <Globe size={10} className="opacity-50" />
                         {data.hostname}
                     </div>
                 )}
 
                 {data.metadata?.description && data.type !== 'link' && (
-                    <div className="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mt-1 italic" title={data.metadata.description}>
+                    <div className="text-xs text-muted line-clamp-2 mt-1 italic" title={data.metadata.description}>
                         {data.metadata.description}
                     </div>
                 )}
                 
-                <div className="mt-auto pt-3 flex items-center justify-between border-t border-gray-100 dark:border-gray-800/50">
+                <div className="mt-auto pt-3 flex items-center justify-between border-t border-border">
                     <PortTagsList portMap={portMap} globalIp={globalIp} nodeData={data} />
-                    
+
                     <div className="flex flex-col items-end gap-1 ml-auto">
                         {data.node && data.node !== 'local' && (!data.parentNode || data.type === 'link') && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 uppercase tracking-wider font-bold">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-surface-2 text-text border border-border uppercase tracking-wider font-bold">
                                 {data.node}
                             </span>
                         )}
-                        
-                        <span className="text-[10px] font-semibold px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded border border-gray-200 dark:border-gray-700 uppercase tracking-wider whitespace-nowrap">
+
+                        <span className="text-[10px] font-semibold px-2 py-0.5 bg-surface-2 text-muted rounded border border-border uppercase tracking-wider whitespace-nowrap">
                             {isMissing ? 'Missing Node' : (typeLabels[effectiveType] || effectiveType)}
                         </span>
                         
-                         {!!data.metadata?.isExternalMissing && (
-                            <button 
+                        {!!data.metadata?.isExternalMissing && (
+                            <button
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     data.onCreateExternalLink?.(data);
                                 }}
-                                className="mt-1 px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold uppercase tracking-wider rounded transition-colors shadow-sm flex items-center gap-1"
+                                className="mt-1 px-2 py-1 bg-accent hover:bg-accent-strong text-on-accent text-[10px] font-bold uppercase tracking-wider rounded transition-colors shadow-sm flex items-center gap-1"
                             >
                                 <Plus size={10} />
                                 Add Link
@@ -679,9 +655,9 @@ const PortTagsList = ({ portMap, globalIp, nodeData }: { portMap: Array<{ host: 
                 const showIpInTag = !globalIp && p.ip && p.showIp;
                 const link = `http://${hostname}:${p.host}`;
                 const content = (
-                    <span className="text-[11px] font-medium px-2 py-0.5 bg-white dark:bg-black/20 text-blue-600 dark:text-blue-400 rounded border border-blue-100 dark:border-blue-800/30 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors cursor-pointer flex items-center gap-1">
+                    <span className="text-[11px] font-medium px-2 py-0.5 bg-surface-2 text-accent rounded border border-border hover:bg-surface transition-colors cursor-pointer flex items-center gap-1">
                         <span>{showIpInTag ? `${p.ip}:${p.host}` : `:${p.host}`}</span>
-                        {p.container && <span className="text-gray-400 dark:text-gray-500 opacity-75">(to :{p.container})</span>}
+                        {p.container && <span className="text-muted opacity-75">(to :{p.container})</span>}
                     </span>
                 );
 
@@ -725,12 +701,12 @@ type LinkFormState = {
 
 // Helper: get MiniMap color for node type
 function getMiniMapNodeColor(type: string): string {
-  return MINIMAP_NODE_COLORS[type] ?? '#d1d5db';
+  return MINIMAP_NODE_COLORS[type] ?? MINIMAP_NODE_COLORS.internet;
 }
 
 // Helper: get MiniMap stroke color for node type
 function getMiniMapStrokeColor(type: string): string {
-  return MINIMAP_STROKE_COLORS[type] ?? '#9ca3af';
+  return MINIMAP_STROKE_COLORS[type] ?? MINIMAP_STROKE_COLORS.internet;
 }
 
 // Legend body extracted from NetworkLegend so the panel wrapper stays under
@@ -738,26 +714,26 @@ function getMiniMapStrokeColor(type: string): string {
 function LegendBody() {
     return (
         <div className="px-3 pb-2 space-y-1.5 border-t border-border pt-2">
-            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-blue-500" /><span>Service / Pod</span></div>
-            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-purple-500" /><span>Container</span></div>
-            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-orange-500" /><span>Gateway</span></div>
-            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-cyan-500" /><span>External Link</span></div>
-            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-gray-400" /><span>Group / Node</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-status-info" /><span>Service / Pod</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-accent" /><span>Container</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-accent-secondary" /><span>Gateway</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-accent" /><span>External Link</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded bg-border" /><span>Group / Node</span></div>
             <div className="border-t border-border pt-1.5 mt-1.5">
-                <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500" /><span>Active / Running</span></div>
-                <div className="flex items-center gap-2 mt-1"><div className="w-2.5 h-2.5 rounded-full bg-red-500" /><span>Stopped / Error</span></div>
+                <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-status-ok" /><span>Active / Running</span></div>
+                <div className="flex items-center gap-2 mt-1"><div className="w-2.5 h-2.5 rounded-full bg-status-fail" /><span>Stopped / Error</span></div>
             </div>
             <div className="border-t border-border pt-1.5 mt-1.5 space-y-1">
                 <div className="flex items-center gap-2">
-                    <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#0ea5e9" strokeWidth="2" /></svg>
+                    <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--status-info)" strokeWidth="2" /></svg>
                     <span>Observed TCP flow</span>
                 </div>
                 <div className="flex items-center gap-2">
-                    <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#d97706" strokeWidth="2" strokeDasharray="4 4" /></svg>
+                    <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--status-warn)" strokeWidth="2" strokeDasharray="4 4" /></svg>
                     <span>Declared dependency</span>
                 </div>
                 <div className="flex items-center gap-2">
-                    <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="#a855f7" strokeWidth="2" strokeDasharray="2 3" /></svg>
+                    <svg width="20" height="6"><line x1="0" y1="3" x2="20" y2="3" stroke="var(--accent-secondary)" strokeWidth="2" strokeDasharray="2 3" /></svg>
                     <span>Inferred (env / host)</span>
                 </div>
             </div>
@@ -766,11 +742,11 @@ function LegendBody() {
                 badges to keep the map planar. */}
             <div className="border-t border-border pt-1.5 mt-1.5 space-y-1">
                 <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"><Lock size={9} /> SSO</span>
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-surface-2 text-text border border-border"><Lock size={9} /> SSO</span>
                     <span>Hinter Authelia/LLDAP</span>
                 </div>
                 <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-sky-100 dark:bg-sky-900/40 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800"><Globe size={9} /> DNS</span>
+                    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-surface-2 text-text border border-border"><Globe size={9} /> DNS</span>
                     <span>DNS über AdGuard</span>
                 </div>
             </div>
@@ -1286,7 +1262,7 @@ export default function NetworkDashboard() {
             },
             parentId: n.parentNode,
             extent: n.parentNode ? 'parent' : undefined,
-            className: isGroup ? 'border border-dashed border-slate-300 dark:border-white/10 bg-slate-500/[0.02] dark:bg-white/[0.01] rounded-2xl backdrop-blur-[2px]' : undefined,
+            className: isGroup ? 'border border-dashed border-border bg-surface-2/5 rounded-2xl backdrop-blur-[2px]' : undefined,
             // #2201 — React Flow v12 reads layout dims from top-level
             // width/height, not style. Set the initial group guess top-level so
             // it doesn't fight the top-level dims getLayoutedElements stamps.
@@ -1639,7 +1615,7 @@ export default function NetworkDashboard() {
                 </Panel>
             )}
             <NetworkLegend />
-            <Background color="#999" gap={16} size={1} className="opacity-10" />
+            <Background color="var(--text-muted)" gap={16} size={1} className="opacity-10" />
             <Controls
                 showInteractive={false}
                 className="!bg-surface !border-border shadow-lg [&>button]:!bg-surface [&>button]:!border-border [&>button]:!text-text [&>button:hover]:!bg-surface-2 [&>button>svg]:!fill-current"
@@ -1740,7 +1716,7 @@ export default function NetworkDashboard() {
                             <FileText size={16} />
                             Device Logs
                         </h4>
-                        <div className="bg-gray-950 text-gray-300 rounded-card border border-gray-800 p-4 font-mono text-xs overflow-auto max-h-[400px] whitespace-pre-wrap">
+                        <div className="bg-surface-muted text-muted rounded-card border border-border p-4 font-mono text-xs overflow-auto max-h-[400px] whitespace-pre-wrap">
                             {healthData.deviceLog || 'No logs available.'}
                         </div>
                     </div>
@@ -1847,7 +1823,7 @@ export default function NetworkDashboard() {
 
       {/* Context Menu / Details Panel */}
       {selectedNodeData && (
-          <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm">
               <div className="w-full sm:max-w-md h-full bg-surface border-l border-border shadow-2xl flex flex-col animate-in slide-in-from-right-10">
                   <div className="flex items-start justify-between px-5 py-4 border-b border-border gap-3">
                       <div className="min-w-0 flex-1">
@@ -2070,7 +2046,7 @@ export default function NetworkDashboard() {
       )}
 
       {selectedEdge && (
-          <div className="fixed inset-0 z-40 flex justify-end bg-gray-950/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-40 flex justify-end bg-black/60 backdrop-blur-sm">
               <div className="w-full sm:max-w-sm h-full bg-surface border-l border-border shadow-2xl flex flex-col animate-in slide-in-from-right-10">
                   <div className="flex items-center justify-between px-5 py-4 border-b border-border">
                       <div>

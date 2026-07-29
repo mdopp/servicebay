@@ -250,6 +250,7 @@ export default function ApiTokensSection() {
   // factory-reset — never a bare browser confirm() (#2164).
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
   const [revoking, setRevoking] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
 
   // The hash is set by the install script; this UI just reflects status +
   // offers a manual revoke. Auto-revoked when the operator mints their first
@@ -327,16 +328,28 @@ export default function ApiTokensSection() {
   };
 
   const revokeOneToken = (id: string, name: string) => {
+    setRevokeError(null);
     setRevokeTarget({ id, name });
   };
 
   const confirmRevoke = async () => {
     if (!revokeTarget || revoking) return;
     setRevoking(true);
+    setRevokeError(null);
     try {
       const res = await fetch(`/api/system/api-tokens?id=${revokeTarget.id}`, { method: 'DELETE' });
-      if (res.ok) loadTokens();
+      // Close the dialog only when the token is actually gone. Closing
+      // unconditionally made a failed revoke look like a success, so the
+      // operator believed a live token was locked out (#2461).
+      if (!res.ok) {
+        const detail = await res.json().then(d => d?.error).catch(() => null);
+        setRevokeError(detail || `Revoke failed — HTTP ${res.status}`);
+        return;
+      }
+      loadTokens();
       setRevokeTarget(null);
+    } catch (e) {
+      setRevokeError(e instanceof Error ? e.message : String(e));
     } finally {
       setRevoking(false);
     }
@@ -418,10 +431,20 @@ export default function ApiTokensSection() {
         resourceName={revokeTarget?.name ?? ''}
         isLoading={revoking}
         confirmText={revoking ? 'Revoking…' : 'Revoke token'}
-        message="Any client using this token — an MCP assistant, the ServiceBay TUI, or a script — is locked out immediately. This cannot be undone."
+        message={
+          <>
+            Any client using this token — an MCP assistant, the ServiceBay TUI, or a script — is locked out immediately. This cannot be undone.
+            {revokeError && (
+              <span role="alert" className="mt-2 block text-status-fail">
+                {revokeError} — the token is still active.
+              </span>
+            )}
+          </>
+        }
         onConfirm={confirmRevoke}
         onCancel={() => {
           if (revoking) return;
+          setRevokeError(null);
           setRevokeTarget(null);
         }}
       />

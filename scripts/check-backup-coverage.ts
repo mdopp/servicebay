@@ -39,12 +39,37 @@ interface TemplateVolume {
 }
 
 /**
+ * Bare `{{VAR}}` hostPaths that are NOT persistent household state, each with
+ * the reason it is exempt. This is the ONLY way a bare-variable hostPath leaves
+ * the coverage check — everything else is a candidate.
+ *
+ * #2465: the previous rule failed *open*. A bare `{{VAR}}` counted as a
+ * persistent volume only when its name ended in `_PATH`/`_DIR`; every other
+ * name returned `null` and was dropped before the coverage check saw it — not
+ * reported as uncovered, invisible. A template naming its data variable
+ * slightly off-pattern (`{{MEDIA_ROOT}}`, `{{PHOTOS}}`) got a green
+ * `check:backup-coverage` with a silently un-backed-up volume, which is the one
+ * outcome this gate exists to prevent. Now the gate fails *closed*: an
+ * off-pattern name is flagged until it is covered, excluded, or (if it really
+ * isn't household state) matched by an entry below.
+ */
+const NON_VOLUME_HOSTPATH_VARS: readonly { pattern: RegExp; reason: string }[] = [
+  { pattern: /_DEVICES?$/, reason: 'device passthrough (e.g. /dev/serial/…), not stored state' },
+  { pattern: /_(SOCKET|SOCK)$/, reason: 'host socket mount, not stored state' },
+  { pattern: /_PORT$/, reason: 'not a filesystem path' },
+];
+
+/** The exemption an off-pattern bare `{{VAR}}` matched, if any. */
+function hostPathVarExemption(name: string): string | null {
+  return NON_VOLUME_HOSTPATH_VARS.find(e => e.pattern.test(name))?.reason ?? null;
+}
+
+/**
  * A hostPath volume is a candidate for the backup contract when it points at
- * the box's persistent data root (`{{DATA_DIR}}/…`) or a whole-volume variable
- * (`{{SOME_MEDIA_PATH}}`). Device passthroughs (`{{ZWAVE_DEVICE}}`) and in-pod /
- * ephemeral mounts are NOT persistent household state — a volume rooted at a
- * bare device/`/dev`/`/run` path is skipped. We include `{{DATA_DIR}}/…` and any
- * single `{{VAR}}` whose name reads like a data path (ends in `_PATH`/`_DIR`).
+ * the box's persistent data root (`{{DATA_DIR}}/…`) or at a whole-volume
+ * variable (`{{JELLYFIN_MEDIA_PATH}}`, `{{MEDIA_ROOT}}`, …). Absolute host
+ * paths (`/dev/…`, `/run/…`, in-pod mounts) are outside the contract, and a
+ * bare variable is only skipped when it matches `NON_VOLUME_HOSTPATH_VARS`.
  */
 function toCoverageKey(raw: string): string | null {
   const dataDir = raw.match(/^\{\{DATA_DIR\}\}\/(.+)$/);
@@ -53,8 +78,8 @@ function toCoverageKey(raw: string): string | null {
   if (bareVar) {
     const name = bareVar[1];
     if (name === 'DATA_DIR') return null; // the root itself, not a leaf volume
-    if (/_(PATH|DIR)$/.test(name)) return raw.slice(2, -2); // e.g. JELLYFIN_MEDIA_PATH
-    return null; // device/port/other vars — not a persistent data volume
+    if (hostPathVarExemption(name)) return null; // explicitly not stored state
+    return name; // fail closed: every other variable volume must be accounted for
   }
   return null; // absolute host paths (devices, /run, in-pod) — not our contract
 }
@@ -90,27 +115,31 @@ function isUnder(key: string, roots: string[]): boolean {
   return roots.some(root => key === root || key.startsWith(root + '/'));
 }
 
-function main(): void {
+/**
+ * The volumes that satisfy neither a manifest nor an explicit bulk-exclude.
+ * Exported so the gate's own coverage decision is testable without the
+ * filesystem (tests/scripts/gate-config-truth.test.ts).
+ */
+function uncoveredVolumes(vols: readonly TemplateVolume[]): TemplateVolume[] {
   const manifestRoots = manifestDataDirs();
   const excludedRoots = Object.keys(EXCLUDED_BULK_VOLUMES).map(k => k.replace(/\/+$/, ''));
+  return vols.filter(v => !isUnder(v.key, manifestRoots) && !isUnder(v.key, excludedRoots));
+}
 
+function main(): void {
   const templates = readdirSync(TEMPLATES_DIR, { withFileTypes: true })
     .filter(e => e.isDirectory())
     .map(e => e.name);
 
-  const uncovered: TemplateVolume[] = [];
-  let checked = 0;
-
+  const all: TemplateVolume[] = [];
   for (const template of templates) {
     const tmplPath = path.join(TEMPLATES_DIR, template, 'template.yml');
     if (!existsSync(tmplPath)) continue;
-    const vols = extractHostPathVolumes(template, readFileSync(tmplPath, 'utf8'));
-    for (const vol of vols) {
-      checked++;
-      const covered = isUnder(vol.key, manifestRoots) || isUnder(vol.key, excludedRoots);
-      if (!covered) uncovered.push(vol);
-    }
+    all.push(...extractHostPathVolumes(template, readFileSync(tmplPath, 'utf8')));
   }
+
+  const checked = all.length;
+  const uncovered = uncoveredVolumes(all);
 
   if (uncovered.length > 0) {
     console.error('✗ backup-coverage contract (#2153): persistent volume(s) with no manifest entry and no EXCLUDED_BULK_VOLUMES marker:\n');
@@ -119,10 +148,20 @@ function main(): void {
     }
     console.error('\nAdd a SERVICE_BACKUP_MANIFESTS entry for it, or list it in EXCLUDED_BULK_VOLUMES with a reason.');
     console.error('Both live in packages/backend/src/lib/externalBackup/serviceManifest.ts (mirror the worker copy).');
+    console.error('If a bare `{{VAR}}` hostPath is genuinely not stored state (a device, a socket), add a');
+    console.error('pattern + reason to NON_VOLUME_HOSTPATH_VARS in scripts/check-backup-coverage.ts (#2465).');
     process.exit(1);
   }
 
   console.log(`✓ backup-coverage: ${checked} persistent template volume(s) all covered (manifest or explicit bulk-exclude).`);
 }
 
-main();
+// Run only when invoked as the CLI — `toCoverageKey` / `extractHostPathVolumes`
+// / `uncoveredVolumes` are imported by tests/scripts/gate-config-truth.test.ts,
+// which must not trigger a full run (and a `process.exit`) just by importing.
+if (/check-backup-coverage\.ts$/.test(process.argv[1] ?? '')) {
+  main();
+}
+
+export { toCoverageKey, extractHostPathVolumes, uncoveredVolumes };
+export type { TemplateVolume };
