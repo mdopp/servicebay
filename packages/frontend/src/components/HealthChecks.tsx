@@ -2,6 +2,7 @@
 
 import { Activity, CheckCircle, XCircle, AlertTriangle, AlertCircle, Play, Edit, Trash2, History, Search, Wrench } from 'lucide-react';
 import { Check } from '@servicebay/api-client';
+import { Button } from '@/components/ui';
 
 /** Four-way row status. Real checks are ok/fail/unknown; synthetic
  *  diagnose rows (#1423) additionally carry `warn`/`info` in their
@@ -119,9 +120,10 @@ export default function HealthChecks({
           list. Diagnose rows surface their own warn/fail (warn is no
           longer folded into fail). */}
       <div className="grid grid-cols-4 gap-2 px-2">
-        <button
+        <Button
             onClick={() => setStatusFilter(statusFilter === 'ok' ? 'all' : 'ok')}
-            className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
+            variant="ghost"
+            className={`h-auto p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'ok'
                 ? 'bg-status-ok/5 border-status-ok/20 ring-2 ring-status-ok ring-opacity-50'
                 : 'bg-surface border-border hover:bg-surface-2'
@@ -134,10 +136,11 @@ export default function HealthChecks({
               <p className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Healthy</p>
               <p className="text-xl font-bold text-text">{counts.ok}</p>
             </div>
-        </button>
-        <button
+        </Button>
+        <Button
             onClick={() => setStatusFilter(statusFilter === 'warn' ? 'all' : 'warn')}
-            className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
+            variant="ghost"
+            className={`h-auto p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'warn'
                 ? 'bg-status-warn/5 border-status-warn/20 ring-2 ring-status-warn ring-opacity-50'
                 : 'bg-surface border-border hover:bg-surface-2'
@@ -150,10 +153,11 @@ export default function HealthChecks({
               <p className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Warning</p>
               <p className="text-xl font-bold text-text">{counts.warn}</p>
             </div>
-        </button>
-        <button
+        </Button>
+        <Button
             onClick={() => setStatusFilter(statusFilter === 'fail' ? 'all' : 'fail')}
-            className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
+            variant="ghost"
+            className={`h-auto p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'fail'
                 ? 'bg-status-fail/5 border-status-fail/20 ring-2 ring-status-fail ring-opacity-50'
                 : 'bg-surface border-border hover:bg-surface-2'
@@ -166,10 +170,11 @@ export default function HealthChecks({
               <p className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Failing</p>
               <p className="text-xl font-bold text-text">{counts.fail}</p>
             </div>
-        </button>
-        <button
+        </Button>
+        <Button
             onClick={() => setStatusFilter(statusFilter === 'unknown' ? 'all' : 'unknown')}
-            className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
+            variant="ghost"
+            className={`h-auto p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'unknown'
                 ? 'bg-surface-2 border-border ring-2 ring-text-subtle ring-opacity-50'
                 : 'bg-surface border-border hover:bg-surface-2'
@@ -182,7 +187,7 @@ export default function HealthChecks({
               <p className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Unknown</p>
               <p className="text-xl font-bold text-text">{counts.unknown}</p>
             </div>
-        </button>
+        </Button>
       </div>
 
       {/* Checks List */}
@@ -193,17 +198,17 @@ export default function HealthChecks({
                 <>
                     <Search className="w-12 h-12 mx-auto mb-3 opacity-20" />
                     <p>No checks match your filters.</p>
-                    <button onClick={() => {setSearchQuery(''); setStatusFilter('all');}} className="mt-2 text-accent hover:underline text-sm">
+                    <Button onClick={() => {setSearchQuery(''); setStatusFilter('all');}} variant="ghost" className="mt-2 text-accent hover:underline text-sm">
                         Clear filters
-                    </button>
+                    </Button>
                 </>
             ) : (
                 <>
                     <Activity className="w-12 h-12 mx-auto mb-3 opacity-20" />
                     <p>No health checks configured.</p>
-                    <button onClick={() => handleOpenModal()} className="mt-4 text-accent hover:underline text-sm">
+                    <Button onClick={() => handleOpenModal()} variant="ghost" className="mt-4 text-accent hover:underline text-sm">
                     Create your first check
-                    </button>
+                    </Button>
                 </>
             )}
           </div>
@@ -277,13 +282,15 @@ export default function HealthChecks({
                         )}
 
                         <div className="flex items-center gap-1 ml-4">
-                            <button
+                            <Button
                                 onClick={() => handleRun(check.id)}
-                                className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
+                                variant="ghost"
+                                size="sm"
+                                className="p-2 h-auto hover:bg-surface-2 rounded-lg transition-colors"
                                 title={isDiagnose ? 'Re-run self-diagnose now' : 'Run check now'}
                             >
                                 <Play className="w-4 h-4 text-text-muted" />
-                            </button>
+                            </Button>
                             {isDiagnose ? (
                                 /* Synthetic diagnose row: not editable config — expose the
                                    self-repair popup instead of Edit/Delete (#1423). It still
@@ -291,44 +298,54 @@ export default function HealthChecks({
                                    under the `diagnose:<id>` key just like any other check, so
                                    the same history view applies — only Edit/Delete don't. */
                                 <>
-                                    <button
+                                    <Button
                                         onClick={() => handleViewHistory(check)}
-                                        className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="p-2 h-auto hover:bg-surface-2 rounded-lg transition-colors"
                                         title="View history"
                                     >
                                         <History className="w-4 h-4 text-text-muted" />
-                                    </button>
-                                    <button
+                                    </Button>
+                                    <Button
                                         onClick={() => handleOpenRepair(check)}
-                                        className="p-2 hover:bg-accent/10 rounded-lg transition-colors"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="p-2 h-auto hover:bg-accent/10 rounded-lg transition-colors"
                                         title="Self-repair options"
                                     >
                                         <Wrench className="w-4 h-4 text-accent" />
-                                    </button>
+                                    </Button>
                                 </>
                             ) : (
                                 <>
-                                    <button
+                                    <Button
                                         onClick={() => handleViewHistory(check)}
-                                        className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="p-2 h-auto hover:bg-surface-2 rounded-lg transition-colors"
                                         title="View history"
                                     >
                                         <History className="w-4 h-4 text-text-muted" />
-                                    </button>
-                                    <button
+                                    </Button>
+                                    <Button
                                         onClick={() => handleOpenModal(check)}
-                                        className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="p-2 h-auto hover:bg-surface-2 rounded-lg transition-colors"
                                         title="Edit check"
                                     >
                                         <Edit className="w-4 h-4 text-text-muted" />
-                                    </button>
-                                    <button
+                                    </Button>
+                                    <Button
                                         onClick={() => handleOpenDeleteModal(check.id)}
-                                        className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="p-2 h-auto hover:bg-surface-2 rounded-lg transition-colors"
                                         title="Delete check"
                                     >
                                         <Trash2 className="w-4 h-4 text-text-muted" />
-                                    </button>
+                                    </Button>
                                 </>
                             )}
                         </div>
