@@ -15,6 +15,7 @@ import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@servicebay/api-client';
 import { useToast } from '@/providers/ToastProvider';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
+import { Button, Input, Select } from '@/components/ui';
 
 interface KubeContainerPort {
     containerPort: number;
@@ -470,7 +471,7 @@ WantedBy=default.target`;
 
                 <div className="mb-4">
                     <label className="block text-sm font-medium text-foreground mb-1">New Service Name</label>
-                    <input
+                    <Input
                         type="text"
                         value={newServiceName}
                         onChange={(e) => setNewServiceName(e.target.value)}
@@ -487,22 +488,22 @@ WantedBy=default.target`;
                 )}
 
                 <div className="flex justify-end gap-3">
-                    <button
+                    <Button
                         type="button"
                         onClick={() => setShowRenameModal(false)}
-                        className="px-4 py-2 text-text-muted hover:bg-surface-2 rounded"
+                        variant="secondary"
                         disabled={isRenaming}
                     >
                         Cancel
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                         type="button"
                         onClick={handleRename}
                         disabled={!newServiceName || isRenaming}
-                        className="px-4 py-2 bg-accent text-on-accent rounded hover:bg-accent-strong disabled:opacity-50 flex items-center gap-2"
+                        variant="primary"
                     >
                         {isRenaming ? 'Renaming...' : 'Rename Service'}
-                    </button>
+                    </Button>
                 </div>
             </div>
         </div>
@@ -517,7 +518,7 @@ WantedBy=default.target`;
             <div>
                 <label className="block text-sm font-bold text-foreground mb-2">Target Node</label>
                 <div className="relative">
-                    <select
+                    <Select
                         value={selectedNode}
                         onChange={(e) => setSelectedNode(e.target.value)}
                         disabled={isEdit}
@@ -527,14 +528,14 @@ WantedBy=default.target`;
                         {nodes.map(n => (
                             <option key={n.Name} value={n.Name}>{n.Name} ({n.URI})</option>
                         ))}
-                    </select>
+                    </Select>
                     <Server className="absolute right-3 top-3.5 text-text-muted pointer-events-none" size={16} />
                 </div>
             </div>
 
             <div>
                 <label className="block text-sm font-bold text-foreground mb-2">Service Name</label>
-                <input
+                <Input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -546,7 +547,7 @@ WantedBy=default.target`;
 
             <div>
                 <label className="block text-sm font-bold text-foreground mb-2">Description</label>
-                <input
+                <Input
                 type="text"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -558,7 +559,7 @@ WantedBy=default.target`;
             <div>
                 <label className="block text-sm font-bold text-foreground mb-2">YAML Filename</label>
                 <div className="flex gap-2">
-                    <input
+                    <Input
                         type="text"
                         value={yamlFileName}
                         onChange={(e) => setYamlFileName(e.target.value)}
@@ -567,24 +568,25 @@ WantedBy=default.target`;
                         disabled={isEdit}
                     />
                     {isEdit && (
-                        <button
+                        <Button
                             type="button"
                             onClick={() => {
                                 setNewServiceName(name);
                                 setShowRenameModal(true);
                             }}
-                            className="px-3 py-2 bg-surface-2 text-text-muted border border-border rounded hover:bg-surface-muted transition-colors"
+                            variant="secondary"
+                            size="md"
                             title="Rename Service & Files"
                         >
                             <Pencil size={18} />
-                        </button>
+                        </Button>
                     )}
                 </div>
             </div>
 
             <div className="flex items-end pb-3 md:col-span-3">
                 <label className="flex items-center gap-3 cursor-pointer">
-                    <input
+                    <Input
                         type="checkbox"
                         checked={autoUpdate}
                         onChange={(e) => setAutoUpdate(e.target.checked)}
@@ -644,37 +646,41 @@ WantedBy=default.target`;
       {/* Editors Tabs */}
       <div className="bg-surface rounded-lg border border-border shadow-sm overflow-hidden">
         <div className="flex border-b border-border bg-surface-muted">
-            <button
+            <Button
                 type="button"
                 className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'yaml' ? 'bg-surface text-accent border-t-2 border-t-accent' : 'text-text-muted hover:text-text'}`}
                 onClick={() => setActiveTab('yaml')}
+                variant="ghost"
             >
                 <FileCode size={16} /> YAML Definition
-            </button>
-            <button
+            </Button>
+            <Button
                 type="button"
                 className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'kube' ? 'bg-surface text-accent border-t-2 border-t-accent' : 'text-text-muted hover:text-text'}`}
                 onClick={() => setActiveTab('kube')}
+                variant="ghost"
             >
                 <FileJson size={16} /> Generated .kube
-            </button>
+            </Button>
             {isEdit && serviceContent && (
-                <button
+                <Button
                     type="button"
                     className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'service' ? 'bg-surface text-accent border-t-2 border-t-accent' : 'text-text-muted hover:text-text'}`}
                     onClick={() => setActiveTab('service')}
+                    variant="ghost"
                 >
                     <FileText size={16} /> Generated Service Unit
-                </button>
+                </Button>
             )}
             {isEdit && (
-                <button
+                <Button
                     type="button"
                     className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'history' ? 'bg-surface text-accent border-t-2 border-t-accent' : 'text-text-muted hover:text-text'}`}
                     onClick={() => setActiveTab('history')}
+                    variant="ghost"
                 >
                     <Clock size={16} /> History
-                </button>
+                </Button>
             )}
         </div>
 
@@ -694,24 +700,28 @@ WantedBy=default.target`;
                         <div className="flex-1 border border-border rounded-md overflow-hidden bg-surface-muted relative group">
                             <div className="absolute top-2 right-4 z-10 flex items-center gap-2">
                                 {isEdit && (
-                                    <button
+                                    <Button
                                         onClick={handleRerender}
                                         type="button"
                                         disabled={rerendering}
-                                        className="p-1.5 bg-surface-2/50 hover:bg-surface-2 text-text-muted hover:text-text rounded backdrop-blur-sm transition-colors disabled:opacity-50"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="p-1.5"
                                         title="Re-render this YAML from its template using the current Settings → Template Variables values"
                                     >
                                         <RefreshCw size={14} className={rerendering ? 'animate-spin' : ''} />
-                                    </button>
+                                    </Button>
                                 )}
-                                <button
+                                <Button
                                     onClick={handleCopyYaml}
                                     type="button"
-                                    className="p-1.5 bg-surface-2/50 hover:bg-surface-2 text-text-muted hover:text-text rounded backdrop-blur-sm transition-colors"
+                                    variant="ghost"
+                                    size="sm"
+                                    className="p-1.5"
                                     title="Copy All"
                                 >
                                     <Clipboard size={14} />
-                                </button>
+                                </Button>
                                 <div className="text-xs text-text-muted font-mono bg-surface-muted/30 px-2 py-1 rounded pointer-events-none">
                                     Line: {cursorLine}
                                 </div>
@@ -811,22 +821,22 @@ WantedBy=default.target`;
       <div className="flex flex-col gap-4">
         <div className="flex justify-end gap-3">
             {variant !== 'embedded' && (
-                <button
+                <Button
                     type="button"
                     onClick={() => router.back()}
-                    className="px-6 py-3 border border-border rounded-md text-text-muted font-medium hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent"
+                    variant="secondary"
                 >
                     Cancel
-                </button>
+                </Button>
             )}
-            <button
+            <Button
                 type="submit"
                 disabled={!!yamlError || !name || !selectedNode || isSaving}
-                className="px-6 py-3 bg-accent text-on-accent rounded-md font-medium hover:bg-accent-strong shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                variant="primary"
             >
             {isSaving && <Loader2 size={16} className="animate-spin" />}
             {isSaving ? 'Saving…' : 'Save Service'}
-            </button>
+            </Button>
         </div>
 
         {yamlError && (
@@ -836,14 +846,16 @@ WantedBy=default.target`;
                     <div className="text-sm">{yamlError.message}</div>
                     {yamlError.raw && yamlError.raw !== yamlError.message && (
                         <div className="mt-1">
-                            <button
+                            <Button
                                 type="button"
                                 onClick={() => setShowParserDetails(!showParserDetails)}
+                                variant="ghost"
+                                size="sm"
                                 className="flex items-center gap-1 text-[11px] uppercase tracking-wider font-bold cursor-pointer text-status-fail hover:text-status-fail select-none transition-colors"
                             >
                                 {showParserDetails ? <ChevronDown size={12} className="shrink-0" /> : <ChevronRight size={12} className="shrink-0" />}
                                 <span>Parser details</span>
-                            </button>
+                            </Button>
                             <div
                                 ref={parserDetailsRef}
                                 className="overflow-hidden"
