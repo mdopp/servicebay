@@ -1194,7 +1194,7 @@ export default function OnboardingWizard() {
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 md:p-10 animate-in fade-in duration-500">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setIsOpen(false)} />
       
-      <div className="relative w-full max-w-6xl h-[85vh] flex flex-col md:flex-row bg-white dark:bg-[#0a0a0b] rounded-[2.5rem] shadow-2xl overflow-hidden border border-white/5 soft-depth">
+      <div className="relative w-full max-w-6xl h-[85vh] flex flex-col md:flex-row bg-white dark:bg-surface-muted rounded-[2.5rem] shadow-2xl overflow-hidden border border-white/5 soft-depth">
 
         {/*
           Mobile step indicator (#718). The full sidebar (288 px) eats
@@ -1205,7 +1205,7 @@ export default function OnboardingWizard() {
         */}
         <div className="md:hidden flex items-center justify-between px-6 py-4 border-b border-white/5 bg-white/[0.02] backdrop-blur-3xl">
           <div className="flex items-center gap-2 text-white">
-            <Monitor className="w-5 h-5 text-blue-500" />
+            <Monitor className="w-5 h-5 text-accent" />
             <span className="text-sm font-bold tracking-tight">ServiceBay</span>
           </div>
           <div className="flex items-center gap-1.5" aria-label="Setup progress">
@@ -1218,9 +1218,9 @@ export default function OnboardingWizard() {
                   aria-current={isActive ? 'step' : undefined}
                   className={[
                     'h-1.5 rounded-full transition-all',
-                    isActive ? 'w-6 bg-blue-500' : '',
-                    isCompleted ? 'w-1.5 bg-emerald-500' : '',
-                    !isActive && !isCompleted ? 'w-1.5 bg-gray-700' : '',
+                    isActive ? 'w-6 bg-accent' : '',
+                    isCompleted ? 'w-1.5 bg-status-ok' : '',
+                    !isActive && !isCompleted ? 'w-1.5 bg-border' : '',
                   ].join(' ')}
                 />
               );
@@ -1232,12 +1232,12 @@ export default function OnboardingWizard() {
         <aside className="hidden md:flex w-72 border-r border-white/5 bg-white/[0.02] backdrop-blur-3xl p-10 flex-col justify-between shrink-0">
           <div className="space-y-10">
             <div className="flex items-center gap-4">
-              <div className="p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/20 shadow-inner">
-                <Monitor className="w-7 h-7 text-blue-500" />
+              <div className="p-3.5 rounded-2xl bg-accent/10 border border-accent/20 shadow-inner">
+                <Monitor className="w-7 h-7 text-accent" />
               </div>
               <div>
                 <h2 className="text-lg font-bold tracking-tight text-white">ServiceBay</h2>
-                <p className="text-[10px] uppercase font-black text-gray-500 tracking-[0.2em]">Setup Engine</p>
+                <p className="text-[10px] uppercase font-black text-subtle tracking-[0.2em]">Setup Engine</p>
               </div>
             </div>
 
@@ -1248,15 +1248,15 @@ export default function OnboardingWizard() {
                 const stepLabel = step.charAt(0).toUpperCase() + step.slice(1).replace('-', ' ');
                 
                 return (
-                  <div 
+                  <div
                     key={step}
                     className={`flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-500 group ${
-                      isActive ? 'bg-blue-600/10 text-blue-400 border border-blue-500/20 shadow-lg shadow-blue-500/5' : 'text-gray-500 hover:text-gray-300'
+                      isActive ? 'bg-accent-strong/10 text-accent border border-accent/20 shadow-lg shadow-accent/5' : 'text-subtle hover:text-muted'
                     }`}
                   >
                     <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-black border-2 transition-all duration-500 ${
-                      isActive ? 'bg-blue-500 border-blue-400 text-white shadow-[0_0_15px_rgba(59,130,246,0.5)]' : 
-                      isCompleted ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-500' : 'border-gray-800 group-hover:border-gray-700'
+                      isActive ? 'bg-accent border-accent text-white shadow-[0_0_15px_rgba(59,130,246,0.5)]' :
+                      isCompleted ? 'bg-status-ok/10 border-status-ok/50 text-status-ok' : 'border-border group-hover:border-border-strong'
                     }`}>
                       {isCompleted ? <CheckCircle size={14} /> : idx + 1}
                     </div>
@@ -1271,14 +1271,14 @@ export default function OnboardingWizard() {
 
           {appVersion && (
             <div className="px-6 py-3 rounded-2xl bg-white/[0.02] border border-white/5">
-                <div className="text-[9px] uppercase font-black text-gray-600 tracking-widest mb-1">Architecture</div>
-                <div className="text-[11px] font-mono text-gray-400">sb-v{appVersion}-stable</div>
+                <div className="text-[9px] uppercase font-black text-subtle tracking-widest mb-1">Architecture</div>
+                <div className="text-[11px] font-mono text-muted">sb-v{appVersion}-stable</div>
             </div>
           )}
         </aside>
 
         {/* Main Content Area */}
-        <div className="flex-1 flex flex-col min-w-0 bg-gradient-to-br from-transparent to-blue-500/[0.02]">
+        <div className="flex-1 flex flex-col min-w-0 bg-gradient-to-br from-transparent to-accent/[0.02]">
           <header className="px-6 sm:px-8 md:px-12 py-6 md:py-10 flex items-center justify-between">
             <div className="space-y-1 min-w-0">
               <div className="flex items-center gap-3">
@@ -1297,7 +1297,7 @@ export default function OnboardingWizard() {
                 */}
                 {stacksOnlyMode && (
                   <span
-                    className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/30"
+                    className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest rounded-full bg-accent/10 text-accent border border-accent/30"
                     title="You're adding a service to an already-set-up node. Skip / Finish exit to the dashboard instead of advancing the wizard."
                   >
                     Add a service
@@ -1305,8 +1305,8 @@ export default function OnboardingWizard() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <div className="h-1 w-12 bg-blue-500 rounded-full" />
-                <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">
+                <div className="h-1 w-12 bg-accent rounded-full" />
+                <p className="text-xs font-bold text-subtle uppercase tracking-widest">
                   {stacksOnlyMode
                     ? `Step ${currentIndex + 1} of ${displayStepCount} · add-a-service mode`
                     : `Stage ${currentIndex + 1} of ${displayStepCount}`}
@@ -1316,7 +1316,7 @@ export default function OnboardingWizard() {
             <button
                 type="button"
                 onClick={() => setIsOpen(false)}
-                className="p-3 text-gray-500 hover:text-white hover:bg-white/10 rounded-2xl transition-all duration-300 border border-transparent hover:border-white/10"
+                className="p-3 text-subtle hover:text-white hover:bg-white/10 rounded-2xl transition-all duration-300 border border-transparent hover:border-white/10"
               >
                 <Minimize2 size={24} />
             </button>
@@ -1349,22 +1349,22 @@ export default function OnboardingWizard() {
               if (!stalled) return null;
               const inactiveMin = Math.floor(inactiveMs / 60_000);
               return (
-                <div className="mb-10 p-6 rounded-[2rem] border border-amber-500/20 bg-amber-500/5 backdrop-blur-md animate-in slide-in-from-top-4 duration-700">
-                  <div className="flex items-center gap-3 text-amber-500 mb-3">
-                    <div className="p-2 bg-amber-500/10 rounded-xl">
+                <div className="mb-10 p-6 rounded-[2rem] border border-status-warn/20 bg-status-warn/5 backdrop-blur-md animate-in slide-in-from-top-4 duration-700">
+                  <div className="flex items-center gap-3 text-status-warn mb-3">
+                    <div className="p-2 bg-status-warn/10 rounded-xl">
                         <AlertTriangle size={20} />
                     </div>
                     <h4 className="font-bold text-base">
                       Previous install appears stalled
                     </h4>
                   </div>
-                  <p className="text-sm text-amber-200/70 leading-relaxed mb-6">
+                  <p className="text-sm text-status-warn/70 leading-relaxed mb-6">
                     {`The install runner hasn't written to the job log in ~${inactiveMin} min, which usually means the previous session crashed before the run could finish. You can resume from where it left off, or clear the lock and start fresh.`}
                   </p>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="outline"
-                      className="!py-2 !px-4 !text-xs !border-blue-500/40 hover:!bg-blue-500/10 text-blue-500"
+                      className="!py-2 !px-4 !text-xs !border-accent/40 hover:!bg-accent/10 text-accent"
                       onClick={async () => {
                         // Resume = attach this tab to the existing
                         // job. The runner is still the source of
@@ -1382,7 +1382,7 @@ export default function OnboardingWizard() {
                     </Button>
                     <Button
                       variant="outline"
-                      className="!py-2 !px-4 !text-xs !border-amber-500/30 hover:!bg-amber-500/10 text-amber-500"
+                      className="!py-2 !px-4 !text-xs !border-status-warn/30 hover:!bg-status-warn/10 text-status-warn"
                       onClick={async () => {
                         if (!confirm('Clear the stalled install and start fresh?')) return;
                         await forceClearInstallLock();
@@ -1476,28 +1476,28 @@ export default function OnboardingWizard() {
 
           {/* Navigation Footer */}
           <footer className="px-6 sm:px-8 md:px-12 py-5 md:py-8 border-t border-white/5 flex items-center justify-between bg-white/[0.01] backdrop-blur-sm flex-wrap gap-3">
-             <Button 
-                variant="ghost" 
-                onClick={handleBack} 
+             <Button
+                variant="ghost"
+                onClick={handleBack}
                 disabled={stepHistory.length === 0 || loading || (currentStep === 'stacks' && stackInstallStep === 'installing')}
-                className="px-8 !text-gray-400 hover:!text-white"
+                className="px-8 !text-muted hover:!text-white"
              >
                 Back
              </Button>
              
              <div className="flex gap-4">
                 {currentStep === 'welcome' && (
-                   <Button onClick={handleSaveWelcome} disabled={loading} className="px-10 py-4 text-base shadow-xl shadow-blue-500/20">
+                   <Button onClick={handleSaveWelcome} disabled={loading} className="px-10 py-4 text-base shadow-xl shadow-accent/20">
                       {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="flex items-center gap-2">Continue <ArrowRight className="w-5 h-5" /></span>}
                    </Button>
                 )}
                 {currentStep === 'network' && (
-                   <Button onClick={handleSaveNetwork} disabled={loading} className="px-10 py-4 text-base shadow-xl shadow-blue-500/20">
+                   <Button onClick={handleSaveNetwork} disabled={loading} className="px-10 py-4 text-base shadow-xl shadow-accent/20">
                       {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="flex items-center gap-2">Continue <ArrowRight className="w-5 h-5" /></span>}
                    </Button>
                 )}
                 {currentStep === 'email' && (
-                   <Button onClick={handleSaveEmail} disabled={loading} className="px-10 py-4 text-base shadow-xl shadow-blue-500/20">
+                   <Button onClick={handleSaveEmail} disabled={loading} className="px-10 py-4 text-base shadow-xl shadow-accent/20">
                       {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <span className="flex items-center gap-2">Continue <ArrowRight className="w-5 h-5" /></span>}
                    </Button>
                 )}
@@ -1505,7 +1505,7 @@ export default function OnboardingWizard() {
                    <Button
                       onClick={handleStartExpressInstall}
                       disabled={loading}
-                      className="px-10 py-4 text-base shadow-xl shadow-blue-500/20"
+                      className="px-10 py-4 text-base shadow-xl shadow-accent/20"
                    >
                       <span className="flex items-center gap-2"><Layers className="w-5 h-5" /> Install Now</span>
                    </Button>
@@ -1535,16 +1535,16 @@ export default function OnboardingWizard() {
 
         {showSkipConfirm && (
            <div className="absolute inset-0 z-[110] flex items-center justify-center p-8 bg-black/60 backdrop-blur-xl animate-in fade-in duration-500">
-              <div className="max-w-md w-full p-10 rounded-[2.5rem] bg-[#0d0d0e] border border-white/10 shadow-2xl space-y-8 animate-in zoom-in-95 duration-500">
+              <div className="max-w-md w-full p-10 rounded-[2.5rem] bg-surface-muted border border-white/10 shadow-2xl space-y-8 animate-in zoom-in-95 duration-500">
                 <div className="space-y-3">
                   <h3 className="text-2xl font-black text-white">Skip onboarding?</h3>
-                  <p className="text-sm text-gray-400 leading-relaxed">
+                  <p className="text-sm text-muted leading-relaxed">
                     You can always return to the setup wizard later or configure everything manually in the Settings panel.
                   </p>
                 </div>
                 <div className="flex gap-4">
                   <Button variant="ghost" className="flex-1 !py-4" onClick={() => setShowSkipConfirm(false)}>Cancel</Button>
-                  <Button className="flex-1 !py-4 !bg-red-600 !border-red-500 shadow-xl shadow-red-600/20" onClick={handleSkip}>Skip anyway</Button>
+                  <Button className="flex-1 !py-4 !bg-status-fail !border-status-fail shadow-xl shadow-status-fail/20" onClick={handleSkip}>Skip anyway</Button>
                 </div>
               </div>
            </div>
