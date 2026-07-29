@@ -257,6 +257,31 @@ async function startUnit(executor: Exec, unit: string, logs: string[]): Promise<
 }
 
 /**
+ * Rollback anchor + trigger record (#2419). The MCP safety layer snapshots the
+ * config and emails the operator before a force-update runs, but neither
+ * captures WHICH image digest the service was on — and once the containers are
+ * recreated the old digest lives only in the caller's response object. Record it
+ * up front so the pre-update state survives in the backend log even if the
+ * caller drops the report, and mirror it into `logs` so the operator sees the
+ * exact `image@digest` to pin if the new image turns out to be bad.
+ *
+ * `warn` level on purpose: force-update is the one `lifecycle`-tier action that
+ * can move a running image, so it should be visible in a default log view.
+ */
+function recordRollbackAnchor(
+  images: ForceUpdateImage[], service: string, nodeName: string,
+  mode: ForceUpdateMode, logs: string[],
+): void {
+  if (images.length === 0) return;
+  const anchors = images.map((e) => `${e.image}@${e.before ?? 'unknown'}`).join(', ');
+  logs.push(`Rollback anchor — pre-update image digests: ${anchors}`);
+  logger.warn(
+    'forceUpdate',
+    `TRIGGERED ${service}@${nodeName} mode=${mode}; pre-update digests: ${anchors}`,
+  );
+}
+
+/**
  * Force a service to re-check the registry and re-pull its image(s), then come
  * back up on the pulled image. Independent of `podman-auto-update`'s timer.
  *
@@ -280,6 +305,8 @@ export async function forceUpdateService(
   const imageRefs = collectServiceImages(files);
   const images = await Promise.all(imageRefs.map((image) => initEntry(image, nodeName)));
   let recreated: string[] = [];
+
+  recordRollbackAnchor(images, service, nodeName, mode, logs);
 
   if (imageRefs.length === 0) {
     // Honest no-op: nothing to pull means nothing to force. Don't restart the

@@ -40,7 +40,7 @@ delegated child-mint subset check (`scopesAreSubset`, #2048) — one source of t
 | Scope | Intent |
 |---|---|
 | `read` | lookups + diagnose + log/file readers — no state change |
-| `lifecycle` | start/stop/restart, run-check-now, refresh, run-backup, channel-set — transient operational verbs |
+| `lifecycle` | start/stop/restart, run-check-now, refresh, run-backup, channel-set — transient operational verbs — **plus `manage_service` `action: force-update`**, which re-pulls the service's image and force-recreates its containers (`fresh` mode also deletes the local image). It stays here by decision on #2419 so lifecycle-only tokens and the companion app keep it; the honesty comes from treating the *call* as destructive — pre-mutation snapshot + operator email, see `DESTRUCTIVE_TOOL_ACTIONS` |
 | `mutate` | create/update/add + config writes — **additive** changes |
 | `reboot` | `reboot_node` — transient, recoverable host restart (#1765); split out so a token can operate+reboot **without** irreversible delete/wipe |
 | `destroy` | delete/restore/purge/factory_reset — **irreversible** state edits |

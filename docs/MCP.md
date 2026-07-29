@@ -154,6 +154,18 @@ in #2324 — a **breaking change** to the tool surface. Each stays in its origin
 scope: `get_logs` / `get_template_artifact` / `list_requests` are `read`,
 `manage_service` is `lifecycle`.
 
+`manage_service`'s `force-update` action is the one place a tool's *action*
+carries a heavier blast radius than its tier's other verbs: it re-pulls the
+declared image and force-recreates the service's containers (`fresh: true` also
+deletes the local image first). It deliberately stays at `lifecycle` (#2419) so
+lifecycle-only tokens and the companion app keep it, and the safeguards are
+resolved **per call** instead: `DESTRUCTIVE_TOOL_ACTIONS` in `mcp/toolPolicy.ts`
+marks `manage_service:force-update` destructive, so it takes the same
+pre-mutation snapshot and sends the same operator email as `deploy_service` —
+while a plain start/stop/restart still does neither. The action also logs the
+pre-update image digest (`Rollback anchor — pre-update image digests: …`, also
+in the returned `logs`), which is what you pin to undo a bad image.
+
 The proxy tools split by how far they push. `add_proxy_route` only records a
 config entry (a later manual sync pushes it). `create_proxy_route` pushes a
 complete NPM host live. `remove_proxy_route` is symmetric with those: by default

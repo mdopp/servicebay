@@ -28,6 +28,14 @@ equivalent is **Force update** on the service's Actions tab. Neither depends on
 `podman-auto-update.timer`, which stays masked until an update window is
 configured.
 
+The action stays at the `lifecycle` token tier (so routine automation and the
+companion app keep it), but every force-update is treated as a **destructive
+call**: it takes a `pre-mutation:manage_service:force-update` auto snapshot,
+emails the operator, and logs the pre-update digest as a `Rollback anchor —
+pre-update image digests: <image>@<digest>` line (also in the returned `logs`).
+That digest is what you pin if the new image turns out to be worse than the old
+one — nothing else records it once the containers are recreated.
+
 - `changed: true` → a new image landed and the containers were recreated on it.
 - `stale: true` → the registry serves a newer digest but the local image did not
   change. Retry with `fresh: true` (UI: the **Fresh pull** button that appears)

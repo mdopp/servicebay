@@ -202,7 +202,7 @@ function CreateTokenForm(props: CreateTokenFormProps) {
             </label>
           ))}
         </div>
-        <p className="text-[10px] text-text-subtle mt-1">read = list/get only. lifecycle = start/stop/restart. mutate = create/update/config-edit. reboot = reboot the node (transient, recoverable). destroy = delete/restore/purge/factory-reset. exec = exec_command (shell). Tokens with destroy also implicitly grant reboot and exec for back-compat.</p>
+        <p className="text-[10px] text-text-subtle mt-1">read = list/get only. lifecycle = start/stop/restart + force-update (re-pull an image, snapshot + email each time). mutate = create/update/config-edit. reboot = reboot the node (transient, recoverable). destroy = delete/restore/purge/factory-reset. exec = exec_command (shell). Tokens with destroy also implicitly grant reboot and exec for back-compat.</p>
       </div>
       <NeverExpiresField readOnly={readOnly} checked={props.neverExpires} onToggle={props.onToggleNeverExpires} />
       {props.error && <p className="text-xs text-status-fail">{props.error}</p>}

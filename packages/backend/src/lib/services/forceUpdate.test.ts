@@ -42,6 +42,7 @@ vi.mock('./serviceListing', () => ({
 
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 
+import { logger } from '@/lib/logger';
 import { forceUpdateService, collectServiceImages } from './forceUpdate';
 
 const POD_SPEC = `
@@ -268,5 +269,39 @@ describe('forceUpdateService (#2397 criterion 2: a stuck image is refreshed via 
     mockTwin.containers = [container(), container({ id: 'c3', names: ['media-infra'], isInfra: true })];
     await forceUpdateService('Local', 'media');
     expect(ran()).not.toContain('podman rm -f --ignore media-infra');
+  });
+});
+
+describe('forceUpdateService (#2419: the rollback anchor is recorded before anything moves)', () => {
+  it('logs the pre-update digest before the first pull/stop, and reports it', async () => {
+    const image = 'docker.io/jellyfin/jellyfin:latest';
+    mockDigest.local.set(image, 'sha256:old');
+    mockDigest.registry.set(image, 'sha256:new');
+    mockDigest.pullLands.set(image, 'sha256:new');
+
+    const result = await forceUpdateService('Local', 'media');
+
+    // The digest the service ran on must survive even if the caller throws the
+    // report away — it is the only thing you can pin to undo a bad update.
+    expect(logger.warn).toHaveBeenCalledWith(
+      'forceUpdate',
+      expect.stringContaining(`TRIGGERED media@Local mode=pull; pre-update digests: ${image}@sha256:old`),
+    );
+    const anchorIndex = result.logs.findIndex((l) => l.includes('Rollback anchor'));
+    const pullIndex = result.logs.findIndex((l) => l.startsWith('Pulling'));
+    expect(anchorIndex).toBeGreaterThanOrEqual(0);
+    expect(anchorIndex).toBeLessThan(pullIndex);
+    expect(result.logs[anchorIndex]).toContain(`${image}@sha256:old`);
+  });
+
+  it('says "unknown" rather than inventing an anchor when the digest is unreadable', async () => {
+    await forceUpdateService('Local', 'media');
+    expect(logger.warn).toHaveBeenCalledWith('forceUpdate', expect.stringContaining('@unknown'));
+  });
+
+  it('records no anchor when the service declares no image (nothing to roll back)', async () => {
+    mockListing.files = { quadletKind: 'kube', kubeContent: '[Kube]', yamlContent: 'spec: {}' };
+    const result = await forceUpdateService('Local', 'media');
+    expect(result.logs.join('\n')).not.toContain('Rollback anchor');
   });
 });
