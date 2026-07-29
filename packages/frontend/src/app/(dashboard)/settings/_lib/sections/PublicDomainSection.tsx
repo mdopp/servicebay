@@ -206,7 +206,7 @@ export default function PublicDomainSection() {
 
   if (phase === 'loading' || !info) {
     return (
-      <p className="text-sm text-gray-500 dark:text-gray-400">
+      <p className="text-sm text-text-subtle">
         <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
         Loading mode…
       </p>
@@ -245,13 +245,13 @@ export default function PublicDomainSection() {
  *  the live LAN-vs-public state. */
 function PublicDomainModeBanner({isLan, Icon, info}: {isLan: boolean; Icon: LucideIcon; info: ModeInfo}) {
   return (
-    <div className={`flex items-start gap-3 rounded-card p-3 ${isLan ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800'}`}>
-      <Icon size={18} className={`shrink-0 mt-0.5 ${isLan ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`} />
+    <div className={`flex items-start gap-3 rounded-card p-3 ${isLan ? 'bg-status-warn/5 border border-border' : 'bg-status-ok/5 border border-border'}`}>
+      <Icon size={18} className={`shrink-0 mt-0.5 ${isLan ? 'text-status-warn' : 'text-status-ok'}`} />
       <div className="min-w-0">
-        <p className="text-sm font-semibold text-gray-900 dark:text-white">
+        <p className="text-sm font-semibold text-text">
           {isLan ? 'Internal-only mode' : 'Public-domain mode'}
         </p>
-        <p className="text-xs text-gray-500 dark:text-gray-400">
+        <p className="text-xs text-text-subtle">
           {isLan
             ? `Services live on <sub>.${info.activeDomain} via AdGuard DNS rewrites. No HTTPS, no external access.`
             : `Services reachable as <sub>.${info.publicDomain} with Let's Encrypt SSL + external access. Internal URLs (<sub>.${info.lanDomain ?? 'home.arpa'}) keep working as a soft-handoff.`}
@@ -304,7 +304,7 @@ function PublicDomainBody({
         />
       )}
       {phase === 'migrating' && (
-        <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+        <div className="flex items-center gap-2 text-sm text-text-muted">
           <Loader2 className="w-4 h-4 animate-spin" />
           Migrating… NPM hosts, Authelia, and cert request can take 30–120 s combined.
         </div>
@@ -328,12 +328,12 @@ function PublicDomainBody({
 
 function PublicModeBody({ info }: { info: ModeInfo }) {
   return (
-    <div className="space-y-3 text-sm text-gray-700 dark:text-gray-300">
+    <div className="space-y-3 text-sm text-text-muted">
       <p>
         Public domain: <span className="font-mono">{info.publicDomain}</span>.
         ServiceBay is serving HTTPS via Let&apos;s Encrypt + Authelia SSO.
       </p>
-      <p className="text-xs text-gray-500 dark:text-gray-400">
+      <p className="text-xs text-text-subtle">
         Internal LAN URLs (<span className="font-mono">{`<sub>.${info.lanDomain ?? 'home.arpa'}`}</span>) keep working as a soft-handoff.
         Removing them entirely is a separate cleanup action, not surfaced here yet.
       </p>
@@ -354,7 +354,7 @@ function IdleForm({
 }) {
   return (
     <>
-      <p className="text-sm text-gray-700 dark:text-gray-300">
+      <p className="text-sm text-text-muted">
         Add a public domain to enable HTTPS, external access, and SSO over a real hostname.
         Internal URLs (<span className="font-mono">{`vault.${lanDomain}`}</span>, …) will keep working as a soft-handoff after migration.
       </p>
@@ -364,18 +364,18 @@ function IdleForm({
           value={pendingDomain}
           onChange={(e) => setPendingDomain(e.target.value)}
           placeholder="example.com"
-          className="flex-1 p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 rounded text-sm"
+          className="flex-1 p-2 border border-border bg-surface rounded text-sm"
           autoComplete="off"
         />
         <button
           onClick={onCheckReadiness}
           disabled={!pendingDomain.trim()}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded disabled:opacity-50"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded disabled:opacity-50"
         >
           Check readiness
         </button>
       </div>
-      <ul className="text-xs text-gray-500 dark:text-gray-400 space-y-1 list-disc list-inside">
+      <ul className="text-xs text-text-subtle space-y-1 list-disc list-inside">
         <li>The pre-flight checks DNS, port 80, and your router port-forward before anything is changed.</li>
         <li>ServiceBay requests Let&apos;s Encrypt certs for each service after the migration.</li>
         <li>Active SSO sessions will need to log in again once the Authelia cookie domain flips.</li>
@@ -398,20 +398,20 @@ function PreflightPanel({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm text-gray-700 dark:text-gray-300">
+        <p className="text-sm text-text-muted">
           Checking readiness for <span className="font-mono">{publicDomain}</span>…
         </p>
         <div className="flex gap-2">
           <button
             onClick={onRefresh}
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-text-muted hover:bg-surface-2 rounded"
             type="button"
           >
             <RefreshCw size={12} /> Refresh
           </button>
           <button
             onClick={onCancel}
-            className="px-2 py-1 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+            className="px-2 py-1 text-xs text-text-muted hover:bg-surface-2 rounded"
             type="button"
           >
             Cancel
@@ -420,7 +420,7 @@ function PreflightPanel({
       </div>
       <PreflightChecklist preflight={preflight} />
       {preflight && !preflight.ready && (
-        <p className="text-xs text-gray-500 dark:text-gray-400">
+        <p className="text-xs text-text-subtle">
           Fix the failing checks (DNS A record at your registrar, port-forward in your router), then click Refresh.
         </p>
       )}
@@ -431,7 +431,7 @@ function PreflightPanel({
 function PreflightChecklist({ preflight }: { preflight: PreflightStatus | null }) {
   if (!preflight) {
     return (
-      <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+      <div className="flex items-center gap-2 text-sm text-text-subtle">
         <Loader2 className="w-4 h-4 animate-spin" /> Running pre-flight…
       </div>
     );
@@ -441,15 +441,15 @@ function PreflightChecklist({ preflight }: { preflight: PreflightStatus | null }
       {preflight.checks.map(c => (
         <li key={c.id} className="flex items-start gap-2">
           {c.status === 'pass' ? (
-            <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
+            <CheckCircle2 className="w-4 h-4 text-status-ok mt-0.5 flex-shrink-0" />
           ) : c.status === 'fail' ? (
-            <XCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+            <XCircle className="w-4 h-4 text-status-fail mt-0.5 flex-shrink-0" />
           ) : (
-            <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+            <AlertTriangle className="w-4 h-4 text-status-warn mt-0.5 flex-shrink-0" />
           )}
           <div className="min-w-0">
-            <div className="font-medium text-gray-800 dark:text-gray-200">{c.label}</div>
-            <div className="text-xs text-gray-500 dark:text-gray-400 break-words">{c.detail}</div>
+            <div className="font-medium text-text">{c.label}</div>
+            <div className="text-xs text-text-subtle break-words">{c.detail}</div>
           </div>
         </li>
       ))}
@@ -475,14 +475,14 @@ function ConfirmPanel({
   return (
     <div className="space-y-3">
       <PreflightChecklist preflight={preflight} />
-      <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded text-xs text-amber-800 dark:text-amber-200">
+      <div className="p-3 bg-status-warn/5 border border-border rounded text-xs text-status-warn">
         <strong>Heads up:</strong> all currently logged-in users (including you) will need to log in again once the migration completes — the Authelia cookie domain flips from your LAN root to <span className="font-mono">{publicDomain}</span>.
       </div>
       <div className="flex flex-wrap gap-2">
         <button
           onClick={onMigrate}
           disabled={migrating}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded disabled:opacity-50"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded disabled:opacity-50"
         >
           {migrating ? <Loader2 size={14} className="animate-spin" /> : null}
           Migrate to {publicDomain}
@@ -490,14 +490,14 @@ function ConfirmPanel({
         <button
           onClick={onDryRun}
           disabled={migrating}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 text-sm font-medium rounded disabled:opacity-50"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-surface-2 hover:bg-surface text-text text-sm font-medium rounded disabled:opacity-50"
         >
           Dry-run first
         </button>
         <button
           onClick={onBack}
           disabled={migrating}
-          className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded disabled:opacity-50"
+          className="px-3 py-2 text-sm text-text-muted hover:bg-surface-2 rounded disabled:opacity-50"
         >
           Back
         </button>
@@ -510,7 +510,7 @@ function ResultStatusBox({ result }: { result: MigrationResult }) {
   const ok = result.errors.length === 0;
   const isDry = !result.applied;
   return (
-    <div className={`p-3 rounded text-sm ${ok ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800' : 'bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-800'}`}>
+    <div className={`p-3 rounded text-sm ${ok ? 'bg-status-ok/5 text-status-ok border border-border' : 'bg-status-fail/5 text-status-fail border border-border'}`}>
       {isDry
         ? `Dry-run for ${result.plan.publicDomain}: ${result.stepResults.length} step${result.stepResults.length === 1 ? '' : 's'} would run.`
         : ok
@@ -523,10 +523,10 @@ function ResultStatusBox({ result }: { result: MigrationResult }) {
 function ResultStepDetails({ result }: { result: MigrationResult }) {
   return (
     <details className="text-xs">
-      <summary className="cursor-pointer text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100">
+      <summary className="cursor-pointer text-text-muted hover:text-text">
         Show step-by-step ({result.stepResults.length})
       </summary>
-      <ol className="mt-2 space-y-1 list-decimal list-inside text-gray-600 dark:text-gray-400">
+      <ol className="mt-2 space-y-1 list-decimal list-inside text-text-subtle">
         {result.plan.steps.map((step, i) => {
           const r = result.stepResults[i];
           const skipped = step.skipped === true;
@@ -561,7 +561,7 @@ function ResultActions({
       {isDry ? (
         <button
           onClick={onMigrateAgain}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded"
         >
           Apply for real
         </button>
@@ -570,21 +570,21 @@ function ResultActions({
           href={`https://${result.plan.publicDomain}`}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded"
         >
           <ExternalLink size={14} /> Open {result.plan.publicDomain}
         </a>
       ) : (
         <button
           onClick={onMigrateAgain}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded"
         >
           Retry failed steps
         </button>
       )}
       <button
         onClick={onReset}
-        className="px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+        className="px-3 py-2 text-sm text-text-muted hover:bg-surface-2 rounded"
       >
         {ok ? 'Done' : 'Close'}
       </button>
@@ -605,7 +605,7 @@ function ResultPanel({
     <div className="space-y-3">
       <ResultStatusBox result={result} />
       {result.plan.warnings.length > 0 && (
-        <ul className="text-xs text-amber-700 dark:text-amber-300 space-y-1 list-disc list-inside">
+        <ul className="text-xs text-status-warn space-y-1 list-disc list-inside">
           {result.plan.warnings.map((w, i) => <li key={i}>{w}</li>)}
         </ul>
       )}
