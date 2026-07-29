@@ -258,6 +258,37 @@ count down file-by-file via lint-sweep units, then flip each rule to `error`
 once its class reaches 0 — forward-only, never loosen. The `TODO(#2353)` in
 `eslint.config.mjs` tracks the two flips (colour-literal, ui-primitive).
 
+#### The ratchet is enforced, and here is how the flip happens (#2430)
+
+A `warn` plus a prose promise is not a rollout — it is a TODO. Measured over 36
+commits the two counts moved by exactly **zero** while violations were *moved*
+between files (a component extracted; the same eight primitives reappearing
+verbatim in the new file), so the plan above is now backed by a gate:
+
+- **`npm run check:lint-ratchet`** (`scripts/check-lint-ratchet.ts`) counts both
+  rules from ESLint's own `--format json` report over `packages/frontend/src`
+  and compares them to `.eslint-ratchet-baseline.json`. **A count may only go
+  down.** Chained from `check:arch` (so the autoloop's per-unit fast gate runs
+  it) and run in CI's `invariants` job as `-- --check`.
+- **`--check` is CI mode:** never writes. An increase fails the PR; a *decrease*
+  passes and prints that the committed baseline has slack. A local run (no
+  flag) rewrites the baseline downward — that is the only way a number in that
+  file ever changes. **Never raise a baseline number by hand**; it is the one
+  thing the file exists to prevent. A sweep therefore commits its code change
+  *and* the tightened baseline together.
+- **The flip to `error`,** per rule, when its baseline reaches **0**: set that
+  rule to `"error"` in `eslint.config.mjs` (the `packages/frontend/src` block),
+  drop it from `RATCHETED_RULES` in `scripts/check-lint-ratchet.ts` and from
+  `.eslint-ratchet-baseline.json` (ESLint's own 0-error gate owns it from then
+  on), and delete its half of the `TODO(#2353)` ROLLOUT comment. The script
+  prints this instruction whenever a count hits 0. The two rules flip
+  **independently** — `no-raw-ui-primitive` is the far smaller class and will
+  clear first; it must not wait on the colour migration. (For the counts at
+  HEAD run the script — they are deliberately not typed here, #2427.)
+- **The burn-down itself** is ordinary lint-sweep work (worst files first; the
+  gate prints the current top ten on a failure). The ratchet's job is only to
+  guarantee the direction — it does not schedule the sweeps.
+
 ### Component discovery + duplicate detection (#2354)
 
 Two companions to the reuse rules above — *you can only reuse what you can
