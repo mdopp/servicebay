@@ -38,6 +38,7 @@ Idempotent overall: safe to re-run on every deploy.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -916,6 +917,150 @@ def report_orphaned_helpers() -> None:
         "(the entity history is preserved; only the helper definition needs re-adding).")
 
 
+# ── UI-config reset guard (#2444) ────────────────────────────────────────────
+#
+# During a redeploy, Home Assistant's own bootstrap has been observed rewriting
+# `automations.yaml`, `scenes.yaml` and `scripts.yaml` back to their empty
+# defaults at the moment it starts — 11 real automations became `[]` with no
+# ServiceBay-side wipe or restore involved (the install log explicitly recorded
+# "keeping the on-disk data"). The HA-internal trigger is upstream and not this
+# script's to fix; what IS ours is refusing to let it happen *silently*.
+#
+# So: every deploy records the emptiness of the three UI-editable include
+# targets in a small sidecar next to them, and compares the current state
+# against the previous deploy's record. A file that held content at the last
+# deploy and is empty now is the fingerprint — we log it loudly and stamp
+# `lastRegression` into the sidecar, which the `ha_automation_integrity`
+# diagnose probe surfaces (that probe's own registry-vs-file check is the
+# continuous detector; this one also catches the case where HA reset the entity
+# registry too, leaving the probe nothing to compare against).
+#
+# Read-only w.r.t. HA's data: the guard never restores or edits the files. HA's
+# own automatic backup is the recovery source, and there is nothing in this
+# script that could be trusted as a source of truth to restore FROM.
+
+HA_INCLUDE_FILES = ("automations.yaml", "scripts.yaml", "scenes.yaml")
+HA_INCLUDE_SNAPSHOT_FILE = ".sb_include_snapshot.json"
+
+# YAML bodies that mean "no entries": the seeds ServiceBay/HA write for an
+# empty list (automations, scenes) or an empty mapping (scripts).
+_EMPTY_YAML_BODIES = frozenset({"", "[]", "{}", "null", "~"})
+
+
+def _yaml_is_effectively_empty(text: str) -> bool:
+    """True when a HA include target defines no entries. Comments, blank lines
+    and document markers don't count as content, so a file holding only
+    `[]` (or only ServiceBay's seed comment) reads as empty. No YAML parser:
+    post-deploys run on the host with stdlib-only python3."""
+    body: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped in ("---", "..."):
+            continue
+        body.append(stripped)
+    return "".join(body).strip() in _EMPTY_YAML_BODIES
+
+
+def _include_file_state(path: str) -> dict | None:
+    """Describe one include target: whether it exists, its size, its content
+    hash, and whether it is effectively empty. None when the file exists but
+    can't be read — an unknown state must never be reported as a reset."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except FileNotFoundError:
+        return {"exists": False, "empty": True, "bytes": 0, "sha256": ""}
+    except OSError:
+        return None
+    return {
+        "exists": True,
+        "empty": _yaml_is_effectively_empty(text),
+        "bytes": len(text.encode("utf-8")),
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    }
+
+
+def scan_ha_include_files(config_dir: str) -> dict[str, dict]:
+    """Current state of the three UI-editable include targets, keyed by
+    filename. Unreadable files are omitted (never guessed at)."""
+    states: dict[str, dict] = {}
+    for name in HA_INCLUDE_FILES:
+        state = _include_file_state(os.path.join(config_dir, name))
+        if state is not None:
+            states[name] = state
+    return states
+
+
+def _read_include_snapshot(path: str) -> dict | None:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            blob = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return blob if isinstance(blob, dict) else None
+
+
+def _write_include_snapshot(path: str, files: dict[str, dict], regressed: list[str],
+                            previous_files: dict[str, dict]) -> None:
+    """Persist the current state as the baseline for the next deploy. When this
+    run detected a reset, also stamp `lastRegression` (what the files looked
+    like before) so diagnose can surface it; when it didn't, the key is absent,
+    so a restored file clears the signal on the next deploy."""
+    blob: dict = {
+        "version": 1,
+        "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "files": files,
+    }
+    if regressed:
+        blob["lastRegression"] = {
+            "files": regressed,
+            "detectedAt": blob["updatedAt"],
+            "previous": {name: previous_files.get(name, {}) for name in regressed},
+        }
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(blob, fh, indent=2)
+    except OSError as e:
+        log(f"   ⚠️ Could not record the Home Assistant config snapshot at {path}: {e}")
+
+
+def guard_ha_include_reset() -> list[str]:
+    """Compare the UI-editable include targets against the previous deploy's
+    record and shout when one that had content came back empty (#2444).
+    Returns the regressed filenames. Never restores, never aborts the deploy."""
+    config_dir = _ha_config_dir()
+    if not os.path.isdir(config_dir):
+        return []
+    snapshot_path = os.path.join(config_dir, HA_INCLUDE_SNAPSHOT_FILE)
+    previous = _read_include_snapshot(snapshot_path) or {}
+    previous_files = previous.get("files") if isinstance(previous.get("files"), dict) else {}
+    current = scan_ha_include_files(config_dir)
+
+    regressed: list[str] = []
+    for name, state in current.items():
+        before = previous_files.get(name)
+        # Only a documented non-empty → empty transition counts. A first deploy
+        # (no snapshot), an already-empty file, or an unreadable one is silent.
+        if isinstance(before, dict) and before.get("empty") is False and state.get("empty"):
+            regressed.append(name)
+
+    if regressed:
+        log(f"⚠️ Home Assistant config reset detected (#2444): {len(regressed)} UI-editable "
+            "file(s) held content at the last deploy and are empty now:")
+        for name in regressed:
+            before = previous_files.get(name, {})
+            log(f"     • {name}: was {before.get('bytes', '?')} bytes at "
+                f"{previous.get('updatedAt', 'the last deploy')}, now empty")
+        log("   ServiceBay did not empty them — Home Assistant rewrote them on this restart.")
+        log("   Do NOT let HA restart again before recovering: restore from Home Assistant's own "
+            "automatic backup (Settings → System → Backups) or a ServiceBay backup.")
+        log("   The `ha_automation_integrity` check on the Diagnose page flags this until the "
+            "file has content again.")
+
+    _write_include_snapshot(snapshot_path, current, regressed, previous_files)
+    return regressed
+
+
 def configure_oscar_ha_onboarding() -> None:
     """When OSCAR_HA_ADMIN_USERNAME and OSCAR_HA_ADMIN_PASSWORD are set,
     walk HA's onboarding API on a fresh install and mint a long-lived
@@ -1215,6 +1360,9 @@ def main() -> int:
     # wiped config. Report which case we're in (#1512), then re-provision
     # the HA long-lived token from the kept data (#1505).
     report_kept_data_state()
+    # Catch HA's own bootstrap resetting automations/scripts/scenes to empty
+    # during this restart (#2444) — compares against the last deploy's record.
+    guard_ha_include_reset()
     # Surface helpers whose backing config entry didn't restore (#1686) so the
     # operator gets an explicit worklist instead of silently-broken dashboards.
     report_orphaned_helpers()

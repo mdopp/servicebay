@@ -41,7 +41,7 @@ vi.mock('@/lib/agent/manager', () => ({
   },
 }));
 
-import { checkHaAutomationIntegrity } from './haAutomationIntegrity';
+import { checkHaAutomationIntegrity, parseGuardRegression } from './haAutomationIntegrity';
 
 const REGISTRY = `${HA_DIR}/.storage/core.entity_registry`;
 
@@ -120,5 +120,69 @@ describe('checkHaAutomationIntegrity (#1864)', () => {
     const r = await checkHaAutomationIntegrity();
     expect(r.status).toBe('ok');
     expect(r.detail).toMatch(/nothing at risk/);
+  });
+});
+
+const SNAPSHOT = `${HA_DIR}/.sb_include_snapshot.json`;
+
+function guardSnapshot(files: string[], detectedAt = '2026-07-28T04:12:00Z'): string {
+  return JSON.stringify({
+    version: 1,
+    updatedAt: detectedAt,
+    files: {},
+    lastRegression: { files, detectedAt, previous: {} },
+  });
+}
+
+describe('checkHaAutomationIntegrity — post-deploy reset guard (#2444)', () => {
+  it('warns when the guard flagged a reset and the file is still empty, even with no registry', async () => {
+    // The variant hazard 1 is blind to: HA reset the entity registry too, so
+    // there is nothing to mismatch against — only the guard's record remains.
+    state.files[SNAPSHOT] = guardSnapshot(['automations.yaml']);
+    state.files[`${HA_DIR}/automations.yaml`] = '[]';
+    const r = await checkHaAutomationIntegrity();
+    expect(r.status).toBe('warn');
+    expect(r.detail).toMatch(/automations\.yaml/);
+    expect(r.detail).toMatch(/2026-07-28T04:12:00Z/);
+    expect(r.hint).toMatch(/automatic backup/i);
+  });
+
+  it('does NOT warn once the flagged file has content again (self-clearing)', async () => {
+    state.files[REGISTRY] = registry([{ platform: 'automation' }]);
+    state.files[SNAPSHOT] = guardSnapshot(['automations.yaml']);
+    state.files[`${HA_DIR}/automations.yaml`] = '- id: morning\n';
+    const r = await checkHaAutomationIntegrity();
+    expect(r.status).toBe('ok');
+  });
+
+  it('ignores a snapshot with no lastRegression stamp (normal redeploy)', async () => {
+    state.files[REGISTRY] = registry([{ platform: 'automation' }]);
+    state.files[SNAPSHOT] = JSON.stringify({ version: 1, updatedAt: 'x', files: { 'automations.yaml': { empty: false } } });
+    state.files[`${HA_DIR}/automations.yaml`] = '- id: morning\n';
+    const r = await checkHaAutomationIntegrity();
+    expect(r.status).toBe('ok');
+  });
+
+  it('still reports "not installed" / "no registry" when nothing is flagged', async () => {
+    const r = await checkHaAutomationIntegrity();
+    expect(r.status).toBe('info');
+    expect(r.detail).toMatch(/no entity registry/);
+  });
+});
+
+describe('parseGuardRegression', () => {
+  it('returns null for a missing, unparseable or unstamped snapshot', () => {
+    expect(parseGuardRegression('')).toBeNull();
+    expect(parseGuardRegression('{ not json')).toBeNull();
+    expect(parseGuardRegression(JSON.stringify({ files: {} }))).toBeNull();
+    expect(parseGuardRegression(JSON.stringify({ lastRegression: { files: [] } }))).toBeNull();
+  });
+
+  it('drops filenames outside the three include targets', () => {
+    const stamp = parseGuardRegression(
+      JSON.stringify({ lastRegression: { files: ['automations.yaml', '../../etc/passwd'] } }),
+    );
+    expect(stamp?.files).toEqual(['automations.yaml']);
+    expect(stamp?.detectedAt).toBeNull();
   });
 });
