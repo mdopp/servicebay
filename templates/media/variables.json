@@ -43,8 +43,8 @@
   },
   "LLDAP_BASE_DN": {
     "type": "text",
-    "description": "LLDAP base DN (e.g. dc=dopp,dc=cloud) — Jellyfin's LDAP-Auth plugin search base. Inherited from the auth template.",
-    "default": "dc=dopp,dc=cloud"
+    "description": "LLDAP base DN (e.g. dc=example,dc=com) — Jellyfin's LDAP-Auth plugin search base. Leave blank: ServiceBay derives it from PUBLIC_DOMAIN at install time, matching what the auth template initialised LLDAP with.",
+    "default": ""
   },
   "LLDAP_ADMIN_PASSWORD": {
     "type": "secret",

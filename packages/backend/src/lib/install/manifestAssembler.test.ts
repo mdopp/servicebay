@@ -34,7 +34,7 @@ vi.mock('./savedSecrets', () => ({
   persistSingleSecret: (n: string, v: string) => persistSingleSecret(n, v),
 }));
 
-import { assembleManifest } from './manifestAssembler';
+import { assembleManifest, deriveLdapBaseDn } from './manifestAssembler';
 
 /** Minimal pod yaml carrying the dependency annotation + a `{{VAR}}`. */
 function tmplYaml(name: string, deps: string[], extra = ''): string {
@@ -331,6 +331,99 @@ describe('assembleManifest', () => {
       templateSource: 'Built-in',
     });
     expect(r.variables.find(v => v.name === 'LLDAP_HOST')?.value).toBe('localhost');
+  });
+
+  // ── #2439: LLDAP_BASE_DN derives from the public domain ────────────────
+  // The four LDAP-consuming templates used to ship the maintainer's own DN as
+  // their variables.json default. They now declare it empty and the assembler
+  // fills it — but ONLY when empty, because the DN roots a live LDAP tree.
+  describe('LLDAP_BASE_DN derivation (#2439)', () => {
+    const ldapYaml = () => tmplYaml('svc', [], '    # {{LLDAP_BASE_DN}} {{PUBLIC_DOMAIN}}');
+
+    it('derives the base DN from PUBLIC_DOMAIN', async () => {
+      getTemplateYaml.mockResolvedValue(ldapYaml());
+      getTemplateVariables.mockResolvedValue({ LLDAP_BASE_DN: { type: 'text', default: '' } });
+      const r = await assembleManifest({
+        items: [{ name: 'svc', checked: true }],
+        prefilled: { PUBLIC_DOMAIN: 'example.com' },
+        templateSource: 'Built-in',
+      });
+      expect(r.variables.find(v => v.name === 'LLDAP_BASE_DN')?.value).toBe('dc=example,dc=com');
+    });
+
+    it('handles a multi-label domain', async () => {
+      getTemplateYaml.mockResolvedValue(ldapYaml());
+      getTemplateVariables.mockResolvedValue({ LLDAP_BASE_DN: { type: 'text', default: '' } });
+      const r = await assembleManifest({
+        items: [{ name: 'svc', checked: true }],
+        prefilled: { PUBLIC_DOMAIN: 'box.example.co.uk' },
+        templateSource: 'Built-in',
+      });
+      expect(r.variables.find(v => v.name === 'LLDAP_BASE_DN')?.value)
+        .toBe('dc=box,dc=example,dc=co,dc=uk');
+    });
+
+    it('falls back to dc=local on a LAN-only box with no public domain', async () => {
+      getTemplateYaml.mockResolvedValue(ldapYaml());
+      getTemplateVariables.mockResolvedValue({ LLDAP_BASE_DN: { type: 'text', default: '' } });
+      const r = await assembleManifest({
+        items: [{ name: 'svc', checked: true }],
+        templateSource: 'Built-in',
+      });
+      expect(r.variables.find(v => v.name === 'LLDAP_BASE_DN')?.value).toBe('dc=local');
+    });
+
+    it('reads the box domain from config when no template references PUBLIC_DOMAIN', async () => {
+      // claude-dev consumes LDAP but publishes no proxy host, so PUBLIC_DOMAIN
+      // never joins `variables` — the DN must still match the auth stack's.
+      getTemplateYaml.mockResolvedValue(tmplYaml('svc', [], '    # {{LLDAP_BASE_DN}}'));
+      getTemplateVariables.mockResolvedValue({ LLDAP_BASE_DN: { type: 'text', default: '' } });
+      getConfig.mockResolvedValue({ templateSettings: {}, reverseProxy: { publicDomain: 'example.com' } });
+      const r = await assembleManifest({
+        items: [{ name: 'svc', checked: true }],
+        templateSource: 'Built-in',
+      });
+      expect(r.variables.map(v => v.name)).not.toContain('PUBLIC_DOMAIN');
+      expect(r.variables.find(v => v.name === 'LLDAP_BASE_DN')?.value).toBe('dc=example,dc=com');
+    });
+
+    it('never overwrites an explicit base DN — an existing install keeps its tree', async () => {
+      getTemplateYaml.mockResolvedValue(ldapYaml());
+      getTemplateVariables.mockResolvedValue({ LLDAP_BASE_DN: { type: 'text', default: '' } });
+      // Operator's stored Template Settings value, on a box that also has a
+      // public domain the derivation would otherwise produce a DN from.
+      getConfig.mockResolvedValue({
+        templateSettings: { LLDAP_BASE_DN: 'dc=legacy,dc=tree' },
+        reverseProxy: { publicDomain: 'example.com' },
+      });
+      const r = await assembleManifest({
+        items: [{ name: 'svc', checked: true }],
+        templateSource: 'Built-in',
+      });
+      expect(r.variables.find(v => v.name === 'LLDAP_BASE_DN')?.value).toBe('dc=legacy,dc=tree');
+    });
+
+    it('normalises the shapes an operator can type into the domain field', () => {
+      expect(deriveLdapBaseDn('Example.COM')).toBe('dc=example,dc=com');
+      expect(deriveLdapBaseDn(' example.com. ')).toBe('dc=example,dc=com');
+      expect(deriveLdapBaseDn('https://example.com/')).toBe('dc=example,dc=com');
+      expect(deriveLdapBaseDn('')).toBe('dc=local');
+      expect(deriveLdapBaseDn(undefined)).toBe('dc=local');
+      // Nothing usable left after dropping non-label junk → LAN fallback,
+      // never a malformed DN.
+      expect(deriveLdapBaseDn('...')).toBe('dc=local');
+    });
+
+    it('never overwrites a base DN supplied by the caller', async () => {
+      getTemplateYaml.mockResolvedValue(ldapYaml());
+      getTemplateVariables.mockResolvedValue({ LLDAP_BASE_DN: { type: 'text', default: '' } });
+      const r = await assembleManifest({
+        items: [{ name: 'svc', checked: true }],
+        prefilled: { PUBLIC_DOMAIN: 'example.com', LLDAP_BASE_DN: 'dc=legacy,dc=tree' },
+        templateSource: 'Built-in',
+      });
+      expect(r.variables.find(v => v.name === 'LLDAP_BASE_DN')?.value).toBe('dc=legacy,dc=tree');
+    });
   });
 
   it('skips a template whose yaml cannot be loaded', async () => {

@@ -25,8 +25,8 @@
   },
   "LLDAP_BASE_DN": {
     "type": "text",
-    "description": "LDAP base DN, e.g. dc=dopp,dc=cloud. Must match the `auth` stack's LLDAP_BASE_DN. Users resolve under ou=people, groups under ou=groups.",
-    "default": "dc=dopp,dc=cloud"
+    "description": "LDAP base DN, e.g. dc=example,dc=com. Must match the `auth` stack's LLDAP_BASE_DN — leave blank and ServiceBay derives the same value from PUBLIC_DOMAIN at install time. Users resolve under ou=people, groups under ou=groups.",
+    "default": ""
   },
   "LLDAP_ADMIN_PASSWORD": {
     "type": "secret",

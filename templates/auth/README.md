@@ -13,7 +13,7 @@ LLDAP + Authelia in a single pod. Authelia depends on LLDAP for its user/group d
 |---|---|---|
 | `LLDAP_PORT` | LLDAP web UI port | `17170` |
 | `LLDAP_LDAP_PORT` | LDAP protocol port | `3890` |
-| `LLDAP_BASE_DN` | LDAP base DN | `dc=dopp,dc=cloud` |
+| `LLDAP_BASE_DN` | LDAP base DN | derived from `PUBLIC_DOMAIN` (`example.com` → `dc=example,dc=com`; `dc=local` when the box has no public domain) |
 | `LLDAP_ADMIN_PASSWORD` | LLDAP admin password — auto-generated | — |
 | `AUTHELIA_PORT` | Authelia portal port | `9091` |
 | `AUTHELIA_*_SECRET` | JWT / session / OIDC HMAC / storage secrets — auto-generated | — |

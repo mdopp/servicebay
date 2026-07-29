@@ -140,11 +140,18 @@ fi
 # a matching LOCAL account per group member so NSS (files) can resolve them.
 # `dev` stays as a break-glass path so a misconfig here can't lock everyone
 # out. Opt-in: with the var blank the whole block is skipped.
+#
+# LLDAP_BASE_DN has no fallback literal (#2439): every DN below is built from
+# it, so a guessed value would point nslcd at a tree that does not exist and
+# fail every login with an opaque bind error. ServiceBay derives the DN from
+# PUBLIC_DOMAIN at install time; if it is still blank here, skip LDAP loudly.
 ldap_enabled=no
-if [ -n "${LLDAP_ADMIN_PASSWORD:-}" ]; then
+if [ -n "${LLDAP_ADMIN_PASSWORD:-}" ] && [ -z "${LLDAP_BASE_DN:-}" ]; then
+  echo "claude-dev: WARNING — LLDAP_ADMIN_PASSWORD is set but LLDAP_BASE_DN is empty; skipping LDAP login (set it to the base DN the \`auth\` stack initialised LLDAP with)." >&2
+fi
+if [ -n "${LLDAP_ADMIN_PASSWORD:-}" ] && [ -n "${LLDAP_BASE_DN:-}" ]; then
   LLDAP_HOST="${LLDAP_HOST:-localhost}"
   LLDAP_LDAP_PORT="${LLDAP_LDAP_PORT:-3890}"
-  LLDAP_BASE_DN="${LLDAP_BASE_DN:-dc=dopp,dc=cloud}"
   CLAUDE_DEV_LDAP_GROUP="${CLAUDE_DEV_LDAP_GROUP:-admins}"
   ldap_uri="ldap://${LLDAP_HOST}:${LLDAP_LDAP_PORT}"
   admin_dn="uid=admin,ou=people,${LLDAP_BASE_DN}"

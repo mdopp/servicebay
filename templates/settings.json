@@ -15,7 +15,7 @@
     },
     "LLDAP_BASE_DN": {
       "default": "",
-      "description": "LDAP base distinguished name, e.g. dc=example,dc=com. No default — it must match the DN your LLDAP was initialised with."
+      "description": "LDAP base distinguished name, e.g. dc=example,dc=com. Leave blank and ServiceBay derives it from PUBLIC_DOMAIN at install time (example.com → dc=example,dc=com; dc=local when the box has no public domain, #2439). Set it only to match a DN your LLDAP was already initialised with — an installed stack keeps whatever value it was deployed with."
     },
     "PUBLIC_DOMAIN": {
       "default": "",

@@ -972,9 +972,9 @@ class MediaScript(unittest.TestCase):
         EnableAllFolders=false (never leak private libs to everyone)."""
         m = load_script("media")
         xml = m.render_ldap_plugin_config(
-            "host.containers.internal", "3890", "dc=dopp,dc=cloud",
-            "uid=admin,ou=people,dc=dopp,dc=cloud", "bindpw",
-            "cn=lldap_admin,ou=groups,dc=dopp,dc=cloud", ["pubA", "pubB"],
+            "host.containers.internal", "3890", "dc=example,dc=com",
+            "uid=admin,ou=people,dc=example,dc=com", "bindpw",
+            "cn=lldap_admin,ou=groups,dc=example,dc=com", ["pubA", "pubB"],
         )
         self.assertIn("<EnableAllFolders>false</EnableAllFolders>", xml)
         self.assertIn("<EnabledFolders><string>pubA</string><string>pubB</string></EnabledFolders>", xml)
@@ -1132,20 +1132,20 @@ class MediaScript(unittest.TestCase):
         xml = m.render_ldap_plugin_config(
             ldap_host="host.containers.internal",
             ldap_port="3890",
-            base_dn="dc=dopp,dc=cloud",
-            bind_dn="uid=admin,ou=people,dc=dopp,dc=cloud",
+            base_dn="dc=example,dc=com",
+            bind_dn="uid=admin,ou=people,dc=example,dc=com",
             bind_password="lldap-pass",
-            admin_group_dn="cn=lldap_admin,ou=groups,dc=dopp,dc=cloud",
+            admin_group_dn="cn=lldap_admin,ou=groups,dc=example,dc=com",
         )
         self.assertIn("<LdapServer>host.containers.internal</LdapServer>", xml)
         self.assertIn("<LdapPort>3890</LdapPort>", xml)
-        self.assertIn("<LdapBaseDn>ou=people,dc=dopp,dc=cloud</LdapBaseDn>", xml)
-        self.assertIn("<LdapBindUser>uid=admin,ou=people,dc=dopp,dc=cloud</LdapBindUser>", xml)
+        self.assertIn("<LdapBaseDn>ou=people,dc=example,dc=com</LdapBaseDn>", xml)
+        self.assertIn("<LdapBindUser>uid=admin,ou=people,dc=example,dc=com</LdapBindUser>", xml)
         # Filter mirrors Radicale: (&(objectClass=person)(uid={username}))
         # — the ampersand is XML-escaped.
         self.assertIn("(&amp;(objectClass=person)(uid={username}))", xml)
         # Admin-group map → Jellyfin admin.
-        self.assertIn("(memberOf=cn=lldap_admin,ou=groups,dc=dopp,dc=cloud)", xml)
+        self.assertIn("(memberOf=cn=lldap_admin,ou=groups,dc=example,dc=com)", xml)
         # Auto-provision LDAP users so the family logs in without a manual
         # per-user step.
         self.assertIn("<CreateUsersFromLdap>true</CreateUsersFromLdap>", xml)
@@ -1184,14 +1184,14 @@ class MediaScript(unittest.TestCase):
                     mock.patch.object(subprocess_mod, "run", run_fn):
                 ok = m.ensure_jellyfin_ldap_plugin(
                     "http://127.0.0.1:8096", "jf-token",
-                    "3890", "dc=dopp,dc=cloud", "lldap-pass",
+                    "3890", "dc=example,dc=com", "lldap-pass",
                 )
             self.assertTrue(ok)
             self.assertTrue(os.path.isfile(cfg_path))
             with open(cfg_path, encoding="utf-8") as fh:
                 first = fh.read()
             self.assertIn("<LdapServer>host.containers.internal</LdapServer>", first)
-            self.assertIn("<LdapBindUser>uid=admin,ou=people,dc=dopp,dc=cloud</LdapBindUser>", first)
+            self.assertIn("<LdapBindUser>uid=admin,ou=people,dc=example,dc=com</LdapBindUser>", first)
             # Jellyfin was bounced so the plugin reloads its config.
             self.assertTrue(
                 any(c[:3] == ["podman", "container", "restart"]
@@ -1204,7 +1204,7 @@ class MediaScript(unittest.TestCase):
                     mock.patch.object(subprocess_mod, "run", run_fn):
                 m.ensure_jellyfin_ldap_plugin(
                     "http://127.0.0.1:8096", "jf-token",
-                    "3890", "dc=dopp,dc=cloud", "lldap-pass",
+                    "3890", "dc=example,dc=com", "lldap-pass",
                 )
             with open(cfg_path, encoding="utf-8") as fh:
                 self.assertEqual(fh.read(), first)
@@ -1236,7 +1236,7 @@ class MediaScript(unittest.TestCase):
                     mock.patch.object(subprocess_mod, "run", lambda *a, **kw: _CP()):
                 ok = m.ensure_jellyfin_ldap_plugin(
                     "http://127.0.0.1:8096", None,
-                    "3890", "dc=dopp,dc=cloud", "lldap-pass",
+                    "3890", "dc=example,dc=com", "lldap-pass",
                 )
             self.assertTrue(ok)
             self.assertTrue(os.path.isfile(cfg_path))
@@ -1251,7 +1251,26 @@ class MediaScript(unittest.TestCase):
             with run_with_env({"DATA_DIR": tmp}):
                 ok = m.ensure_jellyfin_ldap_plugin(
                     "http://127.0.0.1:8096", "jf-token",
-                    "3890", "dc=dopp,dc=cloud", "",
+                    "3890", "dc=example,dc=com", "",
+                )
+            self.assertFalse(ok)
+            cfg_path = os.path.join(
+                tmp, "media", "jellyfin-config", "plugins",
+                "configurations", "LDAP-Auth.xml",
+            )
+            self.assertFalse(os.path.isfile(cfg_path))
+
+    def test_jellyfin_ldap_skipped_without_base_dn(self):
+        """Empty LLDAP_BASE_DN → skip the LDAP wiring (#2439). Every DN in
+        the plugin config is built from it, so writing one with a blank base
+        binds against a tree that does not exist and fails every login."""
+        import tempfile
+        m = load_script("media")
+        with tempfile.TemporaryDirectory() as tmp:
+            with run_with_env({"DATA_DIR": tmp}):
+                ok = m.ensure_jellyfin_ldap_plugin(
+                    "http://127.0.0.1:8096", "jf-token",
+                    "3890", "", "lldap-pass",
                 )
             self.assertFalse(ok)
             cfg_path = os.path.join(

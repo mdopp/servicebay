@@ -12,8 +12,8 @@
   },
   "LLDAP_BASE_DN": {
     "type": "text",
-    "description": "LDAP base DN (e.g. dc=dopp,dc=cloud)",
-    "default": "dc=dopp,dc=cloud"
+    "description": "LDAP base DN (e.g. dc=example,dc=com). Leave blank: ServiceBay derives it from your PUBLIC_DOMAIN at install time (dc=local on a LAN-only box). Set it only to join an LLDAP tree that was initialised with a different DN — it is what LLDAP is initialised with here, so changing it later re-roots every user and group.",
+    "default": ""
   },
   "LLDAP_ADMIN_PASSWORD": {
     "type": "secret",
