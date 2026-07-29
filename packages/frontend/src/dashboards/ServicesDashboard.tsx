@@ -93,16 +93,16 @@ export default function ServicesDashboard() {
         const display = label || (variant === 'chip' ? path.split('/').pop() || path : path);
         const baseClasses =
             variant === 'inline'
-                ? 'text-left text-xs font-mono text-blue-600 dark:text-blue-300 hover:underline px-1 py-0.5 rounded border border-transparent whitespace-normal break-all max-w-full'
+                ? 'text-left text-xs font-mono text-accent hover:underline px-1 py-0.5 rounded border border-transparent whitespace-normal break-all max-w-full'
                 : variant === 'list'
-                    ? 'w-full text-left px-2 py-1 bg-gray-50 dark:bg-gray-950 rounded border border-gray-200 dark:border-gray-800 text-xs font-mono transition-colors whitespace-normal break-all'
-                    : 'text-left px-2 py-0.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded text-xs font-mono whitespace-normal break-all max-w-full transition-colors';
+                    ? 'w-full text-left px-2 py-1 bg-surface-2 rounded border border-border text-xs font-mono transition-colors whitespace-normal break-all'
+                    : 'text-left px-2 py-0.5 bg-surface dark:bg-surface border border-border rounded text-xs font-mono whitespace-normal break-all max-w-full transition-colors';
 
         return (
             <button
                 type="button"
                 onClick={() => openFilePreview(path, nodeName)}
-                className={`${baseClasses} hover:border-blue-400 hover:text-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
+                className={`${baseClasses} hover:border-border hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent`}
                 title={`Open ${path} on ${nodeName || 'Local'}`}
             >
                 {display}
@@ -563,29 +563,29 @@ export default function ServicesDashboard() {
         );
 
         return (
-            <div className={`bg-white dark:bg-gray-900 border rounded-lg p-4 flex flex-col h-full transition-all duration-200 ${bundleSeverityClasses[bundle.severity]}`}>
+            <div className={`bg-surface dark:bg-surface border border-border rounded-lg p-4 flex flex-col h-full transition-all duration-200 ${bundleSeverityClasses[bundle.severity]}`}>
             <div className="flex justify-between items-start mb-3">
                 <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-bold text-lg break-all text-gray-900 dark:text-gray-100">{bundle.displayName}</h3>
+                        <h3 className="font-bold text-lg break-all text-text">{bundle.displayName}</h3>
                         {bundle.nodeName && (
-                            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200">
+                            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-surface-2 text-text">
                                 {bundle.nodeName}
                             </span>
                         )}
-                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900 text-orange-800 dark:text-orange-200">
+                        <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-surface-2 text-text">
                             Unmanaged Bundle
                         </span>
                     </div>
-                    <div className="flex flex-wrap gap-2 text-xs text-gray-500 dark:text-gray-400">
+                    <div className="flex flex-wrap gap-2 text-xs text-text-muted">
                         <span>{bundle.containers.length} containers</span>
                         <span>• {bundle.assets.length} files</span>
                     </div>
                 </div>
-                <div className="flex items-center gap-1 shrink-0 ml-auto bg-gray-50 dark:bg-gray-800/50 p-1 rounded-lg border border-gray-100 dark:border-gray-800">
+                <div className="flex items-center gap-1 shrink-0 ml-auto bg-surface-2 p-1 rounded-lg border border-border">
                     <button
                         onClick={() => setBundlePendingDelete(bundle)}
-                        className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors"
+                        className="p-1.5 text-text-muted hover:text-status-fail hover:bg-surface rounded transition-colors"
                         title="Delete bundle from node"
                         aria-label={`Delete ${bundle.displayName}`}
                     >
@@ -595,7 +595,7 @@ export default function ServicesDashboard() {
                 </div>
             </div>
 
-            <div className="space-y-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 p-3 rounded-lg flex-1">
+            <div className="space-y-2 text-sm text-text-muted bg-surface-muted p-3 rounded-lg flex-1">
                 <div className="flex gap-2">
                     <FileCode size={16} className="shrink-0 mt-0.5" />
                     <div className="flex flex-wrap gap-1">
@@ -603,19 +603,19 @@ export default function ServicesDashboard() {
                             <FileBadge key={asset.path} path={asset.path} nodeName={bundle.nodeName} />
                         ))}
                         {bundle.assets.length > 4 && (
-                            <span className="text-xs text-gray-500">+{bundle.assets.length - 4} more</span>
+                            <span className="text-xs text-text-muted">+{bundle.assets.length - 4} more</span>
                         )}
                     </div>
                 </div>
                 {filteredHints.length > 0 && (
                     <div className="flex gap-2">
-                        <AlertCircle size={16} className="shrink-0 mt-0.5 text-orange-500" />
+                        <AlertCircle size={16} className="shrink-0 mt-0.5 text-status-warn" />
                         <ul className="space-y-0.5 text-xs">
                             {filteredHints.slice(0, 3).map((hint, idx) => (
                                 <li key={idx} className="leading-snug">{hint}</li>
                             ))}
                             {filteredHints.length > 3 && (
-                                <li className="text-[10px] text-gray-500">+{filteredHints.length - 3} more hints</li>
+                                <li className="text-[10px] text-text-muted">+{filteredHints.length - 3} more hints</li>
                             )}
                         </ul>
                     </div>
@@ -623,7 +623,7 @@ export default function ServicesDashboard() {
                 {filteredValidations.length > 0 && (
                     <div className="flex flex-col gap-1">
                         {filteredValidations.map((validation, idx) => (
-                            <div key={idx} className={`text-xs px-2 py-1 rounded border ${validation.level === 'error' ? 'border-red-200 text-red-700 bg-red-50 dark:border-red-900/50 dark:text-red-300 dark:bg-red-900/20' : validation.level === 'warning' ? 'border-amber-200 text-amber-700 bg-amber-50 dark:border-amber-900/50 dark:text-amber-300 dark:bg-amber-900/20' : 'border-green-200 text-green-700 bg-green-50 dark:border-green-900/50 dark:text-green-300 dark:bg-green-900/20'}`}>
+                            <div key={idx} className={`text-xs px-2 py-1 rounded border ${validation.level === 'error' ? 'border-border text-status-fail bg-surface' : validation.level === 'warning' ? 'border-border text-status-warn bg-surface' : 'border-border text-status-ok bg-surface'}`}>
                                 {validation.message}
                             </div>
                         ))}
@@ -631,9 +631,9 @@ export default function ServicesDashboard() {
                 )}
             </div>
             {bundlePorts.length > 0 && (
-                <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-gray-100 dark:border-gray-800/50 mt-3">
+                <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-border mt-3">
                     <div className="flex gap-2 items-center text-sm">
-                        <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Ports:</span>
+                        <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">Ports:</span>
                         <div className="flex flex-wrap gap-1.5">
                             {bundlePorts.map((port, idx) => {
                                 const hostValue = typeof port.hostPort !== 'undefined' && port.hostPort !== null ? String(port.hostPort) : undefined;
@@ -644,9 +644,9 @@ export default function ServicesDashboard() {
                                 const hasConflict = conflictKey ? conflictingPortKeys.has(conflictKey) : false;
                                 const baseClasses = hostValue
                                     ? hasConflict
-                                        ? 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/30'
-                                        : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700 cursor-pointer'
-                                    : 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400 border-yellow-200 dark:border-yellow-800/30 cursor-default';
+                                        ? 'bg-surface text-status-fail border-border hover:bg-surface-2'
+                                        : 'bg-surface-2 text-text-muted border-border hover:bg-surface cursor-pointer'
+                                    : 'bg-surface text-status-warn border-border cursor-default';
                                 const title = hostValue
                                     ? hasConflict
                                         ? `Host port ${hostValue}/${protocol} is published by multiple containers`
@@ -697,26 +697,26 @@ export default function ServicesDashboard() {
         if (totalResults === 0) {
             return (
                 <div className="flex flex-col items-center justify-center p-12 text-center">
-                    <div className="bg-slate-50 dark:bg-slate-900 rounded-full p-6 mb-4">
-                        <Box size={48} className="text-slate-300 dark:text-slate-600" />
+                    <div className="bg-surface-2 rounded-full p-6 mb-4">
+                        <Box size={48} className="text-text-subtle" />
                     </div>
-                    <h3 className="text-lg font-medium text-slate-900 dark:text-slate-100 mb-2">
+                    <h3 className="text-lg font-medium text-text mb-2">
                         {hasSearch ? 'No Results' : 'No Services or Bundles Found'}
                     </h3>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 max-w-sm mb-6">
+                    <p className="text-sm text-text-muted max-w-sm mb-6">
                         {hasSearch
                             ? `Nothing matching "${searchQuery}" exists across managed services or unmanaged bundles.`
                             : "ServiceBay couldn't find any Quadlet-managed services or discovery bundles on your nodes yet."}
                     </p>
 
                     {!hasSearch && totalInventory === 0 && (
-                        <div className="text-left text-xs text-slate-400 bg-slate-100 dark:bg-slate-950 p-4 rounded-lg border border-slate-200 dark:border-slate-800 font-mono w-full max-w-md overflow-x-auto">
+                        <div className="text-left text-xs text-text-muted bg-surface-2 p-4 rounded-lg border border-border font-mono w-full max-w-md overflow-x-auto">
                             <p className="font-bold mb-2">Debug Information:</p>
                             <ul className="space-y-1">
                                 <li>Twin Status: {isConnected ? 'Connected' : 'Disconnected'}</li>
                                 <li>Last Update: {new Date(lastUpdate).toLocaleTimeString()}</li>
                                 {Object.entries(twin?.nodes || {}).map(([name, state]) => (
-                                    <li key={name} className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                                    <li key={name} className="mt-2 pt-2 border-t border-border">
                                         <strong>Node: {name}</strong><br />
                                         - Raw Services: {state.services.length}<br />
                                         - Files: {Object.keys(state.files).length}<br />
@@ -750,7 +750,7 @@ export default function ServicesDashboard() {
                             the overview reads as a table with columns (status · name ·
                             address · actions), not a sparse card grid (#2067 operator
                             feedback). */}
-                        <div className="hidden md:block rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 divide-y divide-gray-100 dark:divide-gray-800 overflow-hidden">
+                        <div className="hidden md:block rounded-lg border border-border bg-surface divide-y divide-border overflow-hidden">
                             {group.services.map(service => (
                                 <ServiceRow
                                     key={`svc-${service.nodeName || 'local'}-${service.name}`}
@@ -961,8 +961,8 @@ export default function ServicesDashboard() {
             {serviceActionOverlays}
             {containerActionsOverlay}
             {containerDrawerMode && drawerContainer && (
-                <div className="fixed inset-0 z-[60] flex justify-end bg-gray-950/70 backdrop-blur-sm">
-                    <div className="w-full max-w-5xl h-full bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-800 shadow-2xl">
+                <div className="fixed inset-0 z-[60] flex justify-end bg-black/70 backdrop-blur-sm">
+                    <div className="w-full max-w-5xl h-full bg-surface border-l border-border shadow-2xl">
                         {containerDrawerMode === 'logs' && logsPanelData ? (
                             <ContainerLogsPanel
                                 container={logsPanelData}
@@ -970,39 +970,39 @@ export default function ServicesDashboard() {
                                 onClose={closeContainerDrawer}
                             />
                         ) : (
-                            <div className="h-full flex flex-col bg-gray-950">
-                                <div className="flex items-start justify-between px-6 py-4 border-b border-gray-800 bg-gray-900">
+                            <div className="h-full flex flex-col bg-surface">
+                                <div className="flex items-start justify-between px-6 py-4 border-b border-border bg-surface-2">
                                     <div>
-                                        <p className="text-xs uppercase tracking-wider text-gray-500">Terminal</p>
-                                        <div className="flex items-center gap-3 text-white text-lg font-semibold">
+                                        <p className="text-xs uppercase tracking-wider text-text-muted">Terminal</p>
+                                        <div className="flex items-center gap-3 text-text text-lg font-semibold">
                                             <TerminalIcon size={18} />
                                             <span>{drawerContainer.names?.[0]?.replace(/^\//, '') || drawerContainer.id}</span>
                                         </div>
                                         {drawerNode && (
-                                            <div className="mt-2 inline-flex items-center gap-2 text-xs text-gray-400">
+                                            <div className="mt-2 inline-flex items-center gap-2 text-xs text-text-muted">
                                                 <span className="uppercase tracking-wide">Node</span>
-                                                <span className="px-2 py-0.5 rounded-full bg-gray-800 text-gray-200 border border-gray-700">{drawerNode}</span>
+                                                <span className="px-2 py-0.5 rounded-full bg-surface text-text border border-border">{drawerNode}</span>
                                             </div>
                                         )}
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <button
                                             onClick={() => terminalRef.current?.clear()}
-                                            className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-800"
+                                            className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface-2"
                                             title="Clear terminal"
                                         >
                                             <Eraser size={18} />
                                         </button>
                                         <button
                                             onClick={() => terminalRef.current?.reconnect()}
-                                            className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-800"
+                                            className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface-2"
                                             title="Reconnect"
                                         >
                                             <RefreshCw size={18} />
                                         </button>
                                         <button
                                             onClick={closeContainerDrawer}
-                                            className="p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-800"
+                                            className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface-2"
                                             title="Close"
                                         >
                                             <X size={18} />
@@ -1043,9 +1043,9 @@ export default function ServicesDashboard() {
         helpId="services"
         actions={
             <>
-                <button 
+                <button
                     onClick={openRegistryOverlay}
-                    className="flex items-center gap-2 bg-blue-600 text-white p-2 rounded hover:bg-blue-700 shadow-sm transition-colors text-sm font-medium"
+                    className="flex items-center gap-2 bg-accent text-on-accent p-2 rounded hover:bg-accent-strong shadow-sm transition-colors text-sm font-medium"
                     title="New Service"
                 >
                     <Plus size={18} />
@@ -1054,13 +1054,13 @@ export default function ServicesDashboard() {
         }
       >
         <div className="relative flex-1 max-w-md min-w-[100px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input 
-                type="text" 
-                placeholder="Search services or bundles..." 
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+            <input
+                type="text"
+                placeholder="Search services or bundles..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                className="w-full pl-9 pr-4 py-2 rounded-lg border border-border bg-surface text-text focus:ring-2 focus:ring-accent outline-none text-sm"
             />
         </div>
       </PageHeader>
@@ -1094,22 +1094,22 @@ export default function ServicesDashboard() {
       />
 
       {showRegistryOverlay && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/70 backdrop-blur-sm">
-            <div className="w-full max-w-6xl h-full bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-800 shadow-2xl flex flex-col">
-                <div className="flex items-start justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/60">
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm">
+            <div className="w-full max-w-6xl h-full bg-surface border-l border-border shadow-2xl flex flex-col">
+                <div className="flex items-start justify-between px-6 py-4 border-b border-border bg-surface-2">
                     <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400">Service Registry</p>
-                        <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mt-1 flex items-center gap-2">
+                        <p className="text-xs uppercase tracking-[0.2em] text-text-muted">Service Registry</p>
+                        <h3 className="text-2xl font-semibold text-text mt-1 flex items-center gap-2">
                             Install Managed Templates
                         </h3>
-                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 max-w-2xl">
+                        <p className="text-sm text-text-muted mt-1 max-w-2xl">
                             Browse curated Quadlet stacks, sync registries, and install new services without leaving the dashboard.
                         </p>
                     </div>
                     <button
                         type="button"
                         onClick={closeRegistryOverlay}
-                        className="p-2 rounded-full text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-800"
+                        className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface"
                         aria-label="Close registry drawer"
                     >
                         <X size={20} />

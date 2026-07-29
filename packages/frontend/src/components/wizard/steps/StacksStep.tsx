@@ -105,28 +105,28 @@ export function StacksStep({
     return (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
-                    <Layers className="w-5 h-5 text-indigo-500"/>
+                <div className="p-2.5 rounded-xl bg-accent/10 border border-accent/20">
+                    <Layers className="w-5 h-5 text-accent"/>
                 </div>
                 <div>
                     <h3 className="font-bold text-lg leading-none">Install services</h3>
-                    <p className="text-xs text-gray-500 mt-1">Select and configure your service bundles</p>
+                    <p className="text-xs text-text-muted mt-1">Select and configure your service bundles</p>
                 </div>
             </div>
 
             {stackInstallStep === 'select' && (
                 <div className="space-y-4">
-                    <p className="text-sm text-gray-500 leading-relaxed">
+                    <p className="text-sm text-text-muted leading-relaxed">
                         Pick the stacks you want installed. Checked stacks get installed;
                         unchecking an already-installed stack uninstalls it. The core stack
                         (DNS, reverse proxy, identity) can only be removed via Factory Reset.
                     </p>
                     {stacksLoading ? (
-                        <div className="flex items-center justify-center py-12 text-gray-400">
+                        <div className="flex items-center justify-center py-12 text-text-muted">
                             <Loader2 className="w-6 h-6 animate-spin mr-3" /> Loading available stacks...
                         </div>
                     ) : availableStacks.length === 0 ? (
-                        <div className="text-sm text-gray-500 py-8 text-center soft-depth rounded-2xl">
+                        <div className="text-sm text-text-muted py-8 text-center soft-depth rounded-2xl">
                             No stacks available in your registries.
                         </div>
                     ) : (
@@ -152,7 +152,7 @@ export function StacksStep({
                         <button
                             type="button"
                             onClick={() => void handleStackSkip()}
-                            className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 underline-offset-4 hover:underline"
+                            className="px-4 py-2 text-sm text-text-muted hover:text-text underline-offset-4 hover:underline"
                         >
                             Install services later
                         </button>
@@ -163,28 +163,28 @@ export function StacksStep({
             {stackInstallStep === 'services' && (
                 <div className="space-y-4">
                     {stacksLoading ? (
-                        <div className="flex items-center justify-center py-12 text-gray-400">
+                        <div className="flex items-center justify-center py-12 text-text-muted">
                             <Loader2 className="w-6 h-6 animate-spin mr-3" /> Fetching templates...
                         </div>
                     ) : (
                         <div className="space-y-4">
                             {stackItems.some(i => i.tier === 'infrastructure') && (
-                                <div className="p-4 rounded-2xl border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-900/10 space-y-3">
-                                    <div className="text-[10px] uppercase font-bold text-indigo-700 dark:text-indigo-300 tracking-widest">
+                                <div className="p-4 rounded-2xl border border-accent/30 bg-accent/5 space-y-3">
+                                    <div className="text-[10px] uppercase font-bold text-accent tracking-widest">
                                         Platform · Built-in Core
                                     </div>
                                     <div className="flex flex-wrap gap-1.5">
                                         {stackItems.filter(i => i.tier === 'infrastructure').map(item => (
                                             <span
                                                 key={item.name}
-                                                className="text-[11px] font-semibold px-2 py-0.5 rounded-lg bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-indigo-200 dark:border-indigo-800/60"
+                                                className="text-[11px] font-semibold px-2 py-0.5 rounded-lg bg-surface text-text border border-accent/30"
                                                 title={item.description ?? ''}
                                             >
                                                 {item.name}
                                             </span>
                                         ))}
                                     </div>
-                                    <p className="text-[10px] text-indigo-700/70 dark:text-indigo-300/60 leading-relaxed">
+                                    <p className="text-[10px] text-accent/70 leading-relaxed">
                                         Foundational services like DNS and the Reverse Proxy are included automatically.
                                     </p>
                                 </div>
@@ -194,15 +194,15 @@ export function StacksStep({
                                 {stackItems.filter(i => i.tier !== 'infrastructure').map(item => {
                                     const i = stackItems.findIndex(x => x.name === item.name);
                                     return (
-                                    <label 
-                                        key={item.name} 
+                                    <label
+                                        key={item.name}
                                         id={`svc-pick-${item.name.toLowerCase()}`}
                                         className={`flex items-start gap-4 p-4 rounded-2xl border transition-all ${
                                         item.alreadyInstalled
-                                            ? 'border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/10 opacity-60'
+                                            ? 'border-status-ok/50 bg-status-ok/5 opacity-60'
                                             : item.checked
-                                                ? 'bg-white dark:bg-blue-600/10 border-blue-400 shadow-sm ring-1 ring-blue-400'
-                                                : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer'
+                                                ? 'bg-surface border-accent shadow-sm ring-1 ring-accent'
+                                                : 'border-border hover:bg-surface-2 cursor-pointer'
                                     }`}>
                                         <input
                                             type="checkbox"
@@ -247,22 +247,22 @@ export function StacksStep({
                                                 }
                                                 setStackItems(newItems);
                                             }}
-                                            className="w-4 h-4 mt-1 text-blue-600 rounded focus:ring-blue-500"
+                                            className="w-4 h-4 mt-1 text-accent rounded focus:ring-accent"
                                         />
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 flex-wrap">
-                                                <span className={`font-bold text-sm ${item.alreadyInstalled ? 'text-gray-400' : 'text-gray-900 dark:text-gray-200'}`}>{item.name}</span>
+                                                <span className={`font-bold text-sm ${item.alreadyInstalled ? 'text-text-muted' : 'text-text'}`}>{item.name}</span>
                                                 {item.alreadyInstalled && (
-                                                    <span className="text-[10px] font-bold text-green-600 uppercase tracking-tighter">already installed</span>
+                                                    <span className="text-[10px] font-bold text-status-ok uppercase tracking-tighter">already installed</span>
                                                 )}
                                                 {item.name === 'nginx' && (
-                                                    <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60">
+                                                    <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/30">
                                                         Gateway
                                                     </span>
                                                 )}
                                             </div>
                                             {item.description && (
-                                                <p className={`text-xs mt-0.5 leading-relaxed ${item.alreadyInstalled ? 'text-gray-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                                                <p className={`text-xs mt-0.5 leading-relaxed ${item.alreadyInstalled ? 'text-text-muted' : 'text-text-muted'}`}>
                                                     {item.description}
                                                 </p>
                                             )}
@@ -280,11 +280,11 @@ export function StacksStep({
                 <div className="space-y-6">
                     {stackNodes.length > 1 && (
                         <div className="p-4 rounded-2xl soft-depth">
-                            <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 ml-1">Target Node</label>
+                            <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 ml-1">Target Node</label>
                             <select
                                 value={stackSelectedNode || ''}
                                 onChange={(e) => setStackSelectedNode(e.target.value)}
-                                className="w-full px-4 py-2.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                                className="w-full px-4 py-2.5 bg-surface border border-border rounded-xl focus:ring-2 focus:ring-accent outline-none text-sm"
                             >
                                 <option value="" disabled>Select a node</option>
                                 {stackNodes.map(n => <option key={n.Name} value={n.Name}>{n.Name}</option>)}
@@ -293,13 +293,13 @@ export function StacksStep({
                     )}
 
                     {stacksLoading ? (
-                        <div className="flex items-center justify-center py-12 text-gray-400">
+                        <div className="flex items-center justify-center py-12 text-text-muted">
                             <Loader2 className="w-6 h-6 animate-spin mr-3" /> Preparing variables...
                         </div>
                     ) : groupVariablesByTemplate(stackVariables).filter(g => g.key !== '_global').length === 0 ? (
-                        <div className="p-6 rounded-2xl bg-green-500/5 border border-green-500/10 text-center">
-                            <CheckCircle className="w-8 h-8 text-green-500 mx-auto mb-2 opacity-50" />
-                            <p className="text-sm font-medium text-green-700 dark:text-green-300">
+                        <div className="p-6 rounded-2xl bg-status-ok/5 border border-status-ok/10 text-center">
+                            <CheckCircle className="w-8 h-8 text-status-ok mx-auto mb-2 opacity-50" />
+                            <p className="text-sm font-medium text-status-ok">
                                 No additional configuration required for these services.
                             </p>
                         </div>
@@ -323,7 +323,7 @@ export function StacksStep({
                                 ] as const).filter(t => t.count > 0);
                                 const activeTab = configureTab ?? (tabs[0]?.id ?? 'settings');
                                 return (
-                                    <div className="flex gap-1 border-b border-gray-200 dark:border-gray-800">
+                                    <div className="flex gap-1 border-b border-border">
                                         {tabs.map(t => (
                                             <button
                                                 key={t.id}
@@ -331,12 +331,12 @@ export function StacksStep({
                                                 onClick={() => setConfigureTab(t.id)}
                                                 className={`px-4 py-2 text-sm font-bold border-b-2 transition-all ${
                                                     activeTab === t.id
-                                                        ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                                                        : 'border-transparent text-gray-500 hover:text-gray-700'
+                                                        ? 'border-accent text-accent'
+                                                        : 'border-transparent text-text-muted hover:text-text'
                                                 }`}
                                             >
                                                 {t.label}
-                                                <span className="ml-2 px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-white/10 text-[10px] opacity-70">{t.count}</span>
+                                                <span className="ml-2 px-1.5 py-0.5 rounded-full bg-surface-2 text-[10px] opacity-70">{t.count}</span>
                                             </button>
                                         ))}
                                     </div>
@@ -356,9 +356,9 @@ export function StacksStep({
                                   if (filtered.length === 0) return null;
                                   return (
                                   <div key={group.key} className="space-y-4 p-5 rounded-2xl soft-depth">
-                                    <div className="flex items-center gap-2 border-b border-gray-200 dark:border-gray-800 pb-2 mb-2">
-                                        <Box className="w-4 h-4 text-indigo-500" />
-                                        <h4 className="text-xs font-bold text-gray-700 dark:text-gray-200 uppercase tracking-widest">{group.label}</h4>
+                                    <div className="flex items-center gap-2 border-b border-border pb-2 mb-2">
+                                        <Box className="w-4 h-4 text-accent" />
+                                        <h4 className="text-xs font-bold text-text uppercase tracking-widest">{group.label}</h4>
                                     </div>
                                     <div className="space-y-5">
                                         {filtered.map((v) => {
@@ -371,17 +371,17 @@ export function StacksStep({
                                             return (
                                             <div key={v.name} className="space-y-1.5">
                                                 <div className="flex items-center justify-between gap-2">
-                                                    <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">
+                                                    <label className="text-[11px] font-bold text-text-muted uppercase tracking-wide">
                                                         {displayLabel}
                                                     </label>
-                                                    <span className="text-[9px] font-mono text-gray-400 opacity-40">{v.name}</span>
+                                                    <span className="text-[9px] font-mono text-text-subtle opacity-40">{v.name}</span>
                                                 </div>
                                                 <StackVariableField
                                                     variable={v}
                                                     onChange={(value: string) => installFlow.setVariableValue(v.name, value)}
                                                     onExposureChange={(exposure: 'public' | 'internal' | 'lan') => installFlow.setVariableExposure(v.name, exposure)}
                                                     publicDomain={stackVariables.find(x => x.name === 'PUBLIC_DOMAIN')?.value}
-                                                    inputClassName="w-full px-4 py-2 bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                                                    inputClassName="w-full px-4 py-2 bg-surface border border-border rounded-xl focus:ring-2 focus:ring-accent outline-none text-sm"
                                                     deviceContext={{
                                                         deviceOptions: stackDeviceOptions,
                                                         loadingDevices: stackLoadingDevices,
@@ -413,9 +413,9 @@ export function StacksStep({
                     <StackInstallProgress
                         controller={installFlow}
                         beforeLog={
-                            <div className="flex items-center justify-between text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">
+                            <div className="flex items-center justify-between text-[10px] font-bold text-text-muted uppercase tracking-widest px-1">
                                 <div className="flex items-center gap-2">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+                                    <div className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
                                     {installingNow ?? 'Initializing pipeline'}
                                 </div>
                                 <div>Node: {stackSelectedNode || 'Local'}</div>
@@ -424,9 +424,9 @@ export function StacksStep({
                     />
                     
                     {stackInstallStep === 'done' && (
-                        <div className="space-y-6 pt-4 border-t border-gray-200 dark:border-gray-800">
+                        <div className="space-y-6 pt-4 border-t border-border">
                             {installFlow.credentialsManifest.length === 0 ? (
-                                <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 flex items-center gap-3 text-emerald-600 dark:text-emerald-400">
+                                <div className="p-4 rounded-2xl bg-status-ok/5 border border-status-ok/10 flex items-center gap-3 text-status-ok">
                                     <CheckCircle size={20} />
                                     <div className="text-sm font-bold">Services deployed successfully</div>
                                 </div>
@@ -460,10 +460,10 @@ export function StacksStep({
                                     }, { ok: 0, warn: 0, fail: 0, info: 0 });
                                     const overall = diagCounts.fail > 0 ? 'fail' : diagCounts.warn > 0 ? 'warn' : diagCounts.ok > 0 ? 'ok' : 'info';
                                     const styles = {
-                                        ok: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20',
-                                        warn: 'bg-amber-500/10 text-amber-500 border-amber-500/20',
-                                        fail: 'bg-red-500/10 text-red-500 border-red-500/20',
-                                        info: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+                                        ok: 'bg-status-ok/10 text-status-ok border-status-ok/20',
+                                        warn: 'bg-status-warn/10 text-status-warn border-status-warn/20',
+                                        fail: 'bg-status-fail/10 text-status-fail border-status-fail/20',
+                                        info: 'bg-status-info/10 text-status-info border-status-info/20',
                                     };
                                     return (
                                         <div className={`p-4 rounded-xl border flex items-center justify-between ${styles[overall as keyof typeof styles]}`}>
@@ -474,7 +474,7 @@ export function StacksStep({
                                                 <div className="flex gap-2 text-[10px] font-black uppercase opacity-80">
                                                     {diagCounts.ok > 0 && <span>{diagCounts.ok} ok</span>}
                                                     {diagCounts.warn > 0 && <span>{diagCounts.warn} warn</span>}
-                                                    {diagCounts.fail > 0 && <span className="text-red-500">{diagCounts.fail} fail</span>}
+                                                    {diagCounts.fail > 0 && <span className="text-status-fail">{diagCounts.fail} fail</span>}
                                                 </div>
                                             </div>
                                             <div className="text-[10px] font-bold opacity-60">
@@ -486,10 +486,10 @@ export function StacksStep({
 
                                 <div className="flex items-center justify-between">
                                     <h4 className="text-sm font-bold flex items-center gap-2">
-                                        {diagnoseRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4 text-emerald-500" />}
+                                        {diagnoseRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4 text-status-ok" />}
                                         Detailed Probe Results
                                     </h4>
-                                    <span className="text-[10px] font-bold text-gray-400 uppercase">Post-Install Check</span>
+                                    <span className="text-[10px] font-bold text-text-muted uppercase">Post-Install Check</span>
                                 </div>
                                 
                                 <DiagnoseProbeList
@@ -544,8 +544,8 @@ function StackPickerRow({ stack, checked, installState, isUninstalling, setPicke
             id={`stack-pick-${stack.name.toLowerCase()}`}
             className={`flex items-start gap-4 p-4 rounded-2xl border transition-all ${isCore ? 'cursor-not-allowed' : 'cursor-pointer'} ${
                 checked
-                    ? 'bg-white dark:bg-blue-600/10 border-blue-400 shadow-sm ring-1 ring-blue-400'
-                    : 'bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/5 opacity-80 hover:opacity-100 hover:border-blue-300'
+                    ? 'bg-surface border-accent shadow-sm ring-1 ring-accent'
+                    : 'bg-surface-muted border-border opacity-80 hover:opacity-100 hover:border-accent/50'
             }`}
         >
             <input
@@ -568,19 +568,19 @@ function StackPickerRow({ stack, checked, installState, isUninstalling, setPicke
                         return next;
                     });
                 }}
-                className="mt-1 w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                className="mt-1 w-4 h-4 rounded border-border text-accent focus:ring-accent disabled:opacity-50"
             />
-            <div className={`p-2 rounded-lg ${checked ? 'bg-blue-500/10 text-blue-500' : 'bg-gray-100 dark:bg-white/10 text-gray-400'}`}>
+            <div className={`p-2 rounded-lg ${checked ? 'bg-accent/10 text-accent' : 'bg-surface-2 text-text-muted'}`}>
                 {stack.type === 'stack' ? <Layers className="w-5 h-5" /> : <Package className="w-5 h-5" />}
             </div>
             <div className="flex-1">
                 <StackPickerBadges name={stack.name} isInstalled={isInstalled} isCore={isCore} isUninstalling={isUninstalling} />
-                <div className="text-[10px] text-gray-500 font-medium uppercase tracking-wider">{stack.source}</div>
+                <div className="text-[10px] text-text-muted font-medium uppercase tracking-wider">{stack.source}</div>
                 {isInstalled && !isCore && (
-                    <p className="text-[10px] text-gray-400 mt-0.5">Uncheck to uninstall.</p>
+                    <p className="text-[10px] text-text-muted mt-0.5">Uncheck to uninstall.</p>
                 )}
                 {isCore && (
-                    <p className="text-[10px] text-gray-400 mt-0.5">Remove via Factory Reset only.</p>
+                    <p className="text-[10px] text-text-muted mt-0.5">Remove via Factory Reset only.</p>
                 )}
             </div>
         </label>
@@ -594,19 +594,19 @@ function StackPickerBadges({ name, isInstalled, isCore, isUninstalling }: {
 }) {
     return (
         <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-bold text-sm text-gray-900 dark:text-gray-100">{name}</span>
+            <span className="font-bold text-sm text-text">{name}</span>
             {isInstalled && (
-                <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800/60">
+                <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-status-ok/10 text-status-ok border border-status-ok/30">
                     installed
                 </span>
             )}
             {isCore && (
-                <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60">
+                <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/30">
                     core
                 </span>
             )}
             {isUninstalling && (
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600">
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-status-warn">
                     <Loader2 className="w-3 h-3 animate-spin" /> uninstalling…
                 </span>
             )}

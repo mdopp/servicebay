@@ -1,4 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
+import { applyBrowserSandboxEnv } from '../../scripts/provision-browser-sandbox'
+
+// Point the loader + fontconfig at the root-free sysroot when one has been
+// provisioned (#2445), so `npm run test:e2e` just works in the agent sandbox.
+// A no-op on a machine that already has the system libraries.
+applyBrowserSandboxEnv()
 
 /**
  * Headless browser-verify harness for the autoloop Box-Verify stage (#1473).

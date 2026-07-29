@@ -20,32 +20,43 @@ build present under `~/.cache/ms-playwright/`. The binary resolves from that
 cache via the pinned dependency — **not** from a transient `~/.npm/_npx/<hash>`
 dir that can be garbage-collected.
 
-## Env limitation — Chromium can't launch in the current dev/verify sandbox (#1930)
+## Sandbox setup — one command, no root (#2445)
 
-The chromium binary is present in the cache, but it **cannot launch** in the
-autoloop dev/verify sandbox: the system shared libraries it links against are
-missing.
+Chromium used to be considered unlaunchable here (#1930): the binary is in the
+cache, but the system shared libraries it links against are missing —
 
 ```
 chrome-headless-shell: error while loading shared libraries:
 libnspr4.so: cannot open shared object file: No such file or directory
 ```
 
-(also `libatk-1.0.so.0`, `libdbus-1.so.3`, `libX11.so.6`). Installing them needs
-`apt`/root on the sandbox host, which is **outside repo scope** — the repo can't
-mutate the agent sandbox or the box. So memory
-`project_browser_verify_harness_1473`'s assumption that "headless chromium works
-in this env" is **currently false**. Full browser-verify enablement remains
-tracked by **epic #1473**.
+That was never a hard limit, only an unwritten setup. Provision it once:
 
-**Fallback (use until #1473 lands a browser-capable env):** assert the data the
-page binds to via an **API-level smoke test** instead of a rendered DOM. The
-disk-import routing-tree page (#1915) is covered this way by
-`packages/frontend/src/app/api/system/disk-import/status/route.test.ts`, which
-asserts the `status` endpoint returns the routing-tree shape the UI depends on
-(`phase`, `categories`, per-folder `tree`, `boxUsers`, `defaultOwner`). It runs
-under plain vitest (no browser) so Box-Verify has a non-browser signal that the
-routing tree is wired.
+```bash
+npm run browser:sandbox      # idempotent; exit 0 = a real page load rendered visible text
+```
+
+`scripts/provision-browser-sandbox.ts` apt-extracts the missing libraries and
+`fonts-dejavu-core` into `~/.cache/servicebay-browser-sandbox` (apt with its
+state/cache dirs redirected + `dpkg-deb -x`; **no root, no sudo**), generates a
+`fonts.conf`, then probes an actual page load and asserts the text renders with
+non-zero height. `playwright.config.ts` calls `applyBrowserSandboxEnv()` at
+import, so `npm run test:e2e` picks the sysroot up with no extra env.
+
+**Fonts are the non-obvious half.** With no font installed Chromium still lays
+the page out, but every text node measures **zero height** — Playwright then
+reports every text element as `hidden` and screenshots come back as empty
+boxes. It looks exactly like a CSS/visibility bug. If you ever see that, the
+sysroot's `fonts.conf` is not being found; re-run with `--force`.
+
+Flags: `--check` (verify only, never touch the network), `--force`
+(re-provision), `--print-env` (`eval "$(npm run -s browser:sandbox -- --print-env)"`).
+
+An API-level smoke test is still the right tool when the assertion is really
+about a payload rather than a rendering — e.g.
+`packages/frontend/src/app/api/system/disk-import/status/route.test.ts` asserts
+the routing-tree shape the disk-import page binds to. But it is no longer a
+*substitute* for a browser check: a rendered-DOM criterion gets a rendered DOM.
 
 ## Invocation
 
@@ -81,6 +92,9 @@ A failing browser assertion is a **red verify**, not a deferral.
 
 ## Notes
 
+- `locator.fill('')` does **not** clear a React controlled input (`fill('x')`
+  does; `press('Control+a')` then `press('Backspace')` does). A spec that clears
+  a field with `fill('')` silently asserts nothing.
 - Specs are `*.e2e.ts` (outside vitest's `*.{test,spec}` glob) and `tests/e2e/**`
   is excluded in `vitest.config.ts`, so `npm test` never runs them under jsdom.
 - This harness only drives the UI; it does not mutate box state. It's meant for
