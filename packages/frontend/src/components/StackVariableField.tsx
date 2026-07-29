@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import type { VariableMeta } from '@servicebay/api-client';
 import { typedFetch, GenerateSecretResponseSchema } from '@servicebay/api-client';
+import { Button, Input, Select } from '@/components/ui';
 
 interface StackVariable {
   name: string;
@@ -80,7 +81,7 @@ export default function StackVariableField({
   // Select dropdown
   if (v.meta?.type === 'select' && v.meta.options) {
     return (
-      <select
+      <Select
         value={v.value}
         onChange={(e) => onChange(e.target.value)}
         className={`${cls} appearance-none`}
@@ -89,7 +90,7 @@ export default function StackVariableField({
         {v.meta.options.map(opt => (
           <option key={opt} value={opt}>{opt}</option>
         ))}
-      </select>
+      </Select>
     );
   }
 
@@ -107,7 +108,7 @@ export default function StackVariableField({
           : 'Select device...';
     return (
       <div className="flex gap-2">
-        <select
+        <Select
           value={v.value}
           onChange={(e) => onChange(e.target.value)}
           className={`${cls} appearance-none flex-1`}
@@ -116,16 +117,17 @@ export default function StackVariableField({
           {devices.map(dev => (
             <option key={dev} value={dev}>{dev.replace(`${devPath}/`, '')}</option>
           ))}
-        </select>
+        </Select>
         {deviceContext?.canRefresh && (
-          <button
+          <Button
             type="button"
+            variant="secondary"
             onClick={() => deviceContext.onRefresh(devPath)}
-            className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
             title="Refresh device list"
+            size="sm"
           >
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          </button>
+          </Button>
         )}
       </div>
     );
@@ -152,7 +154,7 @@ export default function StackVariableField({
     return (
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-0 flex-1 min-w-[12rem]">
-          <input
+          <Input
             type="text"
             value={v.value}
             onChange={(e) => onChange(e.target.value)}
@@ -165,30 +167,33 @@ export default function StackVariableField({
         </div>
         {onExposureChange ? (
           <div className="inline-flex rounded border border-gray-300 dark:border-gray-700 overflow-hidden text-xs" role="group" aria-label="Exposure profile">
-            <button
-              type="button"
+            <Button
+              variant={exposure === 'public' ? 'primary' : 'secondary'}
+              size="sm"
               onClick={() => onExposureChange('public')}
-              className={`px-2.5 py-1.5 ${exposure === 'public' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
               title="Reachable from the internet on 80/443. Auto-requests a Let's Encrypt cert at install."
+              className="rounded-none"
             >
               Public
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant={exposure === 'internal' ? 'primary' : 'secondary'}
+              size="sm"
               onClick={() => onExposureChange('internal')}
-              className={`px-2.5 py-1.5 border-l border-gray-300 dark:border-gray-700 ${exposure === 'internal' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
               title="LAN-only access but with a real Let's Encrypt cert. Authelia forward-auth works (needs HTTPS); NPM blocks non-LAN IPs. ACME challenge bypasses the allowlist so LE can validate."
+              className="rounded-none border-l border-gray-300 dark:border-gray-700"
             >
               Internal
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant={exposure === 'lan' ? 'primary' : 'secondary'}
+              size="sm"
               onClick={() => onExposureChange('lan')}
-              className={`px-2.5 py-1.5 border-l border-gray-300 dark:border-gray-700 ${exposure === 'lan' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
               title="LAN-only, plain HTTP — no cert provisioned. Authelia forward-auth does NOT work here (rejects http scheme)."
+              className="rounded-none border-l border-gray-300 dark:border-gray-700"
             >
               LAN
-            </button>
+            </Button>
           </div>
         ) : (
           <span className={`px-2 py-0.5 rounded text-xs ${badgeClass}`}>{badgeLabel}</span>
@@ -200,7 +205,7 @@ export default function StackVariableField({
   // Password field
   if (v.meta?.type === 'password') {
     return (
-      <input
+      <Input
         type="password"
         value={v.value}
         onChange={(e) => onChange(e.target.value)}
@@ -222,7 +227,7 @@ export default function StackVariableField({
   // Default — plain text. Placeholder prefers `meta.example`, then
   // `meta.default` as a hint, falling back to a generic prompt.
   return (
-    <input
+    <Input
       type="text"
       value={v.value}
       onChange={(e) => onChange(e.target.value)}
@@ -279,17 +284,18 @@ function SecretField({
   return (
     <div>
       <div className="flex gap-2">
-        <input
+        <Input
           type="text" value={value} onChange={(e) => onChange(e.target.value)}
           className={`${cls} font-mono text-xs flex-1`} spellCheck={false} autoComplete="off"
         />
-        <button
+        <Button
           type="button" onClick={regenerate} disabled={regenerating} aria-busy={regenerating}
           title="Regenerate"
-          className="p-2 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          variant="secondary"
+          size="sm"
         >
           <RefreshCw size={16} className={regenerating ? 'animate-spin' : ''} />
-        </button>
+        </Button>
       </div>
       {error && (
         <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">
