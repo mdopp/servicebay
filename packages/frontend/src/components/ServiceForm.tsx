@@ -449,14 +449,14 @@ WantedBy=default.target`;
       {/* Rename Modal */}
       {showRenameModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-md w-full p-6 animate-in fade-in zoom-in-95 duration-200 border border-gray-200 dark:border-gray-800">
-                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
+            <div className="bg-surface rounded-lg shadow-xl max-w-md w-full p-6 animate-in fade-in zoom-in-95 duration-200 border border-border">
+                <h3 className="text-lg font-bold text-foreground mb-4 flex items-center gap-2">
                     <Pencil size={20} /> Rename Service
                 </h3>
-                
-                <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-4 mb-4 flex gap-3">
-                    <AlertTriangle className="text-yellow-600 dark:text-yellow-400 shrink-0" size={24} />
-                    <div className="text-sm text-yellow-800 dark:text-yellow-200">
+
+                <div className="bg-status-warn/10 border border-status-warn/30 rounded-md p-4 mb-4 flex gap-3">
+                    <AlertTriangle className="text-status-warn shrink-0" size={24} />
+                    <div className="text-sm text-foreground">
                         <p className="font-bold mb-1">Warning: Destructive Action</p>
                         <p>This will:</p>
                         <ul className="list-disc list-inside mt-1 space-y-1">
@@ -469,37 +469,37 @@ WantedBy=default.target`;
                 </div>
 
                 <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New Service Name</label>
-                    <input 
-                        type="text" 
+                    <label className="block text-sm font-medium text-foreground mb-1">New Service Name</label>
+                    <input
+                        type="text"
                         value={newServiceName}
                         onChange={(e) => setNewServiceName(e.target.value)}
-                        className="w-full p-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        className="w-full p-2 border border-border bg-surface-2 text-foreground rounded focus:ring-2 focus:ring-accent focus:border-accent"
                         placeholder="my-new-service"
                         autoFocus
                     />
                 </div>
 
                 {renameError && (
-                    <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-200 text-sm rounded border border-red-200 dark:border-red-800">
+                    <div className="mb-4 p-3 bg-status-fail/10 text-status-fail text-sm rounded border border-status-fail/30">
                         {renameError}
                     </div>
                 )}
 
                 <div className="flex justify-end gap-3">
-                    <button 
-                        type="button" 
+                    <button
+                        type="button"
                         onClick={() => setShowRenameModal(false)}
-                        className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
+                        className="px-4 py-2 text-text-muted hover:bg-surface-2 rounded"
                         disabled={isRenaming}
                     >
                         Cancel
                     </button>
-                    <button 
+                    <button
                         type="button"
                         onClick={handleRename}
                         disabled={!newServiceName || isRenaming}
-                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+                        className="px-4 py-2 bg-accent text-on-accent rounded hover:bg-accent-strong disabled:opacity-50 flex items-center gap-2"
                     >
                         {isRenaming ? 'Renaming...' : 'Rename Service'}
                     </button>
@@ -509,71 +509,71 @@ WantedBy=default.target`;
       )}
 
       {/* Top Section: Configuration */}
-      <div className="bg-white dark:bg-gray-900 p-6 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm">
-          <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-4 flex items-center gap-2">
-              <Settings className="text-gray-700 dark:text-gray-300" size={24} /> Configuration
+      <div className="bg-surface p-6 rounded-lg border border-border shadow-sm">
+          <h3 className="text-xl font-bold text-foreground mb-4 flex items-center gap-2">
+              <Settings className="text-text-muted" size={24} /> Configuration
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
-                <label className="block text-sm font-bold text-gray-900 dark:text-gray-100 mb-2">Target Node</label>
+                <label className="block text-sm font-bold text-foreground mb-2">Target Node</label>
                 <div className="relative">
                     <select
                         value={selectedNode}
                         onChange={(e) => setSelectedNode(e.target.value)}
                         disabled={isEdit}
-                        className="w-full p-3 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-400 appearance-none"
+                        className="w-full p-3 border border-border bg-surface-2 rounded-md text-foreground focus:ring-2 focus:ring-accent focus:border-accent disabled:bg-surface-muted disabled:text-text-subtle appearance-none"
                     >
                         <option value="" disabled>Select a node</option>
                         {nodes.map(n => (
                             <option key={n.Name} value={n.Name}>{n.Name} ({n.URI})</option>
                         ))}
                     </select>
-                    <Server className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" size={16} />
+                    <Server className="absolute right-3 top-3.5 text-text-muted pointer-events-none" size={16} />
                 </div>
             </div>
 
             <div>
-                <label className="block text-sm font-bold text-gray-900 dark:text-gray-100 mb-2">Service Name</label>
+                <label className="block text-sm font-bold text-foreground mb-2">Service Name</label>
                 <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 disabled={isEdit}
-                className="w-full p-3 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-400"
+                className="w-full p-3 border border-border bg-surface-2 rounded-md text-foreground focus:ring-2 focus:ring-accent focus:border-accent disabled:bg-surface-muted disabled:text-text-subtle"
                 required
                 />
             </div>
 
             <div>
-                <label className="block text-sm font-bold text-gray-900 dark:text-gray-100 mb-2">Description</label>
+                <label className="block text-sm font-bold text-foreground mb-2">Description</label>
                 <input
                 type="text"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                className="w-full p-3 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full p-3 border border-border bg-surface-2 rounded-md text-foreground focus:ring-2 focus:ring-accent focus:border-accent"
                 placeholder="Optional description"
                 />
             </div>
 
             <div>
-                <label className="block text-sm font-bold text-gray-900 dark:text-gray-100 mb-2">YAML Filename</label>
+                <label className="block text-sm font-bold text-foreground mb-2">YAML Filename</label>
                 <div className="flex gap-2">
                     <input
                         type="text"
                         value={yamlFileName}
                         onChange={(e) => setYamlFileName(e.target.value)}
-                        className="w-full p-3 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-gray-500 dark:disabled:text-gray-400"
+                        className="w-full p-3 border border-border bg-surface-2 rounded-md text-foreground focus:ring-2 focus:ring-accent focus:border-accent disabled:bg-surface-muted disabled:text-text-subtle"
                         required
-                        disabled={isEdit} // Now disabled in edit mode
+                        disabled={isEdit}
                     />
                     {isEdit && (
-                        <button 
+                        <button
                             type="button"
                             onClick={() => {
                                 setNewServiceName(name);
                                 setShowRenameModal(true);
                             }}
-                            className="px-3 py-2 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                            className="px-3 py-2 bg-surface-2 text-text-muted border border-border rounded hover:bg-surface-muted transition-colors"
                             title="Rename Service & Files"
                         >
                             <Pencil size={18} />
@@ -584,32 +584,32 @@ WantedBy=default.target`;
 
             <div className="flex items-end pb-3 md:col-span-3">
                 <label className="flex items-center gap-3 cursor-pointer">
-                    <input 
-                        type="checkbox" 
-                        checked={autoUpdate} 
+                    <input
+                        type="checkbox"
+                        checked={autoUpdate}
                         onChange={(e) => setAutoUpdate(e.target.checked)}
-                        className="w-5 h-5 text-blue-600 rounded border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:ring-blue-500"
+                        className="w-5 h-5 text-accent rounded border-border bg-surface-2 focus:ring-accent"
                     />
-                    <span className="text-base text-gray-900 dark:text-gray-100 font-medium">Enable AutoUpdate (registry)</span>
+                    <span className="text-base text-foreground font-medium">Enable AutoUpdate (registry)</span>
                 </label>
             </div>
           </div>
 
           {/* Extracted Info */}
           {(extractedPorts.length > 0 || extractedVolumes.length > 0) && (
-            <div className="mt-6 pt-6 border-t border-gray-100 dark:border-gray-800 grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="mt-6 pt-6 border-t border-border grid grid-cols-1 md:grid-cols-2 gap-6">
                 {extractedPorts.length > 0 && (
                     <div>
-                        <h4 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-text-muted mb-2 flex items-center gap-2">
                             <Network size={16} /> Ports
                         </h4>
                         <div className="flex flex-wrap gap-2">
                             {extractedPorts.map((port, i) => (
-                                <div key={i} className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-2 py-1 text-xs font-mono text-gray-600 dark:text-gray-300">
+                                <div key={i} className="bg-surface-2 border border-border rounded px-2 py-1 text-xs font-mono text-text-muted">
                                     {port.host ? (
                                         <>
-                                            <span className="text-blue-600 dark:text-blue-400 font-semibold">{port.host}</span>
-                                            <span className="text-gray-400 dark:text-gray-500 mx-1">→</span>
+                                            <span className="text-accent font-semibold">{port.host}</span>
+                                            <span className="text-text-subtle mx-1">→</span>
                                             <span>{port.container}</span>
                                         </>
                                     ) : (
@@ -623,15 +623,15 @@ WantedBy=default.target`;
 
                 {extractedVolumes.length > 0 && (
                     <div>
-                        <h4 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-text-muted mb-2 flex items-center gap-2">
                             <HardDrive size={16} /> Volumes
                         </h4>
                         <div className="flex flex-col gap-1">
                             {extractedVolumes.map((vol, i) => (
                                 <div key={i} className="text-xs font-mono truncate" title={`${vol.host} → ${vol.container}`}>
-                                    <span className="text-orange-600 dark:text-orange-400">{vol.host}</span>
-                                    <span className="text-gray-400 dark:text-gray-500 mx-1">→</span>
-                                    <span className="text-green-600 dark:text-green-400">{vol.container}</span>
+                                    <span className="text-status-warn">{vol.host}</span>
+                                    <span className="text-text-subtle mx-1">→</span>
+                                    <span className="text-status-ok">{vol.container}</span>
                                 </div>
                             ))}
                         </div>
@@ -642,18 +642,18 @@ WantedBy=default.target`;
       </div>
 
       {/* Editors Tabs */}
-      <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden">
-        <div className="flex border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+      <div className="bg-surface rounded-lg border border-border shadow-sm overflow-hidden">
+        <div className="flex border-b border-border bg-surface-muted">
             <button
                 type="button"
-                className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'yaml' ? 'bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-600 dark:border-t-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'yaml' ? 'bg-surface text-accent border-t-2 border-t-accent' : 'text-text-muted hover:text-text'}`}
                 onClick={() => setActiveTab('yaml')}
             >
                 <FileCode size={16} /> YAML Definition
             </button>
             <button
                 type="button"
-                className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'kube' ? 'bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-600 dark:border-t-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'kube' ? 'bg-surface text-accent border-t-2 border-t-accent' : 'text-text-muted hover:text-text'}`}
                 onClick={() => setActiveTab('kube')}
             >
                 <FileJson size={16} /> Generated .kube
@@ -661,7 +661,7 @@ WantedBy=default.target`;
             {isEdit && serviceContent && (
                 <button
                     type="button"
-                    className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'service' ? 'bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-600 dark:border-t-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                    className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'service' ? 'bg-surface text-accent border-t-2 border-t-accent' : 'text-text-muted hover:text-text'}`}
                     onClick={() => setActiveTab('service')}
                 >
                     <FileText size={16} /> Generated Service Unit
@@ -670,7 +670,7 @@ WantedBy=default.target`;
             {isEdit && (
                 <button
                     type="button"
-                    className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'history' ? 'bg-white dark:bg-gray-900 text-blue-600 dark:text-blue-400 border-t-2 border-t-blue-600 dark:border-t-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                    className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'history' ? 'bg-surface text-accent border-t-2 border-t-accent' : 'text-text-muted hover:text-text'}`}
                     onClick={() => setActiveTab('history')}
                 >
                     <Clock size={16} /> History
@@ -683,22 +683,22 @@ WantedBy=default.target`;
                 <div className="flex flex-col lg:flex-row h-[700px]">
                     <div className="flex-1 flex flex-col p-6 min-w-0">
                         {initialData?.yamlPath && (
-                            <div className="mb-2 text-sm text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-700 break-all">
+                            <div className="mb-2 text-sm text-text-muted font-mono bg-surface-2 p-2 rounded border border-border break-all">
                             {initialData.yamlPath}
                             </div>
                         )}
-                        <p className="text-base text-gray-700 dark:text-gray-300 mb-4">
+                        <p className="text-base text-text-muted mb-4">
                             Paste your Kubernetes YAML here. We will automatically extract the service name and generate the configuration.
                         </p>
-                        
-                        <div className="flex-1 border border-gray-300 dark:border-gray-700 rounded-md overflow-hidden bg-[#2d2d2d] dark:bg-black relative group">
+
+                        <div className="flex-1 border border-border rounded-md overflow-hidden bg-surface-muted relative group">
                             <div className="absolute top-2 right-4 z-10 flex items-center gap-2">
                                 {isEdit && (
                                     <button
                                         onClick={handleRerender}
                                         type="button"
                                         disabled={rerendering}
-                                        className="p-1.5 bg-gray-700/50 hover:bg-gray-700 text-gray-300 hover:text-white rounded backdrop-blur-sm transition-colors disabled:opacity-50"
+                                        className="p-1.5 bg-surface-2/50 hover:bg-surface-2 text-text-muted hover:text-text rounded backdrop-blur-sm transition-colors disabled:opacity-50"
                                         title="Re-render this YAML from its template using the current Settings → Template Variables values"
                                     >
                                         <RefreshCw size={14} className={rerendering ? 'animate-spin' : ''} />
@@ -707,12 +707,12 @@ WantedBy=default.target`;
                                 <button
                                     onClick={handleCopyYaml}
                                     type="button"
-                                    className="p-1.5 bg-gray-700/50 hover:bg-gray-700 text-gray-300 hover:text-white rounded backdrop-blur-sm transition-colors"
+                                    className="p-1.5 bg-surface-2/50 hover:bg-surface-2 text-text-muted hover:text-text rounded backdrop-blur-sm transition-colors"
                                     title="Copy All"
                                 >
                                     <Clipboard size={14} />
                                 </button>
-                                <div className="text-xs text-gray-400 font-mono bg-black/30 px-2 py-1 rounded pointer-events-none">
+                                <div className="text-xs text-text-muted font-mono bg-surface-muted/30 px-2 py-1 rounded pointer-events-none">
                                     Line: {cursorLine}
                                 </div>
                             </div>
@@ -727,7 +727,7 @@ WantedBy=default.target`;
                             fontFamily: '"Fira code", "Fira Mono", monospace',
                             fontSize: 14,
                             minHeight: '100%',
-                            color: '#f8f8f2',
+                            color: 'var(--foreground)',
                         }}
                         textareaClassName="focus:outline-none"
                         placeholder="apiVersion: v1&#10;kind: Pod&#10;metadata:&#10;  name: my-service..."
@@ -745,21 +745,21 @@ WantedBy=default.target`;
             {activeTab === 'kube' && (
                 <>
                     {initialData?.kubePath && (
-                        <div className="mb-2 text-sm text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-700 break-all">
+                        <div className="mb-2 text-sm text-text-muted font-mono bg-surface-2 p-2 rounded border border-border break-all">
                         {initialData.kubePath}
                         </div>
                     )}
-                    <div className="border border-gray-300 dark:border-gray-700 rounded-md overflow-hidden bg-[#2d2d2d] dark:bg-black">
+                    <div className="border border-border rounded-md overflow-hidden bg-surface-muted">
                         <Editor
                         value={kubeContent}
-                        onValueChange={() => {}} // Read-only
+                        onValueChange={() => {}}
                         highlight={code => Prism.highlight(code, Prism.languages.ini || Prism.languages.text, 'ini')}
                         padding={16}
                         style={{
                             fontFamily: '"Fira code", "Fira Mono", monospace',
                             fontSize: 14,
                             minHeight: '500px',
-                            color: '#f8f8f2',
+                            color: 'var(--foreground)',
                         }}
                         textareaClassName="focus:outline-none cursor-not-allowed"
                         readOnly
@@ -771,21 +771,21 @@ WantedBy=default.target`;
             {activeTab === 'service' && isEdit && serviceContent && (
                 <>
                     {initialData?.servicePath && (
-                        <div className="mb-2 text-sm text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-700 break-all">
+                        <div className="mb-2 text-sm text-text-muted font-mono bg-surface-2 p-2 rounded border border-border break-all">
                         {initialData.servicePath}
                         </div>
                     )}
-                    <div className="border border-gray-300 dark:border-gray-700 rounded-md overflow-hidden bg-[#2d2d2d] dark:bg-black">
+                    <div className="border border-border rounded-md overflow-hidden bg-surface-muted">
                         <Editor
                             value={serviceContent}
-                            onValueChange={() => {}} // Read-only
+                            onValueChange={() => {}}
                             highlight={code => Prism.highlight(code, Prism.languages.ini || Prism.languages.text, 'ini')}
                             padding={16}
                             style={{
                             fontFamily: '"Fira code", "Fira Mono", monospace',
                             fontSize: 14,
                             minHeight: '500px',
-                            color: '#f8f8f2',
+                            color: 'var(--foreground)',
                             }}
                             textareaClassName="focus:outline-none cursor-not-allowed"
                             readOnly
@@ -814,7 +814,7 @@ WantedBy=default.target`;
                 <button
                     type="button"
                     onClick={() => router.back()}
-                    className="px-6 py-3 border border-gray-300 dark:border-gray-700 rounded-md text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
+                    className="px-6 py-3 border border-border rounded-md text-text-muted font-medium hover:bg-surface-2 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent"
                 >
                     Cancel
                 </button>
@@ -822,7 +822,7 @@ WantedBy=default.target`;
             <button
                 type="submit"
                 disabled={!!yamlError || !name || !selectedNode || isSaving}
-                className="px-6 py-3 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="px-6 py-3 bg-accent text-on-accent rounded-md font-medium hover:bg-accent-strong shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
             {isSaving && <Loader2 size={16} className="animate-spin" />}
             {isSaving ? 'Saving…' : 'Save Service'}
@@ -830,8 +830,8 @@ WantedBy=default.target`;
         </div>
 
         {yamlError && (
-            <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-200 rounded-md shadow-sm flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
-                <AlertCircle size={20} className="mt-0.5 shrink-0 text-red-500 dark:text-red-400" />
+            <div className="p-3 bg-status-fail/10 border border-status-fail/30 text-status-fail rounded-md shadow-sm flex items-start gap-3 animate-in fade-in slide-in-from-top-2">
+                <AlertCircle size={20} className="mt-0.5 shrink-0 text-status-fail" />
                 <div className="flex-1 min-w-0">
                     <div className="text-sm">{yamlError.message}</div>
                     {yamlError.raw && yamlError.raw !== yamlError.message && (
@@ -839,7 +839,7 @@ WantedBy=default.target`;
                             <button
                                 type="button"
                                 onClick={() => setShowParserDetails(!showParserDetails)}
-                                className="flex items-center gap-1 text-[11px] uppercase tracking-wider font-bold cursor-pointer text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 select-none transition-colors"
+                                className="flex items-center gap-1 text-[11px] uppercase tracking-wider font-bold cursor-pointer text-status-fail hover:text-status-fail select-none transition-colors"
                             >
                                 {showParserDetails ? <ChevronDown size={12} className="shrink-0" /> : <ChevronRight size={12} className="shrink-0" />}
                                 <span>Parser details</span>
@@ -853,7 +853,7 @@ WantedBy=default.target`;
                                     transition: 'max-height 300ms cubic-bezier(0.16, 1, 0.3, 1), opacity 250ms cubic-bezier(0.16, 1, 0.3, 1)'
                                 }}
                             >
-                                <pre className="text-[11px] mt-1 font-mono whitespace-pre-wrap break-words text-red-600/80 dark:text-red-300/80">{yamlError.raw}</pre>
+                                <pre className="text-[11px] mt-1 font-mono whitespace-pre-wrap break-words text-status-fail/80">{yamlError.raw}</pre>
                             </div>
                         </div>
                     )}
