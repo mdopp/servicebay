@@ -82,6 +82,24 @@ usage_error() {
 RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; OFF=$'\033[0m'
 ssh_cmd() { ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$SSH_USER@$HOST" "$@"; }
 
+# Build a two-field JSON object: json_body <key1> <val1> <key2> <val2>.
+#
+# Request bodies are never hand-spliced (#2464). A ServiceBay- or
+# operator-chosen password can legitimately contain `"`, `\`, a backtick or a
+# newline; splicing one straight into a quoted JSON string literal silently
+# produces malformed JSON, and the operator sees a generic HTTP 400 mid-repair on a
+# live box instead of a real diagnostic. python3's json.dumps escapes whatever
+# the value happens to be.
+#
+# Values travel through the environment rather than argv so a secret never
+# shows up in another user's `ps` output.
+json_body() {
+  SB_JSON_K1="$1" SB_JSON_V1="$2" SB_JSON_K2="$3" SB_JSON_V2="$4" \
+    python3 -c 'import json, os
+print(json.dumps({os.environ["SB_JSON_K1"]: os.environ["SB_JSON_V1"],
+                  os.environ["SB_JSON_K2"]: os.environ["SB_JSON_V2"]}))'
+}
+
 # Which subdomains need which fixes. Keep this list narrow — these are
 # the three NPM was creating without the right shape per #878. Everything
 # else (vault / photos / etc.) is fine as-is.
@@ -125,11 +143,12 @@ if [[ -z "$NPM_PASS" ]]; then
   SB_BASE="http://$HOST:$SB_PORT"
   SB_COOKIES=$(mktemp -t sb-heal-cookies.XXXXXX)
   trap 'rm -f "$SB_COOKIES"' EXIT
+  sb_login_body=$(json_body username "$SB_ADMIN_USER" password "$SB_ADMIN_PASS")
   sb_code=$(curl -sS -o /dev/null -w "%{http_code}" \
     -H "Origin: $SB_BASE" -H "Content-Type: application/json" \
     -c "$SB_COOKIES" \
     -X POST "$SB_BASE/api/auth/login" \
-    -d "{\"username\":\"$SB_ADMIN_USER\",\"password\":\"$SB_ADMIN_PASS\"}")
+    -d "$sb_login_body")
   if [[ "$sb_code" != "200" ]]; then
     fail "ServiceBay login as $SB_ADMIN_USER failed (HTTP $sb_code)"
     exit 1
@@ -157,9 +176,10 @@ else
 fi
 
 NPM_BASE="http://$HOST:81"
+NPM_TOKEN_BODY=$(json_body identity "$NPM_EMAIL" secret "$NPM_PASS")
 NPM_TOKEN_RESP=$(curl -sS -X POST "$NPM_BASE/api/tokens" \
   -H "Content-Type: application/json" \
-  -d "{\"identity\":\"$NPM_EMAIL\",\"secret\":\"$NPM_PASS\"}")
+  -d "$NPM_TOKEN_BODY")
 NPM_TOKEN=$(echo "$NPM_TOKEN_RESP" | python3 -c "
 import json, sys
 try:
