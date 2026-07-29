@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.2...servicebay-v5.11.3) (2026-07-29)
+
+
+### Bug Fixes
+
+* **frontend:** discard stale async responses when the selection changes ([3799044](https://github.com/mdopp/servicebay/commit/379904458ad93d0c9f06f212384dae045d5d6838)), closes [#2455](https://github.com/mdopp/servicebay/issues/2455) [#2456](https://github.com/mdopp/servicebay/issues/2456)
+* **frontend:** make the disk-import and backup-sync pollers survive their lifecycle ([b987916](https://github.com/mdopp/servicebay/commit/b9879165a66291024d37d701b11593cc3263405b)), closes [#2457](https://github.com/mdopp/servicebay/issues/2457) [#2459](https://github.com/mdopp/servicebay/issues/2459)
+* health/poller race guards, node-delete confirm modal, maintenance scripts ([9af5949](https://github.com/mdopp/servicebay/commit/9af5949f2713407f2246c5f8260cc3b2e9db2260))
+* **scripts:** build repair-script JSON safely and drop the dead markdown-sync stub ([1ffb314](https://github.com/mdopp/servicebay/commit/1ffb314be7a05e584a2ea939f34c6f6145cf1df0)), closes [#2463](https://github.com/mdopp/servicebay/issues/2463) [#2464](https://github.com/mdopp/servicebay/issues/2464)
+* **settings:** confirm before removing a configured node ([1fcca91](https://github.com/mdopp/servicebay/commit/1fcca9141fe500247f1d9a7c9e5bedfcbf766c50)), closes [#2458](https://github.com/mdopp/servicebay/issues/2458)
+* **StackVariableField:** replace raw UI primitives with design-system components per sb/no-raw-ui-primitive ([5d13822](https://github.com/mdopp/servicebay/commit/5d13822d7423b5028dde140f7a7226ae436302ce))
+
 ## [5.11.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.1...servicebay-v5.11.2) (2026-07-29)
 
 
