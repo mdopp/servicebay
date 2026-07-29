@@ -154,6 +154,14 @@ export default function HealthDashboard() {
 
   // Fetch resources when node changes in form
   useEffect(() => {
+    // #2456 — this effect re-runs on every Target Node change, so two resource
+    // fetches can be in flight at once. The cleanup of a superseded run flips
+    // `cancelled`, and nothing below commits past that guard, so a slow
+    // response for a previously-selected node is discarded instead of
+    // overwriting the container/service options for the node now selected.
+    // The three lists are parsed first and committed together *after* the
+    // guard, so the picker can never show a mix of two nodes' resources.
+    let cancelled = false;
     const fetchResources = async () => {
         if (!isModalOpen || !formData.nodeName) {
             setContainers([]);
@@ -171,25 +179,28 @@ export default function HealthDashboard() {
                 fetch(`/api/system/services${query}`)
             ]);
 
-            if (containersRes.ok) setContainers(await containersRes.json());
-            if (servicesRes.ok) {
-                const services = await servicesRes.json();
-                setManagedServices(services.map((s: { name: string }) => s.name));
-            }
-            if (systemRes.ok) {
-                const system = await systemRes.json();
-                setSystemServices(system.map((s: { unit: string }) => s.unit));
-            }
+            const [nextContainers, nextServices, nextSystem] = await Promise.all([
+                containersRes.ok ? containersRes.json() as Promise<Container[]> : null,
+                servicesRes.ok ? servicesRes.json() as Promise<{ name: string }[]> : null,
+                systemRes.ok ? systemRes.json() as Promise<{ unit: string }[]> : null,
+            ]);
+
+            if (cancelled) return;
+
+            if (nextContainers) setContainers(nextContainers);
+            if (nextServices) setManagedServices(nextServices.map(s => s.name));
+            if (nextSystem) setSystemServices(nextSystem.map(s => s.unit));
         } catch (e) {
             // Background resources fetch — keep silent (the panel
             // shows its own "no data" state when this fails).
             console.error('[HealthDashboard] Failed to fetch node resources', e);
         } finally {
-            setResourcesLoading(false);
+            if (!cancelled) setResourcesLoading(false);
         }
     };
 
     fetchResources();
+    return () => { cancelled = true; };
   }, [isModalOpen, formData.nodeName]);
 
   useEffect(() => {

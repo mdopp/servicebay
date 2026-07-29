@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { logger, type Check, type ServiceViewModel } from '@servicebay/api-client';
 import { rowStatus, type RowStatus } from '@/components/HealthChecks';
 
@@ -123,18 +123,34 @@ export function useServiceHealth(service: Pick<ServiceViewModel, 'id' | 'name'>)
   const [boxWideChecks, setBoxWideChecks] = useState<Check[]>([]);
   const [loading, setLoading] = useState(true);
 
+  /**
+   * #2455 — request-generation guard. `reload` is re-created (and re-run by the
+   * effect below) on every service switch, so two loads can be in flight at
+   * once. Each load takes the next generation number and commits nothing unless
+   * it is still the latest one; without this, a slow fetch for the
+   * previously-selected service resolves last and overwrites the health dot /
+   * roll-up of the service now on screen with the wrong service's checks.
+   * `loading` is guarded the same way, so a superseded load can't clear the
+   * spinner while the current one is still running.
+   */
+  const generationRef = useRef(0);
+
   const reload = useCallback(async () => {
+    const generation = ++generationRef.current;
+    const isStale = () => generationRef.current !== generation;
     setLoading(true);
     try {
       const res = await fetch('/api/health/checks', { cache: 'no-store' });
       if (!res.ok) throw new Error('Failed to load health checks');
       const all: Check[] = await res.json();
+      if (isStale()) return;
       setChecks(all.filter(c => checkBelongsToService(c, baseName)));
       setBoxWideChecks(all.filter(isBoxWideCheck));
     } catch (e) {
+      if (isStale()) return;
       logger.error('useServiceHealth', 'Failed to load checks', e);
     } finally {
-      setLoading(false);
+      if (!isStale()) setLoading(false);
     }
   }, [baseName]);
 
