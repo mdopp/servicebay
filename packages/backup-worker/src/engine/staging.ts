@@ -44,20 +44,48 @@ function isExcluded(relPath: string, excludes: string[]): boolean {
 }
 
 /**
+ * Fully resolve `absPath` and return it only when it still lives inside the
+ * service's own (already-resolved) data root — otherwise `null`.
+ *
+ * Security (#2454): manifest-include resolution must NOT follow a symlink out
+ * of the service's data dir. A compromised service can replace an included path
+ * (e.g. `.storage`) with a symlink at a *sibling* service's data dir; a bare
+ * `fs.stat` follows it, so the sibling's bytes would be copied into THIS
+ * service's tar and shipped offsite. `fs.realpath` resolves symlinks in every
+ * component, so this also rejects an include that merely *traverses* a symlink
+ * (or a `..` segment) on its way out. A symlink that stays inside the service's
+ * own data root is legitimate and still resolves.
+ */
+async function realPathInsideRoot(dataDirReal: string, absPath: string): Promise<string | null> {
+  let real: string;
+  try {
+    real = await fs.realpath(absPath);
+  } catch {
+    return null; // missing, dangling symlink, or a symlink loop
+  }
+  return real === dataDirReal || real.startsWith(dataDirReal + path.sep) ? real : null;
+}
+
+/**
  * Resolve a manifest include that may carry a trailing-`*` glob in its leaf
  * component (e.g. `.storage/lovelace*`) to the concrete relative paths under
  * `serviceDataDir`. A plain include resolves to itself. Only a single
  * trailing-`*` on the leaf is supported (#1595/#1596).
  */
-async function resolveIncludeGlob(serviceDataDir: string, include: string): Promise<string[]> {
+async function resolveIncludeGlob(
+  serviceDataDir: string,
+  dataDirReal: string,
+  include: string,
+): Promise<string[]> {
   if (!include.includes('*')) return [include];
   const dir = path.posix.dirname(include);
   const leaf = path.posix.basename(include);
   if (leaf.indexOf('*') !== leaf.length - 1) return [include];
   const prefix = leaf.slice(0, -1);
-  const parentAbs = path.join(serviceDataDir, dir);
-  if (!(await pathExists(parentAbs))) return [];
-  const entries = await fs.readdir(parentAbs, { withFileTypes: true });
+  // Escaping parent → not even enumerated (no sibling-directory listing).
+  const parentReal = await realPathInsideRoot(dataDirReal, path.join(serviceDataDir, dir));
+  if (!parentReal) return [];
+  const entries = await fs.readdir(parentReal, { withFileTypes: true });
   return entries
     .filter(e => e.name.startsWith(prefix))
     .map(e => path.posix.join(dir, e.name));
@@ -96,15 +124,31 @@ export async function stageServiceBackup(
   stagingDir: string,
 ): Promise<string[]> {
   const staged: string[] = [];
+  let dataDirReal: string;
+  try {
+    // The data root itself may legitimately be a symlink (e.g. a mounted
+    // stacks path) — resolve it ONCE and containment-check against the result.
+    dataDirReal = await fs.realpath(serviceDataDir);
+  } catch {
+    return staged; // no data dir on disk yet
+  }
   const includes: string[] = [];
   for (const include of manifest.include) {
-    includes.push(...(await resolveIncludeGlob(serviceDataDir, include)));
+    includes.push(...(await resolveIncludeGlob(serviceDataDir, dataDirReal, include)));
   }
   for (const include of includes) {
     if (isExcluded(include, manifest.exclude)) continue;
     const absInclude = path.join(serviceDataDir, include);
     if (!(await pathExists(absInclude))) continue;
-    const isDir = (await fs.stat(absInclude)).isDirectory();
+    const realInclude = await realPathInsideRoot(dataDirReal, absInclude);
+    if (!realInclude) {
+      // #2454 — symlink (or `..`) escape out of the service's own data dir.
+      console.warn(
+        `[backup-worker] "${manifest.service}": skipping include "${include}" — it resolves outside the service data dir`,
+      );
+      continue;
+    }
+    const isDir = (await fs.stat(realInclude)).isDirectory();
     const relFiles = isDir
       ? await collectDirFiles(serviceDataDir, include, manifest.exclude)
       : [include];

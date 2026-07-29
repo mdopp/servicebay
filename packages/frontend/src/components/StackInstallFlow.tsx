@@ -78,11 +78,11 @@ export function StackInstallConfigureForm({
     <div className="space-y-4">
       {nodes && nodes.length > 1 && (
         <div>
-          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase mb-1">Target Node</label>
+          <label className="block text-xs font-medium text-subtle uppercase mb-1">Target Node</label>
           <select
             value={selectedNode ?? ''}
             onChange={(e) => onSelectNode?.(e.target.value)}
-            className={inputClassName ?? 'w-full p-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded'}
+            className={inputClassName ?? 'w-full p-2 border border-border bg-surface text-text rounded'}
           >
             <option value="" disabled>Select a node</option>
             {nodes.map(n => (
@@ -95,19 +95,19 @@ export function StackInstallConfigureForm({
       {beforeVariables}
 
       {variables.length === 0 ? (
-        <div className="p-4 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200 rounded">
+        <div className="p-4 bg-surface text-status-ok rounded">
           No variables found. You can proceed.
         </div>
       ) : (
         <div className="space-y-4">
           {variables.filter(v => v.global).length > 0 && (
             <div>
-              <p className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">From Settings</p>
+              <p className="text-xs font-medium text-subtle uppercase tracking-wide mb-2">From Settings</p>
               <div className="grid gap-2">
                 {variables.filter(v => v.global).map(v => (
-                  <div key={v.name} className="flex items-center gap-3 p-2 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
-                    <span className="text-sm font-medium text-gray-500 dark:text-gray-400 min-w-[100px]">{v.name}</span>
-                    <span className="text-sm text-gray-700 dark:text-gray-300 font-mono">{v.value}</span>
+                  <div key={v.name} className="flex items-center gap-3 p-2 bg-surface-2 rounded border border-border">
+                    <span className="text-sm font-medium text-subtle min-w-[100px]">{v.name}</span>
+                    <span className="text-sm text-text font-mono">{v.value}</span>
                   </div>
                 ))}
               </div>
@@ -115,13 +115,13 @@ export function StackInstallConfigureForm({
           )}
           {groups.map(group => (
             <div key={group.key}>
-              <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-700 pb-1 mb-3">{group.label}</h4>
+              <h4 className="text-sm font-semibold text-text border-b border-border pb-1 mb-3">{group.label}</h4>
               <div className="grid gap-4">
                 {group.variables.map(v => (
                   <div key={v.name}>
-                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">{v.name}</label>
+                    <label className="block text-sm font-bold text-text mb-1">{v.name}</label>
                     {v.meta?.description && (
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">{v.meta.description}</p>
+                      <p className="text-xs text-subtle mb-1">{v.meta.description}</p>
                     )}
                     <StackVariableField
                       variable={v}
@@ -191,12 +191,12 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
         />
       )}
 
-      <div className="bg-gray-900 text-gray-100 p-4 rounded-md font-mono text-xs min-h-[12rem] border border-gray-800">
+      <div className="bg-surface-muted text-text p-4 rounded-md font-mono text-xs min-h-[12rem] border border-border">
         {globalLines.map((log, i) => (
           <div key={i} className="mb-1">{log}</div>
         ))}
         {phase === 'installing' && (
-          <div className="flex items-center gap-2 text-gray-400 mt-2">
+          <div className="flex items-center gap-2 text-muted mt-2">
             <Loader2 size={14} className="animate-spin" /> Processing...
           </div>
         )}
@@ -218,7 +218,7 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
                 abortInstall();
               }
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-red-600 text-white hover:bg-red-700"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-status-fail text-on-accent hover:opacity-80"
           >
             <XCircle size={14} /> Abort install
           </button>
@@ -233,7 +233,7 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
                 reset();
               }
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-amber-600 text-white hover:bg-amber-700"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-status-warn text-on-accent hover:opacity-80"
           >
             <RefreshCcw size={14} /> Start over
           </button>
@@ -241,9 +241,9 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
       )}
 
       {npmCredPrompt && (
-        <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
-          <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">NPM admin login required</p>
-          <p className="text-xs text-amber-700 dark:text-amber-300 mb-3">
+        <div className="mt-3 p-3 bg-surface rounded-lg border border-border">
+          <p className="text-sm font-medium text-status-warn mb-2">NPM admin login required</p>
+          <p className="text-xs text-status-warn mb-3">
             Nginx Proxy Manager rejected the password this install tried to set — usually because the data volume on this host carries an admin password from a previous install.{' '}
             {npmCredFallback.email || npmCredFallback.password
               ? <>The fields below are pre-filled with the credentials ServiceBay previously had stored (best guess for what NPM&apos;s database still accepts); the wizard&apos;s newly-generated password is <em>not</em> shown here because NPM already rejected it.</>
@@ -255,14 +255,14 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
               type="email"
               value={credEmail}
               onChange={(e) => setCredEmail(e.target.value)}
-              className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700 rounded-md text-sm"
+              className="w-full px-3 py-2 bg-surface border border-border rounded-md text-sm"
               placeholder="NPM admin email"
             />
             <input
               type="text"
               value={credPassword}
               onChange={(e) => setCredPassword(e.target.value)}
-              className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700 rounded-md text-sm font-mono"
+              className="w-full px-3 py-2 bg-surface border border-border rounded-md text-sm font-mono"
               placeholder="NPM admin password"
               autoComplete="off"
               spellCheck={false}
@@ -276,13 +276,13 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
               <button
                 onClick={() => { void retryNpmCredentials(credEmail, credPassword); }}
                 disabled={!credPassword}
-                className="flex-1 px-3 py-2 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700 disabled:opacity-50"
+                className="flex-1 px-3 py-2 bg-status-warn text-on-accent rounded-md text-sm font-medium hover:opacity-80 disabled:opacity-50"
               >
                 Authenticate &amp; Retry
               </button>
               <button
                 onClick={skipNpmCredentials}
-                className="px-3 py-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-sm"
+                className="px-3 py-2 text-subtle hover:text-text text-sm"
               >
                 Skip
               </button>
@@ -315,36 +315,36 @@ export function StackInstallSummary({ controller, doneFooter }: SummaryProps) {
   return (
     <div className="mt-3 space-y-3">
       {manifest.length > 0 && (
-        <div className="p-3 bg-rose-50 dark:bg-rose-900/20 rounded border border-rose-200 dark:border-rose-800 text-sm">
+        <div className="p-3 bg-surface rounded border border-border text-sm">
           <div className="flex items-center justify-between mb-2">
-            <p className="font-medium text-rose-800 dark:text-rose-200">🔑 Credentials — save now</p>
+            <p className="font-medium text-status-fail">🔑 Credentials — save now</p>
             <button
               type="button"
               onClick={downloadCsv}
-              className="text-xs px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded"
+              className="text-xs px-2 py-1 bg-status-fail hover:opacity-80 text-on-accent rounded"
               title="Download as Bitwarden / Vaultwarden CSV"
             >
               ⬇ Download CSV
             </button>
           </div>
-          <p className="text-xs text-rose-700 dark:text-rose-300 mb-2">
+          <p className="text-xs text-status-fail mb-2">
             Won&apos;t be shown again. Either copy them into your password manager now or use the CSV button: Vaultwarden → Tools → Import → Bitwarden (csv).
           </p>
           <div className="space-y-1.5 font-mono text-xs">
             {manifest.filter(c => c.importance === 'critical').map(c => (
-              <div key={c.service} className="border-l-2 border-rose-300 dark:border-rose-700 pl-2">
-                <div className="font-sans font-medium text-rose-900 dark:text-rose-100">{c.service}</div>
-                <div className="text-rose-700 dark:text-rose-300 break-all">{c.url}</div>
-                <div className="text-rose-600 dark:text-rose-400">{c.username} / {c.password}</div>
+              <div key={c.service} className="border-l-2 border-border pl-2">
+                <div className="font-sans font-medium text-text">{c.service}</div>
+                <div className="text-text break-all">{c.url}</div>
+                <div className="text-text-muted">{c.username} / {c.password}</div>
               </div>
             ))}
           </div>
           {manifest.some(c => c.importance === 'system') && (
             <details className="mt-2 text-xs">
-              <summary className="cursor-pointer text-rose-700 dark:text-rose-300">System / DR secrets ({manifest.filter(c => c.importance === 'system').length})</summary>
+              <summary className="cursor-pointer text-text-muted">System / DR secrets ({manifest.filter(c => c.importance === 'system').length})</summary>
               <div className="mt-1 space-y-1 font-mono">
                 {manifest.filter(c => c.importance === 'system').map(c => (
-                  <div key={c.service} className="text-rose-600 dark:text-rose-400 pl-2">
+                  <div key={c.service} className="text-text-muted pl-2">
                     <span className="font-sans">{c.service}:</span> {c.password}
                   </div>
                 ))}
@@ -541,39 +541,39 @@ function InstallServiceRows({ items, installingNow, deployedNames, perService }:
   };
 
   return (
-    <div className="mb-3 border border-gray-200 dark:border-gray-800 rounded-md overflow-hidden">
+    <div className="mb-3 border border-border rounded-md overflow-hidden">
       {items.map(item => {
         const isDone = deployedSet.has(item.name);
         const isInstalling = installingNow === item.name;
         const lines = perService.get(item.name) || [];
         const isOpen = expanded.has(item.name);
         const statusIcon = isDone
-          ? <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
+          ? <CheckCircle2 size={14} className="text-status-ok shrink-0" />
           : isInstalling
-            ? <Loader2 size={14} className="animate-spin text-blue-500 shrink-0" />
-            : <Circle size={14} className="text-gray-300 dark:text-gray-600 shrink-0" />;
+            ? <Loader2 size={14} className="animate-spin text-status-info shrink-0" />
+            : <Circle size={14} className="text-text-subtle shrink-0" />;
         const statusText = isDone ? 'Deployed' : isInstalling ? 'Installing…' : 'Pending';
         return (
-          <div key={item.name} className="border-b border-gray-200 dark:border-gray-800 last:border-b-0">
+          <div key={item.name} className="border-b border-border last:border-b-0">
             <button
               type="button"
               onClick={() => toggle(item.name)}
-              className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-gray-50 dark:hover:bg-gray-900 transition-colors"
+              className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-surface-2 transition-colors"
             >
-              {isOpen ? <ChevronDown size={14} className="text-gray-400 shrink-0" /> : <ChevronRight size={14} className="text-gray-400 shrink-0" />}
+              {isOpen ? <ChevronDown size={14} className="text-text-subtle shrink-0" /> : <ChevronRight size={14} className="text-text-subtle shrink-0" />}
               {statusIcon}
-              <span className="text-sm font-medium text-gray-900 dark:text-gray-100 flex-1 truncate">{item.name}</span>
-              <span className={`text-xs ${isDone ? 'text-emerald-600 dark:text-emerald-400' : isInstalling ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}>
+              <span className="text-sm font-medium text-text flex-1 truncate">{item.name}</span>
+              <span className={`text-xs ${isDone ? 'text-status-ok' : isInstalling ? 'text-status-info' : 'text-subtle'}`}>
                 {statusText}
               </span>
               {lines.length > 0 && (
-                <span className="text-[10px] text-gray-400 tabular-nums">{lines.length} ln</span>
+                <span className="text-[10px] text-text-subtle tabular-nums">{lines.length} ln</span>
               )}
             </button>
             {isOpen && (
-              <div className="bg-gray-900 text-gray-100 px-3 py-2 font-mono text-[11px] max-h-48 overflow-y-auto">
+              <div className="bg-surface-muted text-text px-3 py-2 font-mono text-[11px] max-h-48 overflow-y-auto">
                 {lines.length === 0 ? (
-                  <span className="text-gray-500">No log lines yet for {item.name}.</span>
+                  <span className="text-subtle">No log lines yet for {item.name}.</span>
                 ) : (
                   lines.map((line, i) => <div key={i} className="leading-snug">{line}</div>)
                 )}

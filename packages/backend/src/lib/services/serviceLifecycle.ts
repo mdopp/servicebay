@@ -23,6 +23,7 @@ import { saveSnapshot } from '../history';
 import { injectServiceDirectives } from './quadletDirectives';
 import { ServiceListing } from './serviceListing';
 import { buildExpectedContainerNames } from './containerNameMatcher';
+import { assertTrashId } from '../api/schemas';
 import type { PodLikeDoc, PodLikeVolumeMount } from './containerNameMatcher';
 
 const SYSTEMD_DIR = '.config/containers/systemd';
@@ -1850,6 +1851,10 @@ export class ServiceLifecycle {
     /** Recursive listing of the trash bucket for one node. Each entry maps
      *  to a single soft-deleted service. */
     static async restoreTrashedService(nodeName: string, trashId: string): Promise<{ service: string }> {
+        // #2452 — `trashId` lands inside `cat`/`mv`/`rm -rf` command strings
+        // below. Same strict basename check the sibling `purgeTrash` applies:
+        // no separators, no traversal, no shell metacharacters.
+        assertTrashId(trashId);
         const agent = await agentManager.ensureAgent(nodeName);
         const trashRoot = `~/${SYSTEMD_DIR}/.trash`;
         const trashDir = `${trashRoot}/${trashId}`;
@@ -1905,9 +1910,7 @@ export class ServiceLifecycle {
         const trashRoot = `~/${SYSTEMD_DIR}/.trash`;
         if (opts.trashId) {
             // Strict basename — no traversal allowed.
-            if (!/^[a-zA-Z0-9._-]+$/.test(opts.trashId)) {
-                throw new Error(`Invalid trash id: ${opts.trashId}`);
-            }
+            assertTrashId(opts.trashId);
             await agent.sendCommand('exec', { command: `rm -rf '${trashRoot}/${opts.trashId}'` });
             logger.info('ServiceManager', `Purged trash entry ${opts.trashId} on ${nodeName}`);
             return { purged: [opts.trashId] };

@@ -14,6 +14,27 @@ export const ServiceName = z.string()
   .max(255)
   .regex(/^[A-Za-z0-9@_.\-:]+$/, 'invalid service name');
 
+// Trash-bucket entry ids. A strict basename — the id is interpolated into
+// `rm -rf`/`mv` command strings rooted at the trash dir, so no separators, no
+// traversal, no shell metacharacters. Mirrors the check `purgeTrash` has always
+// applied (services/serviceLifecycle.ts) so both trash paths share one rule.
+// `..` and a leading dot are rejected on top of the character class: `..` alone
+// satisfies the class but resolves to the trash root's parent.
+export const TRASH_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
+export const TrashId = z.string()
+  .min(1)
+  .max(255)
+  .regex(TRASH_ID_PATTERN, 'invalid trash id')
+  .refine(s => !s.includes('..'), 'parent traversal not allowed')
+  .refine(s => !s.startsWith('.'), 'leading dot not allowed');
+
+/** Imperative form of {@link TrashId} for non-zod call sites. Throws on reject. */
+export function assertTrashId(trashId: string): void {
+  if (!TrashId.safeParse(trashId).success) {
+    throw new Error(`Invalid trash id: ${trashId}`);
+  }
+}
+
 // Node names are user-supplied labels; allow alnum + `_-` only.
 export const NodeName = z.string()
   .min(1)

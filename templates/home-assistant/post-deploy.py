@@ -72,6 +72,16 @@ REQUEST_TIMEOUT = 10.0
 # auth_oidc install
 HA_API = "http://127.0.0.1:8123"
 HA_OIDC_REPO = "christiaangoossens/hass-oidc-auth"
+# SHA-256 of the upstream GitHub tag archive, per release tag we ship a default
+# for (#2453). The download is a plain HTTPS fetch that we then unpack as root,
+# so a compromised upstream release — or anything that can sit in the middle —
+# would otherwise be an arbitrary-write primitive. GitHub's tag archives are
+# byte-stable per tag, so a mismatch means the artifact changed under us and we
+# refuse to extract it. Operators pinning a different HA_OIDC_AUTH_VERSION
+# supply the matching digest via HA_OIDC_AUTH_SHA256.
+HA_OIDC_RELEASE_SHA256 = {
+    "v1.1.0": "92650f0698401e8bc7533065cfd3f2ca5c2074b5ffdb50554898954f32a50412",
+}
 HA_READY_TIMEOUT = 180.0
 HA_READY_INTERVAL = 3.0
 HA_CONTAINER_NAME = "home-assistant-homeassistant"
@@ -1148,6 +1158,27 @@ def _strip_first_component(member_path: str) -> str | None:
     return "/".join(rest[2:])  # path inside auth_oidc/
 
 
+def _safe_member_target(staging: str, rel: str) -> str | None:
+    """Resolve `rel` inside `staging` and return the absolute path to write,
+    or None when the entry would land outside `staging` (#2453).
+
+    `_strip_first_component` only removes the archive's top-level directory;
+    everything after `custom_components/auth_oidc/` comes straight from the
+    tarball, so `../../../etc/cron.d/x` or `/etc/cron.d/x` would otherwise be
+    joined onto the staging dir and written as root. Resolving the candidate
+    and requiring it to still sit under the real staging path rejects both
+    shapes (and any symlinked parent) *before* anything is created."""
+    root = os.path.realpath(staging)
+    if not rel:
+        return root
+    candidate = os.path.realpath(os.path.join(root, rel))
+    if candidate == root:
+        return root
+    if not candidate.startswith(root + os.sep):
+        return None
+    return candidate
+
+
 def _extract_auth_oidc(tar_path: str, target_dir: str) -> None:
     """Extract only the `custom_components/auth_oidc/` subtree from
     the release tarball into `target_dir`. Replaces the directory
@@ -1161,7 +1192,14 @@ def _extract_auth_oidc(tar_path: str, target_dir: str) -> None:
                 rel = _strip_first_component(member.name)
                 if rel is None:
                     continue
-                out_path = os.path.join(staging, rel) if rel else staging
+                out_path = _safe_member_target(staging, rel)
+                if out_path is None:
+                    # A path-traversal entry means the artifact is hostile, not
+                    # merely odd — abort the whole extraction instead of
+                    # installing the rest of it (#2453).
+                    raise tarfile.TarError(
+                        f"refusing tarball entry that escapes the staging dir: {member.name!r}"
+                    )
                 if member.isdir():
                     os.makedirs(out_path, exist_ok=True)
                     continue
@@ -1178,6 +1216,25 @@ def _extract_auth_oidc(tar_path: str, target_dir: str) -> None:
     finally:
         if os.path.isdir(staging):
             shutil.rmtree(staging, ignore_errors=True)
+
+
+def _expected_release_sha256(version: str) -> str | None:
+    """The digest the downloaded tarball must match, or None when we have no
+    pin for this version. An operator bumping HA_OIDC_AUTH_VERSION supplies
+    HA_OIDC_AUTH_SHA256; otherwise we use the shipped map."""
+    override = env("HA_OIDC_AUTH_SHA256").strip().lower()
+    if override:
+        return override
+    return HA_OIDC_RELEASE_SHA256.get(version)
+
+
+def _file_sha256(path: str) -> str:
+    """Chunked so a large artifact never has to be held in memory."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def install_auth_oidc(version: str) -> bool:
@@ -1202,12 +1259,27 @@ def install_auth_oidc(version: str) -> bool:
         log(f"   ⚠️ Could not read existing version stamp: {exc}. Proceeding with install.")
 
     url = f"https://github.com/{HA_OIDC_REPO}/archive/refs/tags/{version}.tar.gz"
+    expected_sha = _expected_release_sha256(version)
+    if not expected_sha:
+        log(f"   ⚠️ No pinned SHA-256 for auth_oidc {version} — refusing to download + unpack an "
+            "unverified artifact as root.")
+        log(f"   Recovery: set HA_OIDC_AUTH_SHA256 to the sha256 of {url} "
+            f"(`curl -sL {url} | sha256sum`), or pin HA_OIDC_AUTH_VERSION back to a version "
+            f"ServiceBay ships a digest for ({', '.join(sorted(HA_OIDC_RELEASE_SHA256))}).")
+        return False
+
     log(f"   Downloading {url}")
     tar_path = ""
     try:
         with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:
             tar_path = tmp.name
         urllib.request.urlretrieve(url, tar_path)  # noqa: S310 (pinned URL)
+        actual_sha = _file_sha256(tar_path)
+        if actual_sha != expected_sha:
+            # Verify BEFORE extraction — the extract runs as root (#2453).
+            raise tarfile.TarError(
+                f"sha256 mismatch for {url}: expected {expected_sha}, got {actual_sha}"
+            )
         os.makedirs(os.path.dirname(target), exist_ok=True)
         _extract_auth_oidc(tar_path, target)
     except (urllib.error.URLError, OSError, tarfile.TarError) as exc:

@@ -30,7 +30,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
-import { Button } from '@/components/ui';
+import { Button, Field, Input, Select, Textarea, Table } from '@/components/ui';
 import PageHeader from '@/components/PageHeader';
 import ConfirmModal from '@/components/ConfirmModal';
 import FileViewer from '@/components/FileViewer';
@@ -758,13 +758,12 @@ export default function BackupPage() {
               </p>
               <p className="text-xs text-text-subtle mt-1">
                 Need granular control?{' '}
-                <button
-                  type="button"
+                <Button
                   onClick={() => openRestoreOverlay(true)}
                   className="text-status-ok underline"
                 >
                   Selective restore…
-                </button>
+                </Button>
               </p>
             </div>
             <Button
@@ -842,7 +841,7 @@ export default function BackupPage() {
             <div className="text-sm text-text-muted italic">No snapshots yet. Create one to capture your setup and per-service config.</div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
+              <Table className="min-w-full text-sm">
                 <thead>
                   <tr className="text-left text-text-muted border-b border-border">
                     <th className="py-2 font-medium">Archive</th>
@@ -873,10 +872,9 @@ export default function BackupPage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </Table>
               {backups.length > BACKUP_PREVIEW_COUNT && (
-                <button
-                  type="button"
+                <Button
                   onClick={() => setShowAllBackups(v => !v)}
                   className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text transition-colors"
                 >
@@ -884,7 +882,7 @@ export default function BackupPage() {
                   {showAllBackups
                     ? `Show fewer (newest ${BACKUP_PREVIEW_COUNT})`
                     : `Show all ${backups.length} backups`}
-                </button>
+                </Button>
               )}
             </div>
           )}
@@ -1010,7 +1008,7 @@ export default function BackupPage() {
                   : sortedNasBackups.slice(0, NAS_PREVIEW_COUNT);
                 return (
                 <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm">
+                  <Table className="min-w-full text-sm">
                     <thead>
                       <tr className="text-left text-text-muted border-b border-border">
                         <th className="py-2 font-medium">Service</th>
@@ -1053,10 +1051,9 @@ export default function BackupPage() {
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </Table>
                   {sortedNasBackups.length > NAS_PREVIEW_COUNT && (
-                    <button
-                      type="button"
+                    <Button
                       onClick={() => setShowAllNasBackups(v => !v)}
                       className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-text-muted hover:text-text transition-colors"
                     >
@@ -1064,7 +1061,7 @@ export default function BackupPage() {
                       {showAllNasBackups
                         ? `Show fewer (newest ${NAS_PREVIEW_COUNT})`
                         : `Show all ${sortedNasBackups.length} snapshots`}
-                    </button>
+                    </Button>
                   )}
                 </div>
                 );
@@ -1089,7 +1086,7 @@ export default function BackupPage() {
             <label className="flex items-center gap-2 cursor-pointer">
               <span className="text-xs text-text-muted">{backupSync.enabled ? 'Enabled' : 'Disabled'}</span>
               <div className="relative">
-                <input type="checkbox" className="sr-only peer" checked={backupSync.enabled} onChange={e => setBackupSync(prev => ({ ...prev, enabled: e.target.checked }))} />
+                <Input type="checkbox" className="sr-only peer" checked={backupSync.enabled} onChange={e => setBackupSync(prev => ({ ...prev, enabled: e.target.checked }))} />
                 <div className="w-9 h-5 bg-surface-muted peer-focus:outline-none rounded-full peer border border-border peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-surface after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-accent"></div>
               </div>
             </label>
@@ -1112,9 +1109,9 @@ export default function BackupPage() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="block text-xs font-medium text-text-muted">Source Directories</label>
-              <button type="button" onClick={addBackupSource} className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:text-accent-strong">
+              <Button onClick={addBackupSource} className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:text-accent-strong">
                 <Plus size={14} /> Add source
-              </button>
+              </Button>
             </div>
             <div className="space-y-3">
               {backupSync.sources.length === 0 && (
@@ -1123,7 +1120,7 @@ export default function BackupPage() {
               {backupSync.sources.map((src, i) => (
                 <div key={i} className="rounded-card border border-border bg-surface-muted p-3 space-y-2">
                   <div className="flex items-center gap-2">
-                    <input
+                    <Input
                       type="text"
                       className="flex-1 px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text"
                       value={src.path}
@@ -1141,14 +1138,18 @@ export default function BackupPage() {
                     </Button>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-medium text-text-muted mb-1">Exclude patterns (one per line)</label>
-                    <textarea
-                      className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text font-mono"
-                      rows={2}
-                      value={src.excludePatterns}
-                      onChange={e => updateBackupSource(i, { excludePatterns: e.target.value })}
-                      placeholder="*.tmp&#10;cache/"
-                    />
+                    <Field label="Exclude patterns (one per line)">
+                      {(props) => (
+                        <Textarea
+                          {...props}
+                          className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text font-mono"
+                          rows={2}
+                          value={src.excludePatterns}
+                          onChange={e => updateBackupSource(i, { excludePatterns: e.target.value })}
+                          placeholder="*.tmp&#10;cache/"
+                        />
+                      )}
+                    </Field>
                   </div>
                 </div>
               ))}
@@ -1172,9 +1173,8 @@ export default function BackupPage() {
               ] as const).map(({ val, label, hint, Icon }) => {
                 const active = backupSync.targetType === val;
                 return (
-                  <button
+                  <Button
                     key={val}
-                    type="button"
                     onClick={() => setBackupSync(prev => ({ ...prev, targetType: val }))}
                     aria-pressed={active}
                     className={`flex items-start gap-2 px-3 py-2 text-left rounded-card border-2 transition-colors ${active ? 'bg-accent/10 border-accent' : 'border-border hover:bg-surface-2 hover:border-border-strong'}`}
@@ -1184,7 +1184,7 @@ export default function BackupPage() {
                       <div className={`text-xs font-semibold ${active ? 'text-accent' : 'text-text'}`}>{label}</div>
                       <div className={`text-[11px] leading-tight ${active ? 'text-accent/70' : 'text-text-muted'}`}>{hint}</div>
                     </div>
-                  </button>
+                  </Button>
                 );
               })}
             </div>
@@ -1211,77 +1211,124 @@ export default function BackupPage() {
 
           {backupSync.targetType === 'ssh' && (
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">Host</label>
-                <input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshHost} onChange={e => setBackupSync(prev => ({ ...prev, sshHost: e.target.value }))} placeholder="192.168.1.100" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">Port</label>
-                <input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshPort} onChange={e => setBackupSync(prev => ({ ...prev, sshPort: e.target.value }))} placeholder="22" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">User</label>
-                <input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshUser} onChange={e => setBackupSync(prev => ({ ...prev, sshUser: e.target.value }))} />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">Remote Path</label>
-                <input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshPath} onChange={e => setBackupSync(prev => ({ ...prev, sshPath: e.target.value }))} placeholder="/backup" />
-              </div>
+              <Field label="Host">
+                {(props) => (
+                  <Input type="text" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshHost} onChange={e => setBackupSync(prev => ({ ...prev, sshHost: e.target.value }))} placeholder="192.168.1.100" />
+                )}
+              </Field>
+              <Field label="Port">
+                {(props) => (
+                  <Input type="text" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshPort} onChange={e => setBackupSync(prev => ({ ...prev, sshPort: e.target.value }))} placeholder="22" />
+                )}
+              </Field>
+              <Field label="User">
+                {(props) => (
+                  <Input type="text" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshUser} onChange={e => setBackupSync(prev => ({ ...prev, sshUser: e.target.value }))} />
+                )}
+              </Field>
+              <Field label="Remote Path">
+                {(props) => (
+                  <Input type="text" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshPath} onChange={e => setBackupSync(prev => ({ ...prev, sshPath: e.target.value }))} placeholder="/backup" />
+                )}
+              </Field>
               <div className="col-span-2">
-                <label className="block text-xs font-medium text-text-muted mb-1">Identity File</label>
-                <input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshIdentityFile} onChange={e => setBackupSync(prev => ({ ...prev, sshIdentityFile: e.target.value }))} />
+                <Field label="Identity File">
+                  {(props) => (
+                    <Input type="text" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.sshIdentityFile} onChange={e => setBackupSync(prev => ({ ...prev, sshIdentityFile: e.target.value }))} />
+                  )}
+                </Field>
               </div>
             </div>
           )}
 
           {backupSync.targetType === 'smb' && (
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="block text-xs font-medium text-text-muted mb-1">Host</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbHost} onChange={e => setBackupSync(prev => ({ ...prev, smbHost: e.target.value }))} placeholder="nas.local" /></div>
-              <div><label className="block text-xs font-medium text-text-muted mb-1">Share Name</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbShare} onChange={e => setBackupSync(prev => ({ ...prev, smbShare: e.target.value }))} placeholder="backup" /></div>
-              <div><label className="block text-xs font-medium text-text-muted mb-1">Subfolder (optional)</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbPath} onChange={e => setBackupSync(prev => ({ ...prev, smbPath: e.target.value }))} /></div>
-              <div><label className="block text-xs font-medium text-text-muted mb-1">Username</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbUsername} onChange={e => setBackupSync(prev => ({ ...prev, smbUsername: e.target.value }))} /></div>
-              <div className="col-span-2"><label className="block text-xs font-medium text-text-muted mb-1">Password</label><input type="password" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbPassword} onChange={e => setBackupSync(prev => ({ ...prev, smbPassword: e.target.value }))} /></div>
+              <Field label="Host">
+                {(props) => (
+                  <Input type="text" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbHost} onChange={e => setBackupSync(prev => ({ ...prev, smbHost: e.target.value }))} placeholder="nas.local" />
+                )}
+              </Field>
+              <Field label="Share Name">
+                {(props) => (
+                  <Input type="text" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbShare} onChange={e => setBackupSync(prev => ({ ...prev, smbShare: e.target.value }))} placeholder="backup" />
+                )}
+              </Field>
+              <Field label="Subfolder (optional)">
+                {(props) => (
+                  <Input type="text" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbPath} onChange={e => setBackupSync(prev => ({ ...prev, smbPath: e.target.value }))} />
+                )}
+              </Field>
+              <Field label="Username">
+                {(props) => (
+                  <Input type="text" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbUsername} onChange={e => setBackupSync(prev => ({ ...prev, smbUsername: e.target.value }))} />
+                )}
+              </Field>
+              <div className="col-span-2">
+                <Field label="Password">
+                  {(props) => (
+                    <Input type="password" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbPassword} onChange={e => setBackupSync(prev => ({ ...prev, smbPassword: e.target.value }))} />
+                  )}
+                </Field>
+              </div>
             </div>
           )}
 
           {backupSync.targetType === 'nfs' && (
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="block text-xs font-medium text-text-muted mb-1">Host</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.nfsHost} onChange={e => setBackupSync(prev => ({ ...prev, nfsHost: e.target.value }))} placeholder="nas.local" /></div>
-              <div><label className="block text-xs font-medium text-text-muted mb-1">Export Path</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.nfsExport} onChange={e => setBackupSync(prev => ({ ...prev, nfsExport: e.target.value }))} placeholder="/volume1/backup" /></div>
-              <div className="col-span-2"><label className="block text-xs font-medium text-text-muted mb-1">Subfolder (optional)</label><input type="text" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.nfsPath} onChange={e => setBackupSync(prev => ({ ...prev, nfsPath: e.target.value }))} /></div>
+              <Field label="Host">
+                {(props) => (
+                  <Input type="text" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.nfsHost} onChange={e => setBackupSync(prev => ({ ...prev, nfsHost: e.target.value }))} placeholder="nas.local" />
+                )}
+              </Field>
+              <Field label="Export Path">
+                {(props) => (
+                  <Input type="text" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.nfsExport} onChange={e => setBackupSync(prev => ({ ...prev, nfsExport: e.target.value }))} placeholder="/volume1/backup" />
+                )}
+              </Field>
+              <div className="col-span-2">
+                <Field label="Subfolder (optional)">
+                  {(props) => (
+                    <Input type="text" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.nfsPath} onChange={e => setBackupSync(prev => ({ ...prev, nfsPath: e.target.value }))} />
+                  )}
+                </Field>
+              </div>
             </div>
           )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-text-muted mb-1">Schedule</label>
-              <select className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.schedule} onChange={e => setBackupSync(prev => ({ ...prev, schedule: e.target.value as 'hourly' | 'daily' | 'weekly' | 'monthly' }))}>
-                <option value="hourly">Hourly</option>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-text-muted mb-1">Time (UTC)</label>
-              <input type="time" className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.time} onChange={e => setBackupSync(prev => ({ ...prev, time: e.target.value }))} />
-            </div>
+            <Field label="Schedule">
+              {(props) => (
+                <Select {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.schedule} onChange={e => setBackupSync(prev => ({ ...prev, schedule: e.target.value as 'hourly' | 'daily' | 'weekly' | 'monthly' }))}>
+                  <option value="hourly">Hourly</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </Select>
+              )}
+            </Field>
+            <Field label="Time (UTC)">
+              {(props) => (
+                <Input type="time" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.time} onChange={e => setBackupSync(prev => ({ ...prev, time: e.target.value }))} />
+              )}
+            </Field>
             {backupSync.schedule === 'weekly' && (
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">Day of Week</label>
-                <select className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.dayOfWeek ?? 0} onChange={e => setBackupSync(prev => ({ ...prev, dayOfWeek: parseInt(e.target.value) }))}>
-                  {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => (
-                    <option key={i} value={i}>{d}</option>
-                  ))}
-                </select>
-              </div>
+              <Field label="Day of Week">
+                {(props) => (
+                  <Select {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.dayOfWeek ?? 0} onChange={e => setBackupSync(prev => ({ ...prev, dayOfWeek: parseInt(e.target.value) }))}>
+                    {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => (
+                      <option key={i} value={i}>{d}</option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
             )}
             {backupSync.schedule === 'monthly' && (
-              <div>
-                <label className="block text-xs font-medium text-text-muted mb-1">Day of Month</label>
-                <input type="number" min={1} max={28} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.dayOfMonth ?? 1} onChange={e => setBackupSync(prev => ({ ...prev, dayOfMonth: parseInt(e.target.value) || 1 }))} />
-              </div>
+              <Field label="Day of Month">
+                {(props) => (
+                  <Input type="number" min={1} max={28} {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.dayOfMonth ?? 1} onChange={e => setBackupSync(prev => ({ ...prev, dayOfMonth: parseInt(e.target.value) || 1 }))} />
+                )}
+              </Field>
             )}
           </div>
 
@@ -1376,9 +1423,9 @@ export default function BackupPage() {
                 <h3 className="text-lg font-semibold text-text">Restore from Backup</h3>
                 <p className="text-xs text-text-muted">Select what to restore before applying changes.</p>
               </div>
-              <button type="button" onClick={closeRestoreOverlay} className="rounded-full p-2 text-text-muted hover:text-text hover:bg-surface-2" aria-label="Close restore panel">
+              <Button onClick={closeRestoreOverlay} className="rounded-full p-2 text-text-muted hover:text-text hover:bg-surface-2" aria-label="Close restore panel">
                 <X size={18} />
-              </button>
+              </Button>
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
@@ -1391,7 +1438,7 @@ export default function BackupPage() {
                     <label htmlFor="restore-backup-file" className="inline-flex items-center gap-2 px-4 py-2 bg-surface-2 border border-border rounded-card text-sm text-text hover:bg-surface-muted cursor-pointer">
                       <UploadCloud size={16} /> Select file
                     </label>
-                    <input id="restore-backup-file" type="file" accept=".tar.gz" className="hidden" onChange={(event) => handleRestoreFromFile(event.target.files?.[0] || null)} />
+                    <Input id="restore-backup-file" type="file" accept=".tar.gz" className="hidden" onChange={(event) => handleRestoreFromFile(event.target.files?.[0] || null)} />
                   </div>
                   {restoreUploadError && (<p className="mt-3 text-xs text-status-fail">{restoreUploadError}</p>)}
                 </div>
@@ -1415,7 +1462,7 @@ export default function BackupPage() {
 
                   {/* Settings */}
                   <div className="rounded-card border border-border overflow-hidden">
-                    <button type="button" onClick={() => toggleRestoreSection('settings')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors">
+                    <Button onClick={() => toggleRestoreSection('settings')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors">
                       {restoreExpandedSections.settings ? <ChevronDown size={16} className="text-text-subtle shrink-0" /> : <ChevronRight size={16} className="text-text-subtle shrink-0" />}
                       <Settings size={16} className="text-text-subtle shrink-0" />
                       <div className="flex-1 min-w-0">
@@ -1424,7 +1471,7 @@ export default function BackupPage() {
                           {Object.values(restoreSelectionState.configFlags).filter(Boolean).length} of {Object.keys(restoreSelectionState.configFlags).length} selected
                         </span>
                       </div>
-                    </button>
+                    </Button>
                     {restoreExpandedSections.settings && (
                       <div className="px-4 pb-4 pt-1 border-t border-border grid gap-2.5">
                         {([
@@ -1437,7 +1484,11 @@ export default function BackupPage() {
                           { key: 'update' as const, label: 'Auto-update', summary: restorePreview.config.update ? (restorePreview.config.update.enabled === false ? 'Disabled' : 'Enabled') : 'Not configured' },
                         ]).map(item => (
                           <label key={item.key} className="flex items-center gap-3 text-sm text-text py-1">
-                            <input type="checkbox" className="rounded" checked={restoreSelectionState.configFlags[item.key]} onChange={() => toggleRestoreConfigFlag(item.key)} />
+                            <Field label="">
+                              {(props) => (
+                                <Input type="checkbox" {...props} className="rounded" checked={restoreSelectionState.configFlags[item.key]} onChange={() => toggleRestoreConfigFlag(item.key)} />
+                              )}
+                            </Field>
                             <span className="font-medium min-w-[120px]">{item.label}</span>
                             <span className="text-xs text-text-muted truncate">{item.summary}</span>
                           </label>
@@ -1448,7 +1499,7 @@ export default function BackupPage() {
 
                   {/* Nodes & Checks */}
                   <div className="rounded-card border border-border overflow-hidden">
-                    <button type="button" onClick={() => toggleRestoreSection('infrastructure')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors">
+                    <Button onClick={() => toggleRestoreSection('infrastructure')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors">
                       {restoreExpandedSections.infrastructure ? <ChevronDown size={16} className="text-text-subtle shrink-0" /> : <ChevronRight size={16} className="text-text-subtle shrink-0" />}
                       <Activity size={16} className="text-text-subtle shrink-0" />
                       <div className="flex-1 min-w-0">
@@ -1458,7 +1509,7 @@ export default function BackupPage() {
                           {' '}{Object.values(restoreSelectionState.checks).filter(Boolean).length} check{Object.values(restoreSelectionState.checks).filter(Boolean).length !== 1 ? 's' : ''}
                         </span>
                       </div>
-                    </button>
+                    </Button>
                     {restoreExpandedSections.infrastructure && (
                       <div className="px-4 pb-4 pt-1 border-t border-border space-y-4">
                         {restorePreview.config.nodes.length > 0 && (
@@ -1466,12 +1517,16 @@ export default function BackupPage() {
                             <p className="text-xs font-medium text-text-muted uppercase tracking-wide mb-2">Nodes</p>
                             <div className="grid gap-2">
                               {restorePreview.config.nodes.map(node => (
-                                <label key={node.name} className="flex items-center gap-3 text-sm text-text">
-                                  <input type="checkbox" className="rounded" checked={restoreSelectionState.nodes[node.name]} onChange={() => toggleRestoreNode(node.name)} />
+                                <div key={node.name} className="flex items-center gap-3 text-sm text-text">
+                                  <Field label="">
+                                    {(props) => (
+                                      <Input type="checkbox" {...props} className="rounded" checked={restoreSelectionState.nodes[node.name]} onChange={() => toggleRestoreNode(node.name)} />
+                                    )}
+                                  </Field>
                                   <Server size={14} className="text-text-subtle shrink-0" />
                                   <span className="font-medium">{node.name}</span>
                                   <span className="text-xs text-text-muted">{node.uri}{node.default ? ' · Default' : ''}</span>
-                                </label>
+                                </div>
                               ))}
                             </div>
                           </div>
@@ -1481,12 +1536,16 @@ export default function BackupPage() {
                             <p className="text-xs font-medium text-text-muted uppercase tracking-wide mb-2">Health Checks</p>
                             <div className="grid gap-2">
                               {restorePreview.config.checks.map(check => (
-                                <label key={check.id} className="flex items-center gap-3 text-sm text-text">
-                                  <input type="checkbox" className="rounded" checked={restoreSelectionState.checks[check.id]} onChange={() => toggleRestoreCheck(check.id)} />
+                                <div key={check.id} className="flex items-center gap-3 text-sm text-text">
+                                  <Field label="">
+                                    {(props) => (
+                                      <Input type="checkbox" {...props} className="rounded" checked={restoreSelectionState.checks[check.id]} onChange={() => toggleRestoreCheck(check.id)} />
+                                    )}
+                                  </Field>
                                   <span className="font-medium">{check.name}</span>
                                   {check.type && <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-surface-2 text-text-muted">{check.type}</span>}
                                   {check.target && <span className="text-xs text-text-muted">{check.target}</span>}
-                                </label>
+                                </div>
                               ))}
                             </div>
                           </div>
@@ -1501,7 +1560,7 @@ export default function BackupPage() {
                   {/* Systemd Files */}
                   {restorePreview.nodeFiles.length > 0 && (
                     <div className="rounded-card border border-border overflow-hidden">
-                      <button type="button" onClick={() => toggleRestoreSection('files')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors">
+                      <Button onClick={() => toggleRestoreSection('files')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors">
                         {restoreExpandedSections.files ? <ChevronDown size={16} className="text-text-subtle shrink-0" /> : <ChevronRight size={16} className="text-text-subtle shrink-0" />}
                         <FolderOpen size={16} className="text-text-subtle shrink-0" />
                         <div className="flex-1 min-w-0">
@@ -1510,7 +1569,7 @@ export default function BackupPage() {
                             {Object.values(restoreSelectionState.nodeFiles).reduce((sum, files) => sum + Object.values(files).filter(Boolean).length, 0)} of {restorePreview.nodeFiles.reduce((sum, g) => sum + g.files.length, 0)} files selected
                           </span>
                         </div>
-                      </button>
+                      </Button>
                       {restoreExpandedSections.files && (
                         <div className="border-t border-border">
                           {restorePreview.nodeFiles.map(group => {
@@ -1521,15 +1580,23 @@ export default function BackupPage() {
                               <div key={group.nodeName} className="border-b border-border last:border-b-0">
                                 <div className="flex items-center justify-between gap-2 px-4 py-2.5 bg-surface-muted">
                                   <div className="flex items-center gap-3">
-                                    <input type="checkbox" className="rounded" checked={allSelected} onChange={() => toggleAllNodeFiles(group.nodeName, !allSelected)} />
+                                    <Field label="">
+                                      {(props) => (
+                                        <Input type="checkbox" {...props} className="rounded" checked={allSelected} onChange={() => toggleAllNodeFiles(group.nodeName, !allSelected)} />
+                                      )}
+                                    </Field>
                                     <span className="text-sm font-medium text-text">{group.nodeName}</span>
                                     <span className="text-xs text-text-muted">{selectedCount}/{group.files.length} files</span>
                                   </div>
                                   <div className="flex items-center gap-2 text-xs text-text-muted">
                                     <span>Target:</span>
-                                    <select value={restoreSelectionState.targetNodes[group.nodeName]} onChange={(event) => updateRestoreTargetNode(group.nodeName, event.target.value)} className="bg-surface-2 border border-border text-text rounded px-2 py-1 text-xs">
-                                      {availableRestoreTargets.map(target => (<option key={target} value={target}>{target}</option>))}
-                                    </select>
+                                    <Field label="">
+                                      {(props) => (
+                                        <Select {...props} value={restoreSelectionState.targetNodes[group.nodeName]} onChange={(event) => updateRestoreTargetNode(group.nodeName, event.target.value)} className="bg-surface-2 border border-border text-text rounded px-2 py-1 text-xs">
+                                          {availableRestoreTargets.map(target => (<option key={target} value={target}>{target}</option>))}
+                                        </Select>
+                                      )}
+                                    </Field>
                                   </div>
                                 </div>
                                 <div className="max-h-80 overflow-y-auto">
@@ -1542,22 +1609,30 @@ export default function BackupPage() {
                                     return (
                                       <div key={sg.service} className="border-b border-border last:border-b-0">
                                         <div className="flex items-center gap-2 px-4 py-2 hover:bg-surface-2">
-                                          <input type="checkbox" className="rounded" checked={sgAllSelected} onChange={() => toggleServiceGroupFiles(group.nodeName, sg.files, !sgAllSelected)} />
-                                          <button type="button" onClick={() => toggleRestoreSection(sgKey)} className="flex items-center gap-1.5 flex-1 min-w-0 text-left">
+                                          <Field label="">
+                                            {(props) => (
+                                              <Input type="checkbox" {...props} className="rounded" checked={sgAllSelected} onChange={() => toggleServiceGroupFiles(group.nodeName, sg.files, !sgAllSelected)} />
+                                            )}
+                                          </Field>
+                                          <Button onClick={() => toggleRestoreSection(sgKey)} className="flex items-center gap-1.5 flex-1 min-w-0 text-left">
                                             {sgExpanded ? <ChevronDown size={12} className="text-text-subtle shrink-0" /> : <ChevronRight size={12} className="text-text-subtle shrink-0" />}
                                             <span className="text-xs font-medium text-text capitalize">{displayName}</span>
                                             <span className="text-[10px] text-text-subtle">{sgSelectedCount}/{sg.files.length}</span>
-                                          </button>
+                                          </Button>
                                         </div>
                                         {sgExpanded && (
                                           <div className="pl-10 pr-4 pb-1">
                                             {sg.files.map(file => (
                                               <div key={file.relativePath} className="flex items-center gap-3 py-1 text-xs text-text-muted">
-                                                <input type="checkbox" className="rounded" checked={Boolean(restoreSelectionState.nodeFiles[group.nodeName]?.[file.relativePath])} onChange={() => toggleRestoreFile(group.nodeName, file.relativePath)} />
+                                                <Field label="">
+                                                  {(props) => (
+                                                    <Input type="checkbox" {...props} className="rounded" checked={Boolean(restoreSelectionState.nodeFiles[group.nodeName]?.[file.relativePath])} onChange={() => toggleRestoreFile(group.nodeName, file.relativePath)} />
+                                                  )}
+                                                </Field>
                                                 <span className="flex-1 font-mono truncate">{file.fileName}</span>
-                                                <button type="button" onClick={() => handleRestoreFilePreview(group.nodeName, file.relativePath)} className="shrink-0 p-1 rounded text-text-subtle hover:text-text hover:bg-surface-2" title="Preview file">
+                                                <Button onClick={() => handleRestoreFilePreview(group.nodeName, file.relativePath)} className="shrink-0 p-1 rounded text-text-subtle hover:text-text hover:bg-surface-2" title="Preview file">
                                                   <Eye size={14} />
-                                                </button>
+                                                </Button>
                                               </div>
                                             ))}
                                           </div>
@@ -1577,7 +1652,7 @@ export default function BackupPage() {
                   {/* Service Data */}
                   {restorePreview.serviceData && restorePreview.serviceData.length > 0 && (
                     <div className="rounded-card border border-border overflow-hidden">
-                      <button type="button" onClick={() => toggleRestoreSection('serviceData')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors">
+                      <Button onClick={() => toggleRestoreSection('serviceData')} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 transition-colors">
                         {restoreExpandedSections.serviceData ? <ChevronDown size={16} className="text-text-subtle shrink-0" /> : <ChevronRight size={16} className="text-text-subtle shrink-0" />}
                         <Database size={16} className="text-text-subtle shrink-0" />
                         <div className="flex-1 min-w-0">
@@ -1586,7 +1661,7 @@ export default function BackupPage() {
                             {Object.values(restoreSelectionState.serviceData).reduce((sum, fm) => sum + Object.values(fm).filter(Boolean).length, 0)} file{Object.values(restoreSelectionState.serviceData).reduce((sum, fm) => sum + Object.values(fm).filter(Boolean).length, 0) !== 1 ? 's' : ''} selected
                           </span>
                         </div>
-                      </button>
+                      </Button>
                       {restoreExpandedSections.serviceData && (
                         <div className="px-4 pb-4 pt-1 border-t border-border space-y-3">
                           <p className="text-xs text-status-warn bg-status-warn/10 border border-status-warn/30 rounded-card px-3 py-2">
@@ -1605,12 +1680,16 @@ export default function BackupPage() {
                             return (
                               <div key={sd.name} className="rounded border border-border">
                                 <div className="flex items-center gap-2 px-3 py-2">
-                                  <input type="checkbox" className="rounded" checked={allSelected} onChange={() => setRestoreSelectionState(prev => {
-                                    if (!prev) return prev;
-                                    const newVal = !allSelected;
-                                    return { ...prev, serviceData: { ...prev.serviceData, [sd.name]: Object.fromEntries(sd.files.map(f => [f, newVal])) } };
-                                  })} />
-                                  <button type="button" onClick={() => toggleRestoreSection(sdKey)} className="flex items-center gap-2 flex-1 min-w-0">
+                                  <Field label="">
+                                    {(props) => (
+                                      <Input type="checkbox" {...props} className="rounded" checked={allSelected} onChange={() => setRestoreSelectionState(prev => {
+                                        if (!prev) return prev;
+                                        const newVal = !allSelected;
+                                        return { ...prev, serviceData: { ...prev.serviceData, [sd.name]: Object.fromEntries(sd.files.map(f => [f, newVal])) } };
+                                      })} />
+                                    )}
+                                  </Field>
+                                  <Button onClick={() => toggleRestoreSection(sdKey)} className="flex items-center gap-2 flex-1 min-w-0">
                                     {sdExpanded ? <ChevronDown size={14} className="text-text-subtle shrink-0" /> : <ChevronRight size={14} className="text-text-subtle shrink-0" />}
                                     <HardDrive size={14} className="text-text-subtle shrink-0" />
                                     <div className="flex flex-col items-start min-w-0">
@@ -1624,10 +1703,10 @@ export default function BackupPage() {
                                         </span>
                                       )}
                                     </div>
-                                  </button>
+                                  </Button>
                                   <div className="flex items-center gap-1 shrink-0">
                                     {fileCategories.map(cat => (
-                                      <button key={cat.category} type="button" title={`Select only ${SERVICE_DATA_CATEGORY_LABELS[cat.category].toLowerCase()} (${cat.files.length} files)`} onClick={() => setRestoreSelectionState(prev => {
+                                      <Button key={cat.category} title={`Select only ${SERVICE_DATA_CATEGORY_LABELS[cat.category].toLowerCase()} (${cat.files.length} files)`} onClick={() => setRestoreSelectionState(prev => {
                                         if (!prev) return prev;
                                         const newFiles: Record<string, boolean> = {};
                                         for (const f of sd.files) newFiles[f] = false;
@@ -1635,7 +1714,7 @@ export default function BackupPage() {
                                         return { ...prev, serviceData: { ...prev.serviceData, [sd.name]: newFiles } };
                                       })} className="px-1.5 py-0.5 text-xs rounded border border-border hover:bg-surface-2 transition-colors">
                                         {SERVICE_DATA_CATEGORY_ICONS[cat.category]}
-                                      </button>
+                                      </Button>
                                     ))}
                                   </div>
                                 </div>
@@ -1650,32 +1729,40 @@ export default function BackupPage() {
                                       return (
                                         <div key={cat.category}>
                                           <div className="flex items-center gap-2">
-                                            <input type="checkbox" className="rounded" checked={catAllSelected} onChange={() => setRestoreSelectionState(prev => {
-                                              if (!prev) return prev;
-                                              const updated = { ...prev.serviceData[sd.name] };
-                                              const newVal = !catAllSelected;
-                                              for (const f of cat.files) updated[f] = newVal;
-                                              return { ...prev, serviceData: { ...prev.serviceData, [sd.name]: updated } };
-                                            })} />
-                                            <button type="button" onClick={() => toggleRestoreSection(catKey)} className="flex items-center gap-1.5 flex-1 min-w-0">
+                                            <Field label="">
+                                              {(props) => (
+                                                <Input type="checkbox" {...props} className="rounded" checked={catAllSelected} onChange={() => setRestoreSelectionState(prev => {
+                                                  if (!prev) return prev;
+                                                  const updated = { ...prev.serviceData[sd.name] };
+                                                  const newVal = !catAllSelected;
+                                                  for (const f of cat.files) updated[f] = newVal;
+                                                  return { ...prev, serviceData: { ...prev.serviceData, [sd.name]: updated } };
+                                                })} />
+                                              )}
+                                            </Field>
+                                            <Button onClick={() => toggleRestoreSection(catKey)} className="flex items-center gap-1.5 flex-1 min-w-0">
                                               {catExpanded ? <ChevronDown size={12} className="text-text-subtle shrink-0" /> : <ChevronRight size={12} className="text-text-subtle shrink-0" />}
                                               <span className="text-xs">{SERVICE_DATA_CATEGORY_ICONS[cat.category]}</span>
                                               <span className="text-xs font-medium text-text-muted">{SERVICE_DATA_CATEGORY_LABELS[cat.category]}</span>
                                               <span className="text-xs text-text-muted">{catSelectedCount}/{cat.files.length}</span>
-                                            </button>
+                                            </Button>
                                           </div>
                                           {catExpanded && (
                                             <div className="ml-6 mt-1 space-y-0.5">
                                               {cat.files.map(file => (
-                                                <label key={file} className="flex items-center gap-2 text-xs text-text-muted py-0.5">
-                                                  <input type="checkbox" className="rounded" checked={Boolean(restoreSelectionState.serviceData[sd.name]?.[file])} onChange={() => setRestoreSelectionState(prev => {
-                                                    if (!prev) return prev;
-                                                    const updated = { ...prev.serviceData[sd.name] };
-                                                    updated[file] = !updated[file];
-                                                    return { ...prev, serviceData: { ...prev.serviceData, [sd.name]: updated } };
-                                                  })} />
+                                                <div key={file} className="flex items-center gap-2 text-xs text-text-muted py-0.5">
+                                                  <Field label="">
+                                                    {(props) => (
+                                                      <Input type="checkbox" {...props} className="rounded" checked={Boolean(restoreSelectionState.serviceData[sd.name]?.[file])} onChange={() => setRestoreSelectionState(prev => {
+                                                        if (!prev) return prev;
+                                                        const updated = { ...prev.serviceData[sd.name] };
+                                                        updated[file] = !updated[file];
+                                                        return { ...prev, serviceData: { ...prev.serviceData, [sd.name]: updated } };
+                                                      })} />
+                                                    )}
+                                                  </Field>
                                                   <span className="font-mono truncate">{file}</span>
-                                                </label>
+                                                </div>
                                               ))}
                                             </div>
                                           )}
@@ -1719,9 +1806,9 @@ export default function BackupPage() {
                   {restoreFilePreview.nodeName} · <span className="font-mono">{restoreFilePreview.relativePath}</span>
                 </p>
               </div>
-              <button type="button" onClick={() => setRestoreFilePreview(null)} className="rounded-full p-2 text-text-muted hover:text-text hover:bg-surface-2" aria-label="Close file preview">
+              <Button onClick={() => setRestoreFilePreview(null)} className="rounded-full p-2 text-text-muted hover:text-text hover:bg-surface-2" aria-label="Close file preview">
                 <X size={18} />
-              </button>
+              </Button>
             </div>
             <div className="flex-1 overflow-y-auto bg-surface-muted p-4">
               {restoreFilePreview.loading ? (

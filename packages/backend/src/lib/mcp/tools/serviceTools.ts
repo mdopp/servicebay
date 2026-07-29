@@ -5,6 +5,12 @@
  */
 import { z } from 'zod';
 import { getServices, getUnmanagedBundles } from '@/lib/store/repository';
+// #2452 — every identifier below is interpolated into a shell command string on
+// the node (systemctl/mkdir/mv/rm in services/serviceLifecycle.ts). The MCP tool
+// surface validates them with the SAME strict schemas the REST routes use
+// (app/api/services/[name]/**), so a metacharacter or `../` payload is rejected
+// by the tool schema before any handler — and therefore any exec — runs.
+import { ServiceName, TrashId } from '@/lib/api/schemas';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { redactServiceFiles } from '../redact';
 import { nodeParam, resolveNode, textResult, errorResult, type ToolRegistration } from './context';
@@ -32,7 +38,7 @@ export function registerServiceTools({ server }: ToolRegistration) {
     'Start, stop, restart, or force-update a service via `action`. start/stop/restart return the service status after the action (same shape the old start/stop/restart tools returned). `force-update` re-checks the registry, re-pulls each image the service declares, and force-recreates its containers so the unit cannot come back up on the cached image — use it instead of a `podman pull` + restart by hand, and note that a plain `restart` never re-checks the registry. It returns a JSON report with per-image before/registry/after digests; if `stale` is true the local image still is not the one the registry serves — retry with `fresh: true`, which deletes the local image before re-pulling.',
     {
       action: z.enum(['start', 'stop', 'restart', 'force-update']).describe('Lifecycle action to perform on the service.'),
-      name: z.string().describe('Service name'),
+      name: ServiceName.describe('Service name'),
       fresh: z
         .boolean()
         .optional()
@@ -56,7 +62,7 @@ export function registerServiceTools({ server }: ToolRegistration) {
   server.tool(
     'get_service_files',
     'Get the on-disk files for a service. Returns `kubeContent` = the systemd Quadlet unit, `yamlContent` = the Kubernetes Pod-spec `.yml` (apiVersion/kind/spec), and `quadletKind` = "kube" or "container". For a `.kube` service (quadletKind="kube"): `kubeContent` is the [Kube]/[Install] unit and `yamlContent` is the pod spec; these field names are REVERSED relative to update_service_yaml — to write back the pod spec, pass this tool\'s `yamlContent` into update_service_yaml (the Quadlet unit is regenerated on its own). For a single-container `.container` service (quadletKind="container", e.g. ollama after the GPU fixup): `kubeContent` is the whole `.container` unit ([Container] section) and `yamlContent` is empty — the unit file IS the artifact, so edit `kubeContent` and pass it straight into update_service_yaml.',
-    { name: z.string().describe('Service name'), node: nodeParam },
+    { name: ServiceName.describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
       const nodeName = await resolveNode(node);
       const files = await ServiceManager.getServiceFiles(nodeName, name);
@@ -74,7 +80,7 @@ export function registerServiceTools({ server }: ToolRegistration) {
     'deploy_service',
     'Deploy a new service or update an existing one from kube YAML. Pass extraFiles to seed companion config (e.g. authelia/configuration.yml).',
     {
-      name: z.string().describe('Service name'),
+      name: ServiceName.describe('Service name'),
       kubeContent: z.string().describe('Kubernetes/Podman kube YAML content'),
       yamlContent: z.string().optional().describe('Companion compose/config YAML content'),
       yamlFileName: z.string().optional().describe('Filename for the companion YAML'),
@@ -186,8 +192,8 @@ export function registerServiceTools({ server }: ToolRegistration) {
     'rename_service',
     'Rename a service',
     {
-      oldName: z.string().describe('Current service name'),
-      newName: z.string().describe('New service name'),
+      oldName: ServiceName.describe('Current service name'),
+      newName: ServiceName.describe('New service name'),
       node: nodeParam,
     },
     async ({ oldName, newName, node }) => {
@@ -201,7 +207,7 @@ export function registerServiceTools({ server }: ToolRegistration) {
   server.tool(
     'delete_service',
     'Soft-delete a service: stops the unit and moves its files to the trash bucket. Restorable via restore_trashed_service for 7 days; then auto-purged. Use purge_trashed_service to delete immediately.',
-    { name: z.string().describe('Service name'), node: nodeParam },
+    { name: ServiceName.describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
       const nodeName = await resolveNode(node);
       await ServiceManager.deleteService(nodeName, name);
@@ -225,7 +231,7 @@ export function registerServiceTools({ server }: ToolRegistration) {
   server.tool(
     'restore_trashed_service',
     'Restore a soft-deleted service from trash. Use list_trashed_services to find the id.',
-    { id: z.string().describe('Trash entry id'), node: nodeParam },
+    { id: TrashId.describe('Trash entry id'), node: nodeParam },
     async ({ id, node }) => {
       const nodeName = await resolveNode(node);
       const result = await ServiceManager.restoreTrashedService(nodeName, id);
@@ -237,7 +243,7 @@ export function registerServiceTools({ server }: ToolRegistration) {
   server.tool(
     'purge_trashed_service',
     'Permanently delete a trash entry. Use list_trashed_services to find the id. Counts as a destructive op (snapshotted).',
-    { id: z.string().describe('Trash entry id'), node: nodeParam },
+    { id: TrashId.describe('Trash entry id'), node: nodeParam },
     async ({ id, node }) => {
       const nodeName = await resolveNode(node);
       const result = await ServiceManager.purgeTrash(nodeName, { trashId: id });

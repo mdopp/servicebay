@@ -87,6 +87,105 @@ describe('stageServiceBackup', () => {
     await expect(fs.readFile(path.join(staging, 'data/database.sqlite'), 'utf8')).resolves.toBe('SNAPSHOT');
   });
 
+  // #2454 — a compromised service must not be able to point one of its own
+  // manifest includes at a SIBLING service's data dir and have the worker copy
+  // that sibling's bytes into its own (offsite-shipped) tar.
+  describe('symlink escape (#2454)', () => {
+    it('skips an include that is a symlink at a sibling service data dir', async () => {
+      const victim = await mkTmp();
+      await write(victim, 'secrets.json', 'SIBLING-SECRET');
+      const src = await mkTmp();
+      await write(src, 'configuration.yaml', 'default_config:');
+      await fs.symlink(victim, path.join(src, '.storage')); // hostile swap
+      const staging = await mkTmp();
+
+      const manifest: ServiceBackupManifest = {
+        service: 'home-assistant',
+        include: ['configuration.yaml', '.storage'],
+        exclude: [],
+      };
+      const staged = await stageServiceBackup(src, manifest, staging);
+
+      expect(staged).toEqual(['configuration.yaml']);
+      expect(staged.some(p => p.startsWith('.storage'))).toBe(false);
+      await expect(fs.access(path.join(staging, '.storage'))).rejects.toThrow();
+      await expect(fs.access(path.join(staging, 'secrets.json'))).rejects.toThrow();
+    });
+
+    it('skips a single-file include symlinked outside the data root', async () => {
+      const victim = await mkTmp();
+      await write(victim, 'config.yaml', 'api_key: SIBLING-SECRET\n');
+      const src = await mkTmp();
+      await fs.symlink(path.join(victim, 'config.yaml'), path.join(src, 'config.yaml'));
+      const staging = await mkTmp();
+
+      const staged = await stageServiceBackup(src, getServiceManifest('hermes')!, staging);
+
+      expect(staged).toEqual([]);
+      await expect(fs.access(path.join(staging, 'config.yaml'))).rejects.toThrow();
+    });
+
+    it('does not enumerate or stage a glob include whose parent escapes the data root', async () => {
+      const victim = await mkTmp();
+      await write(victim, 'lovelace.lovelace', 'SIBLING-DASHBOARD');
+      const src = await mkTmp();
+      await write(src, 'configuration.yaml', 'default_config:');
+      await fs.symlink(victim, path.join(src, '.storage'));
+      const staging = await mkTmp();
+
+      const staged = await stageServiceBackup(src, getServiceManifest('home-assistant')!, staging);
+
+      expect(staged).not.toContain('.storage/lovelace.lovelace');
+      expect(staged).toContain('configuration.yaml');
+    });
+
+    it('does not follow a symlink nested inside an included directory', async () => {
+      const victim = await mkTmp();
+      await write(victim, 'querylog.json', 'SIBLING-DATA');
+      const src = await mkTmp();
+      await write(src, 'conf/AdGuardHome.yaml', 'bind_host: 0.0.0.0');
+      await fs.symlink(path.join(victim, 'querylog.json'), path.join(src, 'conf/leak.json'));
+      await fs.symlink(victim, path.join(src, 'conf/leakdir'));
+      const staging = await mkTmp();
+
+      const staged = await stageServiceBackup(src, getServiceManifest('adguard')!, staging);
+
+      expect(staged).toEqual(['conf/AdGuardHome.yaml']);
+    });
+
+    it('still stages a symlink that stays inside the service data root', async () => {
+      const src = await mkTmp();
+      await write(src, 'real-storage/lovelace.lovelace', 'MY-DASH');
+      await write(src, 'configuration.yaml', 'default_config:');
+      await fs.symlink(path.join(src, 'real-storage'), path.join(src, '.storage'));
+      const staging = await mkTmp();
+
+      const staged = await stageServiceBackup(src, getServiceManifest('home-assistant')!, staging);
+
+      expect(staged).toContain('.storage/lovelace.lovelace');
+      expect(staged).toContain('configuration.yaml');
+      await expect(
+        fs.readFile(path.join(staging, '.storage/lovelace.lovelace'), 'utf8'),
+      ).resolves.toBe('MY-DASH');
+    });
+
+    it('skips an include that climbs out with ..', async () => {
+      const parent = await mkTmp();
+      await write(parent, 'outside.yaml', 'SIBLING-SECRET');
+      const src = path.join(parent, 'service');
+      await fs.mkdir(src, { recursive: true });
+      const staging = await mkTmp();
+
+      const manifest: ServiceBackupManifest = {
+        service: 'evil',
+        include: ['../outside.yaml'],
+        exclude: [],
+      };
+
+      expect(await stageServiceBackup(src, manifest, staging)).toEqual([]);
+    });
+  });
+
   it('returns [] when nothing matches', async () => {
     const src = await mkTmp();
     const staging = await mkTmp();

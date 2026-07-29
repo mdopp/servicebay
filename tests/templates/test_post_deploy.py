@@ -23,6 +23,7 @@ import io
 import json
 import os
 import sys
+import tarfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -2452,6 +2453,219 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertTrue(m._yaml_is_effectively_empty(body), body)
         for body in ("- id: '1'\n", "morning:\n  sequence: []\n", "# c\n- alias: x\n"):
             self.assertFalse(m._yaml_is_effectively_empty(body), body)
+
+
+class HomeAssistantAuthOidcTarball(unittest.TestCase):
+    """#2453: the auth_oidc release tarball is fetched over the network and
+    unpacked as root. Extraction must not be able to write outside the staging
+    dir, and the artifact must be checked against a pinned hash *before* it is
+    unpacked — otherwise a compromised upstream release (or a MITM) is a
+    root-level arbitrary-write primitive."""
+
+    PREFIX = "hass-oidc-auth-1.1.0"
+
+    @staticmethod
+    def _make_tarball(path: str, entries: dict[str, str]) -> None:
+        """Write a .tar.gz with the member names given VERBATIM — `tf.add()`
+        would normalise a `../` path away, which is exactly the payload we
+        need to keep, so each member is an explicit TarInfo."""
+        import tarfile as tar_mod
+        with tar_mod.open(path, "w:gz") as tf:
+            for name, body in entries.items():
+                data = body.encode("utf-8")
+                info = tar_mod.TarInfo(name)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+
+    @contextlib.contextmanager
+    def _staging_under(self, parent: str):
+        """Pin the script's mkdtemp into `parent` so a `../` payload has a
+        known resolved destination we can assert never appears."""
+        import tempfile as tmp_mod
+        os.makedirs(parent, exist_ok=True)
+        real = tmp_mod.mkdtemp
+        with mock.patch.object(tmp_mod, "mkdtemp", lambda *a, **kw: real(*a, **{**kw, "dir": parent})):
+            yield
+
+    def test_safe_member_target_rejects_escapes(self):
+        """The containment check itself, over the shapes a hostile archive
+        can produce once the top-level dir is stripped."""
+        m = load_script("home-assistant")
+        import tempfile
+        with tempfile.TemporaryDirectory() as staging:
+            for rel in ("../pwned", "../../etc/cron.d/pwned", "a/../../pwned",
+                        "/etc/cron.d/pwned", "/tmp/pwned"):
+                self.assertIsNone(m._safe_member_target(staging, rel), rel)
+            root = os.path.realpath(staging)
+            self.assertEqual(m._safe_member_target(staging, ""), root)
+            self.assertEqual(m._safe_member_target(staging, "a/b.py"), os.path.join(root, "a/b.py"))
+            # `..` that stays inside is fine — only escaping is rejected.
+            self.assertEqual(m._safe_member_target(staging, "a/../b.py"), os.path.join(root, "b.py"))
+
+    def test_extract_rejects_relative_traversal_entry(self):
+        """Hostile payload: a real tarball carrying `../pwned.py` inside
+        custom_components/auth_oidc/. Extraction must abort, and the escaped
+        path must not exist afterwards."""
+        m = load_script("home-assistant")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tar_path = os.path.join(tmp, "release.tar.gz")
+            parent = os.path.join(tmp, "stage")
+            target = os.path.join(tmp, "auth_oidc")
+            self._make_tarball(tar_path, {
+                f"{self.PREFIX}/custom_components/auth_oidc/__init__.py": "legit\n",
+                f"{self.PREFIX}/custom_components/auth_oidc/../pwned.py": "os.system('id')\n",
+            })
+            with self._staging_under(parent):
+                with self.assertRaises(tarfile.TarError) as ctx:
+                    m._extract_auth_oidc(tar_path, target)
+            self.assertIn("escapes the staging dir", str(ctx.exception))
+            self.assertFalse(os.path.exists(os.path.join(parent, "pwned.py")))
+            # Aborted, not half-installed.
+            self.assertFalse(os.path.exists(target))
+            self.assertEqual(os.listdir(parent), [])
+
+    def test_extract_rejects_absolute_path_entry(self):
+        """The other shape: an absolute member path, which `os.path.join`
+        would have honoured wholesale (join(staging, '/x') == '/x')."""
+        m = load_script("home-assistant")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tar_path = os.path.join(tmp, "release.tar.gz")
+            target = os.path.join(tmp, "auth_oidc")
+            absolute_victim = os.path.join(tmp, "victim.py")
+            self._make_tarball(tar_path, {
+                f"{self.PREFIX}/custom_components/auth_oidc/__init__.py": "legit\n",
+                f"{self.PREFIX}/custom_components/auth_oidc/{absolute_victim}": "pwned\n",
+            })
+            with self.assertRaises(tarfile.TarError):
+                m._extract_auth_oidc(tar_path, target)
+            self.assertFalse(os.path.exists(absolute_victim))
+            self.assertFalse(os.path.exists(target))
+
+    def test_extract_installs_a_legitimate_tarball(self):
+        """The benign case still works: the top-level dir is unwrapped, the
+        auth_oidc subtree lands in target_dir, everything else is skipped."""
+        m = load_script("home-assistant")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tar_path = os.path.join(tmp, "release.tar.gz")
+            target = os.path.join(tmp, "auth_oidc")
+            self._make_tarball(tar_path, {
+                f"{self.PREFIX}/README.md": "not part of the component\n",
+                f"{self.PREFIX}/custom_components/auth_oidc/__init__.py": "component\n",
+                f"{self.PREFIX}/custom_components/auth_oidc/manifest.json": '{"domain": "auth_oidc"}\n',
+                f"{self.PREFIX}/custom_components/auth_oidc/views/welcome.py": "view\n",
+            })
+            m._extract_auth_oidc(tar_path, target)
+            with open(os.path.join(target, "__init__.py")) as fh:
+                self.assertEqual(fh.read(), "component\n")
+            with open(os.path.join(target, "views", "welcome.py")) as fh:
+                self.assertEqual(fh.read(), "view\n")
+            self.assertTrue(os.path.isfile(os.path.join(target, "manifest.json")))
+            self.assertFalse(os.path.exists(os.path.join(target, "README.md")))
+
+    # ── pinned-digest verification ────────────────────────────────────────
+
+    def _install_with_fake_download(self, m, tmp, tar_path, env_extra):
+        """Run install_auth_oidc with urlretrieve serving `tar_path`. Returns
+        (result, stdout, download_count)."""
+        import shutil as shutil_mod
+        calls = []
+
+        def fake_urlretrieve(url, dest):
+            calls.append(url)
+            shutil_mod.copyfile(tar_path, dest)
+            return dest, None
+
+        buf = io.StringIO()
+        old = sys.stdout
+        sys.stdout = buf
+        try:
+            with run_with_env({"DATA_DIR": tmp, **env_extra}):
+                with mock.patch.object(m.urllib.request, "urlretrieve", fake_urlretrieve):
+                    result = m.install_auth_oidc(env_extra.get("HA_OIDC_AUTH_VERSION", "v1.1.0"))
+        finally:
+            sys.stdout = old
+        return result, buf.getvalue(), len(calls)
+
+    @staticmethod
+    def _sha256_of(path: str) -> str:
+        import hashlib
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            h.update(fh.read())
+        return h.hexdigest()
+
+    def test_install_rejects_tarball_whose_digest_does_not_match_the_pin(self):
+        """A swapped artifact (compromised release / MITM) must be refused
+        before extraction — nothing lands in the config dir."""
+        m = load_script("home-assistant")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tar_path = os.path.join(tmp, "release.tar.gz")
+            self._make_tarball(tar_path, {
+                f"{self.PREFIX}/custom_components/auth_oidc/__init__.py": "swapped\n",
+            })
+            result, out, downloads = self._install_with_fake_download(
+                m, tmp, tar_path,
+                {"HA_OIDC_AUTH_SHA256": "0" * 64, "HA_OIDC_AUTH_VERSION": "v1.1.0"},
+            )
+            self.assertFalse(result)
+            self.assertIn("sha256 mismatch", out)
+            self.assertEqual(downloads, 1)
+            self.assertFalse(os.path.exists(
+                os.path.join(tmp, "home-assistant", "homeassistant", "custom_components", "auth_oidc")))
+
+    def test_install_refuses_a_version_with_no_pinned_digest(self):
+        """An unpinned version is never even downloaded — no unverified
+        artifact gets unpacked as root."""
+        m = load_script("home-assistant")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tar_path = os.path.join(tmp, "release.tar.gz")
+            self._make_tarball(tar_path, {
+                f"{self.PREFIX}/custom_components/auth_oidc/__init__.py": "x\n",
+            })
+            result, out, downloads = self._install_with_fake_download(
+                m, tmp, tar_path, {"HA_OIDC_AUTH_VERSION": "v9.9.9-unpinned"},
+            )
+            self.assertFalse(result)
+            self.assertEqual(downloads, 0)
+            self.assertIn("No pinned SHA-256", out)
+            self.assertIn("HA_OIDC_AUTH_SHA256", out)
+
+    def test_install_accepts_a_tarball_matching_the_pin(self):
+        """Happy path: digest matches → component installed + version stamped."""
+        m = load_script("home-assistant")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tar_path = os.path.join(tmp, "release.tar.gz")
+            self._make_tarball(tar_path, {
+                f"{self.PREFIX}/custom_components/auth_oidc/__init__.py": "component\n",
+            })
+            result, _out, downloads = self._install_with_fake_download(
+                m, tmp, tar_path,
+                {"HA_OIDC_AUTH_SHA256": self._sha256_of(tar_path), "HA_OIDC_AUTH_VERSION": "v1.1.0"},
+            )
+            self.assertTrue(result)
+            self.assertEqual(downloads, 1)
+            installed = os.path.join(tmp, "home-assistant", "homeassistant",
+                                     "custom_components", "auth_oidc")
+            with open(os.path.join(installed, "__init__.py")) as fh:
+                self.assertEqual(fh.read(), "component\n")
+            with open(os.path.join(installed, ".sb_installed_version")) as fh:
+                self.assertEqual(fh.read().strip(), "v1.1.0")
+
+    def test_default_version_digest_is_pinned_in_the_script(self):
+        """The shipped default must not depend on an operator-supplied digest
+        — variables.json's HA_OIDC_AUTH_VERSION default needs a pin."""
+        m = load_script("home-assistant")
+        with open(TEMPLATES_DIR / "home-assistant" / "variables.json") as fh:
+            declared = json.load(fh)
+        default_version = declared["HA_OIDC_AUTH_VERSION"]["default"]
+        self.assertIn(default_version, m.HA_OIDC_RELEASE_SHA256)
+        self.assertRegex(m.HA_OIDC_RELEASE_SHA256[default_version], r"^[0-9a-f]{64}$")
 
 
 class ClaudeDevScript(unittest.TestCase):
