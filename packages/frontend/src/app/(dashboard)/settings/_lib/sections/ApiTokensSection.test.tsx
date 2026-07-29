@@ -129,5 +129,73 @@ describe('ApiTokensSection (#2100 settings migration)', () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith('/api/system/api-tokens?id=t1', { method: 'DELETE' }),
     );
+    // A successful revoke closes the dialog.
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  // #2461: `setRevokeTarget(null)` used to run in `finally`, so a failed DELETE
+  // closed the modal with no error — the operator believed a still-live token
+  // had been locked out.
+  it('keeps the confirm modal open and shows an error when the revoke call fails', async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/system/mcp-bootstrap') {
+        return Promise.resolve(new Response(JSON.stringify({ active: false }), { status: 200 }));
+      }
+      if (url.startsWith('/api/system/api-tokens')) {
+        if (init?.method === 'DELETE') {
+          return Promise.resolve(new Response(JSON.stringify({ error: 'token store is read-only' }), { status: 500 }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ tokens: [TOKEN] }), { status: 200 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ApiTokensSection />);
+    await waitFor(() => expect(screen.getByText('workstation')).toBeDefined());
+    fireEvent.click(screen.getByRole('button', { name: /revoke workstation/i }));
+
+    const dialog = await screen.findByRole('dialog');
+    const input = dialog.querySelector('input[type="text"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'workstation' } });
+    fireEvent.click(screen.getByRole('button', { name: /revoke token/i }));
+
+    // The server's reason is surfaced, in the dialog, which stays open.
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/token store is read-only/);
+    expect(alert.textContent).toMatch(/still active/i);
+    expect(screen.getByRole('dialog')).toBeDefined();
+    // The token is still listed — nothing was optimistically removed.
+    expect(screen.getByRole('button', { name: /revoke workstation/i })).toBeDefined();
+    // Not stuck mid-flight either: the retry path is live again.
+    await waitFor(() => expect(screen.getByRole('button', { name: /^revoke token$/i })).toBeDefined());
+  });
+
+  it('surfaces a network failure on revoke without closing the modal', async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/system/mcp-bootstrap') {
+        return Promise.resolve(new Response(JSON.stringify({ active: false }), { status: 200 }));
+      }
+      if (url.startsWith('/api/system/api-tokens')) {
+        if (init?.method === 'DELETE') return Promise.reject(new Error('network down'));
+        return Promise.resolve(new Response(JSON.stringify({ tokens: [TOKEN] }), { status: 200 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<ApiTokensSection />);
+    await waitFor(() => expect(screen.getByText('workstation')).toBeDefined());
+    fireEvent.click(screen.getByRole('button', { name: /revoke workstation/i }));
+
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(dialog.querySelector('input[type="text"]') as HTMLInputElement, {
+      target: { value: 'workstation' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /revoke token/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/network down/);
+    expect(screen.getByRole('dialog')).toBeDefined();
   });
 });
