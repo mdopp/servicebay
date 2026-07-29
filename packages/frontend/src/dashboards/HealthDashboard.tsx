@@ -17,7 +17,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
 import DiagnoseProbeList, { type DiagnoseProbe } from '@/components/DiagnoseProbeList';
 import ContainersDashboard from '@/dashboards/ContainersDashboard';
-import { Button, Badge } from '@/components/ui';
+import { Button, Badge, Input, Select, Textarea, Table } from '@/components/ui';
 
 interface Container {
   Id: string;
@@ -392,7 +392,7 @@ export default function HealthDashboard() {
         {activeTab !== 'system' && (
         <div className="relative flex-1 max-w-md min-w-[100px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-subtle" />
-            <input
+            <Input
                 type="text"
                 placeholder="Search..."
                 value={searchQuery}
@@ -412,9 +412,10 @@ export default function HealthDashboard() {
           { id: 'logs' as const, label: 'Logs' },
           { id: 'system' as const, label: 'System' },
         ]).map(tab => (
-          <button
+          <Button
             key={tab.id}
             onClick={() => handleTabChange(tab.id)}
+            variant="ghost"
             className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
               activeTab === tab.id
                 ? 'border-accent text-accent'
@@ -422,7 +423,7 @@ export default function HealthDashboard() {
             }`}
           >
             {tab.label}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -477,9 +478,10 @@ export default function HealthDashboard() {
               <div className="flex items-center gap-2">
                 <div className="flex bg-surface-2 rounded-card p-1">
                     {(['1h', '24h', '3d', '2w'] as const).map(range => (
-                        <button
+                        <Button
                             key={range}
                             onClick={() => setTimeRange(range)}
+                            variant="ghost"
                             className={`px-3 py-1 text-xs font-semibold rounded-chip transition-colors ${
                                 timeRange === range
                                     ? 'bg-surface text-accent shadow-sm'
@@ -487,7 +489,7 @@ export default function HealthDashboard() {
                             }`}
                         >
                             {range}
-                        </button>
+                        </Button>
                     ))}
                 </div>
                 <Button
@@ -638,7 +640,7 @@ export default function HealthDashboard() {
                 </div>
 
                 {/* Table */}
-                            <table className="w-full text-left text-sm border border-border rounded-card overflow-hidden">
+                            <Table className="w-full text-left text-sm border border-border rounded-card overflow-hidden">
                               <thead className="bg-surface-2 text-text-muted">
                         <tr>
                                   <th className="p-3 font-semibold">Time</th>
@@ -680,7 +682,7 @@ export default function HealthDashboard() {
                             </tr>
                         ))}
                     </tbody>
-                </table>
+                </Table>
                             </div>
                             )}
             </div>
@@ -739,8 +741,8 @@ export default function HealthDashboard() {
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-text-muted mb-1">Name</label>
-                <input 
-                  type="text" 
+                <Input
+                  type="text"
                   value={formData.name}
                   onChange={e => setFormData({...formData, name: e.target.value})}
                   disabled={isSystemCheck()}
@@ -750,7 +752,7 @@ export default function HealthDashboard() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-text-muted mb-1">Type</label>
-                <select 
+                <Select
                   value={formData.type}
                   onChange={e => setFormData({...formData, type: e.target.value as CheckType})}
                   disabled={isSystemCheck()}
@@ -764,7 +766,7 @@ export default function HealthDashboard() {
                   <option value="agent">Agent Health</option>
                   <option value="script">Custom Script (JS)</option>
                   <option value="fritzbox">Fritz!Box Internet</option>
-                </select>
+                </Select>
                 
                 {/* Type Hint */}
                 <div className="mt-2 text-xs text-text-muted bg-surface-2 p-2 rounded-card border border-border">
@@ -796,7 +798,7 @@ export default function HealthDashboard() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-text-muted mb-1">Target Node</label>
-                <select 
+                <Select
                   value={formData.nodeName || ''}
                   onChange={e => setFormData({...formData, nodeName: e.target.value})}
                   disabled={isSystemCheck()}
@@ -806,7 +808,7 @@ export default function HealthDashboard() {
                   {nodes.map(node => (
                     <option key={node.Name} value={node.Name}>{node.Name}</option>
                   ))}
-                </select>
+                </Select>
                 <p className="text-xs text-text-subtle mt-1">Select the node where this check should run.</p>
               </div>
               <div>
@@ -814,7 +816,7 @@ export default function HealthDashboard() {
                     {formData.type === 'script' ? 'Script Content' : formData.type === 'fritzbox' ? 'Fritz!Box Hostname / IP' : 'Target'}
                 </label>
                 {formData.type === 'script' ? (
-                    <textarea
+                    <Textarea
                         value={formData.target}
                         onChange={e => setFormData({...formData, target: e.target.value})}
                         disabled={isSystemCheck()}
@@ -823,7 +825,7 @@ export default function HealthDashboard() {
                     />
                 ) : formData.type === 'podman' ? (
                     <div className="relative">
-                        <select
+                        <Select
                             value={formData.target}
                             onChange={e => setFormData({...formData, target: e.target.value})}
                             disabled={resourcesLoading || isSystemCheck()}
@@ -835,7 +837,7 @@ export default function HealthDashboard() {
                                     {c.Names[0]} ({c.Image})
                                 </option>
                             ))}
-                        </select>
+                        </Select>
                         {resourcesLoading && (
                             <div className="absolute right-8 top-2.5">
                                 <div className="animate-spin h-5 w-5 border-2 border-accent rounded-full border-t-transparent"></div>
@@ -861,14 +863,14 @@ export default function HealthDashboard() {
                         disabled={resourcesLoading || isSystemCheck()}
                     />
                 ) : (
-                    <input 
-                      type="text" 
+                    <Input
+                      type="text"
                       value={formData.target}
                       onChange={e => setFormData({...formData, target: e.target.value})}
                       disabled={isSystemCheck()}
                       className={`w-full p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
                       placeholder={
-                        formData.type === 'http' ? 'https://example.com' : 
+                        formData.type === 'http' ? 'https://example.com' :
                         formData.type === 'fritzbox' ? 'fritz.box' :
                         '192.168.1.1'
                       }
@@ -888,11 +890,11 @@ export default function HealthDashboard() {
                     <h4 className="text-sm font-medium text-text">HTTP Options</h4>
                     <div>
                         <label className="block text-xs font-medium text-text-muted mb-1">Expected Status Code</label>
-                        <input 
-                            type="number" 
+                        <Input
+                            type="number"
                             value={formData.httpConfig?.expectedStatus || 200}
                             onChange={e => setFormData({
-                                ...formData, 
+                                ...formData,
                                 httpConfig: { ...formData.httpConfig, expectedStatus: parseInt(e.target.value) }
                             })}
                             disabled={isSystemCheck()}
@@ -902,10 +904,10 @@ export default function HealthDashboard() {
                     <div>
                         <label className="block text-xs font-medium text-text-muted mb-1">Body Match (Optional)</label>
                         <div className="flex gap-2 mb-2">
-                            <select
+                            <Select
                                 value={formData.httpConfig?.bodyMatchType || 'contains'}
                                 onChange={e => setFormData({
-                                    ...formData, 
+                                    ...formData,
                                     httpConfig: { ...formData.httpConfig, bodyMatchType: e.target.value as 'contains' | 'regex' }
                                 })}
                                 disabled={isSystemCheck()}
@@ -913,12 +915,12 @@ export default function HealthDashboard() {
                             >
                                 <option value="contains">Contains</option>
                                 <option value="regex">Regex</option>
-                            </select>
-                            <input 
-                                type="text" 
+                            </Select>
+                            <Input
+                                type="text"
                                 value={formData.httpConfig?.bodyMatch || ''}
                                 onChange={e => setFormData({
-                                    ...formData, 
+                                    ...formData,
                                     httpConfig: { ...formData.httpConfig, bodyMatch: e.target.value }
                                 })}
                                 disabled={isSystemCheck()}
@@ -932,8 +934,8 @@ export default function HealthDashboard() {
 
               <div>
                 <label className="block text-sm font-medium text-text-muted mb-1">Interval (seconds)</label>
-                <input 
-                  type="number" 
+                <Input
+                  type="number"
                   value={formData.interval}
                   onChange={e => setFormData({...formData, interval: parseInt(e.target.value)})}
                   disabled={isSystemCheck()}
