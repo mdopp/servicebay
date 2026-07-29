@@ -35,6 +35,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildInventory, type ScannedFile } from '../engine/inventory';
+import { hashFileContent } from '../engine/hashFile';
 import { buildPlan, type HashResolver } from '../engine/dedup';
 import { ImportCatalog } from '../engine/catalog';
 import { applyPlan } from '../engine/plan';
@@ -211,56 +212,12 @@ export async function walkMount(mount: string, fsImpl: typeof fs = fs): Promise<
   return out;
 }
 
-/** Bytes held in memory at a time by the full hash. The peak allocation of
- *  `hashFileContent` is this buffer, whatever the file's size (#2423). */
-export const HASH_CHUNK_BYTES = 1024 * 1024;
-
-/** The fs seam `hashFileContent` reads through — injectable like `walkMount`'s
- *  `fsImpl`, so a test can prove the READ PATTERN (chunk-sized, one buffer) on a
- *  file far larger than anything it could put on disk. */
-export interface HashFileIO {
-  openSync: (path: string, flags: string) => number;
-  readSync: (
-    fd: number,
-    buffer: Buffer,
-    offset: number,
-    length: number,
-    position: number | null,
-  ) => number;
-  closeSync: (fd: number) => void;
-}
-
-const realHashFileIO: HashFileIO = { openSync, readSync, closeSync };
-
-/**
- * Lazy sha256 of a file's bytes — the full hash, taken only for a record whose
- * target is already in the catalog (a delta/re-plan), never to confirm a
- * fingerprint collision (so a real backup disk is never read whole).
- *
- * Read in fixed `HASH_CHUNK_BYTES` chunks through ONE reusable buffer: peak
- * memory is O(chunk), not O(filesize). The eager `readFileSync` this replaced
- * pulled the whole file in, so a re-plan over an already-cataloged multi-GB
- * movie OOM-killed the `--memory=1g` worker — a SIGKILL, which skips
- * `runWorker`'s catch, so the run vanished with no terminal status (#2423).
- * sha256 is a streaming hash, so the digest is byte-identical to hashing the
- * whole buffer in one `update()`.
- */
-export function hashFileContent(record: ImportRecord, fsImpl: HashFileIO = realHashFileIO): string {
-  const h = createHash('sha256');
-  const buf = Buffer.allocUnsafe(HASH_CHUNK_BYTES);
-  const fd = fsImpl.openSync(record.sourcePath, 'r');
-  try {
-    for (;;) {
-      // position `null` ⇒ read from (and advance) the file's own offset.
-      const read = fsImpl.readSync(fd, buf, 0, HASH_CHUNK_BYTES, null);
-      if (read === 0) break;
-      h.update(read === HASH_CHUNK_BYTES ? buf : buf.subarray(0, read));
-    }
-  } finally {
-    fsImpl.closeSync(fd);
-  }
-  return h.digest('hex');
-}
+// The full-file hash now lives in the engine (`engine/hashFile.ts`) so the
+// host-side `scripts/disk-import.ts` can share this one constant-memory
+// implementation instead of keeping its own eager `readFileSync` copy (#2438).
+// Re-exported here because this module's importers (and its #2423 tests) have
+// always reached it through `cli/main`.
+export { hashFileContent, HASH_CHUNK_BYTES, type HashFileIO } from '../engine/hashFile';
 
 /** Bytes read from each end for the cheap dedup fingerprint (#1995). */
 const FINGERPRINT_EDGE_BYTES = 64 * 1024;

@@ -15,6 +15,7 @@ export * from './engine/catalog';
 export * from './engine/categories';
 export * from './engine/classify';
 export * from './engine/dedup';
+export * from './engine/hashFile';
 export * from './engine/hostExec';
 export * from './engine/hostScan';
 export * from './engine/immichLibraries';
