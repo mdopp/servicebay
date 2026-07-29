@@ -10,7 +10,8 @@
  * Each group module receives a `ToolServer` whose `.tool()` is already wrapped
  * in `safeHandler`, so a new tool is covered by the safety layer by
  * construction and cannot register around it. The policy tables the layer reads
- * (TOOL_SCOPES / MUTATING_TOOLS / DESTRUCTIVE_TOOLS / MCP_KERNEL_TOOLS) live in
+ * (TOOL_SCOPES / MUTATING_TOOLS / DESTRUCTIVE_TOOLS + DESTRUCTIVE_TOOL_ACTIONS /
+ * MCP_KERNEL_TOOLS) live in
  * `toolPolicy.ts` and are re-exported here so this module's public API is
  * unchanged.
  */
@@ -26,7 +27,7 @@ import { type ApiScope } from '@/lib/auth/apiScope';
 import { consumeSingleUseToken } from '@/lib/auth/apiTokens';
 import {
   MUTATING_TOOLS,
-  DESTRUCTIVE_TOOLS,
+  destructiveCallLabel,
   TOOL_SCOPES,
   MCP_KERNEL_TOOLS,
   tokenHasScope,
@@ -111,10 +112,14 @@ function runToolWithSideEffects(
     const start = Date.now();
     let outcome: 'ok' | 'error' | 'blocked' = 'ok';
     let errorMessage: string | undefined;
+    // Resolved per CALL, not per tool (#2419): a multi-action tool can carry one
+    // destructive action among reversible ones (`manage_service` force-update),
+    // and only that action gets the snapshot + operator email.
+    const destructive = destructiveCallLabel(toolName, args);
     try {
-      if (DESTRUCTIVE_TOOLS.has(toolName)) {
+      if (destructive) {
         // Best-effort: don't block the mutation if the snapshot fails.
-        await snapshotBeforeMutation(toolName, args);
+        await snapshotBeforeMutation(destructive, args);
       }
       const result = await handler(...handlerArgs);
       // Result is `isError: true` when a tool reports a logical error.
@@ -144,8 +149,8 @@ function runToolWithSideEffects(
       // token / runaway agent shows up in their inbox right away. Skip
       // failures and `blocked` (the safety layer already handled those).
       // No-op when SMTP isn't configured.
-      if (DESTRUCTIVE_TOOLS.has(toolName) && outcome === 'ok') {
-        void notifyDestructiveOp({ tool: toolName, caller: auth?.user, args, ts }).catch(() => undefined);
+      if (destructive && outcome === 'ok') {
+        void notifyDestructiveOp({ tool: destructive, caller: auth?.user, args, ts }).catch(() => undefined);
       }
     }
   })();

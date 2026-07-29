@@ -512,8 +512,8 @@ def render_ldap_plugin_config(
 
     Mirrors how Radicale binds LLDAP (templates/radicale/template.yml):
       - server  ldap://host.containers.internal:3890
-      - base    dc=dopp,dc=cloud, users under ou=people
-      - bind    uid=admin,ou=people,dc=dopp,dc=cloud
+      - base    the LLDAP base DN (e.g. dc=example,dc=com), users under ou=people
+      - bind    uid=admin,ou=people,<base DN>
       - filter  (&(objectClass=person)(uid={0}))  → here the plugin uses
                 its own `{username}` token, so the search filter is
                 `(uid={username})` scoped under the people OU.
@@ -605,6 +605,14 @@ def ensure_jellyfin_ldap_plugin(
     if not bind_password:
         log("   ℹ️ Jellyfin LDAP wiring skipped — no LLDAP admin password in env "
             "(install the `auth` stack so LLDAP_ADMIN_PASSWORD is inherited).")
+        return False
+    # No fallback DN (#2439): the search base, bind DN and admin-group DN below
+    # are all built from it, so a guessed value writes a plugin config that
+    # binds against a tree that does not exist — LDAP logins then fail with an
+    # opaque error instead of the plugin being visibly absent.
+    if not base_dn:
+        log("   ℹ️ Jellyfin LDAP wiring skipped — LLDAP_BASE_DN is empty "
+            "(set it to the base DN the `auth` stack initialised LLDAP with).")
         return False
 
     # host.containers.internal is the name podman puts in every container's
@@ -917,7 +925,7 @@ def main() -> int:
             jellyfin_base,
             jf_token,
             env("LLDAP_LDAP_PORT", "3890"),
-            env("LLDAP_BASE_DN", "dc=dopp,dc=cloud"),
+            env("LLDAP_BASE_DN"),
             env("LLDAP_ADMIN_PASSWORD"),
             public_lib_guids,
         )

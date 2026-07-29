@@ -13,7 +13,15 @@
 /**
  * Risk tiers, least→most destructive:
  *   read      lookups + diagnose + log readers
- *   lifecycle start/stop/restart + run_check_now + refresh + run_backup
+ *   lifecycle start/stop/restart + run_check_now + refresh + run_backup, plus
+ *             `manage_service` action=force-update: re-pulls the service's
+ *             declared image and force-recreates its containers (no data is
+ *             touched, but the running image can move forward and, in `fresh`
+ *             mode, the local image is deleted first). #2419 deliberately KEPT
+ *             it in this tier — lifecycle-only tokens and the companion app
+ *             need it — and covers it with the destructive-call safeguards
+ *             (pre-mutation snapshot + operator email) instead; see
+ *             DESTRUCTIVE_TOOL_ACTIONS in mcp/toolPolicy.ts.
  *   mutate    create/update/add + config writes — additive changes
  *   reboot    reboot_node — transient & recoverable host restart (#1765);
  *             split out of `destroy` so a token can grant operate+reboot

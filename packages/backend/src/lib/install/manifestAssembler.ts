@@ -184,6 +184,37 @@ async function hostHasNvidiaCdi(): Promise<boolean> {
 }
 
 /**
+ * LAN-only fallback base DN (#2439). A box with no `PUBLIC_DOMAIN` still needs
+ * a base DN to initialise LLDAP's tree with — every LDAP consumer (Authelia,
+ * Radicale, Jellyfin's LDAP-Auth, claude-dev's nslcd) just has to agree with
+ * it, so any self-consistent DN works. `dc=local` is chosen because `.local`
+ * is reserved for link-local/LAN use (RFC 6762), so it can never collide with
+ * a public domain the operator registers later. It is deliberately a FIXED
+ * literal rather than derived from the box's hostname: the DN roots a stored
+ * LDAP tree, and a hostname the operator renames would silently re-root it.
+ */
+const LAN_ONLY_BASE_DN = 'dc=local';
+
+/**
+ * Turn a bare public domain into an LDAP base DN — `example.com` →
+ * `dc=example,dc=com` (#2439). Returns {@link LAN_ONLY_BASE_DN} when the box
+ * has no public domain (LAN-only install). Tolerates the shapes an operator
+ * can type into the domain field (scheme, trailing slash/dot, whitespace,
+ * uppercase); anything left that is not a DNS label is dropped.
+ */
+export function deriveLdapBaseDn(publicDomain: string | undefined): string {
+  const labels = (publicDomain ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+    .split('/')[0]
+    .split('.')
+    .filter(l => /^[a-z0-9-]+$/.test(l));
+  if (labels.length === 0) return LAN_ONLY_BASE_DN;
+  return labels.map(l => `dc=${l}`).join(',');
+}
+
+/**
  * Per-variable help text for well-known global variables that templates
  * reference but rarely declare a `description` for (so the wizard would
  * otherwise show a bare, unlabelled input). Keyed by variable name.
@@ -225,6 +256,9 @@ function withHelpText(
  *   5. `meta.default`
  *   6. `secret` / `rsa-private` / `bcrypt` typed vars: reuse a saved
  *      value when one exists, else generate (and persist) a fresh one
+ *   7. derived-from-another-variable vars, applied only when still empty:
+ *      `VAULTWARDEN_DOMAIN` (subdomain + public domain) and
+ *      `LLDAP_BASE_DN` ({@link deriveLdapBaseDn} of the public domain)
  */
 export async function assembleManifest(
   input: AssembleManifestInput,
@@ -426,6 +460,26 @@ export async function assembleManifest(
 
   // VAULTWARDEN_DOMAIN derives from the subdomain + public domain.
   const pubDomain = variables.find(v => v.name === 'PUBLIC_DOMAIN')?.value;
+
+  // LLDAP_BASE_DN derives from the same public domain (#2439) — the four
+  // LDAP-consuming templates used to ship the maintainer's own DN as their
+  // default. Fill ONLY when the value is still empty, so a box that already
+  // has a base DN (prefilled, Template Settings, or a replayed manifest)
+  // keeps it: the DN roots an existing LDAP tree, and overwriting it would
+  // silently re-root every user and group on the next redeploy.
+  // `global` is deliberately NOT set: unlike VAULTWARDEN_DOMAIN this stays an
+  // editable wizard field, so an operator joining an LLDAP tree that was
+  // initialised with a different DN can correct the derived value in place.
+  const baseDn = variables.find(v => v.name === 'LLDAP_BASE_DN');
+  if (baseDn && !baseDn.value) {
+    // Read the box's domain from config too, not just the PUBLIC_DOMAIN
+    // variable: that variable only joins `variables` when some selected
+    // template references it or declares a subdomain, so a stack like
+    // claude-dev (LDAP consumer, no proxy host) would otherwise fall back to
+    // the LAN DN on a box that does have a public domain — and disagree with
+    // the DN the `auth` stack initialised LLDAP with.
+    baseDn.value = deriveLdapBaseDn(pubDomain || config.reverseProxy?.publicDomain);
+  }
   const vwSub = variables.find(v => v.name === 'VAULTWARDEN_SUBDOMAIN')?.value;
   if (pubDomain && vwSub) {
     const vwDomain = variables.find(v => v.name === 'VAULTWARDEN_DOMAIN');
@@ -473,8 +527,6 @@ export async function applyVariableDefaults(
       }
     }
   }
-  if (defaults.size === 0) return input;
-
   const next: JobInputVariable[] = input.variables.map(v => ({ ...v }));
   const indexByName = new Map(next.map((v, i) => [v.name, i]));
   let changed = false;
@@ -488,5 +540,25 @@ export async function applyVariableDefaults(
       changed = true;
     }
   }
+
+  if (await fillDerivedBaseDn(next)) changed = true;
   return changed ? { ...input, variables: next } : input;
+}
+
+/**
+ * #2439 — LLDAP_BASE_DN has no `variables.json` default to fall back on any
+ * more; it is derived from the public domain. A manifest replayed from before
+ * the variable existed would therefore reach the deploy empty, and an empty
+ * base DN renders an Authelia/Radicale config that binds against nothing. Fill
+ * it at the install entry point too, under the same "only when empty" rule so
+ * an installed stack's DN is never re-rooted. Mutates `vars` in place and
+ * returns whether it changed anything. Only an EXISTING empty slot is filled —
+ * never appended, so a stack with no LDAP variable stays untouched.
+ */
+async function fillDerivedBaseDn(vars: JobInputVariable[]): Promise<boolean> {
+  const dn = vars.find(v => v.name === 'LLDAP_BASE_DN');
+  if (!dn || dn.value) return false;
+  const cfg = await getConfig().catch(() => null);
+  dn.value = deriveLdapBaseDn(cfg?.reverseProxy?.publicDomain);
+  return true;
 }

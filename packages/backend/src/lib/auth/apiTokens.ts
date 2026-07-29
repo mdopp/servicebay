@@ -10,7 +10,9 @@
  *
  * Scopes (cumulative — a token can have any subset; the gate is per-tool):
  *   - read       list_*, get_*, diagnose, list_trashed_services
- *   - lifecycle  start/stop/restart, run_check_now, refresh_agent
+ *   - lifecycle  start/stop/restart, force-update (re-pull image + recreate
+ *                containers — snapshot + operator email, #2419),
+ *                run_check_now, refresh_agent
  *   - mutate     deploy_service, update_service_yaml, add_proxy_route,
  *                create_health_check, run_backup, restore_trashed_service,
  *                rename_service

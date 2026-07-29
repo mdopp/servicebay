@@ -9,6 +9,13 @@ vi.mock('@/lib/registry', async (orig) => ({
   getTemplateVariables: mockReg.getTemplateVariables,
 }));
 
+// #2439 — the LLDAP_BASE_DN safety net reads the box's public domain.
+const { mockCfg } = vi.hoisted(() => ({ mockCfg: { getConfig: vi.fn() } }));
+vi.mock('@/lib/config', async (orig) => ({
+  ...(await orig<typeof import('@/lib/config')>()),
+  getConfig: mockCfg.getConfig,
+}));
+
 import { applyVariableDefaults } from './manifestAssembler';
 import type { JobInput } from './jobStore';
 
@@ -71,6 +78,39 @@ describe('applyVariableDefaults (#1297)', () => {
     const out = await applyVariableDefaults(original);
     expect(mockReg.getTemplateVariables).not.toHaveBeenCalled();
     expect(out).toBe(original); // same reference — no allocation when nothing changed
+  });
+
+  // #2439 — LLDAP_BASE_DN is derived, not defaulted, so a manifest replayed
+  // from before the variable existed would otherwise deploy a blank base DN.
+  it('derives an empty LLDAP_BASE_DN from the box public domain', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue({ LLDAP_BASE_DN: { type: 'text', default: '' } });
+    mockCfg.getConfig.mockResolvedValue({ reverseProxy: { publicDomain: 'example.com' } });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'auth', checked: true }],
+      variables: [{ name: 'LLDAP_BASE_DN', value: '' }],
+    }));
+    expect(out.variables.find(v => v.name === 'LLDAP_BASE_DN')?.value).toBe('dc=example,dc=com');
+  });
+
+  it('leaves an installed LLDAP_BASE_DN alone — never re-roots a live tree', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue({ LLDAP_BASE_DN: { type: 'text', default: '' } });
+    mockCfg.getConfig.mockResolvedValue({ reverseProxy: { publicDomain: 'example.com' } });
+    const original = input({
+      items: [{ name: 'auth', checked: true }],
+      variables: [{ name: 'LLDAP_BASE_DN', value: 'dc=legacy,dc=tree' }],
+    });
+    const out = await applyVariableDefaults(original);
+    expect(out).toBe(original);
+  });
+
+  it('does not invent an LLDAP_BASE_DN for a stack that has none', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue({ FOO: { default: 'bar' } });
+    mockCfg.getConfig.mockResolvedValue({ reverseProxy: { publicDomain: 'example.com' } });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'x', checked: true }],
+      variables: [{ name: 'FOO', value: '' }],
+    }));
+    expect(out.variables.find(v => v.name === 'LLDAP_BASE_DN')).toBeUndefined();
   });
 
   it('does not mutate the caller\'s input', async () => {

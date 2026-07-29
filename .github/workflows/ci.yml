@@ -11,8 +11,9 @@ name: CI
 #   test        — vitest run (with v8 coverage) + new-code diff-coverage gate (#1548)
 #   invariants  — file size, security `as any` budget, exec-template-literal count,
 #                 withApiHandler adoption ratio, twin singleton fan-in, gate-path
-#                 resolution + CI/script parity, plus template backup coverage
-#                 and knip (companion to docs/ARCHITECTURE_INVARIANTS.md)
+#                 resolution + CI/script parity, plus template backup coverage,
+#                 the design-system lint ratchet (#2430) and knip (companion to
+#                 docs/ARCHITECTURE_INVARIANTS.md)
 #   depcruise   — module boundary rules (no lib→app imports, one mutation path,
 #                 one renderer, no circular deps outside the known set)
 #   semgrep     — security & coupling patterns (executor.exec template literals,
@@ -207,6 +208,17 @@ jobs:
       # Unused files / exports / dependencies. Clean at the time it was wired in
       # (#2429) — blocking, like every other gate here.
       - run: npm run knip
+      # Monotonic lint ratchet (#2430) for the two staged design-system rules
+      # (`sb/no-raw-color-literal`, `sb/no-raw-ui-primitive`). They ship at
+      # `warn` with a "burn down, then flip to error" plan, and warnings gate
+      # nothing — so the burn-down flatlined for 36 commits while violations
+      # were merely *moved* between files. This step fails the PR when either
+      # rule's count rises above `.eslint-ratchet-baseline.json`. `--check` is
+      # CI mode: it never rewrites the baseline (a decrease is reported as
+      # slack and passes; local `npm run check:lint-ratchet`, chained from
+      # `check:arch`, tightens the committed file).
+      - name: Lint ratchet (design-system rules may only decrease)
+        run: npm run check:lint-ratchet -- --check
       # Frontend copy-paste / duplicate-JSX report (#2354). Report-only
       # (mirrors the #2353 lint-rule WARN staging + the semgrep/audit tiering):
       # prints extraction candidates to the CI log but never blocks the merge.

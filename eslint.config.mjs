@@ -163,6 +163,12 @@ const servicebayPlugin = {
     // loosen. TODO(#2353): ratchet no-raw-color-literal → error after the
     // colour-token migration; ratchet no-raw-ui-primitive → error after the
     // <button>/<table>/<input> migration.
+    //
+    // ENFORCED since #2430 — the plan above is no longer prose: the counts are
+    // pinned in .eslint-ratchet-baseline.json and `npm run check:lint-ratchet`
+    // (CI `invariants` job, and chained from `check:arch`) fails any commit
+    // that raises either one. Flip procedure when a count reaches 0:
+    // docs/ARCHITECTURE_INVARIANTS.md § UI-primitive and design-token reuse.
     "no-raw-ui-primitive": {
       meta: {
         type: "suggestion",

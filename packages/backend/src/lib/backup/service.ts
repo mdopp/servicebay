@@ -402,13 +402,33 @@ async function recordBackupSuccess(
     return result;
 }
 
-async function loadBackupConfig(config?: BackupConfig): Promise<{ config: BackupConfig; previousStatus?: 'success' | 'error' }> {
-    if (!config) {
-        const appConfig = await getConfig();
-        return { config: appConfig.backup!, previousStatus: appConfig.backup?.lastStatus };
-    }
+/**
+ * Surfaced when a manual/on-demand run is triggered on a box that has never
+ * configured Backup Sync (#2443). `config.backup` is legitimately absent then,
+ * so this is a "nothing to do, here's what's missing" answer — not a failure.
+ */
+export const BACKUP_NOT_CONFIGURED_MESSAGE =
+    "Backup isn't configured — add a source and target in Settings → Backup, then run it again.";
+
+// Returns `config: undefined` when nothing is configured. The caller decides
+// what that means; asserting past it (`appConfig.backup!`) crashed the manual
+// run path with a raw "Cannot read properties of undefined" (#2443).
+async function loadBackupConfig(config?: BackupConfig): Promise<{ config?: BackupConfig; previousStatus?: 'success' | 'error' }> {
     const appConfig = await getConfig();
-    return { config, previousStatus: appConfig.backup?.lastStatus };
+    return { config: config ?? appConfig.backup, previousStatus: appConfig.backup?.lastStatus };
+}
+
+// Bail the same clean way scheduleBackup() does: no history entry, no
+// "Backup Failed" alert — nothing failed, there is simply nothing set up yet.
+function notConfiguredResult(startedAt: Date): BackupRunResult {
+    logger.info('Backup', BACKUP_NOT_CONFIGURED_MESSAGE);
+    return {
+        success: false,
+        startedAt: startedAt.toISOString(),
+        completedAt: new Date().toISOString(),
+        duration: 0,
+        message: BACKUP_NOT_CONFIGURED_MESSAGE,
+    };
 }
 
 export async function runBackup(config?: BackupConfig): Promise<BackupRunResult> {
@@ -431,6 +451,7 @@ export async function runBackup(config?: BackupConfig): Promise<BackupRunResult>
         const loaded = await loadBackupConfig(config);
         resolvedConfig = loaded.config;
         previousStatus = loaded.previousStatus;
+        if (!resolvedConfig) return notConfiguredResult(startedAt);
         return await runBackupItems(resolvedConfig, startedAt, previousStatus);
     } catch (error) {
         const completedAt = new Date();

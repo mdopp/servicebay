@@ -306,6 +306,77 @@ describe('Declared template variables are used', () => {
   }
 });
 
+// ─── 2c. …and no default hardcodes one deployment's domain ──────────────────
+//
+// A `variables.json` default is what actually reaches a fresh install, so a
+// concrete domain in one makes every other operator's box point at (or be
+// rooted under) someone else's namespace. #2425 removed the literal
+// `dopp.cloud` defaults; #2439 found the same value still sitting in four
+// LLDAP_BASE_DN defaults, DN-encoded, where a `dopp.cloud` grep could not see
+// it. This rule catches BOTH encodings — and any future maintainer's domain,
+// not just this one — by allowing only the reserved names in a default:
+// documentation domains (RFC 2606) and the LAN/link-local suffixes.
+describe('Template variable defaults carry no concrete domain', () => {
+  /** Reserved last labels a default may legitimately end on: RFC 2606
+   *  documentation/test names, plus the LAN suffixes ServiceBay itself uses
+   *  (`localhost`, podman's `host.containers.internal`, `dc=local`). */
+  const RESERVED_TLD = new Set([
+    'example', 'test', 'invalid', 'localhost', 'local', 'internal', 'lan', 'arpa',
+  ]);
+  /** A dotted DNS name whose last label is alphabetic — excludes IPs
+   *  (`169.254.1.2`), version strings (`v1.1.0`) and unix paths. */
+  const DOMAIN_RE = /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.([a-z]{2,})\b/g;
+  /** An LDAP DN written as `dc=` components — the encoding #2439 missed. */
+  const DN_RE = /dc=([a-z0-9-]+)(?:\s*,\s*dc=([a-z0-9-]+))*/g;
+
+  /** Every offending domain-shaped literal in one default value. */
+  function offendingLiterals(value: string): string[] {
+    const bad: string[] = [];
+    for (const m of value.toLowerCase().matchAll(DOMAIN_RE)) {
+      if (!RESERVED_TLD.has(m[1])) bad.push(m[0]);
+    }
+    for (const m of value.toLowerCase().matchAll(DN_RE)) {
+      const labels = [...m[0].matchAll(/dc=([a-z0-9-]+)/g)].map(x => x[1]);
+      // A DN roots an LDAP tree; the same reserved-name rule applies to its
+      // last component (`dc=example,dc=com` is fine, `dc=local` is fine).
+      if (labels.length > 1 && !RESERVED_TLD.has(labels[labels.length - 1])) bad.push(m[0]);
+    }
+    return bad;
+  }
+
+  /** name → default, for one variables.json-shaped object. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function defaultsOf(vars: Record<string, any>): [string, string][] {
+    return Object.entries(vars)
+      .filter(([, spec]) => typeof spec?.default === 'string' && spec.default !== '')
+      .map(([name, spec]) => [name, spec.default as string]);
+  }
+
+  for (const t of templates) {
+    it(`${t.name}: no variables.json default hardcodes a real domain`, () => {
+      const offenders = defaultsOf(t.variables)
+        .flatMap(([name, def]) => offendingLiterals(def).map(lit => `${name} = "${def}" (${lit})`));
+      expect(
+        offenders,
+        `${t.name}: default(s) carrying one deployment's domain:\n  ${offenders.join('\n  ')}\n\n` +
+        `A default ships to every install. Leave it empty and derive the value ` +
+        `(LLDAP_BASE_DN derives from PUBLIC_DOMAIN in manifestAssembler, #2439), or use ` +
+        `an RFC 2606 documentation name (example.com) in the description instead.`,
+      ).toEqual([]);
+    });
+  }
+
+  it('templates/settings.json globals hardcode no real domain', () => {
+    const settings = JSON.parse(
+      fs.readFileSync(path.join(TEMPLATES_DIR, 'settings.json'), 'utf-8'),
+    );
+    const offenders = defaultsOf(settings.variables ?? {})
+      .flatMap(([name, def]) => offendingLiterals(def).map(lit => `${name} = "${def}" (${lit})`));
+    expect(offenders, `settings.json globals with a hardcoded domain:\n  ${offenders.join('\n  ')}`)
+      .toEqual([]);
+  });
+});
+
 // ─── 3. Each template renders to a valid Pod ────────────────────────────────
 describe('Templates render to valid Pod manifests', () => {
   /** Build a Mustache view that supplies a value for every variable referenced

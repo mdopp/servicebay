@@ -11,8 +11,8 @@
   },
   "LLDAP_BASE_DN": {
     "type": "text",
-    "description": "LLDAP base DN (e.g. dc=dopp,dc=cloud)",
-    "default": "dc=dopp,dc=cloud"
+    "description": "LLDAP base DN (e.g. dc=example,dc=com). Leave blank: ServiceBay derives it from PUBLIC_DOMAIN at install time, matching what the auth template initialised LLDAP with.",
+    "default": ""
   },
   "LLDAP_ADMIN_PASSWORD": {
     "type": "secret",

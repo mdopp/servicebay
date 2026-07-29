@@ -2,7 +2,7 @@
  * `ha_automation_integrity` probe (#1864) — guards against the Home Assistant
  * automations/scripts/scenes data-loss incident.
  *
- * Two distinct hazards, surfaced as one row:
+ * Three distinct hazards, surfaced as one row:
  *
  *  1. **Registry/config mismatch.** HA's entity registry
  *     (`<config>/.storage/core.entity_registry`) lists N>0 entities of a
@@ -15,7 +15,16 @@
  *     state; this probe surfaces the same condition in diagnose so it's
  *     visible without a deploy.
  *
- *  2. **No effective backup target.** HA owns automations/scripts/scenes but
+ *  2. **A post-deploy-detected reset (#2444).** `templates/home-assistant/
+ *     post-deploy.py` records the emptiness of the three include targets on
+ *     every deploy and stamps `lastRegression` into
+ *     `<config>/.sb_include_snapshot.json` when a file that held content at the
+ *     last deploy comes back empty. That covers the variant hazard 1 is blind
+ *     to: HA resetting the entity registry along with the YAML, leaving no
+ *     registry entries to mismatch against. Surfaced only while the flagged
+ *     file is still empty, so restoring it clears the row.
+ *
+ *  3. **No effective backup target.** HA owns automations/scripts/scenes but
  *     no external backup destination resolves — so a future emptying would be
  *     unrecoverable. Crucially this checks the EFFECTIVE target via
  *     `resolveBackupTarget()`, which defaults to `config.gateway` (the
@@ -114,6 +123,48 @@ async function scanIncludeMismatches(
   return { mismatches, totalRegistered };
 }
 
+/** The sidecar `post-deploy.py` writes next to the include targets (#2444). */
+const GUARD_SNAPSHOT_FILE = '.sb_include_snapshot.json';
+
+/** Pull the `lastRegression` stamp out of the post-deploy guard's sidecar.
+ *  Returns null when absent/unparseable, or when it names no known include
+ *  file — the filenames are used to build a `cat` command, so anything outside
+ *  the three we ship is dropped rather than trusted. */
+export function parseGuardRegression(
+  snapshotJson: string,
+): { files: string[]; detectedAt: string | null } | null {
+  let parsed: { lastRegression?: { files?: unknown; detectedAt?: unknown } };
+  try {
+    parsed = JSON.parse(snapshotJson) as typeof parsed;
+  } catch {
+    return null;
+  }
+  const reg = parsed?.lastRegression;
+  if (!reg || typeof reg !== 'object') return null;
+  const known = new Set(INCLUDES.map((i) => i.file));
+  const files = Array.isArray(reg.files)
+    ? reg.files.filter((f): f is string => typeof f === 'string' && known.has(f))
+    : [];
+  if (files.length === 0) return null;
+  return { files, detectedAt: typeof reg.detectedAt === 'string' ? reg.detectedAt : null };
+}
+
+/** Hazard-2 scan: the files the post-deploy guard flagged as reset AND which
+ *  are still empty right now (a restored file clears itself). */
+async function scanGuardRegression(
+  agent: ExecAgent,
+  haConfigDir: string,
+): Promise<{ files: string[]; detectedAt: string | null }> {
+  const stamp = parseGuardRegression(await readFileOrEmpty(agent, haConfigDir, GUARD_SNAPSHOT_FILE));
+  if (!stamp) return { files: [], detectedAt: null };
+  const stillEmpty: string[] = [];
+  for (const file of stamp.files) {
+    const parsed = parseHaEntryCount(await readFileOrEmpty(agent, haConfigDir, file));
+    if (parsed === 0) stillEmpty.push(file);
+  }
+  return { files: stillEmpty, detectedAt: stamp.detectedAt };
+}
+
 export async function checkHaAutomationIntegrity(
   nodeName: string = 'Local',
 ): Promise<HaAutomationIntegrityResult> {
@@ -132,6 +183,21 @@ export async function checkHaAutomationIntegrity(
   }
 
   const registryJson = await readFileOrEmpty(agent, haConfigDir, '.storage/core.entity_registry');
+
+  // ── Hazard 1: registry lists entities but the config file is empty. ──
+  let totalRegistered = 0;
+  if (registryJson.trim() !== '') {
+    const scan = await scanIncludeMismatches(agent, haConfigDir, registryJson);
+    if (scan.mismatches.length > 0) return mismatchWarning(scan.mismatches, haConfigDir);
+    totalRegistered = scan.totalRegistered;
+  }
+
+  // ── Hazard 2: the post-deploy guard recorded a reset and the file is still
+  // empty. Checked even without a registry — the variant this catches is HA
+  // resetting the registry too, which would make hazard 1 silent. ──
+  const guarded = await scanGuardRegression(agent, haConfigDir);
+  if (guarded.files.length > 0) return guardRegressionWarning(guarded.files, guarded.detectedAt, haConfigDir);
+
   if (registryJson.trim() === '') {
     return {
       status: 'info',
@@ -139,11 +205,7 @@ export async function checkHaAutomationIntegrity(
     };
   }
 
-  // ── Hazard 1: registry lists entities but the config file is empty. ──
-  const { mismatches, totalRegistered } = await scanIncludeMismatches(agent, haConfigDir, registryJson);
-  if (mismatches.length > 0) return mismatchWarning(mismatches, haConfigDir);
-
-  // ── Hazard 2: HA owns entities but no effective backup target resolves. ──
+  // ── Hazard 3: HA owns entities but no effective backup target resolves. ──
   if (totalRegistered > 0 && !(await resolveBackupTarget())) return noBackupWarning(totalRegistered);
 
   return {
@@ -169,7 +231,27 @@ function mismatchWarning(mismatches: string[], haConfigDir: string): HaAutomatio
   };
 }
 
-/** Hazard-2 warn result: HA owns entities but no effective backup destination. */
+/** Hazard-2 warn result: the deploy-time guard saw a non-empty include target
+ *  come back empty, and it still is. */
+function guardRegressionWarning(
+  files: string[],
+  detectedAt: string | null,
+  haConfigDir: string,
+): HaAutomationIntegrityResult {
+  logger.warn('diagnose:ha_automation_integrity', `post-deploy reset guard: ${files.join(', ')} came back empty`);
+  return {
+    status: 'warn',
+    detail:
+      `Home Assistant emptied ${files.join(', ')} during a redeploy${detectedAt ? ` on ${detectedAt}` : ''} — ` +
+      `${files.length === 1 ? 'the file' : 'the files'} held content at the previous deploy and ${files.length === 1 ? 'is' : 'are'} still empty. ` +
+      `ServiceBay did not write ${files.length === 1 ? 'it' : 'them'}; this is the config-reset fingerprint from #2444.`,
+    hint:
+      `Recover from Home Assistant's own automatic backup (Settings → System → Backups) or a ServiceBay backup of ${haConfigDir}, ` +
+      'then reload the affected integration. If you deleted this config yourself, the row clears at the next home-assistant deploy.',
+  };
+}
+
+/** Hazard-3 warn result: HA owns entities but no effective backup destination. */
 function noBackupWarning(totalRegistered: number): HaAutomationIntegrityResult {
   return {
     status: 'warn',

@@ -14,7 +14,9 @@ Pick a name (e.g. `Claude Code on workstation`) and the scopes you want
 this client to have:
 
 - **read** — list/get only. The safest default.
-- **lifecycle** — adds start/stop/restart, run-check-now, refresh-agent.
+- **lifecycle** — adds start/stop/restart, run-check-now, refresh-agent, and
+  force-update (re-pull a service's image and recreate its containers — you get
+  a snapshot and an email each time one runs).
 - **mutate** — adds deploy/update/add-route/create-check.
 - **destroy** — adds delete/exec/restore/purge. Use sparingly.
 

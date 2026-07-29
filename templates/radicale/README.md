@@ -15,7 +15,7 @@ If you'd rather have a dedicated `carddav.` alias for clarity, add it as a secon
 | `RADICALE_PORT` | CalDAV/CardDAV HTTP port | `5232` |
 | `LLDAP_HOST` | LLDAP hostname | `localhost` |
 | `LLDAP_LDAP_PORT` | LLDAP LDAP-protocol port | `3890` |
-| `LLDAP_BASE_DN` | LLDAP base DN | `dc=dopp,dc=cloud` |
+| `LLDAP_BASE_DN` | LLDAP base DN | derived from `PUBLIC_DOMAIN` (`dc=local` on a LAN-only box) |
 | `LLDAP_ADMIN_PASSWORD` | LLDAP admin password (used as Radicale's reader bind) | inherited from lldap template |
 
 ## How auth works

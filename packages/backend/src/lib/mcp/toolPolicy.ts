@@ -5,6 +5,7 @@
  *   TOOL_SCOPES       — the scope a token must hold to call a tool
  *   MUTATING_TOOLS    — gated on `config.mcp.allowMutations`
  *   DESTRUCTIVE_TOOLS — pre-mutation snapshot + operator email
+ *   DESTRUCTIVE_TOOL_ACTIONS — the same, for ONE action of a multi-action tool
  *   MCP_KERNEL_TOOLS  — the always-eager core advertised to Tool-Search clients
  *
  * They live here rather than in `server.ts` so a tool-group module (or the
@@ -38,7 +39,12 @@ export const MUTATING_TOOLS = new Set([
  * isn't in the token's set. Cookie auth has all scopes for back-compat.
  *
  *   read       lookups + diagnose + log readers
- *   lifecycle  start/stop/restart + run_check_now + refresh + run_backup
+ *   lifecycle  start/stop/restart + force-update (re-pull the declared image
+ *              and recreate the containers — the service's DATA is untouched,
+ *              but the image it runs can move forward and a container is
+ *              force-removed; #2419 keeps it here and covers it with the
+ *              destructive-call safeguards instead, see
+ *              DESTRUCTIVE_TOOL_ACTIONS) + run_check_now + refresh + run_backup
  *   mutate     create/update/add + config writes — additive changes
  *   reboot     reboot_node — transient, recoverable host restart (#1765),
  *              split off `destroy` so a token can operate+reboot without
@@ -197,6 +203,46 @@ export const DESTRUCTIVE_TOOLS = new Set([
   'set_boot_next_usb',
   'factory_reset',
 ]);
+
+/**
+ * Per-ACTION destructive calls (#2419). `DESTRUCTIVE_TOOLS` is keyed on the tool
+ * name, but `manage_service` carries four actions with very different blast
+ * radii: start/stop/restart are reversible in-place verbs, while `force-update`
+ * re-pulls the image, force-removes the service's containers, and in `fresh`
+ * mode deletes the local image first. Tagging the whole tool destructive would
+ * snapshot + email on every routine restart; tagging none of it left the
+ * heaviest action with no rewind point and no operator notice.
+ *
+ * So the safeguard is resolved per CALL: `<tool>` → the set of `args.action`
+ * values that get the destructive treatment. The tool's SCOPE is unchanged —
+ * `manage_service` stays `lifecycle` by the architect's decision on #2419
+ * (lifecycle-only tokens and the companion app must keep force-update), and the
+ * safeguards are what make that tier honest.
+ */
+export const DESTRUCTIVE_TOOL_ACTIONS: Record<string, readonly string[]> = {
+  manage_service: ['force-update'],
+};
+
+/**
+ * Label this specific call if it deserves the destructive-op safeguards
+ * (pre-mutation snapshot + operator email), else `null`.
+ *
+ * Returns a label rather than a boolean so both safeguards name the ACTION and
+ * not just the tool: the snapshot lands as `pre-mutation:manage_service:force-update(…)`
+ * and the email/coalescing key is per-action, so an operator can tell a
+ * force-update apart from the tool's reversible verbs at a glance.
+ */
+export function destructiveCallLabel(
+  toolName: string,
+  args?: Record<string, unknown>,
+): string | null {
+  if (DESTRUCTIVE_TOOLS.has(toolName)) return toolName;
+  const action = args?.action;
+  if (typeof action === 'string' && DESTRUCTIVE_TOOL_ACTIONS[toolName]?.includes(action)) {
+    return `${toolName}:${action}`;
+  }
+  return null;
+}
 
 /**
  * `destroy`-tier tools (delete/purge/restore/factory_reset/set_boot_next_usb)
