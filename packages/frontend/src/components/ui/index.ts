@@ -26,6 +26,16 @@ export type { SectionHeadingProps, SectionHeadingTone } from './SectionHeading';
 export { Field } from './Field';
 export type { FieldProps } from './Field';
 
+export { Input } from './Input';
+
+export { Select } from './Select';
+export type { SelectProps } from './Select';
+
+export { Textarea } from './Textarea';
+
+export { Table } from './Table';
+export type { TableProps } from './Table';
+
 export { PageScroll, PageShell, PageScrollRegion } from './PageScroll';
 export type { PageScrollProps } from './PageScroll';
 
