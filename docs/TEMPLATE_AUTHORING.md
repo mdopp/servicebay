@@ -290,14 +290,28 @@ if __name__ == "__main__":
   LAN address rootless podman forwards to, and the operator's
   notification address). Unset if ServiceBay doesn't know them.
 
-The env is the **only** channel. The script body ships to the box
-**verbatim** — it is *not* Mustache-rendered (#2415), so `{{VAR}}` in a
-script is dead text, not a substitution. Read `os.environ` instead.
-The upside: podman/docker `--format '{{.Image}}'` Go templates, Helm
-and Jinja snippets, and Python f-string `{{…}}` escapes all survive
-intact. (Rendering used to delete every unrecognised `{{…}}` silently,
-turning a `--format` string into `--format '|'` — which podman answers
-with exit 0, so it read as "empty field" for five debugging rounds.)
+<a id="verbatim-script-contract"></a>
+#### The script-body contract (both script types)
+
+This holds for **every** Python script a template ships —
+`post-deploy.py` and `migrations/v{N}-to-v{M}.py` alike:
+
+> **The env is the only channel. The body ships to the box verbatim.**
+
+Script bodies are *not* Mustache-rendered (#2415 for `post-deploy.py`,
+#2435 for migrations), so `{{VAR}}` in a script is dead text, not a
+substitution — read `os.environ` instead. The upside: podman/docker
+`--format '{{.Image}}'` Go templates, Helm and Jinja snippets, and
+Python f-string `{{…}}` escapes all survive intact. (Rendering used to
+delete every unrecognised `{{…}}` silently, turning a `--format` string
+into `--format '|'` — which podman answers with exit 0, so it read as
+"empty field" for five debugging rounds.) It also removes a syntax
+hazard: splicing a raw value into Python *source* breaks the script the
+moment the value contains a quote or a newline; `os.environ` doesn't
+care.
+
+If a script needs a value, add it to the env (`postDeployEnv` in
+`packages/backend/src/lib/install/runner.ts`) — never to a render pass.
 
 #### Output protocol
 
@@ -366,14 +380,10 @@ engine walks the chain in order if an operator's box is multiple
 versions behind. See #352 phase 3.
 
 The script protocol is identical to `post-deploy.py` (env file →
-`source` → `python3`, stdout streamed live to the install log)
-with two important differences:
-
-> **One asymmetry to know about:** unlike `post-deploy.py`, migration
-> bodies are still Mustache-rendered before they run, so an unrecognised
-> `{{…}}` is deleted (#2435 tracks removing that). Read your values from
-> `os.environ` and don't put Go-template/Jinja/Helm syntax in a migration
-> until it's closed.
+`source` → `python3`, stdout streamed live to the install log), and the
+[script-body contract](#the-script-body-contract-both-script-types) is
+the same one: the body ships **verbatim**, values arrive through the
+environment only. There are two behavioural differences:
 
 1. **Migrations are fail-fast.** A non-zero exit aborts the deploy
    *before* the new yaml lands — the existing service keeps running
@@ -427,6 +437,9 @@ All of the `post-deploy.py` env (every wizard variable, `HOST`,
 - `OLD_DATA_DIR` / `NEW_DATA_DIR` — both default to the operator's
   `DATA_DIR`. The slot exists for future migrations that move data
   between distinct roots; today they're always equal.
+
+Same rule as `post-deploy.py`: this env is the *only* channel — a
+`{{VAR}}` written into a migration body is prose, not a value.
 
 #### Audit log
 

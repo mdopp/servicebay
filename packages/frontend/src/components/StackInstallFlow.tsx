@@ -151,7 +151,7 @@ interface ProgressProps extends CommonProps {
 }
 
 export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
-  const { items, logs, phase, installingNow, deployedNames, npmCredPrompt, npmCredFallback, retryNpmCredentials, skipNpmCredentials, abortInstall, reset } = controller;
+  const { items, logs, phase, installingNow, deployedNames, npmCredPrompt, npmCredFallback, npmCredError, retryNpmCredentials, skipNpmCredentials, abortInstall, reset } = controller;
   const logTailRef = useRef<HTMLDivElement | null>(null);
   const [credEmail, setCredEmail] = useNpmCredFallback(npmCredFallback.email);
   const [credPassword, setCredPassword] = useNpmCredFallback(npmCredFallback.password);
@@ -244,7 +244,11 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
         <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
           <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">NPM admin login required</p>
           <p className="text-xs text-amber-700 dark:text-amber-300 mb-3">
-            Nginx Proxy Manager rejected the password this install tried to set — usually because the data volume on this host carries an admin password from a previous install. The fields below are pre-filled with the credentials ServiceBay previously had stored (best guess for what NPM&apos;s database still accepts); the wizard&apos;s newly-generated password is <em>not</em> shown here because NPM already rejected it. Click <span className="font-semibold">Authenticate &amp; Retry</span> to try these values, replace them with whatever password you know NPM is actually using, or Skip to configure proxy routes manually later.
+            Nginx Proxy Manager rejected the password this install tried to set — usually because the data volume on this host carries an admin password from a previous install.{' '}
+            {npmCredFallback.email || npmCredFallback.password
+              ? <>The fields below are pre-filled with the credentials ServiceBay previously had stored (best guess for what NPM&apos;s database still accepts); the wizard&apos;s newly-generated password is <em>not</em> shown here because NPM already rejected it.</>
+              : <>ServiceBay has no stored credentials for this host, so the fields below start empty — fill in the admin email and password NPM is actually using.</>}
+            {' '}Click <span className="font-semibold">Authenticate &amp; Retry</span> to submit these values, replace them with whatever password you know NPM is actually using, or Skip to configure proxy routes manually later.
           </p>
           <div className="space-y-2">
             <input
@@ -263,6 +267,11 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
               autoComplete="off"
               spellCheck={false}
             />
+            {npmCredError && (
+              <p role="alert" className="text-xs font-medium text-status-fail">
+                {npmCredError}
+              </p>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={() => { void retryNpmCredentials(credEmail, credPassword); }}
@@ -403,14 +412,32 @@ export default function StackInstallFlow(props: {
 }
 
 /**
- * Local-state helper seeded from the hook's `npmCredFallback`. After a
- * failed retry the operator's edits are preserved across the re-open
- * because the prompt component stays mounted — the hook just flips
- * `npmCredPrompt` true → false → true again with the same fallback
- * values it captured at runInstall time.
+ * Local input state seeded from the hook's `npmCredFallback`.
+ *
+ * The fallback is *not* available at mount: this component mounts as
+ * soon as the phase becomes `installing`, while the fallback only
+ * arrives later on the `/api/install/status` poll that reports
+ * `needs_credentials`. A bare `useState(fallback)` therefore captured
+ * `''` forever and the prompt rendered blank inputs under copy that
+ * promised pre-filled values (#2442).
+ *
+ * So re-seed whenever the fallback *value* changes — React's
+ * "adjust state when a prop changes" pattern, done in render so there
+ * is no blank-then-filled flash. The comparison is on the string, not
+ * the `npmCredFallback` object, which is deliberate: the poll hands
+ * back a fresh object every 2s, and re-seeding on identity would wipe
+ * a half-typed retry. Operator edits survive a failed retry for the
+ * same reason — the runner re-reports the same fallback string, so
+ * nothing is clobbered.
  */
-function useNpmCredFallback(initial: string): [string, (v: string) => void] {
-  return useState(initial);
+function useNpmCredFallback(fallback: string): [string, (v: string) => void] {
+  const [value, setValue] = useState(fallback);
+  const [seededFrom, setSeededFrom] = useState(fallback);
+  if (fallback !== seededFrom) {
+    setSeededFrom(fallback);
+    setValue(fallback);
+  }
+  return [value, setValue];
 }
 
 /**

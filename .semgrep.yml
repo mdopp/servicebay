@@ -1,10 +1,17 @@
 # Custom Semgrep rules — ServiceBay-specific security & coupling boundaries.
 #
-# Run locally:
-#   docker run --rm -v "$PWD:/src" returntocorp/semgrep semgrep --config /src/.semgrep.yml /src
+# Run locally (pin the same tag CI uses so a local run and CI agree):
+#   docker run --rm -v "$PWD:/src" returntocorp/semgrep:1.172.0 \
+#       semgrep --config /src/.semgrep.yml /src
 #
-# Run in CI: see the `semgrep` job in .github/workflows/ci.yml (uses the
-# official returntocorp/semgrep-action).
+# Run in CI: see the `semgrep` job in .github/workflows/ci.yml (same pinned
+# image tag — keep the two in sync when bumping).
+#
+# Every glob under a rule's `paths:` is asserted by
+# scripts/check-invariants.ts (`gate-path-resolves`) to match at least one
+# tracked file, using the anchored gitignore semantics semgrep is migrating
+# to. A rule whose paths match nothing scans nothing and passes vacuously —
+# that is the #2379 / #2428 failure mode, and it is now build-blocking.
 #
 # These rules complement, not duplicate, the registry rulesets (which CI
 # also runs: `p/typescript`, `p/security-audit`). Keep entries here narrow
@@ -63,9 +70,17 @@ rules:
       languages: [typescript]
       severity: ERROR
       paths:
+          # Repo-relative, workspace-split paths (#2428). These read
+          # `src/lib/util/safeTarExtract*` + `src/lib/systemBackup.ts` until
+          # today — pre-workspace-split roots that no longer exist, kept alive
+          # only by semgrep's legacy unanchored-glob matching (which the
+          # Semgrepignore v2 migration removes). `safeTarExtract` itself lives
+          # in systemBackup.ts; there is no separate util module to exclude.
+          # scripts/check-invariants.ts now asserts every glob here resolves to
+          # a non-empty file set, so a stale path fails the build instead of
+          # silently emptying the rule.
           exclude:
-              - 'src/lib/util/safeTarExtract*'
-              - 'src/lib/systemBackup.ts'
+              - 'packages/backend/src/lib/systemBackup.ts'
               - '*.test.ts'
 
     # -----------------------------------------------------------------------
@@ -91,9 +106,12 @@ rules:
       languages: [typescript]
       severity: WARNING
       paths:
+          # `src/` + `server.ts` (the pre-workspace-split roots) until #2428.
+          # `packages/*/src/` covers every workspace source root, including
+          # `packages/backend/src/server.ts` — the custom server that the bare
+          # `server.ts` entry used to name at the repo root.
           include:
-              - 'src/'
-              - 'server.ts'
+              - 'packages/*/src/'
           exclude:
               - '*.test.ts'
               - 'tests/'
@@ -163,5 +181,7 @@ rules:
       languages: [typescript]
       severity: WARNING
       paths:
+          # `src/app/api/**/route.ts` (pre-workspace-split) until #2428 — the
+          # App Router lives in packages/frontend now.
           include:
-              - 'src/app/api/**/route.ts'
+              - 'packages/frontend/src/app/api/**/route.ts'

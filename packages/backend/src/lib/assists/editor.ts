@@ -27,7 +27,7 @@ import matter from 'gray-matter';
 import { DATA_DIR } from '@/lib/dirs';
 import { logger } from '@/lib/logger';
 import { ASSIST_KINDS } from '@/lib/assists/catalog';
-import { SECRET_PATTERNS, scanForSecrets } from '@/lib/assists/secretScan';
+import { scanForSecrets } from '@/lib/assists/secretScan';
 
 const TAG = 'assists:editor';
 
@@ -36,12 +36,12 @@ const PROPOSALS_DIR = () => path.join(LOCAL_ASSISTS_DIR(), '.proposals');
 const HISTORY_DIR = () => path.join(LOCAL_ASSISTS_DIR(), '.history');
 
 /**
- * Secret signatures now live in the SHARED `@/lib/assists/secretScan` module,
+ * Secret signatures live in the SHARED `@/lib/assists/secretScan` module,
  * imported here, by the #2326 s4 landing gate (`proposals.ts`), AND by the
  * build-time backstop `tests/backend/assist_consistency.test.ts` — one source of
- * truth, so the three scans can never drift. Re-exported for existing callers.
+ * truth, so the three scans can never drift. Import `SECRET_PATTERNS` from that
+ * module directly; this file no longer re-exports it.
  */
-export { SECRET_PATTERNS };
 
 /** Name of the first secret pattern the text matches, or null if clean. */
 export function scanForSecret(text: string): string | null {

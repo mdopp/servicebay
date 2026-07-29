@@ -16,7 +16,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { startServer, fileReader, moduleDir, type ServerDeps } from './server';
-import { runReplan, type ReplanIO, type ReplanRequest } from '../engine/replan';
+import { runReplan, type ReplanIO } from '../engine/replan';
 import { PLAN_SIDECAR_FILE, STATUS_FILE } from '../contract/status';
 import { hashFileContent, fingerprintFileContent } from '../cli/main';
 
@@ -89,8 +89,9 @@ function serveReplanIO(out: string): ReplanIO {
   };
 }
 
-/** Re-export the request type for callers building the serve deps. */
-export type { ReplanRequest };
+// `ReplanRequest` is not re-exported here: the package's public surface
+// (`src/index.ts`) already re-exports it from `../engine/replan`, which is where
+// every caller imports it from.
 
 /** Start the worker app server over the bind-mounted device + out volume. */
 export function serve(opts: ServeOptions) {

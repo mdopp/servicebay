@@ -10,8 +10,9 @@ name: CI
 #   build       — next build (with .next/cache restored)
 #   test        — vitest run (with v8 coverage) + new-code diff-coverage gate (#1548)
 #   invariants  — file size, security `as any` budget, exec-template-literal count,
-#                 withApiHandler adoption ratio, twin singleton fan-in
-#                 (companion to docs/ARCHITECTURE_INVARIANTS.md)
+#                 withApiHandler adoption ratio, twin singleton fan-in, gate-path
+#                 resolution + CI/script parity, plus template backup coverage
+#                 and knip (companion to docs/ARCHITECTURE_INVARIANTS.md)
 #   depcruise   — module boundary rules (no lib→app imports, one mutation path,
 #                 one renderer, no circular deps outside the known set)
 #   semgrep     — security & coupling patterns (executor.exec template literals,
@@ -195,6 +196,17 @@ jobs:
         if: steps.cache-npm.outputs.cache-hit != 'true'
         run: npm ci --prefer-offline --no-audit --no-fund
       - run: npm run check:invariants
+      # #2429: `check:arch` chains invariants → backup-coverage → deps, and CI
+      # reimplemented it piecemeal and dropped the middle one — so the only gate
+      # between "a template ships a new persistent volume" and "the box loses
+      # that data on a disk-loss reinstall" never ran where merges happen.
+      # `check-invariants.ts` (`ci-runs-every-check-script`) now fails when a
+      # `check:*` script in package.json is not referenced anywhere under
+      # .github/workflows/, so this can't silently drop out again.
+      - run: npm run check:backup-coverage
+      # Unused files / exports / dependencies. Clean at the time it was wired in
+      # (#2429) — blocking, like every other gate here.
+      - run: npm run knip
       # Frontend copy-paste / duplicate-JSX report (#2354). Report-only
       # (mirrors the #2353 lint-rule WARN staging + the semgrep/audit tiering):
       # prints extraction candidates to the CI log but never blocks the merge.
@@ -250,7 +262,13 @@ jobs:
     runs-on: ubuntu-latest
     if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
     container:
-      image: returntocorp/semgrep
+      # PINNED (#2428). This tracked `returntocorp/semgrep` (floating :latest),
+      # so an upstream release could change scanning behaviour with no commit
+      # in this repo — specifically the Semgrepignore v2 / gitignore migration,
+      # which anchors `paths:` globs and would have silently emptied three
+      # rules in .semgrep.yml. Bump this tag deliberately, and keep the
+      # `Run locally` header in .semgrep.yml on the same tag.
+      image: returntocorp/semgrep:1.172.0
     steps:
       - uses: actions/checkout@v7
       # ServiceBay-specific patterns only at first. Each rule in .semgrep.yml

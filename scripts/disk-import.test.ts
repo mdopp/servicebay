@@ -3,9 +3,11 @@
 // and --apply must STOP for an explicit confirmation before any host I/O.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   parseDiskImportArgs,
@@ -13,11 +15,19 @@ import {
   walkMount,
   renderReport,
   summarizePlan,
+  hashFileContent,
   DiskImportError,
   type DiskImportOptions,
   type DiskImportIO,
 } from './disk-import';
-import { buildInventory, buildPlan } from '@servicebay/disk-import-worker';
+import {
+  buildInventory,
+  buildPlan,
+  hashFileContent as sharedHashFileContent,
+  HASH_CHUNK_BYTES,
+  type HashFileIO,
+  type ImportRecord,
+} from '@servicebay/disk-import-worker';
 
 // A small fixture mount: a photo, a music track, a doc, and one junk file.
 let mount: string;
@@ -204,5 +214,122 @@ describe('runDiskImport — apply review gate', () => {
     const verbs = execCalls.map(a => a[0]);
     expect(verbs).toContain('rsync');
     expect(verbs).toContain('chown');
+  });
+});
+
+// #2438 — this script's full hash used to be its own eager
+// `createHash('sha256').update(readFileSync(record.sourcePath))`, i.e. the whole
+// file in memory: the same OOM class #2423 fixed in the capped worker. It is now
+// the worker engine's chunked implementation, shared rather than copied. These
+// tests pin BOTH halves of the acceptance: the digest is byte-identical to the
+// eager output, and the read pattern is O(chunk), not O(filesize).
+describe('hashFileContent (#2438 — shared chunked hash, digest-identical)', () => {
+  const rec = (sourcePath: string, size: number): ImportRecord =>
+    ({ sourcePath, size, mtimeMs: 0 }) as ImportRecord;
+
+  /** The implementation this replaced, verbatim: one eager readFileSync into
+   *  one update(). Every digest below is compared against THIS. */
+  const eagerHash = (p: string): string =>
+    createHash('sha256').update(readFileSync(p)).digest('hex');
+
+  it('is the worker engine implementation itself, not a second copy', () => {
+    // A divergent copy is how the OOM survived #2423 in the first place: the
+    // worker was fixed, this script kept its own. Same binding ⇒ can't recur.
+    expect(hashFileContent).toBe(sharedHashFileContent);
+  });
+
+  it('matches the pre-fix eager digest for the files on a real mount', () => {
+    for (const rel of [
+      ['pics', 'holiday.jpg'],
+      ['tunes', 'song.mp3'],
+      ['docs', 'invoice.pdf'],
+    ]) {
+      const p = path.join(mount, ...rel);
+      expect(hashFileContent(rec(p, readFileSync(p).length)), p).toBe(eagerHash(p));
+    }
+  });
+
+  it('matches the pre-fix eager digest across every chunk boundary', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'sb-script-hash-'));
+    try {
+      // Empty, sub-chunk, chunk±1 and multi-chunk-with-remainder: a byte-identical
+      // digest at each pins the chunk-boundary handling (a dropped or reordered
+      // chunk, or a stale tail of the reused buffer, changes the digest).
+      const sizes = [
+        0,
+        1,
+        HASH_CHUNK_BYTES - 1,
+        HASH_CHUNK_BYTES,
+        HASH_CHUNK_BYTES + 1,
+        2 * HASH_CHUNK_BYTES + 12345,
+      ];
+      for (const size of sizes) {
+        const p = path.join(dir, `f-${size}`);
+        const bytes = Buffer.allocUnsafe(size);
+        for (let i = 0; i < size; i += 1) bytes[i] = (i * 31 + (i >> 13)) & 0xff;
+        writeFileSync(p, bytes);
+        expect(hashFileContent(rec(p, size)), `size ${size}`).toBe(eagerHash(p));
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('hashes a file far larger than memory through ONE chunk-sized buffer', () => {
+    // 256 MiB served from nothing — 256× the chunk, and more than the eager
+    // version could have held without the OOM. Reads are recorded, so the
+    // memory claim is asserted on the READ PATTERN, not inferred. (Size is kept
+    // to what hashes comfortably inside the default 5s budget: the bound proven
+    // here is O(chunk) regardless of length, so a bigger number buys nothing but
+    // flake risk — #2431.)
+    const size = 256 * HASH_CHUNK_BYTES;
+    let remaining = size;
+    const reads: { requested: number; returned: number; buffer: Buffer }[] = [];
+    let closed = 0;
+    const io: HashFileIO = {
+      openSync: () => 7,
+      readSync: (_fd, buffer, offset, length) => {
+        const returned = Math.min(length, remaining);
+        remaining -= returned;
+        buffer.fill(0, offset, offset + returned); // deterministic bytes
+        reads.push({ requested: length, returned, buffer });
+        return returned;
+      },
+      closeSync: () => {
+        closed += 1;
+      },
+    };
+
+    const digest = hashFileContent(rec('/mnt/src/movies/huge.mkv', size), io);
+
+    // Peak allocation is one chunk buffer, reused for every read.
+    expect(new Set(reads.map(r => r.buffer)).size).toBe(1);
+    expect(reads[0].buffer.byteLength).toBe(HASH_CHUNK_BYTES);
+    expect(Math.max(...reads.map(r => r.requested))).toBe(HASH_CHUNK_BYTES);
+    expect(reads).toHaveLength(size / HASH_CHUNK_BYTES + 1); // + the final 0-byte read
+    expect(closed).toBe(1); // fd released even on the long path
+
+    // …and the digest is still the sha256 of those bytes — computed here at a
+    // DIFFERENT chunk size, so it also pins chunking-invariance.
+    const expected = createHash('sha256');
+    const zeros = Buffer.alloc(64 * 1024);
+    for (let left = size; left > 0; left -= zeros.length) expected.update(zeros);
+    expect(digest).toBe(expected.digest('hex'));
+  });
+
+  it('the script wires this hash in and keeps no eager readFileSync copy', () => {
+    const src = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), 'disk-import.ts'),
+      'utf8',
+    );
+    const imported = /import \{([\s\S]*?)\} from '@servicebay\/disk-import-worker';/.exec(src);
+    expect(imported?.[1]).toContain('hashFileContent');
+    // The real IO seam resolves dedup hashes through it …
+    expect(src).toMatch(/hashOf: hashFileContent,/);
+    // … and the eager whole-file read is gone for good: the script hashes
+    // nothing itself, so it can neither read a file whole nor grow a second
+    // divergent copy of the hash.
+    expect(src).not.toMatch(/readFileSync\(/);
+    expect(src).not.toMatch(/createHash\(/);
   });
 });

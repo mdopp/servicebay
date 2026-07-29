@@ -103,6 +103,14 @@ describe('POST /api/auth/token-from-authelia-session (#2246)', () => {
   // Criterion (4): the minted token actually works on read/mutate and is
   // REFUSED on a destroy-tier tool. Verified against the SAME machinery the
   // /mcp path uses: verifyToken (store round-trip) + tokenHasScope (the gate).
+  //
+  // #2431 — `tokenHasScope` comes from `@/lib/mcp/toolPolicy`, its actual home.
+  // `@/lib/mcp/server` only re-exports it (server.ts:53) and its own gate calls
+  // that same binding (server.ts:195), so this is byte-for-byte the /mcp gate —
+  // but importing server.ts here dragged in the whole MCP SDK + every
+  // tools/*Tools module, ~890ms of transform inside a single 5s-budget test.
+  // Under full-suite parallel load that blew the budget and failed a green
+  // tree. toolPolicy imports only `apiScope`, so the case now costs ~5ms.
   it('mints a token that passes read/mutate and is refused on destroy', async () => {
     const res = await post({ 'remote-user': 'admin', 'remote-groups': 'admins' });
     const { token: raw } = await res.json();
@@ -111,7 +119,7 @@ describe('POST /api/auth/token-from-authelia-session (#2246)', () => {
     const verified = await verifyToken(raw);
     expect(verified).not.toBeNull();
 
-    const { tokenHasScope } = await import('@/lib/mcp/server');
+    const { tokenHasScope } = await import('@/lib/mcp/toolPolicy');
     // read (list_*) and mutate (deploy_service) are granted.
     expect(tokenHasScope(verified!.scopes, 'read')).toBe(true);
     expect(tokenHasScope(verified!.scopes, 'lifecycle')).toBe(true);

@@ -28,7 +28,7 @@
     "check:invariants": "tsx scripts/check-invariants.ts",
     "check:backup-coverage": "tsx scripts/check-backup-coverage.ts",
     "check:frontend-dup": "tsx scripts/check-frontend-dup.ts",
-    "check:deps": "depcruise --config .dependency-cruiser.cjs packages/frontend/src packages/backend/src",
+    "check:deps": "depcruise --config .dependency-cruiser.cjs packages/api-client/src packages/backend/src packages/backup-worker/src packages/frontend/src",
     "check:arch": "npm run check:invariants && npm run check:backup-coverage && npm run check:deps",
     "prepare": "husky || true",
     "autoloop:seal": "tsx scripts/autoloop-seal.ts",
@@ -102,7 +102,6 @@
   "knip": {
     "ignoreBinaries": [
       "fuser",
-      "python3",
       "gofmt"
     ],
     "ignore": [
@@ -129,16 +128,6 @@
           "src/app/**/{page,layout,route,loading,error,not-found,template,default,global-error,sitemap,robots,manifest,opengraph-image,twitter-image,icon,apple-icon}.{ts,tsx}",
           "src/mocks/browser.ts",
           "src/components/ui/index.ts"
-        ]
-      },
-      "packages/backend": {
-        "entry": [
-          "src/server.ts"
-        ]
-      },
-      "packages/api-client": {
-        "entry": [
-          "src/index.ts"
         ]
       }
     }

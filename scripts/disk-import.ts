@@ -20,8 +20,6 @@
  * Run: `npm run disk-import -- --mount /run/media/usb --dry-run`
  *      `npm run disk-import -- --mount /run/media/usb --apply`
  */
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline/promises';
@@ -33,6 +31,7 @@ import {
   type ScannedFile,
   buildPlan,
   type HashResolver,
+  hashFileContent,
   classifyRecord,
   ImportCatalog,
   applyPlan,
@@ -40,7 +39,6 @@ import {
   type SafeExec,
   type Category,
   type ImportPlan,
-  type ImportRecord,
 } from '@servicebay/disk-import-worker';
 
 /** Thrown for user-facing failures (bad args, abort) so the CLI prints a clean
@@ -164,10 +162,17 @@ export async function walkMount(mount: string, fsImpl: typeof fs = fs): Promise<
   return out;
 }
 
-/** Hash a file's bytes (sha256 hex). Used lazily by dedup on size collisions. */
-export function hashFileContent(record: ImportRecord): string {
-  return createHash('sha256').update(readFileSync(record.sourcePath)).digest('hex');
-}
+/**
+ * Hash a file's bytes (sha256 hex). Used lazily by dedup on size collisions.
+ *
+ * Re-exported from the worker engine so this script and the capped worker share
+ * ONE constant-memory implementation (#2438). It used to be a local eager
+ * whole-file read hashed in a single update — the same OOM the worker's
+ * planning phase hit on a multi-GB movie (#2423). The shared version reads in
+ * fixed `HASH_CHUNK_BYTES` chunks through one reusable buffer, and sha256 being
+ * a streaming hash, the digest is byte-identical to the eager one it replaced.
+ */
+export { hashFileContent };
 
 /** Aggregate stats for one category in the sizing report. */
 interface CategoryStat {

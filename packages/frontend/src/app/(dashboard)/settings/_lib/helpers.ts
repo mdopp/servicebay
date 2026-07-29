@@ -15,10 +15,9 @@ export const DEFAULT_TEMPLATE_SCHEMA: Record<string, TemplateSettingsSchemaEntry
   },
 };
 
-// The self-update status shape now lives with the shared updater card so both
-// Settings and Home can use it (#2082). Re-exported here for back-compat with
-// existing settings importers.
-export type { AppUpdateStatus } from '@/components/ServiceBayUpdateCard';
+// The self-update status shape lives with the shared updater card so both
+// Settings and Home can use it (#2082); import `AppUpdateStatus` from
+// `@/components/ServiceBayUpdateCard` directly — no re-export here.
 
 export type SettingsOverrides = Partial<{
   templateValues: Record<string, string>;

@@ -2,8 +2,9 @@
 
 ServiceBay is the control plane that installs and manages self-hosted services
 on a home box (templates → Podman kube pods, NPM reverse proxy, Authelia SSO).
-The management app is `packages/{frontend,backend,api-client}`; services ship as
-**templates** under `templates/` (not as code in `packages/`).
+The management app is `packages/{frontend,backend,api-client}`, plus the two
+sandboxed one-shot workers `packages/{backup-worker,disk-import-worker}`;
+services ship as **templates** under `templates/` (not as code in `packages/`).
 
 Orientation:
 - `docs/ARCHITECTURE_INVARIANTS.md` — invariants; run `npm run check:arch && npm run lint` before architecture changes.

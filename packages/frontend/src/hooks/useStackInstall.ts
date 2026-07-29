@@ -95,8 +95,15 @@ export interface UseStackInstallReturn {
   credentialsManifest: Credential[];
   npmCredPrompt: boolean;
   /** Pre-fill values for the NPM-credentials prompt — usually the
-   *  auto-generated values the wizard used; operator can override. */
+   *  auto-generated values the wizard used; operator can override.
+   *  Arrives with the `needs_credentials` status poll, i.e. *after* the
+   *  prompt's component has mounted, so consumers must treat it as a
+   *  changing value rather than a mount-time seed (#2442). */
   npmCredFallback: { email: string; password: string };
+  /** Why the last `retryNpmCredentials` call could not be sent, or null.
+   *  Rendered next to the prompt's inputs so a rejected submit is visible
+   *  instead of a dead button (#2442). */
+  npmCredError: string | null;
   error: string | null;
 
   /** Toggle an item's checked state (used by select-step UIs in caller). */
@@ -133,7 +140,9 @@ export interface UseStackInstallReturn {
   runInstall: (overrides?: { items?: StackItem[]; variables?: StackVariable[]; node?: string }) => Promise<void>;
 
   /** Submit operator-supplied NPM credentials to resume a paused job.
-   *  Backed by POST /api/install/credentials. */
+   *  Backed by POST /api/install/credentials. A submit it cannot send
+   *  (missing field, no job attached) sets `npmCredError` and leaves the
+   *  prompt open rather than returning silently (#2442). */
   retryNpmCredentials: (email: string, password: string) => Promise<void>;
 
   /** Resume a paused job by skipping the NPM credentials prompt. */
@@ -196,6 +205,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
   const [credentialsManifest, setCredentialsManifest] = useState<Credential[]>([]);
   const [npmCredPrompt, setNpmCredPrompt] = useState(false);
   const [npmCredFallback, setNpmCredFallback] = useState<{ email: string; password: string }>({ email: '', password: '' });
+  const [npmCredError, setNpmCredError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
 
@@ -246,6 +256,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     setCredentialsManifest([]);
     setNpmCredPrompt(false);
     setNpmCredFallback({ email: '', password: '' });
+    setNpmCredError(null);
     setError(null);
     setJobId(null);
     jobIdRef.current = null;
@@ -534,9 +545,23 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
   }, [items, variables, templateSource, source, attachToJob]);
 
   const retryNpmCredentials = useCallback(async (email: string, password: string): Promise<void> => {
-    if (!email || !password) return;
+    // Every bail-out below used to `return` silently, which rendered the
+    // "Authenticate & Retry" button dead — the operator clicked and
+    // nothing at all happened (#2442). Each one now says why.
+    if (!email) {
+      setNpmCredError("Enter the NPM admin email — ServiceBay had no stored value to pre-fill.");
+      return;
+    }
+    if (!password) {
+      setNpmCredError("Enter the NPM admin password.");
+      return;
+    }
     const id = jobIdRef.current;
-    if (!id) return;
+    if (!id) {
+      setNpmCredError("This install is no longer attached to a job — start over to retry.");
+      return;
+    }
+    setNpmCredError(null);
     setNpmCredPrompt(false);
     try {
       await fetch("/api/install/credentials", {
@@ -547,6 +572,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     } catch {
       // Re-show the prompt so the operator can retry. The runner stays
       // paused on the in-memory promise; nothing has been committed.
+      setNpmCredError("Could not reach ServiceBay to submit the credentials. Check the connection and retry.");
       setNpmCredPrompt(true);
     }
   }, []);
@@ -554,6 +580,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
   const skipNpmCredentials = useCallback(() => {
     const id = jobIdRef.current;
     if (!id) return;
+    setNpmCredError(null);
     setNpmCredPrompt(false);
     void fetch("/api/install/skip-credentials", {
       method: "POST",
@@ -573,6 +600,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     credentialsManifest,
     npmCredPrompt,
     npmCredFallback,
+    npmCredError,
     error,
     setItemChecked,
     setItems,

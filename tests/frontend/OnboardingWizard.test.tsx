@@ -685,85 +685,110 @@ describe('OnboardingWizard', () => {
             }, { timeout: 9_000 });
         });
 
-        // TODO(#flaky-test): the post-retry waitFor for "1. Configure DNS"
-        // sporadically times out under CI load even with a 15s budget,
-        // despite the runtime path being deterministic on inspection.
-        // Likely a React state-batching / waitFor timing artifact. Skipped
-        // until the convergence refactor settles; manually verified the UX
-        // works end-to-end.
-        it.skip('shows NPM credential prompt when proxy auth fails', async () => {
+        // #2432 — un-skipped. This was `it.skip` from 2026-05-06 to 2026-07-28,
+        // blamed on "React state-batching / waitFor timing". It wasn't timing:
+        // the spec had been left behind by two architecture moves and could
+        // never have gone green again.
+        //   1. It drove the prompt by 401'ing POST /api/system/nginx/proxy-hosts.
+        //      The client stopped calling NPM directly — the install runner does,
+        //      server-side, and pauses the job on phase `needs_credentials`
+        //      (lib/install/runner.ts). The client learns about it only from the
+        //      /api/install/status poll (useStackInstall.applyJobState), so the
+        //      old mock could not raise the prompt at all.
+        //   2. Its final assertion waited for "1. Configure DNS" — a static
+        //      bullet list that now exists only in InstallerModal. The wizard's
+        //      Done step replaced it with the runtime DoneStepDnsCheck (see the
+        //      DNS-verification spec directly above). That waitFor was
+        //      unsatisfiable, hence a guaranteed 15s timeout, not a flake.
+        // Rewritten against today's path: serve `needs_credentials` from
+        // /api/install/status, assert the prompt, retry, assert the wizard
+        // POSTs the operator's password to /api/install/credentials and clears
+        // the prompt. No poll-cadence wait — every assertion here is reachable
+        // from a synchronous state update, so the spec carries no timing budget
+        // beyond the default.
+        it('shows NPM credential prompt when proxy auth fails', async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
-            (fetchTemplateVariables as any).mockResolvedValue({
-                SERVICE_NAME: { type: 'text', default: 'my-service' },
-                PUBLIC_DOMAIN: { type: 'text', default: 'example.com' },
-                TEST_SUBDOMAIN: { type: 'subdomain', default: 'test', proxyPort: '8080', exposure: 'public' },
-            });
 
-            // Make proxy-hosts return 401 with needsCredentials
+            // Job state served by /api/install/status: paused on
+            // needs_credentials until the wizard posts credentials, done after.
+            let credentialsPosted: { jobId?: string; email?: string; password?: string } | null = null;
+            const baseFetch = global.fetch;
             global.fetch = vi.fn().mockImplementation((url: string, opts?: { method?: string; body?: string }) => {
-                if (url.includes('/api/settings')) {
-                    return Promise.resolve({ ok: true, json: () => Promise.resolve({ templateSettings: {} }) });
+                if (typeof url === 'string' && url.includes('/api/install/credentials')) {
+                    credentialsPosted = JSON.parse(opts?.body ?? '{}');
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
                 }
-                if (url.includes('/api/install/assemble')) {
-                    // #800 — configure step assembles the manifest server-side.
+                if (typeof url === 'string' && url.includes('/api/install/status')) {
+                    const paused = credentialsPosted === null;
                     return Promise.resolve({ ok: true, json: () => Promise.resolve({
-                        items: [{ name: 'nginx-web', checked: true, yaml: 'apiVersion: v1\nkind: Pod' }],
-                        variables: [
-                            { name: 'SERVICE_NAME', value: 'my-service', global: false, meta: { type: 'text', templateName: 'nginx-web' } },
-                            { name: 'PUBLIC_DOMAIN', value: 'example.com', global: true, meta: { type: 'text', templateName: 'nginx-web' } },
-                            { name: 'TEST_SUBDOMAIN', value: 'test', global: false, meta: { type: 'subdomain', proxyPort: '8080', exposure: 'public', templateName: 'nginx-web' } },
-                        ],
+                        job: {
+                            id: 'test-job-1',
+                            source: 'wizard',
+                            phase: paused ? 'needs_credentials' : 'done',
+                            startedAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString(),
+                            endedAt: paused ? undefined : new Date().toISOString(),
+                            progress: { currentItem: null, deployedNames: ['nginx-web'], totalCount: 1 },
+                            credentialsManifest: [],
+                            ...(paused
+                                ? { needsCredentials: { fallback: { email: 'admin@example.com', password: 'stored-guess' } } }
+                                : {}),
+                        },
+                        logs: '',
+                        logsOffset: 0,
                     }) });
                 }
-                if (url.includes('/api/services') && (!opts || opts.method !== 'POST')) {
-                    return Promise.resolve({ ok: true, json: () => Promise.resolve([
-                        { name: 'nginx-web', active: true, status: 'running' },
-                    ]) });
-                }
-                if (url.includes('/api/services') && opts?.method === 'POST') {
-                    return Promise.resolve({ ok: true, json: () => Promise.resolve({ success: true }) });
-                }
-                if (url.includes('/api/system/nginx/status')) {
-                    return Promise.resolve({ ok: true, json: () => Promise.resolve({ installed: true, active: true }) });
-                }
-                if (url.includes('/api/system/nginx/proxy-hosts') && opts?.method === 'POST') {
-                    // Check if credentials were provided in body
-                    const body = opts?.body ? JSON.parse(opts.body) : {};
-                    if (body.npmCredentials?.password === 'correct-password') {
-                        return Promise.resolve({ ok: true, json: () => Promise.resolve({ created: ['test.example.com'] }) });
-                    }
-                    return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({ error: 'Auth failed', needsCredentials: true }) });
-                }
-                return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+                return (baseFetch as any)(url, opts);
             });
 
             render(<OnboardingWizard />);
 
-            // Select stack → services → configure → install
+            // Machine → select stack → services → configure → install
+            await advancePastMachineStep();
             await commitStackPicker();
 
-            await waitFor(() => screen.getByRole('button', { name: /Continue/i }));
-            optOutOfDomain();
-            fireEvent.click(screen.getByRole('button', { name: /Continue/i }));
+            await clickWhenEnabled(/Continue/i);
+            await clickWhenEnabled(/Install Stack/i);
 
-            await waitFor(() => screen.getByRole('button', { name: /Install Stack/i }));
-            fireEvent.click(screen.getByRole('button', { name: /Install Stack/i }));
+            // The runner paused: the wizard shows the NPM login prompt instead
+            // of running to done.
+            const password = await waitFor(() => screen.getByPlaceholderText('NPM admin password'));
+            expect(screen.getByText(/NPM admin login required/i)).toBeDefined();
 
-            // Should show credential prompt instead of going to done
+            // The prompt's copy promises pre-filled values, so the inputs must
+            // actually carry `needsCredentials.fallback` — which only reaches
+            // the client on the status poll, i.e. after this component mounted
+            // (#2442). Blank inputs here are the bug.
+            const email = screen.getByPlaceholderText('NPM admin email') as HTMLInputElement;
+            expect(email.value).toBe('admin@example.com');
+            expect((password as HTMLInputElement).value).toBe('stored-guess');
+
+            // Clearing the email and retrying must say why nothing happened
+            // rather than leaving a dead button (#2442).
+            fireEvent.change(email, { target: { value: '' } });
+            fireEvent.click(screen.getByRole('button', { name: /Authenticate & Retry/i }));
             await waitFor(() => {
-                expect(screen.getByText(/NPM Admin Login/i)).toBeDefined();
-                expect(screen.getByPlaceholderText('NPM admin password')).toBeDefined();
-            }, { timeout: 5000 });
+                expect(screen.getByRole('alert').textContent).toMatch(/NPM admin email/i);
+            });
+            expect(credentialsPosted).toBeNull();
 
-            // Enter correct credentials and submit
-            fireEvent.change(screen.getByPlaceholderText('NPM admin password'), { target: { value: 'correct-password' } });
+            // Operator restores the pre-filled email, overrides the password
+            // with the one NPM actually accepts, and retries for real.
+            fireEvent.change(email, { target: { value: 'admin@example.com' } });
+            fireEvent.change(password, { target: { value: 'correct-password' } });
             fireEvent.click(screen.getByRole('button', { name: /Authenticate & Retry/i }));
 
-            // Should succeed and show done state with DNS steps (since we have subdomain vars)
+            // It goes to the runner, not to NPM from the browser, and the
+            // prompt clears so the install overlay resumes.
             await waitFor(() => {
-                expect(screen.getByText(/1\. Configure DNS/i)).toBeDefined();
-            }, { timeout: 5000 });
-        }, 15_000);
+                expect(credentialsPosted).toEqual({
+                    jobId: 'test-job-1', email: 'admin@example.com', password: 'correct-password',
+                });
+            });
+            await waitFor(() => {
+                expect(screen.queryByPlaceholderText('NPM admin password')).toBeNull();
+            });
+        });
 
         it('skips already-installed services during install', async () => {
             (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);

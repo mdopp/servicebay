@@ -1242,7 +1242,11 @@ export interface TemplateMigrationScript {
   fromVersion: number;
   /** Schema version this migration upgrades to. */
   toVersion: number;
-  /** Un-rendered script body. Mustache placeholders intact. */
+  /**
+   * Raw script body. Ships to the box verbatim — never Mustache-rendered
+   * (#2435), so any `{{…}}` in it is dead text, exactly like
+   * `post-deploy.py` (#2415).
+   */
   content: string;
 }
 
