@@ -31,7 +31,6 @@ import type { CheckResult } from '@/lib/health/types';
 import { runDiagnose } from '@/lib/diagnose/runDiagnose';
 import {
   DIAGNOSE_CHECK_ID_PREFIX,
-  DIAGNOSE_MESSAGE_PREFIX,
   isDiagnoseCheckId,
   diagnoseCheckId,
   diagnoseStatusToCheckStatus,
@@ -46,7 +45,6 @@ import { logger } from '@/lib/logger';
 // `@/lib/diagnose/diagnoseChecks` import path.
 export {
   DIAGNOSE_CHECK_ID_PREFIX,
-  DIAGNOSE_MESSAGE_PREFIX,
   isDiagnoseCheckId,
   diagnoseCheckId,
   diagnoseStatusToCheckStatus,

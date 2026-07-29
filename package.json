@@ -102,7 +102,6 @@
   "knip": {
     "ignoreBinaries": [
       "fuser",
-      "python3",
       "gofmt"
     ],
     "ignore": [
@@ -129,16 +128,6 @@
           "src/app/**/{page,layout,route,loading,error,not-found,template,default,global-error,sitemap,robots,manifest,opengraph-image,twitter-image,icon,apple-icon}.{ts,tsx}",
           "src/mocks/browser.ts",
           "src/components/ui/index.ts"
-        ]
-      },
-      "packages/backend": {
-        "entry": [
-          "src/server.ts"
-        ]
-      },
-      "packages/api-client": {
-        "entry": [
-          "src/index.ts"
         ]
       }
     }
