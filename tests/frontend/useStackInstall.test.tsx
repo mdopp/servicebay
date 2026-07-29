@@ -183,4 +183,118 @@ describe('useStackInstall', () => {
       expect(result.current.variables).toBe(before);
     });
   });
+
+  describe('retryNpmCredentials — no submit is ever silent (#2442)', () => {
+    /** Answer the attach call with a job paused on `needs_credentials`,
+     *  carrying the stored fallback the prompt is supposed to pre-fill. */
+    function pausedJobFetchMock(fallback = { email: 'stored@example.com', password: 'stored-pw' }) {
+      return vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/install/status')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({
+              job: {
+                id: 'job-1',
+                source: 'wizard',
+                phase: 'needs_credentials',
+                startedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                progress: { currentItem: null, deployedNames: [], totalCount: 1 },
+                credentialsManifest: [],
+                needsCredentials: { fallback },
+              },
+              logs: '',
+              logsOffset: 0,
+            }),
+          });
+        }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) });
+      });
+    }
+
+    /** Attach to that paused job so `jobIdRef` is populated, exactly as the
+     *  wizard does when the poll reports `needs_credentials`. */
+    async function attachedToPausedJob(fetchMock: ReturnType<typeof pausedJobFetchMock>) {
+      global.fetch = fetchMock;
+      const { result } = renderHook(() => useStackInstall({ templateSource: 'Built-in' }));
+      await act(async () => { await result.current.attachToJob('job-1'); });
+      return result;
+    }
+
+    it('exposes the stored fallback the status poll reports', async () => {
+      const result = await attachedToPausedJob(pausedJobFetchMock());
+      expect(result.current.npmCredPrompt).toBe(true);
+      expect(result.current.npmCredFallback).toEqual({ email: 'stored@example.com', password: 'stored-pw' });
+      expect(result.current.npmCredError).toBeNull();
+    });
+
+    it('explains itself instead of no-opping when only a password was typed', async () => {
+      const fetchMock = pausedJobFetchMock();
+      const result = await attachedToPausedJob(fetchMock);
+
+      await act(async () => { await result.current.retryNpmCredentials('', 'only-a-password'); });
+
+      expect(result.current.npmCredError).toMatch(/email/i);
+      // Nothing was submitted and the prompt stays open so the operator
+      // can fix the field — the pre-#2442 behaviour was a bare `return`.
+      expect(fetchMock.mock.calls.some(c => String(c[0]).includes('/api/install/credentials'))).toBe(false);
+      expect(result.current.npmCredPrompt).toBe(true);
+    });
+
+    it('explains itself when only an email was typed', async () => {
+      const fetchMock = pausedJobFetchMock();
+      const result = await attachedToPausedJob(fetchMock);
+
+      await act(async () => { await result.current.retryNpmCredentials('admin@example.com', ''); });
+
+      expect(result.current.npmCredError).toMatch(/password/i);
+      expect(fetchMock.mock.calls.some(c => String(c[0]).includes('/api/install/credentials'))).toBe(false);
+    });
+
+    it('submits and clears the error once both fields are filled', async () => {
+      const fetchMock = pausedJobFetchMock();
+      const result = await attachedToPausedJob(fetchMock);
+
+      await act(async () => { await result.current.retryNpmCredentials('', 'only-a-password'); });
+      expect(result.current.npmCredError).not.toBeNull();
+
+      await act(async () => { await result.current.retryNpmCredentials('admin@example.com', 'real-pw'); });
+
+      const post = fetchMock.mock.calls.find(c => String(c[0]).includes('/api/install/credentials'));
+      expect(post).toBeDefined();
+      expect(JSON.parse(String((post![1] as { body: string }).body))).toEqual({
+        jobId: 'job-1', email: 'admin@example.com', password: 'real-pw',
+      });
+      expect(result.current.npmCredError).toBeNull();
+      expect(result.current.npmCredPrompt).toBe(false);
+    });
+
+    it('surfaces a transport failure and re-opens the prompt', async () => {
+      const fetchMock = pausedJobFetchMock();
+      const result = await attachedToPausedJob(fetchMock);
+      fetchMock.mockImplementation((url: string) => (
+        String(url).includes('/api/install/credentials')
+          ? Promise.reject(new Error('offline'))
+          : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) })
+      ));
+
+      await act(async () => { await result.current.retryNpmCredentials('admin@example.com', 'real-pw'); });
+
+      expect(result.current.npmCredError).toMatch(/could not reach/i);
+      expect(result.current.npmCredPrompt).toBe(true);
+    });
+
+    it('clears the error when the operator skips instead', async () => {
+      const fetchMock = pausedJobFetchMock();
+      const result = await attachedToPausedJob(fetchMock);
+      await act(async () => { await result.current.retryNpmCredentials('', 'only-a-password'); });
+      expect(result.current.npmCredError).not.toBeNull();
+
+      act(() => { result.current.skipNpmCredentials(); });
+
+      expect(result.current.npmCredError).toBeNull();
+      expect(result.current.npmCredPrompt).toBe(false);
+    });
+  });
 });

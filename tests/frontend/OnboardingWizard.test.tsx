@@ -754,17 +754,27 @@ describe('OnboardingWizard', () => {
             // of running to done.
             const password = await waitFor(() => screen.getByPlaceholderText('NPM admin password'));
             expect(screen.getByText(/NPM admin login required/i)).toBeDefined();
-            expect(screen.getByPlaceholderText('NPM admin email')).toBeDefined();
 
-            // Operator fills in the credentials NPM actually accepts and retries.
-            // Both fields are typed because `retryNpmCredentials` no-ops on an
-            // empty email — the prompt's advertised pre-fill from
-            // `needsCredentials.fallback` does not currently reach the inputs
-            // (StackInstallFlow's `useNpmCredFallback` seeds `useState` at mount,
-            // which happens before the poll that carries the fallback). Filed as
-            // #2442; this spec covers the prompt path as it behaves today, and
-            // gains the pre-fill assertions when #2442 lands.
-            fireEvent.change(screen.getByPlaceholderText('NPM admin email'), { target: { value: 'admin@example.com' } });
+            // The prompt's copy promises pre-filled values, so the inputs must
+            // actually carry `needsCredentials.fallback` — which only reaches
+            // the client on the status poll, i.e. after this component mounted
+            // (#2442). Blank inputs here are the bug.
+            const email = screen.getByPlaceholderText('NPM admin email') as HTMLInputElement;
+            expect(email.value).toBe('admin@example.com');
+            expect((password as HTMLInputElement).value).toBe('stored-guess');
+
+            // Clearing the email and retrying must say why nothing happened
+            // rather than leaving a dead button (#2442).
+            fireEvent.change(email, { target: { value: '' } });
+            fireEvent.click(screen.getByRole('button', { name: /Authenticate & Retry/i }));
+            await waitFor(() => {
+                expect(screen.getByRole('alert').textContent).toMatch(/NPM admin email/i);
+            });
+            expect(credentialsPosted).toBeNull();
+
+            // Operator restores the pre-filled email, overrides the password
+            // with the one NPM actually accepts, and retries for real.
+            fireEvent.change(email, { target: { value: 'admin@example.com' } });
             fireEvent.change(password, { target: { value: 'correct-password' } });
             fireEvent.click(screen.getByRole('button', { name: /Authenticate & Retry/i }));
 
