@@ -11,7 +11,7 @@
 // proxied, admin-gated route — NOT rendered in this control-plane page.
 
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, HardDrive, RefreshCw, Download, Save, Trash2 } from 'lucide-react';
+import { Loader2, HardDrive, RefreshCw, Download, Save, Trash2, AlertTriangle } from 'lucide-react';
 import { RoutingTree } from './_lib/RoutingTree';
 import type { ReviewTree, Rule } from './_lib/types';
 
@@ -105,14 +105,32 @@ function useDiskImportRun(selected: string, onAfterAbort: () => void) {
   // tile shows progress instead of re-offering the Import button (no double-submit).
   const [flowActive, setFlowActive] = useState(false);
   const [error, setError] = useState('');
+  // A poll that failed for a reason OTHER than "no run" — the tile keeps showing
+  // the last-known run behind a soft indicator instead of resetting (#2457).
+  const [statusStale, setStatusStale] = useState(false);
 
   // Re-attach to an already-running worker on open + poll while one is active.
   useEffect(() => {
     let active = true;
     const poll = async () => {
-      const r = await fetch('/api/system/disk-import/status');
+      let next: RunStatus | null;
+      try {
+        const r = await fetch('/api/system/disk-import/status');
+        // 404 is the route's real answer for "no scan has been launched" (#1949),
+        // so it legitimately clears the tile. Every OTHER failure — 5xx, a 400 from
+        // an unreachable node, a network drop, a truncated body — is transient:
+        // discard it and keep the last-known run on screen (#2457), because
+        // dropping to `null` sent the operator back to the device picker while the
+        // worker was still importing.
+        if (r.status === 404) next = null;
+        else if (!r.ok) throw new Error(`status ${r.status}`);
+        else next = (await r.json()) as RunStatus;
+      } catch {
+        if (active) setStatusStale(true);
+        return;
+      }
       if (!active) return;
-      const next = r.ok ? ((await r.json()) as RunStatus) : null;
+      setStatusStale(false);
       setRun(next);
       // Clear the client flow flag (and surface a background error) once the async
       // apply flow reaches a terminal phase — the work runs detached now (#2009).
@@ -148,6 +166,7 @@ function useDiskImportRun(selected: string, onAfterAbort: () => void) {
     await fetch('/api/system/disk-import/abort', { method: 'POST' }).catch(() => {});
     setRun(null);
     setFlowActive(false);
+    setStatusStale(false);
     onAfterAbort();
   };
 
@@ -177,7 +196,7 @@ function useDiskImportRun(selected: string, onAfterAbort: () => void) {
     }
   };
 
-  return { run, launching, flowActive, error, launch, startOver, apply };
+  return { run, launching, flowActive, error, statusStale, launch, startOver, apply };
 }
 
 /** Fetch + edit the per-folder routing tree (#2000). Holds the explicit rule map
@@ -287,7 +306,7 @@ function useRoutingProfiles() {
 export default function DiskImportPage() {
   const { devices, loading, refresh } = useDevices();
   const [selected, setSelected] = useState('');
-  const { run, launching, flowActive, error, launch, startOver, apply } = useDiskImportRun(selected, () => {
+  const { run, launching, flowActive, error, statusStale, launch, startOver, apply } = useDiskImportRun(selected, () => {
     setSelected('');
     refresh();
   });
@@ -312,6 +331,15 @@ export default function DiskImportPage() {
       </header>
 
       {error && <p className="text-sm text-status-fail">{error}</p>}
+
+      {/* Soft indicator for a failed status poll (#2457) — the view below is the
+          last thing the box reported, NOT a reset. The next poll clears this. */}
+      {statusStale && (
+        <p className="text-xs text-status-warn flex items-center gap-1.5">
+          <AlertTriangle size={12} /> Couldn&apos;t read the import status just now — showing the last
+          known progress and retrying.
+        </p>
+      )}
 
       <TileBody
         run={run}

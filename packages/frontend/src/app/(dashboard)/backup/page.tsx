@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBackupState } from './_lib/useBackupState';
 import {
   Save,
@@ -183,6 +183,19 @@ export default function BackupPage() {
   }, [nasDeleteTarget, nasDeleting, addToast, setNasDeleting, setNasDeleteTarget, fetchNasOverview]);
 
   // ─── Backup Sync handlers ─────────────────────────────────────────
+  // The "Run Now" progress poller lives in a ref so it can be stopped from
+  // anywhere — most importantly on unmount. Before #2459 the 5s interval was
+  // created inline and never cleared, so navigating away mid-sync left it firing
+  // forever against a view that no longer exists.
+  const syncPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopSyncPoll = useCallback(() => {
+    if (syncPollRef.current !== null) {
+      clearInterval(syncPollRef.current);
+      syncPollRef.current = null;
+    }
+  }, []);
+  useEffect(() => stopSyncPoll, [stopSyncPoll]);
+
   const buildBackupTarget = () => {
     const s = backupSync;
     switch (s.targetType) {
@@ -263,12 +276,19 @@ export default function BackupPage() {
       });
       if (!res.ok) throw new Error((await res.json()).error || 'Run failed');
       addToast('info', 'Backup', 'Backup sync started. This may take a while.');
+      // Only ever one sync poller (a second Run Now replaces the first), and it
+      // dies with the page — see stopSyncPoll / the unmount effect (#2459).
+      stopSyncPoll();
       const poll = setInterval(async () => {
         try {
           const r = await fetch('/api/settings/backup-sync');
           const data = await r.json();
+          // The interval was cleared while this request was in flight (unmount, or
+          // a newer run) — drop the answer instead of writing state for a view
+          // that is gone (#2459).
+          if (syncPollRef.current !== poll) return;
           if (!data.running) {
-            clearInterval(poll);
+            stopSyncPoll();
             setBackupSyncRunning(false);
             setBackupSyncHistory(data.history || []);
             if (data.config?.lastStatus === 'success') {
@@ -286,6 +306,7 @@ export default function BackupPage() {
           }
         } catch { /* ignore */ }
       }, 5000);
+      syncPollRef.current = poll;
     } catch (e) {
       setBackupSyncRunning(false);
       addToast('error', 'Backup Failed', e instanceof Error ? e.message : 'Unknown error');
