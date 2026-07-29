@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.10.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.10.1...servicebay-v5.10.2) (2026-07-28)
+
+
+### Bug Fixes
+
+* **auth:** generate the servicebay OIDC client secret per install ([a7b98a8](https://github.com/mdopp/servicebay/commit/a7b98a8f01151062a32f1ece1660a55ee913bbe1)), closes [#2417](https://github.com/mdopp/servicebay/issues/2417)
+* **claude-dev:** stop re-parsing workspace directory names as shell ([b4109b3](https://github.com/mdopp/servicebay/commit/b4109b31734539ea151dbb6998e06c4914e2b8fa)), closes [#2418](https://github.com/mdopp/servicebay/issues/2418)
+* **diagnose:** surface a failed host-firewall reconcile and assert the rule is loaded ([02f6bb2](https://github.com/mdopp/servicebay/commit/02f6bb20bdbc541d4d1670120aed4fc4e1a8442d)), closes [#2420](https://github.com/mdopp/servicebay/issues/2420)
+* **disk-import:** chunk the planning full hash so a large file cannot OOM the worker ([b141de6](https://github.com/mdopp/servicebay/commit/b141de63e696e6ae162a0b2114cebe9c2d693856)), closes [#2423](https://github.com/mdopp/servicebay/issues/2423)
+* **docker:** install workspace deps in Dockerfile.dev and build it in CI ([3881058](https://github.com/mdopp/servicebay/commit/388105844f16d9714e1d117306f4cf90d25712aa)), closes [#2422](https://github.com/mdopp/servicebay/issues/2422)
+* **home-assistant:** bind Z-Wave and Matter control ports to loopback ([da8fd15](https://github.com/mdopp/servicebay/commit/da8fd15b4f14b615ace27bccfe79d4b496779898)), closes [#2416](https://github.com/mdopp/servicebay/issues/2416)
+* **portal:** degrade the anonymous portal when the config read fails ([4787d21](https://github.com/mdopp/servicebay/commit/4787d21060a90a2c1e151f78f0aae66f26459687)), closes [#2421](https://github.com/mdopp/servicebay/issues/2421)
+* **security:** Z-Wave LAN exposure, claude-dev RCE, OIDC secret rotation + 7 more (deep-eval batch) ([64e6197](https://github.com/mdopp/servicebay/commit/64e6197feaba685b3ecaea520de3329856f20efb))
+* **templates:** stop hardcoding one deployment's paths, host IP and domain ([06180bb](https://github.com/mdopp/servicebay/commit/06180bb9ecd883288e8b97775598385951ba9776)), closes [#2424](https://github.com/mdopp/servicebay/issues/2424) [#2425](https://github.com/mdopp/servicebay/issues/2425) [#2426](https://github.com/mdopp/servicebay/issues/2426)
+
 ## [5.10.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.10.0...servicebay-v5.10.1) (2026-07-28)
 
 
