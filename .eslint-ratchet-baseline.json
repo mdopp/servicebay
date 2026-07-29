@@ -3,6 +3,6 @@
   "updated": "2026-07-29",
   "rules": {
     "sb/no-raw-color-literal": 678,
-    "sb/no-raw-ui-primitive": 331
+    "sb/no-raw-ui-primitive": 317
   }
 }
