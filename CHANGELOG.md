@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.4](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.3...servicebay-v5.11.4) (2026-07-29)
+
+
+### Bug Fixes
+
+* **dashboards:** replace raw color literals with design tokens in networkDashboard.ts lib ([8a225ad](https://github.com/mdopp/servicebay/commit/8a225ad92b05118d6eba280d0b319555792b05b3))
+* **dashboards:** replace raw color literals with semantic design tokens in NetworkDashboard ([675b8dc](https://github.com/mdopp/servicebay/commit/675b8dc925f8aee71a888fa6bd8a3d5dec5413fa))
+* **frontend:** report setup, token-revoke and registry failures instead of failing silently ([1086b03](https://github.com/mdopp/servicebay/commit/1086b031c1f1e1624d6f4e1a9b05bceeb8c1b7d4)), closes [#2460](https://github.com/mdopp/servicebay/issues/2460) [#2461](https://github.com/mdopp/servicebay/issues/2461) [#2462](https://github.com/mdopp/servicebay/issues/2462)
+* **gates:** close two fail-open holes in the meta-gates that guard the gates ([dc5d413](https://github.com/mdopp/servicebay/commit/dc5d413fc406afe2d7051d5d001e8b868daa14f0)), closes [#2465](https://github.com/mdopp/servicebay/issues/2465) [#2466](https://github.com/mdopp/servicebay/issues/2466)
+* silent-failure toasts, quality-gate blind spots, lint-ratchet continuation ([f28fe32](https://github.com/mdopp/servicebay/commit/f28fe326a4cc73d8a12495b95b8f05dadb172e2e))
+
 ## [5.11.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.2...servicebay-v5.11.3) (2026-07-29)
 
 
