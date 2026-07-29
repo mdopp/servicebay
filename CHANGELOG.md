@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.1...servicebay-v5.11.2) (2026-07-29)
+
+
+### Bug Fixes
+
+* **frontend:** replace raw &lt;button&gt; with Button primitive in HealthChecks ([ad48606](https://github.com/mdopp/servicebay/commit/ad48606dd27dba0215da84eb7b9f56d833306718))
+* **frontend:** replace raw color literals with semantic design tokens in OnboardingWizard ([3368a6e](https://github.com/mdopp/servicebay/commit/3368a6e491ccc600b8fe2cb0a7c8dcf850538c91))
+* **frontend:** replace raw color literals with semantic design tokens in ServiceMonitor ([3625ae1](https://github.com/mdopp/servicebay/commit/3625ae1e23493f0b6d507b23210914380cc3eda1))
+* **frontend:** replace raw color literals with semantic tokens in RegistryBrowser ([fcad61d](https://github.com/mdopp/servicebay/commit/fcad61d04ba05c70c2bfea05bb7f6a016af1f4f4))
+* **health-dashboard:** replace raw UI primitives with design system components ([2443348](https://github.com/mdopp/servicebay/commit/24433483459f345e504ed3143d2aa799a4200eeb))
+* **lint-ratchet:** replace raw color literals in InstallerModal with semantic tokens ([67d275f](https://github.com/mdopp/servicebay/commit/67d275f2dce794bfb1ffea6982a6ed0d08fb4eaf))
+* **serviceForm:** replace raw UI primitives with design system components ([8be0755](https://github.com/mdopp/servicebay/commit/8be075516e47a35d2b8ba1be8fd78c1fe6f7d6c4))
+* **wizard:** replace raw color literals with semantic tokens in MachineStep ([9be114f](https://github.com/mdopp/servicebay/commit/9be114f3e21a874c93fd81254833c6956fc6922d))
+
 ## [5.11.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.0...servicebay-v5.11.1) (2026-07-29)
 
 
