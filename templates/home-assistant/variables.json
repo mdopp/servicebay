@@ -36,6 +36,11 @@
     "description": "Pinned release tag of the auth_oidc custom component (https://github.com/christiaangoossens/hass-oidc-auth). post-deploy downloads + extracts the matching tarball into <config>/custom_components/auth_oidc/ on every deploy and skips the network round-trip when the on-disk version stamp already matches. Bump this string and re-deploy to upgrade.",
     "default": "v1.1.0"
   },
+  "HA_OIDC_AUTH_SHA256": {
+    "type": "text",
+    "description": "Optional SHA-256 of the auth_oidc release tarball, checked before post-deploy unpacks it as root. Leave empty for the shipped default version (ServiceBay pins its digest). Required when you bump HA_OIDC_AUTH_VERSION to a version ServiceBay has no pin for — get it with `curl -sL https://github.com/christiaangoossens/hass-oidc-auth/archive/refs/tags/<tag>.tar.gz | sha256sum`. Without a pin the install is skipped rather than trusting an unverified download.",
+    "default": ""
+  },
   "HA_OIDC_ADMIN_GROUP": {
     "type": "text",
     "description": "LLDAP group whose members become Home Assistant admins via auth_oidc's `roles` mapping. Anyone outside this group lands as a regular user. Default matches what `src/app/api/system/lldap/seed/route.ts` actually creates (`admins`, `family`) — earlier defaults named `lldap_admin` / `lldap_strict_readonly` were aspirational and locked every fresh install out of HA with 'not in the correct group'.",
