@@ -51,6 +51,8 @@ import {
   DOWN_EDGE_DASHES,
   deriveNodeNameFromGraph,
   labelForEdgeKind,
+  MINIMAP_NODE_COLORS,
+  MINIMAP_STROKE_COLORS,
   mergeGraphPreservingPositions,
   styleForEdgeKind,
   topologyLayoutSignature,
@@ -723,38 +725,12 @@ type LinkFormState = {
 
 // Helper: get MiniMap color for node type
 function getMiniMapNodeColor(type: string): string {
-  switch (type) {
-    case 'container': return '#60a5fa';
-    case 'service': return '#c084fc';
-    case 'unmanaged-service': return '#fbbf24';
-    case 'pod': return '#f472b6';
-    case 'proxy': return '#34d399';
-    case 'router': return '#fb923c';
-    case 'gateway': return '#fb923c';
-    case 'internet': return '#9ca3af';
-    case 'link': return '#22d3ee';
-    case 'device': return '#818cf8';
-    case 'group': return 'transparent';
-    default: return '#d1d5db';
-  }
+  return MINIMAP_NODE_COLORS[type] ?? '#d1d5db';
 }
 
 // Helper: get MiniMap stroke color for node type
 function getMiniMapStrokeColor(type: string): string {
-  switch (type) {
-    case 'container': return '#2563eb';
-    case 'service': return '#9333ea';
-    case 'unmanaged-service': return '#d97706';
-    case 'pod': return '#db2777';
-    case 'router': return '#ea580c';
-    case 'gateway': return '#ea580c';
-    case 'internet': return '#4b5563';
-    case 'proxy': return '#059669';
-    case 'link': return '#0891b2';
-    case 'device': return '#4f46e5';
-    case 'group': return '#d1d5db';
-    default: return '#9ca3af';
-  }
+  return MINIMAP_STROKE_COLORS[type] ?? '#9ca3af';
 }
 
 // Legend body extracted from NetworkLegend so the panel wrapper stays under

@@ -414,6 +414,39 @@ export const OBSERVED_EDGE_COLOR = '#3b82f6'; // Clean blue
 export const INFERRED_EDGE_COLOR = '#a855f7'; // Violet
 export const INFERRED_EDGE_DASHES = '2 3';
 
+// ────────────────────────────────────────────────────────────────────
+// MiniMap node-type colors (#2430 — sb/no-raw-color-literal ratchet).
+// These map node types (container, service, pod, etc.) to their
+// visualization colors. Each type has a fill color and a darker stroke.
+// ────────────────────────────────────────────────────────────────────
+export const MINIMAP_NODE_COLORS: Record<string, string> = {
+  container: '#60a5fa',           // blue-400
+  service: '#c084fc',            // purple-400
+  'unmanaged-service': '#fbbf24', // amber-400
+  pod: '#f472b6',                // pink-400
+  proxy: '#34d399',              // emerald-400
+  router: '#fb923c',             // orange-400
+  gateway: '#fb923c',            // orange-400
+  internet: '#9ca3af',           // gray-400
+  link: '#22d3ee',               // cyan-400
+  device: '#818cf8',             // indigo-400
+  group: 'transparent',
+};
+
+export const MINIMAP_STROKE_COLORS: Record<string, string> = {
+  container: '#2563eb',           // blue-600
+  service: '#9333ea',            // purple-600
+  'unmanaged-service': '#d97706', // amber-600
+  pod: '#db2777',                // pink-600
+  router: '#ea580c',             // orange-600
+  gateway: '#ea580c',            // orange-600
+  internet: '#4b5563',           // slate-700
+  proxy: '#059669',              // emerald-600
+  link: '#0891b2',               // cyan-600
+  device: '#4f46e5',             // indigo-600
+  group: '#d1d5db',              // gray-300
+};
+
 export function styleForEdgeKind(
   kind: string | undefined,
   base: CSSProperties | undefined,
