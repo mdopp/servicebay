@@ -47,10 +47,10 @@ export function lastCheckedLabel(check: Check): string {
 /** Per-row status presentation (icon tint + badge background). Module-level
  *  so the row renderer stays a thin map. */
 const ROW_STATUS_META: Record<RowStatus, { color: string; bg: string; Icon: typeof CheckCircle }> = {
-  ok: { color: 'text-green-500', bg: 'bg-green-50 dark:bg-green-900/20', Icon: CheckCircle },
-  warn: { color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20', Icon: AlertTriangle },
-  fail: { color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-900/20', Icon: XCircle },
-  unknown: { color: 'text-gray-400', bg: 'bg-gray-50 dark:bg-gray-800', Icon: AlertCircle },
+  ok: { color: 'text-status-ok', bg: 'bg-status-ok/5', Icon: CheckCircle },
+  warn: { color: 'text-status-warn', bg: 'bg-status-warn/5', Icon: AlertTriangle },
+  fail: { color: 'text-status-fail', bg: 'bg-status-fail/5', Icon: XCircle },
+  unknown: { color: 'text-text-subtle', bg: 'bg-surface-2', Icon: AlertCircle },
 };
 
 interface HealthChecksProps {
@@ -123,77 +123,77 @@ export default function HealthChecks({
             onClick={() => setStatusFilter(statusFilter === 'ok' ? 'all' : 'ok')}
             className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'ok'
-                ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 ring-2 ring-green-500 ring-opacity-50'
-                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750'
+                ? 'bg-status-ok/5 border-status-ok/20 ring-2 ring-status-ok ring-opacity-50'
+                : 'bg-surface border-border hover:bg-surface-2'
             }`}
         >
-            <div className="p-2 bg-green-500/10 rounded-lg mb-1">
-              <CheckCircle className="w-5 h-5 text-green-500" />
+            <div className="p-2 bg-status-ok/10 rounded-lg mb-1">
+              <CheckCircle className="w-5 h-5 text-status-ok" />
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider font-bold text-gray-500 dark:text-gray-400">Healthy</p>
-              <p className="text-xl font-bold text-gray-900 dark:text-white">{counts.ok}</p>
+              <p className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Healthy</p>
+              <p className="text-xl font-bold text-text">{counts.ok}</p>
             </div>
         </button>
         <button
             onClick={() => setStatusFilter(statusFilter === 'warn' ? 'all' : 'warn')}
             className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'warn'
-                ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 ring-2 ring-amber-500 ring-opacity-50'
-                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750'
+                ? 'bg-status-warn/5 border-status-warn/20 ring-2 ring-status-warn ring-opacity-50'
+                : 'bg-surface border-border hover:bg-surface-2'
             }`}
         >
-            <div className="p-2 bg-amber-500/10 rounded-lg mb-1">
-              <AlertTriangle className="w-5 h-5 text-amber-500" />
+            <div className="p-2 bg-status-warn/10 rounded-lg mb-1">
+              <AlertTriangle className="w-5 h-5 text-status-warn" />
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider font-bold text-gray-500 dark:text-gray-400">Warning</p>
-              <p className="text-xl font-bold text-gray-900 dark:text-white">{counts.warn}</p>
+              <p className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Warning</p>
+              <p className="text-xl font-bold text-text">{counts.warn}</p>
             </div>
         </button>
         <button
             onClick={() => setStatusFilter(statusFilter === 'fail' ? 'all' : 'fail')}
             className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'fail'
-                ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 ring-2 ring-red-500 ring-opacity-50'
-                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750'
+                ? 'bg-status-fail/5 border-status-fail/20 ring-2 ring-status-fail ring-opacity-50'
+                : 'bg-surface border-border hover:bg-surface-2'
             }`}
         >
-            <div className="p-2 bg-red-500/10 rounded-lg mb-1">
-              <XCircle className="w-5 h-5 text-red-500" />
+            <div className="p-2 bg-status-fail/10 rounded-lg mb-1">
+              <XCircle className="w-5 h-5 text-status-fail" />
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider font-bold text-gray-500 dark:text-gray-400">Failing</p>
-              <p className="text-xl font-bold text-gray-900 dark:text-white">{counts.fail}</p>
+              <p className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Failing</p>
+              <p className="text-xl font-bold text-text">{counts.fail}</p>
             </div>
         </button>
         <button
             onClick={() => setStatusFilter(statusFilter === 'unknown' ? 'all' : 'unknown')}
             className={`p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'unknown'
-                ? 'bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600 ring-2 ring-gray-500 ring-opacity-50'
-                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750'
+                ? 'bg-surface-2 border-border ring-2 ring-text-subtle ring-opacity-50'
+                : 'bg-surface border-border hover:bg-surface-2'
             }`}
         >
-            <div className="p-2 bg-gray-500/10 rounded-lg mb-1">
-              <AlertCircle className="w-5 h-5 text-gray-500" />
+            <div className="p-2 bg-text-subtle/10 rounded-lg mb-1">
+              <AlertCircle className="w-5 h-5 text-text-subtle" />
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider font-bold text-gray-500 dark:text-gray-400">Unknown</p>
-              <p className="text-xl font-bold text-gray-900 dark:text-white">{counts.unknown}</p>
+              <p className="text-[10px] uppercase tracking-wider font-bold text-text-muted">Unknown</p>
+              <p className="text-xl font-bold text-text">{counts.unknown}</p>
             </div>
         </button>
       </div>
 
       {/* Checks List */}
-      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm mx-2">
+      <div className="bg-surface rounded-xl border border-border overflow-hidden shadow-sm mx-2">
         {filteredChecks.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">
+          <div className="p-8 text-center text-text-muted">
             {checks.length > 0 ? (
                 <>
                     <Search className="w-12 h-12 mx-auto mb-3 opacity-20" />
                     <p>No checks match your filters.</p>
-                    <button onClick={() => {setSearchQuery(''); setStatusFilter('all');}} className="mt-2 text-blue-600 dark:text-blue-400 hover:underline text-sm">
+                    <button onClick={() => {setSearchQuery(''); setStatusFilter('all');}} className="mt-2 text-accent hover:underline text-sm">
                         Clear filters
                     </button>
                 </>
@@ -201,7 +201,7 @@ export default function HealthChecks({
                 <>
                     <Activity className="w-12 h-12 mx-auto mb-3 opacity-20" />
                     <p>No health checks configured.</p>
-                    <button onClick={() => handleOpenModal()} className="mt-4 text-blue-600 dark:text-blue-400 hover:underline text-sm">
+                    <button onClick={() => handleOpenModal()} className="mt-4 text-accent hover:underline text-sm">
                     Create your first check
                     </button>
                 </>
@@ -214,9 +214,9 @@ export default function HealthChecks({
               const { color: statusColor, bg: statusBg, Icon: StatusIcon } = ROW_STATUS_META[rowStatus(check)];
 
               return (
-                <div 
+                <div
                     key={check.id}
-                    className={`p-4 ${index !== filteredChecks.length - 1 ? 'border-b border-gray-200 dark:border-gray-800' : ''} hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors`}
+                    className={`p-4 ${index !== filteredChecks.length - 1 ? 'border-b border-border' : ''} hover:bg-surface-2 transition-colors`}
                 >
                     <div className="flex items-start justify-between">
                         <div className="flex items-start gap-3 flex-1">
@@ -225,23 +225,23 @@ export default function HealthChecks({
                             </div>
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 mb-1">
-                                    <h3 className="font-medium text-gray-900 dark:text-white">{check.name}</h3>
-                                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
+                                    <h3 className="font-medium text-text">{check.name}</h3>
+                                    <span className="text-xs px-2 py-0.5 rounded-full bg-surface-2 text-text-muted">
                                         {check.type.toUpperCase()}
                                     </span>
-                                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400">
+                                    <span className="text-xs px-2 py-0.5 rounded-full bg-status-info/5 text-status-info">
                                         {check.nodeName || 'local'}
                                     </span>
                                 </div>
-                                <p className="text-sm text-gray-600 dark:text-gray-400 truncate">
+                                <p className="text-sm text-text-muted truncate">
                                     {formatLabel(check)}
                                 </p>
                                 {check.message && (
-                                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-1 line-clamp-2">
+                                    <p className="text-xs text-text-subtle mt-1 line-clamp-2">
                                         {check.message}
                                     </p>
                                 )}
-                                <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                                <p className="text-xs text-text-subtle mt-1">
                                     Last checked: {lastCheckedLabel(check)}
                                 </p>
                             </div>
@@ -260,9 +260,9 @@ export default function HealthChecks({
                                             // Min height 20%
                                             const hPercent = Math.max((h.latency / maxLat) * 100, 20);
                                             return (
-                                                <div 
-                                                    key={i} 
-                                                    className={`w-1.5 rounded-sm ${h.status === 'ok' ? 'bg-green-200 dark:bg-green-900' : 'bg-red-400'}`}
+                                                <div
+                                                    key={i}
+                                                    className={`w-1.5 rounded-sm ${h.status === 'ok' ? 'bg-status-ok/50' : 'bg-status-fail'}`}
                                                     style={{ height: `${hPercent}%` }}
                                                     title={`${h.latency}ms - ${new Date(h.timestamp).toLocaleTimeString()}`}
                                                 ></div>
@@ -270,7 +270,7 @@ export default function HealthChecks({
                                         });
                                     })()}
                                 </div>
-                                <div className="text-[10px] text-gray-400 mt-1 font-mono">
+                                <div className="text-[10px] text-text-subtle mt-1 font-mono">
                                     {check.history[0]?.latency || 0}ms
                                 </div>
                             </div>
@@ -279,10 +279,10 @@ export default function HealthChecks({
                         <div className="flex items-center gap-1 ml-4">
                             <button
                                 onClick={() => handleRun(check.id)}
-                                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
                                 title={isDiagnose ? 'Re-run self-diagnose now' : 'Run check now'}
                             >
-                                <Play className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                                <Play className="w-4 h-4 text-text-muted" />
                             </button>
                             {isDiagnose ? (
                                 /* Synthetic diagnose row: not editable config — expose the
@@ -293,41 +293,41 @@ export default function HealthChecks({
                                 <>
                                     <button
                                         onClick={() => handleViewHistory(check)}
-                                        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                        className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
                                         title="View history"
                                     >
-                                        <History className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                                        <History className="w-4 h-4 text-text-muted" />
                                     </button>
                                     <button
                                         onClick={() => handleOpenRepair(check)}
-                                        className="p-2 hover:bg-violet-100 dark:hover:bg-violet-900/30 rounded-lg transition-colors"
+                                        className="p-2 hover:bg-accent/10 rounded-lg transition-colors"
                                         title="Self-repair options"
                                     >
-                                        <Wrench className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                                        <Wrench className="w-4 h-4 text-accent" />
                                     </button>
                                 </>
                             ) : (
                                 <>
                                     <button
                                         onClick={() => handleViewHistory(check)}
-                                        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                        className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
                                         title="View history"
                                     >
-                                        <History className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                                        <History className="w-4 h-4 text-text-muted" />
                                     </button>
                                     <button
                                         onClick={() => handleOpenModal(check)}
-                                        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                        className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
                                         title="Edit check"
                                     >
-                                        <Edit className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                                        <Edit className="w-4 h-4 text-text-muted" />
                                     </button>
                                     <button
                                         onClick={() => handleOpenDeleteModal(check.id)}
-                                        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                        className="p-2 hover:bg-surface-2 rounded-lg transition-colors"
                                         title="Delete check"
                                     >
-                                        <Trash2 className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                                        <Trash2 className="w-4 h-4 text-text-muted" />
                                     </button>
                                 </>
                             )}
