@@ -2,7 +2,7 @@
   "$comment": "Monotonic lint ratchet (#2430) — highest violation count each staged rule is allowed to have. Maintained by scripts/check-lint-ratchet.ts: a local `npm run check:lint-ratchet` rewrites these DOWNWARDS when a sweep lands; CI (`--check`) fails any commit that raises one. Never raise a number by hand — that is the one thing this file exists to prevent. When a count reaches 0, flip that rule to \"error\" in eslint.config.mjs and drop it from RATCHETED_RULES (docs/ARCHITECTURE_INVARIANTS.md § UI-primitive and design-token reuse).",
   "updated": "2026-07-29",
   "rules": {
-    "sb/no-raw-color-literal": 736,
-    "sb/no-raw-ui-primitive": 352
+    "sb/no-raw-color-literal": 707,
+    "sb/no-raw-ui-primitive": 349
   }
 }

@@ -26,7 +26,7 @@ const specialItems: SpecialItem[] = [
         id: 'proxy',
         name: 'Reverse Proxy',
         description: 'Nginx Proxy Manager',
-        icon: <Shield size={18} className="text-green-500" />,
+        icon: <Shield size={18} className="text-status-ok" />,
         type: 'special',
         component: <ReverseProxyConfig />
     },
@@ -34,7 +34,7 @@ const specialItems: SpecialItem[] = [
         id: 'manual',
         name: 'Manual Service',
         description: 'Create from Docker image',
-        icon: <Server size={18} className="text-blue-500" />,
+        icon: <Server size={18} className="text-accent" />,
         type: 'special',
         component: <ManualServiceForm />
     },
@@ -42,7 +42,7 @@ const specialItems: SpecialItem[] = [
         id: 'blank',
         name: 'Blank Quadlet',
         description: 'Edit kube YAML from scratch',
-        icon: <FileCode size={18} className="text-amber-500" />,
+        icon: <FileCode size={18} className="text-status-warn" />,
         type: 'special',
         component: <ServiceForm variant="embedded" />
     },
@@ -50,7 +50,7 @@ const specialItems: SpecialItem[] = [
         id: 'link',
         name: 'External Link',
         description: 'Add shortcut to dashboard',
-        icon: <LinkIcon size={18} className="text-gray-500" />,
+        icon: <LinkIcon size={18} className="text-muted" />,
         type: 'special',
         component: <ExternalLinkConfig />
     }
@@ -58,25 +58,25 @@ const specialItems: SpecialItem[] = [
 
 function RegistryListItem({ item, isSelected, onClick }: { item: Template; isSelected: boolean; onClick: () => void }) {
     return (
-        <button
+        <div
             onClick={onClick}
-            className={`w-full text-left px-4 py-3 rounded-md flex items-center gap-3 transition-colors ${
+            className={`w-full text-left px-4 py-3 rounded-md flex items-center gap-3 transition-colors cursor-pointer ${
                 isSelected
-                ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-gray-200 dark:ring-gray-700'
-                : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                ? 'bg-surface ring-1 ring-border text-accent shadow-sm'
+                : 'hover:bg-surface-2 text-foreground'
             }`}
         >
             {item.type === 'stack' ? (
-                <Layers size={18} className={isSelected ? 'text-purple-500 dark:text-purple-400' : 'text-purple-400 dark:text-purple-500'} />
+                <Layers size={18} className={isSelected ? 'text-accent' : 'text-accent'} />
             ) : (
-                <Folder size={18} className={isSelected ? 'text-blue-500 dark:text-blue-400' : 'text-gray-400 dark:text-gray-500'} />
+                <Folder size={18} className={isSelected ? 'text-accent' : 'text-subtle'} />
             )}
             <div className="flex flex-col items-start min-w-0 flex-1">
                 <span className="font-medium truncate w-full">{item.name}</span>
-                <span className="text-xs text-gray-500 dark:text-gray-400 truncate w-full">{item.source}</span>
+                <span className="text-xs text-muted truncate w-full">{item.source}</span>
             </div>
-            {item.type === 'stack' && <span className="text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full ml-auto">Stack</span>}
-        </button>
+            {item.type === 'stack' && <span className="text-xs bg-surface-2 text-accent px-2 py-0.5 rounded-full ml-auto">Stack</span>}
+        </div>
     );
 }
 
@@ -152,34 +152,34 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
   return (
     <div className="flex h-full overflow-hidden">
       {/* Sidebar List */}
-      <div className="w-80 flex-shrink-0 border-r border-gray-200 dark:border-gray-800 flex flex-col bg-gray-50/50 dark:bg-gray-900/50">
+      <div className="w-80 flex-shrink-0 border-r border-border flex flex-col bg-surface-muted">
         <div className="overflow-y-auto flex-1 p-2 space-y-1">
-            
+
             {/* Special Items Section */}
-            <div className="mb-2 pb-2 border-b border-gray-200 dark:border-gray-800">
-                <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Create New</div>
+            <div className="mb-2 pb-2 border-b border-border">
+                <div className="px-4 py-2 text-xs font-semibold text-muted uppercase tracking-wider">Create New</div>
                 {specialItems.map(item => (
-                    <button
+                    <div
                         key={item.id}
                         onClick={() => handleSpecialClick(item)}
-                        className={`w-full text-left px-4 py-3 rounded-md flex items-center gap-3 transition-colors ${
+                        className={`w-full text-left px-4 py-3 rounded-md flex items-center gap-3 transition-colors cursor-pointer ${
                             selected && 'id' in selected && selected.id === item.id
-                            ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm ring-1 ring-gray-200 dark:ring-gray-700' 
-                            : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                            ? 'bg-surface ring-1 ring-border text-accent shadow-sm'
+                            : 'hover:bg-surface-2 text-foreground'
                         }`}
                     >
                         {item.icon}
                         <div className="flex flex-col items-start min-w-0 flex-1">
                             <span className="font-medium truncate w-full">{item.name}</span>
-                            <span className="text-xs text-gray-500 dark:text-gray-400 truncate w-full">{item.description}</span>
+                            <span className="text-xs text-muted truncate w-full">{item.description}</span>
                         </div>
-                    </button>
+                    </div>
                 ))}
             </div>
 
             {stackItems.length > 0 && (
                 <>
-                    <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">Stacks</div>
+                    <div className="px-4 py-2 text-xs font-semibold text-muted uppercase tracking-wider">Stacks</div>
                     {stackItems.map(t => (
                         <RegistryListItem key={`${t.source}-${t.name}`} item={t} isSelected={isItemSelected(t)} onClick={() => handleTemplateClick(t)} />
                     ))}
@@ -188,7 +188,7 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
 
             {templateItems.length > 0 && (
                 <>
-                    <div className="px-4 py-2 mt-1 text-xs font-semibold text-gray-500 uppercase tracking-wider">Templates</div>
+                    <div className="px-4 py-2 mt-1 text-xs font-semibold text-muted uppercase tracking-wider">Templates</div>
                     {templateItems.map(t => (
                         <RegistryListItem key={`${t.source}-${t.name}`} item={t} isSelected={isItemSelected(t)} onClick={() => handleTemplateClick(t)} />
                     ))}
@@ -196,7 +196,7 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
             )}
 
             {templates.length === 0 && (
-                <div className="p-4 text-center text-gray-500 dark:text-gray-400 text-sm">
+                <div className="p-4 text-center text-muted text-sm">
                     No templates or stacks found in registry.
                 </div>
             )}
@@ -204,7 +204,7 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0 bg-white dark:bg-gray-900">
+      <div className="flex-1 flex flex-col min-w-0 bg-surface">
         {selected ? (
             'id' in selected ? (
                 // Render Special Item Component
@@ -214,26 +214,26 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
             ) : (
                 // Render Template Details
                 <>
-                    <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center bg-white dark:bg-gray-900">
+                    <div className="p-4 border-b border-border flex justify-between items-center bg-surface">
                         <div className="flex flex-col">
-                            <h2 className="font-bold text-xl text-gray-900 dark:text-white flex items-center gap-2">
-                                {selected.type === 'stack' && <Layers className="text-purple-600 dark:text-purple-400" />}
+                            <h2 className="font-bold text-xl text-foreground flex items-center gap-2">
+                                {selected.type === 'stack' && <Layers className="text-accent" />}
                                 {selected.name}
                             </h2>
-                            <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                            <span className="text-sm text-muted flex items-center gap-1">
                                 Source: <span className="font-mono">{selected.source}</span>
                             </span>
                         </div>
-                        <button 
+                        <div
                             onClick={() => setIsModalOpen(true)}
-                            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors shadow-sm font-medium"
+                            className="flex items-center gap-2 bg-accent text-on-accent px-4 py-2 rounded hover:bg-accent-strong transition-colors shadow-sm font-medium cursor-pointer"
                         >
                             <Download size={18} /> Install {selected.type === 'stack' ? 'Stack' : 'Template'}
-                        </button>
+                        </div>
                     </div>
                     <div className="flex-1 overflow-y-auto p-8">
                         {loading ? (
-                            <div className="flex items-center justify-center h-full text-gray-400">
+                            <div className="flex items-center justify-center h-full text-subtle">
                                 <Loader2 size={32} className="animate-spin" />
                             </div>
                         ) : (
@@ -252,7 +252,7 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
                 </>
             )
         ) : (
-            <div className="flex items-center justify-center h-full text-gray-400">
+            <div className="flex items-center justify-center h-full text-subtle">
                 Select an item to view details
             </div>
         )}
