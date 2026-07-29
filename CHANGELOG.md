@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.10.4](https://github.com/mdopp/servicebay/compare/servicebay-v5.10.3...servicebay-v5.10.4) (2026-07-29)
+
+
+### Bug Fixes
+
+* backup crash, HA reset guard, force-update safeguards, LLDAP base DN, lint ratchet ([bf2317f](https://github.com/mdopp/servicebay/commit/bf2317fc26f46bfba935a2250978c0761d831cb8))
+* **home-assistant:** guard against a redeploy silently emptying the UI config ([d22a956](https://github.com/mdopp/servicebay/commit/d22a95645f97d2b2e4a26f699aa512c9ec3c6e67)), closes [#2444](https://github.com/mdopp/servicebay/issues/2444)
+* **mcp:** give force-update the destructive-op safeguards its tier now needs ([b8100dd](https://github.com/mdopp/servicebay/commit/b8100dd6101dccfd10bd8b7430701f8ef66625eb)), closes [#2419](https://github.com/mdopp/servicebay/issues/2419)
+* **templates:** derive LLDAP_BASE_DN from PUBLIC_DOMAIN instead of shipping one box's DN ([c6bc75b](https://github.com/mdopp/servicebay/commit/c6bc75bcd1ce8b3150e6fe7033a28a3b0e128adc)), closes [#2439](https://github.com/mdopp/servicebay/issues/2439)
+
 ## [5.10.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.10.2...servicebay-v5.10.3) (2026-07-29)
 
 
