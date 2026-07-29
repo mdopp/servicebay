@@ -16,6 +16,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { Badge, Button } from '@/components/ui';
+import ConfirmModal from '@/components/ConfirmModal';
 import { useSettings } from '../SettingsContext';
 import { PodmanConnection } from '@/lib/nodes';
 
@@ -47,6 +48,12 @@ export default function NodesSection() {
     identity: '/app/data/ssh/id_rsa',
   });
   const [savingNode, setSavingNode] = useState(false);
+
+  // Removing a node drops its SSH connection and deletes the health checks
+  // attached to it, with no undo — so it goes through the same ConfirmModal as
+  // token revoke / backup delete / factory reset, never a bare click (#2458).
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  const [removingNode, setRemovingNode] = useState(false);
 
   const handleAddNode = async () => {
     setAddingNode(true);
@@ -87,6 +94,21 @@ export default function NodesSection() {
       setNodeDraft({ name: '', destination: '', identity: '/app/data/ssh/id_rsa' });
     }
     setSavingNode(false);
+  };
+
+  const confirmRemoveNode = async () => {
+    if (!removeTarget || removingNode) return;
+    setRemovingNode(true);
+    try {
+      await removeNode(removeTarget);
+    } catch (error) {
+      // removeNode reports its own failure toast; never leave the dialog wedged
+      // in the "removing" state on a rejection.
+      console.error('Failed to remove node', error);
+    } finally {
+      setRemovingNode(false);
+      setRemoveTarget(null);
+    }
   };
 
   const handleDeploySSHKey = (node: PodmanConnection) => {
@@ -328,7 +350,7 @@ export default function NodesSection() {
                       <Button
                         variant="danger"
                         size="sm"
-                        onClick={() => removeNode(node.Name)}
+                        onClick={() => setRemoveTarget(node.Name)}
                         aria-label="Remove Node"
                         title="Remove Node"
                       >
@@ -346,6 +368,21 @@ export default function NodesSection() {
             </div>
           )}
         </div>
+
+        <ConfirmModal
+          isOpen={removeTarget !== null}
+          title="Remove Node"
+          isDestructive
+          resourceName={removeTarget ?? ''}
+          message="ServiceBay forgets this node's SSH connection and deletes the health checks attached to it. Containers already running on the node keep running, but ServiceBay stops managing them until you add the node again. This cannot be undone."
+          confirmText={removingNode ? 'Removing…' : 'Remove node'}
+          isLoading={removingNode}
+          onConfirm={confirmRemoveNode}
+          onCancel={() => {
+            if (removingNode) return;
+            setRemoveTarget(null);
+          }}
+        />
     </>
   );
 }
