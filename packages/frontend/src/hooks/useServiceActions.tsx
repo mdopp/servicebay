@@ -347,14 +347,14 @@ function ServiceActionOverlays({
         title={`Delete ${serviceToDelete?.name || 'Service'}`}
         message={
           <div className="space-y-3">
-            <p className="text-sm text-gray-600 dark:text-gray-300">
-              You are about to delete <strong className="text-gray-900 dark:text-white">{serviceToDelete?.name}</strong>.
+            <p className="text-sm text-text-muted">
+              You are about to delete <strong className="text-text">{serviceToDelete?.name}</strong>.
               This will permanently stop the service and remove all of its configuration files.
             </p>
-            <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-700 dark:text-blue-300">
+            <div className="p-3 rounded-lg bg-status-info/10 border border-status-info/20 text-xs text-status-info">
               ℹ️ <strong>Safety Net Active:</strong> ServiceBay will automatically create a snapshot backup of your configuration before deleting. You can restore this at any time from <strong>Settings &rarr; Backups</strong>.
             </div>
-            <p className="text-xs text-red-600 dark:text-red-400 font-medium">
+            <p className="text-xs text-status-fail font-medium">
               To proceed, type the name of the service below to confirm deletion.
             </p>
           </div>
@@ -428,10 +428,10 @@ function ServiceActionsModal({
 }) {
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800 p-6">
+      <div className="bg-surface rounded-lg shadow-xl w-full max-w-md border border-border p-6">
         <div className="flex justify-between items-center mb-6">
           <div className="flex items-center gap-4">
-            <button onClick={() => setShowActions(false)} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1 text-sm font-medium">
+            <button onClick={() => setShowActions(false)} className="text-text-muted hover:text-text flex items-center gap-1 text-sm font-medium">
               <ArrowLeft size={18} />
               Back
             </button>
@@ -439,7 +439,7 @@ function ServiceActionsModal({
           </div>
           <button
             onClick={() => setShowActions(false)}
-            className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+            className="text-text-muted hover:text-text"
             aria-label="Close service actions"
           >
             <X size={20} />
@@ -447,11 +447,11 @@ function ServiceActionsModal({
         </div>
 
         <div className="mb-6">
-          <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-            <Box className="text-blue-500" />
+          <div className="flex items-center gap-3 p-3 bg-surface-2 rounded-lg">
+            <Box className="text-status-info" />
             <div>
-              <div className="font-medium text-gray-900 dark:text-gray-100">{selectedService.name}</div>
-              <div className="text-xs text-gray-500 font-mono">Systemd Service</div>
+              <div className="font-medium text-text">{selectedService.name}</div>
+              <div className="text-xs text-text-muted font-mono">Systemd Service</div>
             </div>
           </div>
         </div>
@@ -462,14 +462,14 @@ function ServiceActionsModal({
               onClick={() => handleAction('start')}
               disabled={actionLoading}
               running={runningAction === 'start'}
-              icon={<PlayCircle size={18} className="text-green-500" />}
+              icon={<PlayCircle size={18} className="text-status-ok" />}
               label="Start"
             />
             <ActionButton
               onClick={() => handleAction('stop')}
               disabled={actionLoading}
               running={runningAction === 'stop'}
-              icon={<Power size={18} className="text-red-500" />}
+              icon={<Power size={18} className="text-status-fail" />}
               label="Stop"
             />
           </div>
@@ -478,7 +478,7 @@ function ServiceActionsModal({
             onClick={() => handleAction('restart')}
             disabled={actionLoading}
             running={runningAction === 'restart'}
-            icon={<RotateCw size={18} className="text-blue-500" />}
+            icon={<RotateCw size={18} className="text-status-info" />}
             label="Restart Service"
             fullWidth
           />
@@ -487,7 +487,7 @@ function ServiceActionsModal({
             onClick={() => handleAction('update')}
             disabled={actionLoading}
             running={runningAction === 'update'}
-            icon={<RefreshCw size={18} className="text-orange-500" />}
+            icon={<RefreshCw size={18} className="text-status-warn" />}
             label="Update & Restart"
             fullWidth
           />
@@ -498,7 +498,7 @@ function ServiceActionsModal({
               requestDelete(selectedService);
             }}
             disabled={actionLoading}
-            className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors text-red-600 dark:text-red-400 disabled:opacity-60"
+            className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-status-fail/20 bg-status-fail/10 hover:bg-status-fail/20 transition-colors text-status-fail disabled:opacity-60"
           >
             <Trash2 size={18} />
             <span className="font-medium">Delete Service</span>
@@ -518,19 +518,19 @@ function ServiceDrawerHeader({
 }) {
   return (
     <>
-      <p className="text-xs uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400">
+      <p className="text-xs uppercase tracking-[0.2em] text-text-muted">
         {mode === 'monitor' ? 'Service Monitor' : 'Edit Service'}
       </p>
-      <h3 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mt-1 flex items-center gap-2">
+      <h3 className="text-2xl font-semibold text-text mt-1 flex items-center gap-2">
         {service.displayName}
         {service.nodeName && (
-          <span className="px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+          <span className="px-2 py-0.5 rounded-full text-xs bg-status-info/10 text-status-info border border-status-info/20">
             {service.nodeName}
           </span>
         )}
       </h3>
       {service.description && (
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 max-w-2xl">
+        <p className="text-sm text-text-muted mt-1 max-w-2xl">
           {service.description}
         </p>
       )}
@@ -564,7 +564,7 @@ function ServiceDrawerContent({
 
   if (drawerLoading || !editInitialData) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-3 text-gray-500 dark:text-gray-400">
+      <div className="h-full flex flex-col items-center justify-center gap-3 text-text-muted">
         <RefreshCw className="animate-spin" />
         Loading configuration...
       </div>
@@ -572,7 +572,7 @@ function ServiceDrawerContent({
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6 bg-gray-50 dark:bg-gray-950/30">
+    <div className="h-full overflow-y-auto p-6 bg-surface-2">
       <ServiceForm
         key={`${service.id || service.name}-${service.nodeName || 'Local'}`}
         initialData={editInitialData}
@@ -611,9 +611,9 @@ function ActionButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`${fullWidth ? 'w-full ' : ''}flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed`}
+      className={`${fullWidth ? 'w-full ' : ''}flex items-center justify-center gap-2 p-3 rounded-lg border border-border hover:bg-surface-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed`}
     >
-      {running ? <Loader2 size={18} className="animate-spin text-blue-500" /> : icon}
+      {running ? <Loader2 size={18} className="animate-spin text-status-info" /> : icon}
       <span className="font-medium">{running ? 'Running…' : label}</span>
     </button>
   );
