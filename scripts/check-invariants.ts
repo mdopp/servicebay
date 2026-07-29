@@ -622,6 +622,51 @@ async function checkGatePathsResolve() {
 // ---------------------------------------------------------------------------
 const WORKFLOW_DIR = path.join(REPO_ROOT, '.github', 'workflows');
 
+/**
+ * The subset of a workflow file GitHub Actions actually EXECUTES: the shell text
+ * of every `run:` step (inline scalar or `|`/`>` block), with comment-only lines
+ * dropped.
+ *
+ * #2466: this check used to match `npm run <name>` against the raw joined text
+ * of every workflow file, so a `#` comment satisfied it just as well as a step.
+ * ci.yml already carries prose comments naming script names next to (not inside)
+ * their run steps — so deleting a real `- run: npm run check:foo` while leaving
+ * its neighbouring comment kept the meta-gate green. That is the same "a gate
+ * that runs nowhere reports green" failure (#2429) this check exists to catch,
+ * one level up. Matching only executed text closes it.
+ */
+export function extractCiRunText(yamlText: string): string {
+    const lines = yamlText.split('\n');
+    const steps: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+        const m = /^(\s*)(?:(-\s+))?run:(.*)$/.exec(lines[i]);
+        if (!m) continue;
+        const keyIndent = m[1].length + (m[2]?.length ?? 0);
+        const inline = m[3].trim();
+        // `run: |`, `run: >-`, `run: |2` … — the command is the indented block
+        // below. Anything else on the line IS the command (`run: npm ci`); an
+        // empty value is a mapping (`defaults:` → `run:` → `shell:`), not a step.
+        if (!/^[|>][+-]?\d*$/.test(inline)) {
+            if (inline) steps.push(inline.replace(/^(['"])(.*)\1$/, '$2'));
+            continue;
+        }
+        const body: string[] = [];
+        let j = i + 1;
+        for (; j < lines.length; j++) {
+            if (lines[j].trim() === '') continue; // blank lines belong to the block
+            if (lines[j].length - lines[j].trimStart().length <= keyIndent) break;
+            body.push(lines[j].trimStart());
+        }
+        i = j - 1;
+        steps.push(body.join('\n'));
+    }
+    // A `#` line inside a run block is a shell comment — also not executed.
+    return steps
+        .flatMap(s => s.split('\n'))
+        .filter(l => !/^\s*#/.test(l))
+        .join('\n');
+}
+
 async function checkCiRunsEveryCheckScript() {
     const pkg = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf-8')) as {
         scripts: Record<string, string>;
@@ -631,7 +676,19 @@ async function checkCiRunsEveryCheckScript() {
     const workflowFiles = (await readdir(WORKFLOW_DIR)).filter(f => /\.ya?ml$/.test(f));
     const workflowText = (
         await Promise.all(workflowFiles.map(f => readFile(path.join(WORKFLOW_DIR, f), 'utf-8')))
-    ).join('\n');
+    )
+        .map(extractCiRunText)
+        .join('\n');
+
+    // Fail closed if the extractor itself goes blind (a workflow-syntax change
+    // it can't parse). Without this, "no executed text" would silently turn the
+    // reverse-drift scan below into a vacuous pass.
+    if (!/\bnpm (run|ci)\b/.test(workflowText)) {
+        violations.push({
+            check: 'ci-runs-every-check-script',
+            detail: `no executable \`run:\` step in .github/workflows/ mentions npm — the run-step extractor (extractCiRunText) parsed nothing, so this gate would pass vacuously (#2466). Fix the extractor for the workflow syntax in use.`,
+        });
+    }
 
     const runsInCi = (name: string) => new RegExp(`npm run ${name.replace(/[:]/g, '[:]')}(?![\\w:-])`).test(workflowText);
 

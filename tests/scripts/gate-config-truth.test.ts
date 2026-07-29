@@ -7,7 +7,13 @@ import {
   gateGlobToRegExp,
   extractSemgrepPathGlobs,
   extractDepcruiseRoots,
+  extractCiRunText,
 } from '../../scripts/check-invariants';
+import {
+  toCoverageKey,
+  extractHostPathVolumes,
+  uncoveredVolumes,
+} from '../../scripts/check-backup-coverage';
 
 /**
  * #2428 / #2429 / #2427 — the two ways a quality gate lies, and the doc that
@@ -41,6 +47,26 @@ const trackedFiles: string[] = execFileSync('git', ['ls-files'], {
 const matchCount = (glob: string) => {
   const re = gateGlobToRegExp(glob);
   return trackedFiles.filter(f => re.test(f)).length;
+};
+
+/** The gate's own "is this script invoked here" test, over an arbitrary text. */
+const runsInText = (text: string, name: string) =>
+  new RegExp(`npm run ${name.replace(/:/g, '[:]')}(?![\\w:-])`).test(text);
+
+/**
+ * The gate's aggregator rule: a script is covered when it is invoked directly,
+ * or when every `npm run` it chains is itself covered.
+ */
+const isSatisfied = (
+  text: string,
+  scripts: Record<string, string>,
+  name: string,
+  depth = 0,
+): boolean => {
+  if (runsInText(text, name)) return true;
+  if (depth > 2) return false;
+  const members = [...(scripts[name] ?? '').matchAll(/npm run ([\w:-]+)/g)].map(m => m[1]);
+  return members.length > 0 && members.every(m => isSatisfied(text, scripts, m, depth + 1));
 };
 
 describe('gateGlobToRegExp — gitignore / Semgrepignore v2 semantics', () => {
@@ -115,20 +141,17 @@ describe('#2429 — every local check:* gate runs in CI', () => {
     scripts: Record<string, string>;
   };
   const workflowDir = path.join(REPO_ROOT, '.github', 'workflows');
+  // Only what Actions executes — #2466. The gate itself uses the same
+  // extractor, so this spec can't drift from the script it pins.
   const workflowText = readdirSync(workflowDir)
     .filter(f => /\.ya?ml$/.test(f))
-    .map(f => readFileSync(path.join(workflowDir, f), 'utf-8'))
+    .map(f => extractCiRunText(readFileSync(path.join(workflowDir, f), 'utf-8')))
     .join('\n');
 
-  const runsInCi = (name: string) =>
-    new RegExp(`npm run ${name.replace(/:/g, '[:]')}(?![\\w:-])`).test(workflowText);
+  const runsInCi = (name: string) => runsInText(workflowText, name);
 
-  const satisfied = (name: string, depth = 0): boolean => {
-    if (runsInCi(name)) return true;
-    if (depth > 2) return false;
-    const members = [...(pkg.scripts[name] ?? '').matchAll(/npm run ([\w:-]+)/g)].map(m => m[1]);
-    return members.length > 0 && members.every(m => satisfied(m, depth + 1));
-  };
+  const satisfied = (name: string, depth = 0): boolean =>
+    isSatisfied(workflowText, pkg.scripts, name, depth);
 
   const checkScripts = Object.keys(pkg.scripts).filter(n => n.startsWith('check:'));
 
@@ -152,6 +175,135 @@ describe('#2429 — every local check:* gate runs in CI', () => {
       .map(m => m[1])
       .filter(name => !pkg.scripts[name]);
     expect(missing).toEqual([]);
+  });
+});
+
+describe('#2466 — the ci-runs-every-check-script gate sees only text Actions executes', () => {
+  const WITH_STEP = [
+    'jobs:',
+    '  arch:',
+    '    steps:',
+    '      # #2429: this is the only gate between a new volume and data loss.',
+    '      - run: npm run check:foo',
+  ].join('\n');
+
+  // The exact regression shape: the real step deleted in a refactor, its
+  // descriptive comment left behind next to where it used to be.
+  const COMMENT_ONLY = [
+    'jobs:',
+    '  arch:',
+    '    steps:',
+    '      # dropped in a refactor, but still described here: npm run check:foo',
+    '      - run: npm run typecheck',
+  ].join('\n');
+
+  const scripts = { 'check:foo': 'tsx scripts/foo.ts', typecheck: 'tsc --noEmit' };
+
+  it('a comment mentioning the script does NOT satisfy the gate', () => {
+    // Pre-fix, the gate matched the raw file text and this passed.
+    expect(COMMENT_ONLY).toContain('npm run check:foo');
+    expect(runsInText(extractCiRunText(COMMENT_ONLY), 'check:foo')).toBe(false);
+    expect(isSatisfied(extractCiRunText(COMMENT_ONLY), scripts, 'check:foo')).toBe(false);
+  });
+
+  it('a real run step DOES satisfy it (no false positive)', () => {
+    expect(runsInText(extractCiRunText(WITH_STEP), 'check:foo')).toBe(true);
+    expect(isSatisfied(extractCiRunText(WITH_STEP), scripts, 'check:foo')).toBe(true);
+  });
+
+  it('reads a `run: |` block, and drops shell comments inside it', () => {
+    const yaml = [
+      '      - name: gates',
+      '        run: |',
+      '          npm run check:one',
+      '',
+      '          # npm run check:two   <- commented out, not executed',
+      '          npm run check:three',
+      '      - run: npm run check:four',
+    ].join('\n');
+    const text = extractCiRunText(yaml);
+    expect(runsInText(text, 'check:one')).toBe(true);
+    expect(runsInText(text, 'check:three')).toBe(true);
+    expect(runsInText(text, 'check:four')).toBe(true);
+    expect(runsInText(text, 'check:two')).toBe(false);
+  });
+
+  it('does not treat a `defaults:` → `run:` mapping as a command', () => {
+    const yaml = ['defaults:', '  run:', '    shell: bash', '    working-directory: ./x'].join('\n');
+    expect(extractCiRunText(yaml).trim()).toBe('');
+  });
+
+  it('unquotes an inline scalar and stops a block at the next key', () => {
+    expect(extractCiRunText('        run: "npm run check:q"')).toBe('npm run check:q');
+    const yaml = ['      - run: |', '          npm run check:a', '        env:', '          X: 1'].join('\n');
+    expect(extractCiRunText(yaml)).toBe('npm run check:a');
+  });
+
+  it('the real workflows still expose npm commands to the gate (extractor not blind)', () => {
+    // The fail-closed guard in checkCiRunsEveryCheckScript pins this too; if the
+    // extractor ever parses nothing, every check:* would report uncovered.
+    const workflowDir = path.join(REPO_ROOT, '.github', 'workflows');
+    const executed = readdirSync(workflowDir)
+      .filter(f => /\.ya?ml$/.test(f))
+      .map(f => extractCiRunText(readFileSync(path.join(workflowDir, f), 'utf-8')))
+      .join('\n');
+    expect([...executed.matchAll(/npm run ([\w:-]+)/g)].length).toBeGreaterThan(5);
+    // …and the prose that names a script without running it is gone from view.
+    expect(executed).not.toContain('chained from');
+  });
+});
+
+describe('#2465 — backup-coverage fails closed on volume variables of any name', () => {
+  it('flags a bare {{VAR}} hostPath whose name is off the _PATH/_DIR pattern', () => {
+    // Pre-fix these returned null and were dropped before the coverage check —
+    // not reported as uncovered, invisible.
+    expect(toCoverageKey('{{MEDIA_ROOT}}')).toBe('MEDIA_ROOT');
+    expect(toCoverageKey('{{PHOTOS}}')).toBe('PHOTOS');
+    expect(toCoverageKey('{{JELLYFIN_MEDIA_PATH}}')).toBe('JELLYFIN_MEDIA_PATH');
+  });
+
+  it('exempts only the explicit non-volume patterns', () => {
+    expect(toCoverageKey('{{ZWAVE_DEVICE}}')).toBeNull();
+    expect(toCoverageKey('{{USB_DEVICES}}')).toBeNull();
+    expect(toCoverageKey('{{DOCKER_SOCKET}}')).toBeNull();
+    expect(toCoverageKey('{{HTTP_PORT}}')).toBeNull();
+    expect(toCoverageKey('{{DATA_DIR}}')).toBeNull(); // the root, not a leaf volume
+    expect(toCoverageKey('/run/dbus')).toBeNull(); // absolute host path, not our contract
+    expect(toCoverageKey('{{DATA_DIR}}/adguard/work/')).toBe('adguard/work');
+  });
+
+  it('an off-pattern uncovered volume reaches the uncovered list end to end', () => {
+    const yaml = [
+      'spec:',
+      '  volumes:',
+      '    - name: media',
+      '      hostPath:',
+      '        path: {{MEDIA_ROOT}}',
+      '        type: DirectoryOrCreate',
+      '    - name: zwave',
+      '      hostPath:',
+      '        path: {{ZWAVE_DEVICE}}',
+      '    - name: conf',
+      '      hostPath:',
+      '        path: {{DATA_DIR}}/adguard/conf',
+    ].join('\n');
+    const vols = extractHostPathVolumes('probe', yaml);
+    // The device is not a volume at all; the other two are candidates.
+    expect(vols.map(v => v.raw)).toEqual(['{{MEDIA_ROOT}}', '{{DATA_DIR}}/adguard/conf']);
+    // `adguard/conf` is manifest-covered; the off-pattern variable is not.
+    expect(uncoveredVolumes(vols).map(v => v.raw)).toEqual(['{{MEDIA_ROOT}}']);
+  });
+
+  it('leaves the volumes the real templates ship covered (no false positives)', () => {
+    const templatesDir = path.join(REPO_ROOT, 'templates');
+    const vols = readdirSync(templatesDir, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .flatMap(e => {
+        const f = path.join(templatesDir, e.name, 'template.yml');
+        return existsSync(f) ? extractHostPathVolumes(e.name, readFileSync(f, 'utf-8')) : [];
+      });
+    expect(vols.length).toBeGreaterThan(10);
+    expect(uncoveredVolumes(vols)).toEqual([]);
   });
 });
 
