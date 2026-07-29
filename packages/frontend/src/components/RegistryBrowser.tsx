@@ -11,6 +11,7 @@ import ExternalLinkConfig from './ExternalLinkConfig';
 import ManualServiceForm from './ManualServiceForm';
 import ReverseProxyConfig from './ReverseProxyConfig';
 import ServiceForm from './ServiceForm';
+import { Button } from '@/components/ui';
 
 type SpecialItem = {
     id: string;
@@ -58,9 +59,10 @@ const specialItems: SpecialItem[] = [
 
 function RegistryListItem({ item, isSelected, onClick }: { item: Template; isSelected: boolean; onClick: () => void }) {
     return (
-        <div
+        <Button
             onClick={onClick}
-            className={`w-full text-left px-4 py-3 rounded-md flex items-center gap-3 transition-colors cursor-pointer ${
+            variant="ghost"
+            className={`w-full h-auto justify-start text-left px-4 py-3 rounded-md flex items-center gap-3 transition-colors ${
                 isSelected
                 ? 'bg-surface ring-1 ring-border text-accent shadow-sm'
                 : 'hover:bg-surface-2 text-foreground'
@@ -76,7 +78,7 @@ function RegistryListItem({ item, isSelected, onClick }: { item: Template; isSel
                 <span className="text-xs text-muted truncate w-full">{item.source}</span>
             </div>
             {item.type === 'stack' && <span className="text-xs bg-surface-2 text-accent px-2 py-0.5 rounded-full ml-auto">Stack</span>}
-        </div>
+        </Button>
     );
 }
 
@@ -159,10 +161,11 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
             <div className="mb-2 pb-2 border-b border-border">
                 <div className="px-4 py-2 text-xs font-semibold text-muted uppercase tracking-wider">Create New</div>
                 {specialItems.map(item => (
-                    <div
+                    <Button
                         key={item.id}
                         onClick={() => handleSpecialClick(item)}
-                        className={`w-full text-left px-4 py-3 rounded-md flex items-center gap-3 transition-colors cursor-pointer ${
+                        variant="ghost"
+                        className={`w-full h-auto justify-start text-left px-4 py-3 rounded-md flex items-center gap-3 transition-colors ${
                             selected && 'id' in selected && selected.id === item.id
                             ? 'bg-surface ring-1 ring-border text-accent shadow-sm'
                             : 'hover:bg-surface-2 text-foreground'
@@ -173,7 +176,7 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
                             <span className="font-medium truncate w-full">{item.name}</span>
                             <span className="text-xs text-muted truncate w-full">{item.description}</span>
                         </div>
-                    </div>
+                    </Button>
                 ))}
             </div>
 
@@ -224,12 +227,12 @@ export default function RegistryBrowser({ templates }: { templates: Template[] }
                                 Source: <span className="font-mono">{selected.source}</span>
                             </span>
                         </div>
-                        <div
+                        <Button
                             onClick={() => setIsModalOpen(true)}
-                            className="flex items-center gap-2 bg-accent text-on-accent px-4 py-2 rounded hover:bg-accent-strong transition-colors shadow-sm font-medium cursor-pointer"
+                            className="flex items-center gap-2 bg-accent text-on-accent px-4 py-2 rounded hover:bg-accent-strong transition-colors shadow-sm font-medium"
                         >
                             <Download size={18} /> Install {selected.type === 'stack' ? 'Stack' : 'Template'}
-                        </div>
+                        </Button>
                     </div>
                     <div className="flex-1 overflow-y-auto p-8">
                         {loading ? (
