@@ -401,17 +401,17 @@ export function mergeGraphPreservingPositions<TNode extends Node, TEdge extends 
 // operator never confuses the two. Down-target dashes still win —
 // service-down is a stronger signal than provenance.
 // ────────────────────────────────────────────────────────────────────
-export const DEFAULT_EDGE_COLOR = 'rgba(148, 163, 184, 0.2)';
-export const DOWN_EDGE_COLOR = '#ef4444';
+export const DEFAULT_EDGE_COLOR = 'var(--edge-default)';
+export const DOWN_EDGE_COLOR = 'var(--edge-down)';
 export const DOWN_EDGE_DASHES = '6 3';
 
-export const DECLARED_EDGE_COLOR = '#64748b'; // Slate
+export const DECLARED_EDGE_COLOR = 'var(--edge-declared)';
 export const DECLARED_EDGE_DASHES = '4 4';
-export const OBSERVED_EDGE_COLOR = '#3b82f6'; // Clean blue
+export const OBSERVED_EDGE_COLOR = 'var(--edge-observed)';
 // #2175 — inferred edges (env-target inference + fallback anchor). Violet
 // with a dotted stroke so they read as "derived, not declared/observed":
 // distinct from declared's slate dash and observed's solid blue.
-export const INFERRED_EDGE_COLOR = '#a855f7'; // Violet
+export const INFERRED_EDGE_COLOR = 'var(--edge-inferred)';
 export const INFERRED_EDGE_DASHES = '2 3';
 
 // ────────────────────────────────────────────────────────────────────
@@ -420,31 +420,31 @@ export const INFERRED_EDGE_DASHES = '2 3';
 // visualization colors. Each type has a fill color and a darker stroke.
 // ────────────────────────────────────────────────────────────────────
 export const MINIMAP_NODE_COLORS: Record<string, string> = {
-  container: '#60a5fa',           // blue-400
-  service: '#c084fc',            // purple-400
-  'unmanaged-service': '#fbbf24', // amber-400
-  pod: '#f472b6',                // pink-400
-  proxy: '#34d399',              // emerald-400
-  router: '#fb923c',             // orange-400
-  gateway: '#fb923c',            // orange-400
-  internet: '#9ca3af',           // gray-400
-  link: '#22d3ee',               // cyan-400
-  device: '#818cf8',             // indigo-400
-  group: 'transparent',
+  container: 'var(--minimap-container)',
+  service: 'var(--minimap-service)',
+  'unmanaged-service': 'var(--minimap-unmanaged-service)',
+  pod: 'var(--minimap-pod)',
+  proxy: 'var(--minimap-proxy)',
+  router: 'var(--minimap-router)',
+  gateway: 'var(--minimap-gateway)',
+  internet: 'var(--minimap-internet)',
+  link: 'var(--minimap-link)',
+  device: 'var(--minimap-device)',
+  group: 'var(--minimap-group)',
 };
 
 export const MINIMAP_STROKE_COLORS: Record<string, string> = {
-  container: '#2563eb',           // blue-600
-  service: '#9333ea',            // purple-600
-  'unmanaged-service': '#d97706', // amber-600
-  pod: '#db2777',                // pink-600
-  router: '#ea580c',             // orange-600
-  gateway: '#ea580c',            // orange-600
-  internet: '#4b5563',           // slate-700
-  proxy: '#059669',              // emerald-600
-  link: '#0891b2',               // cyan-600
-  device: '#4f46e5',             // indigo-600
-  group: '#d1d5db',              // gray-300
+  container: 'var(--minimap-container-stroke)',
+  service: 'var(--minimap-service-stroke)',
+  'unmanaged-service': 'var(--minimap-unmanaged-service-stroke)',
+  pod: 'var(--minimap-pod-stroke)',
+  router: 'var(--minimap-router-stroke)',
+  gateway: 'var(--minimap-gateway-stroke)',
+  internet: 'var(--minimap-internet-stroke)',
+  proxy: 'var(--minimap-proxy-stroke)',
+  link: 'var(--minimap-link-stroke)',
+  device: 'var(--minimap-device-stroke)',
+  group: 'var(--minimap-group-stroke)',
 };
 
 export function styleForEdgeKind(
