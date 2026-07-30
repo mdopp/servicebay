@@ -560,11 +560,17 @@ function InstallServiceRows({ items, installingNow, deployedNames, perService }:
         const statusText = isDone ? 'Deployed' : isInstalling ? 'Installing…' : 'Pending';
         return (
           <div key={item.name} className="border-b border-border last:border-b-0">
+            {/* `!h-auto !px-3` forces out Button's default size="md" (h-10/px-space-4) so it
+                can't win the cascade against this row's own px-3/py-2 geometry — cn() has no
+                Tailwind-merge dedup, same escape hatch as ServiceMonitor.tsx's tab strip
+                (box-verify 2a9decfa follow-up: this row shipped in the same #2480 batch with
+                the identical unguarded Button migration, just never caught until the sibling
+                fix's re-verify swept the rest of the PR). */}
             <Button
               type="button"
               onClick={() => toggle(item.name)}
               variant="ghost"
-              className="w-full justify-start px-3 py-2 flex items-center gap-2 text-left hover:bg-surface-2 transition-colors"
+              className="!h-auto !px-3 w-full justify-start py-2 flex items-center gap-2 text-left hover:bg-surface-2 transition-colors"
             >
               {isOpen ? <ChevronDown size={14} className="text-text-subtle shrink-0" /> : <ChevronRight size={14} className="text-text-subtle shrink-0" />}
               {statusIcon}
