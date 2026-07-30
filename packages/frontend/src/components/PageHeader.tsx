@@ -24,19 +24,19 @@ export default function PageHeader({ title, children, actions, showBack = false,
   };
 
   return (
-    <div className="flex items-center gap-4 p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+    <div className="flex items-center gap-4 p-4 border-b border-border bg-surface">
       <div className="flex items-center gap-4 shrink-0">
         {showBack && (
           <button
             onClick={handleBack}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+            className="p-2 hover:bg-surface-2 rounded-full transition-colors"
             title="Go Back"
             aria-label="Go back"
           >
-            <ArrowLeft size={24} className="text-gray-600 dark:text-gray-300" />
+            <ArrowLeft size={24} className="text-text-muted" />
           </button>
         )}
-        <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{title}</h1>
+        <h1 className="text-xl font-bold text-text">{title}</h1>
         {helpId && <SectionHelp helpId={helpId} />}
       </div>
 
