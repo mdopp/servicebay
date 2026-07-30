@@ -77,23 +77,23 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 p-4">
-      <div className="w-full max-w-md bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-surface p-4">
+      <div className="w-full max-w-md bg-surface rounded-xl shadow-lg border border-border overflow-hidden">
 
         {/* Header */}
-        <div className="p-8 text-center border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
+        <div className="p-8 text-center border-b border-border bg-surface/50">
           <div className="flex justify-center mb-4">
-            <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-full">
-                <ServiceBayLogo size={48} className="text-blue-600 dark:text-blue-400" />
+            <div className="p-3 bg-surface-2 rounded-full">
+                <ServiceBayLogo size={48} className="text-accent" />
             </div>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">ServiceBay</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">by Korgraph.io - v{pkg.version}</p>
+          <h1 className="text-2xl font-bold text-text mb-1">ServiceBay</h1>
+          <p className="text-sm text-text-muted font-medium">by Korgraph.io - v{pkg.version}</p>
         </div>
 
         {/* Content */}
         <div className="p-8">
-          <p className="text-center text-gray-600 dark:text-gray-300 mb-8 text-sm leading-relaxed">
+          <p className="text-center text-text-muted mb-8 text-sm leading-relaxed">
             Manage your Podman Quadlet services, monitor containers, and access the terminal directly from your browser.
           </p>
 
@@ -101,17 +101,17 @@ export default function LoginPage() {
             <>
               <a
                 href="/api/auth/oidc"
-                className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2"
+                className="w-full py-2.5 px-4 bg-accent hover:bg-accent-strong text-on-accent font-medium rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2"
               >
                 <Shield size={18} />
                 Login with SSO
               </a>
               <div className="relative my-6">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-200 dark:border-gray-700" />
+                  <div className="w-full border-t border-border" />
                 </div>
                 <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400">or</span>
+                  <span className="px-2 bg-surface text-text-muted">or</span>
                 </div>
               </div>
             </>
@@ -119,12 +119,12 @@ export default function LoginPage() {
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Username</label>
+              <label className="block text-sm font-medium text-text mb-1">Username</label>
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                className="w-full px-4 py-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent focus:border-transparent outline-none transition-all"
                 placeholder="System username"
                 autoComplete="username"
                 required
@@ -132,7 +132,7 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Password</label>
+              <label className="block text-sm font-medium text-text mb-1">Password</label>
               <input
                 type="password"
                 value={password}
@@ -140,13 +140,13 @@ export default function LoginPage() {
                 onKeyDown={detectCapsLock}
                 onKeyUp={detectCapsLock}
                 onBlur={() => setCapsLock(false)}
-                className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                className="w-full px-4 py-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent focus:border-transparent outline-none transition-all"
                 placeholder="System password"
                 autoComplete="current-password"
                 required
               />
               {capsLock && (
-                <p className="mt-1 flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400" role="alert">
+                <p className="mt-1 flex items-center gap-1 text-xs text-status-warn" role="alert">
                   <AlertTriangle size={12} /> Caps Lock is on
                 </p>
               )}
@@ -155,12 +155,12 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+              className="w-full py-2.5 px-4 bg-accent hover:bg-accent-strong text-on-accent font-medium rounded-lg shadow-sm transition-colors flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {loading ? <Loader2 size={20} className="animate-spin" /> : <>Login <ArrowRight size={18} /></>}
             </button>
           </form>
-          <p className="text-center text-xs text-gray-400 dark:text-gray-500 mt-4">
+          <p className="text-center text-xs text-text-muted mt-4">
             {oidcEnabled
               ? 'Use your admin credentials or login with SSO above.'
               : 'Use the admin credentials configured during first start.'}
@@ -168,12 +168,12 @@ export default function LoginPage() {
         </div>
 
         {/* Footer */}
-        <div className="p-4 bg-gray-50 dark:bg-gray-900/50 border-t border-gray-100 dark:border-gray-700 flex justify-center">
+        <div className="p-4 bg-surface border-t border-border flex justify-center">
           <a
             href="https://github.com/mdopp/servicebay"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 dark:hover:text-gray-300 transition-colors"
+            className="flex items-center gap-2 text-sm text-text-muted hover:text-text transition-colors"
           >
             <Code size={16} />
             <span>View on GitHub</span>
