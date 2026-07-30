@@ -37,7 +37,7 @@ const CHAT_SUBDOMAIN = 'chat';
 
 function Notice({ children }: { children: ReactNode }) {
   return (
-    <div className="flex-1 flex items-center justify-center p-6 text-center text-gray-500 dark:text-gray-400">
+    <div className="flex-1 flex items-center justify-center p-6 text-center text-text-muted">
       <p className="max-w-sm">{children}</p>
     </div>
   );
