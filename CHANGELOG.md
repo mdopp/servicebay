@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.17](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.16...servicebay-v5.11.17) (2026-07-30)
+
+
+### Bug Fixes
+
+* **components:** replace raw color literals with semantic token in MaintenanceChatEmbed ([90e717f](https://github.com/mdopp/servicebay/commit/90e717fc72740afe95aaae84c3bda03497443ab9))
+* **frontend:** close out lint-ratchet color-literal burn-down (batch n) ([055ae93](https://github.com/mdopp/servicebay/commit/055ae931e01384f94129f7659ffda1328185b106))
+
 ## [5.11.16](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.15...servicebay-v5.11.16) (2026-07-30)
 
 
