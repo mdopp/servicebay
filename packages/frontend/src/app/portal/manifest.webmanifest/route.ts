@@ -28,7 +28,12 @@ export async function GET() {
     scope: '/',
     display: 'standalone',
     orientation: 'portrait',
-    background_color: '#fafafa',
+    // Manifest values must be static hex (no CSS custom properties) — the web
+    // app manifest spec has no token indirection, so these mirror globals.css's
+    // light-mode --background and --accent-strong values verbatim.
+    // eslint-disable-next-line sb/no-raw-color-literal -- static manifest JSON, no CSS token indirection possible
+    background_color: '#f8fafc',
+    // eslint-disable-next-line sb/no-raw-color-literal -- static manifest JSON, no CSS token indirection possible
     theme_color: '#2563eb',
     icons: [
       {

@@ -31,7 +31,7 @@ export default function ChatPage() {
           <MaintenanceChatEmbed />
         </div>
       ) : (
-        <div className="flex-1 flex items-center justify-center p-6 text-center text-gray-500 dark:text-gray-400">
+        <div className="flex-1 flex items-center justify-center p-6 text-center text-text-muted">
           <p className="max-w-sm">
             The Solilos chat is not installed on this server. Install the
             Solilos assistant to chat with the maintenance assistant.

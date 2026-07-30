@@ -15,7 +15,7 @@ interface FileViewerProps {
 
 export default function FileViewer({ content, language }: FileViewerProps) {
   return (
-    <div className="bg-[#2d2d2d] text-[#ccc] min-h-[500px]">
+    <div className="bg-surface-muted text-text min-h-[500px]">
         <Editor
         value={content}
         onValueChange={() => {}}
@@ -28,7 +28,7 @@ export default function FileViewer({ content, language }: FileViewerProps) {
                     .replace(/</g, "&lt;")
                     .replace(/>/g, "&gt;")
                     .replace(/"/g, "&quot;")
-                    .replace(/'/g, "&#039;");
+                    .replace(/'/g, "&#39;");
             }
             return Prism.highlight(code, grammar, language);
         }}

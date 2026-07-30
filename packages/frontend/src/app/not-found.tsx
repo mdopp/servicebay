@@ -12,7 +12,7 @@ export default function NotFound() {
         <div className="pt-2">
           <Link
             href="/"
-            className="inline-block px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-sm transition"
+            className="inline-block px-4 py-2 rounded-md bg-accent-strong hover:bg-accent text-on-accent text-sm transition"
           >
             Back to dashboard
           </Link>
