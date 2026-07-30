@@ -13,6 +13,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
 
 interface ModeInfo {
   mode: 'lan' | 'public';
@@ -359,7 +361,7 @@ function IdleForm({
         Internal URLs (<span className="font-mono">{`vault.${lanDomain}`}</span>, …) will keep working as a soft-handoff after migration.
       </p>
       <div className="flex gap-2">
-        <input
+        <Input
           type="text"
           value={pendingDomain}
           onChange={(e) => setPendingDomain(e.target.value)}
@@ -367,13 +369,12 @@ function IdleForm({
           className="flex-1 p-2 border border-border bg-surface rounded text-sm"
           autoComplete="off"
         />
-        <button
+        <Button
           onClick={onCheckReadiness}
           disabled={!pendingDomain.trim()}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded disabled:opacity-50"
         >
           Check readiness
-        </button>
+        </Button>
       </div>
       <ul className="text-xs text-text-subtle space-y-1 list-disc list-inside">
         <li>The pre-flight checks DNS, port 80, and your router port-forward before anything is changed.</li>
@@ -402,20 +403,22 @@ function PreflightPanel({
           Checking readiness for <span className="font-mono">{publicDomain}</span>…
         </p>
         <div className="flex gap-2">
-          <button
+          <Button
             onClick={onRefresh}
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-text-muted hover:bg-surface-2 rounded"
+            variant="ghost"
+            size="sm"
             type="button"
           >
             <RefreshCw size={12} /> Refresh
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={onCancel}
-            className="px-2 py-1 text-xs text-text-muted hover:bg-surface-2 rounded"
+            variant="ghost"
+            size="sm"
             type="button"
           >
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
       <PreflightChecklist preflight={preflight} />
@@ -479,28 +482,28 @@ function ConfirmPanel({
         <strong>Heads up:</strong> all currently logged-in users (including you) will need to log in again once the migration completes — the Authelia cookie domain flips from your LAN root to <span className="font-mono">{publicDomain}</span>.
       </div>
       <div className="flex flex-wrap gap-2">
-        <button
+        <Button
           onClick={onMigrate}
           disabled={migrating}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded disabled:opacity-50"
+          variant="primary"
         >
           {migrating ? <Loader2 size={14} className="animate-spin" /> : null}
           Migrate to {publicDomain}
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={onDryRun}
           disabled={migrating}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-surface-2 hover:bg-surface text-text text-sm font-medium rounded disabled:opacity-50"
+          variant="secondary"
         >
           Dry-run first
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={onBack}
           disabled={migrating}
-          className="px-3 py-2 text-sm text-text-muted hover:bg-surface-2 rounded disabled:opacity-50"
+          variant="ghost"
         >
           Back
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -559,12 +562,12 @@ function ResultActions({
   return (
     <div className="flex flex-wrap gap-2">
       {isDry ? (
-        <button
+        <Button
           onClick={onMigrateAgain}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded"
+          variant="primary"
         >
           Apply for real
-        </button>
+        </Button>
       ) : ok ? (
         <a
           href={`https://${result.plan.publicDomain}`}
@@ -575,19 +578,19 @@ function ResultActions({
           <ExternalLink size={14} /> Open {result.plan.publicDomain}
         </a>
       ) : (
-        <button
+        <Button
           onClick={onMigrateAgain}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded"
+          variant="primary"
         >
           Retry failed steps
-        </button>
+        </Button>
       )}
-      <button
+      <Button
         onClick={onReset}
-        className="px-3 py-2 text-sm text-text-muted hover:bg-surface-2 rounded"
+        variant="ghost"
       >
         {ok ? 'Done' : 'Close'}
-      </button>
+      </Button>
     </div>
   );
 }
