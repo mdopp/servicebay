@@ -8,7 +8,13 @@ import type { MountCandidate } from '@/lib/backup/mounts';
 const REMOVABLE_FSTYPES = new Set(['vfat', 'exfat', 'ntfs']);
 
 function rowClass(active: boolean, selectable: boolean): string {
-  const base = 'w-full flex items-start gap-2 px-3 py-2 text-left rounded-lg border-2 transition-colors';
+  // h-auto + justify-start override the Button primitive's fixed h-8 /
+  // justify-center defaults (#2484 cascade-collision pattern) — this row's
+  // content is two lines (title + MountDetail), so the primitive's 32px fixed
+  // height clips/overlaps it against the next row in the space-y-1.5 list
+  // without this override (box-verify f8ff36a1 finding).
+  const base =
+    'w-full h-auto justify-start flex items-start gap-2 px-3 py-2 text-left rounded-lg border-2 transition-colors';
   if (active) return `${base} bg-accent/10 border-accent`;
   if (selectable) return `${base} border-border hover:bg-surface-2 hover:border-border`;
   return `${base} border-border opacity-60 cursor-not-allowed`;

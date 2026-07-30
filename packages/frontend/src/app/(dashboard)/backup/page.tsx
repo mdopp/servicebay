@@ -1437,7 +1437,7 @@ export default function BackupPage() {
 
       {restoreOverlayOpen && (
         <div className="fixed inset-0 z-[90] flex items-stretch justify-end" onMouseDown={stopRestoreEvent} onClick={stopRestoreEvent}>
-          <div className="absolute inset-0 bg-gray-950/70 backdrop-blur-sm" onClick={handleRestoreBackdrop} />
+          <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={handleRestoreBackdrop} />
           <aside className="relative z-10 w-full max-w-3xl h-full bg-surface border-l border-border shadow-2xl flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b border-border">
               <div>
@@ -1818,7 +1818,7 @@ export default function BackupPage() {
 
       {restoreFilePreview && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center" onMouseDown={stopRestoreEvent} onClick={stopRestoreEvent}>
-          <div className="absolute inset-0 bg-gray-950/70 backdrop-blur-sm" onClick={() => setRestoreFilePreview(null)} />
+          <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={() => setRestoreFilePreview(null)} />
           <div className="relative z-10 w-full max-w-5xl max-h-[85vh] bg-surface border border-border rounded-card shadow-2xl overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-5 py-3 border-b border-border">
               <div>
