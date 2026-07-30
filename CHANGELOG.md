@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.9](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.8...servicebay-v5.11.9) (2026-07-30)
+
+
+### Bug Fixes
+
+* **confirm-modal:** replace raw color literals with semantic design tokens ([2d86d15](https://github.com/mdopp/servicebay/commit/2d86d15daca26718d29d777b080c94de6cd6cb29))
+* **frontend:** restore intended styling on 4 Button/ghost migrations lost to cascade collision ([9777b7b](https://github.com/mdopp/servicebay/commit/9777b7be2275ea9f19f58a2735905b6caf78a8bc))
+* **frontend:** restore intended styling on 4 Button/ghost migrations lost to cascade collision ([5d0d2af](https://github.com/mdopp/servicebay/commit/5d0d2af9053fc2d9145073933ef3e4f94067a04b))
+* **mobile-nav:** replace raw Tailwind colors with semantic tokens ([9b54865](https://github.com/mdopp/servicebay/commit/9b54865369ea9aaf3a448c6a4738cd00ee5b1abf))
+* **settings/api-tokens-section:** replace raw input and button elements with @/components/ui primitives ([7b524bb](https://github.com/mdopp/servicebay/commit/7b524bb51b5816645ba21b5fa76999157939e6b2))
+* **settings/nodes-section:** replace raw input and button elements with @/components/ui primitives ([2bc813f](https://github.com/mdopp/servicebay/commit/2bc813f038b154cf7e82bd537c902d65563d11e7))
+* **settings:** replace raw Tailwind colors with semantic tokens in FileShareSection ([ee04b31](https://github.com/mdopp/servicebay/commit/ee04b317c3ddca32c7179e8cb11aa8055e2979d0))
+
 ## [5.11.8](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.7...servicebay-v5.11.8) (2026-07-30)
 
 
