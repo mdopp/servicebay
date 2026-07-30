@@ -14,7 +14,13 @@
  *
  * The probe script runs while the box is on `:dev @ <sha>`; its stdout/stderr +
  * exit code are captured and returned. Emits one machine-readable last line:
- *   AUTOLOOP_DEV_VERIFY_RESULT {"reachedDev":true,"probeExit":0,"flippedBack":true,"channel":"latest","probeOutput":"…"}
+ *   AUTOLOOP_DEV_VERIFY_RESULT {"reachedDev":true,"probeExit":0,"flippedBack":true,"channel":"latest",
+ *                               "devImage":{"revision":"…","reads":3,"readFailures":1,"detail":"…"},"probeOutput":"…"}
+ *
+ * `reachedDev` and `flippedBack` are trustworthy on their own — both poll
+ * through the whole restart window and carry their evidence (`devImage`,
+ * `flipBack`), so no manual `list_containers`/image-tag cross-check is needed
+ * (#2387, #2493).
  *
  * Exit 0 = harness ran and flipped back (READ probeExit/probeOutput to judge
  * green/red — that's the LLM's job); exit 2 = harness setup failure (never
@@ -45,30 +51,142 @@ export function revisionMatchesSha(revisionLabel: string, sha: string): boolean 
   return label.startsWith(want);
 }
 
-/** The OCI revision label (full git SHA) of the running `servicebay` container,
- *  or '' if it can't be read. This is the SHA baked into the image, NOT the tag
- *  (`{{.Config.Image}}` returns the tag name, which never carries a SHA). */
-async function runningRevision(): Promise<string> {
+/** The last non-empty line of a `podman inspect --format` stdout, with Go
+ *  template's `<no value>` (label absent from the image) normalised to `''`.
+ *  Exported for unit tests. */
+export function parseRevisionOutput(stdout: string): string {
+  const lines = stdout
+    .split('\n')
+    .map(l => l.trim())
+    .filter(Boolean);
+  const last = lines[lines.length - 1] ?? '';
+  return last === '<no value>' ? '' : last;
+}
+
+/**
+ * The OCI revision label (full git SHA) of the running `servicebay` container.
+ *
+ * `null` means **the read itself failed** — `/mcp` is served by the very app the
+ * channel flip restarts, so a refused connection / non-zero `podman inspect`
+ * (container momentarily absent) is expected mid-flip. That is categorically
+ * different from a *successful* read returning a revision that isn't the target
+ * yet, and the two must not collapse into one value: collapsing them is what
+ * made a `reachedDev:false` verdict unreadable (#2493).
+ *
+ * This is the SHA baked into the image, NOT the tag (`{{.Config.Image}}`
+ * returns the tag name, which never carries a SHA).
+ */
+async function runningRevision(): Promise<string | null> {
   try {
-    const { stdout } = await mcpExec(
-      'podman inspect --format \'{{index .Config.Labels "org.opencontainers.image.revision"}}\' servicebay 2>/dev/null | tail -1',
+    const { code, stdout } = await mcpExec(
+      'podman inspect --format \'{{index .Config.Labels "org.opencontainers.image.revision"}}\' servicebay',
     );
-    return stdout.trim();
+    if (code !== 0) return null; // no such container / podman busy → mid-restart
+    return parseRevisionOutput(stdout);
   } catch {
-    return '';
+    return null; // /mcp unreachable (it lives in the app being restarted)
   }
 }
 
-/** Poll the box's running-image revision label until it matches `sha`, bounded.
- *  Returns true once the `:dev` image built from this SHA is live. */
-async function waitForDevImage(sha: string, timeoutSec: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutSec * 1000;
-  while (Date.now() < deadline) {
-    const revision = await runningRevision();
-    if (revisionMatchesSha(revision, sha)) return true;
-    await new Promise(r => setTimeout(r, 20000));
+// ---------- :dev image confirmation (#2493) ----------
+
+/** Box I/O the `:dev`-image confirmation needs, injected so the polling logic is
+ *  unit-testable on a virtual clock without a real box. */
+export interface DevImageDeps {
+  /** Read the running container's OCI revision label. `null` = the read FAILED
+   *  (mid-restart / `/mcp` down), NOT "the image has no/other revision". */
+  readRevision: () => Promise<string | null>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+}
+
+export interface DevImageResult {
+  reached: boolean;
+  /** The last **successfully read** revision (`''` = image carries no label);
+   *  `null` means the box never answered a single read within the budget. */
+  revision: string | null;
+  /** Successful reads vs. failed reads — the evidence behind the verdict. */
+  reads: number;
+  readFailures: number;
+  detail: string;
+}
+
+export const DEV_IMAGE_TIMEOUT_SEC = 900;
+const DEV_IMAGE_POLL_SEC = 10;
+
+/**
+ * Poll the running image's revision label until it identifies `sha`, bounded.
+ *
+ * Three defects made the old loop report `reachedDev:false` on a box whose
+ * `:dev` image was demonstrably live moments later (#2493):
+ *  1. **A blind trailing window.** The budget was checked at the top of the
+ *     loop, so after the last fixed 20s sleep it returned `false` *without
+ *     reading again* — an image that landed inside that window was never seen.
+ *     Here the deadline is only a verdict **after** a read, so there is always a
+ *     final observation at/after the deadline.
+ *  2. **A failed read looked like a mismatched revision.** `''` was returned for
+ *     both, so a run that never got one successful read (a box restarting for
+ *     the whole budget, an unparseable `/mcp` reply) reported the same verdict —
+ *     with a `detail` claiming "image build likely stuck" — as a genuinely stale
+ *     image. Now they are counted separately and the verdict says which it was,
+ *     so it is trustworthy without a manual `list_containers` cross-check.
+ *  3. **A non-finite budget collapsed the loop to zero iterations** (`NaN`
+ *     deadline ⇒ `Date.now() < NaN` is false ⇒ instant `false`). A bad/missing
+ *     `--image-timeout` value is now rejected at parse time (`parseDevVerifyArgs`)
+ *     and a non-finite budget here falls back to the default rather than
+ *     silently skipping the wait.
+ *
+ * Only budget exhaustion *with a read in hand* is a verdict; every failed read
+ * is "not yet", exactly like `confirmFlipBack`'s null/stale channel (#2387).
+ */
+export async function confirmDevImage(
+  sha: string,
+  deps: DevImageDeps,
+  opts: { timeoutSec?: number; pollEverySec?: number } = {},
+): Promise<DevImageResult> {
+  const requested = opts.timeoutSec ?? DEV_IMAGE_TIMEOUT_SEC;
+  const timeoutSec = Number.isFinite(requested) && requested > 0 ? requested : DEV_IMAGE_TIMEOUT_SEC;
+  const pollEverySec = opts.pollEverySec ?? DEV_IMAGE_POLL_SEC;
+
+  const deadline = deps.now() + timeoutSec * 1000;
+  let revision: string | null = null;
+  let reads = 0;
+  let readFailures = 0;
+
+  for (;;) {
+    const observed = await deps.readRevision();
+    if (observed === null) {
+      readFailures++;
+    } else {
+      reads++;
+      revision = observed;
+      if (revisionMatchesSha(observed, sha)) {
+        return {
+          reached: true,
+          revision: observed,
+          reads,
+          readFailures,
+          detail: `:dev image with revision ${observed} live after ${reads} read(s), ${readFailures} failed read(s)`,
+        };
+      }
+    }
+    // The budget is a verdict only AFTER a read — never in the blind window
+    // between the last poll and the deadline.
+    if (deps.now() >= deadline) break;
+    await deps.sleep(Math.min(pollEverySec * 1000, deadline - deps.now()));
   }
-  return false;
+
+  const spent = `${timeoutSec}s (${reads} read(s), ${readFailures} failed read(s))`;
+  return {
+    reached: false,
+    revision,
+    reads,
+    readFailures,
+    detail:
+      reads === 0
+        ? `never read the running image revision within ${spent} — the box did not answer, which is NOT evidence the :dev image is missing`
+        : `running image revision ${revision === '' ? '(unlabelled)' : revision} never matched ${sha} within ${spent} — :dev build likely still in flight`,
+  };
 }
 
 // ---------- flip-back confirmation (#2387) ----------
@@ -182,20 +300,87 @@ export async function confirmFlipBack(
   };
 }
 
+export const DEV_VERIFY_USAGE =
+  'usage: autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900] [--flipback-timeout 900]';
+
+export interface DevVerifyArgs {
+  sha: string;
+  probeScript: string;
+  imageTimeout: number;
+  flipBackTimeout: number;
+}
+
+/**
+ * Strict CLI parse — a mis-parsed argument used to become a silent
+ * `reachedDev:false` (#2493), so every shape that can't be honoured is a loud
+ * setup error instead:
+ *  - the old `argv.find(a => !a.startsWith('--'))` picked the first positional
+ *    *anywhere*, so `--probe-script /tmp/p.sh <sha>` bound the script path as the
+ *    SHA — non-hex, so no revision could ever match and the run burned the whole
+ *    image budget before reporting a false negative.
+ *  - `Number(argv[i + 1])` on a missing/garbage value yielded `NaN`, and a `NaN`
+ *    deadline made the wait loop exit *immediately* with `false`.
+ * Accepts both `--opt value` and `--opt=value`. Pure — exported for unit tests.
+ */
+export function parseDevVerifyArgs(argv: string[]): { args: DevVerifyArgs } | { error: string } {
+  let sha: string | undefined;
+  let probeScript: string | undefined;
+  const numeric: Record<string, number> = { '--image-timeout': DEV_IMAGE_TIMEOUT_SEC, '--flipback-timeout': FLIP_BACK_TIMEOUT_SEC };
+
+  for (let i = 0; i < argv.length; i++) {
+    const raw = argv[i] as string;
+    if (!raw.startsWith('--')) {
+      if (sha !== undefined) return { error: `unexpected extra argument: ${raw}` };
+      sha = raw;
+      continue;
+    }
+    const eq = raw.indexOf('=');
+    const flag = eq === -1 ? raw : raw.slice(0, eq);
+    const inlineValue = eq === -1 ? undefined : raw.slice(eq + 1);
+    const takeValue = (): string | undefined => {
+      if (inlineValue !== undefined) return inlineValue;
+      const next = argv[++i];
+      return next === undefined || next.startsWith('--') ? undefined : next;
+    };
+    if (flag === '--probe-script') {
+      const value = takeValue();
+      if (!value) return { error: 'missing value for --probe-script' };
+      probeScript = value;
+    } else if (flag in numeric) {
+      const value = takeValue();
+      const n = Number(value);
+      if (value === undefined || !Number.isFinite(n) || n <= 0) {
+        return { error: `${flag} needs a positive number of seconds (got ${value ?? '<nothing>'})` };
+      }
+      numeric[flag] = n;
+    } else {
+      return { error: `unknown option: ${flag}` };
+    }
+  }
+
+  if (!sha) return { error: 'missing <sha>' };
+  // The SHA is compared against the image's OCI revision label, which is hex —
+  // anything else can never match, so reject it here rather than after 900s.
+  if (!/^[0-9a-f]{7,40}$/i.test(sha)) return { error: `<sha> must be a 7-40 char git SHA (got ${sha})` };
+  if (!probeScript) return { error: 'missing --probe-script <path>' };
+
+  return {
+    args: {
+      sha,
+      probeScript,
+      imageTimeout: numeric['--image-timeout'] as number,
+      flipBackTimeout: numeric['--flipback-timeout'] as number,
+    },
+  };
+}
+
 async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  const sha = argv.find(a => !a.startsWith('--'));
-  const probeScript = argv[argv.indexOf('--probe-script') + 1];
-  const imageTimeout = argv.includes('--image-timeout') ? Number(argv[argv.indexOf('--image-timeout') + 1]) : 900;
-  const flipBackTimeout = argv.includes('--flipback-timeout')
-    ? Number(argv[argv.indexOf('--flipback-timeout') + 1])
-    : FLIP_BACK_TIMEOUT_SEC;
-  if (!sha || !probeScript || probeScript.startsWith('--')) {
-    console.error(
-      'usage: autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900] [--flipback-timeout 900]',
-    );
+  const parsed = parseDevVerifyArgs(process.argv.slice(2));
+  if ('error' in parsed) {
+    console.error(`${parsed.error}\n${DEV_VERIFY_USAGE}`);
     process.exit(2);
   }
+  const { sha, probeScript, imageTimeout, flipBackTimeout } = parsed.args;
 
   const emit = (o: Record<string, unknown>) => console.log(`AUTOLOOP_DEV_VERIFY_RESULT ${JSON.stringify(o)}`);
 
@@ -210,16 +395,25 @@ async function main(): Promise<void> {
   await mcpExec('systemd-run --user --unit=sb-prepull-dev --quiet podman pull ghcr.io/mdopp/servicebay:dev || true').catch(() => {});
 
   let reachedDev = false;
+  let devImage: DevImageResult | null = null;
   let probeExit = -1;
   let probeOutput = '';
   try {
     // Flip to :dev and wait for the SHA's image to be live + healthy.
     await setChannel('dev');
+    // Not a settle window: the OUTGOING container keeps answering /api/health
+    // right through the flip (#2387), so the revision poll below — not this
+    // wait — is the authority on whether the :dev image is actually live.
     await waitHealth(180);
-    reachedDev = await waitForDevImage(sha, imageTimeout);
+    devImage = await confirmDevImage(
+      sha,
+      { readRevision: runningRevision, sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now() },
+      { timeoutSec: imageTimeout },
+    );
+    reachedDev = devImage.reached;
     if (reachedDev) await waitHealth(180);
     if (!reachedDev) {
-      probeOutput = `expected :dev image with revision ${sha} did not appear within ${imageTimeout}s (image build likely stuck)`;
+      probeOutput = `did not confirm :dev image with revision ${sha}: ${devImage.detail}`;
     } else {
       // Run the agent-supplied probes against the box on :dev.
       try {
@@ -251,6 +445,17 @@ async function main(): Promise<void> {
       probeExit,
       flippedBack,
       channel,
+      // Evidence behind reachedDev, so a `false` is diagnosable from the result
+      // line alone — reads:0 means "the box never answered", not "no :dev image"
+      // (#2493). No manual list_containers cross-check needed either way.
+      devImage: devImage
+        ? {
+            revision: devImage.revision,
+            reads: devImage.reads,
+            readFailures: devImage.readFailures,
+            detail: devImage.detail,
+          }
+        : null,
       flipBack: { reissues: back.reissues, polls: back.polls, detail: back.detail },
       probeOutput: probeOutput.slice(0, 4000),
     });
