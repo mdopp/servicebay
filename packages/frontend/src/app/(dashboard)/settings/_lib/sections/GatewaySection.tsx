@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { Button, Field, Input } from '@/components/ui';
 
 interface GatewayState {
   configured: boolean;
@@ -112,43 +113,49 @@ export default function GatewaySection() {
 
       <div className="space-y-4">
         <div className="grid sm:grid-cols-2 gap-4">
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Host</span>
-            <input
-              type="text"
-              value={host}
-              onChange={(e) => setHost(e.target.value)}
-              placeholder="fritz.box or 192.168.178.1"
-              className="p-2 border border-border bg-surface rounded text-sm font-mono"
-              autoComplete="off"
-            />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Username</span>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="fritz4554"
-              className="p-2 border border-border bg-surface rounded text-sm font-mono"
-              autoComplete="off"
-            />
-          </label>
-          <label className="flex flex-col gap-1 sm:col-span-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Password</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={state.hasPassword ? '•••••••• (leave blank to keep current)' : '(set a password)'}
-              className="p-2 border border-border bg-surface rounded text-sm font-mono"
-              autoComplete="new-password"
-            />
-          </label>
+          <Field label="Host">
+            {(props) => (
+              <Input
+                {...props}
+                type="text"
+                value={host}
+                onChange={(e) => setHost(e.target.value)}
+                placeholder="fritz.box or 192.168.178.1"
+                className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface text-text font-mono"
+                autoComplete="off"
+              />
+            )}
+          </Field>
+          <Field label="Username">
+            {(props) => (
+              <Input
+                {...props}
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="fritz4554"
+                className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface text-text font-mono"
+                autoComplete="off"
+              />
+            )}
+          </Field>
+          <Field label="Password" className="sm:col-span-2">
+            {(props) => (
+              <Input
+                {...props}
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={state.hasPassword ? '•••••••• (leave blank to keep current)' : '(set a password)'}
+                className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface text-text font-mono"
+                autoComplete="new-password"
+              />
+            )}
+          </Field>
         </div>
 
         <label className="inline-flex items-center gap-2 cursor-pointer text-sm text-text">
-          <input
+          <Input
             type="checkbox"
             checked={ssl}
             onChange={(e) => setSsl(e.target.checked)}
@@ -158,23 +165,25 @@ export default function GatewaySection() {
         </label>
 
         <div className="flex gap-2 pt-2">
-          <button
+          <Button
             onClick={() => submit(true)}
             disabled={busy !== null}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-white text-sm font-medium rounded disabled:opacity-50"
+            variant="primary"
+            size="md"
           >
             {busy === 'test' && <Loader2 size={14} className="animate-spin" />}
             Test connection &amp; save
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={() => submit(false)}
             disabled={busy !== null}
-            className="inline-flex items-center gap-2 px-4 py-2 border border-border hover:bg-surface-2 text-text text-sm font-medium rounded disabled:opacity-50"
+            variant="secondary"
+            size="md"
             title="Save without testing — useful when the FritzBox is currently unreachable"
           >
             {busy === 'save' && <Loader2 size={14} className="animate-spin" />}
             Save without test
-          </button>
+          </Button>
         </div>
 
         <p className="text-[11px] text-text-muted italic">

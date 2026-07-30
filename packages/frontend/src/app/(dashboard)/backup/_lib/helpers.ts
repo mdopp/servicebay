@@ -17,17 +17,17 @@ export type BackupStreamEvent =
   | { type: 'error'; message: string };
 
 export const LOG_STATUS_BADGES: Record<BackupLogStatus, string> = {
-  info: 'text-slate-600 bg-slate-100 dark:text-slate-300 dark:bg-slate-800',
-  success: 'text-emerald-700 bg-emerald-100 dark:text-emerald-300 dark:bg-emerald-900/30',
-  error: 'text-red-700 bg-red-100 dark:text-red-300 dark:bg-red-900/30',
-  skip: 'text-amber-700 bg-amber-100 dark:text-amber-300 dark:bg-amber-900/30',
+  info: 'text-text-muted bg-status-info/10',
+  success: 'text-status-ok bg-status-ok/10',
+  error: 'text-status-fail bg-status-fail/10',
+  skip: 'text-status-warn bg-status-warn/10',
 };
 
 export const LOG_STATUS_DOTS: Record<BackupLogStatus, string> = {
-  info: 'bg-slate-400',
-  success: 'bg-emerald-500',
-  error: 'bg-red-500',
-  skip: 'bg-amber-500',
+  info: 'bg-status-info',
+  success: 'bg-status-ok',
+  error: 'bg-status-fail',
+  skip: 'bg-status-warn',
 };
 
 export const formatBytes = (size: number): string => {
