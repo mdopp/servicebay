@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.15](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.14...servicebay-v5.11.15) (2026-07-30)
+
+
+### Bug Fixes
+
+* **components:** migrate DomainHealthDot to semantic color tokens ([efaa7f9](https://github.com/mdopp/servicebay/commit/efaa7f9d8dc3e00206d311d8cfc289593d390e55))
+* **components:** replace raw color literals with semantic design tokens in OfflineBanner ([e02b6d8](https://github.com/mdopp/servicebay/commit/e02b6d8dc4b5fddc9cfe3943fbe3c7782e3284b7))
+* **components:** replace raw color literals with semantic tokens in ContainerLogsPanel ([65e9504](https://github.com/mdopp/servicebay/commit/65e9504f0ca99423a56771cd4b9bdc8590cc5fb7))
+* **dashboard:** replace raw colors with semantic design tokens ([cc1be64](https://github.com/mdopp/servicebay/commit/cc1be64121b8f169781586bbd0aade64cc92381e))
+* **frontend:** lint-ratchet color-literal burn-down (batch l) ([5794dd0](https://github.com/mdopp/servicebay/commit/5794dd09271d0b2629e5a8997133527c29128c02))
+* **settings:** replace raw Tailwind colors in OperateActionsTab with semantic tokens ([be976fe](https://github.com/mdopp/servicebay/commit/be976fef4d45908ee890fd753928eeeafda2684f))
+
 ## [5.11.14](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.13...servicebay-v5.11.14) (2026-07-30)
 
 
