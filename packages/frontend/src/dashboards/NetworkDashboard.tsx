@@ -41,7 +41,7 @@ import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkI
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
-import { Button, Badge, StatusDot } from '@/components/ui';
+import { Button, Badge, StatusDot, Input } from '@/components/ui';
 import {
   buildOrthogonalPath,
   buildServiceEditHref,
@@ -397,13 +397,14 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
          <div className={`w-full h-full rounded-xl border-2 flex flex-col justify-between p-2 pl-2 transition-all group-border border-border/50 bg-surface-2/30`}>
             <div className="flex justify-between items-start w-full pointer-events-none">
                 <div className={`self-start px-3 py-1.5 rounded-md text-sm font-bold uppercase tracking-wider border shadow-sm flex items-center gap-2 pointer-events-auto bg-surface-2 text-text border-border`}>
-                    <button
+                    <Button
+                        variant="ghost"
                         onClick={(e) => { e.stopPropagation(); onToggle?.(id); }}
-                        className="mr-1 hover:bg-border rounded p-0.5 text-muted"
+                        className="!h-auto !p-0.5 mr-1 text-muted hover:bg-border"
                         title="Collapse Group"
                     >
                         <LayoutGrid size={14} />
-                    </button>
+                    </Button>
                     {data.status && (
                         <div className={`w-2.5 h-2.5 rounded-full ${data.status === 'up' ? 'bg-status-ok' : 'bg-status-fail'}`} />
                     )}
@@ -472,13 +473,14 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                 <div className="font-bold text-lg text-text truncate pr-2 flex items-center gap-2" title={data.label}>
                     {/* Add Expand Button if Expandable & Collapsed */}
                     {isExpandable && (
-                        <button
+                        <Button
+                            variant="ghost"
                             onClick={(e) => { e.stopPropagation(); onToggle?.(id); }}
-                            className="hover:bg-border rounded p-1 text-muted transition-colors"
+                            className="!h-auto !p-1 text-muted hover:bg-border transition-colors"
                             title="Expand Group"
                         >
                             <ChevronDown size={16} className="-rotate-90" />
-                        </button>
+                        </Button>
                     )}
                     
                     {data.label}
@@ -616,16 +618,17 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
                         </span>
                         
                         {!!data.metadata?.isExternalMissing && (
-                            <button
+                            <Button
+                                variant="primary"
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     data.onCreateExternalLink?.(data);
                                 }}
-                                className="mt-1 px-2 py-1 bg-accent hover:bg-accent-strong text-on-accent text-[10px] font-bold uppercase tracking-wider rounded transition-colors shadow-sm flex items-center gap-1"
+                                className="!h-auto !px-2 !py-1 mt-1 text-[10px] font-bold uppercase tracking-wider shadow-sm flex items-center gap-1"
                             >
                                 <Plus size={10} />
                                 Add Link
-                            </button>
+                            </Button>
                         )}
                     </div>
                 </div>
@@ -759,14 +762,15 @@ function NetworkLegend() {
     return (
         <Panel position="bottom-left">
             <div className="bg-surface border border-border rounded-card shadow-sm text-xs">
-                <button
+                <Button
+                    variant="ghost"
                     onClick={() => setIsOpen(!isOpen)}
-                    className="px-3 py-1.5 flex items-center gap-1.5 text-text-muted hover:text-text font-medium w-full"
+                    className="!h-auto !px-3 !py-1.5 flex items-center gap-1.5 text-text-muted hover:text-text font-medium w-full"
                 >
                     <Info size={12} />
                     Legend
                     <ChevronDown size={12} className={`ml-auto transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                </button>
+                </Button>
                 {isOpen && <LegendBody />}
             </div>
         </Panel>
@@ -1552,7 +1556,7 @@ export default function NetworkDashboard() {
       >
         <div className="relative flex-1 max-w-md min-w-[100px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-subtle" />
-            <input
+            <Input
                 type="text"
                 placeholder="Search..."
                 value={searchQuery}
@@ -1756,7 +1760,7 @@ export default function NetworkDashboard() {
                             <div className="space-y-2 mb-3">
                                 {availablePorts.map(port => (
                                     <label key={port} className="flex items-center gap-2 cursor-pointer p-2 rounded-card hover:bg-surface-2 border border-transparent hover:border-border">
-                                        <input
+                                        <Input
                                             type="radio"
                                             name="targetPort"
                                             value={port}
@@ -1768,7 +1772,7 @@ export default function NetworkDashboard() {
                                     </label>
                                 ))}
                                 <label className="flex items-center gap-2 cursor-pointer p-2 rounded-card hover:bg-surface-2 border border-transparent hover:border-border">
-                                    <input
+                                    <Input
                                         type="radio"
                                         name="targetPort"
                                         value="custom"
@@ -1782,7 +1786,7 @@ export default function NetworkDashboard() {
                         )}
 
                         {(!availablePorts.length || !availablePorts.includes(parseInt(connectionPort))) && (
-                             <input
+                             <Input
                                 type="number"
                                 value={connectionPort}
                                 onChange={(e) => setConnectionPort(e.target.value)}
