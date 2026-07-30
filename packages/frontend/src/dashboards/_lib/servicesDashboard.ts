@@ -23,9 +23,9 @@ export type LinkFormState = {
 /** Border-color tailwind classes per bundle severity. The card body
  *  reuses these so a row's outline matches its severity icon. */
 export const bundleSeverityClasses: Record<ServiceBundle['severity'], string> = {
-  critical: 'border-red-200 dark:border-red-800',
-  warning: 'border-amber-200 dark:border-amber-800',
-  info: 'border-gray-200 dark:border-gray-800',
+  critical: 'border-status-fail',
+  warning: 'border-status-warn',
+  info: 'border-border',
 };
 
 /** Raw shape the external-links API returns, before it's mapped into
