@@ -86,9 +86,9 @@ export function DomainHealthDot({ domain, className = '' }: { domain: string; cl
   const check = cache?.get(domain);
   const status = check?.status ?? 'unknown';
 
-  const colour = status === 'ok'   ? 'bg-emerald-500'
-              : status === 'fail' ? 'bg-rose-500'
-              :                     'bg-gray-300 dark:bg-gray-600';
+  const colour = status === 'ok'   ? 'bg-status-ok'
+              : status === 'fail' ? 'bg-status-fail'
+              :                     'bg-surface-2';
 
   const titleParts: string[] = [];
   if (!check) {
