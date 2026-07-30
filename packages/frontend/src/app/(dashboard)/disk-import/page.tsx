@@ -12,6 +12,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, HardDrive, RefreshCw, Download, Save, Trash2, AlertTriangle } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
+import { DataTable } from '@/components/ui/DataTable';
+import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { RoutingTree } from './_lib/RoutingTree';
 import type { ReviewTree, Rule } from './_lib/types';
 
@@ -483,12 +487,9 @@ function WorkerProgress({ run, onStartOver }: { run: RunStatus; onStartOver: () 
           <div className="flex justify-between"><dt>Planned</dt><dd>{s.planned}</dd></div>
         </dl>
       )}
-      <button
-        onClick={onStartOver}
-        className="block text-xs text-text-subtle hover:text-text inline-flex items-center gap-1"
-      >
+      <Button variant="ghost" size="sm" onClick={onStartOver}>
         <RefreshCw size={12} /> Stop and start over
-      </button>
+      </Button>
     </div>
   );
 }
@@ -535,49 +536,20 @@ function PlanReview({ status }: { status: NonNullable<RunStatus['status']> }) {
       </div>
 
       {cats.length > 0 ? (
-        <div className="overflow-x-auto -mx-1">
-          <table className="w-full text-xs">
-            <thead className="text-text-muted">
-              <tr className="border-b border-border">
-                <th className="py-1.5 pr-3 text-left font-medium">Category</th>
-                <th className="py-1.5 px-2 text-right font-medium">Files</th>
-                <th className="py-1.5 px-2 text-right font-medium">Size</th>
-                <th className="py-1.5 px-2 text-right font-medium">Import</th>
-                <th className="py-1.5 px-2 text-right font-medium">Renamed</th>
-                <th className="py-1.5 px-2 text-right font-medium">Dupes</th>
-                <th className="py-1.5 pl-2 text-right font-medium">Conflicts</th>
-              </tr>
-            </thead>
-            <tbody className="text-text">
-              {cats.map(c => (
-                <tr key={c.category} className="border-b border-border">
-                  <td className="py-1.5 pr-3 capitalize">{c.category}</td>
-                  <td className="py-1.5 px-2 text-right tabular-nums">{c.files.toLocaleString()}</td>
-                  <td className="py-1.5 px-2 text-right tabular-nums">{formatBytes(c.bytes)}</td>
-                  <td className="py-1.5 px-2 text-right tabular-nums text-status-info">{c.copy.toLocaleString()}</td>
-                  <td className="py-1.5 px-2 text-right tabular-nums">{(c.renamed ?? 0).toLocaleString()}</td>
-                  <td className="py-1.5 px-2 text-right tabular-nums">{c.skipDupe.toLocaleString()}</td>
-                  <td className={`py-1.5 pl-2 text-right tabular-nums ${c.conflict ? 'font-medium text-status-warn' : ''}`}>
-                    {c.conflict.toLocaleString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot className="font-semibold text-text">
-              <tr>
-                <td className="py-1.5 pr-3">Total</td>
-                <td className="py-1.5 px-2 text-right tabular-nums">{totals.files.toLocaleString()}</td>
-                <td className="py-1.5 px-2 text-right tabular-nums">{formatBytes(totals.bytes)}</td>
-                <td className="py-1.5 px-2 text-right tabular-nums text-status-info">{totals.copy.toLocaleString()}</td>
-                <td className="py-1.5 px-2 text-right tabular-nums">{totals.renamed.toLocaleString()}</td>
-                <td className="py-1.5 px-2 text-right tabular-nums">{totals.skipDupe.toLocaleString()}</td>
-                <td className={`py-1.5 pl-2 text-right tabular-nums ${totals.conflict ? 'text-status-warn' : ''}`}>
-                  {totals.conflict.toLocaleString()}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+        <DataTable<CategoryRollup & { isTotal?: boolean }>
+          columns={[
+            { key: 'category', header: 'Category', cell: (r) => <div className={r.isTotal ? 'font-semibold' : 'capitalize'}>{r.category}</div> },
+            { key: 'files', header: 'Files', cell: (r) => <div className="text-right tabular-nums">{r.files.toLocaleString()}</div>, align: 'right' },
+            { key: 'bytes', header: 'Size', cell: (r) => <div className="text-right tabular-nums">{formatBytes(r.bytes)}</div>, align: 'right' },
+            { key: 'copy', header: 'Import', cell: (r) => <div className={`text-right tabular-nums ${r.isTotal ? '' : 'text-status-info'}`}>{r.copy.toLocaleString()}</div>, align: 'right' },
+            { key: 'renamed', header: 'Renamed', cell: (r) => <div className="text-right tabular-nums">{(r.renamed ?? 0).toLocaleString()}</div>, align: 'right' },
+            { key: 'skipDupe', header: 'Dupes', cell: (r) => <div className="text-right tabular-nums">{r.skipDupe.toLocaleString()}</div>, align: 'right' },
+            { key: 'conflict', header: 'Conflicts', cell: (r) => <div className={`text-right tabular-nums ${r.conflict > 0 ? 'font-medium text-status-warn' : ''}`}>{r.conflict.toLocaleString()}</div>, align: 'right' },
+          ]}
+          rows={[...cats, { ...totals, category: 'Total', isTotal: true } as CategoryRollup & { isTotal: boolean }]}
+          rowKey={(r) => r.isTotal ? 'total' : r.category}
+          className="text-xs"
+        />
       ) : (
         <p className="text-xs text-text-muted">No category breakdown available for this run.</p>
       )}
@@ -628,51 +600,22 @@ function RoutingPresets({
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs rounded-lg bg-surface-2 px-2.5 py-2">
       <span className="text-text-muted">Saved selections:</span>
-      <select
-        value={selected}
-        onChange={e => {
-          const picked = e.target.value;
-          setSelected(picked);
-          const p = profiles.find(x => x.name === picked);
-          if (p) onLoad(p.rules);
-        }}
-        className="rounded border px-1.5 py-1 bg-surface border-border text-text"
-      >
-        <option value="">{profiles.length ? 'Load a preset…' : 'No saved presets'}</option>
+      <Select value={selected} onChange={e => { const picked = e.target.value; setSelected(picked); const p = profiles.find(x => x.name === picked); if (p) onLoad(p.rules); }} className="rounded border px-1.5 py-1 bg-surface border-border text-text text-xs">
+        <option value="">{profiles.length ? 'Load a preset...' : 'No saved presets'}</option>
         {profiles.map(p => (
           <option key={p.name} value={p.name}>{p.name}</option>
         ))}
-      </select>
+      </Select>
       {selected && (
-        <button
-          onClick={() => {
-            onDelete(selected);
-            setSelected('');
-          }}
-          className="inline-flex items-center gap-1 text-status-fail hover:text-status-fail"
-          title={`Delete preset “${selected}”`}
-        >
+        <Button variant="danger" size="sm" onClick={() => { onDelete(selected); setSelected(''); }}>
           <Trash2 size={12} /> Delete
-        </button>
+        </Button>
       )}
       <span className="mx-1 text-text-subtle">|</span>
-      <input
-        value={name}
-        onChange={e => setName(e.target.value)}
-        placeholder="Name this selection"
-        className="rounded border px-2 py-1 bg-surface border-border text-text"
-      />
-      <button
-        onClick={() => {
-          onSave(name.trim());
-          setName('');
-        }}
-        disabled={!edited || !name.trim()}
-        className="inline-flex items-center gap-1 rounded bg-surface-2 px-2 py-1 font-medium text-text hover:bg-surface disabled:opacity-50"
-        title={edited ? 'Save the current owner/target picks as a named preset' : 'Pick owners/targets first'}
-      >
+      <Input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Name this selection" className="rounded border px-2 py-1 bg-surface border-border text-text text-xs" />
+      <Button variant="secondary" size="sm" onClick={() => { onSave(name.trim()); setName(''); }} disabled={!edited || !name.trim()} title={edited ? 'Save current owner/target picks as preset' : 'Pick owners/targets first'}>
         <Save size={12} /> Save selection
-      </button>
+      </Button>
     </div>
   );
 }
@@ -736,21 +679,13 @@ function PlanReady({
       </div>
 
       <div>
-        <button
-          onClick={onApply}
-          disabled={applying}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded-lg disabled:opacity-50"
-        >
-          {applying && <Loader2 size={14} className="animate-spin" />} <Download size={14} />{' '}
-          {edited ? 'Re-plan & import' : 'Import now'}
-        </button>
+        <Button variant="primary" size="md" onClick={onApply} disabled={applying}>
+          {applying && <Loader2 size={14} className="animate-spin" />} <Download size={14} /> {edited ? 'Re-plan & import' : 'Import now'}
+        </Button>
       </div>
-      <button
-        onClick={onStartOver}
-        className="block text-xs text-text-subtle hover:text-text inline-flex items-center gap-1"
-      >
+      <Button variant="ghost" size="sm" onClick={onStartOver}>
         <RefreshCw size={12} /> Start over
-      </button>
+      </Button>
     </div>
   );
 }
@@ -764,12 +699,9 @@ function ApplyDone({ run, onStartOver }: { run: RunStatus; onStartOver: () => vo
       <p className="text-sm text-text">
         {s.applied} file(s) imported. Start over to run another import.
       </p>
-      <button
-        onClick={onStartOver}
-        className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded-lg"
-      >
+      <Button variant="primary" size="md" onClick={onStartOver}>
         <RefreshCw size={14} /> Start over
-      </button>
+      </Button>
     </div>
   );
 }
@@ -778,9 +710,9 @@ function NoDisks({ onRefresh }: { onRefresh: () => void }) {
   return (
     <div className="text-sm text-text-subtle space-y-2">
       <p className="flex items-center gap-2"><HardDrive size={16} /> No USB disk detected. Plug one in and refresh.</p>
-      <button onClick={onRefresh} className="text-xs text-status-info hover:underline inline-flex items-center gap-1">
+      <Button variant="ghost" size="sm" onClick={onRefresh}>
         <RefreshCw size={12} /> Refresh
-      </button>
+      </Button>
     </div>
   );
 }
@@ -815,18 +747,14 @@ function DevicePicker({
       <div className="space-y-1">
         {devices.map(d => (
           <label key={d.path} className="flex items-center gap-2 text-sm text-text cursor-pointer">
-            <input type="radio" name="disk-import-device" value={d.path} checked={selected === d.path} onChange={() => onSelect(d.path)} />
+            <Input type="radio" name="disk-import-device" value={d.path} checked={selected === d.path} onChange={() => onSelect(d.path)} />
             <HardDrive size={14} /> {d.display}
           </label>
         ))}
       </div>
-      <button
-        onClick={onLaunch}
-        disabled={launching || !selected}
-        className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded-lg disabled:opacity-50"
-      >
+      <Button variant="primary" size="md" onClick={onLaunch} disabled={launching || !selected}>
         {launching && <Loader2 size={14} className="animate-spin" />} Scan disk
-      </button>
+      </Button>
     </div>
   );
 }
