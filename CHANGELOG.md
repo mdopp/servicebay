@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.5](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.4...servicebay-v5.11.5) (2026-07-30)
+
+
+### Bug Fixes
+
+* **components:** replace raw color literals with semantic tokens in ActionProgressModal ([6f0bdc7](https://github.com/mdopp/servicebay/commit/6f0bdc76f83c543de62cec525bcb93ad9b44075e))
+* **frontend:** replace raw color literals in login page with design tokens ([5496fff](https://github.com/mdopp/servicebay/commit/5496fff279a48dfd47f423c50ba820c4d2ff0695))
+* **frontend:** replace raw UI primitives in disk-import page with design-system components ([410d9aa](https://github.com/mdopp/servicebay/commit/410d9aa91998a63bc0f0537e427400f84c8f0d05))
+* **frontend:** replace raw UI primitives in LogViewer with design-system components ([b76da45](https://github.com/mdopp/servicebay/commit/b76da457314018d652cd73b1f9af0a36777dad36))
+* **hooks:** migrate useServiceActions to semantic color tokens ([031fd04](https://github.com/mdopp/servicebay/commit/031fd04069bfbbff4e14836a0272c1796d2f2746))
+
 ## [5.11.4](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.3...servicebay-v5.11.4) (2026-07-29)
 
 
