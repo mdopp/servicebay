@@ -57,7 +57,7 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
       <div className="relative">
         <input
           type="text"
-          className={`w-full p-2 border rounded bg-gray-50 dark:bg-gray-700 dark:border-gray-600 ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+          className={`w-full p-2 border rounded bg-surface-2 border-border ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
           placeholder={loading ? 'Loading...' : placeholder}
           value={filter}
           disabled={disabled || loading}
@@ -70,16 +70,16 @@ export const Autocomplete: React.FC<AutocompleteProps> = ({
         />
         {loading && (
           <div className="absolute right-2 top-2.5">
-            <div className="animate-spin h-5 w-5 border-2 border-blue-500 rounded-full border-t-transparent"></div>
+            <div className="animate-spin h-5 w-5 border-2 border-status-info rounded-full border-t-transparent"></div>
           </div>
         )}
       </div>
       {isOpen && !disabled && !loading && filteredOptions.length > 0 && (
-        <ul className="absolute z-10 w-full mt-1 max-h-60 overflow-auto bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-lg">
+        <ul className="absolute z-10 w-full mt-1 max-h-60 overflow-auto bg-surface border-border rounded shadow-lg">
           {filteredOptions.map((option, index) => (
             <li
               key={index}
-              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+              className="p-2 hover:bg-surface-2 cursor-pointer"
               onClick={() => {
                 onChange(option);
                 setFilter(option);

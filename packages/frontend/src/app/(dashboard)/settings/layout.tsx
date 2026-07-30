@@ -14,7 +14,7 @@ function SettingsShell({ children }: { children: React.ReactNode }) {
   const activeGroupId = pathname.split('/').filter(Boolean)[1] ?? DEFAULT_GROUP.id;
 
   if (loading) {
-    return <div className="p-8 text-center text-gray-500">Loading settings...</div>;
+    return <div className="p-8 text-center text-text-subtle">Loading settings...</div>;
   }
 
   return (
@@ -22,7 +22,7 @@ function SettingsShell({ children }: { children: React.ReactNode }) {
       <PageHeader
         title="Settings"
         actions={
-          <span className="text-sm text-gray-500 dark:text-gray-400 inline-flex items-center gap-2">
+          <span className="text-sm text-text-muted inline-flex items-center gap-2">
             {saving ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -37,7 +37,7 @@ function SettingsShell({ children }: { children: React.ReactNode }) {
         <SettingsSearch />
       </PageHeader>
 
-      <div className="flex border-b border-gray-200 dark:border-gray-700 px-6 bg-white dark:bg-gray-900 sticky top-0 z-10 overflow-x-auto">
+      <div className="flex border-b border-border px-6 bg-surface sticky top-0 z-10 overflow-x-auto">
         {SETTINGS_GROUPS.map(group => {
           const Icon = group.icon;
           const isActive = activeGroupId === group.id;
@@ -48,8 +48,8 @@ function SettingsShell({ children }: { children: React.ReactNode }) {
               title={group.intent}
               className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 isActive
-                  ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300'
+                  ? 'border-status-info text-status-info'
+                  : 'border-transparent text-text-subtle hover:text-text dark:hover:text-text-muted hover:border-border'
               }`}
             >
               <Icon size={16} />

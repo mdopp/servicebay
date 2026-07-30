@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { Activity, Edit, MoreVertical, Trash2 } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 import { ServiceViewModel } from '@servicebay/api-client';
 
 type ServiceActionHandlers = {
@@ -42,55 +43,60 @@ export function ServiceActionBar({ service, onMonitor, onEdit, onActions, onEdit
         </>
       ) : isLink ? (
         <>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => onEditLink?.(service)}
-            className="p-1.5 text-text-subtle hover:text-text hover:bg-surface-2 rounded transition-colors"
+            className="text-text-subtle"
             title="Edit Link"
           >
             <Edit size={16} />
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => onDelete?.(service)}
-            className="p-1.5 text-text-subtle hover:text-status-fail hover:bg-status-fail/10 rounded transition-colors"
+            className="text-text-subtle hover:text-status-fail hover:bg-status-fail/10"
             title="Delete"
           >
             <Trash2 size={16} />
-          </button>
+          </Button>
         </>
       ) : (
         <>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => onMonitor?.(service)}
-            className="p-1.5 text-text-subtle hover:text-status-info hover:bg-status-info/10 rounded transition-colors"
+            className="text-text-subtle hover:text-status-info hover:bg-status-info/10"
             title="Monitor"
           >
             <Activity size={16} />
-          </button>
+          </Button>
           {service.type === 'kube' ? (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => onEdit?.(service)}
-              className="p-1.5 text-text-subtle hover:text-text hover:bg-surface-2 rounded transition-colors"
+              className="text-text-subtle"
               title="Edit Configuration"
             >
               <Edit size={16} />
-            </button>
+            </Button>
           ) : (
             <div className="p-1.5 text-text-subtle cursor-not-allowed opacity-50" title="Not Managed via Quadlet Kube">
               <Edit size={16} />
             </div>
           )}
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => onActions?.(service)}
-            className="p-1.5 text-text-subtle hover:text-accent-strong hover:bg-accent/10 rounded transition-colors"
+            className="text-text-subtle hover:text-accent-strong hover:bg-accent/10"
             title="Actions"
           >
             <MoreVertical size={16} />
-          </button>
+          </Button>
         </>
       )}
     </div>
