@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Plus, Trash2, Send, CheckCircle2, AlertCircle } from 'lucide-react';
-import { Button } from '@/components/ui';
+import { Button, Input } from '@/components/ui';
 import { useSettings } from '../SettingsContext';
 
 // Shared token-based input chrome for this section's text fields.
@@ -82,16 +82,17 @@ export default function EmailNotificationsSection() {
     <>
       <label className="flex items-center justify-between gap-space-3">
         <span className="text-sm font-medium text-text">Enable email notifications</span>
-        <button
+        <Button
           role="switch"
           aria-checked={emailEnabled}
           aria-label="Enable email notifications"
           onClick={() => handleEnabledToggle(!emailEnabled)}
           disabled={saving}
-          className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-chip transition-colors disabled:opacity-50 ${emailEnabled ? 'bg-accent' : 'bg-surface-muted border border-border'}`}
+          className={`relative h-6 w-11 shrink-0 items-center rounded-chip transition-colors ${emailEnabled ? 'bg-accent' : 'bg-surface-muted border border-border'}`}
+          type="button"
         >
           <span className={`inline-block h-4 w-4 transform rounded-chip bg-white transition-transform ${emailEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-        </button>
+        </Button>
       </label>
 
       {emailEnabled && (
@@ -108,7 +109,7 @@ export default function EmailNotificationsSection() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className={LABEL_CLASS}>SMTP Host</label>
-              <input
+              <Input
                 type="text"
                 value={emailHost}
                 onChange={e => setEmailHost(e.target.value)}
@@ -120,7 +121,7 @@ export default function EmailNotificationsSection() {
             </div>
             <div>
               <label className={LABEL_CLASS}>SMTP Port</label>
-              <input
+              <Input
                 type="number"
                 value={emailPort}
                 onChange={e => setEmailPort(parseInt(e.target.value) || 0)}
@@ -132,7 +133,7 @@ export default function EmailNotificationsSection() {
             </div>
             <div>
               <label className={LABEL_CLASS}>Username</label>
-              <input
+              <Input
                 type="text"
                 value={emailUser}
                 onChange={e => setEmailUser(e.target.value)}
@@ -144,7 +145,7 @@ export default function EmailNotificationsSection() {
             </div>
             <div>
               <label className={LABEL_CLASS}>Password</label>
-              <input
+              <Input
                 type="password"
                 value={emailPass}
                 onChange={e => setEmailPass(e.target.value)}
@@ -156,7 +157,7 @@ export default function EmailNotificationsSection() {
             </div>
             <div className="md:col-span-2">
               <label className={LABEL_CLASS}>From Address</label>
-              <input
+              <Input
                 type="text"
                 value={emailFrom}
                 onChange={e => setEmailFrom(e.target.value)}
@@ -168,7 +169,7 @@ export default function EmailNotificationsSection() {
             </div>
             <div className="md:col-span-2">
               <label className="flex items-center gap-2 cursor-pointer">
-                <input
+                <Input
                   type="checkbox"
                   checked={emailSecure}
                   onChange={e => handleSecureToggle(e.target.checked)}
@@ -186,7 +187,7 @@ export default function EmailNotificationsSection() {
               Verifies the SMTP settings above by sending one canned message to the address you enter. Works even when the master toggle is off — useful before enabling alerts.
             </p>
             <div className="flex gap-2">
-              <input
+              <Input
                 type="email"
                 value={testRecipient}
                 onChange={e => setTestRecipient(e.target.value)}
@@ -224,7 +225,7 @@ export default function EmailNotificationsSection() {
           <div className="border-t border-border pt-6">
             <label className="block text-sm font-medium text-text-muted mb-2">Recipients</label>
             <div className="flex gap-2 mb-3">
-              <input
+              <Input
                 type="email"
                 value={newRecipient}
                 onChange={e => setNewRecipient(e.target.value)}
