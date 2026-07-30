@@ -69,13 +69,13 @@ export default function OfflineBanner() {
       <div
         role="status"
         aria-live="assertive"
-        className="fixed top-0 inset-x-0 z-50 flex items-center justify-center gap-2 px-4 py-1.5 text-sm font-semibold text-white bg-red-600 shadow-md"
+        className="fixed top-0 inset-x-0 z-50 flex items-center justify-center gap-2 px-4 py-1.5 text-sm font-semibold text-white bg-status-fail shadow-md"
       >
         <span className="inline-block w-2 h-2 rounded-full bg-white animate-pulse" aria-hidden="true" />
         Not online — trying to reconnect…
       </div>
       {/* Thin red frame so the whole UI reads as degraded, without a full wash. */}
-      <div className="pointer-events-none fixed inset-0 z-40 ring-2 ring-inset ring-red-500/60" aria-hidden="true" />
+      <div className="pointer-events-none fixed inset-0 z-40 ring-2 ring-inset ring-status-fail/60" aria-hidden="true" />
     </>
   );
 }
