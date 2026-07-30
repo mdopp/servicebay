@@ -8,16 +8,16 @@ const REMOVABLE_FSTYPES = new Set(['vfat', 'exfat', 'ntfs']);
 
 function rowClass(active: boolean, selectable: boolean): string {
   const base = 'w-full flex items-start gap-2 px-3 py-2 text-left rounded-lg border-2 transition-colors';
-  if (active) return `${base} bg-blue-50 dark:bg-blue-900/20 border-blue-500 dark:border-blue-400`;
-  if (selectable) return `${base} border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 hover:border-gray-300 dark:hover:border-gray-600`;
-  return `${base} border-gray-200 dark:border-gray-700 opacity-60 cursor-not-allowed`;
+  if (active) return `${base} bg-accent/10 border-accent`;
+  if (selectable) return `${base} border-border hover:bg-surface-2 hover:border-border`;
+  return `${base} border-border opacity-60 cursor-not-allowed`;
 }
 
 /** The second line of a row — free space when mounted, hint when not. */
 function MountDetail({ mount }: { mount: MountCandidate }) {
   if (mount.mounted && mount.mountpoint) {
     return (
-      <div className="text-[11px] text-gray-500 dark:text-gray-400">
+      <div className="text-[11px] text-text-muted">
         <span className="font-mono">{mount.mountpoint}</span>
         {mount.fsAvail && <span> · {mount.fsAvail} free{mount.fsUsedPct ? ` (${mount.fsUsedPct} used)` : ''}</span>}
         {mount.fstype && <span> · {mount.fstype}</span>}
@@ -25,7 +25,7 @@ function MountDetail({ mount }: { mount: MountCandidate }) {
     );
   }
   return (
-    <div className="text-[11px] text-amber-600 dark:text-amber-400">
+    <div className="text-[11px] text-status-warn">
       Not mounted — mount a disk here first{mount.fstype ? ` (${mount.fstype})` : ''}
     </div>
   );
@@ -45,15 +45,15 @@ function MountRow({
   const Icon = REMOVABLE_FSTYPES.has(mount.fstype ?? '') ? Usb : HardDrive;
   return (
     <button type="button" disabled={!selectable} onClick={onSelect} aria-pressed={active} className={rowClass(active, selectable)}>
-      <Icon size={16} className={`mt-0.5 flex-shrink-0 ${active ? 'text-blue-600 dark:text-blue-300' : 'text-gray-400'}`} />
+      <Icon size={16} className={`mt-0.5 flex-shrink-0 ${active ? 'text-accent' : 'text-text-muted'}`} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 flex-wrap">
-          <span className={`text-xs font-semibold ${active ? 'text-blue-700 dark:text-blue-300' : 'text-gray-700 dark:text-gray-200'}`}>
+          <span className={`text-xs font-semibold ${active ? 'text-accent' : 'text-text'}`}>
             {mount.label || mount.device}
           </span>
-          <span className="text-[11px] font-mono text-gray-400">{mount.device}</span>
-          {mount.size && <span className="text-[11px] text-gray-400">· {mount.size}</span>}
-          {active && <CheckCircle2 size={12} className="text-blue-600 dark:text-blue-300" />}
+          <span className="text-[11px] font-mono text-text-muted">{mount.device}</span>
+          {mount.size && <span className="text-[11px] text-text-muted">· {mount.size}</span>}
+          {active && <CheckCircle2 size={12} className="text-accent" />}
         </div>
         <MountDetail mount={mount} />
       </div>
@@ -75,7 +75,7 @@ function MountList({
 }) {
   if (mounts.length === 0) {
     return (
-      <p className="text-[11px] text-gray-500 dark:text-gray-400 py-1">
+      <p className="text-[11px] text-text-muted py-1">
         {error
           ? `Couldn't list disks: ${error}. Enter a path manually below.`
           : 'No mounted disks detected. Mount a USB/external drive, then Rescan — or enter a path manually below.'}
@@ -102,12 +102,12 @@ function AdvancedPath({ value, onChange }: { value: string; onChange: (path: str
     <div>
       <input
         type="text"
-        className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+        className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-surface-2 text-text"
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder="/mnt/backup"
       />
-      <p className="text-[11px] text-gray-400 mt-1">
+      <p className="text-[11px] text-text-muted mt-1">
         Advanced: an explicit path. The disk must already be mounted here — Backup Sync refuses an unmounted target so it never writes to the OS disk.
       </p>
     </div>
@@ -176,19 +176,19 @@ export default function LocalTargetPicker({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">Target disk</label>
+        <label className="block text-xs font-medium text-text">Target disk</label>
         <button
           type="button"
           onClick={() => void load()}
           disabled={loading}
-          className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 disabled:opacity-50"
+          className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text disabled:opacity-50"
         >
           {loading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />} Rescan
         </button>
       </div>
 
       {loading && mounts === null ? (
-        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 py-2">
+        <div className="flex items-center gap-2 text-xs text-text-muted py-2">
           <Loader2 size={12} className="animate-spin" /> Scanning disks…
         </div>
       ) : (
@@ -198,7 +198,7 @@ export default function LocalTargetPicker({
           <button
             type="button"
             onClick={() => setShowAdvanced(v => !v)}
-            className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline"
+            className="text-[11px] text-accent hover:underline"
           >
             {advancedOpen ? 'Hide advanced path' : 'Advanced: enter a path manually'}
           </button>
