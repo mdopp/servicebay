@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.10](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.9...servicebay-v5.11.10) (2026-07-30)
+
+
+### Bug Fixes
+
+* **settings:** migrate FactoryResetSection raw color literals to semantic design tokens ([79c75c9](https://github.com/mdopp/servicebay/commit/79c75c9ee7f4f75c988f51c710481dbf300af2d8))
+* **settings:** replace raw UI primitives with Button and DataTable in CredentialsSection ([15f05c4](https://github.com/mdopp/servicebay/commit/15f05c47be714e93ebdab3f13cd5b622f88d634b))
+* **sidebar:** replace raw button elements with Button primitive ([22854c3](https://github.com/mdopp/servicebay/commit/22854c3335a5e59c6c0d1250050a34bbae536421))
+* **template-upgrades-banner:** replace raw color literals with semantic design tokens ([1cbd4b6](https://github.com/mdopp/servicebay/commit/1cbd4b66fb33c2a0f737f7221e809fdd632bb120))
+* **ui:** make cn resolve Tailwind conflicts so a caller className wins ([5eb3cb8](https://github.com/mdopp/servicebay/commit/5eb3cb81cec8708ee36603cca948cff072d55de7)), closes [#2484](https://github.com/mdopp/servicebay/issues/2484)
+* **wizard:** migrate FinishStep color utilities to semantic design tokens ([c28d2dc](https://github.com/mdopp/servicebay/commit/c28d2dcfaa68cea615cddf5f202d2ba8e207f348))
+* **wizard:** migrate WelcomeStep colors to semantic design tokens ([8cd12ea](https://github.com/mdopp/servicebay/commit/8cd12ea40ed1a22f44e2ef4110ea74ff26e7a207))
+
 ## [5.11.9](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.8...servicebay-v5.11.9) (2026-07-30)
 
 
