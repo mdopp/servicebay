@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, History, Info, Loader2, Wrench, X } from 'lucide-react';
-import { Button } from '@/components/ui';
+import { Button, DataTable, Field, Input } from '@/components/ui';
 
 /**
  * Shared probe-list renderer used by Settings → Self-Diagnose and by the
@@ -347,15 +347,16 @@ export default function DiagnoseProbeList({
                 <div className="flex items-start justify-between gap-2">
                   <ProbeHistoryBadge history={probe.history} compact={compact} />
                   {probe.history && probe.history.trend.length > 0 && (
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => void handleViewHistory(probe)}
                       title="View history"
                       aria-label={`View history for ${probe.label}`}
-                      className="shrink-0 mt-1.5 p-1 rounded-card hover:bg-surface-2 text-text-muted transition-colors"
+                      className="shrink-0 mt-1.5 p-1"
                     >
                       <History size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
                 {(probe.actions ?? []).length > 0 && (
@@ -428,28 +429,30 @@ export default function DiagnoseProbeList({
                         >
                           <p className="text-xs text-text-muted">{action.description}</p>
                           {inputs.map(input => (
-                            <div key={input.name} className="space-y-1">
-                              <label className="block text-xs font-medium text-text-muted">
-                                {input.label}{input.required !== false && <span className="text-status-fail"> *</span>}
-                              </label>
-                              <input
-                                type={input.type}
-                                value={values[input.name] ?? ''}
-                                placeholder={input.placeholder}
-                                required={input.required !== false}
-                                onChange={e =>
-                                  setFormValues(s => ({
-                                    ...s,
-                                    [key]: { ...(s[key] ?? {}), [input.name]: e.target.value },
-                                  }))
-                                }
-                                className="w-full px-space-2 py-1.5 text-sm rounded-card border border-border bg-surface-2 text-text focus:outline-none focus:ring-1 focus:ring-accent"
-                                autoComplete="off"
-                              />
-                              {input.hint && (
-                                <p className="text-xs text-text-muted">{input.hint}</p>
+                            <Field
+                              key={input.name}
+                              label={input.label}
+                              required={input.required !== false}
+                              help={input.hint}
+                            >
+                              {(fieldProps) => (
+                                <Input
+                                  {...fieldProps}
+                                  type={input.type}
+                                  value={values[input.name] ?? ''}
+                                  placeholder={input.placeholder}
+                                  required={input.required !== false}
+                                  onChange={e =>
+                                    setFormValues(s => ({
+                                      ...s,
+                                      [key]: { ...(s[key] ?? {}), [input.name]: e.target.value },
+                                    }))
+                                  }
+                                  className="w-full px-space-2 py-1.5 text-sm rounded-card border border-border bg-surface-2 text-text focus:outline-none focus:ring-1 focus:ring-accent"
+                                  autoComplete="off"
+                                />
                               )}
-                            </div>
+                            </Field>
                           ))}
                           <div className="flex items-center gap-2 pt-1">
                             <Button
@@ -602,14 +605,15 @@ export default function DiagnoseProbeList({
                 <h3 className="text-lg font-bold text-text truncate">{historyProbe.label}</h3>
                 <p className="text-xs text-text-muted font-mono truncate">diagnose:{historyProbe.id}</p>
               </div>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={closeHistory}
                 aria-label="Close history"
-                className="shrink-0 p-2 rounded-card hover:bg-surface-2 text-text-muted"
+                className="shrink-0"
               >
                 <X size={18} />
-              </button>
+              </Button>
             </div>
             <div className="flex-1 overflow-y-auto p-space-5">
               {historyLoading && historyData.length === 0 ? (
@@ -622,36 +626,37 @@ export default function DiagnoseProbeList({
                   No history recorded yet for this probe.
                 </div>
               ) : (
-                <table className="w-full text-left text-sm border border-border rounded-card overflow-hidden">
-                  <thead className="bg-surface-2 text-text-muted">
-                    <tr>
-                      <th className="p-3 font-semibold">Time</th>
-                      <th className="p-3 font-semibold">Status</th>
-                      <th className="p-3 font-semibold">Message</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {historyData.map((h, i) => (
-                      <tr key={i} className="hover:bg-surface-2 align-top">
-                        <td className="p-3 text-text whitespace-nowrap">
-                          {new Date(h.timestamp).toLocaleString()}
-                        </td>
-                        <td className="p-3">
-                          <span className={`inline-flex items-center px-space-2 py-0.5 rounded-chip text-xs font-medium ${
-                            h.status === 'ok'
-                              ? 'bg-status-ok/10 text-status-ok'
-                              : 'bg-status-fail/10 text-status-fail'
-                          }`}>
-                            {h.status.toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="p-3 text-text-muted whitespace-pre-wrap break-words font-mono text-xs">
-                          {h.message ?? ''}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <DataTable
+                  columns={[
+                    {
+                      key: 'time',
+                      header: 'Time',
+                      cell: (h) => new Date(h.timestamp).toLocaleString(),
+                      className: 'whitespace-nowrap',
+                    },
+                    {
+                      key: 'status',
+                      header: 'Status',
+                      cell: (h) => (
+                        <span className={`inline-flex items-center px-space-2 py-0.5 rounded-chip text-xs font-medium ${
+                          h.status === 'ok'
+                            ? 'bg-status-ok/10 text-status-ok'
+                            : 'bg-status-fail/10 text-status-fail'
+                        }`}>
+                          {h.status.toUpperCase()}
+                        </span>
+                      ),
+                    },
+                    {
+                      key: 'message',
+                      header: 'Message',
+                      cell: (h) => <div className="whitespace-pre-wrap break-words font-mono text-xs">{h.message ?? ''}</div>,
+                    },
+                  ]}
+                  rows={historyData}
+                  rowKey={(h, i) => String(i)}
+                  rowClassName={() => 'align-top'}
+                />
               )}
             </div>
           </div>
