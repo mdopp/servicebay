@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.13](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.12...servicebay-v5.11.13) (2026-07-30)
+
+
+### Bug Fixes
+
+* **components:** replace raw Tailwind colors with semantic tokens in Autocomplete ([4f3bf91](https://github.com/mdopp/servicebay/commit/4f3bf918d18485507913e136676d8616d3cde26f))
+* **frontend:** migrate PageHeader color literals to semantic tokens ([2c3407f](https://github.com/mdopp/servicebay/commit/2c3407f4bd80434cfcc9bd3a5cd2bc2120ed2090))
+* **SectionLoading:** replace raw color literals with semantic tokens ([8d07e22](https://github.com/mdopp/servicebay/commit/8d07e2214356242f99b9169f86312dcd2dda311b))
+* **settingslayout:** replace raw Tailwind color utilities with semantic design tokens ([8cad5f4](https://github.com/mdopp/servicebay/commit/8cad5f4fd3925ceaafb30d63c3ccd1b03c13dfdf))
+
 ## [5.11.12](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.11...servicebay-v5.11.12) (2026-07-30)
 
 
