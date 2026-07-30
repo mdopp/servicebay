@@ -228,11 +228,15 @@ describe('OverviewDashboard render', () => {
       </ToastProvider>,
     );
 
-    // The migrated banner sits on a <Card> (bg-surface) with a token accent —
-    // no raw blue literals (border-blue-200 / bg-blue-50 / bg-blue-600) anymore.
+    // The migrated banner sits on a <Card> (rounded-card surface) with a token
+    // accent — no raw blue literals (border-blue-200 / bg-blue-50 / bg-blue-600).
+    // Match on the Card's radius token, not `bg-surface`: since #2484 cn() merges
+    // Card's default `bg-surface` away in favour of the banner's own intended
+    // `bg-accent/5` tint, which is the whole point of that className.
     const bannerText = await screen.findByText(/1 service image update available/i);
-    const card = bannerText.closest('.bg-surface');
+    const card = bannerText.closest('.rounded-card');
     expect(card).not.toBeNull();
+    expect(card!.className).toContain('bg-accent/5');
     const html = (card as HTMLElement).outerHTML;
     expect(html).not.toMatch(/(border|bg|text)-blue-\d/);
     // Token accent present for the "update available" state.

@@ -120,49 +120,49 @@ export default function TemplateUpgradesPendingBanner() {
         <div
           className={`mb-4 rounded-lg border ${
             breaking
-              ? 'border-amber-300 dark:border-amber-700 bg-amber-50/70 dark:bg-amber-900/20'
-              : 'border-blue-200 dark:border-blue-800 bg-blue-50/70 dark:bg-blue-900/20'
+              ? 'border-status-warn bg-status-warn/10'
+              : 'border-status-info bg-status-info/10'
           }`}
         >
           <div className="p-4 flex items-start gap-3">
             <div
               className={`shrink-0 p-1.5 rounded ${
                 breaking
-                  ? 'bg-amber-100 dark:bg-amber-800/30 text-amber-700 dark:text-amber-300'
-                  : 'bg-blue-100 dark:bg-blue-800/30 text-blue-700 dark:text-blue-300'
+                  ? 'bg-status-warn/20 text-status-warn'
+                  : 'bg-status-info/20 text-status-info'
               }`}
             >
               <Icon size={16} />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="font-semibold text-sm text-gray-900 dark:text-white">
+              <div className="font-semibold text-sm text-text">
                 {visible.length} template upgrade{visible.length === 1 ? '' : 's'} available
                 {breaking ? ' — includes breaking changes' : ''}
               </div>
-              <ul className="mt-2 space-y-1.5 text-xs text-gray-700 dark:text-gray-300">
+              <ul className="mt-2 space-y-1.5 text-xs text-text-muted">
                 {visible.map(p => (
                   <li key={p.name} className="flex items-center gap-2 flex-wrap">
                     <span className="font-mono font-medium">{p.name}</span>
-                    <span className="text-gray-500 dark:text-gray-400">
+                    <span className="text-text-subtle">
                       v{p.installedVersion} → v{p.currentVersion}
                     </span>
                     {p.sectionHeaders.length > 0 && (
-                      <span className="text-gray-500 dark:text-gray-400">
+                      <span className="text-text-subtle">
                         ({p.sectionHeaders.join(', ')})
                       </span>
                     )}
                     {p.hasBreakingChange && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-amber-200 dark:bg-amber-700/50 text-amber-900 dark:text-amber-100">
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-status-warn/20 text-status-warn">
                         breaking
                       </span>
                     )}
                     <button
                       onClick={() => openInstaller(p.name)}
                       disabled={loadingName === p.name}
-                      className={`ml-auto inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded text-white disabled:opacity-50 ${
+                      className={`ml-auto inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded text-on-accent disabled:opacity-50 ${
                         p.hasBreakingChange
-                          ? 'bg-amber-600 hover:bg-amber-700'
-                          : 'bg-blue-600 hover:bg-blue-700'
+                          ? 'bg-status-warn hover:bg-status-warn/80'
+                          : 'bg-status-info hover:bg-status-info/80'
                       }`}
                       type="button"
                       title={p.hasBreakingChange ? 'Review changelog + acknowledge breaking changes, then re-deploy' : 'Re-deploy this service'}
@@ -176,7 +176,7 @@ export default function TemplateUpgradesPendingBanner() {
             </div>
             <button
               onClick={dismissAll}
-              className="shrink-0 p-1 rounded hover:bg-gray-200/50 dark:hover:bg-gray-700/50 text-gray-500 dark:text-gray-400"
+              className="shrink-0 p-1 rounded hover:bg-surface-2 text-text-subtle hover:text-text-muted"
               title="Dismiss until the next version bump"
               type="button"
             >
