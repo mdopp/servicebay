@@ -106,7 +106,7 @@ export default function FileShareSection() {
           <button
             onClick={loadUsers}
             disabled={loading}
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded disabled:opacity-50"
+            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-text-muted hover:bg-surface-2 rounded disabled:opacity-50"
             type="button"
             title="Re-run LLDAP → Samba sync"
           >
@@ -117,48 +117,48 @@ export default function FileShareSection() {
 
       <div className="space-y-3">
         {error && (
-          <div className="p-3 rounded-lg text-sm bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-800">
+          <div className="p-3 rounded-lg text-sm bg-surface text-status-fail border border-status-fail">
             {error}
           </div>
         )}
 
         {loading && !users && (
-          <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+          <div className="flex items-center gap-2 text-sm text-text-subtle">
             <Loader2 className="w-4 h-4 animate-spin" /> Loading LLDAP users…
           </div>
         )}
 
         {users && users.length === 0 && (
-          <p className="text-sm text-gray-500 dark:text-gray-400">No LLDAP users yet — create one in LLDAP first.</p>
+          <p className="text-sm text-text-subtle">No LLDAP users yet — create one in LLDAP first.</p>
         )}
 
         {users && users.length > 0 && (
-          <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+          <ul className="divide-y divide-border">
             {users.map(u => (
               <li key={u.id} className="py-2 flex items-center gap-3">
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+                  <div className="text-sm font-medium text-text truncate">
                     {u.displayName || u.id}
-                    <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400">
+                    <span className="ml-2 text-xs font-normal text-text-subtle">
                       ({u.id})
                     </span>
                   </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                  <div className="text-xs text-text-subtle">
                     {u.presentInSamba ? 'Samba account ready' : 'Samba account missing — click Set password to provision'}
                   </div>
                   {flashed?.id === u.id && (
-                    <div className="mt-2 p-2 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs">
+                    <div className="mt-2 p-2 rounded bg-surface border border-status-warn text-xs">
                       <div className="flex items-center gap-2">
                         <span className="font-mono break-all">{flashed.password}</span>
                         <button
                           onClick={() => copyPassword(flashed.password)}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 rounded"
+                          className="inline-flex items-center gap-1 px-2 py-1 text-status-warn hover:bg-surface-2 rounded"
                           type="button"
                         >
                           <Copy size={12} /> Copy
                         </button>
                       </div>
-                      <div className="mt-1 text-amber-700 dark:text-amber-300">
+                      <div className="mt-1 text-status-warn">
                         This is the only time the password is shown — copy it now.
                       </div>
                     </div>
@@ -167,7 +167,7 @@ export default function FileShareSection() {
                 <button
                   onClick={() => setPassword(u.id)}
                   disabled={busyUser === u.id}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded disabled:opacity-50"
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs bg-status-ok hover:bg-accent-strong text-on-accent rounded disabled:opacity-50"
                   type="button"
                 >
                   {busyUser === u.id ? <Loader2 size={12} className="animate-spin" /> : <KeyRound size={12} />}

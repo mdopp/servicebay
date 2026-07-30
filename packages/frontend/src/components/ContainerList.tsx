@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { Activity, Eraser, MoreVertical, RefreshCw, Terminal as TerminalIcon, X } from 'lucide-react';
 import type { EnrichedContainer } from '@servicebay/api-client';
-import { Card, SectionHeading, StatusDot } from '@/components/ui';
+import { Button, Card, SectionHeading, StatusDot } from '@/components/ui';
 import { useContainerActions } from '@/hooks/useContainerActions';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import ContainerLogsPanel, { type ContainerLogsPanelData } from '@/components/ContainerLogsPanel';
@@ -159,13 +159,14 @@ export default function ContainerList({ containers, groups, showParentBadge, ini
           {isLoading && slowConnect && 'Still connecting to Digital Twin… check Settings → Nodes if this persists.'}
         </span>
         {isLoading && slowConnect && (
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => { if (typeof window !== 'undefined') window.location.reload(); }}
-            className="flex items-center gap-1 px-3 py-1.5 text-xs bg-surface-2 hover:bg-surface-muted text-text rounded transition-colors not-italic"
+            className="not-italic"
           >
             <RefreshCw size={12} /> Refresh
-          </button>
+          </Button>
         )}
       </Card>
     );
@@ -209,27 +210,33 @@ export default function ContainerList({ containers, groups, showParentBadge, ini
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => openLogs(c)}
-              className="p-1.5 text-text-muted hover:text-accent hover:bg-surface-2 rounded"
+              className="!p-1.5"
               title="Logs & Info"
             >
               <Activity size={18} />
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => openTerminal(c)}
-              className="p-1.5 text-text-muted hover:text-accent hover:bg-surface-2 rounded"
+              className="!p-1.5"
               title="Terminal"
             >
               <TerminalIcon size={18} />
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => openActions(c)}
-              className="p-1.5 text-text-muted hover:text-accent hover:bg-surface-2 rounded"
+              className="!p-1.5"
               title="Actions"
             >
               <MoreVertical size={18} />
-            </button>
+            </Button>
           </div>
         </div>
         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs sm:text-sm text-text-muted">
@@ -367,27 +374,33 @@ export default function ContainerList({ containers, groups, showParentBadge, ini
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => terminalRef.current?.clear()}
-                      className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface-2"
+                      className="!p-2 !rounded-full"
                       title="Clear terminal"
                     >
                       <Eraser size={18} />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => terminalRef.current?.reconnect()}
-                      className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface-2"
+                      className="!p-2 !rounded-full"
                       title="Reconnect"
                     >
                       <RefreshCw size={18} />
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={closeDrawer}
-                      className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface-2"
+                      className="!p-2 !rounded-full"
                       title="Close"
                     >
                       <X size={18} />
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <div className="flex-1 overflow-hidden">

@@ -66,8 +66,6 @@ export function MobileTopBar() {
     return () => { cancelled = true; clearInterval(handle); };
   }, []);
 
-  const setupActive = pathname.startsWith('/setup');
-
   // #1992 — entries the bottom bar omits (Backup, Settings) must still be
   // reachable on a phone. Surface them as icons in the top bar's right row,
   // driven by the same navigation schema (no hand-coded duplication), so a
@@ -75,15 +73,15 @@ export function MobileTopBar() {
   const topBarEntries = NAVIGATION_ENTRIES.filter(p => p.hiddenOnMobileBottom);
 
   return (
-    <div className="h-14 bg-gray-100 dark:bg-black border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-4 shrink-0 md:hidden z-20">
+    <div className="h-14 bg-surface border-b border-border flex items-center justify-between px-4 shrink-0 md:hidden z-20">
        {/* Left: Logo + Text */}
        <div className="flex items-center gap-2">
-          <ServiceBayLogo size={24} className="text-blue-600 dark:text-blue-400" />
+          <ServiceBayLogo size={24} className="text-accent" />
           <div className="flex flex-col">
-             <span className="font-bold text-gray-900 dark:text-white text-sm leading-none">
+             <span className="font-bold text-text text-sm leading-none">
                 ServiceBay
              </span>
-             <span className="text-[10px] text-gray-500 dark:text-gray-400">by Korgraph.io{appVersion ? ` - v${appVersion}` : ''}</span>
+             <span className="text-[10px] text-text-muted">by Korgraph.io{appVersion ? ` - v${appVersion}` : ''}</span>
           </div>
        </div>
        {/* Center: where this ServiceBay lives — the desktop Sidebar is
@@ -96,16 +94,12 @@ export function MobileTopBar() {
           {hasActiveInstall && (
             <button
               onClick={() => router.push('/setup')}
-              className={`relative transition-colors ${
-                setupActive
-                  ? 'text-blue-600 dark:text-blue-400'
-                  : 'text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300'
-              }`}
+              className="relative transition-colors text-accent hover:text-accent-strong"
               aria-label="Resume setup"
               title="Resume setup"
             >
               <Wrench size={20} />
-              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-accent animate-pulse" />
             </button>
           )}
           {topBarEntries.map(p => {
@@ -117,8 +111,8 @@ export function MobileTopBar() {
                 onClick={() => router.push(`${p.path}${node ? `?node=${node}` : ''}`)}
                 className={`transition-colors ${
                   isActive
-                    ? 'text-blue-600 dark:text-blue-400'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                    ? 'text-accent'
+                    : 'text-text-muted hover:text-text'
                 }`}
                 aria-label={p.name}
                 title={p.name}
@@ -127,7 +121,7 @@ export function MobileTopBar() {
               </button>
             );
           })}
-          <a href="https://github.com/mdopp/servicebay" target="_blank" rel="noreferrer" className="text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+          <a href="https://github.com/mdopp/servicebay" target="_blank" rel="noreferrer" className="text-text-muted hover:text-text transition-colors">
              <Code size={20} />
           </a>
        </div>
@@ -154,7 +148,7 @@ export function MobileBottomBar() {
   return (
     <nav
       aria-label="Primary"
-      className="h-[72px] bg-gray-100 dark:bg-black border-t border-gray-200 dark:border-gray-800 flex items-center justify-around gap-1 px-2 shrink-0 md:hidden z-20 pb-2 overflow-x-auto no-scrollbar"
+      className="h-[72px] bg-surface border-t border-border flex items-center justify-around gap-1 px-2 shrink-0 md:hidden z-20 pb-2 overflow-x-auto no-scrollbar"
     >
        {bottomDashboards.map(p => {
           const Icon = p.icon;
@@ -167,8 +161,8 @@ export function MobileBottomBar() {
                 aria-label={p.name}
                 className={`p-2 rounded-xl flex flex-col items-center justify-center gap-1 shrink-0 min-w-[3.5rem] transition-all ${
                     isActive
-                    ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20'
-                    : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
+                    ? 'text-accent bg-surface-2'
+                    : 'text-text-muted hover:bg-surface-2'
                 }`}
              >
                 <Icon size={20} strokeWidth={isActive ? 2.5 : 2} />

@@ -15,7 +15,7 @@ import {
   ShieldAlert,
   WifiOff,
 } from 'lucide-react';
-import { Badge, Button } from '@/components/ui';
+import { Badge, Button, Input } from '@/components/ui';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useSettings } from '../SettingsContext';
 import { PodmanConnection } from '@/lib/nodes';
@@ -137,9 +137,9 @@ export default function NodesSection() {
             <p className="text-text-muted text-xs">
               ServiceBay requires password-less SSH access to remote nodes.
               If you haven&apos;t set this up, use the
-              <button onClick={() => openSSHModal()} className="mx-1 underline font-medium text-accent hover:text-accent-strong">
+              <Button variant="ghost" onClick={() => openSSHModal()} className="!h-auto mx-1 underline font-medium text-accent hover:text-accent-strong">
                 Setup SSH Keys
-              </button>
+              </Button>
               tool to copy your public key to the server.
             </p>
           </div>
@@ -148,7 +148,7 @@ export default function NodesSection() {
         <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end mb-6" id="node-form">
           <div className="md:col-span-3">
             <label className="block text-sm font-medium text-text-muted mb-1">Name</label>
-            <input
+            <Input
               type="text"
               value={newNodeName}
               onChange={e => setNewNodeName(e.target.value)}
@@ -159,7 +159,7 @@ export default function NodesSection() {
           </div>
           <div className="md:col-span-5">
             <label className="block text-sm font-medium text-text-muted mb-1">Destination (SSH)</label>
-            <input
+            <Input
               type="text"
               value={newNodeDest}
               onChange={e => setNewNodeDest(e.target.value)}
@@ -172,7 +172,7 @@ export default function NodesSection() {
             <label className="block text-sm font-medium text-text-muted mb-1">Identity File</label>
             <div className="relative">
               <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-subtle" />
-              <input
+              <Input
                 type="text"
                 value={newNodeIdentity}
                 onChange={e => setNewNodeIdentity(e.target.value)}
@@ -253,7 +253,7 @@ export default function NodesSection() {
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
                       <div className="md:col-span-3">
                         <label className="block text-xs font-medium text-text-muted mb-1">Name</label>
-                        <input
+                        <Input
                           type="text"
                           value={nodeDraft.name}
                           onChange={e => setNodeDraft(prev => ({ ...prev, name: e.target.value }))}
@@ -264,7 +264,7 @@ export default function NodesSection() {
                       </div>
                       <div className="md:col-span-5">
                         <label className="block text-xs font-medium text-text-muted mb-1">Destination (SSH)</label>
-                        <input
+                        <Input
                           type="text"
                           value={nodeDraft.destination}
                           onChange={e => setNodeDraft(prev => ({ ...prev, destination: e.target.value }))}
@@ -275,7 +275,7 @@ export default function NodesSection() {
                       </div>
                       <div className="md:col-span-4">
                         <label className="block text-xs font-medium text-text-muted mb-1">Identity File</label>
-                        <input
+                        <Input
                           type="text"
                           value={nodeDraft.identity}
                           onChange={e => setNodeDraft(prev => ({ ...prev, identity: e.target.value }))}
