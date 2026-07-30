@@ -6,6 +6,7 @@ import { ChevronLeft, Code, Users, ExternalLink, Sparkles, Home, User as UserIco
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
 import DomainTag from './DomainTag';
+import { Button } from '@/components/ui';
 import { NAVIGATION_ENTRIES, isNavActive } from '@/config/navigation';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 
@@ -142,13 +143,14 @@ export default function Sidebar() {
                     </div>
                 </div>
             )}
-            <button
+            <Button
                 onClick={() => setIsCollapsed(!isCollapsed)}
-                className={`p-1.5 rounded-card border border-transparent hover:bg-surface-2 text-text-muted ${isCollapsed ? 'mx-auto' : ''}`}
+                variant="ghost"
+                className={`!h-auto !p-1.5 border border-transparent ${isCollapsed ? 'mx-auto' : ''}`}
                 title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
             >
                 {isCollapsed ? <ServiceBayLogo size={20} /> : <ChevronLeft size={18} />}
-            </button>
+            </Button>
         </div>
         {node && !isCollapsed && (
             <div className="mx-2 mb-1 px-3 py-1.5 bg-status-warn/10 border border-status-warn/30 rounded-card flex items-center gap-2">
@@ -157,44 +159,48 @@ export default function Sidebar() {
             </div>
         )}
         {node && isCollapsed && (
-            <button
+            <Button
                 type="button"
                 onClick={() => setShowCollapsedNodeLabel(v => !v)}
                 title={`Node: ${node}`}
                 aria-label={`Active node: ${node}. Tap for details.`}
-                className="mx-auto mb-1 flex flex-col items-center gap-0.5 focus:outline-none"
+                variant="ghost"
+                size="sm"
+                className="mx-auto mb-1 flex flex-col items-center gap-0.5 !h-auto !p-0"
             >
                 <span className="w-3 h-3 rounded-full bg-status-warn animate-pulse" />
                 {showCollapsedNodeLabel && (
                     <span className="text-[9px] font-mono text-status-warn max-w-[3.5rem] truncate">{node}</span>
                 )}
-            </button>
+            </Button>
         )}
         <div className="overflow-y-auto flex-1 p-2 space-y-1">
             {dashboards.map(p => {
                 const Icon = p.icon;
                 const isActive = isNavActive(pathname, p.path);
                 return (
-                    <button
+                    <Button
                         key={p.id}
                         onClick={() => router.push(`${p.path}${node ? `?node=${node}` : ''}`)}
-                        className={navItemClass(isActive, isCollapsed)}
+                        variant="ghost"
+                        className={`${navItemClass(isActive, isCollapsed)} !h-auto`}
                         title={isCollapsed ? p.name : ''}
                     >
                         <Icon size={20} className={`shrink-0 ${isActive ? 'text-accent' : 'text-text-subtle'}`} />
                         {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">{p.name}</span>}
-                    </button>
+                    </Button>
                 );
             })}
             {chatInstalled && (
-                <button
+                <Button
                     onClick={() => router.push(`/chat${node ? `?node=${node}` : ''}`)}
-                    className={navItemClass(isNavActive(pathname, '/chat'), isCollapsed)}
+                    variant="ghost"
+                    className={`${navItemClass(isNavActive(pathname, '/chat'), isCollapsed)} !h-auto`}
                     title={isCollapsed ? 'Maintenance Chat' : ''}
                 >
                     <MessageCircle size={20} className={`shrink-0 ${isNavActive(pathname, '/chat') ? 'text-accent' : 'text-text-subtle'}`} />
                     {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">Maintenance Chat</span>}
-                </button>
+                </Button>
             )}
             {lldapUrl && (
                 <a
@@ -282,28 +288,30 @@ export default function Sidebar() {
                     {currentUser && (
                         <>
                             <span className="text-text-subtle select-none" aria-hidden>·</span>
-                            <button
+                            <Button
                                 type="button"
                                 onClick={handleLogout}
-                                className="hover:text-text transition-colors"
+                                variant="ghost"
+                                className="!h-auto !p-0 hover:text-text transition-colors"
                                 title={currentUser.source === 'session' ? 'Log out of ServiceBay' : 'Log out — drops the Authelia session'}
                             >
                                 Log out
-                            </button>
+                            </Button>
                         </>
                     )}
                 </div>
             ) : (
                 <>
                     {currentUser && (
-                        <button
+                        <Button
                             type="button"
                             onClick={handleLogout}
-                            className="w-full flex items-center justify-center px-3.5 py-2.5 rounded-card text-text-muted hover:text-text hover:bg-surface-2 transition-all border border-transparent"
+                            variant="ghost"
+                            className="w-full flex items-center justify-center !px-3.5 !py-2.5 border border-transparent"
                             title={currentUser.source === 'session' ? 'Log out of ServiceBay' : 'Log out — drops the Authelia session'}
                         >
                             <LogOut size={18} className="shrink-0" />
-                        </button>
+                        </Button>
                     )}
                     <div className="flex justify-center">
                         <SectionHelp
