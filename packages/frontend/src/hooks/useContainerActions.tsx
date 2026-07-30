@@ -99,24 +99,24 @@ export function useContainerActions({ onActionComplete }: UseContainerActionsOpt
           onCancel={() => { if (!actionLoading) setDeleteModalOpen(false); }}
         />
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-          <div className="relative bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-800 p-5">
+          <div className="relative bg-surface rounded-lg shadow-xl w-full max-w-md border border-border p-5">
             <div className="flex justify-between items-center mb-5">
               <div className="flex items-center gap-3">
-                <button onClick={closeActions} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 flex items-center gap-1 text-sm font-medium">
+                <button onClick={closeActions} className="text-text-muted hover:text-text flex items-center gap-1 text-sm font-medium">
                   <ArrowLeft size={18} />
                   Back
                 </button>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">Container Actions</h3>
+                <h3 className="text-lg font-bold text-text">Container Actions</h3>
               </div>
-              <button onClick={closeActions} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+              <button onClick={closeActions} className="text-text-muted hover:text-text">
                 <X size={20} />
               </button>
             </div>
-            <div className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg mb-5">
-              <Box className="text-blue-500" />
+            <div className="flex items-center gap-3 p-3 bg-surface-2 rounded-lg mb-5">
+              <Box className="text-status-info" />
               <div>
-                <div className="font-medium text-gray-900 dark:text-gray-100">{selectedContainer.name}</div>
-                <div className="text-xs text-gray-500 font-mono">{shortId}</div>
+                <div className="font-medium text-text">{selectedContainer.name}</div>
+                <div className="text-xs text-text-muted font-mono">{shortId}</div>
               </div>
             </div>
             <div className="space-y-3">
@@ -124,22 +124,22 @@ export function useContainerActions({ onActionComplete }: UseContainerActionsOpt
                 <button
                   onClick={() => handleAction('stop')}
                   disabled={actionLoading}
-                  className="flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                  className="flex items-center justify-center gap-2 p-3 rounded-lg border border-border hover:bg-surface-2 transition-colors"
                 >
-                  <Power size={18} className="text-orange-500" />
+                  <Power size={18} className="text-status-warn" />
                   <span>Stop</span>
                 </button>
                 <button
                   onClick={() => handleAction('restart')}
                   disabled={actionLoading}
-                  className="flex items-center justify-center gap-2 p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                  className="flex items-center justify-center gap-2 p-3 rounded-lg border border-border hover:bg-surface-2 transition-colors"
                 >
-                  <RotateCw size={18} className="text-blue-500" />
+                  <RotateCw size={18} className="text-status-info" />
                   <span>Restart</span>
                 </button>
               </div>
-              <div className="border-t border-gray-200 dark:border-gray-800 pt-4">
-                <h4 className="text-xs font-semibold text-gray-500 uppercase mb-3 flex items-center gap-2">
+              <div className="border-t border-border pt-4">
+                <h4 className="text-xs font-semibold text-text-muted uppercase mb-3 flex items-center gap-2">
                   <AlertTriangle size={12} />
                   Destructive Actions
                 </h4>
@@ -147,7 +147,7 @@ export function useContainerActions({ onActionComplete }: UseContainerActionsOpt
                   <button
                     onClick={() => handleAction('force-stop')}
                     disabled={actionLoading}
-                    className="flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/30 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-700 dark:text-red-400 transition-colors"
+                    className="flex items-center justify-center gap-2 p-3 rounded-lg border border-status-fail/20 bg-status-fail/10 hover:bg-status-fail/20 text-status-fail transition-colors"
                   >
                     <Power size={18} />
                     <span>Force Stop</span>
@@ -155,7 +155,7 @@ export function useContainerActions({ onActionComplete }: UseContainerActionsOpt
                   <button
                     onClick={() => handleAction('force-restart')}
                     disabled={actionLoading}
-                    className="flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/30 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-700 dark:text-red-400 transition-colors"
+                    className="flex items-center justify-center gap-2 p-3 rounded-lg border border-status-fail/20 bg-status-fail/10 hover:bg-status-fail/20 text-status-fail transition-colors"
                   >
                     <RotateCw size={18} />
                     <span>Force Restart</span>
@@ -164,7 +164,7 @@ export function useContainerActions({ onActionComplete }: UseContainerActionsOpt
                 <button
                   onClick={() => handleAction('delete')}
                   disabled={actionLoading}
-                  className="w-full mt-3 flex items-center justify-center gap-2 p-3 rounded-lg border border-red-200 dark:border-red-900/30 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-700 dark:text-red-400 transition-colors"
+                  className="w-full mt-3 flex items-center justify-center gap-2 p-3 rounded-lg border border-status-fail/20 bg-status-fail/10 hover:bg-status-fail/20 text-status-fail transition-colors"
                 >
                   <Trash2 size={18} />
                   <span>Delete Container</span>
@@ -172,8 +172,8 @@ export function useContainerActions({ onActionComplete }: UseContainerActionsOpt
               </div>
             </div>
             {actionLoading && (
-              <div className="absolute inset-0 bg-white/60 dark:bg-gray-900/60 flex items-center justify-center rounded-lg">
-                <RefreshCw className="animate-spin text-blue-500" size={32} />
+              <div className="absolute inset-0 bg-surface/60 flex items-center justify-center rounded-lg">
+                <RefreshCw className="animate-spin text-status-info" size={32} />
               </div>
             )}
           </div>
