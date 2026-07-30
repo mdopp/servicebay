@@ -6,6 +6,14 @@ import '@xterm/xterm/css/xterm.css';
 import { useToast } from '@/providers/ToastProvider';
 import { humanizeError } from '@servicebay/api-client';
 
+// xterm terminal theme colors — dark background with light foreground for
+// contrast and readability. Not mapped to semantic tokens as these define
+// the terminal UI appearance (distinct from the modal's surface colors).
+// eslint-disable-next-line sb/no-raw-color-literal -- terminal-specific colors required for xterm theme
+const XTERM_THEME_BACKGROUND = '#1e1e1e';
+// eslint-disable-next-line sb/no-raw-color-literal -- terminal-specific colors required for xterm theme
+const XTERM_THEME_FOREGROUND = '#f3f4f6';
+
 interface ActionProgressModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -139,8 +147,8 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
           term = new Terminal({
             cursorBlink: true,
             theme: {
-              background: '#1e1e1e',
-              foreground: '#f3f4f6',
+              background: XTERM_THEME_BACKGROUND,
+              foreground: XTERM_THEME_FOREGROUND,
             },
             fontFamily: 'Menlo, Monaco, "Courier New", monospace',
             fontSize: 12,
@@ -182,17 +190,17 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-3xl border border-gray-200 dark:border-gray-800 flex flex-col h-[600px]">
-        <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800">
+      <div className="bg-surface rounded-lg shadow-xl w-full max-w-3xl border border-border flex flex-col h-[600px]">
+        <div className="flex justify-between items-center p-4 border-b border-border">
           <h3 className="text-lg font-bold flex items-center gap-2">
-            {status === 'running' && <Loader2 className="animate-spin text-blue-500" size={20} />}
-            {status === 'completed' && <span className="text-green-500">✓</span>}
-            {status === 'error' && <span className="text-red-500">✗</span>}
+            {status === 'running' && <Loader2 className="animate-spin text-status-info" size={20} />}
+            {status === 'completed' && <span className="text-status-ok">✓</span>}
+            {status === 'error' && <span className="text-status-fail">✗</span>}
             {action === 'start' && 'Starting'}
             {action === 'stop' && 'Stopping'}
             {action === 'restart' && 'Restarting'} {serviceName}
             {status === 'running' && elapsed > 0 && (
-                <span className="text-sm font-normal text-gray-400 ml-2">
+                <span className="text-sm font-normal text-text-muted ml-2">
                     {elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`}
                 </span>
             )}
@@ -201,7 +209,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
             {status === 'running' && (
               <button
                 onClick={() => setMinimized(true)}
-                className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 p-1 rounded transition-colors"
+                className="text-text-muted hover:text-text p-1 rounded transition-colors"
                 title="Run in background"
                 aria-label="Run in background"
               >
@@ -221,7 +229,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
                   onClose();
                 }
               }}
-              className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 p-1 rounded transition-colors"
+              className="text-text-muted hover:text-text p-1 rounded transition-colors"
               aria-label={status === 'running' ? 'Run in background' : 'Close'}
               title={status === 'running' ? 'Run in background' : 'Close'}
             >
@@ -230,18 +238,20 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
           </div>
         </div>
         
-        <div className="p-4 bg-[#1e1e1e] border-b border-gray-800">
-          <div className="p-3 bg-blue-900/20 border border-blue-900/50 rounded text-blue-200 text-xs">
+        {/* eslint-disable-next-line sb/no-raw-color-literal -- terminal background needs to match xterm theme */}
+        <div className="p-4 bg-[#1e1e1e] border-b border-border">
+          <div className="p-3 bg-status-info/10 border border-status-info/20 rounded text-status-info text-xs">
              <p>Operation in progress. You can safely minimize this window to keep working &mdash; we&apos;ll notify you when it finishes. Closing this modal keeps the task running in the background.</p>
           </div>
         </div>
 
+        {/* eslint-disable-next-line sb/no-raw-color-literal -- terminal background needs to match xterm theme */}
         <div className="flex-1 bg-[#1e1e1e] p-4 overflow-hidden">
             <div ref={terminalRef} className="h-full w-full" />
         </div>
 
         {(status === 'completed' || status === 'error') && (
-            <div className="p-4 border-t border-gray-200 dark:border-gray-800 flex flex-col sm:flex-row justify-between items-center gap-3 bg-gray-50 dark:bg-gray-900/50">
+            <div className="p-4 border-t border-border flex flex-col sm:flex-row justify-between items-center gap-3 bg-surface">
                 {status === 'error' ? (
                     <div className="flex flex-wrap gap-2 w-full sm:w-auto">
                         <button
@@ -250,7 +260,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
                                 setRetryCount(prev => prev + 1);
                                 setStatus('running');
                             }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-md transition-colors shadow-sm"
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-status-warn hover:bg-status-warn/90 text-on-accent text-xs font-semibold rounded-md transition-colors shadow-sm"
                         >
                             <RotateCw size={14} className="animate-spin" style={{ animationDuration: '3s' }} />
                             Retry Action
@@ -260,7 +270,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
                             href={`/api/services/${serviceName}/logs`}
                             target="_blank"
                             rel="noreferrer"
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors border border-gray-300 dark:border-gray-700"
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-2 hover:bg-surface-muted text-text text-xs font-semibold rounded-md transition-colors border border-border"
                         >
                             <FileText size={14} />
                             View Full Logs
@@ -268,7 +278,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
 
                         <a
                             href="/status"
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-200 hover:bg-slate-300 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors border border-gray-300 dark:border-gray-700"
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-surface-2 hover:bg-surface-muted text-text text-xs font-semibold rounded-md transition-colors border border-border"
                         >
                             <Wrench size={14} />
                             Self-Diagnose
@@ -276,20 +286,20 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
 
                         <button
                             onClick={() => addToast('info', 'AI Assistant Triggered', `Claude is reviewing the logs for ${serviceName}...`)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-md transition-colors shadow-sm"
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-status-info hover:bg-status-info/90 text-on-accent text-xs font-semibold rounded-md transition-colors shadow-sm"
                         >
                             <Bot size={14} />
                             Ask AI to Fix
                         </button>
                     </div>
                 ) : (
-                    <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                    <div className="text-xs text-status-ok font-medium">
                         ✓ Operation completed successfully.
                     </div>
                 )}
-                <button 
+                <button
                     onClick={onClose}
-                    className="w-full sm:w-auto px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-semibold text-sm transition-colors shadow-sm"
+                    className="w-full sm:w-auto px-5 py-2 bg-status-info hover:bg-status-info/90 text-on-accent rounded-md font-semibold text-sm transition-colors shadow-sm"
                 >
                     Close
                 </button>
