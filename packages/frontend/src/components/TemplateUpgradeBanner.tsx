@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Info, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { Input } from '@/components/ui';
 
 interface UpgradeSection {
   version: number;
@@ -97,7 +98,7 @@ export default function TemplateUpgradeBanner({ templateName, source, onReadyToI
   if (loadFailed) return null;
   if (!preview) {
     return (
-      <div className="mb-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-800/50 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
+      <div className="mb-4 p-3 rounded-lg bg-surface-2 text-xs text-text-muted flex items-center gap-2">
         <Loader2 size={14} className="animate-spin" /> Checking for template changes…
       </div>
     );
@@ -110,25 +111,25 @@ export default function TemplateUpgradeBanner({ templateName, source, onReadyToI
     <div
       className={`mb-4 rounded-lg border overflow-hidden ${
         breaking
-          ? 'border-amber-300 dark:border-amber-700 bg-amber-50/70 dark:bg-amber-900/20'
-          : 'border-blue-200 dark:border-blue-800 bg-blue-50/70 dark:bg-blue-900/20'
+          ? 'border-status-warn bg-status-warn/5'
+          : 'border-status-info bg-status-info/5'
       }`}
     >
       <div className="p-4 flex items-start gap-3">
         <div
           className={`shrink-0 p-1.5 rounded ${
             breaking
-              ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-200'
-              : 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-200'
+              ? 'bg-status-warn/10 text-status-warn'
+              : 'bg-status-info/10 text-status-info'
           }`}
         >
           {breaking ? <AlertTriangle size={18} /> : <Info size={18} />}
         </div>
         <div className="flex-1 min-w-0">
-          <h4 className={`text-sm font-semibold ${breaking ? 'text-amber-900 dark:text-amber-100' : 'text-blue-900 dark:text-blue-100'}`}>
+          <h4 className={`text-sm font-semibold ${breaking ? 'text-status-warn' : 'text-status-info'}`}>
             {breaking ? 'Breaking template change' : 'Template updated'} — v{preview.installedVersion ?? 1} → v{preview.currentVersion}
           </h4>
-          <p className="text-xs text-gray-600 dark:text-gray-300 mt-0.5">
+          <p className="text-xs text-text-muted mt-0.5">
             Review the changes before deploying. {breaking
               ? 'Some of them require action on your side.'
               : 'No action required, just FYI.'}
@@ -142,14 +143,14 @@ export default function TemplateUpgradeBanner({ templateName, source, onReadyToI
             key={section.version}
             className={`rounded p-3 text-sm ${
               section.breaking
-                ? 'bg-amber-100/60 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800'
-                : 'bg-white/70 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700'
+                ? 'bg-status-warn/10 border border-status-warn/30'
+                : 'bg-surface border border-border'
             }`}
           >
-            <div className="font-mono text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1">
+            <div className="font-mono text-xs font-semibold text-text-muted mb-1">
               v{section.version}{section.breaking ? ' (breaking)' : ''}
             </div>
-            <div className="prose prose-sm dark:prose-invert max-w-none text-gray-700 dark:text-gray-300 prose-p:my-1 prose-ul:my-1">
+            <div className="prose prose-sm dark:prose-invert max-w-none text-text prose-p:my-1 prose-ul:my-1">
               <ReactMarkdown>{section.body}</ReactMarkdown>
             </div>
           </div>
@@ -158,11 +159,11 @@ export default function TemplateUpgradeBanner({ templateName, source, onReadyToI
 
       {breaking && (
         <div className="px-4 pb-4">
-          <label className="flex items-start gap-2 text-sm text-amber-900 dark:text-amber-100 cursor-pointer">
-            <input
+          <label className="flex items-start gap-2 text-sm text-status-warn cursor-pointer">
+            <Input
               type="checkbox"
               checked={acknowledged}
-              onChange={e => setAcknowledged(e.target.checked)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAcknowledged(e.target.checked)}
               className="mt-0.5"
             />
             <span>
