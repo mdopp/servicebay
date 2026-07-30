@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, Plus, Trash2 } from 'lucide-react';
-import { Button } from '@/components/ui';
+import { Button, Input } from '@/components/ui';
 import ConfirmModal from '@/components/ConfirmModal';
 import { copyToClipboard } from '../clipboard';
 
@@ -55,18 +55,19 @@ function BootstrapBanner({ status, revoking, reactivating, onRevoke, onReactivat
         </p>
       </div>
       <div className="shrink-0 flex items-center gap-2">
-        <button
+        <Button
           type="button"
           disabled={reactivating}
           onClick={onReactivate}
+          variant="ghost"
           className={btnClass}
           title="Re-issue the existing LAN-only bootstrap token for another ~30 minutes so an MCP client can reconnect — same token value."
         >
           {reactivating ? 'Re-activating…' : 'Re-activate (30 min)'}
-        </button>
-        <button type="button" disabled={revoking} onClick={onRevoke} className={btnClass}>
+        </Button>
+        <Button type="button" disabled={revoking} onClick={onRevoke} variant="ghost" className={btnClass}>
           {revoking ? 'Revoking…' : 'Revoke now'}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -77,7 +78,7 @@ function RevealedSecretBox({ secret, copied, onCopy, onDismiss }: { secret: stri
     <div className="p-3 bg-status-warn/10 rounded-card border border-status-warn/30 space-y-2">
       <p className="text-xs font-semibold text-status-warn">⚠️ Save this token now — it will not be shown again.</p>
       <div className="flex items-stretch gap-2">
-        <input
+        <Input
           type="text"
           readOnly
           value={secret}
@@ -163,7 +164,7 @@ function NeverExpiresField({ readOnly, checked, onToggle }: { readOnly: boolean;
         className={`flex items-center gap-1.5 text-xs ${readOnly ? 'cursor-pointer text-text-muted' : 'cursor-not-allowed text-text-subtle opacity-60'}`}
         title={readOnly ? 'Mint a non-expiring token — safe only for a read-only, unattended consumer.' : 'Never-expiring tokens are limited to the read scope. Select only "read" to enable this.'}
       >
-        <input
+        <Input
           type="checkbox"
           checked={readOnly && checked}
           disabled={!readOnly}
@@ -184,7 +185,7 @@ function CreateTokenForm(props: CreateTokenFormProps) {
     <div className="space-y-2 p-3 rounded-card border border-border bg-surface-2">
       <div>
         <label className="block text-[11px] font-semibold uppercase tracking-wider text-text-subtle mb-1">Name</label>
-        <input
+        <Input
           type="text"
           value={props.name}
           onChange={e => props.onName(e.target.value)}
@@ -197,7 +198,7 @@ function CreateTokenForm(props: CreateTokenFormProps) {
         <div className="flex flex-wrap gap-2">
           {ALL_SCOPES.map(scope => (
             <label key={scope} className="flex items-center gap-1.5 text-xs cursor-pointer text-text-muted">
-              <input type="checkbox" checked={props.scopes.includes(scope)} onChange={() => props.onToggleScope(scope)} className="rounded accent-accent" />
+              <Input type="checkbox" checked={props.scopes.includes(scope)} onChange={() => props.onToggleScope(scope)} className="rounded accent-accent" />
               <span className="font-mono">{scope}</span>
             </label>
           ))}
