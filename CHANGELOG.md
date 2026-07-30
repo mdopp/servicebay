@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.7](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.6...servicebay-v5.11.7) (2026-07-30)
+
+
+### Bug Fixes
+
+* **components:** replace raw color literals with semantic design tokens in DoneStepDnsCheck ([5312cd3](https://github.com/mdopp/servicebay/commit/5312cd3c9cb015123a251b2f0b30716bf216bcda))
+* **frontend:** replace raw Tailwind colors with semantic tokens in InstallProgressCard ([ac91da9](https://github.com/mdopp/servicebay/commit/ac91da91c176ffa7bb29a94549eb9d8c901668c8))
+* **ReverseProxyConfig:** replace raw color literals with semantic design tokens ([7542314](https://github.com/mdopp/servicebay/commit/7542314d5480a17a121c161062387f010e589bd2))
+* **ServiceMonitor:** stop Button defaults from clobbering the tab strip ([2a9decf](https://github.com/mdopp/servicebay/commit/2a9decfa539f222e9da0e072cb6024da5859f83d))
+* **ServiceMonitor:** stop Button defaults from clobbering the tab strip ([0c7b3c9](https://github.com/mdopp/servicebay/commit/0c7b3c9298b33810f35885ecaa3e44452434fb1b))
+* **StackInstallFlow:** stop Button defaults from clobbering the per-service row ([097cde1](https://github.com/mdopp/servicebay/commit/097cde17c68baacf721658b87fc7d57076b5099d))
+* **StackInstallFlow:** stop Button defaults from clobbering the per-service row ([54c92f3](https://github.com/mdopp/servicebay/commit/54c92f395482743f78e115c3f73c31cdda2677c3))
+* **wizard/NetworkStep:** replace raw color literals with semantic design tokens ([faf21b0](https://github.com/mdopp/servicebay/commit/faf21b0d45cc62257f3d32f481ba6c3205890fe7))
+
 ## [5.11.6](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.5...servicebay-v5.11.6) (2026-07-30)
 
 
