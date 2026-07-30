@@ -354,10 +354,13 @@ function CardDisclosure({
  *  markdown help modal. */
 function HowToButton({ onClick }: { onClick: () => void }) {
   return (
+    // `!`-prefixed: ghost's default text-text-muted / md h-10+px-space-4 sort after
+    // these in the compiled stylesheet and would otherwise silently win, turning this
+    // inline text link gray and boxy instead of a plain accent-colored line (#2484).
     <Button
       onClick={onClick}
       variant="ghost"
-      className="text-accent hover:underline"
+      className="!h-auto !p-0 hover:!bg-transparent !text-accent hover:underline"
       aria-haspopup="dialog"
     >
       How do I use this?

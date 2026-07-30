@@ -167,7 +167,7 @@ export default function FileShareSection() {
                 <button
                   onClick={() => setPassword(u.id)}
                   disabled={busyUser === u.id}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs bg-status-ok hover:bg-accent-strong text-on-accent rounded disabled:opacity-50"
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs bg-status-ok hover:bg-status-ok/80 text-on-accent rounded disabled:opacity-50"
                   type="button"
                 >
                   {busyUser === u.id ? <Loader2 size={12} className="animate-spin" /> : <KeyRound size={12} />}

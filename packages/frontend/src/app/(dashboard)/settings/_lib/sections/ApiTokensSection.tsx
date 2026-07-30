@@ -40,7 +40,11 @@ function BootstrapBanner({ status, revoking, reactivating, onRevoke, onReactivat
   // Show whenever the bootstrap entry still exists — including after its
   // window lapsed — so an expired token can be re-activated (#1419).
   if (!status.active && !status.present) return null;
-  const btnClass = 'text-xs font-medium px-3 py-1.5 rounded-card border border-status-warn/40 text-status-warn bg-status-warn/10 hover:bg-status-warn/20 disabled:opacity-50';
+  // `!`-prefixed: Button's default ghost/md classes (bg-transparent, text-text-muted,
+  // hover:bg-surface-2, h-10, px-space-4) sort after these in the compiled stylesheet
+  // and would otherwise silently win, dropping the warning tint and enlarging the
+  // button (confirmed via the compiled CSS rule order — #2484).
+  const btnClass = '!h-auto !text-xs font-medium !px-3 !py-1.5 rounded-card border border-status-warn/40 !text-status-warn !bg-status-warn/10 hover:!bg-status-warn/20 disabled:opacity-50';
   return (
     <div className="mt-4 rounded-card border border-status-warn/30 bg-status-warn/10 px-4 py-3 flex items-start justify-between gap-4">
       <div className="flex-1 min-w-0">
