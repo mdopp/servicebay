@@ -58,8 +58,8 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
 
   return (
     <div ref={wrapperRef} className={`relative ${className}`}>
-      <div 
-        className={`flex flex-wrap items-center gap-1 p-1.5 border rounded bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 min-h-[38px] cursor-text ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+      <div
+        className={`flex flex-wrap items-center gap-1 p-1.5 border rounded bg-surface-2 border-border min-h-[38px] cursor-text ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         onClick={() => {
             if (!disabled) {
                 setIsOpen(true);
@@ -68,9 +68,9 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
         }}
       >
         {value.map(v => (
-          <span key={v} className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-200 rounded">
+          <span key={v} className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-accent/10 text-accent rounded">
             {v}
-            <button onMouseDown={(e) => removeValue(v, e)} className="hover:text-blue-600 dark:hover:text-blue-100">
+            <button onMouseDown={(e) => removeValue(v, e)} className="hover:text-accent-strong">
                 <X size={12} />
             </button>
           </span>
@@ -79,7 +79,7 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
         <input
           ref={inputRef}
           type="text"
-          className="flex-1 min-w-[60px] bg-transparent outline-none text-sm dark:text-gray-100"
+          className="flex-1 min-w-[60px] bg-transparent outline-none text-sm text-text"
           placeholder={value.length === 0 ? placeholder : ''}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -88,30 +88,30 @@ export const MultiSelect: React.FC<MultiSelectProps> = ({
         />
         
         {loading ? (
-             <div className="animate-spin h-4 w-4 border-2 border-slate-500 rounded-full border-t-transparent mr-1"></div>
+             <div className="animate-spin h-4 w-4 border-2 border-text-muted rounded-full border-t-transparent mr-1"></div>
         ) : (
-            <ChevronDown size={16} className="text-slate-400 mr-1" />
+            <ChevronDown size={16} className="text-muted mr-1" />
         )}
       </div>
 
       {isOpen && !disabled && (
-        <ul className="absolute z-50 w-full mt-1 max-h-60 overflow-auto bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded shadow-lg">
+        <ul className="absolute z-50 w-full mt-1 max-h-60 overflow-auto bg-surface-2 border border-border rounded shadow-lg">
           {filteredOptions.length === 0 && (
-             <li className="p-2 text-sm text-slate-500 dark:text-slate-400">No options found</li>
+             <li className="p-2 text-sm text-muted">No options found</li>
           )}
           {filteredOptions.map((option) => {
             const isSelected = value.includes(option);
             return (
                 <li
                 key={option}
-                className={`flex items-center justify-between p-2 text-sm cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 ${isSelected ? 'bg-slate-50 dark:bg-slate-700/50' : ''}`}
+                className={`flex items-center justify-between p-2 text-sm cursor-pointer hover:bg-surface ${isSelected ? 'bg-surface' : ''}`}
                 onMouseDown={(e) => {
                     e.preventDefault(); // Prevent blur/click-outside
                     toggleOption(option);
                 }}
                 >
-                <span className="dark:text-gray-200">{option}</span>
-                {isSelected && <Check size={14} className="text-blue-600 dark:text-blue-400" />}
+                <span className="text-text">{option}</span>
+                {isSelected && <Check size={14} className="text-accent" />}
                 </li>
             );
           })}
