@@ -58,7 +58,7 @@ describe('ContainerLogsPanel — design-system tokens (#2100)', () => {
     const { container } = renderPanel();
     await waitFor(() => expect(screen.getByText('Live Logs')).toBeTruthy());
     // The console body stays a fixed dark terminal surface, not a Card.
-    expect(container.querySelector('.bg-gray-950')).toBeTruthy();
+    expect(container.querySelector('.bg-surface-muted')).toBeTruthy();
     expect(container.querySelector('.font-mono')).toBeTruthy();
   });
 });

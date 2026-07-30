@@ -205,12 +205,12 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
         </div>
 
         {/* Log body stays a monospace terminal console — a dark well, not a Card. */}
-        <div className="flex-1 flex flex-col bg-gray-950 text-gray-200">
-          <div className="flex items-center justify-between px-space-4 py-2 border-b border-gray-800 text-xs text-gray-400 uppercase tracking-wide">
+        <div className="flex-1 flex flex-col bg-surface-muted text-text">
+          <div className="flex items-center justify-between px-space-4 py-2 border-b border-border text-xs text-text-muted uppercase tracking-wide">
             <span>Live Logs</span>
             <div className="flex items-center gap-space-2">
               {logs && (
-                <button onClick={handleCopyLogs} className="flex items-center gap-1 px-space-2 py-1 rounded-card hover:bg-gray-800 transition-colors normal-case" title="Copy logs">
+                <button onClick={handleCopyLogs} className="flex items-center gap-1 px-space-2 py-1 rounded-card hover:bg-surface-2 transition-colors normal-case" title="Copy logs">
                   {copied ? <Check size={12} className="text-status-ok" /> : <Copy size={12} />}
                   <span className="text-[10px]">{copied ? 'Copied' : 'Copy'}</span>
                 </button>
