@@ -137,7 +137,14 @@ export default function NodesSection() {
             <p className="text-text-muted text-xs">
               ServiceBay requires password-less SSH access to remote nodes.
               If you haven&apos;t set this up, use the
-              <Button variant="ghost" onClick={() => openSSHModal()} className="!h-auto mx-1 underline font-medium text-accent hover:text-accent-strong">
+              {/* `!`-prefixed: ghost's default text-text-muted / hover:bg-surface-2 / md
+                  padding sort after these in the compiled stylesheet and would otherwise
+                  silently win, turning this inline text link gray and boxy (#2484). */}
+              <Button
+                variant="ghost"
+                onClick={() => openSSHModal()}
+                className="!h-auto !px-0 !py-0 hover:!bg-transparent mx-1 underline font-medium !text-accent hover:!text-accent-strong"
+              >
                 Setup SSH Keys
               </Button>
               tool to copy your public key to the server.
