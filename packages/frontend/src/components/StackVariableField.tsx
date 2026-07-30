@@ -76,7 +76,7 @@ export default function StackVariableField({
   onExposureChange,
   inputClassName,
 }: StackVariableFieldProps) {
-  const cls = inputClassName ?? 'w-full p-2 border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded focus:ring-2 focus:ring-blue-500';
+  const cls = inputClassName ?? 'w-full p-2 border border-border bg-surface-2 text-text rounded focus:ring-2 focus:ring-accent';
 
   // Select dropdown
   if (v.meta?.type === 'select' && v.meta.options) {
@@ -146,10 +146,10 @@ export default function StackVariableField({
       : v.meta.exposure === 'internal' ? 'internal'
       : 'lan';
     const badgeClass = exposure === 'public'
-      ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100'
+      ? 'bg-status-info/10 text-status-info'
       : exposure === 'internal'
-        ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100'
-        : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
+        ? 'bg-status-warn/10 text-status-warn'
+        : 'bg-surface text-text-muted';
     const badgeLabel = exposure === 'public' ? 'Public' : exposure === 'internal' ? 'Internal' : 'LAN';
     return (
       <div className="flex items-center gap-2 flex-wrap">
@@ -161,12 +161,12 @@ export default function StackVariableField({
             className={`${cls} rounded-r-none border-r-0`}
             placeholder={v.meta.default || 'subdomain'}
           />
-          <span className="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 rounded-r text-sm whitespace-nowrap">
+          <span className="px-3 py-2 bg-surface-2 border border-border text-text-muted rounded-r text-sm whitespace-nowrap">
             .{publicDomain || 'example.com'}
           </span>
         </div>
         {onExposureChange ? (
-          <div className="inline-flex rounded border border-gray-300 dark:border-gray-700 overflow-hidden text-xs" role="group" aria-label="Exposure profile">
+          <div className="inline-flex rounded border border-border overflow-hidden text-xs" role="group" aria-label="Exposure profile">
             <Button
               variant={exposure === 'public' ? 'primary' : 'secondary'}
               size="sm"
@@ -181,7 +181,7 @@ export default function StackVariableField({
               size="sm"
               onClick={() => onExposureChange('internal')}
               title="LAN-only access but with a real Let's Encrypt cert. Authelia forward-auth works (needs HTTPS); NPM blocks non-LAN IPs. ACME challenge bypasses the allowlist so LE can validate."
-              className="rounded-none border-l border-gray-300 dark:border-gray-700"
+              className="rounded-none border-l border-border"
             >
               Internal
             </Button>
@@ -190,7 +190,7 @@ export default function StackVariableField({
               size="sm"
               onClick={() => onExposureChange('lan')}
               title="LAN-only, plain HTTP — no cert provisioned. Authelia forward-auth does NOT work here (rejects http scheme)."
-              className="rounded-none border-l border-gray-300 dark:border-gray-700"
+              className="rounded-none border-l border-border"
             >
               LAN
             </Button>
@@ -298,7 +298,7 @@ function SecretField({
         </Button>
       </div>
       {error && (
-        <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">
+        <p role="alert" className="mt-1 text-xs text-status-fail">
           Couldn&apos;t generate a secret — check your connection or type one manually.
         </p>
       )}
