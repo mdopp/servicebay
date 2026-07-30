@@ -101,7 +101,7 @@ export function RoutingTree({ data, rules, onSetRule }: RoutingTreeProps) {
 
   if (!root) return null;
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-800">
+    <div className="rounded-lg border border-border divide-y divide-border">
       <Row
         row={root}
         data={data}
@@ -139,22 +139,22 @@ function Row({
   return (
     <>
       <div
-        className="flex items-center gap-2 py-1.5 pr-3 text-xs hover:bg-gray-50 dark:hover:bg-gray-800/40"
+        className="flex items-center gap-2 py-1.5 pr-3 text-xs hover:bg-surface-2"
         style={{ paddingLeft: `${indent}px` }}
       >
         <button
           onClick={() => hasChildren && toggle(node.dir)}
-          className={`shrink-0 ${hasChildren ? 'text-gray-500' : 'invisible'}`}
+          className={`shrink-0 ${hasChildren ? 'text-text-muted' : 'invisible'}`}
           aria-label={isOpen ? 'Collapse' : 'Expand'}
         >
           {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
-        <Folder size={14} className="shrink-0 text-amber-500" />
-        <span className="font-medium text-gray-800 dark:text-gray-200 truncate" title={node.dir || '/'}>
+        <Folder size={14} className="shrink-0 text-accent" />
+        <span className="font-medium text-text truncate" title={node.dir || '/'}>
           {dirLabel(node.dir)}
         </span>
         {node.files > 0 && (
-          <span className="shrink-0 text-gray-400 tabular-nums">
+          <span className="shrink-0 text-text-muted tabular-nums">
             {node.files.toLocaleString()} · {fmtBytes(node.bytes)}
           </span>
         )}
@@ -180,7 +180,7 @@ function Row({
         </div>
       </div>
       <div
-        className="flex items-center gap-1.5 pb-1.5 text-[11px] text-gray-400"
+        className="flex items-center gap-1.5 pb-1.5 text-[11px] text-text-muted"
         style={{ paddingLeft: `${indent + 22}px` }}
       >
         <FileText size={11} className="shrink-0" />
@@ -219,8 +219,8 @@ function BaseToggle({ active, onToggle }: { active: boolean; onToggle: () => voi
       }
       className={`rounded border px-1.5 py-0.5 text-[11px] ${
         active
-          ? 'bg-blue-600 text-white border-blue-600 font-medium'
-          : 'bg-white dark:bg-gray-900 text-gray-400 border-gray-200 dark:border-gray-700 hover:text-gray-600 dark:hover:text-gray-300'
+          ? 'bg-accent text-on-accent border-accent font-medium'
+          : 'bg-surface text-text-muted border-border hover:text-text-muted'
       }`}
     >
       strip
@@ -246,8 +246,8 @@ function OwnerPicker({
       value={value}
       onChange={e => onChange(e.target.value)}
       title={inherited ? 'Inherited — pick to set explicitly' : 'Set on this folder'}
-      className={`rounded border px-1.5 py-0.5 text-[11px] bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 ${
-        inherited ? 'text-gray-400 italic' : 'text-gray-800 dark:text-gray-200 font-medium'
+      className={`rounded border px-1.5 py-0.5 text-[11px] bg-surface border-border ${
+        inherited ? 'text-text-muted italic' : 'text-text font-medium'
       }`}
     >
       {owners.map(o => (
@@ -277,8 +277,8 @@ function TargetPicker({
       value={value}
       onChange={e => onChange(e.target.value as Disposition)}
       title={inherited ? 'Inherited — pick to set explicitly' : 'Set on this folder'}
-      className={`rounded border px-1.5 py-0.5 text-[11px] bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700 ${
-        inherited ? 'text-gray-400 italic' : 'text-gray-800 dark:text-gray-200 font-medium'
+      className={`rounded border px-1.5 py-0.5 text-[11px] bg-surface border-border ${
+        inherited ? 'text-text-muted italic' : 'text-text font-medium'
       }`}
     >
       {dispositions.map(d => (

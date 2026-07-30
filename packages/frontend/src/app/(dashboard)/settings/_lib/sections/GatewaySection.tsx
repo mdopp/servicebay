@@ -89,7 +89,7 @@ export default function GatewaySection() {
 
   if (busy === 'load' || !state) {
     return (
-      <p className="text-sm text-gray-500 dark:text-gray-400">
+      <p className="text-sm text-text-muted">
         <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
         Loading gateway settings…
       </p>
@@ -100,11 +100,11 @@ export default function GatewaySection() {
     <>
         <div className="flex justify-end">
           {state.configured ? (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-status-ok">
               <CheckCircle2 size={14} /> Configured
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-status-warn">
               <AlertCircle size={14} /> Not configured
             </span>
           )}
@@ -113,41 +113,41 @@ export default function GatewaySection() {
       <div className="space-y-4">
         <div className="grid sm:grid-cols-2 gap-4">
           <label className="flex flex-col gap-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Host</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Host</span>
             <input
               type="text"
               value={host}
               onChange={(e) => setHost(e.target.value)}
               placeholder="fritz.box or 192.168.178.1"
-              className="p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 rounded text-sm font-mono"
+              className="p-2 border border-border bg-surface rounded text-sm font-mono"
               autoComplete="off"
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Username</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Username</span>
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="fritz4554"
-              className="p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 rounded text-sm font-mono"
+              className="p-2 border border-border bg-surface rounded text-sm font-mono"
               autoComplete="off"
             />
           </label>
           <label className="flex flex-col gap-1 sm:col-span-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">Password</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Password</span>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder={state.hasPassword ? '•••••••• (leave blank to keep current)' : '(set a password)'}
-              className="p-2 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 rounded text-sm font-mono"
+              className="p-2 border border-border bg-surface rounded text-sm font-mono"
               autoComplete="new-password"
             />
           </label>
         </div>
 
-        <label className="inline-flex items-center gap-2 cursor-pointer text-sm text-gray-700 dark:text-gray-300">
+        <label className="inline-flex items-center gap-2 cursor-pointer text-sm text-text">
           <input
             type="checkbox"
             checked={ssl}
@@ -161,7 +161,7 @@ export default function GatewaySection() {
           <button
             onClick={() => submit(true)}
             disabled={busy !== null}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded disabled:opacity-50"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded disabled:opacity-50"
           >
             {busy === 'test' && <Loader2 size={14} className="animate-spin" />}
             Test connection &amp; save
@@ -169,7 +169,7 @@ export default function GatewaySection() {
           <button
             onClick={() => submit(false)}
             disabled={busy !== null}
-            className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm font-medium rounded disabled:opacity-50"
+            className="inline-flex items-center gap-2 px-4 py-2 border border-border hover:bg-surface-2 text-text text-sm font-medium rounded disabled:opacity-50"
             title="Save without testing — useful when the FritzBox is currently unreachable"
           >
             {busy === 'save' && <Loader2 size={14} className="animate-spin" />}
@@ -177,7 +177,7 @@ export default function GatewaySection() {
           </button>
         </div>
 
-        <p className="text-[11px] text-gray-500 dark:text-gray-400 italic">
+        <p className="text-[11px] text-text-muted italic">
           The TR-064 user needs the &quot;Smart Home&quot; permission in the FritzBox UI (System → FRITZ!Box-Benutzer). The password is stored encrypted at rest in <span className="font-mono">config.gateway.password</span>.
         </p>
       </div>

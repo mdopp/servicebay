@@ -94,15 +94,15 @@ export default function DashboardHydrationGate({ phase, subMessage }: DashboardH
   const current = PHASES[phaseIndex] ?? PHASES[0];
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center text-gray-500 dark:text-gray-400 h-full min-h-[300px] px-6">
+    <div className="flex-1 flex flex-col items-center justify-center text-text-muted h-full min-h-[300px] px-6">
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
-          <Loader2 className="animate-spin inline-block mb-3 text-blue-500" size={28} />
-          <p className="font-medium text-gray-700 dark:text-gray-200">
+          <Loader2 className="animate-spin inline-block mb-3 text-accent" size={28} />
+          <p className="font-medium text-text">
             {current.label}
-            <span className="ml-2 text-sm font-normal text-gray-400 tabular-nums">{elapsedSec}s</span>
+            <span className="ml-2 text-sm font-normal text-text-muted tabular-nums">{elapsedSec}s</span>
           </p>
-          <p className="text-sm text-gray-400 mt-1">{subMessage ?? current.description}</p>
+          <p className="text-sm text-text-muted mt-1">{subMessage ?? current.description}</p>
         </div>
 
         <ol className="space-y-2" aria-label="Hydration progress">
@@ -114,16 +114,16 @@ export default function DashboardHydrationGate({ phase, subMessage }: DashboardH
                 key={p.id}
                 className={[
                   'flex items-start gap-3 p-2 rounded',
-                  active ? 'bg-blue-50 dark:bg-blue-900/20' : '',
+                  active ? 'bg-accent/5' : '',
                 ].join(' ')}
                 aria-current={active ? 'step' : undefined}
               >
                 <span
                   className={[
                     'mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold shrink-0',
-                    done ? 'bg-green-500 text-white' : '',
-                    active ? 'bg-blue-500 text-white' : '',
-                    !done && !active ? 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400' : '',
+                    done ? 'bg-status-ok text-on-accent' : '',
+                    active ? 'bg-accent text-on-accent' : '',
+                    !done && !active ? 'bg-surface-2 text-text-muted' : '',
                   ].join(' ')}
                 >
                   {done ? <Check size={12} /> : idx + 1}
@@ -132,15 +132,15 @@ export default function DashboardHydrationGate({ phase, subMessage }: DashboardH
                   <span
                     className={[
                       'block text-sm',
-                      active ? 'text-blue-700 dark:text-blue-300 font-medium' : '',
-                      done ? 'text-gray-600 dark:text-gray-300' : '',
-                      !done && !active ? 'text-gray-500 dark:text-gray-400' : '',
+                      active ? 'text-accent font-medium' : '',
+                      done ? 'text-text' : '',
+                      !done && !active ? 'text-text-muted' : '',
                     ].join(' ')}
                   >
                     {p.label}
                   </span>
                   {active && (
-                    <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    <span className="block text-xs text-text-muted mt-0.5">
                       {p.description}
                     </span>
                   )}
@@ -151,12 +151,12 @@ export default function DashboardHydrationGate({ phase, subMessage }: DashboardH
         </ol>
 
         {showSlowHint && !showTroubleshoot && (
-          <p className="mt-4 text-xs text-gray-500 dark:text-gray-400 text-center">
+          <p className="mt-4 text-xs text-text-muted text-center">
             Taking a little longer than usual &mdash; first-time syncs on a cold cache can run 15&ndash;20 s.
           </p>
         )}
         {showTroubleshoot && (
-          <div className="mt-4 text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/40 rounded p-3 text-center">
+          <div className="mt-4 text-xs text-status-warn bg-status-warn/10 border border-status-warn/30 rounded p-3 text-center">
             Still on this phase after {elapsedSec}s. The agent may not have completed its first inventory pass &mdash;
             check <a href="/diagnose" className="underline">Diagnose</a> or
             restart the node from <a href="/settings/network-domain#nodes" className="underline">Settings &rarr; Nodes</a>.

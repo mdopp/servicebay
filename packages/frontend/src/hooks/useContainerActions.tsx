@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { ArrowLeft, Box, Power, RotateCw, Trash2, AlertTriangle, RefreshCw, X } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
+import { Button } from '@/components/ui';
 import { useToast } from '@/providers/ToastProvider';
 import { logger } from '@servicebay/api-client';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
@@ -102,15 +103,15 @@ export function useContainerActions({ onActionComplete }: UseContainerActionsOpt
           <div className="relative bg-surface rounded-lg shadow-xl w-full max-w-md border border-border p-5">
             <div className="flex justify-between items-center mb-5">
               <div className="flex items-center gap-3">
-                <button onClick={closeActions} className="text-text-muted hover:text-text flex items-center gap-1 text-sm font-medium">
+                <Button variant="ghost" size="sm" onClick={closeActions} className="gap-1 font-medium">
                   <ArrowLeft size={18} />
                   Back
-                </button>
+                </Button>
                 <h3 className="text-lg font-bold text-text">Container Actions</h3>
               </div>
-              <button onClick={closeActions} className="text-text-muted hover:text-text">
+              <Button variant="ghost" onClick={closeActions}>
                 <X size={20} />
-              </button>
+              </Button>
             </div>
             <div className="flex items-center gap-3 p-3 bg-surface-2 rounded-lg mb-5">
               <Box className="text-status-info" />
@@ -121,22 +122,24 @@ export function useContainerActions({ onActionComplete }: UseContainerActionsOpt
             </div>
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
-                <button
+                <Button
+                  variant="ghost"
                   onClick={() => handleAction('stop')}
                   disabled={actionLoading}
-                  className="flex items-center justify-center gap-2 p-3 rounded-lg border border-border hover:bg-surface-2 transition-colors"
+                  className="gap-2 !p-3 !rounded-lg border border-border"
                 >
                   <Power size={18} className="text-status-warn" />
                   <span>Stop</span>
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="ghost"
                   onClick={() => handleAction('restart')}
                   disabled={actionLoading}
-                  className="flex items-center justify-center gap-2 p-3 rounded-lg border border-border hover:bg-surface-2 transition-colors"
+                  className="gap-2 !p-3 !rounded-lg border border-border"
                 >
                   <RotateCw size={18} className="text-status-info" />
                   <span>Restart</span>
-                </button>
+                </Button>
               </div>
               <div className="border-t border-border pt-4">
                 <h4 className="text-xs font-semibold text-text-muted uppercase mb-3 flex items-center gap-2">
@@ -144,31 +147,34 @@ export function useContainerActions({ onActionComplete }: UseContainerActionsOpt
                   Destructive Actions
                 </h4>
                 <div className="grid grid-cols-2 gap-3">
-                  <button
+                  <Button
+                    variant="danger"
                     onClick={() => handleAction('force-stop')}
                     disabled={actionLoading}
-                    className="flex items-center justify-center gap-2 p-3 rounded-lg border border-status-fail/20 bg-status-fail/10 hover:bg-status-fail/20 text-status-fail transition-colors"
+                    className="gap-2 !p-3 !rounded-lg"
                   >
                     <Power size={18} />
                     <span>Force Stop</span>
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="danger"
                     onClick={() => handleAction('force-restart')}
                     disabled={actionLoading}
-                    className="flex items-center justify-center gap-2 p-3 rounded-lg border border-status-fail/20 bg-status-fail/10 hover:bg-status-fail/20 text-status-fail transition-colors"
+                    className="gap-2 !p-3 !rounded-lg"
                   >
                     <RotateCw size={18} />
                     <span>Force Restart</span>
-                  </button>
+                  </Button>
                 </div>
-                <button
+                <Button
+                  variant="danger"
                   onClick={() => handleAction('delete')}
                   disabled={actionLoading}
-                  className="w-full mt-3 flex items-center justify-center gap-2 p-3 rounded-lg border border-status-fail/20 bg-status-fail/10 hover:bg-status-fail/20 text-status-fail transition-colors"
+                  className="!w-full mt-3 gap-2 !p-3 !rounded-lg"
                 >
                   <Trash2 size={18} />
                   <span>Delete Container</span>
-                </button>
+                </Button>
               </div>
             </div>
             {actionLoading && (
