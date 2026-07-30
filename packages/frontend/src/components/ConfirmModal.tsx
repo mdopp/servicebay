@@ -81,25 +81,25 @@ export default function ConfirmModal({
       aria-labelledby="confirm-modal-title"
       onKeyDown={handleKeyDown}
     >
-      <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl max-w-md w-full border border-gray-200 dark:border-gray-800 overflow-hidden animate-in zoom-in-95 duration-200">
+      <div className="bg-surface rounded-lg shadow-xl max-w-md w-full border border-border overflow-hidden animate-in zoom-in-95 duration-200">
         <div className="p-6">
           <div className="flex items-start gap-4">
-            <div className={`p-3 rounded-full shrink-0 ${isDestructive ? 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'}`}>
+            <div className={`p-3 rounded-full shrink-0 ${isDestructive ? 'bg-surface-2 text-status-fail' : 'bg-surface-2 text-accent'}`}>
               <AlertTriangle size={24} />
             </div>
             <div className="flex-1 min-w-0">
-              <h3 id="confirm-modal-title" className="text-lg font-bold text-gray-900 dark:text-white mb-2">{title}</h3>
-              <p className="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
+              <h3 id="confirm-modal-title" className="text-lg font-bold text-text mb-2">{title}</h3>
+              <p className="text-text-muted text-sm leading-relaxed">
                 {message}
               </p>
               {resourceName && (
-                <p className="mt-2 font-mono text-sm text-gray-900 dark:text-gray-100 break-all bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
+                <p className="mt-2 font-mono text-sm text-text break-all bg-surface-2 px-2 py-1 rounded">
                   {resourceName}
                 </p>
               )}
               {requireTypedConfirm && resourceName && (
                 <div className="mt-3">
-                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                  <label className="block text-xs text-text-subtle mb-1">
                     Type <span className="font-mono">{resourceName}</span> to confirm
                   </label>
                   <input
@@ -108,7 +108,7 @@ export default function ConfirmModal({
                     onChange={(e) => setTyped(e.target.value)}
                     autoComplete="off"
                     autoFocus
-                    className="w-full px-3 py-2 text-sm font-mono rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none"
+                    className="w-full px-3 py-2 text-sm font-mono rounded-md border border-border bg-surface-2 text-text focus:ring-2 focus:ring-status-fail focus:border-transparent outline-none"
                   />
                 </div>
               )}
@@ -116,12 +116,12 @@ export default function ConfirmModal({
           </div>
         </div>
 
-        <div className="bg-gray-50 dark:bg-gray-900/50 px-6 py-4 flex justify-end gap-3 border-t border-gray-200 dark:border-gray-800">
+        <div className="bg-surface-muted px-6 py-4 flex justify-end gap-3 border-t border-border">
           <button
             ref={cancelButtonRef}
             onClick={handleCancel}
             disabled={isLoading}
-            className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-md transition-colors font-medium text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            className="px-4 py-2 text-text-muted hover:bg-surface-2 rounded-md transition-colors font-medium text-sm focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50"
           >
             {cancelText}
           </button>
@@ -130,10 +130,10 @@ export default function ConfirmModal({
             onClick={handleConfirm}
             disabled={!canConfirm}
             aria-label={confirmText}
-            className={`px-4 py-2 text-white rounded-md transition-colors font-medium text-sm shadow-sm flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-offset-1 ${
+            className={`px-4 py-2 text-on-accent rounded-md transition-colors font-medium text-sm shadow-sm flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-offset-1 ${
               isDestructive
-                ? 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
-                : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'
+                ? 'bg-status-fail hover:bg-status-fail/80 focus:ring-status-fail'
+                : 'bg-accent-strong hover:bg-accent-strong/80 focus:ring-accent'
             } disabled:opacity-50 disabled:cursor-not-allowed`}
           >
             {isLoading && <Loader2 size={14} className="animate-spin" />}
