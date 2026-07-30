@@ -1237,7 +1237,7 @@ export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request })
                     if (certResult.ok) {
                         results[results.length - 1].certIssued = true;
                         if (certResult.reused) {
-                            logger.info('ProxyHosts', `Reused existing LE cert ${certResult.certId} for ${host.domain} (re-install survived #534 cert-archive — no ACME call needed)`);
+                            logger.info('ProxyHosts', `Reused existing LE cert ${certResult.certId} for ${host.domain} (re-install survived issue 534 cert-archive — no ACME call needed)`);
                         } else {
                             logger.info('ProxyHosts', `Issued + bound LE cert ${certResult.certId} for ${host.domain}`);
                         }
