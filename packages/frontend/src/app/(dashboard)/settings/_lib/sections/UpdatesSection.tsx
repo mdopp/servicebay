@@ -118,18 +118,18 @@ export default function UpdatesSection() {
       <ServiceBayUpdateCard />
 
       {/* Reinstall Operating System Section */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden w-full mt-6">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-3">
-          <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-lg text-red-600 dark:text-red-400">
+      <div className="bg-white dark:bg-surface-2 rounded-xl border border-border shadow-sm overflow-hidden w-full mt-6">
+        <div className="p-4 border-b border-border bg-surface dark:bg-surface flex items-center gap-3">
+          <div className="p-2 bg-surface-2 dark:bg-surface-2 rounded-lg text-status-fail dark:text-status-fail">
             <Power size={20} className={rebooting ? 'animate-pulse' : ''} />
           </div>
           <div>
-            <h3 className="font-bold text-gray-900 dark:text-white">Operating System Reinstallation</h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400">Reinstall or recover the base operating system</p>
+            <h3 className="font-bold text-text dark:text-text">Operating System Reinstallation</h3>
+            <p className="text-xs text-text-muted dark:text-text-muted">Reinstall or recover the base operating system</p>
           </div>
         </div>
         <div className="p-6 space-y-4">
-          <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+          <p className="text-sm text-text dark:text-text leading-relaxed">
             Configure the server to boot into a connected installation USB to perform a fresh operating system reinstallation.
             This process will clear the base system files, but your personal data and stack volumes will be preserved.
           </p>
@@ -140,12 +140,12 @@ export default function UpdatesSection() {
               const armedEntry = bootStatus.entries.find(e => e.bootNum === bootStatus.bootNext);
               const armedDesc = armedEntry ? armedEntry.description : `Boot${bootStatus.bootNext}`;
               return (
-                <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-pulse">
+                <div className="p-4 bg-surface dark:bg-surface border border-border rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-pulse">
                   <div className="flex items-start gap-3">
-                    <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                    <AlertTriangle className="w-5 h-5 text-status-warn dark:text-status-warn mt-0.5 flex-shrink-0" />
                     <div>
-                      <h4 className="text-sm font-bold text-amber-800 dark:text-amber-400">USB Installation Boot Armed</h4>
-                      <p className="text-xs text-amber-700 dark:text-amber-500 mt-1">
+                      <h4 className="text-sm font-bold text-status-warn dark:text-status-warn">USB Installation Boot Armed</h4>
+                      <p className="text-xs text-status-warn dark:text-status-warn mt-1">
                         The system is configured to boot from the installation USB next: <span className="font-semibold font-mono">{armedDesc} ({bootStatus.bootNext})</span>.
                       </p>
                     </div>
@@ -154,14 +154,14 @@ export default function UpdatesSection() {
                     <button
                       onClick={cancelUsbBoot}
                       disabled={cancellingBoot || rebooting}
-                      className="px-3 py-1.5 text-xs bg-white dark:bg-gray-800 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-400 rounded hover:bg-amber-100 dark:hover:bg-amber-900/30 transition disabled:opacity-50"
+                      className="px-3 py-1.5 text-xs bg-white dark:bg-surface border border-border text-status-warn dark:text-status-warn rounded hover:bg-surface-2 dark:hover:bg-surface-2 transition disabled:opacity-50"
                     >
                       {cancellingBoot ? 'Cancelling...' : 'Cancel USB Boot'}
                     </button>
                     <button
                       onClick={triggerManualReboot}
                       disabled={cancellingBoot || rebooting}
-                      className="px-3 py-1.5 text-xs bg-amber-600 text-white rounded hover:bg-amber-700 transition disabled:opacity-50"
+                      className="px-3 py-1.5 text-xs bg-status-warn text-text rounded hover:bg-status-warn/90 transition disabled:opacity-50"
                     >
                       {rebooting ? 'Rebooting...' : 'Reboot Now'}
                     </button>
@@ -171,13 +171,13 @@ export default function UpdatesSection() {
             })()
           ) : (
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
-              <div className="text-xs text-gray-500 dark:text-gray-400">
+              <div className="text-xs text-text-muted dark:text-text-muted">
                 {bootStatus?.candidates && bootStatus.candidates.length > 0 ? (
-                  <span className="text-green-600 dark:text-green-400 font-medium">
+                  <span className="text-status-ok dark:text-status-ok font-medium">
                     ✓ Detected {bootStatus.candidates.length} bootable installation medium candidate(s).
                   </span>
                 ) : (
-                  <span className="text-amber-600 dark:text-amber-500 font-medium">
+                  <span className="text-status-warn dark:text-status-warn font-medium">
                     ⚠ No bootable USB installation media detected in UEFI boot entries. Plug in the USB to start.
                   </span>
                 )}
@@ -185,7 +185,7 @@ export default function UpdatesSection() {
               <button
                 onClick={() => setIsReinstallModalOpen(true)}
                 disabled={armingBoot || rebooting || !bootStatus?.candidates || bootStatus.candidates.length === 0}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors shadow-sm font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="px-4 py-2 bg-status-fail text-text rounded-lg hover:bg-status-fail/90 transition-colors shadow-sm font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 <Power size={16} />
                 {armingBoot ? 'Arming...' : 'Arm USB Boot & Reinstall'}
