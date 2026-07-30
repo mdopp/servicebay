@@ -24,6 +24,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
+  // Next.js Viewport metadata requires a static hex (no CSS token indirection);
+  // mirrors globals.css's --accent-strong value verbatim.
+  // eslint-disable-next-line sb/no-raw-color-literal -- static viewport metadata, no CSS token indirection possible
   themeColor: '#2563eb',
   width: 'device-width',
   initialScale: 1,
