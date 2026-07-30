@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { revisionMatchesSha, confirmFlipBack, FLIP_BACK_TIMEOUT_SEC, type FlipBackDeps } from './autoloop-dev-verify';
+import {
+  revisionMatchesSha,
+  confirmFlipBack,
+  confirmDevImage,
+  parseDevVerifyArgs,
+  parseRevisionOutput,
+  DEV_IMAGE_TIMEOUT_SEC,
+  FLIP_BACK_TIMEOUT_SEC,
+  type DevImageDeps,
+  type FlipBackDeps,
+} from './autoloop-dev-verify';
 
 const FULL = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'; // 40-char git sha
 const SHORT = 'a1b2c3d4'; // harness's short sha
@@ -220,5 +230,194 @@ describe('confirmFlipBack (#2387)', () => {
     expect(result.flippedBack).toBe(true);
     expect(box.stats.postThrows).toBeGreaterThan(0); // it really did hit the throwing path
     expect(box.stats.posts).toBe(1); // …and never needed a second accepted POST
+  });
+});
+
+// ---------------------------------------------------------------------------
+// confirmDevImage (#2493) — the `reachedDev` false-negative race.
+//
+// Same shape as the confirmFlipBack fixtures: a simulated box on a virtual
+// clock, so a 900s budget costs no wall time.
+// ---------------------------------------------------------------------------
+
+/** A valid-but-different 40-char hex revision — the OUTGOING `:latest` image,
+ *  which keeps being reported until the flip's restart actually completes. */
+const OLD = 'f'.repeat(40);
+
+interface ImageScript {
+  /** When the running container starts reporting the TARGET revision. */
+  liveAtMs: number;
+  /** Reads fail (`null` — `/mcp` down mid-restart) before this. */
+  readFailsUntilMs?: number;
+  /** What one `podman inspect` round-trip costs on the virtual clock. */
+  readCostMs?: number;
+}
+
+function makeFakeImageBox(script: ImageScript) {
+  let t = 0;
+  const stats = { reads: 0, failures: 0 };
+  const deps: DevImageDeps = {
+    now: () => t,
+    sleep: async ms => {
+      t += ms;
+    },
+    readRevision: async () => {
+      t += script.readCostMs ?? 1_000; // an /mcp exec round-trip isn't free
+      if (t < (script.readFailsUntilMs ?? 0)) {
+        stats.failures++;
+        return null;
+      }
+      stats.reads++;
+      return t >= script.liveAtMs ? FULL : OLD;
+    },
+  };
+  return { deps, stats, elapsedMs: () => t };
+}
+
+/** The pre-#2493 wait loop, verbatim: deadline checked at the TOP, a fixed 20s
+ *  cadence, and a failed read collapsed to `''`. Kept only as a fixture check so
+ *  the assertions below aren't testing thin air. */
+async function legacyWaitForDevImage(sha: string, deps: DevImageDeps, timeoutSec: number): Promise<boolean> {
+  const deadline = deps.now() + timeoutSec * 1000;
+  while (deps.now() < deadline) {
+    const revision = (await deps.readRevision()) ?? ''; // the old failure/mismatch collapse
+    if (revisionMatchesSha(revision, sha)) return true;
+    await deps.sleep(20_000);
+  }
+  return false;
+}
+
+describe('parseRevisionOutput', () => {
+  it('takes the last non-empty line of a podman inspect --format stdout', () => {
+    expect(parseRevisionOutput(`warning: something\n${FULL}\n`)).toBe(FULL);
+  });
+
+  it("normalises Go template's <no value> (image carries no revision label) to empty", () => {
+    expect(parseRevisionOutput('<no value>\n')).toBe('');
+    expect(parseRevisionOutput('   \n')).toBe('');
+  });
+});
+
+describe('confirmDevImage (#2493)', () => {
+  it('waits at least as long as the documented image budget', () => {
+    expect(DEV_IMAGE_TIMEOUT_SEC).toBeGreaterThanOrEqual(900);
+  });
+
+  it('sees an image that lands inside the last poll gap — the trailing blind window', async () => {
+    // Image goes live at 895s: after the old loop's final read (883s) but before
+    // its budget (900s), i.e. exactly the window it never looked at again.
+    const script: ImageScript = { liveAtMs: 895_000 };
+
+    const legacy = makeFakeImageBox(script);
+    await expect(legacyWaitForDevImage(SHORT, legacy.deps, DEV_IMAGE_TIMEOUT_SEC)).resolves.toBe(false); // fixture
+
+    const box = makeFakeImageBox(script);
+    const result = await confirmDevImage(SHORT, box.deps);
+    expect(result.reached).toBe(true);
+    expect(result.revision).toBe(FULL);
+  });
+
+  it('reports reads:0 with an explicit "not evidence" detail when the box never answered', async () => {
+    // Every read fails for the whole budget. The old loop returned the SAME
+    // false as a genuinely stale image, with a "build likely stuck" detail.
+    const box = makeFakeImageBox({ liveAtMs: 0, readFailsUntilMs: Number.MAX_SAFE_INTEGER });
+    const result = await confirmDevImage(SHORT, box.deps);
+    expect(result).toMatchObject({ reached: false, reads: 0, revision: null });
+    expect(result.readFailures).toBeGreaterThan(0);
+    expect(result.detail).toContain('never read the running image revision');
+    expect(result.detail).toContain('NOT evidence');
+    expect(box.elapsedMs()).toBeLessThanOrEqual((DEV_IMAGE_TIMEOUT_SEC + 60) * 1000); // still bounded
+  });
+
+  it('does not treat a failed read as a verdict — /mcp is down mid-flip by design', async () => {
+    const box = makeFakeImageBox({ liveAtMs: 610_000, readFailsUntilMs: 600_000 });
+    const result = await confirmDevImage(SHORT, box.deps);
+    expect(result.reached).toBe(true);
+    expect(result.readFailures).toBeGreaterThan(0); // it really did hit the failing path
+  });
+
+  it('falls back to the default budget instead of skipping the wait on a non-finite timeout', async () => {
+    // `Number('')`/`Number(undefined)` used to reach here as NaN, making the
+    // deadline NaN → `now() < NaN` false → an instant, wait-free false negative.
+    const script: ImageScript = { liveAtMs: 100_000 };
+
+    const legacy = makeFakeImageBox(script);
+    await expect(legacyWaitForDevImage(SHORT, legacy.deps, Number.NaN)).resolves.toBe(false); // fixture
+    expect(legacy.stats.reads).toBe(0); // …without a single look at the box
+
+    const box = makeFakeImageBox(script);
+    const result = await confirmDevImage(SHORT, box.deps, { timeoutSec: Number.NaN });
+    expect(result.reached).toBe(true);
+    expect(box.stats.reads).toBeGreaterThan(0);
+  });
+
+  it('still reports false — and says so — for an image that genuinely never lands', async () => {
+    const box = makeFakeImageBox({ liveAtMs: Number.MAX_SAFE_INTEGER });
+    const result = await confirmDevImage(SHORT, box.deps);
+    expect(result.reached).toBe(false);
+    expect(result.reads).toBeGreaterThan(0);
+    expect(result.revision).toBe(OLD); // the outgoing image, read successfully
+    expect(result.detail).toContain('still in flight');
+    expect(box.elapsedMs()).toBeLessThanOrEqual((DEV_IMAGE_TIMEOUT_SEC + 60) * 1000);
+  });
+
+  it('returns immediately on the happy path — one read, no wasted budget', async () => {
+    const box = makeFakeImageBox({ liveAtMs: 0 });
+    const result = await confirmDevImage(SHORT, box.deps);
+    expect(result).toMatchObject({ reached: true, reads: 1, readFailures: 0 });
+    expect(box.elapsedMs()).toBeLessThan(5_000);
+  });
+});
+
+describe('parseDevVerifyArgs (#2493)', () => {
+  const ok = (argv: string[]) => {
+    const r = parseDevVerifyArgs(argv);
+    if ('error' in r) throw new Error(`expected a parse, got error: ${r.error}`);
+    return r.args;
+  };
+  const err = (argv: string[]) => {
+    const r = parseDevVerifyArgs(argv);
+    if (!('error' in r)) throw new Error('expected a parse error');
+    return r.error;
+  };
+
+  it('parses the canonical invocation with the documented defaults', () => {
+    expect(ok([SHORT, '--probe-script', '/tmp/probes.sh'])).toEqual({
+      sha: SHORT,
+      probeScript: '/tmp/probes.sh',
+      imageTimeout: DEV_IMAGE_TIMEOUT_SEC,
+      flipBackTimeout: FLIP_BACK_TIMEOUT_SEC,
+    });
+  });
+
+  it('binds the SHA correctly when the flag comes FIRST — the old mis-parse', () => {
+    // `argv.find(a => !a.startsWith('--'))` used to pick /tmp/probes.sh as the
+    // SHA; non-hex, so no revision could ever match → guaranteed false negative.
+    expect(ok(['--probe-script', '/tmp/probes.sh', SHORT])).toMatchObject({ sha: SHORT, probeScript: '/tmp/probes.sh' });
+  });
+
+  it('accepts --opt=value as well as --opt value', () => {
+    expect(ok([SHORT, '--probe-script=/tmp/p.sh', '--image-timeout=1200'])).toMatchObject({
+      probeScript: '/tmp/p.sh',
+      imageTimeout: 1200,
+    });
+  });
+
+  it('rejects a missing or non-numeric timeout instead of silently going NaN', () => {
+    expect(err([SHORT, '--probe-script', '/tmp/p.sh', '--image-timeout'])).toContain('--image-timeout');
+    expect(err([SHORT, '--probe-script', '/tmp/p.sh', '--image-timeout', 'soon'])).toContain('--image-timeout');
+    expect(err([SHORT, '--probe-script', '/tmp/p.sh', '--flipback-timeout', '0'])).toContain('--flipback-timeout');
+  });
+
+  it('rejects a non-SHA positional up front rather than after a 900s wait', () => {
+    expect(err(['/tmp/probes.sh', '--probe-script', '/tmp/probes.sh'])).toContain('git SHA');
+    expect(err(['dev', '--probe-script', '/tmp/probes.sh'])).toContain('git SHA');
+  });
+
+  it('rejects a missing sha / probe script / unknown option / extra positional', () => {
+    expect(err(['--probe-script', '/tmp/p.sh'])).toContain('missing <sha>');
+    expect(err([SHORT])).toContain('--probe-script');
+    expect(err([SHORT, '--probe-script', '/tmp/p.sh', '--nope', '1'])).toContain('unknown option');
+    expect(err([SHORT, 'extra', '--probe-script', '/tmp/p.sh'])).toContain('extra argument');
   });
 });

@@ -44,12 +44,20 @@ const Terminal = forwardRef<TerminalRef, TerminalProps>(({ id = 'host', showCont
     const socket = io();
     socketRef.current = socket;
 
+    // Get semantic color tokens from CSS @theme (dark mode defaults)
+    const root = document.documentElement;
+    const computedStyle = getComputedStyle(root);
+    // eslint-disable-next-line sb/no-raw-color-literal
+    const surfaceColor = computedStyle.getPropertyValue('--surface').trim() || '#111114';
+    // eslint-disable-next-line sb/no-raw-color-literal
+    const foregroundColor = computedStyle.getPropertyValue('--foreground').trim() || '#f0f0f0';
+
     // Initialize xterm
     const term = new XTerm({
       cursorBlink: true,
       theme: {
-        background: '#111827', // gray-900
-        foreground: '#f3f4f6', // gray-100
+        background: surfaceColor,
+        foreground: foregroundColor,
       },
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       fontSize: 14,
@@ -79,7 +87,7 @@ const Terminal = forwardRef<TerminalRef, TerminalProps>(({ id = 'host', showCont
         for (const entry of entries) {
           if (entry.contentRect.width > 0 && entry.contentRect.height > 0) {
             initObserver?.disconnect();
-            
+
             if (terminalRef.current && terminalRef.current.childElementCount === 0) {
               requestAnimationFrame(() => {
                 if (!terminalRef.current) return;
@@ -151,10 +159,10 @@ const Terminal = forwardRef<TerminalRef, TerminalProps>(({ id = 'host', showCont
       if (fitAddonRef.current && termRef.current && socketRef.current) {
         try {
           fitAddonRef.current.fit();
-          socketRef.current.emit('resize', { 
+          socketRef.current.emit('resize', {
             id,
-            cols: termRef.current.cols, 
-            rows: termRef.current.rows 
+            cols: termRef.current.cols,
+            rows: termRef.current.rows
           });
         } catch (e) {
           console.error('Resize failed:', e);
@@ -163,11 +171,11 @@ const Terminal = forwardRef<TerminalRef, TerminalProps>(({ id = 'host', showCont
     };
 
     window.addEventListener('resize', handleResize);
-    
+
     const resizeObserver = new ResizeObserver(() => {
         setTimeout(handleResize, 100);
     });
-    
+
     if (terminalRef.current) {
         resizeObserver.observe(terminalRef.current);
     }
@@ -183,21 +191,21 @@ const Terminal = forwardRef<TerminalRef, TerminalProps>(({ id = 'host', showCont
   }, [id]);
 
   return (
-    <div className="h-full flex flex-col bg-gray-900">
+    <div className="h-full flex flex-col bg-surface">
       {showControls && (
-        <div className="flex justify-between items-center p-4 border-b border-gray-800 bg-gray-900">
-            <h2 className="text-xl font-bold text-gray-100 px-2">Terminal {id !== 'host' ? `(${id})` : ''}</h2>
+        <div className="flex justify-between items-center p-4 border-b border-surface-2 bg-surface">
+            <h2 className="text-xl font-bold text-foreground px-2">Terminal {id !== 'host' ? `(${id})` : ''}</h2>
             <div className="flex gap-2">
-                <button 
+                <button
                     onClick={handleClear}
-                    className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded transition-colors" 
+                    className="p-2 text-text-muted hover:text-foreground hover:bg-surface-2 rounded transition-colors"
                     title="Clear Terminal"
                 >
                     <Eraser size={20} />
                 </button>
-                <button 
+                <button
                     onClick={handleReconnect}
-                    className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded transition-colors" 
+                    className="p-2 text-text-muted hover:text-foreground hover:bg-surface-2 rounded transition-colors"
                     title="Reconnect"
                 >
                     <RefreshCw size={20} />

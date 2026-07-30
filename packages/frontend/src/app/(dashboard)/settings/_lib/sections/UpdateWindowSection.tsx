@@ -21,7 +21,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Lock } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
-import { Button } from '@/components/ui';
+import { Button, Field, Input } from '@/components/ui';
 
 type Day = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
 
@@ -68,7 +68,7 @@ interface ApplyToCheckboxProps {
 function ApplyToCheckbox({ label, description, checked, onChange, disabled }: ApplyToCheckboxProps) {
   return (
     <label className="flex items-start gap-2.5 cursor-pointer select-none p-2 rounded-card hover:bg-surface-2">
-      <input
+      <Input
         type="checkbox"
         checked={checked}
         onChange={e => onChange(e.target.checked)}
@@ -189,7 +189,7 @@ export default function UpdateWindowSection() {
             )}
 
             <label className="flex items-start gap-3 cursor-pointer select-none">
-              <input
+              <Input
                 type="checkbox"
                 checked={window.enabled}
                 onChange={e => setWindow(w => ({ ...w, enabled: e.target.checked }))}
@@ -211,9 +211,8 @@ export default function UpdateWindowSection() {
                   {ORDERED_DAYS.map(day => {
                     const on = window.days.includes(day);
                     return (
-                      <button
+                      <Button
                         key={day}
-                        type="button"
                         onClick={() => toggleDay(day)}
                         disabled={saving}
                         className={`px-3 py-1.5 rounded-card text-xs font-medium border transition-colors ${
@@ -223,43 +222,47 @@ export default function UpdateWindowSection() {
                         }`}
                       >
                         {day}
-                      </button>
+                      </Button>
                     );
                   })}
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <label className="block">
-                  <span className="block text-xs font-medium text-text-muted mb-1.5">Start (UTC)</span>
-                  <input
-                    type="time"
-                    step={300}
-                    value={window.startTime}
-                    onChange={e => setWindow(w => ({ ...w, startTime: e.target.value }))}
-                    disabled={saving}
-                    className="w-full p-2 rounded-card border border-border bg-surface-2 text-text focus:ring-2 focus:ring-status-warn outline-none text-sm"
-                  />
-                </label>
-                <label className="block">
-                  <span className="block text-xs font-medium text-text-muted mb-1.5">
-                    Length: <span className="font-mono">{lengthHumanised(window.lengthMinutes)}</span>
-                  </span>
-                  <input
-                    type="range"
-                    min={30}
-                    max={480}
-                    step={30}
-                    value={window.lengthMinutes}
-                    onChange={e => setWindow(w => ({ ...w, lengthMinutes: parseInt(e.target.value, 10) }))}
-                    disabled={saving}
-                    className="w-full accent-status-warn"
-                  />
-                  <div className="flex justify-between text-[10px] text-text-subtle mt-0.5">
-                    <span>30 min</span>
-                    <span>8 h</span>
-                  </div>
-                </label>
+                <Field label="Start (UTC)">
+                  {(props) => (
+                    <Input
+                      {...props}
+                      type="time"
+                      step={300}
+                      value={window.startTime}
+                      onChange={e => setWindow(w => ({ ...w, startTime: e.target.value }))}
+                      disabled={saving}
+                      className="w-full p-2 rounded-card border border-border bg-surface-2 text-text focus:ring-2 focus:ring-status-warn outline-none text-sm"
+                    />
+                  )}
+                </Field>
+                <Field label={<>Length: <span className="font-mono">{lengthHumanised(window.lengthMinutes)}</span></>}>
+                  {(props) => (
+                    <div className="space-y-1">
+                      <Input
+                        {...props}
+                        type="range"
+                        min={30}
+                        max={480}
+                        step={30}
+                        value={window.lengthMinutes}
+                        onChange={e => setWindow(w => ({ ...w, lengthMinutes: parseInt(e.target.value, 10) }))}
+                        disabled={saving}
+                        className="w-full accent-status-warn"
+                      />
+                      <div className="flex justify-between text-[10px] text-text-subtle">
+                        <span>30 min</span>
+                        <span>8 h</span>
+                      </div>
+                    </div>
+                  )}
+                </Field>
               </div>
 
               <div className="pt-2 border-t border-border">

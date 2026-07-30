@@ -104,30 +104,30 @@ export default function RestoreStatusBanner() {
   };
 
   return (
-    <div className="fixed top-4 right-4 z-40 max-w-md bg-white dark:bg-gray-800 rounded-xl border border-blue-200 dark:border-blue-800 shadow-lg overflow-hidden">
+    <div className="fixed top-4 right-4 z-40 max-w-md bg-surface border border-status-info shadow-lg overflow-hidden rounded-xl">
       <div className="p-4 flex items-start gap-3">
-        <div className="shrink-0 p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
+        <div className="shrink-0 p-2 rounded-lg bg-status-info/30 text-status-info">
           {total > 0 && up > 0 ? <RefreshCw size={20} className="animate-spin" /> : <Loader2 size={20} className="animate-spin" />}
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
+          <h3 className="text-sm font-semibold text-text">
             Welcome back — restoring services from RAID backup
           </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+          <p className="text-xs text-text-muted mt-1">
             {total > 0
               ? <>{up} of {total} services running. The rest are still starting up — Quadlet brings them back automatically after a re-install.</>
               : <>The agent is still picking up services from the RAID backup. This usually clears within a minute.</>}
           </p>
           {total > 0 && (
-            <div className="mt-2 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+            <div className="mt-2 h-1.5 bg-surface-2 rounded-full overflow-hidden">
               <div
-                className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                className="h-full bg-accent-strong rounded-full transition-all duration-300"
                 style={{ width: `${(up / total) * 100}%` }}
               />
             </div>
           )}
           {typeof status.minutesRemaining === 'number' && (
-            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1.5 flex items-center gap-1">
+            <p className="text-[10px] text-text-subtle mt-1.5 flex items-center gap-1">
               <CheckCircle2 size={10} />
               Auto-dismisses in {status.minutesRemaining} min.
             </p>
@@ -138,7 +138,7 @@ export default function RestoreStatusBanner() {
           aria-label="Dismiss"
           disabled={dismissing}
           onClick={dismiss}
-          className="shrink-0 p-1 rounded text-gray-400 hover:text-gray-700 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50"
+          className="shrink-0 p-1 rounded text-text-subtle hover:text-text hover:bg-surface-2 disabled:opacity-50"
         >
           <X size={16} />
         </button>

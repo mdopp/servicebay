@@ -56,8 +56,8 @@ export default function DomainTag({ username, collapsed = false }: DomainTagProp
   const domain = isPublic ? mode.publicDomain! : mode.activeDomain;
   const Icon = isPublic ? Globe : Home;
   const tone = isPublic
-    ? 'text-emerald-600 dark:text-emerald-400'
-    : 'text-amber-600 dark:text-amber-400';
+    ? 'text-status-ok'
+    : 'text-status-warn';
   const tooltip = isPublic
     ? `Public domain mode — services reachable at <sub>.${domain} with HTTPS + external access.`
     : `Internal-only mode — services reachable at <sub>.${domain} on the LAN, no HTTPS / external access. Click to add a public domain.`;
@@ -73,10 +73,10 @@ export default function DomainTag({ username, collapsed = false }: DomainTagProp
   const line = (
     <div className="flex items-center gap-1.5 min-w-0" title={tooltip}>
       <Icon size={13} className={`shrink-0 ${tone}`} />
-      <span className="truncate text-xs text-gray-500 dark:text-gray-400">
-        {user && <span className="font-semibold text-gray-700 dark:text-gray-300">{user}</span>}
+      <span className="truncate text-xs text-text-subtle">
+        {user && <span className="font-semibold text-text-muted">{user}</span>}
         {user ? ' on ' : ''}
-        <span className="font-semibold text-gray-700 dark:text-gray-300">{domain}</span>
+        <span className="font-semibold text-text-muted">{domain}</span>
       </span>
     </div>
   );
@@ -88,7 +88,7 @@ export default function DomainTag({ username, collapsed = false }: DomainTagProp
         {line}
         <Link
           href="/settings/network-domain#reverse-proxy"
-          className="text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors truncate"
+          className="text-[11px] font-medium text-status-warn hover:text-status-warn/75 transition-colors truncate"
         >
           + add a public domain →
         </Link>

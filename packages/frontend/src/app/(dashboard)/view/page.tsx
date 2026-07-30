@@ -17,7 +17,7 @@ export default async function ViewPage({ searchParams }: ViewPageProps) {
   if (!path) {
     return (
       <div className="p-6">
-        <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-4 rounded-lg flex items-center gap-2">
+        <div className="bg-status-fail/30 text-status-fail p-4 rounded-lg flex items-center gap-2">
           <AlertCircle size={20} />
           Missing file path
         </div>
@@ -51,19 +51,19 @@ export default async function ViewPage({ searchParams }: ViewPageProps) {
         title="File Viewer"
         showBack
       >
-        <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+        <div className="flex items-center gap-2 text-sm text-text-muted">
             <FileText size={16} />
-            Viewing <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">{path}</code> on {node || 'Local'}
+            Viewing <code className="bg-surface-2 px-1 rounded">{path}</code> on {node || 'Local'}
         </div>
       </PageHeader>
 
       {error ? (
-        <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-4 rounded-lg flex items-center gap-2 mt-6">
+        <div className="bg-status-fail/30 text-status-fail p-4 rounded-lg flex items-center gap-2 mt-6">
           <AlertCircle size={20} />
           {error}
         </div>
       ) : (
-        <div className="mt-6 bg-white dark:bg-gray-900 rounded-lg shadow border border-gray-200 dark:border-gray-800 overflow-hidden">
+        <div className="mt-6 bg-surface rounded-lg shadow border border-border overflow-hidden">
           {isMarkdown ? (
             <div className="p-8 prose dark:prose-invert max-w-none">
               <ReactMarkdown>{content}</ReactMarkdown>
