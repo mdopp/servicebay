@@ -6,6 +6,9 @@ import Link from 'next/link';
 import { useToast } from '@/providers/ToastProvider';
 import { useSocket } from '@/hooks/useSocket';
 import { humanizeError } from '@servicebay/api-client';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { MultiSelect } from './MultiSelect';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -128,13 +131,15 @@ const CollapsibleJsonBlock = ({ data, sizeBytes, buttonLabel }: { data: unknown;
 
   return (
     <>
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1 text-xs text-text-muted hover:text-text transition-colors select-none"
+        className="flex items-center gap-1 text-xs text-text-muted hover:text-text"
       >
         {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         <span className="font-mono">{buttonLabel} <span className="text-text-subtle">({formatBytes(sizeBytes)})</span> {expanded ? '' : '(click to expand)'}</span>
-      </button>
+      </Button>
       <div
         ref={contentRef}
         className="overflow-hidden"
@@ -434,7 +439,6 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
   };
 
   const controlInputClass = 'w-full h-10 px-space-3 text-sm border border-border rounded-card bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none transition-colors';
-  const baseButtonClass = 'h-10 rounded-card border border-border bg-surface-2 text-text-muted hover:text-accent hover:border-accent/40 transition-colors disabled:opacity-50';
 
   return (
     <div className="flex flex-col h-full bg-surface rounded-card border border-border">
@@ -446,7 +450,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
             <label className="text-xs font-medium text-text-muted">
               Date
             </label>
-            <select
+            <Select
               value={selectedDate}
               onChange={e => setSelectedDate(e.target.value)}
               className={`${controlInputClass} cursor-pointer`}
@@ -457,7 +461,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
                   {date}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           {/* Level Filter */}
@@ -465,7 +469,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
             <label className="text-xs font-medium text-text-muted">
               Level
             </label>
-            <select
+            <Select
               value={filter.level || ''}
               onChange={e => setFilter({ ...filter, level: e.target.value || undefined })}
               className={`${controlInputClass} cursor-pointer`}
@@ -475,7 +479,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
               <option value="info">Info</option>
               <option value="warn">Warn</option>
               <option value="error">Error</option>
-            </select>
+            </Select>
           </div>
 
           {/* Tag Filter */}
@@ -497,7 +501,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
             <label className="text-xs font-medium text-text-muted">
               Limit
             </label>
-            <input
+            <Input
               type="number"
               value={filter.limit}
               onChange={e => setFilter({ ...filter, limit: parseInt(e.target.value) || 100 })}
@@ -514,15 +518,17 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
               <Link
                 href="/settings"
                 title="Change max Log Level"
-                className={`hidden xl:inline-flex items-center gap-2 px-3 text-xs ${baseButtonClass}`}
+                className="hidden xl:inline-flex items-center gap-2 px-3 text-xs h-10 rounded-card border border-border bg-surface-2 text-text-muted hover:text-accent hover:border-accent/40 transition-colors"
               >
                  <Settings className="w-3 h-3" />
                  <span>Max Level: <span className="font-semibold uppercase">{currentSystemLogLevel}</span></span>
               </Link>
 
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={() => setSummaryMode(s => !s)}
-                className={`inline-flex items-center gap-2 px-space-3 text-xs ${baseButtonClass} ${
+                className={`inline-flex items-center gap-2 ${
                   summaryMode ? 'border-accent text-accent' : ''
                 }`}
                 title={summaryMode
@@ -532,55 +538,65 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
               >
                 <ListFilter className="w-3 h-3" />
                 <span>{summaryMode ? 'Summary' : 'Raw'}</span>
-              </button>
+              </Button>
 
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={handleRefresh}
                 disabled={loading || selectedDate === 'live'}
-                className={`inline-flex items-center justify-center w-10 ${baseButtonClass}`}
+                className="inline-flex items-center justify-center w-10"
                 title={selectedDate === 'live' ? 'Refresh disabled in live mode' : 'Refresh logs'}
               >
                 <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              </button>
+              </Button>
               
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={handleCopy}
                 disabled={logs.length === 0}
-                className={`inline-flex items-center justify-center w-10 ${baseButtonClass}`}
+                className="inline-flex items-center justify-center w-10"
                 title="Copy visible logs to clipboard"
                 aria-label="Copy logs"
               >
                 <Copy className="w-4 h-4" />
-              </button>
+              </Button>
 
-              <button
+              <Button
+                variant="secondary"
+                size="sm"
                 onClick={handleDownload}
                 disabled={logs.length === 0}
-                className={`inline-flex items-center justify-center w-10 ${baseButtonClass}`}
+                className="inline-flex items-center justify-center w-10"
                 title="Download logs"
               >
                 <Download className="w-4 h-4" />
-              </button>
+              </Button>
 
               {selectedDate === 'live' && (
-                <button
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => setLivePaused(p => !p)}
-                  className={`inline-flex items-center justify-center w-10 ${baseButtonClass}`}
+                  className="inline-flex items-center justify-center w-10"
                   title={livePaused ? 'Resume live stream' : 'Pause live stream'}
                   aria-label={livePaused ? 'Resume live stream' : 'Pause live stream'}
                 >
                   {livePaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
-                </button>
+                </Button>
               )}
 
               {hasActiveFilter && (
-                <button
+                <Button
+                   variant="secondary"
+                   size="sm"
                    onClick={handleClearFilter}
-                   className={`inline-flex items-center justify-center px-3 text-xs font-medium ${baseButtonClass}`}
+                   className="inline-flex items-center justify-center px-3"
                    title="Clear filters"
                 >
                   Clear
-                </button>
+                </Button>
               )}
             </div>
           </div>
@@ -649,8 +665,10 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
                       </span>
                     )}
                     {log.traceId && (
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="sm"
                         onClick={() => {
                           setFilter(f => ({ ...f, search: log.traceId }));
                           addToast('success', 'Trace ID Filtered', `Isolating transaction: ${log.traceId}`);
@@ -659,7 +677,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
                         title={`Click to filter logs by Trace ID: ${log.traceId}`}
                       >
                         trace: {log.traceId.slice(0, 8)}...
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
