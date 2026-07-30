@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.16](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.15...servicebay-v5.11.16) (2026-07-30)
+
+
+### Bug Fixes
+
+* **app:** replace raw color literals with semantic tokens in not-found page ([ee4ec54](https://github.com/mdopp/servicebay/commit/ee4ec54501fb96e657d3b3e1039e9458f0f52f34))
+* **chat:** replace raw color literals with semantic design token ([c303a07](https://github.com/mdopp/servicebay/commit/c303a07cafa0e600826a5ea3049b1628bbb657d0))
+* **components:** replace raw color literals with semantic tokens in ErrorActions ([dfe9926](https://github.com/mdopp/servicebay/commit/dfe9926e00bd02fa9cffdf9372ef880d7d7a00a5))
+* **frontend:** lint-ratchet color-literal burn-down (batch m) ([6093f6c](https://github.com/mdopp/servicebay/commit/6093f6c95b12d5ba3712a98997eae73b5ef01e1c))
+* **frontend:** replace raw Tailwind colors with semantic tokens in FileViewer ([3998068](https://github.com/mdopp/servicebay/commit/3998068383b7b316e91e6e7b2e0e85ec2894ca62))
+* **nginx:** reword log string to avoid false-positive color-literal match ([1f31a43](https://github.com/mdopp/servicebay/commit/1f31a43848cd29de7b5d6d07b2b6582d71c58ff6))
+* **portal:** document viewport themeColor as token-sourced static hex ([4a1fb64](https://github.com/mdopp/servicebay/commit/4a1fb64584ac63694eb542469805513c710e5da8))
+* **portal:** replace raw color literals in webmanifest with token-sourced hex ([43befb7](https://github.com/mdopp/servicebay/commit/43befb7d9e121ca340847b9fe7b3d04205bf6001))
+* **services:** replace raw color literal with semantic design token ([44a223b](https://github.com/mdopp/servicebay/commit/44a223be281fc754c1e1d2c6a3796a3b716a5d2c))
+
 ## [5.11.15](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.14...servicebay-v5.11.15) (2026-07-30)
 
 
