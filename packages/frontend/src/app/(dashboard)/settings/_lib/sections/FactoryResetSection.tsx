@@ -61,22 +61,22 @@ export default function FactoryResetSection() {
 
   return (
     <div className="space-y-4">
-        <div className="text-sm text-gray-700 dark:text-gray-300 space-y-2">
+        <div className="text-sm text-text space-y-2">
           <p>This deletes every installed service (photos, vault, identity, proxy, all of it) and clears the saved credentials in ServiceBay&apos;s config. The next wizard run goes through the full first-install flow with no pre-filled values.</p>
-          <p className="font-medium text-red-700 dark:text-red-400">
+          <p className="font-medium text-status-fail">
             Not what you want for a normal re-install. To rebuild from a USB stick, pick a Factory-fresh option in the build form instead — &quot;wipe-configs&quot; keeps your app data on disk; this button does not.
           </p>
-          <p className="text-xs text-gray-700 dark:text-gray-300">
+          <p className="text-xs text-text">
             Each service&apos;s config (Home Assistant&apos;s automations + <span className="font-mono">.storage</span>, the Z-Wave network keys, AdGuard / Authelia / nginx settings) is <span className="font-semibold">not</span> pulled back automatically — restore it from a System Snapshot afterwards, or services come up with default settings. Bulk data (the Immich photo library, recorder history, the Z-Wave mesh DB) is not in the snapshot; it is wiped by a Factory Reset (restore it from Backup Sync).
           </p>
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-subtle">
             Family members will need to re-create their LLDAP accounts. NPM&apos;s Let&apos;s Encrypt certs are wiped (LE has a rate limit on re-issuance, so don&apos;t do this repeatedly).
           </p>
         </div>
 
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Type <span className="font-mono font-bold text-red-600 dark:text-red-400">{REQUIRED_CONFIRM}</span> to confirm:
+          <label className="block text-sm font-medium text-text">
+            Type <span className="font-mono font-bold text-status-fail">{REQUIRED_CONFIRM}</span> to confirm:
           </label>
           <input
             type="text"
@@ -86,27 +86,27 @@ export default function FactoryResetSection() {
             placeholder={REQUIRED_CONFIRM}
             autoComplete="off"
             spellCheck={false}
-            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50"
+            className="w-full px-3 py-2 border border-border rounded-lg bg-surface text-text font-mono text-sm focus:outline-none focus:ring-2 focus:ring-status-fail disabled:opacity-50"
           />
         </div>
 
         <button
           onClick={handleFactoryReset}
           disabled={!matches || running}
-          className="w-full sm:w-auto px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+          className="w-full sm:w-auto px-4 py-2 bg-status-fail text-on-accent rounded-lg hover:bg-status-fail/90 transition-colors shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
         >
           {running ? <Loader2 size={18} className="animate-spin" /> : <Trash2 size={18} />}
           {running ? 'Resetting…' : 'Factory reset this server'}
         </button>
 
         {result && (
-          <div className="mt-4 p-4 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-900/50 rounded-lg text-sm text-gray-700 dark:text-gray-300 space-y-1">
-            <p className="font-medium text-green-700 dark:text-green-400">Reset complete.</p>
+          <div className="mt-4 p-4 bg-status-ok/10 border border-status-ok rounded-lg text-sm text-text space-y-1">
+            <p className="font-medium text-status-ok">Reset complete.</p>
             <p>Removed {result.deleted} service{result.deleted === 1 ? '' : 's'}; wiped {result.wipeSteps.length} data group{result.wipeSteps.length === 1 ? '' : 's'}.</p>
             {result.cleared.length > 0 && (
               <p>Config fields cleared: <span className="font-mono text-xs">{result.cleared.join(', ')}</span>.</p>
             )}
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Open the install wizard to set up the server from scratch.</p>
+            <p className="text-xs text-subtle mt-2">Open the install wizard to set up the server from scratch.</p>
           </div>
         )}
     </div>
