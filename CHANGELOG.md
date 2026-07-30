@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.8](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.7...servicebay-v5.11.8) (2026-07-30)
+
+
+### Bug Fixes
+
+* **frontend:** 4th Button-cascade collision + dead accent-hover token (box-verify e9c93f38) ([8b25fc1](https://github.com/mdopp/servicebay/commit/8b25fc19479e7bf0eeef06cdc0274bb1bc30f972))
+* **frontend:** 4th Button-cascade collision + dead accent-hover token (box-verify e9c93f38) ([38e6e80](https://github.com/mdopp/servicebay/commit/38e6e803d578f3ac1a481ed9ac8e3f8833744b58))
+* **frontend:** migrate SSHSetupModal from raw HTML to ui primitives ([86a77c7](https://github.com/mdopp/servicebay/commit/86a77c7d5601d15601560a2b4fdbd77d063fcb11))
+* **frontend:** replace raw buttons with Button primitive in useContainerActions ([638916a](https://github.com/mdopp/servicebay/commit/638916a150b697ec958b5cef9dbc4870e0a28c61))
+* **frontend:** SSHSetupModal !hover important-modifier placed before the variant ([8f6a1f4](https://github.com/mdopp/servicebay/commit/8f6a1f4b3fa250d8fdf0e59ba4b09eaa9a863359))
+
 ## [5.11.7](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.6...servicebay-v5.11.7) (2026-07-30)
 
 
