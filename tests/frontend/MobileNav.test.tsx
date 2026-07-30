@@ -61,9 +61,9 @@ describe('MobileNav', () => {
     it('MobileBottomBar highlights active route', () => {
         renderWithToast(<MobileBottomBar />);
         const networkBtn = screen.getByTitle('Network Map');
-        expect(networkBtn.className).toContain('text-blue-600');
+        expect(networkBtn.className).toContain('text-accent');
         const servicesBtn = screen.getByTitle('Services');
-        expect(servicesBtn.className).not.toContain('text-blue-600');
+        expect(servicesBtn.className).not.toContain('text-accent');
     });
 
     it('MobileBottomBar threads ?node= into navigation', () => {
