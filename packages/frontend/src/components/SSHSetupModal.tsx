@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { X, Terminal, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { installSSHKey } from '@/app/actions/ssh';
+import { Button, Input } from '@/components/ui';
 
 interface SSHSetupModalProps {
   isOpen: boolean;
@@ -60,9 +61,9 @@ export default function SSHSetupModal({ isOpen, onClose, initialHost = '', initi
             <Terminal size={18} />
             Setup SSH Keys
           </h3>
-          <button onClick={onClose} className="text-text-muted hover:text-text">
+          <Button variant="ghost" size="sm" onClick={onClose}>
             <X size={20} />
-          </button>
+          </Button>
         </div>
 
         <div className="p-6 space-y-4 overflow-y-auto">
@@ -73,7 +74,7 @@ export default function SSHSetupModal({ isOpen, onClose, initialHost = '', initi
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2 md:col-span-1">
               <label className="block text-xs font-medium text-text-muted mb-1">Host</label>
-              <input
+              <Input
                 type="text"
                 value={host}
                 onChange={e => setHost(e.target.value)}
@@ -84,7 +85,7 @@ export default function SSHSetupModal({ isOpen, onClose, initialHost = '', initi
             </div>
             <div className="col-span-2 md:col-span-1">
               <label className="block text-xs font-medium text-text-muted mb-1">Port</label>
-              <input
+              <Input
                 type="number"
                 value={port}
                 onChange={e => setPort(parseInt(e.target.value))}
@@ -95,7 +96,7 @@ export default function SSHSetupModal({ isOpen, onClose, initialHost = '', initi
             </div>
             <div className="col-span-2 md:col-span-1">
               <label className="block text-xs font-medium text-text-muted mb-1">Username</label>
-              <input
+              <Input
                 type="text"
                 value={user}
                 onChange={e => setUser(e.target.value)}
@@ -106,7 +107,7 @@ export default function SSHSetupModal({ isOpen, onClose, initialHost = '', initi
             </div>
             <div className="col-span-2 md:col-span-1">
               <label className="block text-xs font-medium text-text-muted mb-1">Password</label>
-              <input
+              <Input
                 type="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
@@ -127,21 +128,19 @@ export default function SSHSetupModal({ isOpen, onClose, initialHost = '', initi
         </div>
 
         <div className="p-4 border-t border-border bg-surface-2 flex justify-end gap-2">
-          <button
+          <Button
+            variant="ghost"
             onClick={onClose}
-            className="px-4 py-2 text-sm text-text-muted hover:text-text"
             disabled={status === 'running'}
           >
             Close
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={handleSetup}
             disabled={status === 'running' || !host || !user || !password}
-            className={`px-4 py-2 text-sm text-on-accent rounded flex items-center gap-2 transition-colors ${
-                status === 'success' ? 'bg-status-ok hover:bg-status-ok/90' :
-                status === 'error' ? 'bg-status-fail hover:bg-status-fail/90' :
-                'bg-accent hover:bg-accent-strong'
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
+            className={status === 'success' ? '!bg-status-ok !hover:bg-status-ok/90' :
+                       status === 'error' ? '!bg-status-fail !hover:bg-status-fail/90' :
+                       undefined}
           >
             {status === 'running' ? <Loader2 className="animate-spin" size={16} /> :
              status === 'success' ? <CheckCircle2 size={16} /> :
@@ -151,7 +150,7 @@ export default function SSHSetupModal({ isOpen, onClose, initialHost = '', initi
              status === 'success' ? 'Done' :
              status === 'error' ? 'Retry' :
              'Run ssh-copy-id'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
