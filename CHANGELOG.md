@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.12](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.11...servicebay-v5.11.12) (2026-07-30)
+
+
+### Bug Fixes
+
+* autoloop-dev-verify reachedDev false-negative ([#2493](https://github.com/mdopp/servicebay/issues/2493)) + lint-ratchet burn-down (batch i) ([07197cc](https://github.com/mdopp/servicebay/commit/07197ccfd2714f6c98c0713202201c1ce3eeed53))
+* **autoloop:** stop dev-verify reporting reachedDev:false for a live :dev image ([cb41fcb](https://github.com/mdopp/servicebay/commit/cb41fcbef5b9d0fae2d30fc9bd106cb978f759a4)), closes [#2493](https://github.com/mdopp/servicebay/issues/2493)
+* **components:** migrate Terminal colors to semantic tokens ([a418f0d](https://github.com/mdopp/servicebay/commit/a418f0d86ecce666c898d678d3d90189704f1e52))
+* **components:** replace raw color literals with semantic tokens in SectionHelp ([56f3b70](https://github.com/mdopp/servicebay/commit/56f3b70110c85a217b1cdb342af54a771df87d31))
+* **domaintag:** replace raw color literals with semantic design tokens ([b73f950](https://github.com/mdopp/servicebay/commit/b73f9501f790412efd5f826a9f9a4f5be3206f88))
+* **frontend:** replace raw color literals with semantic tokens in RegistryDashboard ([59cf58b](https://github.com/mdopp/servicebay/commit/59cf58bc1e80c296dd153425e09347070797e57a))
+* **frontend:** replace raw color literals with semantic tokens in RestoreStatusBanner ([c382524](https://github.com/mdopp/servicebay/commit/c382524f8839b83e55b1707a3626070af92721c7))
+* **lint:** migrate view/page.tsx color utilities to semantic design tokens (sb/no-raw-color-literal) ([40677fc](https://github.com/mdopp/servicebay/commit/40677fc216ddb23d2950c3875d3bf2dceb536fed))
+* **settings:** migrate UpdateWindowSection to UI primitives ([225b86b](https://github.com/mdopp/servicebay/commit/225b86ba8e1fb2883f94f82d56d588ed7835b3ee))
+
 ## [5.11.11](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.10...servicebay-v5.11.11) (2026-07-30)
 
 
