@@ -88,8 +88,14 @@ export default function EmailNotificationsSection() {
           aria-label="Enable email notifications"
           onClick={() => handleEnabledToggle(!emailEnabled)}
           disabled={saving}
-          className={`relative h-6 w-11 shrink-0 items-center rounded-chip transition-colors ${emailEnabled ? 'bg-accent' : 'bg-surface-muted border border-border'}`}
           type="button"
+          variant="ghost"
+          // The track is a fixed-size pill, not a padded/filled action button — force the
+          // primitive's size/variant defaults out with `!` (same escape hatch used for
+          // Button overrides elsewhere, e.g. ContainerLogsPanel.tsx, Sidebar.tsx) so
+          // `size="md"`'s h-10/px-space-4 and the ghost hover fill can't silently win the
+          // cascade against this element's own geometry/colour (#box-verify bde0d914 regression).
+          className={`relative !h-6 !w-11 !px-0 shrink-0 items-center !rounded-chip transition-colors ${emailEnabled ? '!bg-accent hover:!bg-accent' : '!bg-surface-muted hover:!bg-surface-muted border border-border'}`}
         >
           <span className={`inline-block h-4 w-4 transform rounded-chip bg-white transition-transform ${emailEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
         </Button>
