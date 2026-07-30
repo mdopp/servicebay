@@ -138,8 +138,11 @@ export default function SSHSetupModal({ isOpen, onClose, initialHost = '', initi
           <Button
             onClick={handleSetup}
             disabled={status === 'running' || !host || !user || !password}
-            className={status === 'success' ? '!bg-status-ok !hover:bg-status-ok/90' :
-                       status === 'error' ? '!bg-status-fail !hover:bg-status-fail/90' :
+            // The important-modifier goes after the variant (`hover:!bg-…`), not before
+            // it — `!hover:…` is invalid Tailwind syntax and compiles to no rule at all,
+            // silently dropping the hover-intensify state (box-verify e9c93f38 sanity pass).
+            className={status === 'success' ? '!bg-status-ok hover:!bg-status-ok/90' :
+                       status === 'error' ? '!bg-status-fail hover:!bg-status-fail/90' :
                        undefined}
           >
             {status === 'running' ? <Loader2 className="animate-spin" size={16} /> :
