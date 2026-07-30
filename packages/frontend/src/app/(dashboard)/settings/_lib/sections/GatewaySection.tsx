@@ -161,7 +161,7 @@ export default function GatewaySection() {
           <button
             onClick={() => submit(true)}
             disabled={busy !== null}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded disabled:opacity-50"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-white text-sm font-medium rounded disabled:opacity-50"
           >
             {busy === 'test' && <Loader2 size={14} className="animate-spin" />}
             Test connection &amp; save

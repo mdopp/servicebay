@@ -91,12 +91,18 @@ export default function ServicesDashboard() {
     }) => {
         if (!path) return null;
         const display = label || (variant === 'chip' ? path.split('/').pop() || path : path);
+        // `!h-auto`/`!px-*` force out Button's size="sm" defaults (h-8, px-space-3):
+        // this badge wraps a file path across lines (whitespace-normal break-all) and
+        // was never fixed-height, so an unguarded size="sm" would both clip it to a
+        // fixed 32px box and let px-space-3 silently win over the badge's own px-1/px-2
+        // in the compiled stylesheet — the same cn()-has-no-tailwind-merge collision as
+        // #2479/#2482/#2483 (box-verify e9c93f38 follow-up, issue #2484).
         const baseClasses =
             variant === 'inline'
-                ? 'text-left text-xs font-mono text-accent hover:underline px-1 py-0.5 rounded border border-transparent whitespace-normal break-all max-w-full'
+                ? 'text-left text-xs font-mono text-accent hover:underline !h-auto !px-1 py-0.5 rounded border border-transparent whitespace-normal break-all max-w-full'
                 : variant === 'list'
-                    ? 'w-full text-left px-2 py-1 bg-surface-2 rounded border border-border text-xs font-mono transition-colors whitespace-normal break-all'
-                    : 'text-left px-2 py-0.5 bg-surface dark:bg-surface border border-border rounded text-xs font-mono whitespace-normal break-all max-w-full transition-colors';
+                    ? 'w-full text-left !h-auto !px-2 py-1 bg-surface-2 rounded border border-border text-xs font-mono transition-colors whitespace-normal break-all'
+                    : 'text-left !h-auto !px-2 py-0.5 bg-surface dark:bg-surface border border-border rounded text-xs font-mono whitespace-normal break-all max-w-full transition-colors';
 
         return (
             <Button
@@ -588,7 +594,11 @@ export default function ServicesDashboard() {
                         onClick={() => setBundlePendingDelete(bundle)}
                         variant="ghost"
                         size="sm"
-                        className="p-1.5"
+                        // `!h-auto !p-1.5` forces out size="sm"'s h-8/px-space-3 defaults so
+                        // this icon-only button stays a square p-1.5 target instead of an
+                        // asymmetric 32px-tall/12px-horizontal-padding box (same cn()
+                        // collision as #2479/#2482/#2483, issue #2484).
+                        className="!h-auto !p-1.5"
                         title="Delete bundle from node"
                         aria-label={`Delete ${bundle.displayName}`}
                     >
@@ -993,7 +1003,10 @@ export default function ServicesDashboard() {
                                             onClick={() => terminalRef.current?.clear()}
                                             variant="ghost"
                                             size="sm"
-                                            className="p-2 rounded-full"
+                                            // `!h-auto !p-2` forces out size="sm"'s h-8/px-space-3 so this
+                                            // icon button stays a square p-2 target (same cn() collision as
+                                            // #2479/#2482/#2483, issue #2484).
+                                            className="!h-auto !p-2 rounded-full"
                                             title="Clear terminal"
                                         >
                                             <Eraser size={18} />
@@ -1002,7 +1015,10 @@ export default function ServicesDashboard() {
                                             onClick={() => terminalRef.current?.reconnect()}
                                             variant="ghost"
                                             size="sm"
-                                            className="p-2 rounded-full"
+                                            // `!h-auto !p-2` forces out size="sm"'s h-8/px-space-3 so this
+                                            // icon button stays a square p-2 target (same cn() collision as
+                                            // #2479/#2482/#2483, issue #2484).
+                                            className="!h-auto !p-2 rounded-full"
                                             title="Reconnect"
                                         >
                                             <RefreshCw size={18} />
@@ -1011,7 +1027,10 @@ export default function ServicesDashboard() {
                                             onClick={closeContainerDrawer}
                                             variant="ghost"
                                             size="sm"
-                                            className="p-2 rounded-full"
+                                            // `!h-auto !p-2` forces out size="sm"'s h-8/px-space-3 so this
+                                            // icon button stays a square p-2 target (same cn() collision as
+                                            // #2479/#2482/#2483, issue #2484).
+                                            className="!h-auto !p-2 rounded-full"
                                             title="Close"
                                         >
                                             <X size={18} />
@@ -1121,7 +1140,10 @@ export default function ServicesDashboard() {
                         onClick={closeRegistryOverlay}
                         variant="ghost"
                         size="sm"
-                        className="p-2 rounded-full"
+                        // `!h-auto !p-2` forces out size="sm"'s h-8/px-space-3 so this icon
+                        // button stays a square p-2 target (same cn() collision as
+                        // #2479/#2482/#2483, issue #2484).
+                        className="!h-auto !p-2 rounded-full"
                         aria-label="Close registry drawer"
                     >
                         <X size={20} />
