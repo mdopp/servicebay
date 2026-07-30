@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.14](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.13...servicebay-v5.11.14) (2026-07-30)
+
+
+### Bug Fixes
+
+* **backup:** LocalTargetPicker mount rows overlap after Button migration ([5b040ac](https://github.com/mdopp/servicebay/commit/5b040acb32a75ec9451931a9f4539b583f3b350b))
+* **backup:** LocalTargetPicker mount rows overlap after Button migration ([8c3ad4c](https://github.com/mdopp/servicebay/commit/8c3ad4c9d06210f69fb12eb816644e941d191dd0))
+* **backup:** replace raw UI primitives with wrapped Button/Input components ([4db50c1](https://github.com/mdopp/servicebay/commit/4db50c113f9b2245c2e026272408d9e97af83a02))
+* **dashboard:backup:** replace raw color literals with semantic design tokens ([bbf24ff](https://github.com/mdopp/servicebay/commit/bbf24ff11d9118fcb0c0ccd011fda7d8492a98d9))
+* **disk-import:** replace raw UI primitives in RoutingTree with design-system components ([9d092c3](https://github.com/mdopp/servicebay/commit/9d092c380556f6bf7a3d8e778fa649b906aa649a))
+* **frontend:** migrate KnowledgeSection to UI primitives (Button, Input, Select) ([344384b](https://github.com/mdopp/servicebay/commit/344384be2f89543529d6117757de322e9962ebc1))
+* **frontend:** replace raw UI primitives in DiagnoseProbeList ([e21ec79](https://github.com/mdopp/servicebay/commit/e21ec797611d0d623a3212c0a79b745b24f457ed))
+* **frontend:** replace raw UI primitives in ExternalLinkModal ([f310ab5](https://github.com/mdopp/servicebay/commit/f310ab52554b86870eec1c74e45ffaeadf423c51))
+
 ## [5.11.13](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.12...servicebay-v5.11.13) (2026-07-30)
 
 
