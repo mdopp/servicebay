@@ -9,7 +9,7 @@ interface ErrorActionsProps {
 }
 
 const PRIMARY_BTN =
-  'px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-500 text-white text-sm transition';
+  'px-4 py-2 rounded-md bg-accent-strong hover:bg-accent text-on-accent text-sm transition';
 const SECONDARY_BTN =
   'px-4 py-2 rounded-md border border-current/30 hover:bg-current/10 text-sm transition';
 
