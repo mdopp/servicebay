@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { ChevronRight } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Card } from '@/components/ui';
+import { Card, Button } from '@/components/ui';
 import type { PortalCard } from '@/lib/portal/services';
 import type { AppPlatform, PortalAction, PortalIconName, SetupAssetKind } from '@/lib/portal/userGuide';
 import { ACCENT_CHIP_CLASS, serviceAccent, groupCardsBySection } from './portalAccent';
@@ -354,13 +354,14 @@ function CardDisclosure({
  *  markdown help modal. */
 function HowToButton({ onClick }: { onClick: () => void }) {
   return (
-    <button
+    <Button
       onClick={onClick}
-      className="flex items-center gap-1 text-sm text-accent hover:underline mt-space-2"
+      variant="ghost"
+      className="text-accent hover:underline"
       aria-haspopup="dialog"
     >
       How do I use this?
-    </button>
+    </Button>
   );
 }
 
@@ -630,14 +631,15 @@ function CardHelpModal({ card, onClose }: { card: PortalCard; onClose: () => voi
               )}
             </div>
           </div>
-          <button
+          <Button
             type="button"
             aria-label="Close"
             onClick={onClose}
-            className="shrink-0 p-1 rounded-card text-text-subtle hover:text-text hover:bg-surface-2"
+            variant="ghost"
+            className="shrink-0 !p-1 !h-auto !w-auto"
           >
             <X size={20} />
-          </button>
+          </Button>
         </div>
         <div className="overflow-y-auto px-space-5 py-space-4">
           <div className="prose prose-sm dark:prose-invert max-w-none text-text-muted">
@@ -701,14 +703,16 @@ function CommandBlock({ command }: { command: string }) {
       <code className="flex-1 min-w-0 overflow-x-auto rounded-chip bg-surface-muted px-2 py-1.5 text-[11px] font-mono text-text whitespace-pre">
         {command}
       </code>
-      <button
+      <Button
         type="button"
         onClick={onCopy}
         aria-label={copied ? 'Copied' : 'Copy command'}
-        className="shrink-0 inline-flex items-center justify-center w-8 rounded-chip bg-surface-2 text-text-muted hover:bg-surface-muted hover:text-text transition-colors"
+        variant="secondary"
+        size="sm"
+        className="!w-8 !h-8"
       >
         {copied ? <Check size={14} /> : <Copy size={14} />}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -769,12 +773,13 @@ function DeepLinkButton({
   };
   return (
     <div>
-      <button
+      <Button
         onClick={onClick}
-        className={PORTAL_LINK_BUTTON}
+        variant="primary"
+        className="w-full !py-2"
       >
         <Icon size={14} /> {label}
-      </button>
+      </Button>
       {description && !error && (
         <p className="text-[11px] text-text-subtle mt-space-1 leading-snug text-center">{description}</p>
       )}
@@ -816,12 +821,13 @@ function BasicSyncInstallQrButton({
   return (
     <>
       <div>
-        <button
+        <Button
           onClick={() => setOpen(true)}
-          className={PORTAL_LINK_BUTTON}
+          variant="primary"
+          className="w-full !py-2"
         >
           <Icon size={14} /> {label}
-        </button>
+        </Button>
         {description && (
           <p className="text-[11px] text-text-subtle mt-space-1 leading-snug text-center">{description}</p>
         )}
@@ -917,12 +923,13 @@ function SyncthingQrButton({
   return (
     <>
       <div>
-        <button
+        <Button
           onClick={onOpen}
-          className={PORTAL_LINK_BUTTON}
+          variant="primary"
+          className="w-full !py-2"
         >
           <Icon size={14} /> {label}
-        </button>
+        </Button>
         {description && (
           <p className="text-[11px] text-text-subtle mt-space-1 leading-snug text-center">{description}</p>
         )}
@@ -955,12 +962,13 @@ function SyncthingQrButton({
               </p>
             )}
 
-            <button
+            <Button
               onClick={() => setOpen(false)}
-              className="mt-space-4 px-space-4 py-space-2 text-sm text-text-muted hover:text-text"
+              variant="ghost"
+              className="mt-space-4 px-space-4 !py-space-2"
             >
               Close
-            </button>
+            </Button>
           </Card>
         </div>
       )}
