@@ -9,7 +9,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { BookOpen, Loader2, Search } from 'lucide-react';
-import { Badge, Card } from '@/components/ui';
+import { Badge, Card, Button, Input, Select } from '@/components/ui';
 import { ASSIST_KINDS, type AssistKind } from '../knowledge/validation';
 import { useKnowledge } from '../knowledge/useKnowledge';
 import AssistDetail from '../knowledge/AssistDetail';
@@ -98,13 +98,12 @@ function Filters({
   onKind: (v: KindFilter) => void;
   onSource: (v: SourceFilter) => void;
 }) {
-  const selectClass =
-    'p-2 rounded-card border border-border bg-surface-2 text-text text-sm focus:ring-2 focus:ring-accent outline-none';
+  const selectClass = 'flex-1 p-2 rounded-card border border-border bg-surface-2 text-text text-sm focus:ring-2 focus:ring-accent outline-none';
   return (
     <div className="space-y-2">
       <div className="relative">
         <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-subtle" />
-        <input
+        <Input
           type="search"
           value={query}
           onChange={e => onQuery(e.target.value)}
@@ -114,27 +113,27 @@ function Filters({
         />
       </div>
       <div className="flex gap-2">
-        <select
+        <Select
           value={kind}
           onChange={e => onKind(e.target.value as KindFilter)}
           aria-label="Filter by kind"
-          className={`${selectClass} flex-1`}
+          className={selectClass}
         >
           <option value="all">All kinds</option>
           {ASSIST_KINDS.map(k => (
             <option key={k} value={k}>{k}</option>
           ))}
-        </select>
-        <select
+        </Select>
+        <Select
           value={source}
           onChange={e => onSource(e.target.value as SourceFilter)}
           aria-label="Filter by source"
-          className={`${selectClass} flex-1`}
+          className={selectClass}
         >
           <option value="all">All sources</option>
           <option value="Built-in">Built-in</option>
           <option value="Local">Local</option>
-        </select>
+        </Select>
       </div>
     </div>
   );
@@ -161,23 +160,24 @@ function CatalogList({
         const active = a.id === selectedId;
         return (
           <li key={a.id}>
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => onSelect(a.id)}
               aria-current={active}
-              className={`w-full text-left p-2 rounded-card border transition-colors ${
+              className={`w-full h-auto justify-start text-left p-2 rounded-card border transition-colors ${
                 active ? 'border-accent bg-accent/10' : 'border-transparent hover:bg-surface-2'
               }`}
             >
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 w-full">
                 <span className="text-sm font-medium text-text truncate flex-1">{a.title}</span>
                 {pending > 0 && <Badge variant="warn">{pending}</Badge>}
                 <Badge variant={a.source === 'Local' ? 'accent' : 'neutral'} className="font-mono text-[10px]">
                   {a.kind}
                 </Badge>
               </div>
-              <p className="text-[11px] text-text-subtle truncate mt-0.5">{a.whenToUse}</p>
-            </button>
+              <p className="text-[11px] text-text-subtle truncate mt-0.5 w-full text-left">{a.whenToUse}</p>
+            </Button>
           </li>
         );
       })}
