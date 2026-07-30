@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { Button, Input, Textarea } from '@/components/ui';
 import type { ExternalBackupTarget } from '@/lib/config';
 
 type TargetType = 'fritzbox' | 'ftp' | 'ssh';
@@ -54,18 +55,16 @@ function TypePicker({ type, onChange }: { type: TargetType; onChange: (t: Target
   return (
     <div className="flex flex-wrap gap-2">
       {TYPE_OPTIONS.map(opt => (
-        <button
+        <Button
           key={opt.val}
           type="button"
           onClick={() => onChange(opt.val)}
-          className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
-            type === opt.val
-              ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-              : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
-          }`}
+          variant="secondary"
+          size="sm"
+          className={type === opt.val ? 'border-accent bg-accent/10 text-accent' : undefined}
         >
           {opt.label}
-        </button>
+        </Button>
       ))}
     </div>
   );
@@ -170,27 +169,27 @@ function CredentialGrid({ form, view, set }: FieldsProps) {
   return (
     <div className="grid sm:grid-cols-2 gap-3">
       <Field label="Host" optional={optHint}>
-        <input type="text" className={INPUT_CLASS} value={form.host} onChange={e => set({ host: e.target.value })} placeholder={ph.host} autoComplete="off" />
+        <Input type="text" className={INPUT_CLASS} value={form.host} onChange={e => set({ host: e.target.value })} placeholder={ph.host} autoComplete="off" />
       </Field>
       {!isFritz && (
         <Field label="Port">
-          <input type="number" className={INPUT_CLASS} value={form.port} onChange={e => set({ port: e.target.value })} placeholder={form.type === 'ssh' ? '22' : '21'} />
+          <Input type="number" className={INPUT_CLASS} value={form.port} onChange={e => set({ port: e.target.value })} placeholder={form.type === 'ssh' ? '22' : '21'} />
         </Field>
       )}
       <Field label="Username" optional={optHint}>
-        <input type="text" className={INPUT_CLASS} value={form.username} onChange={e => set({ username: e.target.value })} placeholder={ph.user} autoComplete="off" />
+        <Input type="text" className={INPUT_CLASS} value={form.username} onChange={e => set({ username: e.target.value })} placeholder={ph.user} autoComplete="off" />
       </Field>
       <Field label="Password" optional={optHint}>
-        <input type="password" className={INPUT_CLASS} value={form.password} onChange={e => set({ password: e.target.value })} placeholder={ph.password} autoComplete="new-password" />
+        <Input type="password" className={INPUT_CLASS} value={form.password} onChange={e => set({ password: e.target.value })} placeholder={ph.password} autoComplete="new-password" />
       </Field>
       {form.type === 'ssh' && (
         <Field label="Private key" optional="(optional — for key auth)" full>
-          <textarea className={`${INPUT_CLASS} font-mono text-xs`} rows={3} value={form.privateKey} onChange={e => set({ privateKey: e.target.value })} placeholder={ph.privateKey} />
+          <Textarea className={`${INPUT_CLASS} font-mono text-xs`} rows={3} value={form.privateKey} onChange={e => set({ privateKey: e.target.value })} placeholder={ph.privateKey} />
         </Field>
       )}
       {!isFritz && (
         <Field label="Remote directory" optional="(optional)" full>
-          <input type="text" className={INPUT_CLASS} value={form.dir} onChange={e => set({ dir: e.target.value })} placeholder="/backups (defaults to the login directory)" />
+          <Input type="text" className={INPUT_CLASS} value={form.dir} onChange={e => set({ dir: e.target.value })} placeholder="/backups (defaults to the login directory)" />
         </Field>
       )}
     </div>
@@ -210,7 +209,7 @@ function DestinationFields({ form, view, set }: FieldsProps) {
       <CredentialGrid form={form} view={view} set={set} />
       {(isFritz || form.type === 'ftp') && (
         <label className="inline-flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300 cursor-pointer">
-          <input type="checkbox" checked={form.secure} onChange={e => set({ secure: e.target.checked })} className="w-4 h-4" />
+          <Input type="checkbox" checked={form.secure} onChange={e => set({ secure: e.target.checked })} className="w-4 h-4" />
           Use FTPS (explicit AUTH TLS) — uncommon on a LAN FritzBox
         </label>
       )}
@@ -302,20 +301,24 @@ export default function ExternalBackupDestinationSection({ onSaved }: { onSaved?
       <DestinationFields form={form} view={view} set={set} />
 
       <div className="flex flex-wrap gap-2 pt-1">
-        <button
+        <Button
           onClick={() => submit('test')}
           disabled={busy !== null}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg disabled:opacity-50"
+          variant="primary"
+          size="md"
+          className="inline-flex items-center gap-2"
         >
           {busy === 'test' && <Loader2 size={14} className="animate-spin" />} Test connection
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={() => submit('save')}
           disabled={busy !== null}
-          className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm font-medium rounded-lg disabled:opacity-50"
+          variant="secondary"
+          size="md"
+          className="inline-flex items-center gap-2"
         >
           {busy === 'save' && <Loader2 size={14} className="animate-spin" />} Save destination
-        </button>
+        </Button>
       </div>
 
       {form.type !== 'fritzbox' && !view?.hasPassword && !view?.hasPrivateKey && (
