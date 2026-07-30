@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.11](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.10...servicebay-v5.11.11) (2026-07-30)
+
+
+### Bug Fixes
+
+* **backup:** migrate ExternalBackupDestinationSection to semantic design tokens ([3e8c227](https://github.com/mdopp/servicebay/commit/3e8c2270e64d7624dc3446df9799c55e939dcea3))
+* **backup:** migrate helpers.ts to semantic design tokens ([d872f41](https://github.com/mdopp/servicebay/commit/d872f41703d2cb803ec53fedfeb568ba6756e525))
+* **frontend:** migrate FileViewerOverlay to semantic design tokens ([79ed25b](https://github.com/mdopp/servicebay/commit/79ed25ba17ed55d177caa2005c18d405ae9b573c))
+* **service-action-bar:** replace raw color literals with semantic design tokens ([d1c0005](https://github.com/mdopp/servicebay/commit/d1c0005eb2efb07bc56f9fe19275a64aebf88d8a))
+* **settings:** migrate GatewaySection to ui primitives ([d557de0](https://github.com/mdopp/servicebay/commit/d557de01011cd8283d7171834acf629db205d171))
+* **wizard:** replace raw color literals with semantic tokens in SelectedStacksPanel ([2925034](https://github.com/mdopp/servicebay/commit/2925034e1bdac90f5f72b02a20507d780cddb17e))
+* **wizard:** replace raw color literals with semantic tokens in StackVariableField ([f3edd0b](https://github.com/mdopp/servicebay/commit/f3edd0bbaac335fceb395406a851db8dba2ab6df))
+
 ## [5.11.10](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.9...servicebay-v5.11.10) (2026-07-30)
 
 
