@@ -30,20 +30,20 @@ function OrphanBackupsHint() {
     if (orphans.length === 0) return null;
 
     return (
-        <div className="mx-auto max-w-md text-left rounded-2xl border border-blue-500/20 bg-blue-500/5 p-5">
-            <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
+        <div className="mx-auto max-w-md text-left rounded-2xl border border-status-info/20 bg-status-info/5 p-5">
+            <div className="flex items-center gap-2 text-status-info">
                 <DatabaseBackup className="w-5 h-5 shrink-0" />
                 <span className="font-semibold">
                     {orphans.length} service backup{orphans.length === 1 ? '' : 's'} on your FritzBox NAS
                 </span>
             </div>
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+            <p className="mt-1 text-sm text-text-muted">
                 Config for {orphans.map(o => o.service).join(', ')} is on the NAS but not installed here.
                 Install {orphans.length === 1 ? 'it' : 'them'} and the saved config is restored automatically.
             </p>
             <a
                 href="/services"
-                className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-status-info hover:underline"
             >
                 Set them up <ArrowRight className="w-4 h-4" />
             </a>
@@ -55,9 +55,9 @@ export function FinishStep({ handleFinish }: FinishStepProps) {
     return (
         <div className="space-y-8 py-8 text-center animate-in fade-in zoom-in-95 duration-500">
             <div className="relative inline-block">
-                <div className="absolute inset-0 bg-emerald-500/20 blur-3xl rounded-full"></div>
-                <div className="relative p-6 rounded-3xl bg-emerald-500/10 border border-emerald-500/20">
-                    <CheckCircle className="w-16 h-16 text-emerald-500" />
+                <div className="absolute inset-0 bg-status-ok/20 blur-3xl rounded-full"></div>
+                <div className="relative p-6 rounded-3xl bg-status-ok/10 border border-status-ok/20">
+                    <CheckCircle className="w-16 h-16 text-status-ok" />
                 </div>
             </div>
 
@@ -65,7 +65,7 @@ export function FinishStep({ handleFinish }: FinishStepProps) {
                 <h3 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent premium-gradient">
                     You&apos;re All Set!
                 </h3>
-                <p className="text-gray-600 dark:text-gray-400 max-w-md mx-auto leading-relaxed">
+                <p className="text-text-muted max-w-md mx-auto leading-relaxed">
                     Your ServiceBay environment has been successfully configured. You can now access your dashboard and start managing your services.
                 </p>
             </div>
@@ -78,7 +78,7 @@ export function FinishStep({ handleFinish }: FinishStepProps) {
                 </Button>
             </div>
 
-            <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">
+            <p className="text-[10px] text-text-subtle uppercase tracking-widest font-bold">
                 Setup Complete · Welcome Home
             </p>
         </div>
