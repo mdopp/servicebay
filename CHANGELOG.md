@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.6](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.5...servicebay-v5.11.6) (2026-07-30)
+
+
+### Bug Fixes
+
+* **backup:** replace raw color literals with semantic tokens in LocalTargetPicker ([1435f41](https://github.com/mdopp/servicebay/commit/1435f41df8036e72c02e0f963d5cbe31763aa081))
+* **backup:** replace raw input/button/textarea with design-system primitives in ExternalBackupDestinationSection ([673fb72](https://github.com/mdopp/servicebay/commit/673fb72ca1eb7fe8870a36354cb2a792984003a0))
+* **frontend:** replace raw color literals with semantic tokens in SSHSetupModal ([8e5b891](https://github.com/mdopp/servicebay/commit/8e5b8918028140eb9c5e4f60c721ec6f867024c1))
+* **hooks/useContainerActions:** replace raw color literals with semantic design tokens ([6e0715d](https://github.com/mdopp/servicebay/commit/6e0715d523da81cd0532c3736452f0a09afeada0))
+* **lint-sweep:** replace raw UI primitives in EmailNotificationsSection ([6a48eb5](https://github.com/mdopp/servicebay/commit/6a48eb58a028834e4bb6861f5da57bb6465d553c))
+* **settings:** replace raw color literals with semantic design tokens in UpdatesSection ([09188c9](https://github.com/mdopp/servicebay/commit/09188c994bbf6df8a75ea243a96e2a7c258f8e1b))
+* **settings:** replace raw Tailwind color literals with design tokens in CredentialsSection ([767b200](https://github.com/mdopp/servicebay/commit/767b2008c980487a9644ad078bfa5f8daa4328ab))
+* **settings:** stop Button defaults from clobbering the email-toggle pill ([3684b7a](https://github.com/mdopp/servicebay/commit/3684b7ad1bf449134c3eb362b6e43e52c2de609e))
+* **settings:** stop Button primitive defaults from clobbering the email-toggle pill ([bbdeb4d](https://github.com/mdopp/servicebay/commit/bbdeb4d824e07cb22cc718b0ae628704301f89d4))
+* **wizard:** replace raw color literals with semantic design tokens ([64d9805](https://github.com/mdopp/servicebay/commit/64d9805c80cddefd5a48c5774bb5bfbabb5d8875))
+
 ## [5.11.5](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.4...servicebay-v5.11.5) (2026-07-30)
 
 
