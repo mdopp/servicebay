@@ -20,7 +20,7 @@ import RegistryDashboard from '@/dashboards/RegistryDashboard';
 import ServiceCard from '@/components/ServiceCard';
 import ServiceRow from '@/components/ServiceRow';
 import StackGroupHeader from '@/components/StackGroupHeader';
-import { SectionHeading } from '@/components/ui';
+import { SectionHeading, Button, Input } from '@/components/ui';
 import { useServiceActions } from '@/hooks/useServiceActions';
 import { useContainerActions } from '@/hooks/useContainerActions';
 import { buildServiceViewModel } from '@servicebay/api-client';
@@ -99,14 +99,15 @@ export default function ServicesDashboard() {
                     : 'text-left px-2 py-0.5 bg-surface dark:bg-surface border border-border rounded text-xs font-mono whitespace-normal break-all max-w-full transition-colors';
 
         return (
-            <button
-                type="button"
+            <Button
                 onClick={() => openFilePreview(path, nodeName)}
-                className={`${baseClasses} hover:border-border hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent`}
+                className={baseClasses}
                 title={`Open ${path} on ${nodeName || 'Local'}`}
+                variant="ghost"
+                size="sm"
             >
                 {display}
-            </button>
+            </Button>
         );
     };
 
@@ -583,15 +584,17 @@ export default function ServicesDashboard() {
                     </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0 ml-auto bg-surface-2 p-1 rounded-lg border border-border">
-                    <button
+                    <Button
                         onClick={() => setBundlePendingDelete(bundle)}
-                        className="p-1.5 text-text-muted hover:text-status-fail hover:bg-surface rounded transition-colors"
+                        variant="ghost"
+                        size="sm"
+                        className="p-1.5"
                         title="Delete bundle from node"
                         aria-label={`Delete ${bundle.displayName}`}
                     >
                         <Trash2 size={15} />
                         <span className="sr-only">Delete bundle</span>
-                    </button>
+                    </Button>
                 </div>
             </div>
 
@@ -986,27 +989,33 @@ export default function ServicesDashboard() {
                                         )}
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <button
+                                        <Button
                                             onClick={() => terminalRef.current?.clear()}
-                                            className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface-2"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="p-2 rounded-full"
                                             title="Clear terminal"
                                         >
                                             <Eraser size={18} />
-                                        </button>
-                                        <button
+                                        </Button>
+                                        <Button
                                             onClick={() => terminalRef.current?.reconnect()}
-                                            className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface-2"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="p-2 rounded-full"
                                             title="Reconnect"
                                         >
                                             <RefreshCw size={18} />
-                                        </button>
-                                        <button
+                                        </Button>
+                                        <Button
                                             onClick={closeContainerDrawer}
-                                            className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface-2"
+                                            variant="ghost"
+                                            size="sm"
+                                            className="p-2 rounded-full"
                                             title="Close"
                                         >
                                             <X size={18} />
-                                        </button>
+                                        </Button>
                                     </div>
                                 </div>
                                 <div className="flex-1 overflow-hidden">
@@ -1043,19 +1052,21 @@ export default function ServicesDashboard() {
         helpId="services"
         actions={
             <>
-                <button
+                <Button
                     onClick={openRegistryOverlay}
-                    className="flex items-center gap-2 bg-accent text-on-accent p-2 rounded hover:bg-accent-strong shadow-sm transition-colors text-sm font-medium"
+                    variant="primary"
+                    size="md"
+                    className="flex items-center gap-2"
                     title="New Service"
                 >
                     <Plus size={18} />
-                </button>
+                </Button>
             </>
         }
       >
         <div className="relative flex-1 max-w-md min-w-[100px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-            <input
+            <Input
                 type="text"
                 placeholder="Search services or bundles..."
                 value={searchQuery}
@@ -1106,14 +1117,15 @@ export default function ServicesDashboard() {
                             Browse curated Quadlet stacks, sync registries, and install new services without leaving the dashboard.
                         </p>
                     </div>
-                    <button
-                        type="button"
+                    <Button
                         onClick={closeRegistryOverlay}
-                        className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface"
+                        variant="ghost"
+                        size="sm"
+                        className="p-2 rounded-full"
                         aria-label="Close registry drawer"
                     >
                         <X size={20} />
-                    </button>
+                    </Button>
                 </div>
                 <div className="flex-1 min-h-0">
                     <RegistryDashboard variant="embedded" />
