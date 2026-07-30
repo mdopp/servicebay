@@ -43,7 +43,9 @@ describe('AccessRequestsSection (#2086 user-page migration)', () => {
     await waitFor(() => expect(screen.getByText('Alice Resident')).toBeDefined());
 
     // Card surface (design-system token), not the old rounded-xl/gray-800 chrome.
-    expect(container.querySelector('.bg-surface')).not.toBeNull();
+    // The row passes `bg-surface-2`, which since #2484 merges out Card's default
+    // `bg-surface` instead of racing it in the stylesheet.
+    expect(container.querySelector('.bg-surface-2')).not.toBeNull();
     // A StatusDot announces the request state.
     expect(screen.getAllByRole('status').length).toBeGreaterThan(0);
     // Actions are Button primitives: Approve (primary) + Delete (danger).

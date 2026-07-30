@@ -118,14 +118,18 @@ export default function HealthChecks({
     <>
       {/* Stats Overview & Filters — clickable counters that filter the
           list. Diagnose rows surface their own warn/fail (warn is no
-          longer folded into fail). */}
+          longer folded into fail).
+          The active tiles carry no `ring-opacity-50`: Tailwind v4 dropped that
+          utility (it emitted nothing here), and cn()'s tailwind-merge pass
+          (#2484) read it as a ring *colour*, merging the real `ring-status-*`
+          away. Use a `/50` alpha on the colour itself if the ring should fade. */}
       <div className="grid grid-cols-4 gap-2 px-2">
         <Button
             onClick={() => setStatusFilter(statusFilter === 'ok' ? 'all' : 'ok')}
             variant="ghost"
             className={`h-auto p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'ok'
-                ? 'bg-status-ok/5 border-status-ok/20 ring-2 ring-status-ok ring-opacity-50'
+                ? 'bg-status-ok/5 border-status-ok/20 ring-2 ring-status-ok'
                 : 'bg-surface border-border hover:bg-surface-2'
             }`}
         >
@@ -142,7 +146,7 @@ export default function HealthChecks({
             variant="ghost"
             className={`h-auto p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'warn'
-                ? 'bg-status-warn/5 border-status-warn/20 ring-2 ring-status-warn ring-opacity-50'
+                ? 'bg-status-warn/5 border-status-warn/20 ring-2 ring-status-warn'
                 : 'bg-surface border-border hover:bg-surface-2'
             }`}
         >
@@ -159,7 +163,7 @@ export default function HealthChecks({
             variant="ghost"
             className={`h-auto p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'fail'
-                ? 'bg-status-fail/5 border-status-fail/20 ring-2 ring-status-fail ring-opacity-50'
+                ? 'bg-status-fail/5 border-status-fail/20 ring-2 ring-status-fail'
                 : 'bg-surface border-border hover:bg-surface-2'
             }`}
         >
@@ -176,7 +180,7 @@ export default function HealthChecks({
             variant="ghost"
             className={`h-auto p-3 rounded-xl border shadow-sm flex flex-col items-center text-center transition-all ${
                 statusFilter === 'unknown'
-                ? 'bg-surface-2 border-border ring-2 ring-text-subtle ring-opacity-50'
+                ? 'bg-surface-2 border-border ring-2 ring-text-subtle'
                 : 'bg-surface border-border hover:bg-surface-2'
             }`}
         >
