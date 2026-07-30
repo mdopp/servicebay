@@ -235,30 +235,35 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
             <div className={`flex-1 flex flex-col min-h-0 ${variant === 'embedded' ? 'p-0' : 'p-6'}`}>
       <div className="bg-surface dark:bg-surface rounded-lg border border-border dark:border-border shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
         <div className="flex border-b border-border dark:border-border bg-surface dark:bg-surface/50 shrink-0">
+            {/* `!h-auto !px-6` forces out Button's default size="md" (h-10/px-space-4) so it
+                can't win the cascade against this tab strip's own px-6/py-3 geometry — cn()
+                has no Tailwind-merge dedup, same escape hatch as the EmailNotificationsSection
+                fix (box-verify dbf73003 regression: tabs silently rendered 24px→16px padding
+                and a clipped fixed height because no `size` override was passed here). */}
             <Button
             variant="ghost"
-            className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'status' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
+            className={`!h-auto !px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'status' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
             onClick={() => setActiveTab('status')}
             >
             <Activity size={16} /> Status
             </Button>
             <Button
             variant="ghost"
-            className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'service' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
+            className={`!h-auto !px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'service' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
             onClick={() => setActiveTab('service')}
             >
             <Terminal size={16} /> Service Logs
             </Button>
             <Button
             variant="ghost"
-            className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'container-logs' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
+            className={`!h-auto !px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'container-logs' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
             onClick={() => setActiveTab('container-logs')}
             >
             <Box size={16} /> Container Logs & Info
             </Button>
             <Button
             variant="ghost"
-            className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'network' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
+            className={`!h-auto !px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'network' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
             onClick={() => setActiveTab('network')}
             >
             <FileJson size={16} /> Raw Data / Config
