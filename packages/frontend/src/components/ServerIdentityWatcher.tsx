@@ -107,16 +107,16 @@ export default function ServerIdentityWatcher() {
     <div
       role="status"
       aria-live="polite"
-      className="fixed top-3 left-1/2 -translate-x-1/2 z-[60] max-w-md px-3.5 py-2 rounded-full border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 shadow-lg flex items-center gap-2.5"
+      className="fixed top-3 left-1/2 -translate-x-1/2 z-[60] max-w-md px-3.5 py-2 rounded-full border border-status-warn bg-surface shadow-lg flex items-center gap-2.5"
     >
-      <RefreshCcw size={15} className="shrink-0 text-amber-700 dark:text-amber-300" />
-      <span className="text-sm text-amber-900 dark:text-amber-100">
+      <RefreshCcw size={15} className="shrink-0 text-status-warn" />
+      <span className="text-sm text-text">
         ServiceBay updated
       </span>
       <button
         type="button"
         onClick={() => window.location.reload()}
-        className="text-xs font-medium px-2.5 py-1 rounded-full bg-amber-600 hover:bg-amber-700 text-white"
+        className="text-xs font-medium px-2.5 py-1 rounded-full bg-status-warn hover:opacity-80 text-white"
       >
         Reload
       </button>
@@ -127,7 +127,7 @@ export default function ServerIdentityWatcher() {
           setDismissed(true);
           setPending(false);
         }}
-        className="text-amber-700 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-100"
+        className="text-status-warn hover:text-text"
       >
         <X size={14} />
       </button>
