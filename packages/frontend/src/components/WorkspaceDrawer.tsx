@@ -78,21 +78,21 @@ export default function WorkspaceDrawer({
   // through to the page behind; the panel itself re-enables pointer
   // events so it stays interactive.
   const wrapperClass = hasBackdrop
-    ? 'fixed inset-0 z-[70] flex justify-end bg-gray-950/70 backdrop-blur-sm'
+    ? 'fixed inset-0 z-[70] flex justify-end bg-black/50 backdrop-blur-sm'
     : 'fixed inset-0 z-[70] flex justify-end pointer-events-none';
   const panelExtraClass = hasBackdrop ? '' : 'pointer-events-auto';
 
   return (
     <div className={wrapperClass}>
       <div
-        className={`w-full ${widthClass[width]} h-full bg-white dark:bg-gray-950 border-l border-gray-200 dark:border-gray-800 shadow-2xl flex flex-col transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${panelExtraClass}`}
+        className={`w-full ${widthClass[width]} h-full bg-surface border-l border-border shadow-2xl flex flex-col transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${panelExtraClass}`}
       >
-        <div className="flex items-start justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+        <div className="flex items-start justify-between px-6 py-4 border-b border-border bg-surface-2">
           <div className="min-w-0">{header}</div>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-full text-gray-500 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-800 shrink-0"
+            className="p-2 rounded-full text-text-muted hover:text-text hover:bg-surface-2 shrink-0"
             aria-label={closeAriaLabel}
           >
             <X size={20} />

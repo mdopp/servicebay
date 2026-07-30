@@ -1,5 +1,5 @@
 import { X, AlertCircle } from 'lucide-react';
-import { Card, Button } from '@/components/ui';
+import { Card, Button, Input } from '@/components/ui';
 
 interface LinkForm {
     name: string;
@@ -51,7 +51,7 @@ export default function ExternalLinkModal({ isOpen, onClose, onSave, isEditing, 
                 <div className="p-space-4 space-y-4">
                     <div>
                         <label className={labelCls}>Name</label>
-                        <input
+                        <Input
                             type="text"
                             value={form.name}
                             onChange={e => setForm({ ...form, name: e.target.value })}
@@ -61,7 +61,7 @@ export default function ExternalLinkModal({ isOpen, onClose, onSave, isEditing, 
                     </div>
                     <div>
                         <label className={labelCls}>URL</label>
-                        <input
+                        <Input
                             type="url"
                             value={form.url}
                             onChange={e => setForm({ ...form, url: e.target.value })}
@@ -81,7 +81,7 @@ export default function ExternalLinkModal({ isOpen, onClose, onSave, isEditing, 
                     </div>
                     <div>
                         <label className={labelCls}>Description (Optional)</label>
-                        <input
+                        <Input
                             type="text"
                             value={form.description}
                             onChange={e => setForm({ ...form, description: e.target.value })}
@@ -90,7 +90,7 @@ export default function ExternalLinkModal({ isOpen, onClose, onSave, isEditing, 
                         />
                     </div>
                     <label className="flex items-center gap-space-2 text-sm text-text-muted">
-                        <input
+                        <Input
                             type="checkbox"
                             checked={form.monitor}
                             onChange={e => setForm({ ...form, monitor: e.target.checked })}
@@ -100,7 +100,7 @@ export default function ExternalLinkModal({ isOpen, onClose, onSave, isEditing, 
                     </label>
                     <div>
                         <label className={labelCls}>Target IPs/Ports (Optional)</label>
-                        <input
+                        <Input
                             type="text"
                             value={form.ipTargetsText || ''}
                             onChange={e => setForm({ ...form, ipTargetsText: e.target.value })}

@@ -105,14 +105,14 @@ export default function TerminalDashboard() {
                 label: node.Name,
                 value: node.Name,
                 description: node.URI,
-                icon: <Server size={16} className="text-blue-600 dark:text-blue-300" />
+                icon: <Server size={16} className="text-status-info" />
             }));
         return [
             {
                 label: 'Local',
                 value: 'Local',
                 description: 'This ServiceBay host',
-                icon: <Monitor size={16} className="text-indigo-600 dark:text-indigo-300" />
+                icon: <Monitor size={16} className="text-accent" />
             },
             ...remote
         ];
@@ -147,16 +147,16 @@ export default function TerminalDashboard() {
                             placeholder="Select node"
                             compact
                         />
-                        <button 
+                        <button
                             onClick={() => terminalRef.current?.clear()}
-                            className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" 
+                            className="p-2 text-text bg-surface-2 border border-border rounded hover:bg-surface shadow-sm transition-colors"
                             title="Clear Terminal"
                         >
                             <Eraser size={18} />
                         </button>
-                        <button 
+                        <button
                             onClick={() => terminalRef.current?.reconnect()}
-                            className="p-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm transition-colors" 
+                            className="p-2 text-text bg-surface-2 border border-border rounded hover:bg-surface shadow-sm transition-colors"
                             title="Reconnect"
                         >
                             <RefreshCw size={18} />

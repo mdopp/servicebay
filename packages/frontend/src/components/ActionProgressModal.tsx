@@ -5,6 +5,7 @@ import type { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useToast } from '@/providers/ToastProvider';
 import { humanizeError } from '@servicebay/api-client';
+import { Button } from '@/components/ui';
 
 // xterm terminal theme colors — dark background with light foreground for
 // contrast and readability. Not mapped to semantic tokens as these define
@@ -207,16 +208,19 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
           </h3>
           <div className="flex items-center gap-1">
             {status === 'running' && (
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setMinimized(true)}
-                className="text-text-muted hover:text-text p-1 rounded transition-colors"
                 title="Run in background"
                 aria-label="Run in background"
               >
                 <Minimize2 size={18} />
-              </button>
+              </Button>
             )}
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => {
                 // While the action is still running, treat the X like
                 // "Run in background" — closing this modal aborts the
@@ -229,12 +233,11 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
                   onClose();
                 }
               }}
-              className="text-text-muted hover:text-text p-1 rounded transition-colors"
               aria-label={status === 'running' ? 'Run in background' : 'Close'}
               title={status === 'running' ? 'Run in background' : 'Close'}
             >
               <X size={20} />
-            </button>
+            </Button>
           </div>
         </div>
         
@@ -254,17 +257,19 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
             <div className="p-4 border-t border-border flex flex-col sm:flex-row justify-between items-center gap-3 bg-surface">
                 {status === 'error' ? (
                     <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-                        <button
+                        <Button
+                            size="sm"
+                            variant="secondary"
                             onClick={() => {
                                 setElapsed(0);
                                 setRetryCount(prev => prev + 1);
                                 setStatus('running');
                             }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-status-warn hover:bg-status-warn/90 text-on-accent text-xs font-semibold rounded-md transition-colors shadow-sm"
+                            className="bg-status-warn hover:bg-status-warn/90 text-on-accent font-semibold shadow-sm"
                         >
                             <RotateCw size={14} className="animate-spin" style={{ animationDuration: '3s' }} />
                             Retry Action
-                        </button>
+                        </Button>
                         
                         <a
                             href={`/api/services/${serviceName}/logs`}
@@ -284,25 +289,29 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
                             Self-Diagnose
                         </a>
 
-                        <button
+                        <Button
+                            size="sm"
+                            variant="primary"
                             onClick={() => addToast('info', 'AI Assistant Triggered', `Claude is reviewing the logs for ${serviceName}...`)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-status-info hover:bg-status-info/90 text-on-accent text-xs font-semibold rounded-md transition-colors shadow-sm"
+                            className="bg-status-info hover:bg-status-info/90 font-semibold shadow-sm"
                         >
                             <Bot size={14} />
                             Ask AI to Fix
-                        </button>
+                        </Button>
                     </div>
                 ) : (
                     <div className="text-xs text-status-ok font-medium">
                         ✓ Operation completed successfully.
                     </div>
                 )}
-                <button
+                <Button
+                    size="md"
+                    variant="primary"
                     onClick={onClose}
-                    className="w-full sm:w-auto px-5 py-2 bg-status-info hover:bg-status-info/90 text-on-accent rounded-md font-semibold text-sm transition-colors shadow-sm"
+                    className="w-full sm:w-auto bg-status-info hover:bg-status-info/90 font-semibold shadow-sm"
                 >
                     Close
-                </button>
+                </Button>
             </div>
         )}
       </div>

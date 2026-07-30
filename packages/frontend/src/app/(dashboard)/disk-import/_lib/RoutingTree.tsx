@@ -13,6 +13,7 @@
 
 import { useMemo, useState } from 'react';
 import { ChevronRight, ChevronDown, Folder, FileText } from 'lucide-react';
+import { Button, Field, Select } from '@/components/ui';
 import {
   DISPOSITION_LABELS,
   type Disposition,
@@ -142,13 +143,15 @@ function Row({
         className="flex items-center gap-2 py-1.5 pr-3 text-xs hover:bg-surface-2"
         style={{ paddingLeft: `${indent}px` }}
       >
-        <button
+        <Button
           onClick={() => hasChildren && toggle(node.dir)}
-          className={`shrink-0 ${hasChildren ? 'text-text-muted' : 'invisible'}`}
+          variant="ghost"
+          size="sm"
+          className={`shrink-0 ${hasChildren ? 'text-text-muted' : 'invisible'} p-0`}
           aria-label={isOpen ? 'Collapse' : 'Expand'}
         >
           {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </button>
+        </Button>
         <Folder size={14} className="shrink-0 text-accent" />
         <span className="font-medium text-text truncate" title={node.dir || '/'}>
           {dirLabel(node.dir)}
@@ -210,21 +213,19 @@ function Row({
  */
 function BaseToggle({ active, onToggle }: { active: boolean; onToggle: () => void }) {
   return (
-    <button
+    <Button
       onClick={onToggle}
+      variant={active ? 'primary' : 'secondary'}
+      size="sm"
       title={
         active
           ? "Base root — this folder's name is dropped; the structure below it is kept"
           : "Mark as a base/backup root — drop this folder's name, keep what's inside"
       }
-      className={`rounded border px-1.5 py-0.5 text-[11px] ${
-        active
-          ? 'bg-accent text-on-accent border-accent font-medium'
-          : 'bg-surface text-text-muted border-border hover:text-text-muted'
-      }`}
+      className="text-[11px]"
     >
       strip
-    </button>
+    </Button>
   );
 }
 
@@ -242,20 +243,25 @@ function OwnerPicker({
 }) {
   const inherited = explicit === undefined;
   return (
-    <select
-      value={value}
-      onChange={e => onChange(e.target.value)}
-      title={inherited ? 'Inherited — pick to set explicitly' : 'Set on this folder'}
-      className={`rounded border px-1.5 py-0.5 text-[11px] bg-surface border-border ${
-        inherited ? 'text-text-muted italic' : 'text-text font-medium'
-      }`}
-    >
-      {owners.map(o => (
-        <option key={o.id} value={o.id}>
-          {o.label}
-        </option>
-      ))}
-    </select>
+    <Field label="">
+      {(props) => (
+        <Select
+          {...props}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          title={inherited ? 'Inherited — pick to set explicitly' : 'Set on this folder'}
+          className={`rounded border px-1.5 py-0.5 text-[11px] bg-surface border-border ${
+            inherited ? 'text-text-muted italic' : 'text-text font-medium'
+          }`}
+        >
+          {owners.map(o => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </Select>
+      )}
+    </Field>
   );
 }
 
@@ -273,19 +279,24 @@ function TargetPicker({
 }) {
   const inherited = explicit === undefined;
   return (
-    <select
-      value={value}
-      onChange={e => onChange(e.target.value as Disposition)}
-      title={inherited ? 'Inherited — pick to set explicitly' : 'Set on this folder'}
-      className={`rounded border px-1.5 py-0.5 text-[11px] bg-surface border-border ${
-        inherited ? 'text-text-muted italic' : 'text-text font-medium'
-      }`}
-    >
-      {dispositions.map(d => (
-        <option key={d} value={d}>
-          {DISPOSITION_LABELS[d]}
-        </option>
-      ))}
-    </select>
+    <Field label="">
+      {(props) => (
+        <Select
+          {...props}
+          value={value}
+          onChange={e => onChange(e.target.value as Disposition)}
+          title={inherited ? 'Inherited — pick to set explicitly' : 'Set on this folder'}
+          className={`rounded border px-1.5 py-0.5 text-[11px] bg-surface border-border ${
+            inherited ? 'text-text-muted italic' : 'text-text font-medium'
+          }`}
+        >
+          {dispositions.map(d => (
+            <option key={d} value={d}>
+              {DISPOSITION_LABELS[d]}
+            </option>
+          ))}
+        </Select>
+      )}
+    </Field>
   );
 }

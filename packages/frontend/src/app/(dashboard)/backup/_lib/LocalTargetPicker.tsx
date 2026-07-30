@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, RefreshCw, HardDrive, Usb, CheckCircle2 } from 'lucide-react';
+import { Button, Input } from '@/components/ui';
 import type { MountCandidate } from '@/lib/backup/mounts';
 
 const REMOVABLE_FSTYPES = new Set(['vfat', 'exfat', 'ntfs']);
@@ -44,7 +45,7 @@ function MountRow({
   const selectable = mount.mounted && !!mount.mountpoint;
   const Icon = REMOVABLE_FSTYPES.has(mount.fstype ?? '') ? Usb : HardDrive;
   return (
-    <button type="button" disabled={!selectable} onClick={onSelect} aria-pressed={active} className={rowClass(active, selectable)}>
+    <Button type="button" disabled={!selectable} onClick={onSelect} aria-pressed={active} variant="ghost" size="sm" className={rowClass(active, selectable)}>
       <Icon size={16} className={`mt-0.5 flex-shrink-0 ${active ? 'text-accent' : 'text-text-muted'}`} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 flex-wrap">
@@ -57,7 +58,7 @@ function MountRow({
         </div>
         <MountDetail mount={mount} />
       </div>
-    </button>
+    </Button>
   );
 }
 
@@ -100,7 +101,7 @@ function MountList({
 function AdvancedPath({ value, onChange }: { value: string; onChange: (path: string) => void }) {
   return (
     <div>
-      <input
+      <Input
         type="text"
         className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-surface-2 text-text"
         value={value}
@@ -177,14 +178,16 @@ export default function LocalTargetPicker({
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <label className="block text-xs font-medium text-text">Target disk</label>
-        <button
+        <Button
           type="button"
           onClick={() => void load()}
           disabled={loading}
+          variant="ghost"
+          size="sm"
           className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text disabled:opacity-50"
         >
           {loading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />} Rescan
-        </button>
+        </Button>
       </div>
 
       {loading && mounts === null ? (
@@ -195,13 +198,15 @@ export default function LocalTargetPicker({
         <>
           <MountList mounts={mounts ?? []} value={value} error={error} onChange={onChange} />
 
-          <button
+          <Button
             type="button"
             onClick={() => setShowAdvanced(v => !v)}
+            variant="ghost"
+            size="sm"
             className="text-[11px] text-accent hover:underline"
           >
             {advancedOpen ? 'Hide advanced path' : 'Advanced: enter a path manually'}
-          </button>
+          </Button>
 
           {advancedOpen && <AdvancedPath value={value} onChange={onChange} />}
         </>
