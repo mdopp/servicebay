@@ -354,11 +354,11 @@ function OperateActionModals({
         title={`Delete ${service.name}`}
         message={
           <div className="space-y-3">
-            <p className="text-sm text-gray-600 dark:text-gray-300">
-              You are about to delete <strong className="text-gray-900 dark:text-white">{service.name}</strong>.
+            <p className="text-sm text-text-muted dark:text-text-muted">
+              You are about to delete <strong className="text-text dark:text-white">{service.name}</strong>.
               This will permanently stop the service and remove all of its configuration files.
             </p>
-            <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-700 dark:text-blue-300">
+            <div className="p-3 rounded-lg bg-status-info/10 border border-status-info/20 text-xs text-blue-700 dark:text-blue-300">
               ℹ️ <strong>Safety Net Active:</strong> ServiceBay snapshots your configuration before deleting. Restore it any time from <strong>Settings &rarr; Backups</strong>.
             </div>
           </div>
