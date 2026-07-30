@@ -21,8 +21,8 @@ interface TargetView {
 }
 
 const INPUT_CLASS =
-  'w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white';
-const LABEL_CLASS = 'block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1';
+  'w-full px-3 py-2 text-sm rounded-lg border border-border bg-surface-2 text-text';
+const LABEL_CLASS = 'block text-xs font-medium text-text-muted mb-1';
 
 function Field({
   label,
@@ -38,7 +38,7 @@ function Field({
   return (
     <div className={full ? 'sm:col-span-2' : undefined}>
       <label className={LABEL_CLASS}>
-        {label} {optional && <span className="text-gray-400">{optional}</span>}
+        {label} {optional && <span className="text-text-muted">{optional}</span>}
       </label>
       {children}
     </div>
@@ -202,13 +202,13 @@ function DestinationFields({ form, view, set }: FieldsProps) {
     <>
       <TypePicker type={form.type} onChange={t => set({ type: t })} />
       {isFritz && (
-        <p className="text-[11px] text-gray-500 dark:text-gray-400">
+        <p className="text-[11px] text-text-subtle">
           Leave the fields blank to use the gateway FritzBox credentials. Override them for a dedicated FRITZ.NAS / file-access user.
         </p>
       )}
       <CredentialGrid form={form} view={view} set={set} />
       {(isFritz || form.type === 'ftp') && (
-        <label className="inline-flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300 cursor-pointer">
+        <label className="inline-flex items-center gap-2 text-xs text-text-muted cursor-pointer">
           <Input type="checkbox" checked={form.secure} onChange={e => set({ secure: e.target.checked })} className="w-4 h-4" />
           Use FTPS (explicit AUTH TLS) — uncommon on a LAN FritzBox
         </label>
@@ -279,7 +279,7 @@ export default function ExternalBackupDestinationSection({ onSaved }: { onSaved?
 
   if (busy === 'load') {
     return (
-      <div className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
+      <div className="text-sm text-text-subtle flex items-center gap-2">
         <Loader2 className="animate-spin" size={16} /> Loading destination…
       </div>
     );
@@ -290,9 +290,9 @@ export default function ExternalBackupDestinationSection({ onSaved }: { onSaved?
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-sm font-semibold text-gray-900 dark:text-white">Destination</h4>
+        <h4 className="text-sm font-semibold text-text">Destination</h4>
         {view?.inheritsGateway && isFritz ? (
-          <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
+          <span className="inline-flex items-center gap-1 text-[11px] text-text-subtle">
             <CheckCircle2 size={12} /> Using gateway FritzBox credentials
           </span>
         ) : null}
@@ -322,7 +322,7 @@ export default function ExternalBackupDestinationSection({ onSaved }: { onSaved?
       </div>
 
       {form.type !== 'fritzbox' && !view?.hasPassword && !view?.hasPrivateKey && (
-        <p className="inline-flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-300">
+        <p className="inline-flex items-center gap-1 text-[11px] text-status-warn">
           <AlertCircle size={12} /> Secrets are stored encrypted at rest.
         </p>
       )}
