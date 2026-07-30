@@ -27,6 +27,8 @@ export interface DataTableProps<Row> {
   rowKey: (row: Row, index: number) => string;
   /** Optional per-row click — makes the row a button-like target. */
   onRowClick?: (row: Row, index: number) => void;
+  /** Optional per-row className — called with (row, index) to compute the row's className. */
+  rowClassName?: (row: Row, index: number) => string;
   /** Shown (spanning all columns) when `rows` is empty. */
   empty?: React.ReactNode;
   /** Classes on the scroll container. */
@@ -66,11 +68,13 @@ function BodyRow<Row>({
   row,
   index,
   onRowClick,
+  rowClassName,
 }: {
   columns: Column<Row>[];
   row: Row;
   index: number;
   onRowClick?: (row: Row, index: number) => void;
+  rowClassName?: (row: Row, index: number) => string;
 }) {
   return (
     <tr
@@ -78,6 +82,7 @@ function BodyRow<Row>({
       className={cn(
         'border-b border-border last:border-0 text-text',
         onRowClick && 'cursor-pointer hover:bg-surface-2',
+        rowClassName && rowClassName(row, index),
       )}
     >
       {columns.map((col) => (
@@ -97,6 +102,7 @@ export function DataTable<Row>({
   rows,
   rowKey,
   onRowClick,
+  rowClassName,
   empty = 'No data',
   className,
   minWidthClassName,
@@ -125,6 +131,7 @@ export function DataTable<Row>({
                 row={row}
                 index={i}
                 onRowClick={onRowClick}
+                rowClassName={rowClassName}
               />
             ))
           )}

@@ -10,6 +10,7 @@ import {
   type CredentialUrlHost,
 } from '@servicebay/api-client';
 import { useToast } from '@/providers/ToastProvider';
+import { Button, DataTable } from '@/components/ui';
 
 interface Manifest {
   savedAt: string;
@@ -135,35 +136,37 @@ export default function CredentialsSection() {
         )}
         {manifest && manifest.credentials.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
-            <button
+            <Button
               onClick={downloadCsv}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded-lg"
+              variant="primary"
+              size="md"
               title="Download the saved credentials as a Bitwarden/Vaultwarden-importable CSV."
             >
               <Download size={14} />
               Download CSV
-            </button>
+            </Button>
             {vaultwardenImportUrl && (
               <a
                 href={vaultwardenImportUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-3 py-2 bg-surface-2 hover:bg-surface text-text text-sm font-medium rounded-lg border border-border"
+                className="inline-flex items-center gap-2 px-4 py-2.5 bg-surface-2 hover:bg-surface-muted text-text text-sm font-medium rounded-card border border-border transition-colors"
                 title="Opens the Vaultwarden web-vault import page in a new tab. Download the CSV first, then pick it there. Choose an Organization collection to share entries with other admins (folders are personal)."
               >
                 <ExternalLink size={14} />
                 Open Vaultwarden import
               </a>
             )}
-            <button
+            <Button
               onClick={onWipe}
               disabled={busy === 'wipe'}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-status-fail hover:bg-status-fail/90 text-on-accent text-sm font-medium rounded-lg disabled:opacity-50"
+              variant="danger"
+              size="md"
               title="Remove the saved credentials from the server. Useful once you've stored them safely in your password manager."
             >
               {busy === 'wipe' ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
               Wipe from server
-            </button>
+            </Button>
           </div>
         )}
 
@@ -173,67 +176,85 @@ export default function CredentialsSection() {
             Nothing saved yet. The install wizard writes here at the end of every successful run.
           </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-xs uppercase text-text-muted border-b border-border">
-                <tr>
-                  <th className="text-left py-2 pr-3">Service</th>
-                  <th className="text-left py-2 pr-3">URL</th>
-                  <th className="text-left py-2 pr-3">Username</th>
-                  <th className="text-left py-2 pr-3">Password</th>
-                  <th className="text-left py-2">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {manifest.credentials.map((c, i) => {
+          <DataTable<Credential>
+            columns={[
+              {
+                key: 'service',
+                header: 'Service',
+                cell: (c) => (
+                  <div>
+                    {c.service}
+                    {c.importance === 'system' && (
+                      <span className="ml-2 text-[10px] uppercase tracking-wide text-text-muted">system</span>
+                    )}
+                  </div>
+                ),
+                align: 'left',
+              },
+              {
+                key: 'url',
+                header: 'URL',
+                cell: (c) => <CredentialUrlCell cred={c} hosts={proxyHosts} publicDomain={publicDomain} />,
+                align: 'left',
+                className: 'font-mono text-xs',
+              },
+              {
+                key: 'username',
+                header: 'Username',
+                cell: (c) => c.username,
+                align: 'left',
+                className: 'font-mono text-xs',
+              },
+              {
+                key: 'password',
+                header: 'Password',
+                cell: (c, i) => {
                   const isRevealed = !!revealed[i];
-                  const rowClass = c.importance === 'critical'
-                    ? 'border-b border-border'
-                    : 'border-b border-border opacity-80';
                   return (
-                    <tr key={i} className={rowClass}>
-                      <td className="py-2 pr-3 font-medium text-text">
-                        {c.service}
-                        {c.importance === 'system' && (
-                          <span className="ml-2 text-[10px] uppercase tracking-wide text-text-muted">system</span>
-                        )}
-                      </td>
-                      <td className="py-2 pr-3 text-text font-mono text-xs">
-                        <CredentialUrlCell cred={c} hosts={proxyHosts} publicDomain={publicDomain} />
-                      </td>
-                      <td className="py-2 pr-3 text-text font-mono text-xs">{c.username}</td>
-                      <td className="py-2 pr-3">
-                        <div className="flex items-center gap-2">
-                          <code className="font-mono text-xs">{isRevealed ? c.password : '••••••••••'}</code>
-                          <button
-                            onClick={() => setRevealed(s => ({ ...s, [i]: !s[i] }))}
-                            className="p-1 text-text-muted hover:text-text"
-                            title={isRevealed ? 'Hide password' : 'Reveal password'}
-                          >
-                            {isRevealed ? <EyeOff size={12} /> : <Eye size={12} />}
-                          </button>
-                          {isRevealed && (
-                            <button
-                              onClick={() => {
-                                navigator.clipboard.writeText(c.password).then(
-                                  () => addToast('success', 'Copied to clipboard', `${c.service} password`),
-                                  () => addToast('error', 'Copy failed', 'Browser refused clipboard access.'),
-                                );
-                              }}
-                              className="p-1 text-text-muted hover:text-text text-[10px] uppercase tracking-wide"
-                            >
-                              copy
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-2 text-xs text-text-muted">{c.notes ?? ''}</td>
-                    </tr>
+                    <div className="flex items-center gap-2">
+                      <code className="font-mono text-xs">{isRevealed ? c.password : '••••••••••'}</code>
+                      <Button
+                        onClick={() => setRevealed(s => ({ ...s, [i]: !s[i] }))}
+                        variant="ghost"
+                        className="!h-auto !p-1"
+                        title={isRevealed ? 'Hide password' : 'Reveal password'}
+                      >
+                        {isRevealed ? <EyeOff size={12} /> : <Eye size={12} />}
+                      </Button>
+                      {isRevealed && (
+                        <Button
+                          onClick={() => {
+                            navigator.clipboard.writeText(c.password).then(
+                              () => addToast('success', 'Copied to clipboard', `${c.service} password`),
+                              () => addToast('error', 'Copy failed', 'Browser refused clipboard access.'),
+                            );
+                          }}
+                          variant="ghost"
+                          className="!h-auto !p-1 text-[10px] uppercase tracking-wide"
+                        >
+                          copy
+                        </Button>
+                      )}
+                    </div>
                   );
-                })}
-              </tbody>
-            </table>
-          </div>
+                },
+                align: 'left',
+              },
+              {
+                key: 'notes',
+                header: 'Notes',
+                cell: (c) => c.notes ?? '',
+                align: 'left',
+                className: 'text-xs text-text-muted',
+              },
+            ]}
+            rows={manifest.credentials}
+            rowKey={(c, i) => String(i)}
+            rowClassName={(c) =>
+              c.importance === 'critical' ? '' : 'opacity-80'
+            }
+            empty="No credentials saved"
+          />
         )}
       </div>
     </>
