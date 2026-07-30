@@ -32,7 +32,7 @@ function CredentialUrlCell({ cred, hosts, publicDomain }: {
       href={resolved}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-blue-600 dark:text-blue-400 hover:underline break-all"
+      className="text-accent hover:underline break-all"
     >
       {resolved}
     </a>
@@ -119,7 +119,7 @@ export default function CredentialsSection() {
 
   if (busy === 'load') {
     return (
-      <p className="text-sm text-gray-500 dark:text-gray-400">
+      <p className="text-sm text-text-muted">
         <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
         Loading credentials…
       </p>
@@ -129,7 +129,7 @@ export default function CredentialsSection() {
   return (
     <>
         {manifest && (
-          <p className="text-xs text-gray-500 dark:text-gray-400">
+          <p className="text-xs text-text-muted">
             Persisted at {new Date(manifest.savedAt).toLocaleString()} — encrypted at rest, visible to logged-in admins.
           </p>
         )}
@@ -137,7 +137,7 @@ export default function CredentialsSection() {
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={downloadCsv}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
+              className="inline-flex items-center gap-2 px-3 py-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded-lg"
               title="Download the saved credentials as a Bitwarden/Vaultwarden-importable CSV."
             >
               <Download size={14} />
@@ -148,7 +148,7 @@ export default function CredentialsSection() {
                 href={vaultwardenImportUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-100 text-sm font-medium rounded-lg"
+                className="inline-flex items-center gap-2 px-3 py-2 bg-surface-2 hover:bg-surface text-text text-sm font-medium rounded-lg border border-border"
                 title="Opens the Vaultwarden web-vault import page in a new tab. Download the CSV first, then pick it there. Choose an Organization collection to share entries with other admins (folders are personal)."
               >
                 <ExternalLink size={14} />
@@ -158,7 +158,7 @@ export default function CredentialsSection() {
             <button
               onClick={onWipe}
               disabled={busy === 'wipe'}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-3 py-2 bg-status-fail hover:bg-status-fail/90 text-on-accent text-sm font-medium rounded-lg disabled:opacity-50"
               title="Remove the saved credentials from the server. Useful once you've stored them safely in your password manager."
             >
               {busy === 'wipe' ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
@@ -169,13 +169,13 @@ export default function CredentialsSection() {
 
       <div>
         {!manifest || manifest.credentials.length === 0 ? (
-          <p className="text-sm text-gray-500 dark:text-gray-400 italic">
+          <p className="text-sm text-text-muted italic">
             Nothing saved yet. The install wizard writes here at the end of every successful run.
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-xs uppercase text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
+              <thead className="text-xs uppercase text-text-muted border-b border-border">
                 <tr>
                   <th className="text-left py-2 pr-3">Service</th>
                   <th className="text-left py-2 pr-3">URL</th>
@@ -188,26 +188,26 @@ export default function CredentialsSection() {
                 {manifest.credentials.map((c, i) => {
                   const isRevealed = !!revealed[i];
                   const rowClass = c.importance === 'critical'
-                    ? 'border-b border-gray-100 dark:border-gray-800'
-                    : 'border-b border-gray-100 dark:border-gray-800 opacity-80';
+                    ? 'border-b border-border'
+                    : 'border-b border-border opacity-80';
                   return (
                     <tr key={i} className={rowClass}>
-                      <td className="py-2 pr-3 font-medium text-gray-900 dark:text-white">
+                      <td className="py-2 pr-3 font-medium text-text">
                         {c.service}
                         {c.importance === 'system' && (
-                          <span className="ml-2 text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-400">system</span>
+                          <span className="ml-2 text-[10px] uppercase tracking-wide text-text-muted">system</span>
                         )}
                       </td>
-                      <td className="py-2 pr-3 text-gray-700 dark:text-gray-300 font-mono text-xs">
+                      <td className="py-2 pr-3 text-text font-mono text-xs">
                         <CredentialUrlCell cred={c} hosts={proxyHosts} publicDomain={publicDomain} />
                       </td>
-                      <td className="py-2 pr-3 text-gray-700 dark:text-gray-300 font-mono text-xs">{c.username}</td>
+                      <td className="py-2 pr-3 text-text font-mono text-xs">{c.username}</td>
                       <td className="py-2 pr-3">
                         <div className="flex items-center gap-2">
                           <code className="font-mono text-xs">{isRevealed ? c.password : '••••••••••'}</code>
                           <button
                             onClick={() => setRevealed(s => ({ ...s, [i]: !s[i] }))}
-                            className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                            className="p-1 text-text-muted hover:text-text"
                             title={isRevealed ? 'Hide password' : 'Reveal password'}
                           >
                             {isRevealed ? <EyeOff size={12} /> : <Eye size={12} />}
@@ -220,14 +220,14 @@ export default function CredentialsSection() {
                                   () => addToast('error', 'Copy failed', 'Browser refused clipboard access.'),
                                 );
                               }}
-                              className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-[10px] uppercase tracking-wide"
+                              className="p-1 text-text-muted hover:text-text text-[10px] uppercase tracking-wide"
                             >
                               copy
                             </button>
                           )}
                         </div>
                       </td>
-                      <td className="py-2 text-xs text-gray-500 dark:text-gray-400">{c.notes ?? ''}</td>
+                      <td className="py-2 text-xs text-text-muted">{c.notes ?? ''}</td>
                     </tr>
                   );
                 })}
