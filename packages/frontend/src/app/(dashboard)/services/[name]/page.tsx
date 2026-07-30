@@ -8,7 +8,7 @@ export default async function ServiceDetailPage({ params }: { params: Promise<{ 
   return (
     <Suspense
       fallback={
-        <div className="flex items-center justify-center gap-2 p-8 text-gray-500">
+        <div className="flex items-center justify-center gap-2 p-8 text-text-muted">
           <RefreshCw className="w-4 h-4 animate-spin" /> Loading service…
         </div>
       }
