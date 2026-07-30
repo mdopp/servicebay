@@ -54,63 +54,63 @@ export default function SSHSetupModal({ isOpen, onClose, initialHost = '', initi
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl max-w-lg w-full border border-gray-200 dark:border-gray-800 overflow-hidden flex flex-col max-h-[90vh]">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gray-50 dark:bg-gray-800/50">
-          <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+      <div className="bg-surface rounded-xl shadow-2xl max-w-lg w-full border border-border overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="p-4 border-b border-border flex items-center justify-between bg-surface-2">
+          <h3 className="font-bold text-text flex items-center gap-2">
             <Terminal size={18} />
             Setup SSH Keys
           </h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+          <button onClick={onClose} className="text-text-muted hover:text-text">
             <X size={20} />
           </button>
         </div>
 
         <div className="p-6 space-y-4 overflow-y-auto">
-          <p className="text-sm text-gray-600 dark:text-gray-300">
+          <p className="text-sm text-text-muted">
             This tool will copy the server&apos;s public SSH key to the remote host, enabling password-less authentication required by ServiceBay.
           </p>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2 md:col-span-1">
-              <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Host</label>
-              <input 
-                type="text" 
+              <label className="block text-xs font-medium text-text-muted mb-1">Host</label>
+              <input
+                type="text"
                 value={host}
                 onChange={e => setHost(e.target.value)}
-                className="w-full p-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 text-sm"
+                className="w-full p-2 rounded border border-border bg-surface-2 text-sm text-text"
                 placeholder="192.168.1.x"
                 disabled={status === 'running'}
               />
             </div>
             <div className="col-span-2 md:col-span-1">
-              <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Port</label>
-              <input 
-                type="number" 
+              <label className="block text-xs font-medium text-text-muted mb-1">Port</label>
+              <input
+                type="number"
                 value={port}
                 onChange={e => setPort(parseInt(e.target.value))}
-                className="w-full p-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 text-sm"
+                className="w-full p-2 rounded border border-border bg-surface-2 text-sm text-text"
                 placeholder="22"
                 disabled={status === 'running'}
               />
             </div>
             <div className="col-span-2 md:col-span-1">
-              <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Username</label>
-              <input 
-                type="text" 
+              <label className="block text-xs font-medium text-text-muted mb-1">Username</label>
+              <input
+                type="text"
                 value={user}
                 onChange={e => setUser(e.target.value)}
-                className="w-full p-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 text-sm"
+                className="w-full p-2 rounded border border-border bg-surface-2 text-sm text-text"
                 placeholder="root"
                 disabled={status === 'running'}
               />
             </div>
             <div className="col-span-2 md:col-span-1">
-              <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Password</label>
-              <input 
-                type="password" 
+              <label className="block text-xs font-medium text-text-muted mb-1">Password</label>
+              <input
+                type="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                className="w-full p-2 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-950 text-sm"
+                className="w-full p-2 rounded border border-border bg-surface-2 text-sm text-text"
                 placeholder="••••••"
                 disabled={status === 'running'}
               />
@@ -118,7 +118,7 @@ export default function SSHSetupModal({ isOpen, onClose, initialHost = '', initi
           </div>
 
           {logs.length > 0 && (
-            <div className="mt-4 bg-black rounded-lg p-3 font-mono text-xs text-green-400 h-32 overflow-y-auto whitespace-pre-wrap">
+            <div className="mt-4 bg-black rounded-lg p-3 font-mono text-xs text-status-ok h-32 overflow-y-auto whitespace-pre-wrap">
               {logs.map((log, i) => (
                 <div key={i}>{log}</div>
               ))}
@@ -126,30 +126,30 @@ export default function SSHSetupModal({ isOpen, onClose, initialHost = '', initi
           )}
         </div>
 
-        <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex justify-end gap-2">
-          <button 
+        <div className="p-4 border-t border-border bg-surface-2 flex justify-end gap-2">
+          <button
             onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+            className="px-4 py-2 text-sm text-text-muted hover:text-text"
             disabled={status === 'running'}
           >
             Close
           </button>
-          <button 
+          <button
             onClick={handleSetup}
             disabled={status === 'running' || !host || !user || !password}
-            className={`px-4 py-2 text-sm text-white rounded flex items-center gap-2 transition-colors ${
-                status === 'success' ? 'bg-green-600 hover:bg-green-700' :
-                status === 'error' ? 'bg-red-600 hover:bg-red-700' :
-                'bg-blue-600 hover:bg-blue-700'
+            className={`px-4 py-2 text-sm text-on-accent rounded flex items-center gap-2 transition-colors ${
+                status === 'success' ? 'bg-status-ok hover:bg-status-ok/90' :
+                status === 'error' ? 'bg-status-fail hover:bg-status-fail/90' :
+                'bg-accent hover:bg-accent-strong'
             } disabled:opacity-50 disabled:cursor-not-allowed`}
           >
-            {status === 'running' ? <Loader2 className="animate-spin" size={16} /> : 
+            {status === 'running' ? <Loader2 className="animate-spin" size={16} /> :
              status === 'success' ? <CheckCircle2 size={16} /> :
              status === 'error' ? <AlertCircle size={16} /> :
              <Terminal size={16} />}
-            {status === 'running' ? 'Running...' : 
-             status === 'success' ? 'Done' : 
-             status === 'error' ? 'Retry' : 
+            {status === 'running' ? 'Running...' :
+             status === 'success' ? 'Done' :
+             status === 'error' ? 'Retry' :
              'Run ssh-copy-id'}
           </button>
         </div>
