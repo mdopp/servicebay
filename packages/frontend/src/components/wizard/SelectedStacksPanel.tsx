@@ -46,32 +46,32 @@ const ROW_STYLES: Record<Status, { icon: typeof Check; label: string; classes: s
   already: {
     icon: Check,
     label: 'Already installed',
-    classes: 'text-gray-400',
+    classes: 'text-text-muted',
   },
   done: {
     icon: Check,
     label: 'Done',
-    classes: 'text-emerald-500',
+    classes: 'text-status-ok',
   },
   installing: {
     icon: Loader2,
     label: 'Installing',
-    classes: 'text-blue-500',
+    classes: 'text-status-info',
   },
   queued: {
     icon: Clock,
     label: 'Queued',
-    classes: 'text-gray-400',
+    classes: 'text-text-muted',
   },
   failed: {
     icon: AlertCircle,
     label: 'Failed',
-    classes: 'text-red-500',
+    classes: 'text-status-fail',
   },
   skipped: {
     icon: Check,
     label: 'Skipped',
-    classes: 'text-gray-400',
+    classes: 'text-text-muted',
   },
 };
 
@@ -82,7 +82,7 @@ function StatusRow({ name, status }: StatusRowProps) {
     <li className="flex items-center justify-between gap-3 py-1.5 text-sm">
       <span className="flex items-center gap-2 min-w-0 truncate">
         <Icon className={`shrink-0 ${classes} ${animate}`} size={14} aria-hidden="true" />
-        <span className="text-gray-700 dark:text-gray-200 truncate">{name}</span>
+        <span className="text-text truncate">{name}</span>
       </span>
       <span className={`text-[10px] font-bold uppercase tracking-wider ${classes}`}>{label}</span>
     </li>
@@ -160,11 +160,11 @@ export default function SelectedStacksPanel({
       className="rounded-2xl border border-white/5 bg-white/[0.02] p-4"
     >
       <header className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">
+        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-text-muted">
           <Package size={12} />
           Selected stacks
         </div>
-        <div className="text-[11px] font-mono text-gray-400">{summary}</div>
+        <div className="text-[11px] font-mono text-text-muted">{summary}</div>
       </header>
       <ul role="list" className="divide-y divide-white/5">
         {rows.map(r => (
