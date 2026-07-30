@@ -5,6 +5,8 @@ import { RefreshCw, Terminal, Activity, Box, ArrowLeft, FileJson, DatabaseBackup
 import { useRouter, useSearchParams } from 'next/navigation';
 import { logger } from '@servicebay/api-client';
 import ContainerList from './ContainerList';
+import { Button } from './ui/Button';
+import { Select } from './ui/Select';
 import type { EnrichedContainer } from '@servicebay/api-client';
 
 interface ServiceMonitorProps {
@@ -197,9 +199,9 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
             {variant === 'page' && (
                 <div className="flex justify-between items-center mb-6 p-4 border-b border-border bg-surface dark:bg-surface/50">
                     <div className="flex items-center gap-4">
-                            <button onClick={handleBack} className="p-2 hover:bg-surface-2 dark:hover:bg-surface-2 rounded-full transition-colors">
+                            <Button onClick={handleBack} variant="ghost" size="sm" className="rounded-full">
                                     <ArrowLeft size={24} className="text-muted dark:text-muted" />
-                            </button>
+                            </Button>
                             <h1 className="text-xl font-bold text-foreground dark:text-foreground">Monitor: {serviceName}</h1>
                     </div>
                     <div className="flex items-center gap-3">
@@ -208,22 +210,24 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
                                     {backupMsg.text}
                                 </span>
                             )}
-                            <button
+                            <Button
                                     onClick={handleBackupConfig}
                                     disabled={backingUp}
-                                    className="px-3 py-2 flex items-center gap-2 text-sm text-muted dark:text-muted bg-surface dark:bg-surface-2 border border-border dark:border-border rounded hover:bg-surface-2 dark:hover:bg-surface-2 shadow-sm transition-colors disabled:opacity-50"
+                                    variant="secondary"
+                                    size="sm"
                                     title="Back up this service's config to the FritzBox NAS"
                             >
                                     <DatabaseBackup size={18} className={backingUp ? 'animate-pulse' : ''} /> Back up config
-                            </button>
-                            <button
+                            </Button>
+                            <Button
                                     onClick={fetchLogs}
                                     disabled={loading}
-                                    className="p-2 text-muted dark:text-muted bg-surface dark:bg-surface-2 border border-border dark:border-border rounded hover:bg-surface-2 dark:hover:bg-surface-2 shadow-sm transition-colors"
+                                    variant="secondary"
+                                    size="sm"
                                     title="Refresh"
                             >
                                     <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
-                            </button>
+                            </Button>
                     </div>
                 </div>
             )}
@@ -231,30 +235,34 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
             <div className={`flex-1 flex flex-col min-h-0 ${variant === 'embedded' ? 'p-0' : 'p-6'}`}>
       <div className="bg-surface dark:bg-surface rounded-lg border border-border dark:border-border shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
         <div className="flex border-b border-border dark:border-border bg-surface dark:bg-surface/50 shrink-0">
-            <button
+            <Button
+            variant="ghost"
             className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'status' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
             onClick={() => setActiveTab('status')}
             >
             <Activity size={16} /> Status
-            </button>
-            <button
+            </Button>
+            <Button
+            variant="ghost"
             className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'service' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
             onClick={() => setActiveTab('service')}
             >
             <Terminal size={16} /> Service Logs
-            </button>
-            <button
+            </Button>
+            <Button
+            variant="ghost"
             className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'container-logs' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
             onClick={() => setActiveTab('container-logs')}
             >
             <Box size={16} /> Container Logs & Info
-            </button>
-            <button
+            </Button>
+            <Button
+            variant="ghost"
             className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'network' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
             onClick={() => setActiveTab('network')}
             >
             <FileJson size={16} /> Raw Data / Config
-            </button>
+            </Button>
         </div>
 
         <div className="bg-surface-muted dark:bg-surface-muted p-4 flex-1 overflow-y-auto">
@@ -309,7 +317,7 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
                             <div>
                                 <div className="flex items-center justify-between mb-2">
                                     <h4 className="text-subtle text-sm font-bold">Container Logs</h4>
-                                    <select
+                                    <Select
                                         className="bg-surface-2 text-foreground text-sm rounded border border-border p-1"
                                         value={selectedContainerId || ''}
                                         onChange={(e) => setSelectedContainerId(e.target.value)}
@@ -319,7 +327,7 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
                                                 {c.names?.[0]} ({c.id?.substring(0, 12)})
                                             </option>
                                         ))}
-                                    </select>
+                                    </Select>
                                 </div>
                                 <pre className="text-sm font-mono text-muted whitespace-pre-wrap bg-surface p-4 rounded border border-border min-h-[300px]">
                                     {containerLogs || 'Select a container to view logs.'}

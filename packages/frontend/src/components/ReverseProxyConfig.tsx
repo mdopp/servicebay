@@ -51,31 +51,31 @@ export default function ReverseProxyConfig() {
 
     return (
         <div className="flex flex-col h-full">
-            <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center bg-white dark:bg-gray-900">
-                <h2 className="font-bold text-xl text-gray-900 dark:text-white flex items-center gap-2">
-                    <Shield className="text-green-500" />
+            <div className="p-4 border-b border-border flex justify-between items-center bg-surface">
+                <h2 className="font-bold text-xl text-text flex items-center gap-2">
+                    <Shield className="text-status-ok" />
                     Reverse Proxy (Nginx Proxy Manager)
                 </h2>
                 <button
                     onClick={checkStatus}
                     disabled={loading}
-                    className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                    className="p-2 text-text-muted hover:bg-surface-2 rounded-lg transition-colors"
                 >
                     <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
                 </button>
             </div>
 
-            <div className="flex-1 p-6 overflow-y-auto bg-gray-50 dark:bg-gray-950">
+            <div className="flex-1 p-6 overflow-y-auto bg-surface-2">
                 <div className="max-w-2xl mx-auto space-y-6">
                     {/* Status Card */}
-                    <div className="bg-white dark:bg-gray-900 rounded-xl shadow-sm border border-gray-200 dark:border-gray-800 p-6">
+                    <div className="bg-surface rounded-xl shadow-sm border border-border p-6">
                         <div className="flex items-center gap-4 mb-4">
-                            <div className={`p-3 rounded-full ${status === 'installed' ? 'bg-green-100 text-green-600' : 'bg-yellow-100 text-yellow-600'}`}>
+                            <div className={`p-3 rounded-full ${status === 'installed' ? 'bg-status-ok/10 text-status-ok' : 'bg-status-warn/10 text-status-warn'}`}>
                                 <Server size={24} />
                             </div>
                             <div>
                                 <h3 className="font-semibold text-lg">System Status</h3>
-                                <p className="text-gray-500 text-sm">
+                                <p className="text-text-muted text-sm">
                                     {status === 'installed'
                                         ? `Nginx is installed and managed by ServiceBay${nginxNode && nginxNode !== 'Local' ? ` on ${nginxNode}` : ''}`
                                         : 'Nginx is not installed on this system'}
@@ -84,16 +84,16 @@ export default function ReverseProxyConfig() {
                         </div>
 
                         {status === 'not-installed' && (
-                            <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800">
-                                <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">Installation Required</h4>
-                                <p className="text-sm text-blue-700 dark:text-blue-300 mb-4">
+                            <div className="mt-4 p-4 bg-status-info/10 rounded-lg border border-status-info/20">
+                                <h4 className="font-medium text-status-info mb-2">Installation Required</h4>
+                                <p className="text-sm text-status-info mb-4">
                                     Nginx Proxy Manager provides a web UI for managing reverse proxy hosts, SSL certificates, and redirections.
                                     ServiceBay can install it automatically.
                                 </p>
                                 <button
                                     onClick={handleInstall}
                                     disabled={installing}
-                                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-50"
+                                    className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent rounded-lg transition-colors disabled:opacity-50"
                                 >
                                     {installing ? (
                                         <>
@@ -112,7 +112,7 @@ export default function ReverseProxyConfig() {
 
                         {status === 'installed' && (
                             <div className="mt-4 space-y-3">
-                                <div className="flex items-center gap-2 text-green-600 bg-green-50 dark:bg-green-900/20 p-3 rounded-lg border border-green-100 dark:border-green-800">
+                                <div className="flex items-center gap-2 text-status-ok bg-status-ok/10 p-3 rounded-lg border border-status-ok/20">
                                     <Check size={20} />
                                     <span className="font-medium">Ready to serve traffic</span>
                                 </div>
@@ -120,7 +120,7 @@ export default function ReverseProxyConfig() {
                                     href={`${window.location.protocol}//${window.location.hostname}:${adminPort}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium"
+                                    className="inline-flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-strong text-on-accent rounded-lg transition-colors text-sm font-medium"
                                 >
                                     <ExternalLink size={16} />
                                     Open Admin UI

@@ -41,15 +41,15 @@ export function NetworkStep({
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <section className="space-y-4">
                 <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20">
-                        <Globe className="w-5 h-5 text-blue-500"/>
+                    <div className="p-2.5 rounded-xl bg-accent/10 border border-accent/20">
+                        <Globe className="w-5 h-5 text-accent"/>
                     </div>
                     <div>
                         <h3 className="font-bold text-lg leading-none">Public Domain</h3>
-                        <p className="text-xs text-gray-500 mt-1">Configure your external access entry point</p>
+                        <p className="text-xs text-text-muted mt-1">Configure your external access entry point</p>
                     </div>
                 </div>
-                <div className="p-5 rounded-2xl bg-gray-50/50 dark:bg-white/5 border border-gray-200 dark:border-white/5">
+                <div className="p-5 rounded-2xl bg-surface dark:bg-surface border border-border">
                     <Input label="Public Domain" value={publicDomain} onChange={setPublicDomain} placeholder="example.com" hint="Required for Let's Encrypt and external access" />
                 </div>
             </section>
@@ -68,17 +68,17 @@ export function NetworkStep({
             {selection.ssh && (
                 <section className="space-y-4">
                     <div className="flex items-center gap-3">
-                        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20">
-                            <Key className="w-5 h-5 text-amber-500"/>
+                        <div className="p-2.5 rounded-xl bg-status-warn/10 border border-status-warn/20">
+                            <Key className="w-5 h-5 text-status-warn"/>
                         </div>
                         <div>
                             <h3 className="font-bold text-lg leading-none">Remote Access (SSH)</h3>
-                            <p className="text-xs text-gray-500 mt-1">Generate keys for multi-node management</p>
+                            <p className="text-xs text-text-muted mt-1">Generate keys for multi-node management</p>
                         </div>
                      </div>
 
-                    <div className="p-5 rounded-2xl bg-gray-50/50 dark:bg-white/5 border border-gray-200 dark:border-white/5 space-y-4">
-                        <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+                    <div className="p-5 rounded-2xl bg-surface dark:bg-surface border border-border space-y-4">
+                        <p className="text-sm text-text leading-relaxed">
                             {status?.hasSshKey
                               ? "An existing SSH key was detected. Your system is already prepared for remote node management."
                               : "No SSH key found. We recommend generating one now to enable management of remote nodes via SSH."}
@@ -90,7 +90,7 @@ export function NetworkStep({
                              </Button>
                         )}
                         {status?.hasSshKey && (
-                            <div className="flex items-center gap-2 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/20">
+                            <div className="flex items-center gap-2 text-xs font-medium text-status-ok bg-status-ok/10 p-3 rounded-xl border border-status-ok/20">
                                 <CheckCircle className="w-4 h-4" /> SSH Infrastructure Ready
                             </div>
                         )}
@@ -176,19 +176,19 @@ function GatewaySection({
     return (
         <section className="space-y-4">
             <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20">
-                    <Network className="w-5 h-5 text-purple-500" />
+                <div className="p-2.5 rounded-xl bg-accent/10 border border-accent/20">
+                    <Network className="w-5 h-5 text-accent" />
                 </div>
                 <div>
                     <h3 className="font-bold text-lg leading-none">Internet Gateway</h3>
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-text-muted mt-1">
                         FRITZ!Box powers device discovery, Wake-on-LAN and port-forward
                         management — verify the connection before continuing.
                     </p>
                 </div>
             </div>
 
-            <div className="grid gap-4 p-5 rounded-2xl bg-gray-50/50 dark:bg-white/5 border border-gray-200 dark:border-white/5">
+            <div className="grid gap-4 p-5 rounded-2xl bg-surface dark:bg-surface border border-border">
                 <Input
                     label="Hostname / IP"
                     value={gwHost}
@@ -214,12 +214,12 @@ function GatewaySection({
                         Verify Connection
                     </Button>
                     {result?.kind === 'ok' && (
-                        <span className="flex items-center gap-2 text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-xl border border-emerald-500/20">
+                        <span className="flex items-center gap-2 text-xs font-medium text-status-ok bg-status-ok/10 px-3 py-1.5 rounded-xl border border-status-ok/20">
                             <CheckCircle className="w-4 h-4" /> {result.message}
                         </span>
                     )}
                     {result?.kind === 'fail' && (
-                        <span className="flex items-center gap-2 text-xs font-medium text-red-600 dark:text-red-400 bg-red-500/10 px-3 py-1.5 rounded-xl border border-red-500/20">
+                        <span className="flex items-center gap-2 text-xs font-medium text-status-fail bg-status-fail/10 px-3 py-1.5 rounded-xl border border-status-fail/20">
                             <AlertCircle className="w-4 h-4" /> {result.message}
                         </span>
                     )}

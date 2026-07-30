@@ -212,7 +212,7 @@ describe('InstallerModal — phase footers', () => {
 
     await screen.findByTestId('stack-install-flow');
     const back = screen.getByRole('button', { name: 'Back' });
-    expect(back.className).toContain('text-foreground');
+    expect(back.className).toContain('text-text');
     fireEvent.click(back);
     expect(controller.reset).toHaveBeenCalled();
 
@@ -242,8 +242,8 @@ describe('InstallerModal — phase footers', () => {
     renderModal();
     const btn = await screen.findByRole('button', { name: 'Installing...' });
     expect((btn as HTMLButtonElement).disabled).toBe(true);
-    expect(btn.className).toContain('bg-border');
-    expect(btn.className).toContain('text-muted');
+    expect(btn.className).toContain('bg-surface-2');
+    expect(btn.className).toContain('text-text');
   });
 
   it('done: routes to the dashboard from the accent action', async () => {
@@ -260,8 +260,8 @@ describe('InstallerModal — phase footers', () => {
     controller = makeController({ phase: 'error', error: 'boom' });
     const { onClose } = renderModal();
     const btn = await screen.findByRole('button', { name: 'Close' });
-    expect(btn.className).toContain('bg-border');
-    expect(btn.className).toContain('text-foreground');
+    expect(btn.className).toContain('bg-surface-2');
+    expect(btn.className).toContain('text-text');
     fireEvent.click(btn);
     expect(onClose).toHaveBeenCalledTimes(1);
   });

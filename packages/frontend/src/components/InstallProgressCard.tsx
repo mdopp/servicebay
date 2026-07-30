@@ -44,15 +44,15 @@ export function InstallProgressCardView({
 }) {
   const { phase, currentItem, deployed, total, percent, needsCredentials, logs, postDeployProgress } = state;
   return (
-    <div className="rounded-2xl p-5 glass-panel border border-blue-500/20 bg-gradient-to-br from-blue-500/10 to-indigo-500/5 space-y-4">
+    <div className="rounded-2xl p-5 glass-panel border border-accent/20 bg-gradient-to-br from-accent/10 to-accent/5 space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-base font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-          <Loader2 size={18} className="text-blue-500 shrink-0 animate-spin" />
+        <h2 className="text-base font-bold text-text flex items-center gap-2">
+          <Loader2 size={18} className="text-accent shrink-0 animate-spin" />
           {phaseLabel(phase)}
-          {currentItem && <span className="font-medium text-gray-500 dark:text-gray-400">· {currentItem}</span>}
+          {currentItem && <span className="font-medium text-text-muted">· {currentItem}</span>}
         </h2>
         {total > 0 && (
-          <span className="text-sm font-semibold text-blue-600 dark:text-blue-400 shrink-0 tabular-nums">
+          <span className="text-sm font-semibold text-status-info shrink-0 tabular-nums">
             {deployed}/{total}
           </span>
         )}
@@ -60,13 +60,13 @@ export function InstallProgressCardView({
 
       {/* Percent bar (% = deployed/total). */}
       <div className="space-y-1">
-        <div className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+        <div className="h-2 w-full rounded-full bg-surface-2 overflow-hidden">
           <div
-            className="h-full rounded-full bg-blue-500 transition-[width] duration-500"
+            className="h-full rounded-full bg-accent transition-[width] duration-500"
             style={{ width: `${percent}%` }}
           />
         </div>
-        <p className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{percent}%</p>
+        <p className="text-xs text-text-muted tabular-nums">{percent}%</p>
       </div>
 
       {/* Post-deploy progress bar (#1288). A template's post-deploy step
@@ -76,7 +76,7 @@ export function InstallProgressCardView({
           a silent hang. Shows only while a tick is in flight. */}
       {postDeployProgress && (
         <div className="space-y-1">
-          <div className="flex items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
+          <div className="flex items-center justify-between gap-2 text-xs text-text-muted">
             <span className="truncate">{postDeployProgress.tag ?? 'Post-deploy'}</span>
             <span className="tabular-nums shrink-0">
               {postDeployProgress.completedMb !== undefined && postDeployProgress.totalMb !== undefined
@@ -84,9 +84,9 @@ export function InstallProgressCardView({
                 : `${postDeployProgress.percent}%`}
             </span>
           </div>
-          <div className="h-2 w-full rounded-full bg-gray-200 dark:bg-gray-800 overflow-hidden">
+          <div className="h-2 w-full rounded-full bg-surface-2 overflow-hidden">
             <div
-              className="h-full rounded-full bg-indigo-500 transition-[width] duration-500"
+              className="h-full rounded-full bg-status-info transition-[width] duration-500"
               style={{ width: `${postDeployProgress.percent}%` }}
             />
           </div>
@@ -97,14 +97,14 @@ export function InstallProgressCardView({
           continues with the auto-generated fallback; proxy routes can
           be set later in Settings → Networking & Access. */}
       {needsCredentials && (
-        <div className="rounded-xl border border-amber-300/60 dark:border-amber-800/50 bg-amber-50/80 dark:bg-amber-950/20 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+        <div className="rounded-xl border border-status-warn bg-status-warn/10 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <p className="text-xs text-status-warn leading-relaxed">
             Waiting for reverse-proxy credentials. Skip to continue with auto-generated ones — you can set them later in Settings.
           </p>
           <button
             type="button"
             onClick={onSkipCredentials}
-            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-600 hover:bg-amber-700 text-white transition-colors"
+            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-status-warn hover:bg-status-warn/90 text-on-accent transition-colors"
           >
             <KeyRound size={13} /> Skip credentials
           </button>
@@ -113,7 +113,7 @@ export function InstallProgressCardView({
 
       {/* Log tail — the last few install-runner lines, monospaced. */}
       {logs.length > 0 && (
-        <pre className="text-[11px] leading-relaxed font-mono text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-black/30 rounded-xl p-3 overflow-x-auto max-h-44 whitespace-pre-wrap break-words">
+        <pre className="text-[11px] leading-relaxed font-mono text-text-muted bg-surface-muted rounded-xl p-3 overflow-x-auto max-h-44 whitespace-pre-wrap break-words">
           {logs.join('\n')}
         </pre>
       )}

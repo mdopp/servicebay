@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { Button, Input, Textarea } from '@/components/ui';
 
 /**
  * The request-access modal itself — the form that collects everything
@@ -98,12 +99,13 @@ export default function RequestAccessDialog({ onClose }: { onClose: () => void }
             <p className="text-sm text-text-muted leading-relaxed font-medium">
               The family administrator has been notified. They will create your account in the local identity pool and notify you when it is ready.
             </p>
-            <button
+            <Button
               onClick={onClose}
-              className="mt-space-4 px-space-5 py-2.5 bg-accent hover:bg-accent-strong text-on-accent text-sm font-semibold rounded-card shadow transition-colors"
+              variant="primary"
+              className="mt-space-4"
             >
               Got it
-            </button>
+            </Button>
           </div>
         ) : (
           <form onSubmit={onSubmit} className="space-y-space-5">
@@ -119,7 +121,7 @@ export default function RequestAccessDialog({ onClose }: { onClose: () => void }
                 <label className={FIELD_LABEL}>
                   First name <span className="text-status-fail">*</span>
                 </label>
-                <input
+                <Input
                   type="text"
                   value={firstName}
                   onChange={e => setFirstName(e.target.value)}
@@ -133,7 +135,7 @@ export default function RequestAccessDialog({ onClose }: { onClose: () => void }
                 <label className={FIELD_LABEL}>
                   Last name <span className="text-status-fail">*</span>
                 </label>
-                <input
+                <Input
                   type="text"
                   value={lastName}
                   onChange={e => setLastName(e.target.value)}
@@ -149,7 +151,7 @@ export default function RequestAccessDialog({ onClose }: { onClose: () => void }
               <label className={FIELD_LABEL}>
                 Desired username <span className="text-status-fail">*</span>
               </label>
-              <input
+              <Input
                 type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value.toLowerCase())}
@@ -170,7 +172,7 @@ export default function RequestAccessDialog({ onClose }: { onClose: () => void }
               <label className={FIELD_LABEL}>
                 Your email <span className="text-status-fail">*</span>
               </label>
-              <input
+              <Input
                 type="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
@@ -185,7 +187,7 @@ export default function RequestAccessDialog({ onClose }: { onClose: () => void }
               <label className={FIELD_LABEL}>
                 Anything else? <span className="text-text-subtle">(optional)</span>
               </label>
-              <textarea
+              <Textarea
                 value={message}
                 onChange={e => setMessage(e.target.value)}
                 maxLength={1000}
@@ -202,21 +204,21 @@ export default function RequestAccessDialog({ onClose }: { onClose: () => void }
             )}
 
             <div className="flex justify-end gap-space-2 pt-space-2">
-              <button
+              <Button
                 type="button"
                 onClick={onClose}
-                className="px-space-4 py-space-2 text-sm text-text-muted hover:text-text"
+                variant="ghost"
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
                 type="submit"
                 disabled={submitting}
-                className="inline-flex items-center gap-space-2 px-space-4 py-space-2 bg-accent hover:bg-accent-strong text-on-accent text-sm font-medium rounded-card disabled:opacity-50"
+                variant="primary"
               >
                 {submitting && <Loader2 size={14} className="animate-spin" />}
                 Send request
-              </button>
+              </Button>
             </div>
           </form>
         )}

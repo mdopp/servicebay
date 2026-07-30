@@ -9,6 +9,7 @@ import { Layers, Folder, X } from 'lucide-react';
 import TemplateUpgradeBanner from './TemplateUpgradeBanner';
 import StackInstallFlow from './StackInstallFlow';
 import { useRouter } from 'next/navigation';
+import { Button, Input } from '@/components/ui';
 
 /**
  * Registry-side install entry point. Used when an operator clicks a stack
@@ -189,9 +190,9 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
               : <Folder className="text-accent" />}
             Install {template.type === 'stack' ? 'Stack' : 'Template'}: {template.name}
           </h3>
-          <button onClick={onClose} className="text-muted hover:text-foreground">
+          <Button onClick={onClose} variant="ghost" className="text-muted hover:text-foreground">
             <X size={24} />
-          </button>
+          </Button>
         </div>
 
         <div className="p-6 overflow-y-auto flex-1">
@@ -209,7 +210,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
                   <div className="space-y-2 mb-6">
                     {selectItems.map((item, i) => (
                       <label key={item.name} className="flex items-center gap-3 p-3 border border-border rounded hover:bg-surface-2 cursor-pointer transition-colors">
-                        <input
+                        <Input
                           type="checkbox"
                           checked={item.checked}
                           onChange={() => handleToggle(i)}
@@ -297,52 +298,53 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
         <div className="p-6 border-t border-border flex justify-end gap-3 bg-surface-muted rounded-b-lg">
           {phase === 'idle' && template.type === 'stack' && (
             <>
-              <button onClick={onClose} className="px-4 py-2 text-foreground hover:bg-surface-2 rounded transition-colors">Cancel</button>
-              <button
+              <Button onClick={onClose} variant="secondary">Cancel</Button>
+              <Button
                 onClick={() => { void advanceToConfigure(); }}
                 disabled={!allUpgradesReady || advancing}
                 title={!allUpgradesReady && checkedItems.length > 0 ? 'Acknowledge the breaking-change banner(s) above to continue.' : undefined}
-                className="px-4 py-2 bg-accent text-on-accent rounded hover:bg-accent-strong disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
+                variant="primary"
               >
                 Continue
-              </button>
+              </Button>
             </>
           )}
           {phase === 'configure' && (
             <>
-              <button
+              <Button
                 onClick={() => template.type === 'stack' ? controller.reset() : onClose()}
-                className="px-4 py-2 text-foreground hover:bg-surface-2 rounded transition-colors"
+                variant="secondary"
               >
                 {template.type === 'stack' ? 'Back' : 'Cancel'}
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => { void controller.runInstall({ node: selectedNode }); }}
                 disabled={!selectedNode}
-                className="px-4 py-2 bg-status-ok text-on-accent rounded hover:opacity-90 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                variant="primary"
+                className="bg-status-ok hover:opacity-90 text-on-accent"
               >
                 Install
-              </button>
+              </Button>
             </>
           )}
           {phase === 'installing' && (
-            <button disabled className="px-4 py-2 bg-border text-muted rounded cursor-not-allowed">Installing...</button>
+            <Button disabled variant="secondary">Installing...</Button>
           )}
           {phase === 'done' && (
-            <button
+            <Button
               onClick={() => { onClose(); router.push('/'); }}
-              className="px-4 py-2 bg-accent text-on-accent rounded hover:bg-accent-strong font-medium transition-colors"
+              variant="primary"
             >
               Go to Dashboard
-            </button>
+            </Button>
           )}
           {phase === 'error' && (
-            <button
+            <Button
               onClick={onClose}
-              className="px-4 py-2 bg-border text-foreground rounded hover:opacity-80 font-medium transition-colors"
+              variant="secondary"
             >
               Close
-            </button>
+            </Button>
           )}
         </div>
       </div>

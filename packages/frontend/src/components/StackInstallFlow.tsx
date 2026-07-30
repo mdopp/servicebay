@@ -30,6 +30,7 @@ import StackVariableField from './StackVariableField';
 import { groupVariablesByTemplate } from '@servicebay/api-client';
 import { buildBitwardenCsv } from '@servicebay/api-client';
 import type { UseStackInstallReturn } from '@/hooks/useStackInstall';
+import { Button, Input, Select } from '@/components/ui';
 
 interface DeviceContext {
   deviceOptions: Record<string, string[]>;
@@ -79,7 +80,7 @@ export function StackInstallConfigureForm({
       {nodes && nodes.length > 1 && (
         <div>
           <label className="block text-xs font-medium text-subtle uppercase mb-1">Target Node</label>
-          <select
+          <Select
             value={selectedNode ?? ''}
             onChange={(e) => onSelectNode?.(e.target.value)}
             className={inputClassName ?? 'w-full p-2 border border-border bg-surface text-text rounded'}
@@ -88,7 +89,7 @@ export function StackInstallConfigureForm({
             {nodes.map(n => (
               <option key={n.Name} value={n.Name}>{n.Name} ({n.URI})</option>
             ))}
-          </select>
+          </Select>
         </div>
       )}
 
@@ -211,32 +212,34 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
             their templates again. */}
       {phase === 'installing' && (
         <div className="mt-3 flex items-center justify-end">
-          <button
+          <Button
             type="button"
             onClick={() => {
               if (window.confirm('Abort the install? Already-deployed services stay running; in-flight templates may be partially applied.')) {
                 abortInstall();
               }
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-status-fail text-on-accent hover:opacity-80"
+            variant="danger"
+            className="inline-flex items-center gap-1.5"
           >
             <XCircle size={14} /> Abort install
-          </button>
+          </Button>
         </div>
       )}
       {phase === 'error' && (
         <div className="mt-3 flex items-center justify-end">
-          <button
+          <Button
             type="button"
             onClick={() => {
               if (window.confirm('Start over? This wipes the current install state and returns to the template catalog. Any services already deployed on the host stay running.')) {
                 reset();
               }
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-status-warn text-on-accent hover:opacity-80"
+            variant="secondary"
+            className="inline-flex items-center gap-1.5"
           >
             <RefreshCcw size={14} /> Start over
-          </button>
+          </Button>
         </div>
       )}
 
@@ -251,14 +254,14 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
             {' '}Click <span className="font-semibold">Authenticate &amp; Retry</span> to submit these values, replace them with whatever password you know NPM is actually using, or Skip to configure proxy routes manually later.
           </p>
           <div className="space-y-2">
-            <input
+            <Input
               type="email"
               value={credEmail}
               onChange={(e) => setCredEmail(e.target.value)}
               className="w-full px-3 py-2 bg-surface border border-border rounded-md text-sm"
               placeholder="NPM admin email"
             />
-            <input
+            <Input
               type="text"
               value={credPassword}
               onChange={(e) => setCredPassword(e.target.value)}
@@ -273,19 +276,20 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
               </p>
             )}
             <div className="flex gap-2">
-              <button
+              <Button
                 onClick={() => { void retryNpmCredentials(credEmail, credPassword); }}
                 disabled={!credPassword}
-                className="flex-1 px-3 py-2 bg-status-warn text-on-accent rounded-md text-sm font-medium hover:opacity-80 disabled:opacity-50"
+                variant="secondary"
+                className="flex-1"
               >
                 Authenticate &amp; Retry
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={skipNpmCredentials}
-                className="px-3 py-2 text-subtle hover:text-text text-sm"
+                variant="ghost"
               >
                 Skip
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -318,14 +322,15 @@ export function StackInstallSummary({ controller, doneFooter }: SummaryProps) {
         <div className="p-3 bg-surface rounded border border-border text-sm">
           <div className="flex items-center justify-between mb-2">
             <p className="font-medium text-status-fail">🔑 Credentials — save now</p>
-            <button
+            <Button
               type="button"
               onClick={downloadCsv}
-              className="text-xs px-2 py-1 bg-status-fail hover:opacity-80 text-on-accent rounded"
+              variant="danger"
+              size="sm"
               title="Download as Bitwarden / Vaultwarden CSV"
             >
               ⬇ Download CSV
-            </button>
+            </Button>
           </div>
           <p className="text-xs text-status-fail mb-2">
             Won&apos;t be shown again. Either copy them into your password manager now or use the CSV button: Vaultwarden → Tools → Import → Bitwarden (csv).
@@ -555,10 +560,11 @@ function InstallServiceRows({ items, installingNow, deployedNames, perService }:
         const statusText = isDone ? 'Deployed' : isInstalling ? 'Installing…' : 'Pending';
         return (
           <div key={item.name} className="border-b border-border last:border-b-0">
-            <button
+            <Button
               type="button"
               onClick={() => toggle(item.name)}
-              className="w-full px-3 py-2 flex items-center gap-2 text-left hover:bg-surface-2 transition-colors"
+              variant="ghost"
+              className="w-full justify-start px-3 py-2 flex items-center gap-2 text-left hover:bg-surface-2 transition-colors"
             >
               {isOpen ? <ChevronDown size={14} className="text-text-subtle shrink-0" /> : <ChevronRight size={14} className="text-text-subtle shrink-0" />}
               {statusIcon}
@@ -569,7 +575,7 @@ function InstallServiceRows({ items, installingNow, deployedNames, perService }:
               {lines.length > 0 && (
                 <span className="text-[10px] text-text-subtle tabular-nums">{lines.length} ln</span>
               )}
-            </button>
+            </Button>
             {isOpen && (
               <div className="bg-surface-muted text-text px-3 py-2 font-mono text-[11px] max-h-48 overflow-y-auto">
                 {lines.length === 0 ? (

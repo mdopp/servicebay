@@ -75,17 +75,17 @@ export function DoneStepDnsCheck({ domain, subdomains }: DoneStepDnsCheckProps) 
 
   if (state.phase === 'loading') {
     return (
-      <div className="p-2.5 bg-gray-50 dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 text-sm">
-        <p className="text-xs text-gray-600 dark:text-gray-400">⏳ Checking DNS for {subdomains.length} host{subdomains.length === 1 ? '' : 's'}…</p>
+      <div className="p-2.5 bg-surface rounded border border-border text-sm">
+        <p className="text-xs text-text-muted">⏳ Checking DNS for {subdomains.length} host{subdomains.length === 1 ? '' : 's'}…</p>
       </div>
     );
   }
 
   if (state.phase === 'error') {
     return (
-      <div className="p-2.5 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-800 text-sm space-y-1.5">
-        <p className="font-medium text-amber-800 dark:text-amber-200">DNS check unavailable</p>
-        <p className="text-xs text-amber-700 dark:text-amber-300">
+      <div className="p-2.5 bg-status-warn/10 rounded border border-status-warn text-sm space-y-1.5">
+        <p className="font-medium text-status-warn">DNS check unavailable</p>
+        <p className="text-xs text-status-warn">
           Couldn&apos;t verify DNS automatically: {state.message}. Make sure each subdomain has an A record pointing to your server&apos;s public IP.
         </p>
       </div>
@@ -104,11 +104,11 @@ export function DoneStepDnsCheck({ domain, subdomains }: DoneStepDnsCheckProps) 
 
   if (allMatched) {
     return (
-      <div className="p-2.5 bg-emerald-50 dark:bg-emerald-900/20 rounded border border-emerald-200 dark:border-emerald-800 text-sm space-y-1.5">
-        <p className="font-medium text-emerald-800 dark:text-emerald-200">
+      <div className="p-2.5 bg-status-ok/10 rounded border border-status-ok text-sm space-y-1.5">
+        <p className="font-medium text-status-ok">
           ✓ DNS configured for all {results.length} host{results.length === 1 ? '' : 's'}
         </p>
-        <p className="text-xs text-emerald-700 dark:text-emerald-300">
+        <p className="text-xs text-status-ok">
           Every subdomain already resolves to {expectedIPs.length === 1 ? expectedIPs[0] : `your server (${expectedIPs.join(' or ')})`}.
         </p>
       </div>
@@ -117,29 +117,29 @@ export function DoneStepDnsCheck({ domain, subdomains }: DoneStepDnsCheckProps) 
 
   // Partial / no match — show what needs to change.
   return (
-    <div className="p-2.5 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800 text-sm space-y-1.5">
-      <p className="font-medium text-blue-800 dark:text-blue-200">
+    <div className="p-2.5 bg-status-info/10 rounded border border-status-info text-sm space-y-1.5">
+      <p className="font-medium text-status-info">
         Configure DNS for {unmatched.length} host{unmatched.length === 1 ? '' : 's'}
         {matched.length > 0 ? ` (${matched.length} already pointing here ✓)` : ''}
       </p>
-      <p className="text-xs text-blue-700 dark:text-blue-300">
+      <p className="text-xs text-status-info">
         Add A records pointing to {expectedIPs.length > 0
           ? expectedIPs.join(' (or ')
           : <span>your server&apos;s public IP</span>}
         {expectedIPs.length > 1 ? ')' : ''}:
       </p>
-      <div className="font-mono text-xs text-blue-600 dark:text-blue-400 space-y-0.5">
+      <div className="font-mono text-xs text-status-info space-y-0.5">
         {unmatched.map(r => (
           <div key={r.domain}>
             {r.domain} &rarr;{' '}
             {r.resolvesTo
-              ? <span className="text-amber-600 dark:text-amber-400">currently {r.resolvesTo}</span>
-              : <span className="text-gray-500 dark:text-gray-500">not resolving{r.error ? ` (${r.error})` : ''}</span>
+              ? <span className="text-status-warn">currently {r.resolvesTo}</span>
+              : <span className="text-text-muted">not resolving{r.error ? ` (${r.error})` : ''}</span>
             }
           </div>
         ))}
       </div>
-      <p className="text-[11px] text-blue-600 dark:text-blue-400 opacity-70 pt-1">
+      <p className="text-[11px] text-status-info opacity-70 pt-1">
         Lookup uses a public resolver — once your DNS provider has propagated the change, the warning here clears on the next reload.
       </p>
       {/* Suppress unused-prop warning while keeping the prop in the public API. */}
