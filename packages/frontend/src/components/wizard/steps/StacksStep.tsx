@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Layers, Package, Loader2, CheckCircle, Box, ArrowRight } from 'lucide-react';
-import { Button } from '../WizardUI';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import type { Template } from '@servicebay/api-client';
 import type { StackItem as BaseStackItem, StackVariable, useStackInstall } from '@/hooks/useStackInstall';
 import type { TemplateTier } from '@servicebay/api-client';
@@ -149,13 +151,14 @@ export function StacksStep({
                         without installing anything. In stacks-only mode
                         this also marks setup as complete. */}
                     <div className="flex justify-start pt-2">
-                        <button
-                            type="button"
+                        <Button
+                            variant="ghost"
+                            size="sm"
                             onClick={() => void handleStackSkip()}
-                            className="px-4 py-2 text-sm text-text-muted hover:text-text underline-offset-4 hover:underline"
+                            className="underline-offset-4 hover:underline"
                         >
                             Install services later
-                        </button>
+                        </Button>
                     </div>
                 </div>
             )}
@@ -204,7 +207,7 @@ export function StacksStep({
                                                 ? 'bg-surface border-accent shadow-sm ring-1 ring-accent'
                                                 : 'border-border hover:bg-surface-2 cursor-pointer'
                                     }`}>
-                                        <input
+                                        <Input
                                             type="checkbox"
                                             checked={item.checked}
                                             disabled={item.alreadyInstalled}
@@ -281,14 +284,14 @@ export function StacksStep({
                     {stackNodes.length > 1 && (
                         <div className="p-4 rounded-2xl soft-depth">
                             <label className="block text-[10px] font-bold text-text-muted uppercase tracking-widest mb-2 ml-1">Target Node</label>
-                            <select
+                            <Select
                                 value={stackSelectedNode || ''}
                                 onChange={(e) => setStackSelectedNode(e.target.value)}
                                 className="w-full px-4 py-2.5 bg-surface border border-border rounded-xl focus:ring-2 focus:ring-accent outline-none text-sm"
                             >
                                 <option value="" disabled>Select a node</option>
                                 {stackNodes.map(n => <option key={n.Name} value={n.Name}>{n.Name}</option>)}
-                            </select>
+                            </Select>
                         </div>
                     )}
 
@@ -325,11 +328,12 @@ export function StacksStep({
                                 return (
                                     <div className="flex gap-1 border-b border-border">
                                         {tabs.map(t => (
-                                            <button
+                                            <Button
                                                 key={t.id}
-                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
                                                 onClick={() => setConfigureTab(t.id)}
-                                                className={`px-4 py-2 text-sm font-bold border-b-2 transition-all ${
+                                                className={`px-4 py-2 text-sm font-bold border-b-2 transition-all rounded-none ${
                                                     activeTab === t.id
                                                         ? 'border-accent text-accent'
                                                         : 'border-transparent text-text-muted hover:text-text'
@@ -337,7 +341,7 @@ export function StacksStep({
                                             >
                                                 {t.label}
                                                 <span className="ml-2 px-1.5 py-0.5 rounded-full bg-surface-2 text-[10px] opacity-70">{t.count}</span>
-                                            </button>
+                                            </Button>
                                         ))}
                                     </div>
                                 );
@@ -548,7 +552,7 @@ function StackPickerRow({ stack, checked, installState, isUninstalling, setPicke
                     : 'bg-surface-muted border-border opacity-80 hover:opacity-100 hover:border-accent/50'
             }`}
         >
-            <input
+            <Input
                 type="checkbox"
                 checked={checked}
                 // Core/atomic-wipe stacks can't be unchecked here
