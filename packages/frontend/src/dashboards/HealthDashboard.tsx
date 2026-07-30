@@ -478,7 +478,7 @@ export default function HealthDashboard() {
 
       {/* History Modal */}
       {historyCheck && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex justify-end bg-background/60 backdrop-blur-sm">
           <div className="w-full sm:max-w-3xl h-full bg-surface border-l border-border flex flex-col shadow-2xl animate-in slide-in-from-right-10">
             <div className="flex flex-col gap-4 p-5 border-b border-border sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
@@ -705,7 +705,7 @@ export default function HealthDashboard() {
           Reuses DiagnoseProbeList's action machinery so the recovery
           path doesn't drift from Settings / the wizard. */}
       {repairCheck && repairProbe && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-2xl max-h-[85vh] bg-surface border border-border rounded-panel flex flex-col shadow-2xl">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <div className="min-w-0">
@@ -736,7 +736,7 @@ export default function HealthDashboard() {
 
       {/* Edit/Create Drawer */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex justify-end bg-background/60 backdrop-blur-sm">
           <div className="w-full sm:max-w-xl h-full bg-surface border-l border-border flex flex-col shadow-2xl animate-in slide-in-from-right-10">
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <div>
