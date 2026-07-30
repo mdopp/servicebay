@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import LocalTargetPicker from './LocalTargetPicker';
+import type { MountCandidate } from '@/lib/backup/mounts';
 
 describe('LocalTargetPicker semantic token usage', () => {
   it('renders label with text-text token (not text-gray)', () => {
@@ -146,5 +147,32 @@ describe('LocalTargetPicker semantic token usage', () => {
     // Verify component rendered something
     expect(container).toBeTruthy();
     expect(container.querySelector('[class*="space-y"]')).toBeTruthy();
+  });
+
+  it('mount row overrides the Button primitive fixed height/centering (box-verify f8ff36a1 regression)', async () => {
+    // MountRow renders two lines (title row + MountDetail row) inside a
+    // <Button>. The Button primitive defaults to a fixed h-8 (32px) height
+    // and justify-center; left unmodified, the row's real (taller) content
+    // overflows that fixed box with default overflow:visible, and the next
+    // row — positioned via `space-y-1.5` margin from THIS row's declared
+    // 32px height — visually overlaps it. rowClass() must override both so
+    // the row's box grows with its two-line content.
+    const mounts: MountCandidate[] = [
+      { device: '/dev/sdb1', mounted: true, mountpoint: '/mnt/usb1', fstype: 'ntfs', fsAvail: '100G', fsUsedPct: '40%' } as MountCandidate,
+    ];
+    global.fetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ mounts }))));
+
+    const onChange = vi.fn();
+    const { container } = render(<LocalTargetPicker value="" onChange={onChange} />);
+
+    const row = await waitFor(() => {
+      const btn = container.querySelector('button[aria-pressed]');
+      if (!btn) throw new Error('mount row button not found');
+      return btn as HTMLButtonElement;
+    });
+
+    expect(row.className).toContain('h-auto');
+    expect(row.className).not.toMatch(/(?:^|\s)h-8(?:\s|$)/);
+    expect(row.className).toContain('justify-start');
   });
 });
