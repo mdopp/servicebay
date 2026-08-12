@@ -24,14 +24,30 @@ RUN npm ci
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-# Copy workspace-scoped node_modules that npm did not hoist to root.
-# npm may deoptimize hoisting for some packages (e.g. nodemailer, semver),
-# leaving them under packages/*/node_modules instead of the root.
-# Without this copy the Turbopack build fails with "Module not found" when a
-# frontend API route imports a backend module that depends on those packages
+# Carry over any workspace-scoped node_modules that npm did NOT hoist to root.
+# Without them the Turbopack build fails with "Module not found" when a frontend
+# API route imports a backend module that depends on such a package
 # (email.ts → nodemailer, approve/route.ts → email.ts, #2148 regression).
-COPY --from=deps /app/packages/backend/node_modules ./packages/backend/node_modules
+#
+# npm's hoisting decision is a MOVING TARGET, so this must not name a concrete
+# workspace path. It deoptimized nodemailer into packages/backend/node_modules
+# when #2148 landed, then re-hoisted it to the root when the ^9.0.3 → ^9.0.5
+# bump in 547090c3 re-resolved the tree — leaving the deps stage with no
+# packages/backend/node_modules at all, and the hard
+# `COPY --from=deps /app/packages/backend/node_modules` failing the whole build
+# with "not found" (#2528).
+#
+# Instead copy the deps stage's packages/ tree wholesale — that directory always
+# exists, the manifest COPYs above create it — and merge back whatever
+# node_modules it happens to contain (no-clobber, so the source tree wins).
+COPY --from=deps /app/packages ./packages-deps
 COPY . .
+RUN set -e; for d in packages-deps/*/node_modules; do \
+      [ -d "$d" ] || continue; \
+      w="$(basename "$(dirname "$d")")"; \
+      mkdir -p "packages/$w/node_modules"; \
+      cp -rn "$d/." "packages/$w/node_modules/"; \
+    done; rm -rf packages-deps
 
 # Next.js collects completely anonymous telemetry data about general usage.
 # Learn more here: https://nextjs.org/telemetry
