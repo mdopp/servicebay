@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Code, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import DomainTag from './DomainTag';
-import { NAVIGATION_ENTRIES, isNavActive } from '@/config/navigation';
+import { isNavActive } from '@/config/navigation';
+import { useNavigationEntries } from '@/hooks/useNavigationEntries';
 import { useToast } from '@/providers/ToastProvider';
 
 const FIRST_VISIT_KEY = 'sb.mobileHintShown.v1';
@@ -13,8 +14,6 @@ const FIRST_VISIT_KEY = 'sb.mobileHintShown.v1';
 export function MobileTopBar() {
   const router = useRouter();
   const pathname = usePathname() || '';
-  const searchParams = useSearchParams();
-  const node = searchParams?.get('node');
   const { addToast } = useToast();
   const hintFired = useRef(false);
   // Mirror of the desktop Sidebar's hasActiveInstall pill — mobile
@@ -70,7 +69,12 @@ export function MobileTopBar() {
   // reachable on a phone. Surface them as icons in the top bar's right row,
   // driven by the same navigation schema (no hand-coded duplication), so a
   // future `hiddenOnMobileBottom` entry stays reachable automatically.
-  const topBarEntries = NAVIGATION_ENTRIES.filter(p => p.hiddenOnMobileBottom);
+  // #2521 — that now includes the app-leaving links (Users & Groups, View as
+  // user), which the desktop sidebar used to show and mobile did not. They
+  // render as real links after a divider, so the two groups stay readable.
+  const topBarEntries = useNavigationEntries().filter(p => p.hiddenOnMobileBottom);
+  const internalTopEntries = topBarEntries.filter(p => !p.external);
+  const externalTopEntries = topBarEntries.filter(p => p.external);
 
   return (
     <div className="h-14 bg-surface border-b border-border flex items-center justify-between px-4 shrink-0 md:hidden z-20">
@@ -89,12 +93,15 @@ export function MobileTopBar() {
        <div className="flex-1 min-w-0 flex justify-center px-2">
           <DomainTag />
        </div>
-       {/* Right: Icons */}
-       <div className="flex items-center gap-4">
+       {/* Right: Icons. The row carries two groups now (in-app destinations,
+           then the app-leaving links, #2521), so it can outgrow a 360px phone.
+           Same degradation as the bottom bar (#1992): non-shrinking items in an
+           x-scrollable row — it never clips an icon off the screen. */}
+       <div className="flex items-center gap-3 min-w-0 overflow-x-auto no-scrollbar">
           {hasActiveInstall && (
             <button
               onClick={() => router.push('/setup')}
-              className="relative transition-colors text-accent hover:text-accent-strong"
+              className="relative transition-colors text-accent hover:text-accent-strong shrink-0"
               aria-label="Resume setup"
               title="Resume setup"
             >
@@ -102,14 +109,15 @@ export function MobileTopBar() {
               <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-accent animate-pulse" />
             </button>
           )}
-          {topBarEntries.map(p => {
+          {internalTopEntries.map(p => {
             const Icon = p.icon;
-            const isActive = isNavActive(pathname, p.path);
+            const isActive = p.path ? isNavActive(pathname, p.path) : false;
             return (
               <button
                 key={p.id}
-                onClick={() => router.push(`${p.path}${node ? `?node=${node}` : ''}`)}
-                className={`transition-colors ${
+                data-testid={`nav-${p.id}`}
+                onClick={() => router.push(p.href)}
+                className={`transition-colors shrink-0 ${
                   isActive
                     ? 'text-accent'
                     : 'text-text-muted hover:text-text'
@@ -121,9 +129,42 @@ export function MobileTopBar() {
               </button>
             );
           })}
-          <a href="https://github.com/mdopp/servicebay" target="_blank" rel="noreferrer" className="text-text-muted hover:text-text transition-colors">
-             <Code size={20} />
-          </a>
+          {/* App-leaving links, fenced off by a rule so they don't read as one
+              more in-app icon (#2521). GitHub has always lived out here; it
+              joins the group it belongs to. */}
+          <div
+              data-testid="external-nav-group"
+              aria-label="Opens in a new tab"
+              className="flex items-center gap-3 shrink-0 pl-3 border-l border-border"
+            >
+              {externalTopEntries.map(p => {
+                const Icon = p.icon;
+                return (
+                  <a
+                    key={p.id}
+                    data-testid={`nav-${p.id}`}
+                    href={p.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-text-muted hover:text-text transition-colors shrink-0"
+                    aria-label={p.name}
+                    title={`${p.name} — opens in a new tab`}
+                  >
+                    <Icon size={20} />
+                  </a>
+                );
+              })}
+              <a
+                href="https://github.com/mdopp/servicebay"
+                target="_blank"
+                rel="noreferrer"
+                className="text-text-muted hover:text-text transition-colors shrink-0"
+                aria-label="ServiceBay on GitHub"
+                title="ServiceBay on GitHub — opens in a new tab"
+              >
+                <Code size={20} />
+              </a>
+          </div>
        </div>
     </div>
   );
@@ -132,13 +173,13 @@ export function MobileTopBar() {
 export function MobileBottomBar() {
    const pathname = usePathname() || '';
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const node = searchParams?.get('node');
 
   // Honor the per-entry `hiddenOnMobileBottom` flag from the navigation
   // schema — Settings & Backup opt out of the bottom bar (they live in the
   // mobile top bar's icon row instead, so the bottom bar doesn't overflow).
-  const bottomDashboards = NAVIGATION_ENTRIES.filter(p => !p.hiddenOnMobileBottom);
+  // Every external entry carries the flag too, so the bottom bar is the
+  // in-app group only; nothing here leaves ServiceBay (#2521).
+  const bottomDashboards = useNavigationEntries().filter(p => !p.hiddenOnMobileBottom);
 
   // #1992 — as top-level entries grow, a fixed `justify-around` row crowds the
   // labels and eventually overflows on narrow phones. Use an x-scrollable flex
@@ -152,11 +193,12 @@ export function MobileBottomBar() {
     >
        {bottomDashboards.map(p => {
           const Icon = p.icon;
-          const isActive = isNavActive(pathname, p.path);
+          const isActive = p.path ? isNavActive(pathname, p.path) : false;
           return (
              <button
                 key={p.id}
-                onClick={() => router.push(`${p.path}${node ? `?node=${node}` : ''}`)}
+                data-testid={`nav-${p.id}`}
+                onClick={() => router.push(p.href)}
                 title={p.name}
                 aria-label={p.name}
                 className={`p-2 rounded-xl flex flex-col items-center justify-center gap-1 shrink-0 min-w-[3.5rem] transition-all ${

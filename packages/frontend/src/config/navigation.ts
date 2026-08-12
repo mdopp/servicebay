@@ -14,11 +14,23 @@
  *      bottom bar stays uncluttered (they surface in the mobile top
  *      bar's icon row instead, so they're still reachable on a phone;
  *      see MobileNav.tsx #1992).
+ *
+ * EVERY entry both nav components render lives here — including the
+ * conditional one (Maintenance Chat) and the two that leave the app
+ * (Users & Groups → LLDAP, View as user → the family portal). Before
+ * #2521 those three were inline JSX in `Sidebar.tsx`, which bypassed the
+ * indirection the UX rule depends on (docs/UX_DECISIONS.md → "Primary
+ * sidebar is a user-task list": *"Sidebar.tsx / MobileNav.tsx map over
+ * the schema; no inline entries"*) and made the desktop sidebar show a
+ * different set of destinations than the mobile nav. The schema now
+ * carries the two concepts they needed — `external` + href, and
+ * `requiresTemplate` — so both components can render from one list.
+ * Anything runtime-dependent is resolved by `resolveNavigationEntries`.
  */
-import { Home, Box, HeartPulse, Settings, Network, DatabaseBackup, SquareTerminal } from 'lucide-react';
+import { Home, Box, HeartPulse, Settings, Network, DatabaseBackup, SquareTerminal, MessageCircle, Users } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
-export interface NavigationEntry {
+interface NavigationEntryBase {
   /** Stable identifier used in keys / `data-testid` / `dashboards.id`
    *  references throughout the codebase. Do not change once shipped. */
   id: string;
@@ -29,15 +41,40 @@ export interface NavigationEntry {
   /** Lucide icon component. Accepts the full Lucide prop surface
    *  (size, strokeWidth, className, color, …). */
   icon: LucideIcon;
-  /** Route path. The `usePathname().startsWith(path)` test marks an
-   *  entry active, so prefer "/X" over "/X/" or "/X/index". */
-  path: string;
   /** When true, the mobile bottom bar omits this entry; instead it is
    *  rendered as an icon in the mobile top bar's right-hand row, so it
    *  stays reachable on a phone (#1992). The desktop sidebar always
-   *  renders every entry. Used for Settings and Backup. */
+   *  renders every entry. Used for Settings, Backup and every external
+   *  entry (an app-leaving link never belongs in the bottom bar). */
   hiddenOnMobileBottom?: boolean;
+  /** Render this entry only when the named template is installed on the
+   *  box (`digital twin → installedTemplates`). Lets a conditional
+   *  destination live in the schema instead of as inline component JSX
+   *  (#2521). Maintenance Chat uses this. */
+  requiresTemplate?: string;
 }
+
+/** A destination inside the ServiceBay app — client-side route push. */
+export interface InternalNavigationEntry extends NavigationEntryBase {
+  external?: false;
+  /** Route path. The `usePathname().startsWith(path)` test marks an
+   *  entry active, so prefer "/X" over "/X/" or "/X/index". */
+  path: string;
+}
+
+/** A destination that LEAVES the app — rendered as an `<a target="_blank">`
+ *  in its own visual group, never as a router push (#2521). */
+export interface ExternalNavigationEntry extends NavigationEntryBase {
+  external: true;
+  /** Static URL, when it is known without asking the box (`/portal`). */
+  href?: string;
+  /** Where to read the URL at runtime when it depends on the box's
+   *  configuration. `'lldap'` → `GET /api/auth/lldap-url`. The entry is
+   *  hidden until (and unless) that URL resolves. */
+  hrefSource?: 'lldap';
+}
+
+export type NavigationEntry = InternalNavigationEntry | ExternalNavigationEntry;
 
 /**
  * Active-route test for a nav entry. The root entry (`/`) must match the
@@ -89,4 +126,79 @@ export const NAVIGATION_ENTRIES: NavigationEntry[] = [
   { id: 'backup', name: 'Backup & restore', shortLabel: 'Backup', icon: DatabaseBackup, path: '/backup', hiddenOnMobileBottom: true },
   { id: 'network', name: 'Network Map', shortLabel: 'Network', icon: Network, path: '/network' },
   { id: 'terminal', name: 'Terminal', shortLabel: 'Terminal', icon: SquareTerminal, path: '/terminal', hiddenOnMobileBottom: true },
+  // Conditional in-app destination: the chat surface only exists once
+  // solilos-chat is installed (#1755/#1781). Schema-driven since #2521 —
+  // it used to be inline JSX in Sidebar.tsx, so the mobile nav never saw it.
+  { id: 'chat', name: 'Maintenance Chat', shortLabel: 'Chat', icon: MessageCircle, path: '/chat', requiresTemplate: 'solilos-chat' },
+  // App-leaving links. Not new destinations (#2521 moved them out of
+  // Sidebar.tsx verbatim) — they render in their own group, after a
+  // divider, and stay off the phone bottom bar.
+  { id: 'users', name: 'Users & Groups', shortLabel: 'Users', icon: Users, external: true, hrefSource: 'lldap', hiddenOnMobileBottom: true },
+  { id: 'portal', name: 'View as user', shortLabel: 'Portal', icon: Home, external: true, href: '/portal', hiddenOnMobileBottom: true },
 ];
+
+/** Runtime inputs the schema's conditional / external entries need. */
+export interface NavigationContext {
+  /** `digitalTwin.installedTemplates` — gates `requiresTemplate` entries. */
+  installedTemplates?: string[] | null;
+  /** Resolved LLDAP admin URL (`GET /api/auth/lldap-url`), or null when
+   *  LLDAP is not deployed / not reachable. */
+  lldapUrl?: string | null;
+  /** Active `?node=` — threaded onto in-app routes only. */
+  node?: string | null;
+}
+
+/** A schema entry with everything runtime-dependent already resolved. */
+export interface ResolvedNavigationEntry {
+  id: string;
+  name: string;
+  shortLabel: string;
+  icon: LucideIcon;
+  /** Where the entry goes: an in-app route (with `?node=` threaded) for an
+   *  internal entry, an absolute/app-leaving URL for an external one. */
+  href: string;
+  /** The raw route, for `isNavActive`. `null` for external entries. */
+  path: string | null;
+  external: boolean;
+  hiddenOnMobileBottom: boolean;
+}
+
+/**
+ * Resolve the schema against live box state — the ONE place a nav
+ * component gets its entries from (#2521). Both `Sidebar.tsx` and
+ * `MobileNav.tsx` render whatever this returns, which is what keeps
+ * desktop and mobile showing the same set of destinations.
+ *
+ * Drops an entry when its precondition isn't met: a `requiresTemplate`
+ * entry whose template isn't installed, or an `hrefSource` entry whose
+ * URL hasn't resolved (LLDAP not deployed).
+ */
+export function resolveNavigationEntries(
+  ctx: NavigationContext,
+  entries: NavigationEntry[] = NAVIGATION_ENTRIES,
+): ResolvedNavigationEntry[] {
+  const resolved: ResolvedNavigationEntry[] = [];
+  for (const entry of entries) {
+    if (entry.requiresTemplate && !ctx.installedTemplates?.includes(entry.requiresTemplate)) continue;
+    const common = {
+      id: entry.id,
+      name: entry.name,
+      shortLabel: entry.shortLabel,
+      icon: entry.icon,
+      hiddenOnMobileBottom: Boolean(entry.hiddenOnMobileBottom),
+    };
+    if (entry.external) {
+      const href = entry.hrefSource === 'lldap' ? ctx.lldapUrl : entry.href;
+      if (!href) continue;
+      resolved.push({ ...common, href, path: null, external: true });
+      continue;
+    }
+    resolved.push({
+      ...common,
+      href: `${entry.path}${ctx.node ? `?node=${ctx.node}` : ''}`,
+      path: entry.path,
+      external: false,
+    });
+  }
+  return resolved;
+}

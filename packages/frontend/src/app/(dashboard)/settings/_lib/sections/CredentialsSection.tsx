@@ -20,20 +20,26 @@ interface Manifest {
 /** URL cell (#1626): render an admin-reachable http(s) URL as a clickable
  *  link; render non-URL hints (`env:`, `\\…`, `ssh://`, bearer tokens) as
  *  plain text. The loopback→public-subdomain rewrite happens in
- *  `resolveCredentialUrl`. */
+ *  `resolveCredentialUrl`.
+ *
+ *  No `break-all` here (#2520) — it collapsed the cell's min-content width to a
+ *  single character, so the auto table-layout crushed this column to ~8 chars
+ *  and rendered `https://nginx.dopp.cloud` as "http/s://ngi/nx.dop/p.cloud".
+ *  <DataTable>'s cells carry `break-words`, which contains a long URL without
+ *  ever breaking it mid-token. */
 function CredentialUrlCell({ cred, hosts, publicDomain }: {
   cred: Credential;
   hosts: CredentialUrlHost[];
   publicDomain: string | null;
 }) {
   const resolved = resolveCredentialUrl(cred, { hosts, publicDomain: publicDomain ?? undefined });
-  if (!isHttpUrl(resolved)) return <span className="break-all">{resolved}</span>;
+  if (!isHttpUrl(resolved)) return <span>{resolved}</span>;
   return (
     <a
       href={resolved}
       target="_blank"
       rel="noopener noreferrer"
-      className="text-accent hover:underline break-all"
+      className="text-accent hover:underline"
     >
       {resolved}
     </a>
@@ -176,11 +182,18 @@ export default function CredentialsSection() {
             Nothing saved yet. The install wizard writes here at the end of every successful run.
           </p>
         ) : (
+          // Explicit per-column widths (#2520): without them the browser's auto
+          // table-layout hands the spare width to whichever column holds the
+          // longest prose — Notes — and starves Service/URL/Username. These are
+          // preferred widths, so a column still grows past its share rather
+          // than clipping its content; the table's min-width makes a narrow
+          // viewport scroll instead of crushing them.
           <DataTable<Credential>
             columns={[
               {
                 key: 'service',
                 header: 'Service',
+                className: 'w-[16%]',
                 cell: (c) => (
                   <div>
                     {c.service}
@@ -196,18 +209,19 @@ export default function CredentialsSection() {
                 header: 'URL',
                 cell: (c) => <CredentialUrlCell cred={c} hosts={proxyHosts} publicDomain={publicDomain} />,
                 align: 'left',
-                className: 'font-mono text-xs',
+                className: 'w-[28%] font-mono text-xs',
               },
               {
                 key: 'username',
                 header: 'Username',
                 cell: (c) => c.username,
                 align: 'left',
-                className: 'font-mono text-xs',
+                className: 'w-[16%] font-mono text-xs',
               },
               {
                 key: 'password',
                 header: 'Password',
+                className: 'w-[18%]',
                 cell: (c, i) => {
                   const isRevealed = !!revealed[i];
                   return (
@@ -245,9 +259,15 @@ export default function CredentialsSection() {
                 header: 'Notes',
                 cell: (c) => c.notes ?? '',
                 align: 'left',
-                className: 'text-xs text-text-muted',
+                className: 'w-[22%] text-xs text-text-muted',
               },
             ]}
+            // Above the primitive's 5×8rem default: these five columns are all
+            // dense (a URL, an e-mail username, a masked password + two
+            // buttons, a sentence of notes), so a 40rem floor still stacks the
+            // notes 6 lines deep on a phone. 56rem keeps every row ~2 lines and
+            // lets the wrapper scroll instead.
+            minWidthClassName="min-w-[56rem]"
             rows={manifest.credentials}
             rowKey={(c, i) => String(i)}
             rowClassName={(c) =>

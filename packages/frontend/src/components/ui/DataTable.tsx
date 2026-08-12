@@ -33,8 +33,37 @@ export interface DataTableProps<Row> {
   empty?: React.ReactNode;
   /** Classes on the scroll container. */
   className?: string;
-  /** Min table width to force horizontal scroll on narrow viewports. */
+  /**
+   * Min table width to force horizontal scroll on narrow viewports.
+   *
+   * Optional — when omitted the table falls back to a **column-count derived
+   * default** (see `defaultMinWidth`). Before #2520 this prop had no default
+   * and *zero* call-sites set it, which made the `overflow-x-auto` wrapper
+   * below dead code everywhere: the table was pinned to `w-full`, so it could
+   * never overflow and narrow viewports crushed columns instead of scrolling.
+   * Pass an explicit class to override, or `'min-w-0'` to opt out entirely.
+   */
   minWidthClassName?: string;
+}
+
+/**
+ * Per-column floor for the derived default min-width (#2520). Wide enough that
+ * a column keeps a readable few words rather than collapsing to one token per
+ * line, narrow enough that a small table doesn't grow a spurious scrollbar on a
+ * desktop viewport. Capped so a very wide table scrolls rather than exploding.
+ */
+const MIN_WIDTH_REM_PER_COLUMN = 8;
+const MIN_WIDTH_REM_CAP = 64;
+
+/**
+ * The table's min-width when the caller didn't specify one: `columns × 8rem`,
+ * capped at 64rem. A 3-column table gets 24rem (no scrollbar in a drawer), a
+ * 5-column table 40rem, a 7-column table 56rem — each below a typical desktop
+ * content width but above a phone's, so the scroll only kicks in where the
+ * alternative is crushed columns.
+ */
+export function defaultMinWidth(columnCount: number): string {
+  return `${Math.min(columnCount * MIN_WIDTH_REM_PER_COLUMN, MIN_WIDTH_REM_CAP)}rem`;
 }
 
 const alignClass: Record<NonNullable<Column<unknown>['align']>, string> = {
@@ -88,7 +117,18 @@ function BodyRow<Row>({
       {columns.map((col) => (
         <td
           key={col.key}
-          className={cn('px-space-3 py-space-2', col.align && alignClass[col.align], col.className)}
+          // `break-words` (overflow-wrap) — NOT `break-all` (#2520). Both stop a
+          // long token overflowing its cell, but `break-all` also drops the
+          // cell's min-content width to a single character, so the browser's
+          // auto table-layout happily squeezes that column to ~8 chars and hands
+          // the width to whichever column has the longest prose. `break-words`
+          // leaves min-content at the longest token, so a URL stays readable as
+          // a unit and only wraps when it genuinely cannot fit.
+          className={cn(
+            'px-space-3 py-space-2 break-words',
+            col.align && alignClass[col.align],
+            col.className,
+          )}
         >
           {col.cell(row, index)}
         </td>
@@ -109,7 +149,12 @@ export function DataTable<Row>({
 }: DataTableProps<Row>) {
   return (
     <div className={cn('overflow-x-auto rounded-card border border-border', className)}>
-      <table className={cn('w-full text-left text-sm', minWidthClassName)}>
+      <table
+        className={cn('w-full text-left text-sm', minWidthClassName)}
+        // Only when the caller didn't pass a class — an inline style would win
+        // over their Tailwind `min-w-*` utility and silently ignore the override.
+        style={minWidthClassName ? undefined : { minWidth: defaultMinWidth(columns.length) }}
+      >
         <thead>
           <HeaderRow columns={columns} />
         </thead>
