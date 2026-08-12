@@ -120,9 +120,15 @@ The app should be: **stateless-restartable** (all state on a mounted volume),
   "Secret hygiene" (a build-time scan enforces this).
 
 ## Networking & SSO
-- Default to an **isolated netns** with explicit `hostPort`s; use
-  `hostNetwork: true` only when the app must reach another on-box service on
-  loopback (ADR 0007). A pod with neither is silently unreachable.
+- **Isolated netns + explicit `hostPort`s — always, for a new service.** A pod
+  with neither is silently unreachable. `hostNetwork: true` is reserved for the
+  **closed, named** carve-out list in ADR 0007; a new service does not join it.
+- **Needing a loopback-bound sibling is not a reason to take host networking**
+  (ADR 0007 Decision 3). Reach the sibling at
+  `http://host.containers.internal:<port>` — never `127.0.0.1`, never
+  `{{LAN_IP}}` — and have the *sibling's* port variable carry
+  `blockLanAccess: true` so the wider bind stays off the LAN
+  (`docs/TEMPLATE_AUTHORING.md`). Siblings first, consumer second.
 - User-facing? Put it on a subdomain with Authelia forward-auth (ADR 0001/0006).
   Reference `{{PUBLIC_DOMAIN}}` in the template or the proxy host is skipped —
   see `footgun-subdomain-needs-public-domain`.
