@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.18](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.17...servicebay-v5.11.18) (2026-08-12)
+
+
+### Bug Fixes
+
+* **docker:** tolerate npm hoisting workspace deps to the root ([ea36ba3](https://github.com/mdopp/servicebay/commit/ea36ba3e4d05a01744dc83a58a594f0c6a1b5d67))
+* **docker:** tolerate npm hoisting workspace deps to the root ([f3acd76](https://github.com/mdopp/servicebay/commit/f3acd762f776d24072e008afe27c7aa7c92ff703)), closes [#2528](https://github.com/mdopp/servicebay/issues/2528)
+* **frontend:** render every nav entry from the schema and group app-leaving links ([5f0a22e](https://github.com/mdopp/servicebay/commit/5f0a22e153623392cc160576048614f4f133d8b6)), closes [#2521](https://github.com/mdopp/servicebay/issues/2521)
+* **frontend:** stop DataTable crushing columns; render every nav entry from the schema ([3fa112d](https://github.com/mdopp/servicebay/commit/3fa112d1f54cbbd9e52e2f89216d236a69da02d7))
+* **ui:** stop DataTable crushing columns and breaking URLs mid-token ([f17f5a6](https://github.com/mdopp/servicebay/commit/f17f5a641825e163619212ef4a6233825384e193)), closes [#2520](https://github.com/mdopp/servicebay/issues/2520)
+
 ## [5.11.17](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.16...servicebay-v5.11.17) (2026-07-30)
 
 
