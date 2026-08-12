@@ -73,6 +73,12 @@ real secrets**: no private keys, API tokens, passwords, or `sb_` box tokens.
 
 
 ## Solaris System Architecture & Naming Directives
-- See  for binding guidelines.
-- Stack identity is **Solaris** (). Legacy hermes path references are deprecated.
-- All container-to-container connections must use container DNS service names (e.g. , ).
+- See `docs/SOLARIS_SYSTEM_DIRECTIVES.md` for binding guidelines.
+- Stack identity is **Solaris** (`mdopp/solaris`: `solaris-chat`,
+  `solaris-gatekeeper`, `solaris-whisper`, `solaris-tts`). Legacy `hermes` path
+  references are deprecated.
+- **No hard-coded IPs in cross-service references** — so a reinstall or a new
+  LAN address doesn't break the wiring. The *name* to use is set by ADR 0007,
+  not by this section: containers inside one pod share a netns and use
+  `127.0.0.1:<port>`; anything crossing a service boundary uses
+  `host.containers.internal:<port>`. Never `{{LAN_IP}}`.
