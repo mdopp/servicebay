@@ -2,18 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ChevronLeft, Code, Users, ExternalLink, Sparkles, Home, User as UserIcon, LogOut, MessageCircle } from 'lucide-react';
+import { ChevronLeft, Code, ExternalLink, Sparkles, User as UserIcon, LogOut } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
 import DomainTag from './DomainTag';
 import { Button } from '@/components/ui';
-import { NAVIGATION_ENTRIES, isNavActive } from '@/config/navigation';
-import { useDigitalTwin } from '@/hooks/useDigitalTwin';
-
-// Back-compat re-export — MobileNav imports `dashboards` from here.
-// New code should import NAVIGATION_ENTRIES directly from
-// `@/config/navigation`. (#845)
-export const dashboards = NAVIGATION_ENTRIES;
+import { isNavActive } from '@/config/navigation';
+import { useNavigationEntries } from '@/hooks/useNavigationEntries';
 
 // Renders nothing — lets SectionHelp act as a plain text link (no icon) in the
 // tidied footer's inline secondary-link row.
@@ -34,14 +29,15 @@ export default function Sidebar() {
   const searchParams = useSearchParams();
   const node = searchParams?.get('node');
   const router = useRouter();
-  const { data: twin } = useDigitalTwin();
-  // #1755 / #1781 — the maintenance chat link only appears once solilos-chat
-  // is installed (the chat surface we embed). Gated on the live digital-twin
-  // installedTemplates, like the rest of the service-aware UI.
-  const chatInstalled = Boolean(twin?.installedTemplates?.includes('solilos-chat'));
+  // Every entry — including the conditional Maintenance Chat and the two
+  // app-leaving links — comes from the navigation schema (#2521). No inline
+  // entries here; that is what keeps this in sync with MobileNav
+  // (docs/UX_DECISIONS.md → "Primary sidebar is a user-task list").
+  const navEntries = useNavigationEntries();
+  const appEntries = navEntries.filter(e => !e.external);
+  const externalEntries = navEntries.filter(e => e.external);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showCollapsedNodeLabel, setShowCollapsedNodeLabel] = useState(false);
-  const [lldapUrl, setLldapUrl] = useState<string | null>(null);
   // The redundant /setup sidebar rider was removed (#1503): setup is now
   // integrated into the dashboard, which renders the live install
   // progress directly. The separate rider led operators to the wizard's
@@ -118,13 +114,6 @@ export default function Sidebar() {
     window.location.href = logoutHref;
   };
 
-  useEffect(() => {
-    fetch('/api/auth/lldap-url')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.url) setLldapUrl(data.url); })
-      .catch(() => {});
-  }, []);
-
   return (
     <div className={`${isCollapsed ? 'w-16' : 'w-64'} flex flex-col sidebar-transition h-full shrink-0`}>
         <div className="h-16 flex items-center justify-between px-4">
@@ -174,66 +163,65 @@ export default function Sidebar() {
                 )}
             </Button>
         )}
-        <div className="overflow-y-auto flex-1 p-2 space-y-1">
-            {dashboards.map(p => {
-                const Icon = p.icon;
-                const isActive = isNavActive(pathname, p.path);
-                return (
-                    <Button
-                        key={p.id}
-                        onClick={() => router.push(`${p.path}${node ? `?node=${node}` : ''}`)}
-                        variant="ghost"
-                        className={`${navItemClass(isActive, isCollapsed)} !h-auto`}
-                        title={isCollapsed ? p.name : ''}
-                    >
-                        <Icon size={20} className={`shrink-0 ${isActive ? 'text-accent' : 'text-text-subtle'}`} />
-                        {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">{p.name}</span>}
-                    </Button>
-                );
-            })}
-            {chatInstalled && (
-                <Button
-                    onClick={() => router.push(`/chat${node ? `?node=${node}` : ''}`)}
-                    variant="ghost"
-                    className={`${navItemClass(isNavActive(pathname, '/chat'), isCollapsed)} !h-auto`}
-                    title={isCollapsed ? 'Maintenance Chat' : ''}
+        <div className="overflow-y-auto flex-1 p-2">
+            {/* Group 1 — destinations inside the app. */}
+            <nav aria-label="Primary" className="space-y-1">
+                {appEntries.map(p => {
+                    const Icon = p.icon;
+                    const isActive = p.path ? isNavActive(pathname, p.path) : false;
+                    return (
+                        <Button
+                            key={p.id}
+                            data-testid={`nav-${p.id}`}
+                            onClick={() => router.push(p.href)}
+                            variant="ghost"
+                            className={`${navItemClass(isActive, isCollapsed)} !h-auto`}
+                            title={isCollapsed ? p.name : ''}
+                        >
+                            <Icon size={20} className={`shrink-0 ${isActive ? 'text-accent' : 'text-text-subtle'}`} />
+                            {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">{p.name}</span>}
+                        </Button>
+                    );
+                })}
+            </nav>
+            {/* Group 2 — links that LEAVE ServiceBay (#2521). Separated by a
+                divider and, when expanded, a section label, so an app-leaving
+                link isn't just a 12px icon in an otherwise flat list. The
+                divider survives the collapsed state (the label doesn't). */}
+            {externalEntries.length > 0 && (
+                <nav
+                    aria-label="Opens in a new tab"
+                    className="space-y-1 mt-3 pt-3 border-t border-border"
                 >
-                    <MessageCircle size={20} className={`shrink-0 ${isNavActive(pathname, '/chat') ? 'text-accent' : 'text-text-subtle'}`} />
-                    {!isCollapsed && <span className="font-semibold whitespace-nowrap overflow-hidden animate-in fade-in slide-in-from-left-2 duration-300">Maintenance Chat</span>}
-                </Button>
-            )}
-            {lldapUrl && (
-                <a
-                    href={lldapUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={navItemClass(false, isCollapsed)}
-                    title={isCollapsed ? 'Users & Groups (LLDAP)' : ''}
-                >
-                    <Users size={20} className="shrink-0 text-text-subtle" />
                     {!isCollapsed && (
-                        <span className="font-semibold whitespace-nowrap overflow-hidden flex items-center gap-1.5 animate-in fade-in slide-in-from-left-2 duration-300">
-                            Users & Groups
-                            <ExternalLink size={12} className="text-text-subtle" />
-                        </span>
+                        <p className="px-3.5 pb-1 text-[9px] uppercase font-black text-text-subtle tracking-[0.15em]">
+                            Opens in a new tab
+                        </p>
                     )}
-                </a>
+                    {externalEntries.map(p => {
+                        const Icon = p.icon;
+                        return (
+                            <a
+                                key={p.id}
+                                data-testid={`nav-${p.id}`}
+                                href={p.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={navItemClass(false, isCollapsed)}
+                                title={isCollapsed ? `${p.name} — opens in a new tab` : ''}
+                            >
+                                <Icon size={20} className="shrink-0 text-text-subtle" />
+                                {!isCollapsed && (
+                                    <span className="font-semibold whitespace-nowrap overflow-hidden flex items-center gap-1.5 animate-in fade-in slide-in-from-left-2 duration-300">
+                                        {p.name}
+                                        <ExternalLink size={12} className="text-text-subtle" />
+                                    </span>
+                                )}
+                            </a>
+                        );
+                    })}
+                </nav>
             )}
-            <a
-                href="/portal"
-                target="_blank"
-                rel="noopener noreferrer"
-                className={navItemClass(false, isCollapsed)}
-                title={isCollapsed ? 'View as user' : ''}
-            >
-                <Home size={20} className="shrink-0 text-text-subtle" />
-                {!isCollapsed && (
-                    <span className="font-semibold whitespace-nowrap overflow-hidden flex items-center gap-1.5 animate-in fade-in slide-in-from-left-2 duration-300">
-                        View as user
-                        <ExternalLink size={12} className="text-text-subtle" />
-                    </span>
-                )}
-            </a>
         </div>
 
         <div className="p-2 space-y-1 border-t border-border pt-3 mt-auto">
