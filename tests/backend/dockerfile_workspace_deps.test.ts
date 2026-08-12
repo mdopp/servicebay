@@ -77,6 +77,32 @@ describe('Dockerfile workspace dependency install (#2422)', () => {
     ).toEqual([]);
   });
 
+  it('never hard-COPYs a concrete packages/<member>/node_modules across stages (#2528)', () => {
+    // npm's hoisting decision is not stable across lockfile changes. When the
+    // nodemailer ^9.0.3 → ^9.0.5 bump (547090c3) re-hoisted it to the root, the
+    // deps stage stopped producing packages/backend/node_modules entirely and
+    // `COPY --from=deps /app/packages/backend/node_modules ...` failed the whole
+    // build with "not found" — three consecutive red release.yml runs, :dev
+    // stale for 13 days. A stage that needs those modules must copy the whole
+    // packages/ tree (which always exists) and merge what it finds.
+    const problems: string[] = [];
+    for (const file of DOCKERFILES) {
+      const text = fs.readFileSync(path.join(REPO_ROOT, file), 'utf-8');
+      for (const line of text.split('\n')) {
+        if (/^\s*COPY\s.*\bpackages\/[A-Za-z0-9._-]+\/node_modules\b/.test(line)) {
+          problems.push(`${file}: ${line.trim()}`);
+        }
+      }
+    }
+
+    expect(
+      problems,
+      `Dockerfile COPY of a concrete workspace node_modules path:\n  ${problems.join('\n  ')}\n\n` +
+        'That directory only exists when npm happens to deoptimize hoisting for that ' +
+        'workspace. Copy `/app/packages` and merge the node_modules you find instead.',
+    ).toEqual([]);
+  });
+
   it('Dockerfile.dev merges workspace-scoped node_modules into the root', () => {
     // npm deoptimizes hoisting for some packages (nodemailer today) and leaves
     // them in packages/backend/node_modules. dist-server/server.cjs require()s
