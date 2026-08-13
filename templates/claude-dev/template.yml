@@ -6,7 +6,12 @@ metadata:
     app: claude-dev
   annotations:
     servicebay.label: "Claude Dev (Claude Code CLI + toolchain)"
-    servicebay.schema-version: "1"
+    # v2 (#2522): the pod moved off `hostNetwork` into its own network
+    # namespace (ADR 0007 Decision 1). sshd's port is published with an
+    # explicit `hostPort` on the SAME port number, and the LLDAP bind target
+    # became `host.containers.internal` instead of the `LLDAP_HOST` variable.
+    # No data move; /workspace and the persisted SSH host keys are untouched.
+    servicebay.schema-version: "2"
     servicebay.ports: "{{CLAUDE_DEV_SSH_PORT}}/tcp"
     # LLDAP (the `auth` stack) provides the directory the SSH login binds
     # against, and installing auth first means claude-dev inherits the
@@ -15,7 +20,10 @@ metadata:
     servicebay.dependencies: "auth"
     # Continuous health probe (#628). A raw TCP connect to the SSH port
     # proves sshd accepted the listener — a dev box has no
-    # unauthenticated HTTP surface to probe.
+    # unauthenticated HTTP surface to probe. The poller runs in the HOST
+    # netns, so 127.0.0.1 reaches the `hostPort` published below exactly as
+    # it reached the hostNetwork bind before v2 (same call radicale's
+    # localhost health URL makes for its isolated pod).
     servicebay.healthcheck: |
       kind: tcp
       host: 127.0.0.1
@@ -24,10 +32,21 @@ metadata:
       timeout: 5s
       startup_timeout: 5m
 spec:
-  # hostNetwork so sshd binds {{CLAUDE_DEV_SSH_PORT}} directly on the
-  # host — the operator port-maps that on the FritzBox (or reaches it
-  # over the LAN) to drive a Claude Code session from the mobile app.
-  hostNetwork: true
+  # ADR 0007 Decision 1 (#2522): claude-dev runs in its OWN network
+  # namespace — deliberately NO `hostNetwork`. This container is a general
+  # shell with a Claude session running unattended in it, so host networking
+  # gave it 127.0.0.1 reach to every other service port on the box and to
+  # ServiceBay's own control API. It was never on the ADR's closed carve-out
+  # list; it is migrated rather than added to it.
+  #
+  #   - sshd is reachable on exactly the same port as before: the `hostPort`
+  #     below publishes {{CLAUDE_DEV_SSH_PORT}} on the host with NO `hostIP`,
+  #     so podman binds 0.0.0.0 — the same reachability hostNetwork gave it.
+  #     The operator's router port-forward, every `ssh -p <port> …@<box>`,
+  #     and the Claude Code mobile app connection all keep working unchanged,
+  #     and the SSH host keys persist on /workspace so known_hosts is happy.
+  #   - The one on-box sibling it consumes is LLDAP; it is reached via
+  #     `host.containers.internal` — see the LLDAP_HOST note below.
   containers:
   # Built from templates/claude-dev/Dockerfile and published by
   # .github/workflows/claude-dev-image.yml. The image carries Node 22,
@@ -48,8 +67,31 @@ spec:
       # mirror the `auth` template's variable names so LLDAP_ADMIN_PASSWORD is
       # reused from savedSecrets (the value auth generated) rather than asked
       # for again. Blank LLDAP_ADMIN_PASSWORD ⇒ LDAP off, local `dev` only.
+      #
+      # `host.containers.internal` is the name podman writes into every
+      # container's /etc/hosts for the host, and it is the ONLY way an
+      # isolated pod reaches an on-box sibling (ADR 0007 Decision 1). NOT
+      # `localhost` — since v2 that is this pod's own loopback, where no
+      # LDAP server listens — and NOT the LAN_IP placeholder, which rootless
+      # podman refuses outright.
+      #
+      # This is a LITERAL, deliberately not the LLDAP_HOST placeholder: the
+      # install assembler force-resolves LLDAP_HOST to "localhost" for EVERY
+      # (manifestAssembler.ts, "LLDAP_HOST is always localhost"), which is
+      # correct for the hostNetwork `auth` pod that owns the variable but
+      # would silently overwrite the value here and break every LDAP login.
+      # Radicale's `ldap_uri` and media's post-deploy hard-code the same host
+      # for the same reason.
+      #
+      # Sibling-first (ADR 0007 Decision 3) is already satisfied — `auth`
+      # needs no change for this migration. LLDAP's raw LDAP port is
+      # deliberately left on 0.0.0.0 (auth/template.yml: "DELIBERATELY NOT
+      # SET: LLDAP_LDAP_HOST") and its LAN half is closed one layer down by
+      # `blockLanAccess: true`, whose nftables rule accepts `iifname lo` —
+      # where the pasta-proxied pod path lands — and drops physical
+      # interfaces (#2388).
       - name: LLDAP_HOST
-        value: "{{LLDAP_HOST}}"
+        value: "host.containers.internal"
       - name: LLDAP_LDAP_PORT
         value: "{{LLDAP_LDAP_PORT}}"
       - name: LLDAP_BASE_DN
@@ -59,7 +101,15 @@ spec:
       - name: CLAUDE_DEV_LDAP_GROUP
         value: "{{CLAUDE_DEV_LDAP_GROUP}}"
     ports:
+      # No `hostIP` on purpose (contrast radicale #2357, which pins
+      # 127.0.0.1): podman publishes on 0.0.0.0, which is precisely the
+      # reachability the hostNetwork bind had. sshd is the service — it is
+      # authenticated by SSH key or LLDAP bind, nginx cannot proxy raw SSH,
+      # and the operator's router forwards this port straight to it. Pinning
+      # the loopback here would silently lock the owner out of their own dev
+      # box.
       - containerPort: {{CLAUDE_DEV_SSH_PORT}}
+        hostPort: {{CLAUDE_DEV_SSH_PORT}}
     volumeMounts:
       # Persistent home for the `dev` user: git checkouts, Claude Code
       # session history (~/.claude), gh auth and SSH host keys all live

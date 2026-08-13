@@ -710,11 +710,11 @@ describe('hostNetwork templates: every declared TCP port is guarded (#2416)', ()
       why: 'The Authelia portal itself — it IS the login surface, so gating it '
         + 'behind itself is circular. Every app redirects here.',
     },
-    'claude-dev:2222': {
-      policy: 'lan-exposed',
-      why: 'sshd. Authenticated by SSH key / LLDAP bind, not by the proxy; '
-        + 'nginx cannot proxy raw SSH.',
-    },
+    // NOTE: `claude-dev:2222` used to live here. It is gone because the
+    // template no longer runs hostNetwork (#2522) — this policy map is only
+    // consulted for hostNetwork pods, so the entry had become dead code. The
+    // equivalent reasoning for its (still deliberate) 0.0.0.0 hostPort now
+    // lives in the dedicated claude-dev suite further down this file.
     'file-share:22000': {
       policy: 'lan-exposed',
       why: 'Syncthing sync protocol. Peers connect device-to-device over TLS '
@@ -1196,6 +1196,115 @@ describe('Media template: Audiobookshelf retired for fresh installs (#1725)', ()
     // The migration must NOT delete/move the ABS data dirs — it only informs.
     expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);
     expect(mig).toMatch(/UNTOUCHED|preserved/i);
+  });
+});
+
+// ─── 3d. claude-dev runs isolated, and SSH stays reachable (#2522) ──────────
+describe('Claude Dev template: isolated netns, SSH reachability preserved (#2522)', () => {
+  const claudeDev = templates.find(t => t.name === 'claude-dev')!;
+  const auth = templates.find(t => t.name === 'auth')!;
+
+  const view: Record<string, string> = {};
+  for (const v of catalogVars) view[v] = `stub-${v.toLowerCase()}`;
+  for (const [name, meta] of Object.entries(claudeDev.variables)) {
+    if (meta && typeof meta === 'object' && 'default' in meta && typeof meta.default === 'string') {
+      view[name] = meta.default;
+    }
+  }
+  view.CLAUDE_DEV_SSH_PORT = '2222';
+  view.LLDAP_LDAP_PORT = '3890';
+  view.DATA_DIR = '/mnt/data/stacks';
+  view.LAN_IP = '192.168.1.10';
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pod = (): any =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    yaml.loadAll(Mustache.render(claudeDev.yamlContent, view)).find((d: any) => d?.kind === 'Pod');
+
+  const sshEnv = (): Record<string, string> => {
+    const c = pod().spec.containers.find((x: { name: string }) => x.name === 'claude-dev');
+    const out: Record<string, string> = {};
+    for (const e of c.env ?? []) out[e.name] = String(e.value);
+    return out;
+  };
+
+  it('no longer runs hostNetwork', () => {
+    // ADR 0007 Decision 1. claude-dev was never on the ADR's closed carve-out
+    // list, so it is migrated rather than granted an exemption.
+    expect(pod().spec.hostNetwork).toBeUndefined();
+  });
+
+  it('publishes sshd on the SAME port, on every interface — the lockout guard', () => {
+    // This is the criterion an operator feels: their router port-forward and
+    // `ssh -p 2222 …@<box>` must keep working with nothing changed on their
+    // side. That needs hostPort == containerPort AND no `hostIP` (a
+    // `hostIP: 127.0.0.1` pin like radicale's #2357 would make the box
+    // reachable only from the box itself — i.e. lock the owner out).
+    const c = pod().spec.containers.find((x: { name: string }) => x.name === 'claude-dev');
+    expect(c.ports).toHaveLength(1);
+    expect(c.ports[0].containerPort).toBe(2222);
+    expect(c.ports[0].hostPort).toBe(2222);
+    expect(c.ports[0].hostIP).toBeUndefined();
+  });
+
+  it('reaches LLDAP via host.containers.internal — never localhost or LAN_IP', () => {
+    // An isolated pod cannot reach an on-box sibling on 127.0.0.1 (that is now
+    // its OWN loopback), and rootless podman refuses the host's LAN IP
+    // outright (ADR 0007 Context). host.containers.internal is the only path.
+    expect(sshEnv().LLDAP_HOST).toBe('host.containers.internal');
+    expect(sshEnv().LLDAP_HOST).not.toMatch(/localhost|127\.0\.0\.1|192\.168\./);
+  });
+
+  it('hard-codes the LLDAP host instead of taking the LLDAP_HOST variable', () => {
+    // manifestAssembler force-resolves LLDAP_HOST to "localhost" for EVERY
+    // template ("LLDAP_HOST is always localhost") — correct for the
+    // hostNetwork `auth` pod that owns the variable, but it would silently
+    // overwrite the value here and break every LDAP login with no error.
+    expect(claudeDev.yamlContent).not.toMatch(/\{\{LLDAP_HOST\}\}/);
+    expect(claudeDev.variables.LLDAP_HOST).toBeUndefined();
+  });
+
+  it('the sibling precondition it depends on is actually in place (ADR 0007 order)', () => {
+    // "Siblings first, consumer second." The consumer above is only correct
+    // because `auth` leaves LLDAP's raw LDAP port bound wider than loopback
+    // and closes the LAN half at the host firewall instead (#2388). If a
+    // future change loopback-binds that port, this consumer breaks — so pin
+    // the precondition here, at the consumer, not only in the auth suite.
+    expect(auth.yamlContent).not.toMatch(/name:\s*LLDAP_LDAP_HOST/);
+    expect(auth.variables.LLDAP_LDAP_PORT.blockLanAccess).toBe(true);
+  });
+
+  it('is NOT added to ADR 0007 carve-out list', () => {
+    // The list was closed in #2518/#2523. Migrating the consumer is the
+    // decision; growing the list again would hollow that out.
+    const adr = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'docs', 'adr',
+        '0007-container-network-isolation-and-carveouts.md'), 'utf-8',
+    );
+    const decision2 = adr.slice(
+      adr.indexOf('2. **These stay on `hostNetwork` deliberately'),
+      adr.indexOf('3. **Consuming a loopback-bound sibling'),
+    );
+    expect(decision2.length).toBeGreaterThan(100);
+    expect(decision2).not.toMatch(/claude-dev/);
+  });
+
+  it('schema-version is bumped to 2 with a CHANGELOG section and a v1-to-v2 migration', () => {
+    expect(claudeDev.yamlContent).toMatch(/servicebay\.schema-version:\s*"2"/);
+    const changelog = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'claude-dev', 'CHANGELOG.md'), 'utf-8',
+    );
+    expect(changelog).toMatch(/##\s*v2\b.*\(breaking\)/);
+    const mig = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'claude-dev', 'migrations', 'v1-to-v2.py'), 'utf-8',
+    );
+    // Structural hop — nothing on /workspace may be moved, renamed or deleted.
+    expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);
+    expect(mig).toMatch(/untouched/i);
+    // And it must never abort the deploy: a non-zero exit would leave the
+    // operator unable to re-deploy their own dev box, while a broken LDAP
+    // path does not lock anyone out (the local `dev` account still works).
+    expect(mig).not.toMatch(/return\s+[1-9]|sys\.exit\([1-9]/);
   });
 });
 
