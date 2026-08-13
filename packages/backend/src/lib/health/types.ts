@@ -1,7 +1,6 @@
 export type CheckType =
   | 'http'
   | 'ping'
-  | 'script'
   | 'podman'
   | 'service'
   | 'systemd'
@@ -30,7 +29,34 @@ export type CheckType =
   // public IP". For the full taxonomy (CAA, port-80 sim, etc.) the
   // operator triggers an on-demand letsdebug run from the diagnose
   // row's action button.
-  | 'dns_routing';
+  | 'dns_routing'
+  // Display-only (#2535): the synthetic `diagnose:<probeId>` rows the Checks
+  // list merges in at read time (`diagnose/diagnoseChecks.ts`). They are never
+  // stored in checks.json and never reach the probe registry — only *results*
+  // are persisted for them — so there is deliberately no `diagnose` probe.
+  // They previously borrowed `type:'script'`, which made the Health page badge
+  // a self-diagnose row "SCRIPT" and made the removed script type look like it
+  // was still in use.
+  | 'diagnose';
+
+/**
+ * The caller-supplied `script` check type was **removed** (#2535).
+ *
+ * It interpolated the check's `target` into `(async () => { … })()` and ran it
+ * with `vm.runInContext` inside the ServiceBay backend process. `node:vm` is
+ * explicitly not a security boundary, and the surrounding target validation was
+ * parity with the REST route, not containment — so the type is gone rather than
+ * sandboxed. Every entry point that used to accept it refuses it with this
+ * message; `initializeDefaultChecks` disables (never silently drops) any row
+ * that a box stored before the removal.
+ */
+export const SCRIPT_CHECK_REMOVED_MESSAGE =
+  'The "script" health check type was removed for security — it evaluated caller-supplied JavaScript inside the ServiceBay backend process. Use an "http" check (status code / body match) or a template-provided probe instead.';
+
+/** Marker appended to a stored `script` check's name when it is retired
+ *  (#2535), so the operator sees WHY the row is switched off on every surface
+ *  that lists checks, and so the migration stays idempotent across restarts. */
+export const SCRIPT_CHECK_RETIRED_SUFFIX = ' [disabled: script check type removed]';
 
 /**
  * Grace window (#2166) within which a check that has produced no result yet is

@@ -6,7 +6,6 @@
  * its own probe file (mirror the pattern in domain.ts / letsdebug.ts).
  */
 
-import vm from 'vm';
 import { registerProbe } from './registry';
 import { assertHttpTargetAllowed } from '../ssrfGuard';
 import { ContainerId, ServiceName, HostString } from '../../api/schemas';
@@ -106,22 +105,15 @@ registerProbe({
   },
 });
 
-registerProbe({
-  type: 'script',
-  async run(check) {
-    const safeSetTimeout = (fn: (...args: unknown[]) => void, ms: number) => setTimeout(fn, Math.min(ms, 5000));
-    const safeClearTimeout = (id: ReturnType<typeof setTimeout>) => clearTimeout(id);
-    const sandbox = { fetch: global.fetch, console: { log: () => {} }, setTimeout: safeSetTimeout, clearTimeout: safeClearTimeout };
-    const context = vm.createContext(sandbox);
-    const code = `(async () => { ${check.target} })()`;
-    try {
-      const result = vm.runInContext(code, context, { timeout: 5000 });
-      if (result && typeof result.then === 'function') await result;
-    } catch (e: unknown) {
-      throw new Error(`Script failed: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  },
-});
+// #2535: there is deliberately NO `script` probe here any more. It used to
+// interpolate the check's `target` into `(async () => { … })()` and run it via
+// `vm.runInContext` on a context holding the host realm's `fetch`. `node:vm` is
+// documented as not being a security mechanism, and the target character-class
+// validation added in #2534 was parity with the REST route, not containment
+// (member access, assignment and `await` all survive it, which is enough to
+// reach host intrinsics). The evaluator is removed rather than sandboxed — a
+// real isolation boundary is a separate piece of work that was not commissioned.
+// Do not re-add an eval-shaped probe here; add a first-class typed probe instead.
 
 registerProbe({
   type: 'node',

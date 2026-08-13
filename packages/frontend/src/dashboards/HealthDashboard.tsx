@@ -17,7 +17,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
 import DiagnoseProbeList, { type DiagnoseProbe } from '@/components/DiagnoseProbeList';
 import ContainersDashboard from '@/dashboards/ContainersDashboard';
-import { Button, Badge, Input, Select, Textarea, Table } from '@/components/ui';
+import { Button, Badge, Input, Select, Table } from '@/components/ui';
 
 interface Container {
   Id: string;
@@ -775,7 +775,8 @@ export default function HealthDashboard() {
                   <option value="service">Managed Service</option>
                   <option value="systemd">System Service</option>
                   <option value="agent">Agent Health</option>
-                  <option value="script">Custom Script (JS)</option>
+                  {/* #2535: "Custom Script (JS)" is gone — the probe behind it
+                      evaluated the target inside the backend process. */}
                   <option value="fritzbox">Fritz!Box Internet</option>
                 </Select>
                 
@@ -799,9 +800,6 @@ export default function HealthDashboard() {
                     {formData.type === 'agent' && (
                         <p>Monitors the ServiceBay Agent on a node. Verifies connection status, heartbeat, and error rates. Fails if the agent disconnects or stops reporting.</p>
                     )}
-                    {formData.type === 'script' && (
-                        <p>Executes a custom JavaScript snippet in a sandboxed environment. Use <code>fetch()</code> for custom logic. Throw an error to fail the check.</p>
-                    )}
                     {formData.type === 'fritzbox' && (
                         <p>Queries a Fritz!Box router via UPnP (TR-064) to check internet connectivity status. Fails if the router reports &apos;Disconnected&apos; or is unreachable.</p>
                     )}
@@ -824,17 +822,9 @@ export default function HealthDashboard() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-text-muted mb-1">
-                    {formData.type === 'script' ? 'Script Content' : formData.type === 'fritzbox' ? 'Fritz!Box Hostname / IP' : 'Target'}
+                    {formData.type === 'fritzbox' ? 'Fritz!Box Hostname / IP' : 'Target'}
                 </label>
-                {formData.type === 'script' ? (
-                    <Textarea
-                        value={formData.target}
-                        onChange={e => setFormData({...formData, target: e.target.value})}
-                        disabled={isSystemCheck()}
-                        className={`w-full p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none font-mono text-sm h-32 ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
-                        placeholder="if (1 !== 1) throw new Error('Math broken')"
-                    />
-                ) : formData.type === 'podman' ? (
+                {formData.type === 'podman' ? (
                     <div className="relative">
                         <Select
                             value={formData.target}

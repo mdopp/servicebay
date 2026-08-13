@@ -23,7 +23,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import type { CheckConfig } from '@/lib/health/types';
+import { SCRIPT_CHECK_REMOVED_MESSAGE, type CheckConfig } from '@/lib/health/types';
 
 const mocks = vi.hoisted(() => ({
   saveCheck: vi.fn(),
@@ -77,7 +77,13 @@ vi.mock('@/lib/api/handler', () => ({
         return NextResponse.json({ ok: true, data: result });
       } catch (e) {
         if (e instanceof z.ZodError) {
-          return NextResponse.json({ ok: false, error: 'validation failed' }, { status: 400 });
+          // Mirrors the real wrapper, which ships `details: e.flatten()` — the
+          // per-field messages are what a caller actually reads, so a test that
+          // dropped them couldn't tell a clear refusal from a generic one.
+          return NextResponse.json(
+            { ok: false, error: 'validation failed', code: 'VALIDATION', details: e.flatten() },
+            { status: 400 },
+          );
         }
         throw e;
       }
@@ -243,6 +249,34 @@ describe('POST /api/health/checks — legitimate checks still round-trip', () =>
       expect(saved.id).toMatch(UUID_RE);
     });
   }
+});
+
+describe('POST /api/health/checks — the removed script type is refused with a reason (#2535)', () => {
+  // `type: "script"` interpolated the target into `(async () => { … })()` and
+  // ran it with `vm.runInContext` inside the backend process. The probe is
+  // deleted, so the route must refuse the type — and refuse it *legibly*: the
+  // caller most likely to send one is a template post-deploy written against an
+  // older box, and a bare "invalid enum value" would read as a ServiceBay bug.
+  it('rejects type "script" and never reaches the store', async () => {
+    const res = await post(validBody({ type: 'script', target: 'return true' }));
+    expect(res.status).toBe(400);
+    expect(mocks.saveCheck).not.toHaveBeenCalled();
+  });
+
+  it('explains WHY, naming the removal and the replacement', async () => {
+    const res = await post(validBody({ type: 'script', target: 'return true' }));
+    const body = (await res.json()) as { details?: { fieldErrors?: Record<string, string[]> } };
+    const messages = (body.details?.fieldErrors?.type ?? []).join(' ');
+    expect(messages).toBe(SCRIPT_CHECK_REMOVED_MESSAGE);
+    expect(messages).toMatch(/removed for security/);
+    expect(messages).toMatch(/"http" check/);
+  });
+
+  it('still rejects any other unknown type (the enum is not weakened)', async () => {
+    const res = await post(validBody({ type: 'exec', target: 'id' }));
+    expect(res.status).toBe(400);
+    expect(mocks.saveCheck).not.toHaveBeenCalled();
+  });
 });
 
 describe('DELETE /api/health/checks — one id rule, shared with the sibling routes (#2536)', () => {

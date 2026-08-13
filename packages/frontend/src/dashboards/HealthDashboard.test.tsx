@@ -107,6 +107,32 @@ describe('HealthDashboard (#2100 dashboards migration)', () => {
     expect(await screen.findByText('Create Health Check')).toBeDefined();
   });
 
+  // #2535 — the "Custom Script (JS)" type is removed from the picker. The probe
+  // behind it evaluated the operator's target with `vm.runInContext` inside the
+  // backend process; the type is gone at the schema, the MCP tool and the probe
+  // registry, so offering it here would only produce a 400.
+  it('the type picker no longer offers a custom-script check', async () => {
+    render(<HealthDashboard />);
+    await waitFor(() => expect(screen.getByTestId('health-checks')).toBeDefined());
+
+    fireEvent.click(screen.getByRole('button', { name: /add check/i }));
+    await screen.findByText('Create Health Check');
+
+    // The check-type picker is the one <select> that offers 'http'.
+    const typeSelect = Array.from(document.querySelectorAll('select')).find(s =>
+      Array.from(s.options).some(o => o.value === 'http'),
+    ) as HTMLSelectElement;
+    expect(typeSelect, 'the check-type picker must render').toBeDefined();
+    const values = Array.from(typeSelect.options).map(o => o.value);
+    expect(values).not.toContain('script');
+    expect(values).toContain('http');
+    expect(screen.queryByText(/Custom Script/i)).toBeNull();
+    // …and the script-only "Script Content" textarea is gone with it.
+    expect(screen.queryByText('Script Content')).toBeNull();
+    expect(document.querySelector('textarea')).toBeNull();
+    expect(typeSelect.value).toBe('http');
+  });
+
   it('switching to the Logs tab preserves tab behaviour', async () => {
     render(<HealthDashboard />);
     await waitFor(() => expect(screen.getByTestId('health-checks')).toBeDefined());

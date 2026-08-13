@@ -18,7 +18,7 @@ describe('Probe registry (#592)', () => {
   // which now runs the DoH DNS-routing logic itself. No standalone
   // `dns_routing` probe registers any more.
   const EXPECTED_TYPES = [
-    'http', 'ping', 'script', 'podman', 'service', 'systemd', 'node', 'agent',
+    'http', 'ping', 'podman', 'service', 'systemd', 'node', 'agent',
     'fritzbox', 'backup', 'domain', 'letsdebug', 'lan_ip_drift', 'npm_auth',
     'cert_expiry', 'cert_request_failure',
   ];
@@ -28,6 +28,19 @@ describe('Probe registry (#592)', () => {
     for (const t of EXPECTED_TYPES) {
       expect(registered.has(t as never), `missing probe: ${t}`).toBe(true);
     }
+  });
+
+  // #2535: `script` is REMOVED, not disabled. The probe interpolated the
+  // check's target into `(async () => { … })()` and ran it with
+  // `vm.runInContext` on a context holding the host realm's `fetch` — an
+  // evaluator whose only containment was a character class on the target. A
+  // hidden-but-reachable path would be the same vulnerability with worse
+  // discoverability, so what is pinned here is *absence*: nothing in the
+  // registry can execute a stored script row, whichever entry point produced
+  // it. Do not re-add an eval-shaped probe to satisfy this list.
+  it('has no probe for the removed script type', () => {
+    expect(registeredProbeTypes()).not.toContain('script');
+    expect(getProbe('script' as never)).toBeUndefined();
   });
 
   it('getProbe returns undefined for unknown types', () => {

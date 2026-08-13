@@ -1,4 +1,5 @@
 import { HealthStore } from './store';
+import { SCRIPT_CHECK_RETIRED_SUFFIX, type CheckConfig } from './types';
 import { ServiceManager } from '../services/ServiceManager';
 import { getConfig } from '../config';
 import { listNodes } from '../nodes';
@@ -41,7 +42,7 @@ const SLUG_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
 
 /**
  * Template-registered checks (#1551): a stack's post-deploy may register an
- * extra `http`/`tcp`/`script` probe against its own endpoint via
+ * extra `http`/`tcp` probe against its own endpoint via
  * `POST /api/health/checks` (e.g. home-assistant's `home-assistant-api`,
  * oscar-ollama's `ollama-api`). These carry no `type:'service'` link, so the
  * service-row prune above misses them and they linger as `0ms` rows for an
@@ -55,7 +56,7 @@ const SLUG_ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
  * deployed set.
  */
 function isOrphanTemplateCheck(c: { id: string; type: string }, deployed: Set<string>): boolean {
-  if (c.type !== 'http' && c.type !== 'tcp' && c.type !== 'script') return false;
+  if (c.type !== 'http' && c.type !== 'tcp') return false;
   if (UUID_RE.test(c.id) || !SLUG_ID_RE.test(c.id)) return false;
   // Owned by a deployed service? (id === <svc> or id starts with `<svc>-`)
   for (const svc of deployed) {
@@ -81,7 +82,7 @@ async function addServiceChecks(existingChecks: ReturnType<typeof HealthStore.ge
       }
     }
 
-    // Prune template-registered http/tcp/script probes whose owning stack is
+    // Prune template-registered http/tcp probes whose owning stack is
     // not deployed (#1551) — these slip past the `type:'service'` prune above
     // and otherwise linger forever (e.g. a stale `ollama-api`/`home-assistant-api`
     // row carried over a wipe-configs reinstall, a restored config backup, or a
@@ -166,9 +167,47 @@ function addDefaultPhase3bChecks(exists: (type: string, target: string) => boole
   }
 }
 
+/**
+ * Retire any `script` check a box stored before the type was removed (#2535).
+ *
+ * The type is gone from every entry point and there is no `script` probe any
+ * more, so such a row can never run again. The two silent outcomes are both
+ * unacceptable: leaving it enabled would have it tick forever as "unknown check
+ * type", and deleting it would throw away the operator's only record of what
+ * they were monitoring (the JS body lives in `target`, and no equivalent `http`
+ * check can be derived from arbitrary JS — there is nothing to auto-migrate to).
+ *
+ * So: **disable it in place with a visible notice.** The row is kept verbatim
+ * (id, target, interval, history), `enabled` is flipped to false so the
+ * scheduler skips it, and the reason is appended to its *name* — which is what
+ * the Health page, the per-service Operate tab, and MCP `get_health_checks` all
+ * render. The operator sees exactly which check stopped and why, and can either
+ * delete it or rebuild it as an `http` check. Idempotent: a row already carrying
+ * the marker and already disabled is left alone.
+ */
+function retireScriptChecks(existingChecks: CheckConfig[]) {
+  for (const c of existingChecks) {
+    // `script` is no longer a CheckType — this compares against what is on disk.
+    if (String(c.type) !== 'script') continue;
+    const alreadyRetired = c.enabled === false && c.name.endsWith(SCRIPT_CHECK_RETIRED_SUFFIX);
+    if (alreadyRetired) continue;
+    const name = c.name.endsWith(SCRIPT_CHECK_RETIRED_SUFFIX)
+      ? c.name
+      : `${c.name}${SCRIPT_CHECK_RETIRED_SUFFIX}`;
+    HealthStore.saveCheck({ ...c, name, enabled: false });
+    logger.warn(
+      'Health',
+      `Disabled stored script check "${c.name}" (${c.id}): the script check type was removed (#2535). ` +
+        'The check is kept but will never run — delete it or replace it with an http check.',
+    );
+  }
+}
+
 export async function initializeDefaultChecks() {
   logger.info('Health', 'Initializing default checks...');
   const existingChecks = HealthStore.getChecks();
+
+  retireScriptChecks(existingChecks);
 
   const staleSystemdSocket = existingChecks.find(c => c.type === 'systemd' && c.target === 'podman.socket');
   if (staleSystemdSocket) {
