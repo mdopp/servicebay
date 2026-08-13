@@ -222,9 +222,10 @@ WantedBy=default.target`;
   const handleRerender = async () => {
     if (!name) return;
     if (!window.confirm(
-      'Re-render this service\'s YAML from its template using the current ' +
-      'Settings → Template Variables values? The editor below will be replaced ' +
-      'with the new YAML; nothing is saved or restarted until you click Save.',
+      'Re-render this service\'s YAML from its template, using the same values ' +
+      'a deploy would resolve (Template Settings, your saved variables and stored ' +
+      'secrets)? The editor below will be replaced with the new YAML; nothing is ' +
+      'saved or restarted until you click Save.',
     )) {
       return;
     }
@@ -238,7 +239,19 @@ WantedBy=default.target`;
       }
       if (typeof data.yamlContent === 'string') {
         handleYamlChange(data.yamlContent);
-        addToast('success', 'Re-rendered', 'Review the changes and click Save to apply.');
+        // #2537 — a variable the server could not resolve renders empty. Name it
+        // here rather than let the operator find the blank after a save; the
+        // blanked-value diff is exactly what scrolls off screen unnoticed.
+        const unresolved: string[] = Array.isArray(data.unresolved) ? data.unresolved : [];
+        if (unresolved.length > 0) {
+          addToast(
+            'warning',
+            'Re-rendered with empty values',
+            `${unresolved.join(', ')} could not be resolved and rendered empty. Check ${unresolved.length === 1 ? 'it' : 'them'} in the YAML before saving.`,
+          );
+        } else {
+          addToast('success', 'Re-rendered', 'Review the changes and click Save to apply.');
+        }
       }
     } catch (e) {
       addToast('error', 'Re-render failed', e instanceof Error ? e.message : String(e));
@@ -707,7 +720,7 @@ WantedBy=default.target`;
                                         variant="ghost"
                                         size="sm"
                                         className="p-1.5"
-                                        title="Re-render this YAML from its template using the current Settings → Template Variables values"
+                                        title="Re-render this YAML from its template, using the same values a deploy would resolve"
                                     >
                                         <RefreshCw size={14} className={rerendering ? 'animate-spin' : ''} />
                                     </Button>

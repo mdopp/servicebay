@@ -13,8 +13,9 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
+const toastMocks = vi.hoisted(() => ({ addToast: vi.fn(), updateToast: vi.fn() }));
 vi.mock('@/providers/ToastProvider', () => ({
-  useToast: () => ({ addToast: vi.fn(), updateToast: vi.fn() }),
+  useToast: () => toastMocks,
 }));
 vi.mock('@/app/actions/system', () => ({ getNodes: () => Promise.resolve([]) }));
 // Keep the history panel out of the render.
@@ -68,5 +69,82 @@ describe('ServiceForm — rename modal Escape-to-close (#2188)', () => {
     // Escape must be ignored while the request is in flight.
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.getByRole('heading', { name: /rename service/i })).toBeTruthy();
+  });
+});
+
+/**
+ * "Re-render from template" — #2537. The route now names any variable it could
+ * not resolve instead of handing back quietly-blank YAML; the operator only
+ * benefits if the form SAYS so, because the blanked line is exactly what
+ * scrolls off screen in the diff they are reviewing.
+ */
+describe('ServiceForm — re-render reports unresolved values (#2537)', () => {
+  function renderForm() {
+    render(
+      <ServiceForm
+        isEdit
+        initialData={{
+          name: 'my-service',
+          yamlFileName: 'my-service.yml',
+          kubeContent: '',
+          yamlContent: '',
+        }}
+      />,
+    );
+  }
+
+  function stubPreview(payload: unknown, ok = true, status = 200) {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('reconfigure-preview')) {
+        return { ok, status, json: async () => payload } as unknown as Response;
+      }
+      // The editor revalidates the YAML it was handed — irrelevant here.
+      return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+    }));
+  }
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    toastMocks.addToast.mockClear();
+    vi.stubGlobal('confirm', vi.fn(() => true));
+  });
+
+  it('warns, naming each variable that rendered empty', async () => {
+    stubPreview({ yamlContent: 'kind: Pod\n', unresolved: ['HASS_TOKEN'] });
+    renderForm();
+
+    fireEvent.click(screen.getByTitle(/Re-render this YAML/i));
+
+    await waitFor(() => expect(toastMocks.addToast).toHaveBeenCalled());
+    const [type, title, message] = toastMocks.addToast.mock.calls.at(-1) as string[];
+    expect(type).toBe('warning');
+    expect(title).toMatch(/empty/i);
+    expect(message).toContain('HASS_TOKEN');
+  });
+
+  it('reports plain success when everything resolved', async () => {
+    stubPreview({ yamlContent: 'kind: Pod\n', unresolved: [] });
+    renderForm();
+
+    fireEvent.click(screen.getByTitle(/Re-render this YAML/i));
+
+    await waitFor(() => expect(toastMocks.addToast).toHaveBeenCalled());
+    expect((toastMocks.addToast.mock.calls.at(-1) as string[])[0]).toBe('success');
+  });
+
+  it('surfaces the server refusal when a secret could not be recovered', async () => {
+    stubPreview(
+      { error: 'Refusing to re-render: the stored value for LLDAP_ADMIN_PASSWORD ...' },
+      false,
+      400,
+    );
+    renderForm();
+
+    fireEvent.click(screen.getByTitle(/Re-render this YAML/i));
+
+    await waitFor(() => expect(toastMocks.addToast).toHaveBeenCalled());
+    const [type, , message] = toastMocks.addToast.mock.calls.at(-1) as string[];
+    expect(type).toBe('error');
+    expect(message).toContain('LLDAP_ADMIN_PASSWORD');
   });
 });
