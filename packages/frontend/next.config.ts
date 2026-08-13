@@ -33,6 +33,29 @@ const nextConfig: NextConfig = {
   // `/` used to redirect to `/services` — removed in #802/#803 when the
   // Overview Dashboard landed at the root path. If you're hunting for
   // the redirect, it's now a real page: src/app/(dashboard)/page.tsx.
+  //
+  // #2555: the Settings redirects are CONFIG redirects, not redirect-only
+  // `page.tsx` server components. A page-level `redirect()` under
+  // `settings/layout.tsx` is resolved inside React on the client (the root
+  // `loading.tsx` makes the document flush 200 before the page renders), where
+  // it competes with the layout's own async config load. That crashed `/settings`
+  // outright — see the comment in `settings/layout.tsx`. A config redirect is a
+  // real 307 answered before any render, so there is no React involved at all.
+  // Keep the `/settings` destination in sync with `DEFAULT_GROUP` in
+  // `src/app/(dashboard)/settings/_lib/ia.ts` — `tests/frontend/settings-redirects.test.ts`
+  // fails if they drift. It is spelled out literally because Next evaluates
+  // `redirects()` from the compiled config in its own scope: a module-level
+  // const referenced in here is `undefined` at call time, and `ia.ts` can't be
+  // imported (it pulls in `lucide-react`).
+  async redirects() {
+    return [
+      // Settings lands on the first cross-cutting group.
+      { source: '/settings', destination: '/settings/network-domain', permanent: false },
+      // Services left Settings (spec §4.4 / §8) — old bookmarks still resolve.
+      { source: '/settings/services', destination: '/services', permanent: false },
+      { source: '/settings/services/:name', destination: '/services/:name', permanent: false },
+    ];
+  },
 };
 
 export default nextConfig;
