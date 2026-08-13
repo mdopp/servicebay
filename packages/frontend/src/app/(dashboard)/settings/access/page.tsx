@@ -33,7 +33,7 @@ export default function AccessSettingsPage() {
         tier="essential"
         label="Saved credentials"
         icon={Key}
-        description="Credentials the install wizard persisted — encrypted at rest, visible to logged-in admins."
+        description="What the install wizard set up and where each password lives. Passwords aren't shown here — they belong in Vaultwarden."
       >
         <CredentialsSection />
       </SettingDisclosure>

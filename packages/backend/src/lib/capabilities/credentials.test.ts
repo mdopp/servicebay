@@ -120,6 +120,40 @@ describe('credentials.handleInstalled', () => {
     expect(creds.find(c => (c as { template?: string }).template === 'immich')).toBeTruthy();
   });
 
+  it('resets a previously-secured entry to not-yet-secured on re-install (#2519)', async () => {
+    // The operator handed this off to Vaultwarden, so ServiceBay dropped
+    // the secret. A re-install brings a fresh one — ServiceBay cannot know
+    // whether it changed, so the entry must go back to "not yet secured"
+    // rather than claiming the vault already has this value.
+    mockConfig = {
+      installManifest: {
+        savedAt: '2026-08-01T00:00:00.000Z',
+        credentials: [
+          { service: 'immich OIDC client_secret', url: 'https://auth.dopp.cloud', username: 'immich', password: '', importance: 'system', template: 'immich', securedAt: '2026-08-01T00:00:00.000Z' } as never,
+          { service: 'vaultwarden OIDC client_secret', url: 'https://auth.dopp.cloud', username: 'vaultwarden', password: '', importance: 'system', template: 'vaultwarden', securedAt: '2026-08-01T00:00:00.000Z' } as never,
+        ],
+      },
+    };
+    const r = await handleInstalled({
+      kind: 'feature.installed', template: 'immich', manifest: MANIFEST,
+      variables: [
+        { name: 'PUBLIC_DOMAIN', value: 'dopp.cloud' },
+        oidcSubdomainVar('immich', 'IMMICH_SUBDOMAIN', 'immich', 'IMMICH_SSO_SECRET'),
+        { name: 'IMMICH_SSO_SECRET', value: 'rotated' },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    const creds = mockConfig.installManifest!.credentials;
+    const immich = creds.find(c => (c as { template?: string }).template === 'immich');
+    const vault = creds.find(c => (c as { template?: string }).template === 'vaultwarden');
+    expect(immich?.password).toBe('rotated');
+    expect((immich as { securedAt?: string }).securedAt).toBeUndefined();
+    // An untouched template keeps its hand-off state.
+    expect((vault as { securedAt?: string }).securedAt).toBe('2026-08-01T00:00:00.000Z');
+    // Still one entry per template — an update, not a duplicate.
+    expect(creds.filter(c => (c as { template?: string }).template === 'immich')).toHaveLength(1);
+  });
+
   it('no-ops when builder produces no entries', async () => {
     const r = await handleInstalled({
       kind: 'feature.installed', template: 'noop', manifest: MANIFEST,
