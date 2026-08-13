@@ -178,6 +178,72 @@ describe('HealthStore read cache (#2163) — no synchronous re-read on the hot p
   });
 });
 
+describe('HealthStore result path — the store is not solely reliant on its callers (#2536)', () => {
+  let HealthStore: typeof import('./store').HealthStore;
+  let realFs: typeof import('fs');
+  let parentDir: string;
+
+  beforeEach(async () => {
+    parentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'healthstore-parent-'));
+    tmpDir = path.join(parentDir, 'data');
+    await fs.mkdir(tmpDir);
+    vi.resetModules();
+    process.env.DATA_DIR = tmpDir;
+    realFs = (await import('fs')).default;
+    ({ HealthStore } = await import('./store'));
+  });
+
+  afterEach(async () => {
+    delete process.env.DATA_DIR;
+    await fs.rm(parentDir, { recursive: true, force: true });
+  });
+
+  const result = (checkId: string): CheckResult => ({
+    check_id: checkId, status: 'ok', timestamp: new Date().toISOString(),
+  });
+
+  // Ids that would resolve outside <DATA_DIR>/results. The API boundaries
+  // reject these with CheckIdString; the store must refuse them too, because
+  // a CheckConfig also reaches saveResult from the MCP tools, the install
+  // path, domain-check reconciliation and the diagnose bridge.
+  const escaping = ['../pwn', '../../pwn', '../../../etc/cron.d/pwn', 'sub/pwn', 'a\\b', ''];
+
+  for (const checkId of escaping) {
+    it(`refuses to write a result for out-of-scope id ${JSON.stringify(checkId)}`, () => {
+      expect(() => HealthStore.saveResult(result(checkId))).not.toThrow();
+
+      // Nothing landed anywhere: not in results/, not one level up in
+      // DATA_DIR, not outside DATA_DIR entirely.
+      expect(HealthStore.getResultCheckIds()).toEqual([]);
+      const strayInDataDir = realFs.readdirSync(tmpDir).filter(f => f.endsWith('.json'));
+      expect(strayInDataDir).toEqual([]);
+      const strayAboveDataDir = realFs.readdirSync(parentDir).filter(f => f !== 'data');
+      expect(strayAboveDataDir).toEqual([]);
+    });
+
+    it(`reads back empty for out-of-scope id ${JSON.stringify(checkId)}`, () => {
+      expect(HealthStore.getResults(checkId)).toEqual([]);
+    });
+  }
+
+  it('still persists and reads back every legitimate id shape', () => {
+    // UUID, deterministic domain/diagnose ids, template slug, bare snake_case.
+    const ids = [
+      '11111111-2222-4333-8444-555555555555',
+      'domain:nginx.example.com',
+      'diagnose:sso_verify',
+      'home-assistant-api',
+      'lan_ip_drift',
+    ];
+    for (const id of ids) HealthStore.saveResult(result(id));
+
+    for (const id of ids) {
+      expect(HealthStore.getResults(id).map(r => r.check_id)).toEqual([id]);
+    }
+    expect(HealthStore.getResultCheckIds().sort()).toEqual([...ids].sort());
+  });
+});
+
 describe('HealthStore.deleteCheck — honest return (synthetic rows can\'t be deleted)', () => {
   let HealthStore: typeof import('./store').HealthStore;
 

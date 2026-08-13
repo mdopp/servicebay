@@ -19,6 +19,28 @@ function ensureDirs() {
 }
 
 /**
+ * Resolve a check id to its result file — the store's own last line of
+ * defence (#2536).
+ *
+ * A check id is a *file name*: results live at `<DATA_DIR>/results/<id>.json`.
+ * Every API boundary validates it with `CheckIdString`, but the store must not
+ * be solely reliant on its callers — a `CheckConfig` reaches `saveResult` from
+ * the MCP tools, the install path, domain-check reconciliation and the diagnose
+ * bridge as well as the routes. Refuse anything that would resolve outside
+ * RESULTS_DIR instead of writing there.
+ *
+ * Returns null when the id can't be a file name in that directory; callers
+ * degrade (no write / empty read) rather than throwing, since a bad id is a
+ * caller bug, not a reason to take a health tick down.
+ */
+function resultFilePath(checkId: string): string | null {
+  if (!checkId || /[/\\\0]/.test(checkId)) return null;
+  const resolved = path.resolve(RESULTS_DIR, `${checkId}.json`);
+  if (path.dirname(resolved) !== path.resolve(RESULTS_DIR)) return null;
+  return resolved;
+}
+
+/**
  * Hot-path read cache (#2163). getChecks / getResults sit on the diagnose,
  * health-API and core-health-summary request paths and were doing a full
  * readFileSync + JSON.parse on every call — with many checks or a large
@@ -162,7 +184,11 @@ export class HealthStore {
 
   /** Persist a check's result file and invalidate its cache entry. */
   private static writeResults(checkId: string, results: CheckResult[]) {
-    const resultFile = path.join(RESULTS_DIR, `${checkId}.json`);
+    const resultFile = resultFilePath(checkId);
+    if (!resultFile) {
+      logger.error('HealthStore', `Refusing to write results for out-of-scope check id: ${JSON.stringify(checkId)}`);
+      return;
+    }
     try {
       atomicWriteFileSync(resultFile, JSON.stringify(results, null, 2));
       resultsCache.delete(checkId);
@@ -199,7 +225,8 @@ export class HealthStore {
   }
 
   static getResults(checkId: string): CheckResult[] {
-    const resultFile = path.join(RESULTS_DIR, `${checkId}.json`);
+    const resultFile = resultFilePath(checkId);
+    if (!resultFile) return [];
     return cachedRead<CheckResult[]>(
       resultFile,
       () => resultsCache.get(checkId),
