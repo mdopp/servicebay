@@ -7,7 +7,7 @@ metadata:
     servicebay.role: media
   annotations:
     servicebay.label: "Movies & TV"
-    servicebay.schema-version: "6"
+    servicebay.schema-version: "7"
     # Jellyfin's public URL routes through nginx, and its LDAP-Auth
     # plugin binds LLDAP from the `auth` stack — both prerequisites.
     # (#1725: Audiobookshelf retired for fresh installs; audiobooks are
@@ -53,14 +53,20 @@ spec:
   #     `127.0.0.1:9091` Authelia probe and `127.0.0.1:<JELLYFIN_PORT>`
   #     Jellyfin probe keep working — the latter via the hostPort.
   #   - #1725/#1730: Audiobookshelf fully retired. This pod no longer runs
-  #     ABS, `books.<domain>` is repointed to Jellyfin (variables.json:
-  #     ABS_SUBDOMAIN.proxyPort → JELLYFIN_PORT), and the `audiobookshelf`
-  #     OIDC client is dropped. On an upgrade the v5→v6 migration tears
-  #     down the now-orphaned `media-audiobookshelf` container (left
-  #     `Up` by #1725, which only stopped *shipping* it in the pod) but
-  #     leaves its {{DATA_DIR}}/media/audiobookshelf-* data dirs untouched
-  #     on disk (non-destructive). Audiobooks are served by Jellyfin's
+  #     ABS and the `audiobookshelf` OIDC client is dropped. On an upgrade
+  #     the v5→v6 migration tears down the now-orphaned
+  #     `media-audiobookshelf` container (left `Up` by #1725, which only
+  #     stopped *shipping* it in the pod) but leaves its
+  #     {{DATA_DIR}}/media/audiobookshelf-* data dirs untouched on disk
+  #     (non-destructive). Audiobooks are served by Jellyfin's
   #     /media/audiobooks library (registered in post-deploy.py).
+  #   - #2561 (v7): the transitional `books.<domain>` alias is gone. v6 had
+  #     repointed it at Jellyfin so operators kept the familiar address;
+  #     that arrangement is over. Jellyfin has exactly ONE hostname now,
+  #     `{{MEDIA_SUBDOMAIN}}.{{PUBLIC_DOMAIN}}` — the only `type: subdomain`
+  #     variable this template declares, so a deploy can only ever create
+  #     that one proxy host. The v6→v7 migration removes the leftover alias
+  #     on boxes that still have it.
   hostAliases:
     - ip: "{{HOST_GATEWAY_IP}}"
       hostnames:

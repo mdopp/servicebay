@@ -31,19 +31,20 @@ vi.mock('@/lib/health/store', () => ({ HealthStore: { getLastResult: vi.fn(() =>
 
 import { resolveServiceUrl } from './services';
 
-/** A `media`-shaped template: two subdomains in one pod, so the proxy-host
- *  match can only be made on forwardPort. */
+/** A `file-share`-shaped template: two subdomains in one pod, so the
+ *  proxy-host match can only be made on forwardPort. */
 const VARIABLES = {
-  ABS_SUBDOMAIN: { type: 'subdomain', default: 'books', proxyPort: 'ABS_PORT' },
-  ABS_PORT: { type: 'text', default: '13378' },
-  JELLYFIN_SUBDOMAIN: { type: 'subdomain', default: 'watch', proxyPort: '8096' },
+  FILEBROWSER_SUBDOMAIN: { type: 'subdomain', default: 'files', proxyPort: 'FILEBROWSER_PORT' },
+  FILEBROWSER_PORT: { type: 'text', default: '13378' },
+  SYNCTHING_SUBDOMAIN: { type: 'subdomain', default: 'sync', proxyPort: '8096' },
 };
 
-/** Both hosts carry `service: media` — `buildProxyHosts` writes the template
- *  name on every host in the template, so only the port discriminates. */
+/** Both hosts carry `service: file-share` — `buildProxyHosts` writes the
+ *  template name on every host in the template, so only the port
+ *  discriminates. */
 const HOSTS = [
-  { created: true, forwardPort: 8096, domain: 'watch.example.com', service: 'media' },
-  { created: true, forwardPort: 9999, domain: 'books.example.com', service: 'media' },
+  { created: true, forwardPort: 8096, domain: 'sync.example.com', service: 'file-share' },
+  { created: true, forwardPort: 9999, domain: 'files.example.com', service: 'file-share' },
 ];
 
 const cfg = (over: Record<string, unknown> = {}): AppConfig =>
@@ -57,23 +58,23 @@ describe('resolveServiceUrl proxyPort resolution (#2544)', () => {
   });
 
   it('matches the proxy host for the port the OPERATOR set', async () => {
-    const config = cfg({ installedVariables: [{ varName: 'ABS_PORT', value: '9999' }] });
-    expect(await resolveServiceUrl(config, 'media', 'ABS_SUBDOMAIN')).toBe('http://books.example.com');
+    const config = cfg({ installedVariables: [{ varName: 'FILEBROWSER_PORT', value: '9999' }] });
+    expect(await resolveServiceUrl(config, 'file-share', 'FILEBROWSER_SUBDOMAIN')).toBe('http://files.example.com');
   });
 
   it('lets a global Template Setting outrank the operator-set port', async () => {
     const config = cfg({
-      templateSettings: { ABS_PORT: '8096' },
-      installedVariables: [{ varName: 'ABS_PORT', value: '9999' }],
+      templateSettings: { FILEBROWSER_PORT: '8096' },
+      installedVariables: [{ varName: 'FILEBROWSER_PORT', value: '9999' }],
     });
     // 8096 wins → matches the OTHER host, proving precedence is honoured
     // rather than the operator value simply always winning.
-    expect(await resolveServiceUrl(config, 'media', 'ABS_SUBDOMAIN')).toBe('http://watch.example.com');
+    expect(await resolveServiceUrl(config, 'file-share', 'FILEBROWSER_SUBDOMAIN')).toBe('http://sync.example.com');
   });
 
   it('still resolves a literal proxyPort and the template default', async () => {
-    expect(await resolveServiceUrl(cfg(), 'media', 'JELLYFIN_SUBDOMAIN')).toBe('http://watch.example.com');
-    // ABS_PORT default 13378 matches no host → documented fallback URL.
-    expect(await resolveServiceUrl(cfg(), 'media', 'ABS_SUBDOMAIN')).toBe('http://books.home.arpa');
+    expect(await resolveServiceUrl(cfg(), 'file-share', 'SYNCTHING_SUBDOMAIN')).toBe('http://sync.example.com');
+    // FILEBROWSER_PORT default 13378 matches no host → documented fallback URL.
+    expect(await resolveServiceUrl(cfg(), 'file-share', 'FILEBROWSER_SUBDOMAIN')).toBe('http://files.home.arpa');
   });
 });

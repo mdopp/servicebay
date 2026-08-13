@@ -40,21 +40,6 @@ export interface Credential {
    * the captured template name).
    */
   template?: string;
-  /**
-   * ISO timestamp of when this entry was handed off to the operator's
-   * Vaultwarden vault (#2519). Once set, ServiceBay no longer keeps the
-   * secret: `password` is emptied and only the pointer (service / url /
-   * username / notes) remains, so Settings can still list *what* exists
-   * without being a second password manager.
-   *
-   * Absent ⇒ **not yet secured** — ServiceBay is still the only place
-   * this secret lives, and the UI says so. A re-install or rotation
-   * replaces the owning template's entries wholesale (see
-   * `mergeCredentials` / `capabilities/credentials.ts`), which drops
-   * `securedAt` with them — the fresh secret is unsecured again, by
-   * construction, because ServiceBay cannot know whether it changed.
-   */
-  securedAt?: string;
 }
 
 interface BuildOpts {
@@ -127,21 +112,27 @@ export function mergeCredentials(
 }
 
 /**
- * True once the entry has been handed off to Vaultwarden and ServiceBay
- * dropped its own copy of the secret (#2519).
+ * True once the entry has been handed over to the operator and ServiceBay
+ * dropped its own copy of the secret (#2560).
+ *
+ * There is no separate marker: **the absence of the password IS the
+ * state.** An earlier design carried a `securedAt` timestamp alongside an
+ * emptied password, which made "handed over" and "we still hold it"
+ * two facts that had to be kept in agreement by discipline. Deriving the
+ * state from the secret itself makes the inconsistent case unrepresentable
+ * — and there is now exactly one way out of "not yet handed over" (a
+ * proven download), so a timestamp adds nothing a reader needs.
  */
-export function isCredentialSecured(cred: Pick<Credential, 'securedAt'>): boolean {
-  return typeof cred.securedAt === 'string' && cred.securedAt.length > 0;
+export function isCredentialSecured(cred: Pick<Credential, 'password'>): boolean {
+  return !cred.password;
 }
 
 export interface CredentialSecuritySummary {
   total: number;
-  /** Entries whose secret now lives only in Vaultwarden. */
+  /** Entries ServiceBay no longer holds the secret for. */
   secured: number;
   /** Entries ServiceBay still holds the secret for — the risk surface. */
   unsecured: number;
-  /** Newest `securedAt` across secured entries, or null when none. */
-  lastSecuredAt: string | null;
 }
 
 /** Roll a manifest up into the counts Settings renders instead of passwords. */
@@ -149,69 +140,42 @@ export function summarizeCredentialSecurity(
   creds: readonly Credential[],
 ): CredentialSecuritySummary {
   let secured = 0;
-  let lastSecuredAt: string | null = null;
-  for (const c of creds) {
-    if (!isCredentialSecured(c)) continue;
-    secured++;
-    if (!lastSecuredAt || c.securedAt! > lastSecuredAt) lastSecuredAt = c.securedAt!;
-  }
-  return { total: creds.length, secured, unsecured: creds.length - secured, lastSecuredAt };
+  for (const c of creds) if (isCredentialSecured(c)) secured++;
+  return { total: creds.length, secured, unsecured: creds.length - secured };
 }
 
 /**
- * Mark every not-yet-secured entry as handed off, **dropping ServiceBay's
- * copy of the secret in the same step** (#2519).
+ * Stable identity of a credential entry across re-installs and rotations.
  *
- * Emptying `password` is the point, not a side effect: "secured" and "we
- * still hold it" must never be representable at the same time, so the two
- * can't drift apart. Already-secured entries pass through untouched (their
- * original `securedAt` is the honest one).
- */
-export function markCredentialsSecured(
-  creds: readonly Credential[],
-  at: string,
-): Credential[] {
-  return creds.map(c => (isCredentialSecured(c) ? c : { ...c, password: '', securedAt: at }));
-}
-
-/**
- * Stable identity of a credential entry across re-installs and rotations
- * (#2519).
- *
- * Also the value of the `servicebay-id` custom field on the Vaultwarden
- * item, which is what makes a repeat push an **update** instead of a
- * duplicate: the vault item survives ServiceBay replacing the local entry
- * (a re-install drops and re-adds the template's entries), so identity
- * has to be derivable from the entry's own content rather than from a
- * stored item id.
+ * Identifies *which* entries a hand-over actually delivered: the download
+ * is built from a snapshot, and an install that finishes between the
+ * download and its confirmation adds entries that were never in the file.
+ * Those must survive the drop, so the confirmation names what it received
+ * rather than saying "everything pending".
  *
  * `username` is part of the key on purpose — a template that provisions
  * two accounts for the same service (admin + a service user) must not
- * collapse into one vault item.
+ * collapse into one entry.
  */
 export function credentialKey(cred: Pick<Credential, 'service' | 'username' | 'template'>): string {
   return `${cred.template ?? ''}::${cred.service}::${cred.username}`;
 }
 
 /**
- * Mark exactly the entries whose key is in `keys` as secured, dropping
- * ServiceBay's copy of their password in the same map (#2519).
+ * Drop ServiceBay's copy of the password for exactly the entries whose key
+ * is in `keys` — the ones a hand-over proved it delivered (#2560).
  *
- * The narrow counterpart to `markCredentialsSecured`: an automated push
- * confirms items **one at a time**, so an entry whose read-back failed
- * must keep its password and stay visibly unsecured while its neighbours
- * are secured. Marking the whole manifest on a partial success is exactly
- * the optimistic failure this feature exists to avoid.
+ * The entry itself stays: service, URL, username and notes remain so
+ * Settings can still say *what* exists. Everything not named in `keys`
+ * keeps its password, which is what makes a partial or stale delivery
+ * safe: an unnamed entry is simply still pending.
  */
-export function markCredentialsSecuredByKey(
+export function dropDeliveredPasswords(
   creds: readonly Credential[],
   keys: ReadonlySet<string>,
-  at: string,
 ): Credential[] {
   return creds.map(c =>
-    isCredentialSecured(c) || !keys.has(credentialKey(c))
-      ? c
-      : { ...c, password: '', securedAt: at },
+    isCredentialSecured(c) || !keys.has(credentialKey(c)) ? c : { ...c, password: '' },
   );
 }
 
@@ -311,10 +275,10 @@ export function resolveCredentialUrl(
  *  public subdomain (#1626) — keeping the CSV import in lock-step with
  *  what the Saved-credentials table shows.
  *
- *  Entries already secured in Vaultwarden are skipped (#2519) — their
- *  `password` was dropped at hand-off, so exporting them would produce
- *  rows that overwrite a real vault item with an empty one. The CSV is
- *  exactly "what is still only on this box". */
+ *  Entries already handed over are skipped (#2560) — their `password` was
+ *  dropped at hand-off, so exporting them would produce rows that
+ *  overwrite a real vault item with an empty one. The CSV is exactly
+ *  "what is still only on this box". */
 export function buildBitwardenCsv(manifest: Credential[], ctx: CredentialUrlContext = {}): string {
   const escape = (s: string) => `"${(s ?? '').replace(/"/g, '""')}"`;
   const header = [
@@ -342,4 +306,39 @@ export function buildBitwardenCsv(manifest: Credential[], ctx: CredentialUrlCont
   });
 
   return [header, ...rows].join('\n') + '\n';
+}
+
+/**
+ * Receipt for a delivered credential file (#2560) — the value the browser
+ * sends back to prove it holds the complete document, and the only thing
+ * that licenses ServiceBay to delete its copy.
+ *
+ * Byte length plus a 64-bit FNV-1a over the UTF-8 bytes. Deliberately
+ * **not** SubtleCrypto: `crypto.subtle` is undefined on an insecure
+ * origin, and a box reached over plain http on the LAN is the normal case
+ * — a hand-over that silently can't run there would be a worse failure
+ * than the one it replaces. Deliberately not a second implementation
+ * either; one function both sides call is what keeps the two ends from
+ * drifting.
+ *
+ * This is a completeness check, not a security primitive, and it does not
+ * need to be one: the caller is an authenticated session that could read
+ * the manifest and wipe it outright. What it must catch is *our own*
+ * optimism — a truncated response, a stale file, a `catch` that skipped
+ * the save — and for that, "you cannot produce this without the whole
+ * file" is exactly the property required.
+ */
+export function credentialReceipt(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  // Two independent 32-bit rolls rather than one 64-bit one: `Math.imul`
+  // works everywhere this code runs, where BigInt literals need a newer
+  // compile target than the shared package builds to.
+  let a = 0x811c9dc5;
+  let b = 0xc2b2ae35;
+  for (let i = 0; i < bytes.length; i++) {
+    a = Math.imul(a ^ bytes[i], 0x01000193) >>> 0;
+    b = Math.imul(b ^ (bytes[i] + i), 0x85ebca6b) >>> 0;
+  }
+  const hex = (n: number) => n.toString(16).padStart(8, '0');
+  return `${bytes.length}-${hex(a)}${hex(b)}`;
 }

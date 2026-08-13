@@ -28,6 +28,7 @@ import Mustache from 'mustache';
 import yaml from 'js-yaml';
 import { describe, it, expect } from 'vitest';
 import { findGpuMultiContainerError } from '@/lib/services/podSchema';
+import { buildProxyHosts } from '@/lib/stackInstall/postInstall';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const TEMPLATES_DIR = path.join(REPO_ROOT, 'templates');
@@ -289,7 +290,7 @@ describe('Declared template variables are used', () => {
         // `type: subdomain` vars are consumed STRUCTURALLY by the platform
         // (buildProxyHosts turns them into NPM proxy hosts) rather than by a
         // `{{...}}` reference, so absence from the template's own files is
-        // expected and correct — see media's ABS_SUBDOMAIN (#2381).
+        // expected and correct — e.g. auth's LLDAP_SUBDOMAIN (#2381).
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         .filter(([, spec]) => (spec as any)?.type !== 'subdomain')
         .map(([name]) => name)
@@ -1169,24 +1170,52 @@ describe('Media template: Audiobookshelf retired for fresh installs (#1725)', ()
     expect(JSON.stringify(pod)).not.toMatch(/audiobookshelf-config|abs-audiobooks|abs-podcasts/);
   });
 
-  it('declares no orphaned ABS_* variables (#2381)', () => {
+  it('declares no ABS_* variables at all (#2381, #2561)', () => {
     // #1725/#1730 retired Audiobookshelf but left its variables declared, so
     // the install/edit wizard kept rendering "Abs Admin Password" &c. for a
-    // container the pod no longer runs (#2381). Every declared variable must
-    // be live: referenced by template.yml/post-deploy.py, or — for
-    // `type: subdomain` — consumed structurally by buildProxyHosts.
-    // `ABS_SUBDOMAIN` is the one legitimate survivor: it declares the
-    // `books.<domain>` proxy host that v6 repointed to JELLYFIN_PORT.
-    const absVars = Object.keys(media.variables).filter(n => n.startsWith('ABS_'));
-    expect(absVars).toEqual(['ABS_SUBDOMAIN']);
-    expect(media.variables.ABS_SUBDOMAIN.type).toBe('subdomain');
-    expect(media.variables.ABS_SUBDOMAIN.proxyPort).toBe('JELLYFIN_PORT');
+    // container the pod no longer runs (#2381). `ABS_SUBDOMAIN` survived that
+    // sweep because it still declared the `books.<domain>` proxy host v6 had
+    // repointed at Jellyfin — v7 (#2561) ends that transitional arrangement,
+    // so the last ABS_* variable is gone too.
+    expect(Object.keys(media.variables).filter(n => n.startsWith('ABS_'))).toEqual([]);
   });
 
-  it('schema-version is bumped to 6 with a matching CHANGELOG section', () => {
-    expect(media.yamlContent).toMatch(/servicebay\.schema-version:\s*"6"/);
+  it('a deploy can only create media.<domain> — the books route is structurally impossible (#2561)', () => {
+    // The load-bearing proof that removing the declaration removes the route:
+    // ServiceBay derives proxy hosts from `type: subdomain` DECLARATIONS via
+    // buildProxyHosts, so feeding it exactly what the media template declares
+    // is what a fresh deploy of `media` would create. Asserting the absence of
+    // the declaration alone would not show that.
+    const subdomainVars = Object.entries(media.variables)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .filter(([, spec]) => (spec as any)?.type === 'subdomain');
+    expect(subdomainVars.map(([name]) => name)).toEqual(['MEDIA_SUBDOMAIN']);
+
+    const { hosts } = buildProxyHosts([
+      { name: 'PUBLIC_DOMAIN', value: 'dopp.cloud' },
+      { name: 'JELLYFIN_PORT', value: mediaView.JELLYFIN_PORT },
+      ...subdomainVars.map(([name, spec]) => ({
+        name,
+        value: String(spec.default ?? ''),
+        meta: { ...spec, templateName: 'media' },
+      })),
+    ]);
+    expect(hosts.map(h => h.domain)).toEqual(['media.dopp.cloud']);
+    expect(hosts[0].forwardPort).toBe(8096);
+    expect(JSON.stringify(hosts)).not.toMatch(/books/);
+  });
+
+  it('schema-version is bumped to 7 with a matching CHANGELOG section', () => {
+    expect(media.yamlContent).toMatch(/servicebay\.schema-version:\s*"7"/);
     const changelog = fs.readFileSync(path.join(TEMPLATES_DIR, 'media', 'CHANGELOG.md'), 'utf-8');
-    expect(changelog).toMatch(/##\s*v6\b/);
+    expect(changelog).toMatch(/##\s*v7\b.*\(breaking\)/);
+    // The operator's required action leads the section: they lose an address
+    // and need to be told its replacement in the first sentence, not the last
+    // (docs/TEMPLATE_AUTHORING.md).
+    const v7 = changelog.slice(changelog.indexOf('## v7'), changelog.indexOf('## v6'));
+    const lead = v7.split('###')[0];
+    expect(lead).toMatch(/books\.<domain>/);
+    expect(lead).toMatch(/media\.<domain>/);
   });
 
   it('the v5-to-v6 migration is non-destructive (leaves ABS data on disk)', () => {
@@ -1196,6 +1225,23 @@ describe('Media template: Audiobookshelf retired for fresh installs (#1725)', ()
     // The migration must NOT delete/move the ABS data dirs — it only informs.
     expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);
     expect(mig).toMatch(/UNTOUCHED|preserved/i);
+  });
+
+  it('the v6-to-v7 migration clears the stale books route and touches no data (#2561)', () => {
+    const mig = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'media', 'migrations', 'v6-to-v7.py'), 'utf-8',
+    );
+    // Removing the declaration stops FUTURE deploys creating the route, but
+    // nothing prunes the host that already exists (the nginx capability
+    // handler only creates on feature.installed; dangling_proxy ignores a
+    // route whose target is alive). Hence the DELETE through ServiceBay's
+    // own proxy-hosts endpoint.
+    expect(mig).toMatch(/api\/system\/nginx\/proxy-hosts/);
+    expect(mig).toMatch(/"DELETE"/);
+    // Route cleanup only — no on-disk data may move.
+    expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);
+    // Best-effort like v5-to-v6: a leftover route must never abort a deploy.
+    expect(mig).not.toMatch(/return 1|sys\.exit\(1\)/);
   });
 });
 

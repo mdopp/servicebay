@@ -18,6 +18,7 @@ export { getLayoutedElements } from '@/lib/network/layout';
 export { groupVariablesByTemplate } from '@/lib/stackInstall/groupVariables';
 export {
   buildBitwardenCsv,
+  credentialReceipt,
   resolveCredentialUrl,
   isHttpUrl,
   isCredentialSecured,

@@ -3,8 +3,8 @@
 # (optionally) video/photos — on one subdomain. Audiobookshelf was retired
 # (#1725/#1730); audiobooks are now a Jellyfin library, so the family portal
 # shows ONE "Media" card whose Open button routes to Jellyfin. The legacy
-# `books.<domain>` URL still resolves (it redirects to Jellyfin) but no longer
-# gets its own tile.
+# `books.<domain>` URL is gone as of v7 (#2561) — `media.<domain>` is the
+# only address Jellyfin answers on.
 cards:
   - subdomain_var: "MEDIA_SUBDOMAIN"
     label: "Media"
