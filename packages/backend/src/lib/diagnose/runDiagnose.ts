@@ -36,6 +36,7 @@ import { checkNasBackupReachable } from '@/lib/diagnose/probes/nasBackupReachabl
 import { checkHaAutomationIntegrity } from '@/lib/diagnose/probes/haAutomationIntegrity';
 import { checkSsoVerify } from '@/lib/diagnose/probes/ssoVerify';
 import { checkHermesChat } from '@/lib/diagnose/probes/hermesChat';
+import { evaluateRaidHealth, PROBE_ID as RAID_PROBE_ID, PROBE_LABEL as RAID_PROBE_LABEL } from '@/lib/diagnose/probes/raidDegraded';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
 import { persistDiagnoseResults, buildProbeHistory, type ProbeHistory } from '@/lib/diagnose/persistDiagnoseResults';
 import '@/lib/diagnose/probes/register';
@@ -102,6 +103,7 @@ const PROBE_GROUP: Record<string, ProbeGroup> = {
   hermes_chat: 'services',
   // Storage & backups
   disk: 'storage-backups',
+  raid: 'storage-backups',
   nas_backup_reachable: 'storage-backups',
   // System info (collapsed — not a problem)
   serial: 'system-info',
@@ -393,6 +395,7 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     listen,
     serial,
     disk,
+    mdstat,
     firstBoot,
     uptimeRes,
     psStatus,
@@ -403,6 +406,10 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     exec('ss -ltn 2>/dev/null | tail -n +2 | awk \'{print $4}\' | awk -F: \'{print $NF}\' | sort -nu', 4000),
     exec('ls -la /dev/serial/by-id/ 2>/dev/null | grep -v "^total" | awk \'{print $NF}\' | grep -v "^$"', 3000),
     exec('df -h /mnt/data 2>/dev/null | tail -1', 3000),
+    // The kernel's own view of every md array (#2526). `df` above only
+    // proves the filesystem mounts — it says nothing about whether the
+    // RAID1 underneath it still has both members.
+    exec('cat /proc/mdstat', 3000),
     exec(
       'systemctl --no-pager status setup-raid install-python install-nginx 2>&1 | grep -E "(●|Active:)" | head -20',
       5000,
@@ -582,6 +589,23 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     status: diskStatus,
     detail: diskLine || 'no df output',
     hint: diskHint,
+  });
+
+  // 7b) RAID array health (#2526). Distinct probe rather than folded into
+  //     `disk`, because the two answer different questions: `disk` is
+  //     "will writes fit?", this is "is there still a mirror?". A box whose
+  //     data array lost (or never had) its second member mounts and fills
+  //     exactly like a healthy one, so nothing else on the box notices —
+  //     mdmonitor only fires on a failure *event*, and the weekly
+  //     raid-check reports mismatch_cnt=0 on a degraded array.
+  const raid = evaluateRaidHealth(mdstat.stdout ?? '', mdstat.code);
+  probes.push({
+    id: RAID_PROBE_ID,
+    label: RAID_PROBE_LABEL,
+    status: raid.status,
+    detail: raid.detail,
+    hint: raid.hint,
+    _items: raid.items,
   });
 
   // 8) First-boot oneshot units (FCOS only)

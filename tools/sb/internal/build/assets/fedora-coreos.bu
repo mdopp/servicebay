@@ -313,7 +313,27 @@ storage:
             # For nvme disks the partition is e.g. /dev/nvme0n1p1
             [[ -e "$PART" ]] || PART="${RAID_DISK}p1"
 
-            # Create degraded RAID1 (second disk missing)
+            # Create the data array as a 2-member RAID1 with the literal
+            # keyword `missing` in slot 1. This is DELIBERATE, not a bug —
+            # do not "fix" it by dropping to --raid-devices=1 or by adding
+            # a second device here (see #1666, #2526):
+            #
+            #   * Most boxes ship with one data disk. Declaring 2 members
+            #     now means a mirror can be added later with a plain
+            #     `mdadm --manage /dev/md/data --add /dev/<part>` — no
+            #     backup, reshape or reformat of live data.
+            #   * There is no second disk to name at this point in first
+            #     boot: the loop above picked the single largest non-OS
+            #     disk, and anything else present is the OS disk or
+            #     removable.
+            #
+            # The cost is real and must stay visible: the array runs
+            # degraded ([2/1] [U_]) with NO redundancy until an operator
+            # adds a member, and that state is indistinguishable from a
+            # failed disk when read from /proc/mdstat alone. The `raid`
+            # diagnose probe (packages/backend/src/lib/diagnose/probes/
+            # raidDegraded.ts) surfaces it and explains the difference —
+            # keep the two in sync if this line ever changes.
             mdadm --create /dev/md/data --level=1 --raid-devices=2 --metadata=1.2 \
               --run "$PART" missing
 

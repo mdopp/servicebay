@@ -25,6 +25,10 @@ describe('groupForProbe (#1534 problem-domain grouping)', () => {
       cert_expiry: 'tls',
       sso_verify: 'sso',
       disk: 'storage-backups',
+      // #2526 — a degraded array is a storage problem, so it rides the
+      // prominent "Storage & backups" card, NOT the collapsed system-info
+      // panel where an operator would never trip over it.
+      raid: 'storage-backups',
       nas_backup_reachable: 'storage-backups',
     };
     for (const [id, group] of Object.entries(cases)) {
