@@ -34,6 +34,11 @@ vi.mock('./savedSecrets', () => ({
   persistSingleSecret: (n: string, v: string) => persistSingleSecret(n, v),
 }));
 
+const loadSavedVariables = vi.fn<() => Record<string, string>>(() => ({}));
+vi.mock('./savedVariables', () => ({
+  loadSavedVariables: () => loadSavedVariables(),
+}));
+
 import { assembleManifest, deriveLdapBaseDn } from './manifestAssembler';
 
 /** Minimal pod yaml carrying the dependency annotation + a `{{VAR}}`. */
@@ -69,6 +74,47 @@ beforeEach(() => {
   loadSavedSecrets.mockReturnValue({});
   persistSingleSecret.mockReset();
   persistSingleSecret.mockResolvedValue(true);
+  loadSavedVariables.mockReset();
+  loadSavedVariables.mockReturnValue({});
+});
+
+describe('assembleManifest — operator-set variable reuse (#2531)', () => {
+  it('restores an operator-set text value that the template defaults to empty', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('solaris', []));
+    getTemplateVariables.mockResolvedValue({ VAPID_PUBLIC_KEY: { type: 'text', default: '' } });
+    loadSavedVariables.mockReturnValue({ VAPID_PUBLIC_KEY: 'BKxOperatorSetKey' });
+
+    const r = await assembleManifest({ items: [{ name: 'solaris', checked: true }] });
+
+    expect(r.variables.find(v => v.name === 'VAPID_PUBLIC_KEY')?.value).toBe('BKxOperatorSetKey');
+  });
+
+  it('ranks the operator value above the template default, and prefilled above both', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', []));
+    getTemplateVariables.mockResolvedValue({
+      PORT: { type: 'text', default: '8080' },
+      OTHER: { type: 'text', default: '1' },
+    });
+    loadSavedVariables.mockReturnValue({ PORT: '9000', OTHER: '2' });
+
+    const r = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      prefilled: { OTHER: '3' },
+    });
+
+    expect(r.variables.find(v => v.name === 'PORT')?.value).toBe('9000');
+    expect(r.variables.find(v => v.name === 'OTHER')?.value).toBe('3');
+  });
+
+  it('leaves a variable the operator never set on the template default', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', []));
+    getTemplateVariables.mockResolvedValue({ PORT: { type: 'text', default: '8080' } });
+    loadSavedVariables.mockReturnValue({});
+
+    const r = await assembleManifest({ items: [{ name: 'svc', checked: true }] });
+
+    expect(r.variables.find(v => v.name === 'PORT')?.value).toBe('8080');
+  });
 });
 
 describe('assembleManifest', () => {

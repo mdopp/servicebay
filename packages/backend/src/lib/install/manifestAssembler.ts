@@ -37,6 +37,7 @@ import { readManifestAnnotations } from '@/lib/template/contract';
 import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
 import { getConfig } from '@/lib/config';
 import { loadSavedSecrets, persistSingleSecret } from './savedSecrets';
+import { loadSavedVariables } from './savedVariables';
 import type { JobInput, JobInputItem, JobInputVariable } from './jobStore';
 
 /** A template the caller wants installed. Mirrors the wizard's
@@ -390,6 +391,11 @@ export async function assembleManifest(
   // Saved secret values — reused so a service with a pre-existing data
   // volume keeps the password it was initialised with (#615).
   const storedValues: Record<string, string> = loadSavedSecrets(config);
+  // Operator-set non-secret values from the last install (#2531) — the
+  // non-secret twin of `storedValues`. Without it a `text` variable the
+  // operator typed and that has no default came back empty on every
+  // reinstall, with no error.
+  const savedVariables: Record<string, string> = loadSavedVariables(config);
 
   const vars = new Set<string>();
   const allMeta: Record<string, VariableMeta> = {};
@@ -496,6 +502,11 @@ export async function assembleManifest(
     if (name === 'OLLAMA_GPU_PASSTHROUGH' && !value && (await hostHasNvidiaCdi())) {
       value = 'yes';
     }
+    // #2531 — a value the operator set on a previous install outranks the
+    // template default. Only genuinely operator-set values are stored (see
+    // savedVariables.ts), so a template that BUMPS a default still reaches a
+    // box that never overrode it — the #1297 contract is preserved.
+    if (!value && savedVariables[name]) value = savedVariables[name];
     if (!value && meta?.default) value = meta.default;
 
     if (!value && meta?.type === 'secret') {
@@ -599,24 +610,58 @@ export async function assembleManifest(
  * so every path — wizard and replayed reinstall — gets the same defaults
  * applied. A non-empty manifest value always wins; a default only fills a
  * missing/empty slot. Returns the input unchanged when nothing needed filling.
+ *
+ * #2531 — the same slot-filling now also restores values the OPERATOR set on a
+ * previous install (`config.installedVariables`), which outrank the template
+ * default. This is the end-to-end point: it runs for the MCP `install_template`
+ * path and for `POST /api/install/start`, including the reinstall that replays
+ * a saved JobInput and never touches `assembleManifest`.
  */
-export async function applyVariableDefaults(
-  input: JobInput,
-  templateSource?: string,
-): Promise<JobInput> {
+/**
+ * `varName → value` to fill into any missing/empty slot of a JobInput, for the
+ * templates this install actually deploys.
+ *
+ * Precedence: an operator-set value from a previous install (#2531) outranks
+ * the template's `variables.json` default (#1297) — both only ever fill a gap,
+ * so a value the manifest already carries wins over either.
+ */
+async function collectVariableFills(
+  items: JobInputItem[],
+  templateSource: string | undefined,
+): Promise<Map<string, string>> {
   // First template to declare a variable owns its default (mirrors
   // assembleManifest's grouping), so only record the first non-empty default.
-  const fills = new Map<string, string>();
-  for (const item of input.items) {
+  const defaults = new Map<string, string>();
+  const declared = new Set<string>();
+  for (const item of items) {
     if (!item.checked || item.alreadyInstalled) continue;
     const meta = await getTemplateVariables(item.name, templateSource).catch(() => null);
     if (!meta) continue;
     for (const [name, m] of Object.entries(meta)) {
-      if (m.default !== undefined && m.default !== '' && !fills.has(name)) {
-        fills.set(name, m.default);
+      declared.add(name);
+      if (m.default !== undefined && m.default !== '' && !defaults.has(name)) {
+        defaults.set(name, m.default);
       }
     }
   }
+
+  const cfg = await getConfig().catch(() => null);
+  const savedVariables = cfg ? loadSavedVariables(cfg) : {};
+  const fills = new Map<string, string>();
+  for (const name of declared) {
+    if (savedVariables[name]) fills.set(name, savedVariables[name]);
+  }
+  for (const [name, def] of defaults) {
+    if (!fills.has(name)) fills.set(name, def);
+  }
+  return fills;
+}
+
+export async function applyVariableDefaults(
+  input: JobInput,
+  templateSource?: string,
+): Promise<JobInput> {
+  const fills = await collectVariableFills(input.items, templateSource);
 
   const next: JobInputVariable[] = input.variables.map(v => ({ ...v }));
   const indexByName = new Map(next.map((v, i) => [v.name, i]));

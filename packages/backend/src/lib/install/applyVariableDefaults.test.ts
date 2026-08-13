@@ -24,7 +24,12 @@ function input(partial: Partial<JobInput>): JobInput {
   return { ...base, ...partial };
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  // #2531 — the saved operator-set variables are read from config on every
+  // call, so every test needs a config. Individual tests override.
+  mockCfg.getConfig.mockResolvedValue({});
+});
 
 describe('applyVariableDefaults (#1297)', () => {
   it('fills a newly-added variable default that is missing from a replayed manifest', async () => {
@@ -119,5 +124,79 @@ describe('applyVariableDefaults (#1297)', () => {
     const out = await applyVariableDefaults(original);
     expect(original.variables).toHaveLength(0); // untouched
     expect(out.variables).toHaveLength(1);
+  });
+});
+
+/**
+ * #2531 — this is the END-TO-END point for the reported failure: the reinstall
+ * path replays a saved JobInput and never calls `assembleManifest`, but every
+ * install (MCP `install_template` and `POST /api/install/start`) goes through
+ * `applyVariableDefaults`. The operator's value has to be restored here.
+ */
+describe('applyVariableDefaults — operator-set values survive a reinstall (#2531)', () => {
+  const solaris = {
+    VAPID_PUBLIC_KEY: { type: 'text', default: '' },
+    VAPID_SUBJECT: { type: 'text', default: '' },
+    VAPID_PRIVATE_KEY: { type: 'secret' },
+  };
+
+  it('restores an operator-set text variable whose variables.json default is empty', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue(solaris);
+    mockCfg.getConfig.mockResolvedValue({
+      installedVariables: [{ varName: 'VAPID_PUBLIC_KEY', value: 'BKxOperatorSetKey' }],
+    });
+    // The reported repro: plain reinstall, no overrides, the replayed manifest
+    // carries the variable with the blank the previous run left behind.
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'solaris', checked: true }],
+      variables: [{ name: 'VAPID_PUBLIC_KEY', value: '' }, { name: 'VAPID_SUBJECT', value: '' }],
+    }));
+    expect(out.variables.find(v => v.name === 'VAPID_PUBLIC_KEY')?.value).toBe('BKxOperatorSetKey');
+    // A variable that was blank BY DESIGN stays blank — nothing is invented.
+    expect(out.variables.find(v => v.name === 'VAPID_SUBJECT')?.value).toBe('');
+  });
+
+  it('adds the variable back when the replayed manifest predates it', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue(solaris);
+    mockCfg.getConfig.mockResolvedValue({
+      installedVariables: [{ varName: 'VAPID_PUBLIC_KEY', value: 'BKx' }],
+    });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'solaris', checked: true }],
+      variables: [],
+    }));
+    expect(out.variables.find(v => v.name === 'VAPID_PUBLIC_KEY')?.value).toBe('BKx');
+  });
+
+  it('ranks the operator value above the template default', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue({ PORT: { type: 'text', default: '8080' } });
+    mockCfg.getConfig.mockResolvedValue({ installedVariables: [{ varName: 'PORT', value: '9000' }] });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'x', checked: true }],
+      variables: [{ name: 'PORT', value: '' }],
+    }));
+    expect(out.variables.find(v => v.name === 'PORT')?.value).toBe('9000');
+  });
+
+  it('still lets an explicit manifest value win over the saved one', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue({ PORT: { type: 'text', default: '8080' } });
+    mockCfg.getConfig.mockResolvedValue({ installedVariables: [{ varName: 'PORT', value: '9000' }] });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'x', checked: true }],
+      variables: [{ name: 'PORT', value: '7000' }],
+    }));
+    expect(out.variables.find(v => v.name === 'PORT')?.value).toBe('7000');
+  });
+
+  it('does not invent a variable the selected templates do not declare', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue({ FOO: { default: 'bar' } });
+    mockCfg.getConfig.mockResolvedValue({
+      installedVariables: [{ varName: 'SOME_OTHER_TEMPLATES_VAR', value: 'v' }],
+    });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'x', checked: true }],
+      variables: [],
+    }));
+    expect(out.variables.find(v => v.name === 'SOME_OTHER_TEMPLATES_VAR')).toBeUndefined();
   });
 });

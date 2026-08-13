@@ -1219,6 +1219,23 @@ async function runJob(jobId: string): Promise<void> {
     }
   }
 
+  // #2531 — the loud backstop for the non-secret twin of the reuse above.
+  // `applyVariableDefaults` restores operator-set values at the install entry
+  // point, so a variable that STILL arrives empty despite having a saved value
+  // means the restore did not happen (config unreadable, the record lost). That
+  // is a value being destroyed, not a field left blank — it gets its own line
+  // instead of being folded into the generic #1318 "rendered empty" warning.
+  {
+    try {
+      const { loadSavedVariables, findUnrecoveredVariables, buildUnrecoveredVariablesWarning } =
+        await import('./savedVariables');
+      const lost = findUnrecoveredVariables(input.variables, loadSavedVariables(await getConfig()));
+      if (lost.length > 0) await log(jobId, buildUnrecoveredVariablesWarning(lost));
+    } catch {
+      // Best-effort: a config read failure must not block the install.
+    }
+  }
+
   // Authelia storage self-heal — Authelia encrypts its SQLite storage
   // with AUTHELIA_STORAGE_ENCRYPTION_KEY. If the data dir survives a
   // reinstall but the new key doesn't match what encrypted that data,
@@ -1842,6 +1859,17 @@ async function runJob(jobId: string): Promise<void> {
     await persistInstalledSecrets(input.variables, await getConfig());
   } catch (e) {
     await log(jobId, `(note) couldn't persist installed secrets: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // #2531 — and the same for the operator-set NON-secret variables, so the
+  // next reinstall doesn't rebuild them from `variables.json` defaults and
+  // blank a value the operator typed. Same post-`done` placement and
+  // best-effort contract as the secrets above.
+  try {
+    const { persistInstalledVariables } = await import('./savedVariables');
+    await persistInstalledVariables(input.variables, await getConfig());
+  } catch (e) {
+    await log(jobId, `(note) couldn't persist operator-set variables: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // The CoreOS first-boot installer writes `stackSetupPending: true`
