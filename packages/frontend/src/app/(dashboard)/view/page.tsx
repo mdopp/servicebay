@@ -46,7 +46,8 @@ export default async function ViewPage({ searchParams }: ViewPageProps) {
   else if (path.endsWith('.sh')) language = 'bash';
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    // Page width comes from <PageFrame> in the dashboard layout (#2548).
+    <div className="p-6">
       <PageHeader
         title="File Viewer"
         showBack

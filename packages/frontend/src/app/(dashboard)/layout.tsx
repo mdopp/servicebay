@@ -4,6 +4,7 @@ import OnboardingWizard from '@/components/OnboardingWizard';
 import RestoreStatusBanner from '@/components/RestoreStatusBanner';
 import CoreHealthBanner from '@/components/CoreHealthBanner';
 import OfflineBanner from '@/components/OfflineBanner';
+import { PageFrame } from '@/components/ui';
 
 // Dashboard pages depend on the live Digital Twin state and SSH-pool
 // connectivity; never try to pre-render them at build time.
@@ -27,7 +28,9 @@ export default function DashboardLayout({
       <MobileTopBar />
       
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-white dark:bg-surface border border-border/60 dark:border-white/5 rounded-2xl shadow-xl relative">
-        {children}
+        {/* The single place a dashboard page's content width is decided (#2548).
+            Pages must not set their own — see components/ui/PageFrame.tsx. */}
+        <PageFrame>{children}</PageFrame>
       </main>
 
       <MobileBottomBar />

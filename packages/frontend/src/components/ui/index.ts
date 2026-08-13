@@ -39,5 +39,7 @@ export type { TableProps } from './Table';
 export { PageScroll, PageShell, PageScrollRegion } from './PageScroll';
 export type { PageScrollProps } from './PageScroll';
 
+export { PageFrame, PAGE_FRAME_CLASS } from './PageFrame';
+
 export { cn } from './cn';
 export type { ClassValue } from './cn';
