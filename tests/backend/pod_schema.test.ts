@@ -203,3 +203,114 @@ metadata:
         expect(r.error?.path).toMatch(/PVC/);
     });
 });
+
+// ─── GPU passthrough is single-container-only (#2517) ───────────────────────
+// `podman kube play` silently drops resources.limits outside cpu/memory, and
+// the `.container` Quadlet escape hatch is one container per unit. The
+// daggerheart-chronik shape (chronik + bot sharing hostPath volumes) deployed
+// healthy and ran on CPU with no error anywhere — that is what must now fail.
+describe('validatePodManifest: GPU in a multi-container pod (#2517)', () => {
+    const MULTI_GPU = `
+apiVersion: v1
+kind: Pod
+metadata:
+  name: daggerheart-chronik
+spec:
+  hostNetwork: true
+  containers:
+  - name: chronik
+    image: ghcr.io/example/chronik:latest
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+    volumeMounts:
+    - mountPath: /data
+      name: data
+  - name: bot
+    image: ghcr.io/example/bot:latest
+    volumeMounts:
+    - mountPath: /data
+      name: data
+  volumes:
+  - name: data
+    hostPath:
+      path: /mnt/data/daggerheart-chronik
+      type: DirectoryOrCreate
+`;
+
+    const SINGLE_GPU = `
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ollama
+spec:
+  hostNetwork: true
+  containers:
+  - name: ollama
+    image: docker.io/ollama/ollama:latest
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+`;
+
+    it('rejects the two-container pod that requests a GPU', () => {
+        const r = validatePodManifest(MULTI_GPU);
+        expect(r.ok).toBe(false);
+        expect(r.error?.path).toBe('spec.containers[chronik].resources.limits[nvidia.com/gpu]');
+    });
+
+    it('names the working alternative, not just the prohibition', () => {
+        const msg = validatePodManifest(MULTI_GPU).error?.message ?? '';
+        // Actionable: single-container service + `.container` Quadlet + where to read more.
+        expect(msg).toMatch(/SINGLE-container/);
+        expect(msg).toMatch(/\.container.*Quadlet/);
+        expect(msg).toMatch(/AddDevice=nvidia\.com\/gpu=all/);
+        expect(msg).toMatch(/hostPath volume/);
+        expect(msg).toMatch(/TEMPLATE_AUTHORING\.md/);
+    });
+
+    it('accepts a single-container pod that requests a GPU (the ollama shape)', () => {
+        expect(validatePodManifest(SINGLE_GPU).ok).toBe(true);
+    });
+
+    it('accepts a multi-container pod with no GPU limit', () => {
+        const yaml = MULTI_GPU.replace(/    resources:\n      limits:\n        nvidia\.com\/gpu: "1"\n/, '');
+        expect(yaml).not.toMatch(/nvidia/);
+        expect(validatePodManifest(yaml).ok).toBe(true);
+    });
+
+    it('accepts a multi-container pod with plain cpu/memory limits', () => {
+        const yaml = MULTI_GPU.replace('        nvidia.com/gpu: "1"', '        cpu: "2"\n        memory: 512Mi');
+        expect(validatePodManifest(yaml).ok).toBe(true);
+    });
+
+    it('catches a non-NVIDIA vendor GPU key too', () => {
+        const yaml = MULTI_GPU.replace('nvidia.com/gpu', 'amd.com/gpu');
+        const r = validatePodManifest(yaml);
+        expect(r.ok).toBe(false);
+        expect(r.error?.path).toContain('amd.com/gpu');
+    });
+
+    it('counts an initContainer toward the multi-container rule', () => {
+        const yaml = `
+apiVersion: v1
+kind: Pod
+metadata:
+  name: withinit
+spec:
+  hostNetwork: true
+  initContainers:
+  - name: prep
+    image: docker.io/library/busybox:latest
+  containers:
+  - name: app
+    image: docker.io/example/app:latest
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+`;
+        const r = validatePodManifest(yaml);
+        expect(r.ok).toBe(false);
+        expect(r.error?.path).toBe('spec.containers[app].resources.limits[nvidia.com/gpu]');
+    });
+});

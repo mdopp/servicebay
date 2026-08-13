@@ -70,6 +70,25 @@ example.
 
 #### GPU passthrough (CDI)
 
+**Single-container pods only.** `podman kube play` silently ignores
+every `resources.limits` key outside cpu/memory, so a GPU limit in a
+multi-container Pod deploys perfectly — healthy unit, green
+`/healthz`, nothing in the logs — and runs on CPU (#1026, #2517).
+ServiceBay's only escape hatch is swapping the service to a
+`.container` Quadlet with `AddDevice=nvidia.com/gpu=all`, and a
+`.container` unit is one container per unit, so there is no equivalent
+for a Pod with two containers. **This is enforced, not advisory:**
+`validatePodManifest` rejects the manifest at install time (POST/PUT
+`/api/services` — so every wizard install, MCP `deploy_service`,
+`update_service_yaml`, and bundle import, whichever registry the
+template came from), and the consistency suite rejects it at PR time
+for templates shipped here.
+
+If your service needs a GPU *and* sidecars: give the GPU workload its
+own single-container service and share state with the others through a
+hostPath volume both mount. Do not add a second container to the pod
+that holds the GPU limit.
+
 Templates that benefit from a GPU (Ollama, Immich's ML, media
 transcoding) opt in via a Mustache-section-gated `resources` block:
 
@@ -94,9 +113,14 @@ transcoding) opt in via a Mustache-section-gated `resources` block:
 
 The Quadlet generator passes `resources.limits.nvidia.com/gpu` through
 to podman, which matches it against the host's CDI device registry.
-Hosts without a registered NVIDIA GPU fail-fast at unit start time
-with a clear error — there is no silent fallback to CPU once the
-operator opts in.
+On a single-container service the template's `post-deploy.py` then
+swaps the unit to a `.container` Quadlet carrying
+`AddDevice=nvidia.com/gpu=all`, which is what actually attaches the
+card; `ServiceManager.reconcileContainerQuadletShadow` retires the
+shadowing `.kube`/`.yml` on every redeploy so the swap survives
+(#2174). Without that swap the limit is dropped and the container runs
+on CPU with no error — which is why the multi-container shape above is
+refused outright rather than deployed.
 
 Worked reference: `templates/ollama/`.
 

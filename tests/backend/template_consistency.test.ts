@@ -27,6 +27,7 @@ import path from 'path';
 import Mustache from 'mustache';
 import yaml from 'js-yaml';
 import { describe, it, expect } from 'vitest';
+import { findGpuMultiContainerError } from '@/lib/services/podSchema';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const TEMPLATES_DIR = path.join(REPO_ROOT, 'templates');
@@ -377,12 +378,11 @@ describe('Template variable defaults carry no concrete domain', () => {
   });
 });
 
-// ─── 3. Each template renders to a valid Pod ────────────────────────────────
-describe('Templates render to valid Pod manifests', () => {
-  /** Build a Mustache view that supplies a value for every variable referenced
-   *  by any template. Defaults from variables.json win; otherwise stub strings.
-   *  For section blocks (`{{#X}}...`) Mustache reads the value's truthiness;
-   *  defaults like '' would skip the block, which matches reality. */
+/** Build a Mustache view that supplies a value for every variable referenced
+ *  by any template. Defaults from variables.json win; otherwise stub strings.
+ *  For section blocks (`{{#X}}...`) Mustache reads the value's truthiness;
+ *  defaults like '' would skip the block, which matches reality. */
+function buildTemplateRenderView(): Record<string, string> {
   const view: Record<string, string> = {};
   for (const v of catalogVars) {
     // Stub fallbacks first; per-template defaults (if present) overwrite.
@@ -407,13 +407,19 @@ describe('Templates render to valid Pod manifests', () => {
       if (typeof def === 'string') view[name] = def;
     }
   }
+  // RSA private key is multi-line and pre-indented in the real wizard. Just
+  // give it a plausible single-line stub for parse-time validation.
+  view.AUTHELIA_OIDC_RSA_PRIVATE_KEY = '          -----BEGIN STUB-----\n          stub\n          -----END STUB-----';
+  return view;
+}
+
+// ─── 3. Each template renders to a valid Pod ────────────────────────────────
+describe('Templates render to valid Pod manifests', () => {
+  const view = buildTemplateRenderView();
   // ZWAVE_DEVICE acts as a section gate — when truthy, the home-assistant
   // template emits the Z-Wave container. Setting it to a fake path exercises
   // *more* of the YAML in the test, which is what we want.
   view.ZWAVE_DEVICE = '/dev/serial/by-id/stub-zwave';
-  // RSA private key is multi-line and pre-indented in the real wizard. Just
-  // give it a plausible single-line stub for parse-time validation.
-  view.AUTHELIA_OIDC_RSA_PRIVATE_KEY = '          -----BEGIN STUB-----\n          stub\n          -----END STUB-----';
 
   for (const t of templates) {
     it(`${t.name}: template.yml renders to a parseable Pod with ≥1 container`, () => {
@@ -461,6 +467,37 @@ describe('Templates render to valid Pod manifests', () => {
           }
         }
       }
+    });
+  }
+});
+
+// ─── 3a2. GPU passthrough is single-container-only (#2517) ──────────────────
+// `podman kube play` silently drops `resources.limits` outside cpu/memory, and
+// the escape hatch (a `.container` Quadlet with `AddDevice=nvidia.com/gpu=all`,
+// #1026) is one container per unit — so a multi-container pod can never get a
+// GPU, it just deploys healthy and runs on CPU with no error anywhere.
+//
+// The runtime gate is `validatePodManifest` (POST/PUT /api/services), which
+// covers every install regardless of which registry the template came from.
+// This is the PR-time half: a template shipped from THIS repo can't introduce
+// the shape in the first place, and the author sees it in `npm test` rather
+// than on the box. Same rule, same function — one source of truth.
+describe('GPU passthrough: shipped templates stay single-container (#2517)', () => {
+  // Model "the operator opted into GPU, everything else at defaults": force
+  // only the GPU section gates truthy. Forcing *every* section on would report
+  // containers a real GPU deploy would never emit (e.g. the Z-Wave container).
+  const gpuView = buildTemplateRenderView();
+  for (const v of catalogVars) {
+    if (/GPU/.test(v)) gpuView[v] = 'yes';
+  }
+
+  for (const t of templates) {
+    it(`${t.name}: no GPU limit in a multi-container pod`, () => {
+      const rendered = Mustache.render(t.yamlContent, gpuView);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const pod = (yaml.loadAll(rendered) as any[]).find(d => d?.kind === 'Pod');
+      const err = findGpuMultiContainerError(pod);
+      expect(err, err ? `${t.name}: ${err.path} — ${err.message}` : '').toBeNull();
     });
   }
 });
