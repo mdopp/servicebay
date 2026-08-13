@@ -25,7 +25,7 @@ The things worth bragging about — each true against the code, each with a deta
 |---|---|
 | Google Photos / iCloud | **Immich** — photo & video library with face recognition |
 | Audible | **Audiobookshelf** — audiobook server with phone & tablet apps |
-| Spotify | **Navidrome** — music server (Subsonic-compatible) |
+| Spotify | **Jellyfin** — music server (playback via Symfonium) |
 | Bitwarden cloud / 1Password | **Vaultwarden** — password manager |
 | Dropbox / Google Drive | **Syncthing** + **Filebrowser** + **Samba** |
 | Google Calendar / Contacts | **Radicale** (CalDAV / CardDAV) |

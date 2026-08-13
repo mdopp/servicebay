@@ -199,8 +199,8 @@ Use this checklist for every template that wants SSO:
 2. **Tell the service to use OIDC.** Two paths, pick whichever the
    upstream supports:
    - **Env vars in `template.yml`** when the upstream reads OIDC
-     config from environment (Vaultwarden's `SSO_*`, Navidrome's
-     `ND_OIDC_*`). Zero-click after deploy.
+     config from environment (Vaultwarden's `SSO_*`). Zero-click
+     after deploy.
    - **API call from `post-deploy.py`** when the upstream only
      accepts runtime settings (Immich's `PUT /api/system-config`,
      Audiobookshelf's auth settings API). Read the env vars the
