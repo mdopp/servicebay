@@ -136,7 +136,14 @@ describe('pruneLogsDb (#1869)', () => {
     // VACUUM rewrote the DB: page count collapsed and the freelist is empty.
     expect(pageCount(db)).toBeLessThan(before / 10);
     expect(freelist(db)).toBe(0);
-  });
+    // #2558: 30s, not the 5s default. This is the one case in the file that
+    // pays a real VACUUM — the sibling above seeds the same 20 000 rows and
+    // stays fast precisely because it skips it. Rewriting the file took 10.9s
+    // on a loaded machine and timed out CI, so the default is simply the wrong
+    // budget for the work; the seed size stays at 20 000 because both
+    // assertions depend on it (`before > 100` pages, and a collapse to under a
+    // tenth). Raising the ceiling does not weaken what the test proves.
+  }, 30_000);
 
   it('does not delete when nothing is old (no-op prune leaves the DB untouched)', () => {
     seed(db, NOW, 5000);
