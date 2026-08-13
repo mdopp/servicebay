@@ -39,7 +39,7 @@ homes under `/workspace/home/<user>` stay private (mode `700`).
 | `CLAUDE_DEV_SSH_AUTHORIZED_KEY` | Optional SSH public key for the `dev` user; enables key-based login (recommended when the box is reachable from outside the LAN). |
 | `LLDAP_ADMIN_PASSWORD` | LLDAP bind password. **Not asked for** — reused automatically from the value the `auth` stack generated. Empty ⇒ LDAP login off, `dev` only. |
 | `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in (default `admins`). |
-| `LLDAP_HOST` / `LLDAP_LDAP_PORT` / `LLDAP_BASE_DN` | LLDAP coordinates; default to the `auth` stack's (`localhost` / `3890` / the base DN derived from `PUBLIC_DOMAIN`). LDAP login is skipped when the base DN is blank. |
+| `LLDAP_LDAP_PORT` / `LLDAP_BASE_DN` | LLDAP coordinates; default to the `auth` stack's (`3890` / the base DN derived from `PUBLIC_DOMAIN`). LDAP login is skipped when the base DN is blank. The LLDAP *host* is not a variable — since template v2 the pod reaches it at `host.containers.internal` (see [CHANGELOG](CHANGELOG.md)). |
 
 ## Logging in as your own LDAP user
 
@@ -73,10 +73,14 @@ serves no `uidNumber`/`gidNumber`, and groups carry DN `member`s rather than
 
 ## Reaching it from a phone
 
-`sshd` binds `CLAUDE_DEV_SSH_PORT` directly on the host (the pod runs
-with `hostNetwork`). On the LAN, connect straight to
-`dev@<server-ip>:<port>`. From outside, add a FritzBox port-forward for
-that port and point the Claude Code mobile app's SSH connection at it.
+`CLAUDE_DEV_SSH_PORT` is published on the host via `hostPort` with no
+`hostIP`, so it answers on every interface. (Before template v2 the pod ran
+with `hostNetwork` and sshd bound the host directly — the reachability is the
+same, the blast radius is not; see [CHANGELOG](CHANGELOG.md) and
+[ADR 0007](../../docs/adr/0007-container-network-isolation-and-carveouts.md).)
+On the LAN, connect straight to `dev@<server-ip>:<port>`. From outside, add a
+FritzBox port-forward for that port and point the Claude Code mobile app's SSH
+connection at it.
 
 ## Starting a session
 

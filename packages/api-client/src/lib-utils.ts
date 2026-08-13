@@ -20,6 +20,8 @@ export {
   buildBitwardenCsv,
   resolveCredentialUrl,
   isHttpUrl,
+  isCredentialSecured,
+  summarizeCredentialSecurity,
 } from '@/lib/stackInstall/credentialsManifest';
 export {
   generateBundleStackArtifacts,

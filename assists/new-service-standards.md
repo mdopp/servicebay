@@ -14,6 +14,24 @@ referenced `docs/` files directly. The `get_service_standards` MCP tool
 one-liners are scanned from `docs/adr/*.md` titles at runtime so they never
 drift from the source.
 
+## repoBootstrap — step 1, before any stack/CI/storage/auth choice
+
+A standard nobody consults is not a standard. So the first step of building a
+service repo is consulting this catalog, and the new repo carries the pointer
+back to it **from its first commit** (#2513):
+
+- Call `get_service_standards` (flavor `servicebay`) and read every id it lists
+  under `assistsToRead` via `get_assist(id)` **before** picking a stack, a CI
+  shape, a storage engine, or an auth design.
+- Write the generated pointer block into the new repo's `CLAUDE.md`:
+  `npm run standards:bootstrap -- --write <repo>`; verify with `-- --check <repo>`
+  (exit 1 when the pointer is missing or has drifted). The block itself is the
+  `repoBootstrap.claudeMdBlock` field of the tool's output and is reproduced
+  verbatim in the `create-service` recipe.
+- **If the ServiceBay MCP is not connected, stop and say so.** A session that
+  cannot reach the catalog cannot make these decisions; connecting it is the
+  first task, not an optional extra.
+
 ## mustRespectAdrs — the platform decisions a new service is bound by
 
 A new service does not get to re-litigate these. Read the one-liner, then the
@@ -50,6 +68,9 @@ opening a PR:
 - `create-service` — the concrete recipe to build and deploy a service repo
   behind SSO.
 - `servicebay-overview` — what the platform is and how the pieces fit together.
+- If the service has a UI: `service-ui-design-standard` (how it looks) **and**
+  `service-ui-user-language` (what it says — state texts in the user's language,
+  no CLI/env/header names in rendered HTML).
 - Footguns to skim: `footgun-forward-auth-acme-collision`,
   `footgun-subdomain-needs-public-domain`.
 

@@ -720,6 +720,88 @@ async function checkCiRunsEveryCheckScript() {
 }
 
 // ---------------------------------------------------------------------------
+// 8b. The service-repo bootstrap step still consults the standards catalog.
+//
+// #2513: `get_service_standards` served an excellent index that nothing outside
+// an already-connected MCP session referenced, so a sibling repo picked its
+// stack, its CI and its storage before ever meeting the ADRs. The fix is a step
+// — step 1 of the `create-service` recipe — plus the generated CLAUDE.md pointer
+// the new repo carries from its first commit.
+//
+// A step that lives only in prose is a step an agent skips (CLAUDE.md
+// § "Deterministic execution → scripts"), and prose is also what silently rots:
+// re-order the recipe, drop the pointer block, and nothing complains. This check
+// is the ratchet — the recipe must still name the tool in its FIRST ordered
+// action, and must still carry a pointer block that references the tool, the
+// assist fetch, and the gap-reporting convention.
+// ---------------------------------------------------------------------------
+const CREATE_SERVICE_ASSIST = path.join(REPO_ROOT, 'assists', 'create-service.md');
+const BOOTSTRAP_BEGIN_RE = /<!-- BEGIN SERVICEBAY STANDARDS POINTER/;
+const BOOTSTRAP_END_RE = /<!-- END SERVICEBAY STANDARDS POINTER -->/;
+/** Every pointer block is worthless without these — same list as the module. */
+const BOOTSTRAP_POINTER_REFS = ['get_service_standards', 'get_assist', 'standards-gap'];
+
+/**
+ * Pure audit of the `create-service` recipe text. Returns one detail string per
+ * problem (empty = the bootstrap step is intact). Exported so the suite can
+ * exercise the RED path — a gate whose failure branch is never run is a gate
+ * nobody knows still works.
+ */
+export function auditServiceRepoBootstrap(doc: string): string[] {
+    const problems: string[] = [];
+
+    // The first entry of the "## Ordered actions" list must be the standards step.
+    const ordered = /\n## Ordered actions\n([\s\S]*?)(?:\n## |\s*$)/.exec(doc);
+    if (!ordered) {
+        problems.push('assists/create-service.md has no "## Ordered actions" section to carry the bootstrap step (#2513).');
+    } else {
+        const firstAction = /^1\.[\s\S]*?(?=^\d+\.\s)/m.exec(ordered[1])?.[0] ?? ordered[1];
+        if (!firstAction.includes('get_service_standards')) {
+            problems.push(
+                'assists/create-service.md — the FIRST ordered action no longer names `get_service_standards`. Consulting the catalog must come before the image/stack/CI choices, or a new repo is built past the ADRs again (#2513).',
+            );
+        }
+    }
+
+    const start = doc.search(BOOTSTRAP_BEGIN_RE);
+    const end = doc.search(BOOTSTRAP_END_RE);
+    if (start < 0 || end < 0) {
+        problems.push(
+            'assists/create-service.md no longer carries the generated CLAUDE.md standards-pointer block. Regenerate it with `npm run standards:bootstrap -- --print` (#2513).',
+        );
+        return problems;
+    }
+    const block = doc.slice(start, end);
+    for (const ref of BOOTSTRAP_POINTER_REFS) {
+        if (block.includes(ref)) continue;
+        problems.push(
+            `assists/create-service.md — the standards-pointer block no longer mentions \`${ref}\`, so a repo bootstrapped from it loses that link into the catalog (#2513).`,
+        );
+    }
+    return problems;
+}
+
+async function checkServiceRepoBootstrapStep() {
+    const check = 'service-repo-bootstrap-step';
+    let doc: string;
+    try {
+        doc = await readFile(CREATE_SERVICE_ASSIST, 'utf-8');
+    } catch {
+        violations.push({
+            check,
+            detail: 'assists/create-service.md is missing — it owns step 1 of the service-repo bootstrap (#2513).',
+        });
+        return;
+    }
+
+    const problems = auditServiceRepoBootstrap(doc);
+    for (const detail of problems) violations.push({ check, detail });
+    if (problems.length === 0) {
+        measurements.push('service-repo bootstrap: step 1 of assists/create-service.md consults get_service_standards, pointer block intact');
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 9. docs/ARCHITECTURE_INVARIANTS.md's numbers are generated, not typed.
 //
 // #2427: the doc carried a hand-maintained measurement table ("largest backend
@@ -816,6 +898,7 @@ async function main() {
         checkDurableStateAtomicWrites(),
         checkGatePathsResolve(),
         checkCiRunsEveryCheckScript(),
+        checkServiceRepoBootstrapStep(),
         syncOrCheckThresholdDoc(),
     ]);
 

@@ -4,6 +4,9 @@ import {
   resolveCredentialUrl,
   isHttpUrl,
   buildBitwardenCsv,
+  isCredentialSecured,
+  markCredentialsSecured,
+  summarizeCredentialSecurity,
   type Credential,
   type CredentialUrlContext,
 } from './credentialsManifest';
@@ -130,5 +133,95 @@ describe('buildBitwardenCsv login_uri', () => {
     const line = csv.trim().split('\n')[1];
     // login_uri is the 8th column — empty for a non-URL value
     expect(line.split(',')[7]).toBe('""');
+  });
+});
+
+/**
+ * #2519 — the Vaultwarden hand-off state. "Secured" means the secret lives
+ * in the operator's vault and ServiceBay dropped its copy; the two must
+ * never be true at once, which is what these tests pin down.
+ */
+describe('credential security state (#2519)', () => {
+  const unsecured = (service: string, template?: string): Credential => cred(service, template);
+  const secured = (service: string, at: string, template?: string): Credential => ({
+    ...cred(service, template), password: '', securedAt: at,
+  });
+
+  it('treats a missing or empty securedAt as not secured', () => {
+    expect(isCredentialSecured(unsecured('lldap'))).toBe(false);
+    expect(isCredentialSecured({ securedAt: '' })).toBe(false);
+    expect(isCredentialSecured({ securedAt: '2026-08-13T00:00:00.000Z' })).toBe(true);
+  });
+
+  it('summarises how many entries ServiceBay still holds the secret for', () => {
+    const s = summarizeCredentialSecurity([
+      secured('lldap', '2026-08-10T00:00:00.000Z'),
+      secured('npm', '2026-08-12T00:00:00.000Z'),
+      unsecured('immich'),
+    ]);
+    expect(s).toEqual({
+      total: 3,
+      secured: 2,
+      unsecured: 1,
+      lastSecuredAt: '2026-08-12T00:00:00.000Z',
+    });
+  });
+
+  it('summarises an empty manifest without a last-sync timestamp', () => {
+    expect(summarizeCredentialSecurity([])).toEqual({
+      total: 0, secured: 0, unsecured: 0, lastSecuredAt: null,
+    });
+  });
+
+  it('drops the password in the same step that marks an entry secured', () => {
+    const at = '2026-08-13T12:00:00.000Z';
+    const out = markCredentialsSecured([unsecured('lldap'), unsecured('npm')], at);
+    expect(out.every(c => c.password === '')).toBe(true);
+    expect(out.every(c => c.securedAt === at)).toBe(true);
+    // The pointer survives — Settings still says *what* exists.
+    expect(out.map(c => c.service)).toEqual(['lldap', 'npm']);
+    expect(out[0].username).toBe('admin');
+  });
+
+  it('leaves an already-secured entry (and its original timestamp) untouched', () => {
+    const first = '2026-08-01T00:00:00.000Z';
+    const out = markCredentialsSecured([secured('lldap', first)], '2026-08-13T12:00:00.000Z');
+    expect(out[0].securedAt).toBe(first);
+  });
+
+  it('never leaves a secured entry that still carries a secret', () => {
+    const out = markCredentialsSecured(
+      [unsecured('lldap'), secured('npm', '2026-08-01T00:00:00.000Z')],
+      '2026-08-13T12:00:00.000Z',
+    );
+    expect(out.filter(c => isCredentialSecured(c)).every(c => c.password === '')).toBe(true);
+  });
+
+  it('excludes secured entries from the Bitwarden CSV', () => {
+    const csv = buildBitwardenCsv([
+      secured('lldap', '2026-08-01T00:00:00.000Z'),
+      unsecured('immich'),
+    ]);
+    const lines = csv.trim().split('\n');
+    expect(lines).toHaveLength(2); // header + the one unsecured row
+    expect(csv).toContain('immich');
+    expect(csv).not.toContain('lldap');
+  });
+
+  it('a re-install of a secured template resets it to not-yet-secured', () => {
+    // mergeCredentials replaces the deployed template's entries wholesale,
+    // so `securedAt` goes with them — the fresh secret is unsecured again.
+    const existing = [secured('lldap', '2026-08-01T00:00:00.000Z', 'auth')];
+    const fresh = [{ ...cred('lldap', 'auth'), password: 'ROTATED' }];
+    const merged = mergeCredentials(existing, fresh, ['auth']);
+    expect(merged).toHaveLength(1);
+    expect(isCredentialSecured(merged[0])).toBe(false);
+    expect(merged[0].password).toBe('ROTATED');
+  });
+
+  it('does not un-secure entries owned by templates this install did not touch', () => {
+    const existing = [secured('lldap', '2026-08-01T00:00:00.000Z', 'auth')];
+    const merged = mergeCredentials(existing, [cred('immich', 'immich')], ['immich']);
+    expect(isCredentialSecured(merged.find(c => c.service === 'lldap')!)).toBe(true);
   });
 });

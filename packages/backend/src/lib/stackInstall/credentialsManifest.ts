@@ -40,6 +40,21 @@ export interface Credential {
    * the captured template name).
    */
   template?: string;
+  /**
+   * ISO timestamp of when this entry was handed off to the operator's
+   * Vaultwarden vault (#2519). Once set, ServiceBay no longer keeps the
+   * secret: `password` is emptied and only the pointer (service / url /
+   * username / notes) remains, so Settings can still list *what* exists
+   * without being a second password manager.
+   *
+   * Absent ⇒ **not yet secured** — ServiceBay is still the only place
+   * this secret lives, and the UI says so. A re-install or rotation
+   * replaces the owning template's entries wholesale (see
+   * `mergeCredentials` / `capabilities/credentials.ts`), which drops
+   * `securedAt` with them — the fresh secret is unsecured again, by
+   * construction, because ServiceBay cannot know whether it changed.
+   */
+  securedAt?: string;
 }
 
 interface BuildOpts {
@@ -109,6 +124,54 @@ export function mergeCredentials(
   const deployed = new Set(deployedTemplates);
   const kept = existing.filter(c => !c.template || !deployed.has(c.template));
   return [...kept, ...fresh];
+}
+
+/**
+ * True once the entry has been handed off to Vaultwarden and ServiceBay
+ * dropped its own copy of the secret (#2519).
+ */
+export function isCredentialSecured(cred: Pick<Credential, 'securedAt'>): boolean {
+  return typeof cred.securedAt === 'string' && cred.securedAt.length > 0;
+}
+
+export interface CredentialSecuritySummary {
+  total: number;
+  /** Entries whose secret now lives only in Vaultwarden. */
+  secured: number;
+  /** Entries ServiceBay still holds the secret for — the risk surface. */
+  unsecured: number;
+  /** Newest `securedAt` across secured entries, or null when none. */
+  lastSecuredAt: string | null;
+}
+
+/** Roll a manifest up into the counts Settings renders instead of passwords. */
+export function summarizeCredentialSecurity(
+  creds: readonly Credential[],
+): CredentialSecuritySummary {
+  let secured = 0;
+  let lastSecuredAt: string | null = null;
+  for (const c of creds) {
+    if (!isCredentialSecured(c)) continue;
+    secured++;
+    if (!lastSecuredAt || c.securedAt! > lastSecuredAt) lastSecuredAt = c.securedAt!;
+  }
+  return { total: creds.length, secured, unsecured: creds.length - secured, lastSecuredAt };
+}
+
+/**
+ * Mark every not-yet-secured entry as handed off, **dropping ServiceBay's
+ * copy of the secret in the same step** (#2519).
+ *
+ * Emptying `password` is the point, not a side effect: "secured" and "we
+ * still hold it" must never be representable at the same time, so the two
+ * can't drift apart. Already-secured entries pass through untouched (their
+ * original `securedAt` is the honest one).
+ */
+export function markCredentialsSecured(
+  creds: readonly Credential[],
+  at: string,
+): Credential[] {
+  return creds.map(c => (isCredentialSecured(c) ? c : { ...c, password: '', securedAt: at }));
 }
 
 // #632 removed `formatCredentialsBanner` — the install runner no longer
@@ -205,7 +268,12 @@ export function resolveCredentialUrl(
  *  When a `ctx` is supplied, each row's `login_uri` is run through
  *  `resolveCredentialUrl` so loopback URLs become the admin-reachable
  *  public subdomain (#1626) — keeping the CSV import in lock-step with
- *  what the Saved-credentials table shows. */
+ *  what the Saved-credentials table shows.
+ *
+ *  Entries already secured in Vaultwarden are skipped (#2519) — their
+ *  `password` was dropped at hand-off, so exporting them would produce
+ *  rows that overwrite a real vault item with an empty one. The CSV is
+ *  exactly "what is still only on this box". */
 export function buildBitwardenCsv(manifest: Credential[], ctx: CredentialUrlContext = {}): string {
   const escape = (s: string) => `"${(s ?? '').replace(/"/g, '""')}"`;
   const header = [
@@ -214,7 +282,7 @@ export function buildBitwardenCsv(manifest: Credential[], ctx: CredentialUrlCont
     'login_uri', 'login_username', 'login_password', 'login_totp',
   ].join(',');
 
-  const rows = manifest.map(c => {
+  const rows = manifest.filter(c => !isCredentialSecured(c)).map(c => {
     const resolved = resolveCredentialUrl(c, ctx);
     return [
       escape('ServiceBay Home'),

@@ -36,6 +36,13 @@ import { checkNasBackupReachable } from '@/lib/diagnose/probes/nasBackupReachabl
 import { checkHaAutomationIntegrity } from '@/lib/diagnose/probes/haAutomationIntegrity';
 import { checkSsoVerify } from '@/lib/diagnose/probes/ssoVerify';
 import { checkHermesChat } from '@/lib/diagnose/probes/hermesChat';
+import { evaluateRaidHealth, PROBE_ID as RAID_PROBE_ID, PROBE_LABEL as RAID_PROBE_LABEL } from '@/lib/diagnose/probes/raidDegraded';
+import {
+  DISK_FILL_COMMAND,
+  evaluateDiskFill,
+  PROBE_ID as DISK_PROBE_ID,
+  PROBE_LABEL as DISK_PROBE_LABEL,
+} from '@/lib/diagnose/probes/diskFill';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
 import { persistDiagnoseResults, buildProbeHistory, type ProbeHistory } from '@/lib/diagnose/persistDiagnoseResults';
 import '@/lib/diagnose/probes/register';
@@ -102,6 +109,7 @@ const PROBE_GROUP: Record<string, ProbeGroup> = {
   hermes_chat: 'services',
   // Storage & backups
   disk: 'storage-backups',
+  raid: 'storage-backups',
   nas_backup_reachable: 'storage-backups',
   // System info (collapsed — not a problem)
   serial: 'system-info',
@@ -393,6 +401,7 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     listen,
     serial,
     disk,
+    mdstat,
     firstBoot,
     uptimeRes,
     psStatus,
@@ -402,7 +411,14 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     exec('systemctl --user --failed --no-legend --no-pager 2>&1', 5000),
     exec('ss -ltn 2>/dev/null | tail -n +2 | awk \'{print $4}\' | awk -F: \'{print $NF}\' | sort -nu', 4000),
     exec('ls -la /dev/serial/by-id/ 2>/dev/null | grep -v "^total" | awk \'{print $NF}\' | grep -v "^$"', 3000),
-    exec('df -h /mnt/data 2>/dev/null | tail -1', 3000),
+    // Fill level of every filesystem the box depends on, not just the data
+    // array (#2527). `/boot` used to be unwatched, and a `/boot` too full to
+    // stage the next kernel is how a box ends up unbootable after an update.
+    exec(DISK_FILL_COMMAND, 3000),
+    // The kernel's own view of every md array (#2526). `df` above only
+    // proves the filesystem mounts — it says nothing about whether the
+    // RAID1 underneath it still has both members.
+    exec('cat /proc/mdstat', 3000),
     exec(
       'systemctl --no-pager status setup-raid install-python install-nginx 2>&1 | grep -E "(●|Active:)" | head -20',
       5000,
@@ -561,27 +577,35 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     detail: serialDevices.length === 0 ? 'No USB serial devices (no Z-Wave / Zigbee stick plugged in).' : serialDevices.join('\n'),
   });
 
-  // 7) Disk usage on /mnt/data (where ServiceBay stores everything)
-  const diskLine = trimOutput(disk.stdout, 1);
-  let diskStatus: ProbeStatus = 'ok';
-  let diskHint: string | undefined;
-  const usePctMatch = diskLine.match(/(\d+)%/);
-  if (!diskLine) {
-    diskStatus = 'warn';
-    diskHint = '/mnt/data is not mounted yet — first-boot RAID setup may still be running.';
-  } else if (usePctMatch) {
-    const used = parseInt(usePctMatch[1], 10);
-    if (used >= 90) {
-      diskStatus = 'warn';
-      diskHint = 'Storage above 90% — click "Show largest directories" below to find what to clean, or extend the array.';
-    }
-  }
+  // 7) Fill level of /mnt/data, /boot and / (#2527). Each filesystem is
+  //    judged against what it is for — see the threshold rationale in
+  //    probes/diskFill.ts. Reporting only: the probe never frees space,
+  //    because reclaiming /boot means deleting kernels.
+  const diskFill = evaluateDiskFill(disk.stdout ?? '', disk.code);
   probes.push({
-    id: 'disk',
-    label: 'Storage (/mnt/data)',
-    status: diskStatus,
-    detail: diskLine || 'no df output',
-    hint: diskHint,
+    id: DISK_PROBE_ID,
+    label: DISK_PROBE_LABEL,
+    status: diskFill.status,
+    detail: diskFill.detail,
+    hint: diskFill.hint,
+    _items: diskFill.items,
+  });
+
+  // 7b) RAID array health (#2526). Distinct probe rather than folded into
+  //     `disk`, because the two answer different questions: `disk` is
+  //     "will writes fit?", this is "is there still a mirror?". A box whose
+  //     data array lost (or never had) its second member mounts and fills
+  //     exactly like a healthy one, so nothing else on the box notices —
+  //     mdmonitor only fires on a failure *event*, and the weekly
+  //     raid-check reports mismatch_cnt=0 on a degraded array.
+  const raid = evaluateRaidHealth(mdstat.stdout ?? '', mdstat.code);
+  probes.push({
+    id: RAID_PROBE_ID,
+    label: RAID_PROBE_LABEL,
+    status: raid.status,
+    detail: raid.detail,
+    hint: raid.hint,
+    _items: raid.items,
   });
 
   // 8) First-boot oneshot units (FCOS only)

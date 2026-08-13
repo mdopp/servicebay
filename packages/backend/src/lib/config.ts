@@ -611,6 +611,13 @@ export interface InstalledCredential {
   password: string;
   importance: 'critical' | 'system';
   notes?: string;
+  /**
+   * #2519 — ISO timestamp of the Vaultwarden hand-off. Set ⇒ the secret
+   * lives in the operator's vault and `password` here is empty. Absent ⇒
+   * ServiceBay is still the only copy, and Settings marks it "not yet
+   * secured". See `stackInstall/credentialsManifest.ts`.
+   */
+  securedAt?: string;
 }
 
 export interface InstallManifest {

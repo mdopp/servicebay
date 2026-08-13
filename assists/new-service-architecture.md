@@ -10,6 +10,17 @@ tags: [architecture, adr, new-service, language, libraries, tests, storage, secr
 Recommended defaults, not mandates — deviate when you have a reason, and say why.
 These sit on top of the platform ADRs in `docs/adr/` (respect those; see bottom).
 
+## Step 0 — fetch the standards before you decide anything (#2513)
+
+Every recommendation below assumes you have read the catalog. Call
+`get_service_standards` (flavor `servicebay`) first, follow its `repoBootstrap`
+block, and write the generated pointer into the new repo's `CLAUDE.md`
+(`npm run standards:bootstrap -- --write <repo>` in a `mdopp/servicebay`
+checkout). A repo that starts without that pointer has no link back to the ADRs,
+and the next agent working in it re-derives — wrongly — decisions that were
+already made. **If the ServiceBay MCP is not connected in this session, stop and
+say so** rather than guessing at auth, health, storage, or CI.
+
 An architecture recommendation must say **how** a need is solved — and the first
 decision is **where it lives**. Only then do language/structure/etc. follow.
 
@@ -67,6 +78,12 @@ The app should be: **stateless-restartable** (all state on a mounted volume),
   **real streaming progress** for long ops (not a bare spinner; reconnect by
   server job id, not localStorage), responsive/mobile layout, and visible focus
   states. See `service-ui-design-standard`.
+- **Speak the user's language, and test it.** Looking native isn't enough: every
+  rendered state text answers *what can the user do next*, and CLI commands,
+  env-var names and HTTP header names never reach rendered HTML — enforce that
+  with a test in your own suite, not a review habit. This applies
+  `docs/UX_PHILOSOPHY.md` §5 to a service frontend; see
+  `service-ui-user-language`.
 
 ## Recommended libraries
 - Lean over heavy: a minimal web framework + a good HTTP client, not a kitchen

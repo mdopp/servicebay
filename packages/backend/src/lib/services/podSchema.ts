@@ -175,6 +175,66 @@ function validatePortReachability(
 }
 
 /**
+ * GPU passthrough is single-container-only (#2517, root cause #1026).
+ *
+ * `podman kube play` silently ignores every `resources.limits` key outside
+ * cpu/memory. For a GPU that means the pod comes up healthy, both containers
+ * running, `/healthz` green — and the card is simply not there. The only
+ * escape hatch ServiceBay has is the `.container` Quadlet swap
+ * (`AddDevice=nvidia.com/gpu=all`, see `ServiceManager.reconcileContainerQuadletShadow`),
+ * and a `.container` unit is **one container per unit** — so it has no
+ * equivalent for a multi-container Pod.
+ *
+ * Rather than deploy a service that quietly runs on CPU, refuse the manifest
+ * and say what does work. Single-container pods are untouched: they are
+ * exactly the shape the `.container` escape hatch supports.
+ *
+ * Exported so the template-consistency suite can apply the same rule to
+ * shipped templates at PR time (one rule, two gates).
+ */
+const GPU_LIMIT_KEY = /gpu/i;
+
+function gpuLimitKeys(container: unknown): string[] {
+    const resources = (container as {
+        resources?: { limits?: Record<string, unknown>; requests?: Record<string, unknown> };
+    } | null)?.resources;
+    const keys = [
+        ...Object.keys(resources?.limits ?? {}),
+        ...Object.keys(resources?.requests ?? {}),
+    ];
+    return [...new Set(keys.filter(k => GPU_LIMIT_KEY.test(k)))];
+}
+
+export function findGpuMultiContainerError(pod: unknown): PodValidationError | null {
+    const spec = (pod as { spec?: { containers?: unknown; initContainers?: unknown } } | null)?.spec;
+    const containers = Array.isArray(spec?.containers) ? spec.containers : [];
+    const initContainers = Array.isArray(spec?.initContainers) ? spec.initContainers : [];
+    const total = containers.length + initContainers.length;
+    // A single-container pod can be swapped to a `.container` Quadlet, so the
+    // GPU limit is honourable there — leave it alone.
+    if (total <= 1) return null;
+
+    for (const c of [...containers, ...initContainers]) {
+        const keys = gpuLimitKeys(c);
+        if (keys.length === 0) continue;
+        const name = (c as { name?: string } | null)?.name ?? '?';
+        return {
+            path: `spec.containers[${name}].resources.limits[${keys[0]}]`,
+            message:
+                `container "${name}" requests a GPU (${keys.join(', ')}) but this pod declares ` +
+                `${total} containers. \`podman kube play\` silently drops resources.limits ` +
+                `outside cpu/memory, so this would deploy healthy and run on CPU with no error ` +
+                `anywhere. GPU passthrough only works for a SINGLE-container service, which ` +
+                `ServiceBay deploys as a \`.container\` Quadlet with \`AddDevice=nvidia.com/gpu=all\`. ` +
+                `Fix: move the GPU workload into its own single-container service and share data ` +
+                `with the others through a hostPath volume, or drop the GPU limit and run on CPU. ` +
+                `See docs/TEMPLATE_AUTHORING.md → "GPU passthrough (CDI)".`,
+        };
+    }
+    return null;
+}
+
+/**
  * Validate PVC documents in a multi-doc YAML. Basic shape only;
  * podman creates the volume on first deploy regardless of most fields.
  */
@@ -241,6 +301,14 @@ export function validatePodManifest(yamlContent: string): PodValidationResult {
     const portError = validatePortReachability(podResult.data);
     if (portError) {
         return { ok: false, error: portError };
+    }
+
+    // GPU: a multi-container pod can never receive one, and kube-play says
+    // nothing about it. Refuse loudly instead of deploying a CPU-only service
+    // that reports healthy (#2517).
+    const gpuError = findGpuMultiContainerError(podResult.data);
+    if (gpuError) {
+        return { ok: false, error: gpuError };
     }
 
     // PVC docs (if any)

@@ -7,6 +7,12 @@ tags: [ui, design, frontend, tokens, palette, typography, accessibility, ux, res
 
 # ServiceBay UI / design standard
 
+> **Scope:** this assist is *how it looks and behaves*. What the UI **says** —
+> state texts, empty states, onboarding conditions, settings grouping, and the
+> ban on CLI/env/header names in rendered HTML — is the companion standard
+> `service-ui-user-language`. A frontend that passes every rule here and fails
+> that one still gets rejected by the operator (#2514).
+
 A user-facing service should feel like it belongs to ServiceBay even though it
 lives on its own subdomain. This is the **descriptive** design language: copy the
 tokens below into your own stylesheet (CSS custom properties, a Tailwind theme, or

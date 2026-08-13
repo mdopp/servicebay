@@ -60,18 +60,63 @@ proxy host at `<sub>.<PUBLIC_DOMAIN>`:
   `footgun-forward-auth-acme-collision`.
 
 ## Ordered actions
-1. **Image** — build + push it; confirm the box can `podman pull` it.
-2. **Place the template** — push to a template registry, OR drop it under
+1. **Bootstrap the repo against the standards catalog** — *before* the stack, the
+   CI, the storage engine or the auth design. Call `get_service_standards`
+   (flavor `servicebay`), read every id in its `assistsToRead` via
+   `get_assist(id)`, and write the pointer block below into the new repo's
+   `CLAUDE.md` so the next agent in that repo finds the catalog too:
+   `npm run standards:bootstrap -- --write <repo>` (verify with `-- --check <repo>`).
+   **If the ServiceBay MCP is not connected in this session, stop and say so** —
+   an unconnected session cannot see the ADRs, so its stack/CI/auth choices are
+   guesses (#2513: exactly how a sibling repo shipped without SSO awareness,
+   without a health endpoint, and with a CI that didn't gate on tests).
+2. **Image** — build + push it; confirm the box can `podman pull` it.
+3. **Place the template** — push to a template registry, OR drop it under
    `/mnt/data/servicebay/local-templates/templates/<name>/` (survives reinstall,
    no git needed).
-3. **Install** — `POST /api/install/assemble` `{items:[{name,checked:true}],
+4. **Install** — `POST /api/install/assemble` `{items:[{name,checked:true}],
    prefilled:{...}, templateSource:"Local"}` → returns `{items, variables}` →
    `POST /api/install/start` `{source, input:{items, variables, wipeMode:"install",
    templateSource:"Local", host}}` → poll `/api/install/progress?jobId=…` until
    `phase:"done"`. (All accept a `lifecycle`-scoped `sb_` token.)
-4. **Verify** — healthcheck 200; `https://<sub>.<PUBLIC_DOMAIN>/` unauthenticated
+5. **Verify** — healthcheck 200; `https://<sub>.<PUBLIC_DOMAIN>/` unauthenticated
    returns **302 → auth.<domain>** (Authelia); the app's function works; and a
    request missing `Remote-User` is rejected (no SSO bypass).
+
+## The `CLAUDE.md` standards pointer (step 1, verbatim)
+
+Paste this into the new repo's `CLAUDE.md` — or let the script write it. It is
+generated from `packages/backend/src/lib/mcp/serviceRepoBootstrap.ts` and served
+by `get_service_standards` as its `repoBootstrap.claudeMdBlock`; the copy below
+is kept byte-identical by `npm run check:arch`, so all three can't drift.
+
+```markdown
+<!-- BEGIN SERVICEBAY STANDARDS POINTER (generated — do not edit by hand) -->
+
+## Standards: fetch them, never re-derive them
+
+This repo is built for a ServiceBay box, so **ServiceBay's standards catalog is
+the binding source of its architecture decisions** — this file only points at it.
+
+1. **Before the first stack, CI, storage, or auth decision**, call the ServiceBay
+   MCP tool `get_service_standards` (flavor `servicebay`) and fetch every id it
+   lists under `assistsToRead` via `get_assist(id)`. Read first, design second —
+   a stack chosen before reading is a stack chosen against the ADRs by accident.
+2. **If the ServiceBay MCP is not connected in this session, stop and say so.**
+   An unconnected session cannot see the ADRs, so anything it decides about auth,
+   health, storage, or CI is a guess. Connecting it is the first task, not an
+   optional extra.
+3. **The catalog wins.** Where this file and the catalog disagree, this file is
+   the stale one — fix it here, not in your head.
+4. **Report gaps back.** A missing, ambiguous, or wrong standard is itself a
+   finding: file a `standards-gap` issue on `mdopp/servicebay` and propose the
+   assist/docs fix. See `get_assist("report-standards-gaps")`.
+
+This block is generated. Regenerate or verify it from a `mdopp/servicebay`
+checkout: `npm run standards:bootstrap -- --write <repo>` / `-- --check <repo>`.
+
+<!-- END SERVICEBAY STANDARDS POINTER -->
+```
 
 ## Verify the proxy actually loaded
 The install log can say "proxy hosts ensured" while nginx reverted the conf.
@@ -87,6 +132,8 @@ with an SSL connect error (000).
 - Assist `service-ui-design-standard` — if the service has a frontend, adopt
   ServiceBay's design tokens (palette/accent, radii, typography, spacing) + the
   UX baseline (styled large file picker, streaming progress, responsive/mobile,
-  focus states) so it looks and behaves like ServiceBay.
+  focus states) so it looks and behaves like ServiceBay. Its companion
+  `service-ui-user-language` covers what the UI *says* — state texts in the
+  user's language, no CLI/env/header names in rendered HTML.
 - `docs/TEMPLATE_AUTHORING.md`, `templates/CLAUDE.md` — the full template contract.
 - Worked examples in-repo: `templates/file-share/` (forward-auth), `templates/vaultwarden/` (OIDC).

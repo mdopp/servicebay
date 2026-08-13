@@ -62,6 +62,23 @@ export interface AssembleManifestInput {
    *  call span multiple sources (#1177). A pinned `'Built-in'` skips the
    *  registry walk, so external-registry templates resolve to null. */
   templateSource?: string;
+  /**
+   * #2537 — resolve only; never MINT credential material and never write.
+   *
+   * A read-only caller (the editor's "Re-render from template" preview) needs
+   * the exact variable set a deploy would use, but must not have the side
+   * effects a deploy has. Under `preview` the three generation branches
+   * (random secret / RSA key / bcrypt hash) are skipped: a secret-typed
+   * variable resolves from `installedSecrets` or stays EMPTY, and the caller
+   * reports it as unresolved. That is deliberate — minting a fresh password
+   * here would both write it to `installedSecrets` (diverging the store from
+   * the running pod) and hand the operator a YAML that silently rotates a
+   * live credential, which is the same class of harm as blanking it.
+   *
+   * With nothing generated, the trailing `persistSingleSecret` loop has
+   * nothing to persist, so `preview` is write-free by construction.
+   */
+  preview?: boolean;
 }
 
 export interface AssembledManifest {
@@ -378,6 +395,8 @@ export async function assembleManifest(
 ): Promise<AssembledManifest> {
   const { templateSource } = input;
   const prefilled = input.prefilled ?? {};
+  // #2537 — read-only resolve: no new credential material, no config write.
+  const preview = input.preview === true;
 
   const items: JobInputItem[] = input.items.map(i => ({
     name: i.name,
@@ -512,7 +531,10 @@ export async function assembleManifest(
     if (!value && meta?.type === 'secret') {
       if (storedValues[name]) {
         value = storedValues[name];
-      } else if (meta.noAutoGenerate) {
+      } else if (preview || meta.noAutoGenerate) {
+        // `preview` (#2537): the store had nothing, so this value is genuinely
+        // unresolvable. Leave it empty and let the caller SAY SO rather than
+        // mint a replacement credential in a read-only path.
         // #1002 — Some `type: secret` variables are operator-supplied
         // externally (Telegram/Discord bot tokens, HA long-lived
         // token, etc.). Auto-generating them as random strings
@@ -538,6 +560,7 @@ export async function assembleManifest(
       v.value = storedValues[v.name];
       continue;
     }
+    if (preview) continue; // #2537 — never mint a key in a read-only resolve.
     v.value = generateRsaPrivateKeyPem();
     newlyGenerated.push({ name: v.name, value: v.value });
   }
@@ -551,6 +574,7 @@ export async function assembleManifest(
       v.value = storedValues[v.name];
       continue;
     }
+    if (preview) continue; // #2537 — a fresh hash is fresh credential material.
     const sourceName = meta?.bcryptSource;
     if (!sourceName) continue;
     const source = variables.find(x => x.name === sourceName);

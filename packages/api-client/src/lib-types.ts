@@ -19,6 +19,7 @@ export type {
   Credential,
   CredentialUrlHost,
   CredentialUrlContext,
+  CredentialSecuritySummary,
 } from '@/lib/stackInstall/credentialsManifest';
 export type {
   ServiceBundle,

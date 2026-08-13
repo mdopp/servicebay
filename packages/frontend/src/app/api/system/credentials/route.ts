@@ -25,6 +25,10 @@ const CredentialSchema = z.object({
   importance: z.enum(['critical', 'system']),
   notes: z.string().max(400).optional(),
   template: z.string().max(120).optional(),
+  // #2519 — hand-off marker. Round-tripped so a caller that reads the
+  // manifest and writes it back doesn't silently resurrect entries as
+  // "not yet secured".
+  securedAt: z.string().max(40).optional(),
 });
 
 const ManifestBody = z.object({
