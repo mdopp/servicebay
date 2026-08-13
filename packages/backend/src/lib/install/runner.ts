@@ -1093,6 +1093,34 @@ async function runJob(jobId: string): Promise<void> {
     await log(jobId, `⚠️ Registry refresh failed (${e instanceof Error ? e.message : String(e)}); installing from the existing on-disk clone.`);
   }
 
+  // #2530 — and re-resolve the pod specs from the registry we just pulled.
+  // `assembleManifest` captured `item.yaml` BEFORE the sync above (a replayed
+  // reinstall captured it whenever its manifest was saved), so without this the
+  // deploy always renders a template one sync behind — a block added to the
+  // template since is silently missing from the rendered pod YAML, with no
+  // error and no warning. Refresh in place so the render below uses what the
+  // registry actually holds.
+  try {
+    const { refreshTemplateArtifacts, applyVariableDefaults } = await import('./manifestAssembler');
+    const { updated, unresolved } = await refreshTemplateArtifacts(checked, input.templateSource);
+    if (updated.length > 0) {
+      await log(jobId, `🔄 Re-read ${updated.length} template spec${updated.length === 1 ? '' : 's'} from the refreshed registry — ${updated.join(', ')} changed since this manifest was assembled; deploying the registry version.`);
+      // A refreshed spec can reference a variable the manifest never had a
+      // value for. Re-apply defaults (fills empty slots only, so nothing the
+      // operator set is touched) rather than render the new ref empty.
+      const refilled = await applyVariableDefaults(input, input.templateSource);
+      input.variables = refilled.variables;
+    }
+    if (unresolved.length > 0) {
+      await log(jobId, `⚠️ Could not re-read the template spec for ${unresolved.join(', ')} from any registry — deploying the spec saved in this manifest, which may be out of date. Check that the template still exists in its registry.`);
+    }
+  } catch (e) {
+    // Never fail the install on the refresh itself — but never let it fail
+    // QUIETLY either: a skipped refresh means the specs below are the ones the
+    // manifest was assembled with, which is the staleness this guards against.
+    await log(jobId, `⚠️ Could not re-read template specs from the registry (${e instanceof Error ? e.message : String(e)}); deploying the specs saved in this manifest, which may be out of date.`);
+  }
+
   // Topo-sort by install-time dependencies. We also tag each item
   // with its `servicebay.tier` so the sort adds an implicit edge from
   // every feature to every infrastructure item — guaranteeing the
