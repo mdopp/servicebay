@@ -238,8 +238,8 @@ const PORTAL_ICON_SET: ReadonlySet<string> = new Set(PORTAL_ICONS);
 
 /**
  * Per-subdomain card definition. Templates that host multiple
- * services (e.g. `media` runs both Audiobookshelf at `books.<domain>`
- * and Navidrome at `music.<domain>`) declare one entry per service
+ * services (e.g. `file-share` runs Syncthing at `sync.<domain>` and
+ * FileBrowser at `files.<domain>`) declare one entry per service
  * via `cards[]` in the frontmatter, and the portal emits one card
  * per entry.
  *
@@ -248,7 +248,8 @@ const PORTAL_ICON_SET: ReadonlySet<string> = new Set(PORTAL_ICONS);
  */
 export interface UserGuideCard {
   /** Variable name in the template's `variables.json` to use as the
-   *  subdomain. e.g. `"ABS_SUBDOMAIN"` for Audiobookshelf. */
+   *  subdomain. e.g. `"SYNCTHING_SUBDOMAIN"` for file-share's
+   *  Syncthing card. */
   subdomain_var: string;
   /** Optional override label; falls back to the template label. */
   label?: string;

@@ -1,5 +1,60 @@
 # Media (Jellyfin) — template changelog
 
+## v7 (breaking) — #2561
+
+**`books.<domain>` goes away — use `media.<domain>` instead.** If you
+typed a `books.` address into Symfonium, Findroid, Streamyfin or a
+browser bookmark, change it to `media.<domain>`; that is the same
+Jellyfin, and from now on its only address.
+
+### Why
+
+`books.<domain>` was Audiobookshelf's address. #1725/#1730 retired
+Audiobookshelf and deliberately repointed the name at Jellyfin so
+operators could keep using the URL they already had. That was a
+transitional courtesy, not a destination: Jellyfin already answers on
+`media.<domain>`, and a second hostname on the same port gives nobody
+anything — it just doubles the certificates, the DNS records and the
+places a stale bookmark can hide.
+
+### What changed
+
+- `variables.json`: `ABS_SUBDOMAIN` (the last `ABS_*` variable) is
+  removed. ServiceBay builds proxy hosts structurally from a template's
+  `type: "subdomain"` declarations, so with the declaration gone a
+  deploy cannot create the route: `MEDIA_SUBDOMAIN` is now the only
+  subdomain this template declares, and `media.<domain>` the only host
+  it can produce. Schema bumped to `7`.
+- `migrations/v6-to-v7.py`: removes the leftover alias from Nginx Proxy
+  Manager on boxes that still have it. Nothing else would — the install
+  path only ever *creates* proxy hosts, and the `dangling_proxy`
+  diagnose probe ignores this one because it forwards to a live
+  Jellyfin. The alias is matched by shape (a host under your public
+  domain that forwards to `JELLYFIN_PORT` and isn't
+  `MEDIA_SUBDOMAIN.<domain>`) so a renamed `ABS_SUBDOMAIN` is caught
+  too. Best-effort: a failure prints the manual step and never blocks
+  the deploy. No data is touched.
+
+### Required action for existing installs
+
+1. **Re-point any app or bookmark that uses `books.<domain>`** at
+   `https://media.<domain>`. Same server, same libraries, same login —
+   only the address changes. Audiobooks stay where they are, in
+   Jellyfin's `/media/audiobooks` library.
+2. Nothing else is required. The migration removes the old route for
+   you on the next deploy; there is no data to move and no credential
+   to rotate.
+3. *Optional housekeeping:* removing a proxy host deliberately leaves
+   its Let's Encrypt certificate in place (a shared bundle may still be
+   in use). If a `books.` certificate later shows up as failing to
+   renew, delete it in Nginx Proxy Manager → SSL Certificates.
+
+> **If you hand-created your own extra Jellyfin alias** (a second
+> hostname forwarding to Jellyfin's port that you added yourself), the
+> migration removes that too — it cannot tell it apart from the retired
+> one. Every removal is named in the deploy log; re-add it in
+> Settings → Routes if you want it back.
+
 ## v6 (breaking) — #1730 + #1731
 
 **Finish the Audiobookshelf retirement + stop the shared-tree SELinux

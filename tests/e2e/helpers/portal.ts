@@ -155,10 +155,15 @@ export async function ssoLogin(
 
 /**
  * The SSO services to smoke-login, in order. Defaults to the OIDC-backed apps
- * the box ships (`vault`/`photos`/`books`, mirroring `ssoVerify.ts`
+ * the box ships (`vault`/`photos`, mirroring `ssoVerify.ts`
  * `OIDC_CLIENT_SUBDOMAINS`); override per box via `SB_SSO_SERVICES` (a
  * comma-separated subdomain list) so an install with a different service set
  * verifies exactly what it has.
+ *
+ * `books` used to be in this list. Audiobookshelf was retired (#1725) and its
+ * subdomain was kept alive pointing at Jellyfin until #2561 removed it — and
+ * Jellyfin authenticates via LDAP, not OIDC, so it was never an OIDC client
+ * to smoke-login in the first place.
  */
 export function ssoServices(): string[] {
   const raw = process.env.SB_SSO_SERVICES
@@ -168,7 +173,7 @@ export function ssoServices(): string[] {
       .map((s) => s.trim())
       .filter(Boolean)
   }
-  return ['vault', 'photos', 'books']
+  return ['vault', 'photos']
 }
 
 /**

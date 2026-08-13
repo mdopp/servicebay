@@ -504,7 +504,7 @@ body
   it('parses a per-card category inside cards[]', () => {
     const raw = `---
 cards:
-  - subdomain_var: "ABS_SUBDOMAIN"
+  - subdomain_var: "MEDIA_SUBDOMAIN"
     category: "Media"
 ---
 body

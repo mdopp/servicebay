@@ -31,16 +31,16 @@ import { logger } from '@/lib/logger';
 import { parseUserGuide, DEFAULT_PORTAL_CATEGORY, type PortalIconName, type RecommendedApp, type SetupAsset, type ManualPairing, type PortalAction, type PortalCategory } from './userGuide';
 
 export interface PortalCard {
-  /** Stable id, e.g. "media:ABS_SUBDOMAIN" or "immich:IMMICH_SUBDOMAIN".
-   *  Used as React key + lets multi-service templates emit one card
-   *  per subdomain (#242 follow-up). */
+  /** Stable id, e.g. "file-share:SYNCTHING_SUBDOMAIN" or
+   *  "immich:IMMICH_SUBDOMAIN". Used as React key + lets multi-service
+   *  templates emit one card per subdomain (#242 follow-up). */
   id: string;
   /** Template name (e.g. "media"). Used for asset endpoint paths. */
   name: string;
   /** Subdomain-variable name on the template (`*_SUBDOMAIN`). The
    *  asset endpoint uses this to resolve the right URL when the
-   *  template has multiple subdomains (e.g. media → ABS_SUBDOMAIN
-   *  for the Audiobookshelf card). */
+   *  template has multiple subdomains (e.g. file-share →
+   *  SYNCTHING_SUBDOMAIN for the Syncthing card). */
   subdomainVar: string;
   /** User-facing label */
   label: string;
@@ -294,8 +294,8 @@ export async function resolveServiceUrl(
   config: AppConfig,
   templateName: string,
   /** Optional explicit *_SUBDOMAIN variable name. Required for
-   *  multi-subdomain templates (media has both ABS_SUBDOMAIN and
-   *  NAVIDROME_SUBDOMAIN); when omitted, falls back to the first
+   *  multi-subdomain templates (file-share has both SYNCTHING_SUBDOMAIN
+   *  and FILEBROWSER_SUBDOMAIN); when omitted, falls back to the first
    *  subdomain variable in variables.json (single-subdomain case). */
   subdomainVar?: string,
 ): Promise<string | null> {

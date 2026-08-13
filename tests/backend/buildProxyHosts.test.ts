@@ -177,12 +177,12 @@ describe('buildProxyHosts', () => {
   it('uses templateName from meta when present, else derives from var name', () => {
     const { hosts } = buildProxyHosts([
       v('PUBLIC_DOMAIN', 'example.com'),
-      v('ABS_SUBDOMAIN', 'audio', subdomain('public', '13378', { templateName: 'media' })),
-      v('NAVIDROME_SUBDOMAIN', 'navi', subdomain('public', '4533', { templateName: 'media' })),
+      v('SYNCTHING_SUBDOMAIN', 'audio', subdomain('public', '13378', { templateName: 'file-share' })),
+      v('FILEBROWSER_SUBDOMAIN', 'navi', subdomain('public', '4533', { templateName: 'file-share' })),
       v('FOO_SUBDOMAIN', 'foo', subdomain('public', '5000')),
     ]);
-    expect(hosts.find(h => h.domain === 'audio.example.com')?.service).toBe('media');
-    expect(hosts.find(h => h.domain === 'navi.example.com')?.service).toBe('media');
+    expect(hosts.find(h => h.domain === 'audio.example.com')?.service).toBe('file-share');
+    expect(hosts.find(h => h.domain === 'navi.example.com')?.service).toBe('file-share');
     expect(hosts.find(h => h.domain === 'foo.example.com')?.service).toBe('foo');
   });
 
