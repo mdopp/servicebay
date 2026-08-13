@@ -85,15 +85,20 @@ describe('HealthDashboard (#2100 dashboards migration)', () => {
 
     // The search input (this dashboard's own chrome — the page-title bar is the
     // shared PageHeader, migrated separately) is on token classes.
-    const search = screen.getByPlaceholderText('Search...');
+    // #2550: the shared <Search> primitive, named after the tab it filters.
+    const search = screen.getByRole('searchbox', { name: 'Search checks' });
     expect(search.className).toContain('border-border');
     expect(search.className).toContain('bg-surface-2');
     expect(search.className).not.toMatch(/border-gray-|bg-white|focus:ring-blue/);
 
     // The tab nav active/hover states are on accent/text tokens, not raw.
-    const checksTab = screen.getByRole('button', { name: 'Checks' });
+    // #2549: the strip is the shared <Tabs> primitive, so it is a real tablist
+    // — `getByRole('button')` no longer finds a tab, and that is the point.
+    const checksTab = screen.getByRole('tab', { name: 'Checks' });
     expect(checksTab.className).toMatch(/border-accent|text-accent/);
     expect(checksTab.className).not.toMatch(/blue-\d|gray-\d/);
+    expect(checksTab.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tabpanel', { name: 'Checks' })).toBeDefined();
   });
 
   it('add-check action is a primitive Button that opens the editor drawer', async () => {
@@ -107,13 +112,51 @@ describe('HealthDashboard (#2100 dashboards migration)', () => {
     expect(await screen.findByText('Create Health Check')).toBeDefined();
   });
 
+  // #2535 — the "Custom Script (JS)" type is removed from the picker. The probe
+  // behind it evaluated the operator's target with `vm.runInContext` inside the
+  // backend process; the type is gone at the schema, the MCP tool and the probe
+  // registry, so offering it here would only produce a 400.
+  it('the type picker no longer offers a custom-script check', async () => {
+    render(<HealthDashboard />);
+    await waitFor(() => expect(screen.getByTestId('health-checks')).toBeDefined());
+
+    fireEvent.click(screen.getByRole('button', { name: /add check/i }));
+    await screen.findByText('Create Health Check');
+
+    // The check-type picker is the one <select> that offers 'http'.
+    const typeSelect = Array.from(document.querySelectorAll('select')).find(s =>
+      Array.from(s.options).some(o => o.value === 'http'),
+    ) as HTMLSelectElement;
+    expect(typeSelect, 'the check-type picker must render').toBeDefined();
+    const values = Array.from(typeSelect.options).map(o => o.value);
+    expect(values).not.toContain('script');
+    expect(values).toContain('http');
+    expect(screen.queryByText(/Custom Script/i)).toBeNull();
+    // …and the script-only "Script Content" textarea is gone with it.
+    expect(screen.queryByText('Script Content')).toBeNull();
+    expect(document.querySelector('textarea')).toBeNull();
+    expect(typeSelect.value).toBe('http');
+  });
+
   it('switching to the Logs tab preserves tab behaviour', async () => {
     render(<HealthDashboard />);
     await waitFor(() => expect(screen.getByTestId('health-checks')).toBeDefined());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Logs' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Logs' }));
     // The checks panel unmounts when a non-checks tab is active.
     await waitFor(() => expect(screen.queryByTestId('health-checks')).toBeNull());
+  });
+
+  // #2549: the same switch, driven by the keyboard only. The hand-rolled strip
+  // had no arrow-key handling at all, so this could not have passed before.
+  it('arrow keys move between tabs and switch the panel', async () => {
+    render(<HealthDashboard />);
+    await waitFor(() => expect(screen.getByTestId('health-checks')).toBeDefined());
+
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Checks' }), { key: 'End' });
+    await waitFor(() => expect(screen.queryByTestId('health-checks')).toBeNull());
+    expect(screen.getByRole('tab', { name: 'System' }).getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'System' }));
   });
 
   // #2187 — Save Check disables + spins while the POST is in flight, so a

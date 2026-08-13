@@ -44,8 +44,12 @@ interface VariableLike {
   meta?: unknown;
 }
 
-/** Flat lookup `varName → value` of every saved operator-set variable. */
-export function loadSavedVariables(config: AppConfig): Record<string, string> {
+/** Flat lookup `varName → value` of every saved operator-set variable.
+ *
+ *  Takes only the field it reads so read-only consumers can call it with a
+ *  narrower config view (see `lib/template/effectiveVariables.ts`); an
+ *  `AppConfig` still satisfies it. */
+export function loadSavedVariables(config: Pick<AppConfig, 'installedVariables'>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const entry of config.installedVariables ?? []) {
     if (entry.varName && entry.value) out[entry.varName] = entry.value;

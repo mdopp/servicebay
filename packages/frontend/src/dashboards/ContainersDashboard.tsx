@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import DashboardHydrationGate, { type HydrationPhase } from '@/components/DashboardHydrationGate';
-import { Search } from 'lucide-react';
+import { Search, SEARCH_SLOT_CLASS } from '@/components/ui';
 import PageHeader from '@/components/PageHeader';
 import ContainerList, { type ContainerListItem } from '@/components/ContainerList';
 import { logger, type ServiceBundle } from '@servicebay/api-client';
@@ -129,16 +129,12 @@ export default function ContainersDashboard() {
         <div className="h-full flex flex-col relative">
               <PageHeader title="Container Engine" showBack={false} helpId="container-engine">
                         <div className="flex flex-col gap-3 w-full md:flex-row md:items-center">
-                            <div className="relative flex-1 min-w-[200px]">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-subtle" />
-                                <input
-                                    type="text"
-                                    placeholder="Search containers..."
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
-                                    className="w-full pl-9 pr-4 py-2 rounded-lg border border-border bg-surface text-sm text-text focus:ring-2 focus:ring-accent outline-none"
-                                />
-                            </div>
+                            <Search
+                                label="Search containers"
+                                value={searchQuery}
+                                onChange={setSearchQuery}
+                                className={SEARCH_SLOT_CLASS}
+                            />
                             <label className="flex items-center gap-2 text-sm text-text-muted select-none">
                                 <input
                                     type="checkbox"

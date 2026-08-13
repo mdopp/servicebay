@@ -174,6 +174,47 @@ export function markCredentialsSecured(
   return creds.map(c => (isCredentialSecured(c) ? c : { ...c, password: '', securedAt: at }));
 }
 
+/**
+ * Stable identity of a credential entry across re-installs and rotations
+ * (#2519).
+ *
+ * Also the value of the `servicebay-id` custom field on the Vaultwarden
+ * item, which is what makes a repeat push an **update** instead of a
+ * duplicate: the vault item survives ServiceBay replacing the local entry
+ * (a re-install drops and re-adds the template's entries), so identity
+ * has to be derivable from the entry's own content rather than from a
+ * stored item id.
+ *
+ * `username` is part of the key on purpose — a template that provisions
+ * two accounts for the same service (admin + a service user) must not
+ * collapse into one vault item.
+ */
+export function credentialKey(cred: Pick<Credential, 'service' | 'username' | 'template'>): string {
+  return `${cred.template ?? ''}::${cred.service}::${cred.username}`;
+}
+
+/**
+ * Mark exactly the entries whose key is in `keys` as secured, dropping
+ * ServiceBay's copy of their password in the same map (#2519).
+ *
+ * The narrow counterpart to `markCredentialsSecured`: an automated push
+ * confirms items **one at a time**, so an entry whose read-back failed
+ * must keep its password and stay visibly unsecured while its neighbours
+ * are secured. Marking the whole manifest on a partial success is exactly
+ * the optimistic failure this feature exists to avoid.
+ */
+export function markCredentialsSecuredByKey(
+  creds: readonly Credential[],
+  keys: ReadonlySet<string>,
+  at: string,
+): Credential[] {
+  return creds.map(c =>
+    isCredentialSecured(c) || !keys.has(credentialKey(c))
+      ? c
+      : { ...c, password: '', securedAt: at },
+  );
+}
+
 // #632 removed `formatCredentialsBanner` — the install runner no longer
 // dumps the manifest into the deploy log. The wizard's Done UI reads
 // the same data from `job.credentialsManifest` and the credentials

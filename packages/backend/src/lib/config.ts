@@ -472,6 +472,20 @@ export interface AppConfig {
    */
   installManifest?: InstallManifest;
   /**
+   * Vaultwarden push account (#2519) — the dedicated *technical* account
+   * ServiceBay logs in as to write `installManifest.credentials` into a
+   * shared organization collection.
+   *
+   * Absent ⇒ no automated push; the entries stay visibly "not yet
+   * secured" and the operator can still use the CSV hand-off. Never the
+   * operator's own account: `password` here unlocks nothing but the items
+   * ServiceBay itself wrote (see
+   * `assists/footgun-vaultwarden-personal-vault-write.md`). The field is
+   * named `password` deliberately — that puts it inside `SENSITIVE_KEYS`,
+   * so it is encrypted at rest and redacted from scoped-token reads.
+   */
+  credentialVault?: CredentialVaultConfig;
+  /**
    * Internal: every `type: secret | bcrypt | rsa-private` variable value
    * from the most recent install, keyed by template-variable name. Used
    * by the install runner to reuse passwords across clean-installs that
@@ -624,6 +638,44 @@ export interface InstallManifest {
   /** ISO timestamp of when this manifest was persisted. */
   savedAt: string;
   credentials: InstalledCredential[];
+}
+
+/**
+ * Outcome of the most recent push attempt (#2519). Kept so Settings can
+ * say *why* entries are still unsecured instead of just that they are.
+ */
+export interface CredentialVaultSyncState {
+  /** ISO timestamp of the attempt. */
+  at: string;
+  ok: boolean;
+  /** Machine-readable failure reason (`VaultFailureReason`), absent on success. */
+  reason?: string;
+  /** Operator-facing detail. Never contains key material. */
+  message?: string;
+  /** Entries whose item was written AND read back successfully. */
+  secured?: number;
+  /** Entries the attempt tried to push. */
+  attempted?: number;
+}
+
+/** Connection to the Vaultwarden organization collection ServiceBay pushes to. */
+export interface CredentialVaultConfig {
+  /**
+   * Explicit base URL override. Normally unset: the address is derived
+   * as `http://host.containers.internal:<VAULTWARDEN_PORT>` per ADR 0007
+   * Decision 3, with the host loopback as the fallback. Set this only for
+   * a vault that is not the box's own.
+   */
+  baseUrl?: string;
+  /** E-mail of the dedicated ServiceBay account (not the operator's). */
+  accountEmail: string;
+  /** That account's master password. Auto-encrypted at rest. */
+  password: string;
+  /** Organization the collection belongs to. */
+  organizationId: string;
+  /** Collection every pushed item is filed into. */
+  collectionId: string;
+  lastSync?: CredentialVaultSyncState;
 }
 
 /**

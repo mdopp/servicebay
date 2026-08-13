@@ -119,6 +119,32 @@ describe('claude-dev portal card (#1682)', () => {
     expect(vscode!.href).toContain('@192.168.178.100:2244/workspace');
   });
 
+  it('honours an operator-set CLAUDE_DEV_SSH_PORT from installedVariables (#2544)', async () => {
+    // Changed in Configure, not a global Template Setting: the value lands
+    // in `config.installedVariables` (#2531). Before #2544 the deep link
+    // read templateSettings only and shipped the template DEFAULT port, so
+    // "Open in VS Code" tried to SSH to a port nothing listens on.
+    configState.config = {
+      reverseProxy: { hosts: [], lanIp: '192.168.178.100' },
+      templateSettings: {},
+      installedVariables: [{ varName: 'CLAUDE_DEV_SSH_PORT', value: '2299' }],
+    };
+    const cards = await buildPortalCards();
+    const vscode = cards[0].secondaryActions.find(a => a.type === 'external_scheme');
+    expect(vscode!.href).toContain('@192.168.178.100:2299/workspace');
+  });
+
+  it('lets a global Template Setting outrank the operator-set SSH port (#2544)', async () => {
+    configState.config = {
+      reverseProxy: { hosts: [], lanIp: '192.168.178.100' },
+      templateSettings: { CLAUDE_DEV_SSH_PORT: '2244' },
+      installedVariables: [{ varName: 'CLAUDE_DEV_SSH_PORT', value: '2299' }],
+    };
+    const cards = await buildPortalCards();
+    const vscode = cards[0].secondaryActions.find(a => a.type === 'external_scheme');
+    expect(vscode!.href).toContain('@192.168.178.100:2244/workspace');
+  });
+
   it('falls back to the active domain for the host when no lanIp is recorded', async () => {
     configState.config = { reverseProxy: { hosts: [] }, templateSettings: {} };
     const cards = await buildPortalCards();

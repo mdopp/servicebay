@@ -7,6 +7,7 @@ import PageHeader from '@/components/PageHeader';
 import { SettingsProvider, useSettings } from './_lib/SettingsContext';
 import { SETTINGS_GROUPS, DEFAULT_GROUP } from './_lib/ia';
 import SettingsSearch from './_lib/SettingsSearch';
+import { Tabs } from '@/components/ui';
 
 function SettingsShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '';
@@ -37,27 +38,23 @@ function SettingsShell({ children }: { children: React.ReactNode }) {
         <SettingsSearch />
       </PageHeader>
 
-      <div className="flex border-b border-border px-6 bg-surface sticky top-0 z-10 overflow-x-auto">
-        {SETTINGS_GROUPS.map(group => {
-          const Icon = group.icon;
-          const isActive = activeGroupId === group.id;
-          return (
-            <Link
-              key={group.id}
-              href={`/settings/${group.id}`}
-              title={group.intent}
-              className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
-                isActive
-                  ? 'border-status-info text-status-info'
-                  : 'border-transparent text-text-subtle hover:text-text dark:hover:text-text-muted hover:border-border'
-              }`}
-            >
-              <Icon size={16} />
-              {group.label}
-            </Link>
-          );
-        })}
-      </div>
+      {/* #2549: the shared <Tabs> strip. Nav mode — each group is a routed page,
+          so these stay <Link>s with aria-current, not role=tab. The chrome
+          (padding, sticky, background) stays here; the primitive owns only the
+          tab language, which is now identical to Status'. */}
+      <Tabs
+        label="Settings groups"
+        value={activeGroupId}
+        linkComponent={Link}
+        className="px-6 bg-surface sticky top-0 z-10"
+        items={SETTINGS_GROUPS.map(group => ({
+          id: group.id,
+          label: group.label,
+          icon: group.icon,
+          href: `/settings/${group.id}`,
+          title: group.intent,
+        }))}
+      />
 
       <div className="px-4 pb-8 w-full space-y-6">{children}</div>
     </div>

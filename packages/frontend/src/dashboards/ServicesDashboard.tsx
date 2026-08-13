@@ -20,7 +20,7 @@ import RegistryDashboard from '@/dashboards/RegistryDashboard';
 import ServiceCard from '@/components/ServiceCard';
 import ServiceRow from '@/components/ServiceRow';
 import StackGroupHeader from '@/components/StackGroupHeader';
-import { SectionHeading, Button, Input } from '@/components/ui';
+import { SectionHeading, Button, Search, SEARCH_SLOT_CLASS } from '@/components/ui';
 import { useServiceActions } from '@/hooks/useServiceActions';
 import { useContainerActions } from '@/hooks/useContainerActions';
 import { buildServiceViewModel } from '@servicebay/api-client';
@@ -31,7 +31,7 @@ import type { EnrichedContainer } from '@servicebay/api-client';
 // We keep Service interface but recreate it or import from shared data if it matches?
 // SharedData Service is a complex UI object. digital twin ServiceUnit is simple.
 // WE NEED TO MAP TWIN -> UI SERVICE here.
-import { Plus, RefreshCw, Trash2, Box, Search, X, AlertCircle, FileCode, Terminal as TerminalIcon, Eraser } from 'lucide-react';
+import { Plus, RefreshCw, Trash2, Box, X, AlertCircle, FileCode, Terminal as TerminalIcon, Eraser } from 'lucide-react';
 import { ServiceBundle, BundlePortSummary } from '@servicebay/api-client';
 import {
     bundleSeverityClasses,
@@ -1083,16 +1083,12 @@ export default function ServicesDashboard() {
             </>
         }
       >
-        <div className="relative flex-1 max-w-md min-w-[100px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-            <Input
-                type="text"
-                placeholder="Search services or bundles..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 rounded-lg border border-border bg-surface text-text focus:ring-2 focus:ring-accent outline-none text-sm"
-            />
-        </div>
+        <Search
+            label="Search services or bundles"
+            value={searchQuery}
+            onChange={setSearchQuery}
+            className={SEARCH_SLOT_CLASS}
+        />
       </PageHeader>
 
       <div className="flex-1 overflow-y-auto px-4 md:px-6 py-6">

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Layers, Package, Loader2, CheckCircle, Box, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { Tabs } from '@/components/ui/Tabs';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import type { Template } from '@servicebay/api-client';
@@ -326,24 +327,13 @@ export function StacksStep({
                                 ] as const).filter(t => t.count > 0);
                                 const activeTab = configureTab ?? (tabs[0]?.id ?? 'settings');
                                 return (
-                                    <div className="flex gap-1 border-b border-border">
-                                        {tabs.map(t => (
-                                            <Button
-                                                key={t.id}
-                                                variant="ghost"
-                                                size="sm"
-                                                onClick={() => setConfigureTab(t.id)}
-                                                className={`px-4 py-2 text-sm font-bold border-b-2 transition-all rounded-none ${
-                                                    activeTab === t.id
-                                                        ? 'border-accent text-accent'
-                                                        : 'border-transparent text-text-muted hover:text-text'
-                                                }`}
-                                            >
-                                                {t.label}
-                                                <span className="ml-2 px-1.5 py-0.5 rounded-full bg-surface-2 text-[10px] opacity-70">{t.count}</span>
-                                            </Button>
-                                        ))}
-                                    </div>
+                                    // #2549: shared <Tabs> primitive.
+                                    <Tabs
+                                        label="Configuration groups"
+                                        value={activeTab}
+                                        onChange={setConfigureTab}
+                                        items={tabs}
+                                    />
                                 );
                             })()}
 

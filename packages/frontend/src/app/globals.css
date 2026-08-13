@@ -95,6 +95,14 @@
   --space-6: 2rem;             /* 32px */
   --space-7: 3rem;             /* 48px */
   --space-8: 4rem;             /* 64px */
+
+  /* --- Page frame: the ONE content width of a dashboard page (#2548).
+     Applied once, by <PageFrame> in app/(dashboard)/layout.tsx — pages must not
+     set a page width of their own, or the content jumps sideways when you
+     navigate (Home used to be max-w-5xl mx-auto while every other page was
+     full-bleed). 96rem = 1536px: below that the shell is the limit, so this
+     only bites on ultrawide, where an unbounded line length is unreadable. --- */
+  --page-max-width: 96rem;     /* 1536px */
 }
 
 @theme inline {
@@ -143,6 +151,10 @@
   --spacing-space-6: var(--space-6);
   --spacing-space-7: var(--space-7);
   --spacing-space-8: var(--space-8);
+
+  /* --- Page frame width → `max-w-page` (Tailwind v4 reads max-w-* from the
+     --container-* namespace). Only <PageFrame> should use it. --- */
+  --container-page: var(--page-max-width);
 }
 
 @media (prefers-color-scheme: light) {

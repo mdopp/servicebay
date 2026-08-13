@@ -7,7 +7,17 @@ import { logger } from '@servicebay/api-client';
 import ContainerList from './ContainerList';
 import { Button } from './ui/Button';
 import { Select } from './ui/Select';
+import { Tabs, tabPanelProps, type TabItem } from './ui';
 import type { EnrichedContainer } from '@servicebay/api-client';
+
+type MonitorTab = 'status' | 'service' | 'container-logs' | 'network';
+
+const MONITOR_TABS: readonly TabItem<MonitorTab>[] = [
+  { id: 'status', label: 'Status', icon: Activity },
+  { id: 'service', label: 'Service Logs', icon: Terminal },
+  { id: 'container-logs', label: 'Container Logs & Info', icon: Box },
+  { id: 'network', label: 'Raw Data / Config', icon: FileJson },
+];
 
 interface ServiceMonitorProps {
     serviceName: string;
@@ -46,7 +56,7 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
   const searchParams = useSearchParams();
     const nodeParam = searchParams?.get('node');
     const node = initialNode ?? (nodeParam && nodeParam.length > 0 ? nodeParam : undefined);
-  const [activeTab, setActiveTab] = useState<'status' | 'service' | 'container-logs' | 'network'>('status');
+  const [activeTab, setActiveTab] = useState<MonitorTab>('status');
   
   const [logs, setLogs] = useState<{ serviceLogs: string; podmanPs: Partial<EnrichedContainer>[] } | null>(null);
   const [status, setStatus] = useState<string>('');
@@ -234,43 +244,22 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
 
             <div className={`flex-1 flex flex-col min-h-0 ${variant === 'embedded' ? 'p-0' : 'p-6'}`}>
       <div className="bg-surface dark:bg-surface rounded-lg border border-border dark:border-border shadow-sm overflow-hidden flex flex-col flex-1 min-h-0">
-        <div className="flex border-b border-border dark:border-border bg-surface dark:bg-surface/50 shrink-0">
-            {/* `!h-auto !px-6` forces out Button's default size="md" (h-10/px-space-4) so it
-                can't win the cascade against this tab strip's own px-6/py-3 geometry — cn()
-                has no Tailwind-merge dedup, same escape hatch as the EmailNotificationsSection
-                fix (box-verify dbf73003 regression: tabs silently rendered 24px→16px padding
-                and a clipped fixed height because no `size` override was passed here). */}
-            <Button
-            variant="ghost"
-            className={`!h-auto !px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'status' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
-            onClick={() => setActiveTab('status')}
-            >
-            <Activity size={16} /> Status
-            </Button>
-            <Button
-            variant="ghost"
-            className={`!h-auto !px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'service' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
-            onClick={() => setActiveTab('service')}
-            >
-            <Terminal size={16} /> Service Logs
-            </Button>
-            <Button
-            variant="ghost"
-            className={`!h-auto !px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'container-logs' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
-            onClick={() => setActiveTab('container-logs')}
-            >
-            <Box size={16} /> Container Logs & Info
-            </Button>
-            <Button
-            variant="ghost"
-            className={`!h-auto !px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'network' ? 'bg-surface dark:bg-surface text-accent dark:text-accent border-t-2 border-t-accent dark:border-t-accent' : 'text-subtle dark:text-subtle hover:text-muted dark:hover:text-muted'}`}
-            onClick={() => setActiveTab('network')}
-            >
-            <FileJson size={16} /> Raw Data / Config
-            </Button>
-        </div>
+        {/* #2549: was a hand-built folder-tab strip whose `<Button>`s had to
+            fight their own size with `!h-auto !px-6`. The shared <Tabs> renders
+            a raw <button>, so there is no primitive geometry to override. */}
+        <Tabs
+            label="Service monitor views"
+            idBase="monitor"
+            value={activeTab}
+            onChange={setActiveTab}
+            className="bg-surface dark:bg-surface/50 shrink-0"
+            items={MONITOR_TABS}
+        />
 
-        <div className="bg-surface-muted dark:bg-surface-muted p-4 flex-1 overflow-y-auto">
+        <div
+            {...tabPanelProps('monitor', activeTab)}
+            className="bg-surface-muted dark:bg-surface-muted p-4 flex-1 overflow-y-auto"
+        >
             {activeTab === 'status' && (
             <pre className="text-sm font-mono text-status-ok whitespace-pre-wrap">
                 {status || 'Loading status...'}

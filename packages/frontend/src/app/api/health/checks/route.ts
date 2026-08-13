@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { HealthStore } from '@/lib/health/store';
-import { CheckConfig, isCheckPending } from '@/lib/health/types';
+import { CheckConfig, isCheckPending, SCRIPT_CHECK_REMOVED_MESSAGE } from '@/lib/health/types';
 import { v4 as uuidv4 } from 'uuid';
 import { withApiHandler } from '@/lib/api/handler';
 import { CheckIdString, HealthCheckTarget, NodeName } from '@/lib/api/schemas';
@@ -67,6 +67,24 @@ export const GET = withApiHandler({}, async () => {
   return NextResponse.json([...enrichedChecks, ...diagnoseChecks]);
 });
 
+const CheckTypeEnum = z.enum(['http', 'ping', 'podman', 'service', 'systemd', 'node', 'agent', 'fritzbox', 'backup']);
+
+// #2535: `script` is gone from the accepted set — the probe that backed it
+// evaluated the target with `vm.runInContext`, and that path is removed, not
+// disabled. A caller that still sends it (a template post-deploy written
+// against an older box, a script of the operator's own) must get a clear reason
+// rather than a bare "invalid enum value", so the retirement is never silent.
+// `superRefine` runs first and short-circuits the pipe, so the tailored message
+// wins for `script` while every other unknown value falls through to the enum.
+const CheckTypeField = z
+  .string()
+  .superRefine((value, ctx) => {
+    if (value === 'script') {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: SCRIPT_CHECK_REMOVED_MESSAGE });
+    }
+  })
+  .pipe(CheckTypeEnum);
+
 const CheckPostBody = z.object({
   // #2536: a check id is a *file name* — `HealthStore` builds the result file
   // as `<DATA_DIR>/results/<id>.json`. The shared `CheckIdString` is the one
@@ -78,7 +96,7 @@ const CheckPostBody = z.object({
   created_at: z.string().optional(),
   enabled: z.boolean().optional(),
   name: z.string().min(1).max(255),
-  type: z.enum(['http', 'ping', 'script', 'podman', 'service', 'systemd', 'node', 'agent', 'fritzbox', 'backup']),
+  type: CheckTypeField,
   target: HealthCheckTarget,
   interval: z.number().int().min(5).max(86400).optional(),
   nodeName: NodeName.optional(),

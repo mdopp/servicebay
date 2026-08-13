@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search } from 'lucide-react';
+import { Search } from '@/components/ui';
 import { searchSettings, type SearchHit } from './ia';
 
 /**
@@ -114,25 +114,19 @@ export default function SettingsSearch() {
     handleSearchKeyDown(e, { open, hits, activeIndex, setActive, setOpen, jump });
 
   return (
-    <div ref={containerRef} className="relative w-full max-w-md">
-      <div className="relative">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-subtle pointer-events-none" />
-        <input
-          type="text"
-          value={query}
-          onChange={e => {
-            setQuery(e.target.value);
-            setActive(0);
-            setOpen(true);
-          }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={onKeyDown}
-          placeholder="Search settings…"
-          aria-label="Search settings"
-          className="w-full pl-9 pr-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none"
-        />
-      </div>
-
+    <Search
+      containerRef={containerRef}
+      label="Search settings"
+      value={query}
+      onChange={value => {
+        setQuery(value);
+        setActive(0);
+        setOpen(true);
+      }}
+      onFocus={() => setOpen(true)}
+      onKeyDown={onKeyDown}
+      className="w-full max-w-md"
+    >
       {open && query.trim() !== '' && (
         <SearchResults
           query={query}
@@ -142,6 +136,6 @@ export default function SettingsSearch() {
           onPick={jump}
         />
       )}
-    </div>
+    </Search>
   );
 }

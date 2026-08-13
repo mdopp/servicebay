@@ -283,7 +283,9 @@ export default function OverviewDashboard() {
   return (
     <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6">
       {serviceActionOverlays}
-      <div className="max-w-5xl mx-auto space-y-6">
+      {/* Page width comes from <PageFrame> in the dashboard layout (#2548) —
+          this div only carries the vertical rhythm. */}
+      <div className="space-y-6">
         <header>
           <h1 className="text-2xl font-bold text-text">Home</h1>
           <p className="text-sm text-text-muted mt-1">

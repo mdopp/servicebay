@@ -37,11 +37,11 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { getLayoutedElements } from '@servicebay/api-client';
-import { X, Trash2, Edit, Info, Globe, Search, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus, ArrowRight, ArrowLeft, Lock } from 'lucide-react';
+import { X, Trash2, Edit, Info, Globe, FileText, Activity, Link as LinkIcon, ChevronDown, LayoutGrid, Plus, ArrowRight, ArrowLeft, Lock } from 'lucide-react';
 import PageHeader from '@/components/PageHeader';
 import { useToast } from '@/providers/ToastProvider';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
-import { Button, Badge, StatusDot, Input } from '@/components/ui';
+import { Button, Badge, StatusDot, Input, Search, SEARCH_SLOT_CLASS } from '@/components/ui';
 import {
   buildOrthogonalPath,
   buildServiceEditHref,
@@ -1554,16 +1554,12 @@ export default function NetworkDashboard() {
         showBack={false} 
         helpId="network"
       >
-        <div className="relative flex-1 max-w-md min-w-[100px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-subtle" />
-            <Input
-                type="text"
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 rounded-card border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none text-sm"
-            />
-        </div>
+        <Search
+            label="Search the map"
+            value={searchQuery}
+            onChange={setSearchQuery}
+            className={SEARCH_SLOT_CLASS}
+        />
       </PageHeader>
 
       <div className="flex-1 bg-surface-muted border-t border-border relative overflow-hidden">

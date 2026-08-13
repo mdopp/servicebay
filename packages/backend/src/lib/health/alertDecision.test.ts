@@ -60,8 +60,8 @@ describe('getFailureThreshold', () => {
   });
 
   it('falls back for a type without an explicit default', () => {
-    expect(getFailureThreshold(check('script'))).toBe(FALLBACK_FAILURE_THRESHOLD);
-    expect(DEFAULT_FAILURE_THRESHOLDS.script).toBeUndefined();
+    expect(getFailureThreshold(check('agent'))).toBe(FALLBACK_FAILURE_THRESHOLD);
+    expect(DEFAULT_FAILURE_THRESHOLDS.agent).toBeUndefined();
   });
 
   it('honours a per-check override over the type default', () => {

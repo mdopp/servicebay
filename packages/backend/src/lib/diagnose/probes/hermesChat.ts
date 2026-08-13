@@ -47,7 +47,7 @@ export async function checkHermesChat(): Promise<HermesChatResult> {
     };
   }
 
-  const conn = resolveHermesConnection(config);
+  const conn = await resolveHermesConnection(config);
   const client = new HermesClient(conn, 5000);
   if (!client.configured) {
     return {

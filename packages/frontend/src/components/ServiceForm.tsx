@@ -15,7 +15,16 @@ import { getNodes } from '@/app/actions/system';
 import { PodmanConnection } from '@servicebay/api-client';
 import { useToast } from '@/providers/ToastProvider';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
-import { Button, Input, Select } from '@/components/ui';
+import { Button, Input, Select, Tabs, tabPanelProps, type TabItem } from '@/components/ui';
+
+type EditorTab = 'yaml' | 'kube' | 'service' | 'history';
+
+const EDITOR_TABS: readonly TabItem<EditorTab>[] = [
+  { id: 'yaml', label: 'YAML Definition', icon: FileCode },
+  { id: 'kube', label: 'Generated .kube', icon: FileJson },
+  { id: 'service', label: 'Generated Service Unit', icon: FileText },
+  { id: 'history', label: 'History', icon: Clock },
+];
 
 interface KubeContainerPort {
     containerPort: number;
@@ -104,7 +113,7 @@ export default function ServiceForm({ initialData, isEdit, defaultNode, onClose,
   const [renameError, setRenameError] = useState<string | null>(null);
   const [isRenaming, setIsRenaming] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<'yaml' | 'kube' | 'service' | 'history'>('yaml');
+  const [activeTab, setActiveTab] = useState<EditorTab>('yaml');
 
   // Escape closes the rename modal like every other modal in the app
   // (ConfirmModal etc.), but not while a rename request is in flight (#2188).
@@ -658,46 +667,21 @@ WantedBy=default.target`;
 
       {/* Editors Tabs */}
       <div className="bg-surface rounded-lg border border-border shadow-sm overflow-hidden">
-        <div className="flex border-b border-border bg-surface-muted">
-            <Button
-                type="button"
-                className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'yaml' ? 'bg-surface text-accent border-t-2 border-t-accent' : 'text-text-muted hover:text-text'}`}
-                onClick={() => setActiveTab('yaml')}
-                variant="ghost"
-            >
-                <FileCode size={16} /> YAML Definition
-            </Button>
-            <Button
-                type="button"
-                className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'kube' ? 'bg-surface text-accent border-t-2 border-t-accent' : 'text-text-muted hover:text-text'}`}
-                onClick={() => setActiveTab('kube')}
-                variant="ghost"
-            >
-                <FileJson size={16} /> Generated .kube
-            </Button>
-            {isEdit && serviceContent && (
-                <Button
-                    type="button"
-                    className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'service' ? 'bg-surface text-accent border-t-2 border-t-accent' : 'text-text-muted hover:text-text'}`}
-                    onClick={() => setActiveTab('service')}
-                    variant="ghost"
-                >
-                    <FileText size={16} /> Generated Service Unit
-                </Button>
+        {/* #2549: shared <Tabs>. The optional tabs are filtered out of the item
+            list rather than conditionally rendered, so the strip's roving
+            tabindex and arrow keys see the real set. */}
+        <Tabs
+            label="Service definition views"
+            idBase="service-form"
+            value={activeTab}
+            onChange={setActiveTab}
+            className="bg-surface-muted"
+            items={EDITOR_TABS.filter(t =>
+                t.id === 'service' ? isEdit && Boolean(serviceContent) : t.id === 'history' ? isEdit : true,
             )}
-            {isEdit && (
-                <Button
-                    type="button"
-                    className={`px-6 py-3 font-medium text-sm flex items-center gap-2 transition-colors ${activeTab === 'history' ? 'bg-surface text-accent border-t-2 border-t-accent' : 'text-text-muted hover:text-text'}`}
-                    onClick={() => setActiveTab('history')}
-                    variant="ghost"
-                >
-                    <Clock size={16} /> History
-                </Button>
-            )}
-        </div>
+        />
 
-        <div className="p-0">
+        <div {...tabPanelProps('service-form', activeTab)} className="p-0">
             {activeTab === 'yaml' && (
                 <div className="flex flex-col lg:flex-row h-[700px]">
                     <div className="flex-1 flex flex-col p-6 min-w-0">

@@ -18,6 +18,14 @@ vi.mock('@/lib/config', () => ({
   saveConfig: (cfg: AppConfig) => saveConfigMock(cfg),
 }));
 
+// #2519 — the handler hands off to the Vaultwarden push. Mocked here so
+// the persistence assertions stay about persistence; the push's own
+// behaviour is covered in lib/vaultwarden/sync.test.ts.
+const syncMock = vi.fn(async () => ({ ok: true, attempted: 0, secured: 0, at: 'now' }));
+vi.mock('@/lib/vaultwarden/sync', () => ({
+  syncCredentialsToVault: (...args: unknown[]) => syncMock(...(args as [])),
+}));
+
 import { handleInstalled, handleUninstalled } from './credentials';
 import type { TemplateManifest } from '@/lib/template/contract';
 import type { StackVariable } from '@/lib/stackInstall/types';
@@ -48,6 +56,7 @@ function oidcSubdomainVar(template: string, subVarName: string, clientId: string
 beforeEach(() => {
   mockConfig = {};
   saveConfigMock.mockClear();
+  syncMock.mockClear();
 });
 
 describe('credentials.handleInstalled', () => {
@@ -209,5 +218,46 @@ describe('credentials.handleUninstalled', () => {
       kind: 'feature.uninstalled', template: 'immich', lastKnownVariables: [],
     });
     expect(r.ok).toBe(true);
+  });
+});
+
+describe('credentials install → Vaultwarden push (#2519)', () => {
+  it('hands the freshly persisted entries to the push', async () => {
+    const r = await handleInstalled({
+      kind: 'feature.installed', template: 'immich', manifest: MANIFEST,
+      variables: [
+        { name: 'PUBLIC_DOMAIN', value: 'dopp.cloud' },
+        oidcSubdomainVar('immich', 'IMMICH_SUBDOMAIN', 'immich', 'IMMICH_SSO_SECRET'),
+        { name: 'IMMICH_SSO_SECRET', value: 'super-secret' },
+      ],
+    });
+    expect(r.ok).toBe(true);
+    expect(syncMock).toHaveBeenCalledWith({ trigger: 'install:immich' });
+  });
+
+  it('does NOT fail the install when the push rejects', async () => {
+    syncMock.mockRejectedValueOnce(new Error('vault down'));
+    const r = await handleInstalled({
+      kind: 'feature.installed', template: 'immich', manifest: MANIFEST,
+      variables: [
+        { name: 'PUBLIC_DOMAIN', value: 'dopp.cloud' },
+        oidcSubdomainVar('immich', 'IMMICH_SUBDOMAIN', 'immich', 'IMMICH_SSO_SECRET'),
+        { name: 'IMMICH_SSO_SECRET', value: 'super-secret' },
+      ],
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not push on uninstall', async () => {
+    mockConfig = {
+      installManifest: {
+        savedAt: 'x',
+        credentials: [
+          { service: 'i', url: 'x', username: 'i', password: 'p', importance: 'system', template: 'immich' } as never,
+        ],
+      },
+    };
+    await handleUninstalled({ kind: 'feature.uninstalled', template: 'immich', lastKnownVariables: [] });
+    expect(syncMock).not.toHaveBeenCalled();
   });
 });

@@ -61,18 +61,45 @@ function installFetch(handlers: FetchHandler[]) {
   }) as any;
 }
 
-function manifestFetch(credentials: any[], proxyHosts = [VAULT_HOST]) {
+/** Automated-push status the GET route now carries (#2519). */
+const VAULT_READY = { installed: true, configured: true, lastSync: null };
+const VAULT_NOT_SET_UP = { installed: true, configured: false, lastSync: null };
+const VAULT_ABSENT = { installed: false, configured: false, lastSync: null };
+
+function manifestFetch(
+  credentials: any[],
+  proxyHosts = [VAULT_HOST],
+  vault: any = VAULT_NOT_SET_UP,
+  sync?: { result: any; after: any[]; vaultAfter?: any },
+) {
+  // The section re-reads GET after a push, so the state is mutable.
+  const state = { credentials, vault };
   installFetch([
     {
       pattern: /\/api\/system\/credentials\/secured$/,
       responder: () => jsonRes({ ok: true, secured: 1, securedAt: '2026-08-13T12:00:00.000Z' }),
     },
     {
+      pattern: /\/api\/system\/credentials\/vault$/,
+      responder: () => jsonRes({ ok: true, configured: true }),
+    },
+    {
+      pattern: /\/api\/system\/credentials\/sync$/,
+      responder: () => {
+        if (sync) {
+          state.credentials = sync.after;
+          if (sync.vaultAfter) state.vault = sync.vaultAfter;
+        }
+        return jsonRes(sync?.result ?? { ok: true, attempted: 0, secured: 0 });
+      },
+    },
+    {
       pattern: /\/api\/system\/credentials$/,
       responder: () => jsonRes({
-        manifest: { savedAt: '2026-08-12T08:00:00.000Z', credentials },
+        manifest: { savedAt: '2026-08-12T08:00:00.000Z', credentials: state.credentials },
         proxyHosts,
         publicDomain: 'dopp.cloud',
+        vault: state.vault,
       }),
     },
   ]);
@@ -132,16 +159,95 @@ describe('CredentialsSection (#2519)', () => {
   });
 
   it('says so when Vaultwarden is not installed — the failure path stays visibly unsecured', async () => {
-    manifestFetch([UNSECURED], []);
+    manifestFetch([UNSECURED], [], VAULT_ABSENT);
     render(<CredentialsSection />);
     await waitFor(() => expect(screen.getByText('Immich')).toBeTruthy());
 
-    const status = screen.getByTestId('credentials-sync-status');
-    expect(status.textContent).toMatch(/not yet secured/i);
-    expect(status.textContent).toMatch(/Vaultwarden isn't installed/i);
+    expect(screen.getByTestId('credentials-sync-status').textContent).toMatch(/not yet secured/i);
+    expect(screen.getByTestId('credentials-push-state').textContent).toMatch(/isn’t installed/i);
     expect(screen.queryByRole('link', { name: /vaultwarden/i })).toBeNull();
-    // The CSV escape hatch stays, so the operator is not stuck.
+    // No push offered when there's nothing to push to…
+    expect(screen.queryByRole('button', { name: /push to vaultwarden/i })).toBeNull();
+    // …but the CSV escape hatch stays, so the operator is not stuck.
     expect(screen.getByRole('button', { name: /download csv/i })).toBeTruthy();
+  });
+
+  it('says the push is not set up when ServiceBay has no vault account', async () => {
+    manifestFetch([UNSECURED], [VAULT_HOST], VAULT_NOT_SET_UP);
+    render(<CredentialsSection />);
+    await waitFor(() => expect(screen.getByText('Immich')).toBeTruthy());
+
+    expect(screen.getByTestId('credentials-push-state').textContent).toMatch(/not set up/i);
+    expect(screen.queryByRole('button', { name: /push to vaultwarden/i })).toBeNull();
+  });
+
+  it('pushes on demand and marks only what the vault confirmed', async () => {
+    manifestFetch([UNSECURED], [VAULT_HOST], VAULT_READY, {
+      result: { ok: true, attempted: 1, secured: 1, at: '2026-08-13T12:00:00.000Z' },
+      after: [{ ...UNSECURED, password: '', securedAt: '2026-08-13T12:00:00.000Z' }],
+      vaultAfter: { installed: true, configured: true, lastSync: { at: '2026-08-13T12:00:00.000Z', ok: true, secured: 1, attempted: 1 } },
+    });
+    const { container } = render(<CredentialsSection />);
+    await waitFor(() => expect(screen.getByText('Immich')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: /push to vaultwarden/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('credentials-sync-status').textContent)
+        .toMatch(/All 1 entries are in Vaultwarden/i));
+    expect(container.textContent).not.toMatch(/not yet secured/i);
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/system/credentials/sync',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('offers the setup form and posts the account write-only', async () => {
+    manifestFetch([UNSECURED], [VAULT_HOST], VAULT_NOT_SET_UP);
+    render(<CredentialsSection />);
+    await waitFor(() => expect(screen.getByText('Immich')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: /set up automatic push/i }));
+    fireEvent.change(screen.getByLabelText(/account e-mail/i), { target: { value: 'servicebay@dopp.cloud' } });
+    fireEvent.change(screen.getByLabelText(/master password/i), { target: { value: 'generated-master-pw' } });
+    fireEvent.change(screen.getByLabelText(/organization id/i), { target: { value: 'org-1' } });
+    fireEvent.change(screen.getByLabelText(/collection id/i), { target: { value: 'col-1' } });
+    // The secret is a password input — never rendered as readable text.
+    expect((screen.getByLabelText(/master password/i) as HTMLInputElement).type).toBe('password');
+    fireEvent.click(screen.getByRole('button', { name: /save vault account/i }));
+
+    await waitFor(() => {
+      const call = (global.fetch as any).mock.calls.find((c: any[]) => c[0] === '/api/system/credentials/vault');
+      expect(call).toBeTruthy();
+      expect(JSON.parse(call[1].body)).toMatchObject({ accountEmail: 'servicebay@dopp.cloud', organizationId: 'org-1' });
+    });
+  });
+
+  it('a failed push leaves the entry marked not yet secured, with the reason', async () => {
+    manifestFetch([UNSECURED], [VAULT_HOST], VAULT_READY, {
+      result: {
+        ok: false, attempted: 1, secured: 0, reason: 'unreachable',
+        message: 'connect ECONNREFUSED', at: '2026-08-13T12:00:00.000Z',
+      },
+      // Server kept the password — nothing was confirmed.
+      after: [UNSECURED],
+      vaultAfter: {
+        installed: true, configured: true,
+        lastSync: { at: '2026-08-13T12:00:00.000Z', ok: false, reason: 'unreachable', message: 'connect ECONNREFUSED', secured: 0, attempted: 1 },
+      },
+    });
+    const { container } = render(<CredentialsSection />);
+    await waitFor(() => expect(screen.getByText('Immich')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: /push to vaultwarden/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('credentials-push-state').textContent).toMatch(/did not complete/i));
+    // The entry must NOT look safe after a failed push.
+    expect(screen.getByTestId('credentials-push-state').textContent).toMatch(/ECONNREFUSED/);
+    expect(screen.getByTestId('credentials-sync-status').textContent).toMatch(/1 of 1 not yet secured/i);
+    expect(container.querySelectorAll('[data-variant="warn"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-variant="ok"]')).toHaveLength(0);
   });
 
   it('drops the local copy when the hand-off is confirmed', async () => {

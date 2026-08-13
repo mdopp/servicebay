@@ -5,17 +5,16 @@
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 // #2534 — the MCP health surface must be no weaker than the HTTP one. A check's
-// `target` is not inert: every probe feeds it somewhere (an argv, a URL, and for
-// `type: "script"` a `vm.runInContext` eval — health/probes/basic.ts). The REST
-// route `POST /api/health/checks` parses it with the shared `HealthCheckTarget`;
-// this tool used a bare `z.string()`, so a mutate-scope token could send content
-// a web session could not. Reuse the SAME shared schemas rather than a second
+// `target` is not inert: every probe feeds it somewhere (an argv for the
+// systemctl/podman probes, a URL the box fetches for `http`). The REST route
+// `POST /api/health/checks` parses it with the shared `HealthCheckTarget`; this
+// tool used a bare `z.string()`, so a mutate-scope token could send content a
+// web session could not. Reuse the SAME shared schemas rather than a second
 // idiom, so the rejection happens in the tool schema before any handler runs.
 //
-// This is parity, NOT containment: `HealthCheckTarget` removes JS call syntax
-// (no parens, no backtick) but not member access or assignment, and the script
-// probe's vm context holds the host realm's `fetch`. Whether a caller-supplied
-// `script` check should exist at all is #2535 — deliberately not widened here.
+// #2535 — the one sink that was an *evaluator* (`type: "script"`, interpolated
+// into `vm.runInContext`) is gone: the probe is deleted and the type is off the
+// enum below, so this tool can no longer store one.
 import { HealthCheckTarget, NodeName } from '@/lib/api/schemas';
 import { HealthStore } from '@/lib/health/store';
 import { CheckRunner } from '@/lib/health/runner';
@@ -23,7 +22,7 @@ import type { CheckConfig, CheckType } from '@/lib/health/types';
 import { textResult, errorResult, type ToolRegistration } from './context';
 
 const checkTypeSchema = z.enum([
-  'http', 'ping', 'script', 'podman', 'service', 'systemd', 'fritzbox', 'node', 'agent', 'backup',
+  'http', 'ping', 'podman', 'service', 'systemd', 'fritzbox', 'node', 'agent', 'backup',
 ]);
 
 // A register function is a flat LIST of tool declarations, not a unit of logic:
@@ -46,8 +45,8 @@ export function registerHealthTools({ server }: ToolRegistration) {
     'Create a new health check (HTTP, ping, container, service, …). Returns the created check including generated id.',
     {
       name: z.string().min(1).describe('Display name'),
-      type: checkTypeSchema.describe('Check type'),
-      target: HealthCheckTarget.describe('URL / IP / container id / service name / script depending on type. Shell and JS metacharacters are rejected — the same rule POST /api/health/checks applies.'),
+      type: checkTypeSchema.describe('Check type. The former "script" (custom JavaScript) type was removed (#2535) — it evaluated the target inside the ServiceBay backend process; use "http" instead.'),
+      target: HealthCheckTarget.describe('URL / IP / container id / service name depending on type. Shell metacharacters are rejected — the same rule POST /api/health/checks applies.'),
       interval: z.number().int().min(10).max(86400).describe('Interval in seconds (10s–24h)'),
       enabled: z.boolean().optional().describe('Default: true'),
       nodeName: NodeName.optional().describe('Node to run the check from (default: first available)'),

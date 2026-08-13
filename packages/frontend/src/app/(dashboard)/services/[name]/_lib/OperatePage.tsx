@@ -11,15 +11,15 @@ import OperateSettingsTab from '../../../settings/services/_lib/OperateSettingsT
 import OperateActionsTab from '../../../settings/services/_lib/OperateActionsTab';
 import OperateContainersTab, { type ContainersDrawerRequest } from './OperateContainersTab';
 import ServiceDetailSummary from '@/components/serviceDetail/ServiceDetailSummary';
-import { Card, PageScroll } from '@/components/ui';
+import { Card, PageScroll, Tabs, tabPanelProps, type TabItem } from '@/components/ui';
 
 type OperateTab = 'health' | 'settings' | 'containers' | 'actions';
 
-const TABS: { id: OperateTab; label: string; Icon: typeof Activity }[] = [
-  { id: 'health', label: 'Health', Icon: Activity },
-  { id: 'settings', label: 'Settings', Icon: SettingsIcon },
-  { id: 'containers', label: 'Containers', Icon: Box },
-  { id: 'actions', label: 'Actions', Icon: Zap },
+const TABS: readonly TabItem<OperateTab>[] = [
+  { id: 'health', label: 'Health', icon: Activity },
+  { id: 'settings', label: 'Settings', icon: SettingsIcon },
+  { id: 'containers', label: 'Containers', icon: Box },
+  { id: 'actions', label: 'Actions', icon: Zap },
 ];
 
 function isTab(v: string | null): v is OperateTab {
@@ -102,23 +102,9 @@ function OperateBody({ service }: { service: ServiceViewModel }) {
         <ServiceDetailSummary service={service} showOperateLink={false} onShowLogs={showLogs} />
       </Card>
 
-      <div className="flex border-b border-border">
-        {TABS.map(({ id, label, Icon }) => (
-          <button
-            key={id}
-            onClick={() => setTab(id)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              tab === id
-                ? 'border-accent text-accent'
-                : 'border-transparent text-text-muted hover:text-text'
-            }`}
-          >
-            <Icon size={16} /> {label}
-          </button>
-        ))}
-      </div>
+      <Tabs label="Service views" idBase="operate" value={tab} onChange={setTab} items={TABS} />
 
-      <div>
+      <div {...tabPanelProps('operate', tab)}>
         {tab === 'health' && <OperateHealthTab service={service} />}
         {tab === 'settings' && <OperateSettingsTab service={service} />}
         {tab === 'containers' && <OperateContainersTab service={service} initialDrawer={logsRequest} />}

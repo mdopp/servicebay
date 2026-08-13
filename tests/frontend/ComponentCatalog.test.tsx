@@ -25,6 +25,8 @@ const EXPECTED_ENTRIES = [
   'section-heading',
   'field',
   'data-table',
+  'tabs',
+  'search',
   'page-scroll',
 ];
 

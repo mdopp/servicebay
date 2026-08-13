@@ -117,7 +117,12 @@ export function getDiagnoseChecksEnriched(nodeName = 'Local') {
     return {
       id,
       name: decoded?.label ? `Self-diagnose: ${decoded.label}` : id,
-      type: 'script' as const,
+      // Display-only type (#2535). These rows are projections of live diagnose
+      // probe results — never stored, never dispatched through the probe
+      // registry. They used to borrow `type:'script'`, which both mislabelled
+      // the row's badge and made the (now removed) script check type look like
+      // it was in use.
+      type: 'diagnose' as const,
       target: probeId,
       interval: DIAGNOSE_INTERVAL_SECONDS,
       enabled: true,

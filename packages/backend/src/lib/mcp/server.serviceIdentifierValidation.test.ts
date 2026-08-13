@@ -33,7 +33,7 @@ const serviceManagerMock = {
   renameService: vi.fn(async () => undefined),
   deleteService: vi.fn(async () => undefined),
   listTrashedServices: vi.fn(async () => []),
-  restoreTrashedService: vi.fn(async () => ({ service: 'media' })),
+  restoreTrashedService: vi.fn(async () => ({ service: 'media', capabilityFailures: [] })),
   purgeTrash: vi.fn(async () => ({ purged: [] })),
 };
 

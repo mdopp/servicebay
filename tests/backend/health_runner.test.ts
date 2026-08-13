@@ -171,26 +171,17 @@ describe('CheckRunner', () => {
          expect(result.message).toContain('Ping');
     });
 
-    it('should run a script check', async () => {
+    // #2535: the `script` probe is GONE. It interpolated the target into
+    // `(async () => { … })()` and ran it with `vm.runInContext` on a context
+    // holding the host realm's `fetch` — an evaluator, not a sandbox. A row
+    // stored on a box that predates the removal must fail loudly here rather
+    // than be executed; the boot-time migration in health/init.ts disables such
+    // rows so this path is only ever the backstop.
+    it('refuses a stored script check instead of evaluating it', async () => {
         const check: CheckConfig = {
-            id: 'test-script',
-            name: 'Test Script',
-            type: 'script',
-            target: 'if (1 !== 1) throw new Error("Math is broken")',
-            interval: 60,
-            enabled: true,
-            created_at: '2024-01-01T00:00:00Z'
-        };
-
-        const result = await CheckRunner.run(check);
-        expect(result.status).toBe('ok');
-    });
-
-    it('should fail a broken script check', async () => {
-        const check: CheckConfig = {
-            id: 'test-script-fail',
-            name: 'Test Script Fail',
-            type: 'script',
+            id: 'test-script-legacy',
+            name: 'Legacy Script',
+            type: 'script' as unknown as CheckConfig['type'],
             target: 'throw new Error("Custom Failure")',
             interval: 60,
             enabled: true,
@@ -199,7 +190,9 @@ describe('CheckRunner', () => {
 
         const result = await CheckRunner.run(check);
         expect(result.status).toBe('fail');
-        expect(result.message).toContain('Custom Failure');
+        expect(result.message).toContain('unknown check type');
+        // The target was never evaluated — its own error text never appears.
+        expect(result.message).not.toContain('Custom Failure');
     });
 
     it('should pass a letsdebug check with no problems', async () => {

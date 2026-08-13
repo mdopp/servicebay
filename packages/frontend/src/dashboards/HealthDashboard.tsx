@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Plus, RefreshCw, X, Search, Loader2 } from 'lucide-react';
+import { Plus, RefreshCw, X, Loader2 } from 'lucide-react';
 import { useToast, ToastType } from '@/providers/ToastProvider';
 import { useSocket } from '@/hooks/useSocket';
 import PageHeader from '@/components/PageHeader';
@@ -17,7 +17,18 @@ import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
 import DiagnoseProbeList, { type DiagnoseProbe } from '@/components/DiagnoseProbeList';
 import ContainersDashboard from '@/dashboards/ContainersDashboard';
-import { Button, Badge, Input, Select, Textarea, Table } from '@/components/ui';
+import {
+  Button,
+  Badge,
+  Input,
+  Search,
+  SEARCH_SLOT_CLASS,
+  Select,
+  Table,
+  Tabs,
+  tabPanelProps,
+  type TabItem,
+} from '@/components/ui';
 
 interface Container {
   Id: string;
@@ -33,6 +44,28 @@ interface HistoryItem {
 }
 
 type HealthTab = 'checks' | 'logs' | 'system' | 'containers';
+
+const HEALTH_TABS: readonly TabItem<HealthTab>[] = [
+  { id: 'checks', label: 'Checks' },
+  { id: 'containers', label: 'Containers' },
+  { id: 'logs', label: 'Logs' },
+  { id: 'system', label: 'System' },
+];
+
+/**
+ * ONE search per tab, each naming its own scope (#2550 owner decision).
+ *
+ * The page-level field used to render on every tab but `system`, while
+ * `searchQuery` is only ever consumed by the Checks panel (<HealthChecks>) and
+ * the Logs panel (<LogViewer>). On the Containers tab it was therefore INERT —
+ * it looked like the containers filter, sat right above the Containers tab's
+ * own "Search containers…" field, and did nothing. Absent from this map ⇒ no
+ * page-level field on that tab.
+ */
+const SEARCH_SCOPE: Partial<Record<HealthTab, string>> = {
+  checks: 'Search checks',
+  logs: 'Search logs',
+};
 
 export default function HealthDashboard() {
   const [checks, setChecks] = useState<Check[]>([]);
@@ -366,6 +399,10 @@ export default function HealthDashboard() {
     setRepairCheck(check);
   }, []);
 
+  // Undefined on the tabs that own their own search (Containers) or have none
+  // (System) — see SEARCH_SCOPE.
+  const searchScope = SEARCH_SCOPE[activeTab];
+
   const repairProbe: DiagnoseProbe | null = repairCheck
     ? (() => {
         const d = (repairCheck as Check & { diagnose?: Partial<DiagnoseProbe> }).diagnose;
@@ -400,45 +437,31 @@ export default function HealthDashboard() {
             </div>
         ) : undefined}
       >
-        {activeTab !== 'system' && (
-        <div className="relative flex-1 max-w-md min-w-[100px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-subtle" />
-            <Input
-                type="text"
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 rounded-card border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none text-sm"
-            />
-        </div>
+        {searchScope && (
+          <Search
+            label={searchScope}
+            value={searchQuery}
+            onChange={setSearchQuery}
+            className={SEARCH_SLOT_CLASS}
+          />
         )}
       </PageHeader>
       </div>
 
-      {/* Tab Navigation */}
-      <div className="flex gap-1 border-b border-border px-2 shrink-0 overflow-x-auto">
-        {([
-          { id: 'checks' as const, label: 'Checks' },
-          { id: 'containers' as const, label: 'Containers' },
-          { id: 'logs' as const, label: 'Logs' },
-          { id: 'system' as const, label: 'System' },
-        ]).map(tab => (
-          <Button
-            key={tab.id}
-            onClick={() => handleTabChange(tab.id)}
-            variant="ghost"
-            className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
-              activeTab === tab.id
-                ? 'border-accent text-accent'
-                : 'border-transparent text-text-muted hover:text-text'
-            }`}
-          >
-            {tab.label}
-          </Button>
-        ))}
-      </div>
+      {/* Tab Navigation — shared <Tabs> primitive (#2549). */}
+      <Tabs
+        label="Status views"
+        idBase="status"
+        value={activeTab}
+        onChange={handleTabChange}
+        className="px-2 shrink-0"
+        items={HEALTH_TABS}
+      />
 
-      <div className="flex-1 overflow-y-auto space-y-6 pb-6">
+      <div
+        {...tabPanelProps('status', activeTab)}
+        className="flex-1 overflow-y-auto space-y-6 pb-6"
+      >
       {activeTab === 'checks' && (
         <HealthChecks
           checks={checks}
@@ -775,7 +798,8 @@ export default function HealthDashboard() {
                   <option value="service">Managed Service</option>
                   <option value="systemd">System Service</option>
                   <option value="agent">Agent Health</option>
-                  <option value="script">Custom Script (JS)</option>
+                  {/* #2535: "Custom Script (JS)" is gone — the probe behind it
+                      evaluated the target inside the backend process. */}
                   <option value="fritzbox">Fritz!Box Internet</option>
                 </Select>
                 
@@ -799,9 +823,6 @@ export default function HealthDashboard() {
                     {formData.type === 'agent' && (
                         <p>Monitors the ServiceBay Agent on a node. Verifies connection status, heartbeat, and error rates. Fails if the agent disconnects or stops reporting.</p>
                     )}
-                    {formData.type === 'script' && (
-                        <p>Executes a custom JavaScript snippet in a sandboxed environment. Use <code>fetch()</code> for custom logic. Throw an error to fail the check.</p>
-                    )}
                     {formData.type === 'fritzbox' && (
                         <p>Queries a Fritz!Box router via UPnP (TR-064) to check internet connectivity status. Fails if the router reports &apos;Disconnected&apos; or is unreachable.</p>
                     )}
@@ -824,17 +845,9 @@ export default function HealthDashboard() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-text-muted mb-1">
-                    {formData.type === 'script' ? 'Script Content' : formData.type === 'fritzbox' ? 'Fritz!Box Hostname / IP' : 'Target'}
+                    {formData.type === 'fritzbox' ? 'Fritz!Box Hostname / IP' : 'Target'}
                 </label>
-                {formData.type === 'script' ? (
-                    <Textarea
-                        value={formData.target}
-                        onChange={e => setFormData({...formData, target: e.target.value})}
-                        disabled={isSystemCheck()}
-                        className={`w-full p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none font-mono text-sm h-32 ${isSystemCheck() ? 'opacity-60 cursor-not-allowed' : ''}`}
-                        placeholder="if (1 !== 1) throw new Error('Math broken')"
-                    />
-                ) : formData.type === 'podman' ? (
+                {formData.type === 'podman' ? (
                     <div className="relative">
                         <Select
                             value={formData.target}

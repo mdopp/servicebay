@@ -1,6 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import { notFound } from 'next/navigation';
+import { Network, Users } from 'lucide-react';
 import {
   Button,
   Card,
@@ -11,6 +13,9 @@ import {
   SectionHeading,
   Field,
   PageScroll,
+  Search,
+  SEARCH_SLOT_CLASS,
+  Tabs,
   type ButtonVariant,
   type ButtonSize,
   type BadgeVariant,
@@ -226,6 +231,58 @@ function DataTableEntry() {
   );
 }
 
+function TabsEntry() {
+  const [tab, setTab] = useState('checks');
+  return (
+    <Entry id="tabs" title="Tabs">
+      <Specimen label="panel mode (role=tablist, arrow keys)">
+        <Tabs
+          label="Catalog demo tabs"
+          idBase="catalog-tabs"
+          value={tab}
+          onChange={setTab}
+          className="w-72"
+          items={[
+            { id: 'checks', label: 'Checks' },
+            { id: 'logs', label: 'Logs' },
+            { id: 'ports', label: 'Ports', count: 3 },
+          ]}
+        />
+      </Specimen>
+      <Specimen label="nav mode (href ⇒ links + aria-current)">
+        <Tabs
+          label="Catalog demo nav"
+          value="access"
+          className="w-72"
+          items={[
+            { id: 'network', label: 'Network', icon: Network, href: '#network' },
+            { id: 'access', label: 'Access', icon: Users, href: '#access' },
+          ]}
+        />
+      </Specimen>
+    </Entry>
+  );
+}
+
+function SearchEntry() {
+  const [query, setQuery] = useState('');
+  return (
+    <Entry id="search" title="Search">
+      <Specimen label="scope-named (label ⇒ accessible name + placeholder)">
+        <Search
+          label="Search containers"
+          value={query}
+          onChange={setQuery}
+          className={`${SEARCH_SLOT_CLASS} w-72`}
+        />
+      </Specimen>
+      <Specimen label="with a value ⇒ clear button">
+        <Search label="Search checks" value="nginx" onChange={() => {}} className="w-72" />
+      </Specimen>
+    </Entry>
+  );
+}
+
 function PageScrollEntry() {
   return (
     <Entry id="page-scroll" title="PageScroll">
@@ -260,6 +317,8 @@ export default function ComponentCatalogPage() {
       <SectionHeadingEntry />
       <FieldEntry />
       <DataTableEntry />
+      <TabsEntry />
+      <SearchEntry />
       <PageScrollEntry />
     </PageScroll>
   );

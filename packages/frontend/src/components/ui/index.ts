@@ -28,6 +28,14 @@ export type { FieldProps } from './Field';
 
 export { Input } from './Input';
 
+export {
+  Search,
+  SEARCH_FIELD_CLASS,
+  SEARCH_SLOT_CLASS,
+  SEARCH_INPUT_CLASS,
+} from './Search';
+export type { SearchProps } from './Search';
+
 export { Select } from './Select';
 export type { SelectProps } from './Select';
 
@@ -38,6 +46,18 @@ export type { TableProps } from './Table';
 
 export { PageScroll, PageShell, PageScrollRegion } from './PageScroll';
 export type { PageScrollProps } from './PageScroll';
+
+export { PageFrame, PAGE_FRAME_CLASS } from './PageFrame';
+
+export {
+  Tabs,
+  tabPanelProps,
+  TABS_STRIP_CLASS,
+  TAB_CLASS,
+  TAB_ACTIVE_CLASS,
+  TAB_INACTIVE_CLASS,
+} from './Tabs';
+export type { TabsProps, TabItem, TabIcon } from './Tabs';
 
 export { cn } from './cn';
 export type { ClassValue } from './cn';

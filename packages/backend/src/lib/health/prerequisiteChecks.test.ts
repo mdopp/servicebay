@@ -106,18 +106,20 @@ describe('isRootCause', () => {
   });
 });
 
-describe('serviceOfCheck — template http/script slug binding (#1663)', () => {
+describe('serviceOfCheck — template http slug binding (#1663)', () => {
   // home-assistant ships an `http` API probe whose id slug leads with the
   // service name; the service itself has a container check.
   const haSvc = chk({ id: 'svc-home-assistant', type: 'service', target: 'home-assistant', name: 'Service: home-assistant' });
   const haApi = chk({ id: 'home-assistant-api', type: 'http', target: 'http://ha:8123', name: 'home-assistant-api' });
   const ollamaSvc = chk({ id: 'svc-ollama', type: 'service', target: 'ollama', name: 'Service: ollama' });
   const ollamaApi = chk({ id: 'ollama-api', type: 'http', target: 'http://ollama:11434', name: 'ollama-api' });
-  const bareScript = chk({ id: 'ollama', type: 'script', target: 'echo', name: 'ollama' });
+  // A template probe whose id slug is the bare service name (#2535: this used
+  // to be a `script` row; the type is gone, the slug-binding rule is unchanged).
+  const bareSlug = chk({ id: 'ollama', type: 'http', target: 'http://ollama:11434/', name: 'ollama' });
   const orphanApi = chk({ id: 'nonexistent-api', type: 'http', target: 'http://x', name: 'nonexistent-api' });
 
   const ctx = makePrerequisiteContext({
-    checks: [haSvc, haApi, ollamaSvc, ollamaApi, bareScript, orphanApi],
+    checks: [haSvc, haApi, ollamaSvc, ollamaApi, bareSlug, orphanApi],
     serviceDeps: new Map(),
     config: undefined,
     isFailing: () => false,
@@ -130,8 +132,8 @@ describe('serviceOfCheck — template http/script slug binding (#1663)', () => {
     expect(serviceOfCheck(ollamaApi, ctx)).toBe('ollama');
   });
 
-  it('binds a bare-slug script probe to a same-named service', () => {
-    expect(serviceOfCheck(bareScript, ctx)).toBe('ollama');
+  it('binds a bare-slug template probe to a same-named service', () => {
+    expect(serviceOfCheck(bareSlug, ctx)).toBe('ollama');
   });
 
   it('returns null when no container-checked service owns the slug', () => {

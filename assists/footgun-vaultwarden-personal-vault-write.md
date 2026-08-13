@@ -66,6 +66,13 @@ Shape 2 is a real deliverable on its own: dropping the password column and
 tracking hand-off state is most of the security win, and its state model is the
 same one shape 1 would write into later.
 
+**ServiceBay took shape 1** (owner decision 2026-08-13). The operator-facing
+setup is `recipe-vaultwarden-servicebay-push`; the implementation lives under
+`packages/backend/src/lib/vaultwarden/`. One thing shape 1 does *not* remove:
+the read-back check. An HTTP 200 from the vault is not evidence that a
+*readable* item exists — re-fetch it and decrypt it before deleting your own
+copy, or the "worse than an error" case above becomes a silent data loss.
+
 ## Reference in this repo
 
 - `packages/backend/src/lib/stackInstall/credentialsManifest.ts` — `Credential.securedAt`,
