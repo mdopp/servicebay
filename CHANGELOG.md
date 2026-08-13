@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.12.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.12.0...servicebay-v5.12.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* **settings:** keep the routed page mounted so /settings stops crashing ([af50306](https://github.com/mdopp/servicebay/commit/af503066af1a8b6155b06f0c0b572fce3e250a9e))
+
 ## [5.12.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.19...servicebay-v5.12.0) (2026-08-13)
 
 
