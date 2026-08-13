@@ -1793,6 +1793,20 @@ async function runJob(jobId: string): Promise<void> {
       },
     });
     await log(jobId, `Saved ${manifest.length} credential(s) to the install manifest.`);
+    // #2560 — an install started over MCP or REST has no browser, so the
+    // blocking hand-over window reaches nobody. ServiceBay therefore keeps
+    // its copy (deleting it unseen would be strictly worse) and says so
+    // here, in the one place a headless caller does read. The hand-over
+    // itself happens the next time a human opens ServiceBay — the gate in
+    // the dashboard layout is driven by "does the box still hold
+    // passwords?", not by "did an install just finish in this tab?".
+    if (manifest.length > 0) {
+      await log(
+        jobId,
+        `${manifest.length} password(s) exist only on this box. Open ServiceBay in a browser to download them — ` +
+        'it will ask before you can do anything else, and it deletes its copy once the file has reached you.',
+      );
+    }
   } catch (e) {
     await log(jobId, `(note) couldn't persist the credentials manifest: ${e instanceof Error ? e.message : String(e)}`);
   }

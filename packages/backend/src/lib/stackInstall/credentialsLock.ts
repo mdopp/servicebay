@@ -5,10 +5,10 @@
  * `config.installManifest.credentials` is a **read-merge-write**: two
  * concurrent writers compute their merge off the same snapshot and one
  * silently loses. Extracted from `capabilities/credentials.ts` when the
- * Vaultwarden push (#2519) became a second writer — the install handler
- * appends entries while the push marks them secured and drops their
- * passwords, and interleaving those two resurrects a password ServiceBay
- * has already declared gone.
+ * credential hand-over (#2560) became a second writer — the install
+ * handler appends entries while a redeemed hand-over drops the passwords
+ * it delivered, and interleaving those two resurrects a password
+ * ServiceBay has already declared gone.
  */
 let queue: Promise<unknown> = Promise.resolve();
 

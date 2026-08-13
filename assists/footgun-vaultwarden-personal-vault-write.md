@@ -50,33 +50,55 @@ There are exactly two shapes, and the choice is the operator's, not yours:
    write into an **organization collection** shared with the humans. Blast radius
    is bounded: that vault holds only what the automation put there. This is the
    only shape with real automated writes.
-2. **No server-side write.** Export (Bitwarden CSV) + the vault's import
-   deep-link, but make it **tracked**: persist a per-entry `securedAt` marker, and
-   have the hand-off confirmation drop your local copy of the secret in the *same
-   write* so "secured" and "we still hold it" are never both true. Repeat
-   installs/rotations replace the entries and therefore clear the marker, which is
-   the honest state: the fresh secret is not in the vault yet.
+2. **No server-side write.** Hand the list to the human as a file, and drop your
+   own copy in the *same operation* — so "they have it" and "we still hold it"
+   are never both true. Repeat installs/rotations replace the entries and put
+   them back into the not-yet-handed-over state, which is the honest one: the
+   fresh secret has not reached the human yet.
 
 **Never take the third option** — prompting for, storing, caching or deriving the
 *operator's own* master password. It replaces one credential-hoarding problem
 with a strictly worse one: that secret unlocks everything else in their vault too,
 not just what you put there.
 
-Shape 2 is a real deliverable on its own: dropping the password column and
-tracking hand-off state is most of the security win, and its state model is the
-same one shape 1 would write into later.
+## ServiceBay tried shape 1 and reverted to shape 2 — read this before proposing it again
 
-**ServiceBay took shape 1** (owner decision 2026-08-13). The operator-facing
-setup is `recipe-vaultwarden-servicebay-push`; the implementation lives under
-`packages/backend/src/lib/vaultwarden/`. One thing shape 1 does *not* remove:
-the read-back check. An HTTP 200 from the vault is not evidence that a
-*readable* item exists — re-fetch it and decrypt it before deleting your own
-copy, or the "worse than an error" case above becomes a silent data loss.
+Shape 1 was built (#2519) and removed the same week (#2560). It works on paper;
+what sank it is what shape 1 actually costs:
+
+- **You end up re-implementing Bitwarden's key ladder.** PBKDF2/Argon2 → master
+  key → stretched key → the protected symmetric key → per-item encryption. There
+  is no server-side shortcut, because the whole point of the protocol is that the
+  server can't do it. That is a lot of bespoke cryptography sitting at the exact
+  point where a mistake means unreadable or unrecoverable credentials.
+- **A faithful fake proves nothing.** The implementation passed against a mock
+  vault and was never once run against a real Vaultwarden. Crypto that has only
+  ever talked to your own test double is unvalidated crypto.
+- **Shape 1 does not remove the read-back check either.** An HTTP 200 from the
+  vault is not evidence a *readable* item exists — you still have to re-fetch and
+  decrypt before deleting your copy, or the "posting plaintext is worse than an
+  error" case above becomes silent data loss.
+
+The generalisable lesson: when the failure mode is *lost credentials*, prefer the
+hand-off that cannot break over the one that is convenient. Automation is worth
+less than a delivery you can prove.
+
+## If you take shape 2, gate the delete on evidence, not on a click
+
+The trap in shape 2 is deleting your copy because the user pressed Download. A
+click is not delivery — the browser can refuse the save, the transfer can
+truncate, the tab can close. Issue the file with a one-shot token, have the
+client send back a checksum **it computed over the bytes it saved**, and delete
+only when that matches what you handed out. Every failure then leaves the secret
+exactly where it was.
 
 ## Reference in this repo
 
-- `packages/backend/src/lib/stackInstall/credentialsManifest.ts` — `Credential.securedAt`,
-  `markCredentialsSecured`, `summarizeCredentialSecurity`.
-- `packages/frontend/src/app/api/system/credentials/secured/route.ts` — the
-  hand-off confirmation that drops the local secrets.
+- `packages/backend/src/lib/stackInstall/credentialsHandover.ts` — the
+  issue/redeem pair, and the write-up of what the receipt does and does not prove.
+- `packages/backend/src/lib/stackInstall/credentialsManifest.ts` —
+  `isCredentialSecured` (state derived from the absent password, not a separate
+  marker), `dropDeliveredPasswords`, `credentialReceipt`.
+- `packages/frontend/src/components/CredentialHandoverGate.tsx` — the blocking
+  hand-over, and why it lives in the layout so a headless install is covered.
 - `templates/vaultwarden/` — the deployed instance. Note it sets no `ADMIN_TOKEN`.

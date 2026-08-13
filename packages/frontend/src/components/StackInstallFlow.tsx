@@ -12,8 +12,8 @@
  *   - `<StackInstallProgress>`       — installing / done phase: log
  *     panel with auto-scroll + the NPM-credentials prompt when the
  *     proxy step asks for them.
- *   - `<StackInstallSummary>`        — done phase: credentials banner
- *     with Bitwarden-CSV download.
+ *   - `<StackInstallSummary>`        — done phase: hands the freshly
+ *     generated credentials to the blocking hand-over gate (#2560).
  *
  * The default export wires all three together; modal uses it as-is.
  * The wizard imports the siblings directly because its configure step
@@ -28,7 +28,7 @@ import { Loader2, RefreshCcw, XCircle, ChevronDown, ChevronRight, CheckCircle2, 
 import type { StackItem } from '@/hooks/useStackInstall';
 import StackVariableField from './StackVariableField';
 import { groupVariablesByTemplate } from '@servicebay/api-client';
-import { buildBitwardenCsv } from '@servicebay/api-client';
+import { notifyCredentialsChanged } from '@/components/CredentialHandoverGate';
 import type { UseStackInstallReturn } from '@/hooks/useStackInstall';
 import { Button, Input, Select } from '@/components/ui';
 
@@ -299,68 +299,32 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
 }
 
 interface SummaryProps extends CommonProps {
-  /** Optional content rendered below the credentials banner — modal
-   *  uses it for the DNS/SSL/access-restriction next-steps panels;
+  /** Modal uses it for the DNS/SSL/access-restriction next-steps panels;
    *  wizard uses it for the auto-run diagnose probe summary. */
   doneFooter?: React.ReactNode;
 }
 
+/**
+ * Done phase (#2560).
+ *
+ * This used to print every generated password on screen under "won't be
+ * shown again". It doesn't any more: the hand-over is a file, exactly
+ * once, and the local copy goes as soon as that file is proven delivered.
+ * Reading passwords off a screen is neither of those things, and it left
+ * ServiceBay's copy in place afterwards regardless.
+ *
+ * So all this does now is tell the gate in the dashboard layout that new
+ * credentials exist. The gate takes over from there and cannot be
+ * dismissed until the download has worked.
+ */
 export function StackInstallSummary({ controller, doneFooter }: SummaryProps) {
-  const manifest = controller.credentialsManifest;
-  const downloadCsv = () => {
-    const blob = new Blob([buildBitwardenCsv(manifest)], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `servicebay-credentials-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
+  const pending = controller.credentialsManifest.length;
 
-  return (
-    <div className="mt-3 space-y-3">
-      {manifest.length > 0 && (
-        <div className="p-3 bg-surface rounded border border-border text-sm">
-          <div className="flex items-center justify-between mb-2">
-            <p className="font-medium text-status-fail">🔑 Credentials — save now</p>
-            <Button
-              type="button"
-              onClick={downloadCsv}
-              variant="danger"
-              size="sm"
-              title="Download as Bitwarden / Vaultwarden CSV"
-            >
-              ⬇ Download CSV
-            </Button>
-          </div>
-          <p className="text-xs text-status-fail mb-2">
-            Won&apos;t be shown again. Either copy them into your password manager now or use the CSV button: Vaultwarden → Tools → Import → Bitwarden (csv).
-          </p>
-          <div className="space-y-1.5 font-mono text-xs">
-            {manifest.filter(c => c.importance === 'critical').map(c => (
-              <div key={c.service} className="border-l-2 border-border pl-2">
-                <div className="font-sans font-medium text-text">{c.service}</div>
-                <div className="text-text break-all">{c.url}</div>
-                <div className="text-text-muted">{c.username} / {c.password}</div>
-              </div>
-            ))}
-          </div>
-          {manifest.some(c => c.importance === 'system') && (
-            <details className="mt-2 text-xs">
-              <summary className="cursor-pointer text-text-muted">System / DR secrets ({manifest.filter(c => c.importance === 'system').length})</summary>
-              <div className="mt-1 space-y-1 font-mono">
-                {manifest.filter(c => c.importance === 'system').map(c => (
-                  <div key={c.service} className="text-text-muted pl-2">
-                    <span className="font-sans">{c.service}:</span> {c.password}
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
-        </div>
-      )}
-      {doneFooter}
-    </div>
-  );
+  useEffect(() => {
+    if (pending > 0) notifyCredentialsChanged();
+  }, [pending]);
+
+  return <div className="mt-3 space-y-3">{doneFooter}</div>;
 }
 
 /**

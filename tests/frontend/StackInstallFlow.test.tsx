@@ -6,6 +6,7 @@ import StackInstallFlow, {
   StackInstallSummary,
 } from '@/components/StackInstallFlow';
 import type { UseStackInstallReturn } from '@/hooks/useStackInstall';
+import { CREDENTIALS_CHANGED_EVENT } from '@/components/CredentialHandoverGate';
 
 /** Build a minimal controller stub the components can render against. */
 function makeController(overrides: Partial<UseStackInstallReturn> = {}): UseStackInstallReturn {
@@ -72,11 +73,12 @@ describe('StackInstallFlow phase dispatch', () => {
         },
       ],
     });
-    render(<StackInstallFlow controller={controller} />);
+    const { container } = render(<StackInstallFlow controller={controller} />);
     expect(screen.getByText('Stack installation complete.')).toBeDefined();
-    expect(screen.getByText('Nginx Admin')).toBeDefined();
-    expect(screen.getByText(/admin@example\.com \/ p4ssw0rd/)).toBeDefined();
-    expect(screen.getByRole('button', { name: /Download CSV/i })).toBeDefined();
+    // #2560 — the done step never prints a password again. The hand-over is
+    // a file, and the blocking gate in the dashboard layout owns it.
+    expect(container.textContent).not.toContain('p4ssw0rd');
+    expect(screen.queryByRole('button', { name: /Download CSV/i })).toBeNull();
   });
 
   it('renders null for idle / error phases', () => {
@@ -233,7 +235,10 @@ describe('StackInstallProgress — NPM credentials prompt', () => {
 });
 
 describe('StackInstallSummary', () => {
-  it('groups system secrets in a collapsed details block', () => {
+  it('shows no secret and wakes the hand-over gate instead (#2560)', () => {
+    const events: string[] = [];
+    const listener = () => events.push('changed');
+    window.addEventListener(CREDENTIALS_CHANGED_EVENT, listener);
     const controller = makeController({
       phase: 'done',
       credentialsManifest: [
@@ -241,9 +246,11 @@ describe('StackInstallSummary', () => {
         { service: 'System secret', url: '/u', username: 's', password: 'x', importance: 'system' },
       ],
     });
-    render(<StackInstallSummary controller={controller} />);
-    expect(screen.getByText('Critical')).toBeDefined();
-    expect(screen.getByText(/System \/ DR secrets/)).toBeDefined();
+    const { container } = render(<StackInstallSummary controller={controller} />);
+    window.removeEventListener(CREDENTIALS_CHANGED_EVENT, listener);
+
+    expect(container.textContent).not.toContain('System secret');
+    expect(events).toEqual(['changed']);
   });
 
   it('renders the doneFooter slot below the credentials banner', () => {

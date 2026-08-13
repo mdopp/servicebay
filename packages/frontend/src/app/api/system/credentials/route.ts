@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getConfig, saveConfig, type AppConfig, type InstalledCredential, type InstallManifest } from '@/lib/config';
+import { getConfig, saveConfig, type InstalledCredential, type InstallManifest } from '@/lib/config';
 import { withApiHandler } from '@/lib/api/handler';
-import { logger } from '@/lib/logger';
-import { isVaultwardenInstalled, syncCredentialsToVault } from '@/lib/vaultwarden/sync';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,7 +14,10 @@ export const dynamic = 'force-dynamic';
  *   DELETE — wipe the manifest ("I saved these — wipe from server")
  *
  * The `password` field on each entry is auto-encrypted at rest by the
- * existing `SENSITIVE_KEYS` regex in lib/config.ts.
+ * existing `SENSITIVE_KEYS` regex in lib/config.ts. Deleting a password
+ * because it reached the operator is NOT this route's job — that is the
+ * hand-over in `./handover`, which only deletes against proof of delivery
+ * (#2560).
  */
 
 const CredentialSchema = z.object({
@@ -27,31 +28,11 @@ const CredentialSchema = z.object({
   importance: z.enum(['critical', 'system']),
   notes: z.string().max(400).optional(),
   template: z.string().max(120).optional(),
-  // #2519 — hand-off marker. Round-tripped so a caller that reads the
-  // manifest and writes it back doesn't silently resurrect entries as
-  // "not yet secured".
-  securedAt: z.string().max(40).optional(),
 });
 
 const ManifestBody = z.object({
   credentials: z.array(CredentialSchema).max(64),
 });
-
-/**
- * Push state for the UI (#2519). Deliberately carries no secret: the
- * account e-mail and the org/collection ids are pointers, and
- * `credentialVault.password` is never read here.
- */
-export function vaultStatus(config: AppConfig) {
-  const v = config.credentialVault;
-  return {
-    installed: isVaultwardenInstalled(config),
-    configured: Boolean(v?.accountEmail && v.password && v.organizationId && v.collectionId),
-    /** Which account writes — a pointer, not a credential. */
-    account: v?.accountEmail ?? null,
-    lastSync: v?.lastSync ?? null,
-  };
-}
 
 export const GET = withApiHandler({}, async () => {
   const config = await getConfig();
@@ -64,9 +45,8 @@ export const GET = withApiHandler({}, async () => {
     service: h.service,
   }));
   const publicDomain = config.reverseProxy?.publicDomain ?? null;
-  const vault = vaultStatus(config);
-  if (!manifest) return NextResponse.json({ manifest: null, proxyHosts, publicDomain, vault });
-  return NextResponse.json({ manifest, proxyHosts, publicDomain, vault });
+  if (!manifest) return NextResponse.json({ manifest: null, proxyHosts, publicDomain });
+  return NextResponse.json({ manifest, proxyHosts, publicDomain });
 });
 
 export const POST = withApiHandler({ body: ManifestBody }, async ({ body }) => {
@@ -76,14 +56,6 @@ export const POST = withApiHandler({ body: ManifestBody }, async ({ body }) => {
     credentials: body.credentials as InstalledCredential[],
   };
   await saveConfig({ ...config, installManifest: manifest });
-  // End-of-install write — the moment the freshly generated passwords
-  // exist. Push them straight at Vaultwarden (#2519) rather than waiting
-  // for an operator to notice. Not awaited: a vault that is down must not
-  // fail an install, and every failure is already durable state (the
-  // entry keeps its password and stays "not yet secured").
-  void syncCredentialsToVault({ trigger: 'install-manifest' }).catch(e => {
-    logger.warn('Credentials', `Vaultwarden push failed: ${e instanceof Error ? e.message : String(e)}`);
-  });
   return NextResponse.json({ ok: true, savedAt: manifest.savedAt, count: manifest.credentials.length });
 });
 

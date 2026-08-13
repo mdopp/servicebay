@@ -66,12 +66,6 @@ const AppConfigSchema = z.object({
   installedTemplates: z.record(z.string(), looseObject).optional(),
   serviceMigrations: z.record(z.string(), looseArray).optional(),
   installManifest: looseObject.optional(),
-  // #2519 — the Vaultwarden push account. Listed so a caller that
-  // round-trips the whole config isn't rejected by `.strict()`; the
-  // account itself is written through its own dedicated route
-  // (`/api/system/credentials/vault`), which is where the validation
-  // that matters lives.
-  credentialVault: looseObject.optional(),
   accessRequests: looseArray.optional(),
   maxUsers: z.number().int().positive().max(100000).optional(),
   portalLanOnly: z.boolean().optional(),

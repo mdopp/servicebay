@@ -5,9 +5,9 @@ import {
   isHttpUrl,
   buildBitwardenCsv,
   credentialKey,
+  credentialReceipt,
+  dropDeliveredPasswords,
   isCredentialSecured,
-  markCredentialsSecured,
-  markCredentialsSecuredByKey,
   summarizeCredentialSecurity,
   type Credential,
   type CredentialUrlContext,
@@ -139,81 +139,44 @@ describe('buildBitwardenCsv login_uri', () => {
 });
 
 /**
- * #2519 — the Vaultwarden hand-off state. "Secured" means the secret lives
- * in the operator's vault and ServiceBay dropped its copy; the two must
- * never be true at once, which is what these tests pin down.
+ * #2560 — the hand-over state. There is no marker beside the password:
+ * "handed over" IS "we no longer hold the secret", which is what makes the
+ * inconsistent pair unrepresentable. These tests pin that down.
  */
-describe('credential security state (#2519)', () => {
+describe('credential hand-over state (#2560)', () => {
   const unsecured = (service: string, template?: string): Credential => cred(service, template);
-  const secured = (service: string, at: string, template?: string): Credential => ({
-    ...cred(service, template), password: '', securedAt: at,
+  const secured = (service: string, template?: string): Credential => ({
+    ...cred(service, template), password: '',
   });
 
-  it('treats a missing or empty securedAt as not secured', () => {
+  it('derives the state from the password alone', () => {
     expect(isCredentialSecured(unsecured('lldap'))).toBe(false);
-    expect(isCredentialSecured({ securedAt: '' })).toBe(false);
-    expect(isCredentialSecured({ securedAt: '2026-08-13T00:00:00.000Z' })).toBe(true);
+    expect(isCredentialSecured({ password: '' })).toBe(true);
+    expect(isCredentialSecured({ password: 'still-here' })).toBe(false);
   });
 
   it('summarises how many entries ServiceBay still holds the secret for', () => {
-    const s = summarizeCredentialSecurity([
-      secured('lldap', '2026-08-10T00:00:00.000Z'),
-      secured('npm', '2026-08-12T00:00:00.000Z'),
-      unsecured('immich'),
-    ]);
-    expect(s).toEqual({
-      total: 3,
-      secured: 2,
-      unsecured: 1,
-      lastSecuredAt: '2026-08-12T00:00:00.000Z',
-    });
+    const s = summarizeCredentialSecurity([secured('lldap'), secured('npm'), unsecured('immich')]);
+    expect(s).toEqual({ total: 3, secured: 2, unsecured: 1 });
   });
 
-  it('summarises an empty manifest without a last-sync timestamp', () => {
-    expect(summarizeCredentialSecurity([])).toEqual({
-      total: 0, secured: 0, unsecured: 0, lastSecuredAt: null,
-    });
+  it('summarises an empty manifest', () => {
+    expect(summarizeCredentialSecurity([])).toEqual({ total: 0, secured: 0, unsecured: 0 });
   });
 
-  it('drops the password in the same step that marks an entry secured', () => {
-    const at = '2026-08-13T12:00:00.000Z';
-    const out = markCredentialsSecured([unsecured('lldap'), unsecured('npm')], at);
-    expect(out.every(c => c.password === '')).toBe(true);
-    expect(out.every(c => c.securedAt === at)).toBe(true);
-    // The pointer survives — Settings still says *what* exists.
-    expect(out.map(c => c.service)).toEqual(['lldap', 'npm']);
-    expect(out[0].username).toBe('admin');
-  });
-
-  it('leaves an already-secured entry (and its original timestamp) untouched', () => {
-    const first = '2026-08-01T00:00:00.000Z';
-    const out = markCredentialsSecured([secured('lldap', first)], '2026-08-13T12:00:00.000Z');
-    expect(out[0].securedAt).toBe(first);
-  });
-
-  it('never leaves a secured entry that still carries a secret', () => {
-    const out = markCredentialsSecured(
-      [unsecured('lldap'), secured('npm', '2026-08-01T00:00:00.000Z')],
-      '2026-08-13T12:00:00.000Z',
-    );
-    expect(out.filter(c => isCredentialSecured(c)).every(c => c.password === '')).toBe(true);
-  });
-
-  it('excludes secured entries from the Bitwarden CSV', () => {
-    const csv = buildBitwardenCsv([
-      secured('lldap', '2026-08-01T00:00:00.000Z'),
-      unsecured('immich'),
-    ]);
+  it('excludes handed-over entries from the Bitwarden CSV', () => {
+    const csv = buildBitwardenCsv([secured('lldap'), unsecured('immich')]);
     const lines = csv.trim().split('\n');
-    expect(lines).toHaveLength(2); // header + the one unsecured row
+    expect(lines).toHaveLength(2); // header + the one pending row
     expect(csv).toContain('immich');
     expect(csv).not.toContain('lldap');
   });
 
-  it('a re-install of a secured template resets it to not-yet-secured', () => {
+  it('a re-install of a handed-over template resets it to pending', () => {
     // mergeCredentials replaces the deployed template's entries wholesale,
-    // so `securedAt` goes with them — the fresh secret is unsecured again.
-    const existing = [secured('lldap', '2026-08-01T00:00:00.000Z', 'auth')];
+    // so the fresh secret is pending again — ServiceBay cannot know the
+    // operator's file still matches.
+    const existing = [secured('lldap', 'auth')];
     const fresh = [{ ...cred('lldap', 'auth'), password: 'ROTATED' }];
     const merged = mergeCredentials(existing, fresh, ['auth']);
     expect(merged).toHaveLength(1);
@@ -221,43 +184,57 @@ describe('credential security state (#2519)', () => {
     expect(merged[0].password).toBe('ROTATED');
   });
 
-  it('does not un-secure entries owned by templates this install did not touch', () => {
-    const existing = [secured('lldap', '2026-08-01T00:00:00.000Z', 'auth')];
+  it('does not un-hand-over entries owned by templates this install did not touch', () => {
+    const existing = [secured('lldap', 'auth')];
     const merged = mergeCredentials(existing, [cred('immich', 'immich')], ['immich']);
     expect(isCredentialSecured(merged.find(c => c.service === 'lldap')!)).toBe(true);
   });
 });
 
-describe('per-entry securing (#2519 automated push)', () => {
+describe('dropping only what a hand-over delivered (#2560)', () => {
   it('keys an entry by template + service + username', () => {
     expect(credentialKey(cred('immich', 'immich'))).toBe('immich::immich::admin');
-    // Two accounts on the same service must not collapse into one item.
+    // Two accounts on the same service must not collapse into one entry.
     expect(credentialKey({ ...cred('immich', 'immich'), username: 'service' }))
       .not.toBe(credentialKey(cred('immich', 'immich')));
   });
 
-  it('secures ONLY the confirmed entries and drops just their passwords', () => {
+  it('drops the password of ONLY the delivered entries', () => {
     const creds = [cred('immich', 'immich'), cred('lldap', 'auth')];
-    const at = '2026-08-13T12:00:00.000Z';
-    const next = markCredentialsSecuredByKey(creds, new Set([credentialKey(creds[1])]), at);
+    const next = dropDeliveredPasswords(creds, new Set([credentialKey(creds[1])]));
 
     expect(next[0].password).toBe('secret');
-    expect(next[0].securedAt).toBeUndefined();
     expect(next[1].password).toBe('');
-    expect(next[1].securedAt).toBe(at);
+    // The pointer survives — Settings still says *what* exists.
+    expect(next[1].service).toBe('lldap');
+    expect(next[1].username).toBe('admin');
   });
 
-  it('never resurrects a password and never restamps an already-secured entry', () => {
-    const already: Credential = { ...cred('lldap', 'auth'), password: '', securedAt: '2026-08-01T00:00:00.000Z' };
-    const next = markCredentialsSecuredByKey([already], new Set([credentialKey(already)]), '2026-08-13T12:00:00.000Z');
-    expect(next[0].securedAt).toBe('2026-08-01T00:00:00.000Z');
-    expect(next[0].password).toBe('');
-  });
-
-  it('an unknown key secures nothing — no accidental blanket marking', () => {
+  it('an unknown key drops nothing — no accidental blanket wipe', () => {
     const creds = [cred('immich', 'immich')];
-    const next = markCredentialsSecuredByKey(creds, new Set(['other::x::y']), '2026-08-13T12:00:00.000Z');
+    const next = dropDeliveredPasswords(creds, new Set(['other::x::y']));
     expect(next[0].password).toBe('secret');
     expect(summarizeCredentialSecurity(next).unsecured).toBe(1);
+  });
+});
+
+describe('credentialReceipt (#2560)', () => {
+  it('is stable for identical content', () => {
+    expect(credentialReceipt('a,b,c\n')).toBe(credentialReceipt('a,b,c\n'));
+  });
+
+  it('changes when a single byte changes', () => {
+    expect(credentialReceipt('a,b,c\n')).not.toBe(credentialReceipt('a,b,d\n'));
+  });
+
+  it('changes when the file is truncated — the failure mode it exists for', () => {
+    const csv = buildBitwardenCsv([cred('immich', 'immich'), cred('lldap', 'auth')]);
+    expect(credentialReceipt(csv.slice(0, -20))).not.toBe(credentialReceipt(csv));
+  });
+
+  it('leads with the exact byte length', () => {
+    expect(credentialReceipt('hello')).toMatch(/^5-[0-9a-f]{16}$/);
+    // Multi-byte characters count as bytes, not code points.
+    expect(credentialReceipt('ä')).toMatch(/^2-/);
   });
 });

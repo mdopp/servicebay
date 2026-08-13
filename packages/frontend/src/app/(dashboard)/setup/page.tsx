@@ -26,14 +26,14 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, AlertTriangle, Loader2, KeyRound, Maximize2, ChevronDown, ChevronRight, Download } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Loader2, KeyRound, Maximize2, ChevronDown, ChevronRight } from 'lucide-react';
 import { completeStackSetup } from '@/app/actions/onboarding';
 import { Card, Button } from '@/components/ui';
 import type { JobPhase, JobState } from '@/lib/install/jobStore';
 import type { Credential } from '@/lib/stackInstall/credentialsManifest';
 import { DoneStepDnsCheck } from '@/components/DoneStepDnsCheck';
+import { notifyCredentialsChanged } from '@/components/CredentialHandoverGate';
 import DiagnoseProbeList, { type DiagnoseProbe } from '@/components/DiagnoseProbeList';
-import { buildBitwardenCsv } from '@/lib/stackInstall/credentialsManifest';
 
 interface StatusResponse {
   job: JobState | null;
@@ -135,55 +135,30 @@ function ServiceStatusStrip({ job }: { job: JobState }) {
  * minimised mid-install still gets the same "save these now" prompt
  * with the same CSV-export shortcut.
  */
+/**
+ * Credentials created by this install (#2560).
+ *
+ * No passwords are printed here. The hand-over is a single downloaded
+ * file, and ServiceBay drops its copy only once that file is proven
+ * delivered — `CredentialHandoverGate` in the dashboard layout owns that
+ * and cannot be dismissed until it has worked. All this panel does is
+ * wake it and say what is waiting.
+ */
 function CredentialsPanel({ manifest }: { manifest: Credential[] }) {
-  if (manifest.length === 0) return null;
-  const critical = manifest.filter(c => c.importance === 'critical');
-  const system = manifest.filter(c => c.importance === 'system');
-  const handleDownload = () => {
-    const blob = new Blob([buildBitwardenCsv(manifest)], { type: 'text/csv' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `servicebay-credentials-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
+  const pending = manifest.length;
+  useEffect(() => {
+    if (pending > 0) notifyCredentialsChanged();
+  }, [pending]);
+  if (pending === 0) return null;
   return (
-    <Card padding="sm" className="bg-status-fail/10 border-status-fail/20 text-sm">
-      <div className="flex items-center justify-between mb-2">
-        <p className="font-medium text-status-fail">🔑 Credentials — save now</p>
-        <Button
-          size="sm"
-          onClick={handleDownload}
-          className="gap-1.5"
-          title="Download as Bitwarden / Vaultwarden CSV"
-        >
-          <Download size={12} /> CSV
-        </Button>
-      </div>
-      <p className="text-xs text-status-fail mb-2">
-        Won&apos;t be shown again. Copy to your password manager now or use the CSV button: Vaultwarden → Tools → Import → Bitwarden (csv).
+    <Card padding="sm" className="bg-status-warn/10 border-status-warn/20 text-sm">
+      <p className="font-medium text-text inline-flex items-center gap-1.5">
+        <KeyRound size={14} /> {pending} new password{pending === 1 ? '' : 's'} to save
       </p>
-      <div className="space-y-1.5 font-mono text-xs">
-        {critical.map(c => (
-          <div key={c.service} className="border-l-2 border-status-fail/40 pl-2">
-            <div className="font-sans font-medium text-text">{c.service}</div>
-            <div className="text-status-fail break-all">{c.url}</div>
-            <div className="text-status-fail">{c.username} / {c.password}</div>
-          </div>
-        ))}
-      </div>
-      {system.length > 0 && (
-        <details className="mt-2 text-xs">
-          <summary className="cursor-pointer text-status-fail">System / disaster-recovery secrets ({system.length})</summary>
-          <div className="mt-1 space-y-1 font-mono">
-            {system.map(c => (
-              <div key={c.service} className="text-status-fail pl-2">
-                <span className="font-sans">{c.service}:</span> {c.password}
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
+      <p className="text-xs text-text-muted mt-1">
+        Download them in the window on top of this page. ServiceBay deletes its own copy as soon as
+        the file has reached you.
+      </p>
     </Card>
   );
 }
