@@ -226,7 +226,7 @@ export function registerServiceTools({ server }: ToolRegistration) {
   // --- Delete Service (soft) ---
   server.tool(
     'delete_service',
-    'Soft-delete a service: stops the unit and moves its files to the trash bucket. Restorable via restore_trashed_service for 7 days; then auto-purged. Use purge_trashed_service to delete immediately.',
+    'Soft-delete a service: stops the unit, moves its files to the trash bucket, and removes its cross-service registrations (Authelia OIDC client, NPM proxy host, AdGuard rewrite, credentials entry, LAN-block firewall rule). Restorable via restore_trashed_service for 7 days — restore re-provisions those registrations. Then auto-purged; use purge_trashed_service to delete immediately.',
     { name: ServiceName.describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
       const nodeName = await resolveNode(node);
@@ -250,12 +250,18 @@ export function registerServiceTools({ server }: ToolRegistration) {
   // --- Restore From Trash ---
   server.tool(
     'restore_trashed_service',
-    'Restore a soft-deleted service from trash. Use list_trashed_services to find the id.',
+    'Restore a soft-deleted service from trash, re-provisioning the cross-service registrations the delete removed. Use list_trashed_services to find the id.',
     { id: TrashId.describe('Trash entry id'), node: nodeParam },
     async ({ id, node }) => {
       const nodeName = await resolveNode(node);
       const result = await ServiceManager.restoreTrashedService(nodeName, id);
-      return textResult(`Service "${result.service}" restored from trash on ${nodeName}.`);
+      // A restore that came back without its OIDC client / proxy route must
+      // say so here — the operator is mid-recovery and would otherwise find
+      // out by failing to log in (#2541).
+      const failed = result.capabilityFailures.length > 0
+        ? ` ⚠️ Re-provisioning incomplete: ${result.capabilityFailures.map(f => `${f.handler}: ${f.message}`).join('; ')}`
+        : '';
+      return textResult(`Service "${result.service}" restored from trash on ${nodeName}.${failed}`);
     },
   );
 

@@ -3,9 +3,11 @@
  *
  * One-button stack-level wipe. Per the user-locked design:
  *   1. For each child template (reverse install order):
- *      - Capture the variables snapshot from `config.installManifest` /
- *        `installedSecrets` so the uninstall event can carry the same
- *        `lastKnownVariables` the install event saw.
+ *      - Reconstruct that template's install-time variables (declarations
+ *        from `variables.json`, values through the shared read-path
+ *        resolver + `installedSecrets`) so the uninstall events carry the
+ *        `meta` the NPM/AdGuard handlers filter on — see
+ *        `capabilities/serviceLifecycleEvents.ts`.
  *      - Emit `feature.uninstalling` → handlers prep for removal.
  *      - Stop + delete the service (via ServiceManager.deleteService —
  *        removes the Quadlet unit + stops the pod).
@@ -31,6 +33,7 @@ import { agentManager } from '@/lib/agent/manager';
 import { getNodeTwins } from '@/lib/store/repository';
 import { getConfig } from '@/lib/config';
 import { getCapabilityBus } from '@/lib/capabilities/bus';
+import { reconstructTemplateVariables } from '@/lib/capabilities/serviceLifecycleEvents';
 import { logger } from '@/lib/logger';
 import type { StackVariable } from '@/lib/stackInstall/types';
 
@@ -78,11 +81,7 @@ export const POST = withApiHandlerParams<undefined, undefined, { name: string }>
 
     const nodeName = (typeof body.node === 'string' && body.node) || Object.keys(getNodeTwins())[0] || 'Local';
 
-    // Snapshot variables once — every per-template `feature.uninstalled`
-    // event carries the same map so handlers (especially NPM, which
-    // reconstructs `<sub>.<PUBLIC_DOMAIN>`) see consistent context.
     const config = await getConfig();
-    const lastKnownVariables: StackVariable[] = buildLastKnownVariables(config);
 
     // Compute data-dir paths up front so we can refuse if DATA_DIR
     // points somewhere unsafe.
@@ -110,6 +109,14 @@ export const POST = withApiHandlerParams<undefined, undefined, { name: string }>
     const reverseOrder = [...manifest.templates].reverse();
 
     for (const template of reverseOrder) {
+      // Per-template reconstruction (#2541). The old shared
+      // `buildLastKnownVariables` snapshot carried no `meta`, so
+      // `buildProxyHosts` and `rewriteNamesFor` — both of which filter on
+      // `meta.type === 'subdomain'` — matched nothing and the NPM + AdGuard
+      // cleanup were silent no-ops. Reconstructing per template is also the
+      // only way `meta.templateName` (the ownership key) can be right.
+      const lastKnownVariables: StackVariable[] = await reconstructTemplateVariables(template);
+
       // Fire `feature.uninstalling` first so handlers can capture any
       // state the unit holds. Failures here are logged but non-fatal.
       try {
@@ -126,7 +133,9 @@ export const POST = withApiHandlerParams<undefined, undefined, { name: string }>
       // Stop + delete the unit. ServiceManager handles both the
       // systemctl stop and the .kube file deletion.
       try {
-        await ServiceManager.deleteService(nodeName, template);
+        // This route owns the events (it reports per-handler failures back
+        // to the caller), so the delete path must not fire them again.
+        await ServiceManager.deleteService(nodeName, template, { emitCapabilityEvents: false });
         result.deleted.push(template);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -173,31 +182,3 @@ export const POST = withApiHandlerParams<undefined, undefined, { name: string }>
     return apiError(e, { tag: 'api:system:stacks:wipe', status: 500 });
   }
 });
-
-/**
- * Reconstruct the install-time variable map from persisted config.
- * Combines `installedSecrets` (#615/#622) with the operator-visible
- * `installManifest.credentials` entries and the `templateSettings`
- * globals. Not exhaustive — non-secret per-template variables that
- * were never persisted aren't recoverable, but the handlers' uninstall
- * paths only need the values they used at install time (subdomain
- * names, PUBLIC_DOMAIN), all of which are persisted.
- */
-function buildLastKnownVariables(config: Awaited<ReturnType<typeof getConfig>>): StackVariable[] {
-  const out: StackVariable[] = [];
-  const seen = new Set<string>();
-  const push = (name: string, value: string) => {
-    if (seen.has(name) || !value) return;
-    seen.add(name);
-    out.push({ name, value });
-  };
-
-  for (const [k, v] of Object.entries(config.templateSettings ?? {})) {
-    if (typeof v === 'string') push(k, v);
-  }
-  if (config.reverseProxy?.publicDomain) push('PUBLIC_DOMAIN', config.reverseProxy.publicDomain);
-  for (const entry of config.installedSecrets ?? []) {
-    push(entry.varName, entry.password);
-  }
-  return out;
-}

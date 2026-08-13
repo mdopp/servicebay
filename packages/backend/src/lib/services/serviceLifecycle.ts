@@ -24,6 +24,15 @@ import { injectServiceDirectives } from './quadletDirectives';
 import { ServiceListing } from './serviceListing';
 import { buildExpectedContainerNames } from './containerNameMatcher';
 import { assertTrashId } from '../api/schemas';
+import {
+    reconstructTemplateVariables,
+    emitFeatureUninstalling,
+    emitFeatureUninstalled,
+    emitFeatureRestored,
+    recordCapabilityOutcome,
+    type CapabilityFailure,
+} from '../capabilities/serviceLifecycleEvents';
+import type { StackVariable } from '../stackInstall/types';
 import type { PodLikeDoc, PodLikeVolumeMount } from './containerNameMatcher';
 
 const SYSTEMD_DIR = '.config/containers/systemd';
@@ -480,7 +489,12 @@ export class ServiceLifecycle {
             onProgress?.(`Migrating predecessor: soft-deleting ${old} (replaced by ${newName})`);
             logger.info('ServiceManager', `Soft-deleting predecessor "${old}" before deploying "${newName}"`);
             try {
-                await ServiceLifecycle.deleteService(nodeName, old);
+                // No capability events: this is a rename-in-place, not an
+                // uninstall. The successor's own `feature.installed` owns the
+                // OIDC client / proxy host / firewall rule the predecessor
+                // registered, and tearing them down mid-migration would only
+                // race the re-registration (#2541).
+                await ServiceLifecycle.deleteService(nodeName, old, { emitCapabilityEvents: false });
             } catch (e) {
                 // Non-fatal — if the old unit can't be cleaned, the deploy
                 // below either succeeds (different ports / pod name) or
@@ -1782,8 +1796,27 @@ export class ServiceLifecycle {
      * service config, and the existing system-backup mechanism only takes
      * snapshots periodically. A trash bucket gives an immediate one-step
      * recovery without restoring from a backup tarball.
+     *
+     * Cross-service cleanup (#2541): the same `feature.uninstalling` /
+     * `feature.uninstalled` pair the stack wipe fires, so one deleted
+     * service no longer leaves its Authelia OIDC client, NPM proxy host,
+     * AdGuard rewrite, credentials-manifest entry and `blockLanAccess`
+     * firewall rule behind. The counterpart lives in
+     * {@link restoreTrashedService}, which re-provisions all five — the
+     * cleanup is only safe because the trash bin can rebuild.
+     *
+     * `emitCapabilityEvents: false` is for callers that own the events
+     * themselves (the stack-wipe route) or that are not really uninstalling
+     * (the predecessor migration).
      */
-    static async deleteService(nodeName: string, serviceName: string) {
+    static async deleteService(
+        nodeName: string,
+        serviceName: string,
+        opts: { emitCapabilityEvents?: boolean } = {},
+    ) {
+        const emitEvents = opts.emitCapabilityEvents !== false;
+        const lastKnownVariables = emitEvents ? await ServiceLifecycle.beginUninstall(serviceName) : [];
+
         const { yamlPath } = await ServiceListing.getServiceFiles(nodeName, serviceName);
         const agent = await agentManager.ensureAgent(nodeName);
 
@@ -1834,9 +1867,43 @@ export class ServiceLifecycle {
         await ServiceLifecycle.refreshAgent(nodeName);
         ServiceLifecycle.backupQuadlets(nodeName);
 
-        // Drop the per-service health check (#1506). The check is created
-        // on deploy and must be removed on uninstall — otherwise an
-        // un-installed service lingers as a red "failing" row forever.
+        await ServiceLifecycle.finishUninstall(serviceName, lastKnownVariables, emitEvents);
+
+        logger.info('ServiceManager', `Soft-deleted ${serviceName} on ${nodeName} → ${trashDir}`);
+    }
+
+    /**
+     * Pre-stop half of an uninstall (#2541): reconstruct the install-time
+     * variables while the unit is still up and fire `feature.uninstalling`.
+     * Returns the map — both uninstall events must see the same one, and a
+     * reconstruction failure degrades to "no cleanup context" rather than
+     * blocking the delete.
+     */
+    private static async beginUninstall(serviceName: string): Promise<StackVariable[]> {
+        const lastKnownVariables = await reconstructTemplateVariables(serviceName).catch(e => {
+            logger.warn('ServiceManager', `Could not reconstruct variables for ${serviceName}:`, e);
+            return [] as StackVariable[];
+        });
+        for (const f of await emitFeatureUninstalling(serviceName, lastKnownVariables)) {
+            logger.warn('ServiceManager', `${f.handler} (uninstalling ${serviceName}): ${f.message}`);
+        }
+        return lastKnownVariables;
+    }
+
+    /**
+     * Post-removal half: drop the per-service health check (#1506) —
+     * otherwise an uninstalled service lingers as a red "failing" row
+     * forever — then fire `feature.uninstalled` so the Authelia client,
+     * proxy host, AdGuard rewrite, credentials entry and firewall rule go
+     * with it (#2541). Non-blocking: the unit is already gone, so a handler
+     * that can't reach Authelia/NPM becomes a standing diagnose finding
+     * rather than a failed delete.
+     */
+    private static async finishUninstall(
+        serviceName: string,
+        lastKnownVariables: StackVariable[],
+        emitEvents: boolean,
+    ): Promise<void> {
         try {
             const { HealthStore } = await import('../health/store');
             const removed = HealthStore.deleteServiceCheck(serviceName);
@@ -1844,13 +1911,29 @@ export class ServiceLifecycle {
         } catch (e) {
             logger.warn('ServiceManager', `Failed to remove health check for ${serviceName}:`, e);
         }
-
-        logger.info('ServiceManager', `Soft-deleted ${serviceName} on ${nodeName} → ${trashDir}`);
+        if (!emitEvents) return;
+        await recordCapabilityOutcome(
+            serviceName,
+            await emitFeatureUninstalled(serviceName, lastKnownVariables),
+            'uninstalling',
+        );
     }
 
-    /** Recursive listing of the trash bucket for one node. Each entry maps
-     *  to a single soft-deleted service. */
-    static async restoreTrashedService(nodeName: string, trashId: string): Promise<{ service: string }> {
+    /**
+     * Bring one soft-deleted service back out of the trash bucket.
+     *
+     * Moves the Quadlet + YAML back, reloads systemd — and re-provisions
+     * the cross-service state {@link deleteService} tore down (#2541), by
+     * firing `feature.installed` exactly as an install would: Authelia OIDC
+     * client, NPM proxy host, AdGuard rewrite, credentials-manifest entry,
+     * `blockLanAccess` firewall rule. Without this half, restore would hand
+     * the operator back a service with no SSO and no route, at the exact
+     * moment they are undoing a mistake.
+     *
+     * Values come from durable config, not from the trashed files — see
+     * `reconstructTemplateVariables` for what that can and cannot recover.
+     */
+    static async restoreTrashedService(nodeName: string, trashId: string): Promise<{ service: string; capabilityFailures: CapabilityFailure[] }> {
         // #2452 — `trashId` lands inside `cat`/`mv`/`rm -rf` command strings
         // below. Same strict basename check the sibling `purgeTrash` applies:
         // no separators, no traversal, no shell metacharacters.
@@ -1899,8 +1982,15 @@ export class ServiceLifecycle {
         await ServiceLifecycle.refreshAgent(nodeName);
         ServiceLifecycle.backupQuadlets(nodeName);
 
+        // Re-provision the neighbours the delete cleaned up. Failures are
+        // recorded as standing findings (same store the install runner
+        // writes) so a restored-but-unprovisioned service is visible in
+        // diagnose instead of quietly missing its login path.
+        const capabilityFailures = await emitFeatureRestored(manifest.service);
+        await recordCapabilityOutcome(manifest.service, capabilityFailures, 'restoring');
+
         logger.info('ServiceManager', `Restored ${manifest.service} from trash on ${nodeName}`);
-        return { service: manifest.service };
+        return { service: manifest.service, capabilityFailures };
     }
 
     /** Permanently delete one trash entry, or all entries older than the

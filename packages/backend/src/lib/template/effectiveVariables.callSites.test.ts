@@ -47,8 +47,6 @@ const ALLOWLIST: Record<string, string> = {
     'THE resolver — the one precedence every read path goes through.',
   'packages/backend/src/lib/install/manifestAssembler.ts':
     'The install path (assembleManifest), which the resolver mirrors. The write side of the same precedence; #2537 routes the reconfigure preview through it.',
-  'packages/frontend/src/app/api/system/stacks/[name]/wipe/route.ts':
-    'Not a resolution chain: iterates templateSettings entries to SCRUB credentials belonging to a wiped stack. It reads keys, never resolves a value.',
 };
 
 /**
