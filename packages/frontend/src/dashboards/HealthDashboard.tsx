@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Plus, RefreshCw, X, Search, Loader2 } from 'lucide-react';
+import { Plus, RefreshCw, X, Loader2 } from 'lucide-react';
 import { useToast, ToastType } from '@/providers/ToastProvider';
 import { useSocket } from '@/hooks/useSocket';
 import PageHeader from '@/components/PageHeader';
@@ -17,7 +17,18 @@ import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
 import DiagnoseProbeList, { type DiagnoseProbe } from '@/components/DiagnoseProbeList';
 import ContainersDashboard from '@/dashboards/ContainersDashboard';
-import { Button, Badge, Input, Select, Table, Tabs, tabPanelProps, type TabItem } from '@/components/ui';
+import {
+  Button,
+  Badge,
+  Input,
+  Search,
+  SEARCH_SLOT_CLASS,
+  Select,
+  Table,
+  Tabs,
+  tabPanelProps,
+  type TabItem,
+} from '@/components/ui';
 
 interface Container {
   Id: string;
@@ -40,6 +51,21 @@ const HEALTH_TABS: readonly TabItem<HealthTab>[] = [
   { id: 'logs', label: 'Logs' },
   { id: 'system', label: 'System' },
 ];
+
+/**
+ * ONE search per tab, each naming its own scope (#2550 owner decision).
+ *
+ * The page-level field used to render on every tab but `system`, while
+ * `searchQuery` is only ever consumed by the Checks panel (<HealthChecks>) and
+ * the Logs panel (<LogViewer>). On the Containers tab it was therefore INERT —
+ * it looked like the containers filter, sat right above the Containers tab's
+ * own "Search containers…" field, and did nothing. Absent from this map ⇒ no
+ * page-level field on that tab.
+ */
+const SEARCH_SCOPE: Partial<Record<HealthTab, string>> = {
+  checks: 'Search checks',
+  logs: 'Search logs',
+};
 
 export default function HealthDashboard() {
   const [checks, setChecks] = useState<Check[]>([]);
@@ -373,6 +399,10 @@ export default function HealthDashboard() {
     setRepairCheck(check);
   }, []);
 
+  // Undefined on the tabs that own their own search (Containers) or have none
+  // (System) — see SEARCH_SCOPE.
+  const searchScope = SEARCH_SCOPE[activeTab];
+
   const repairProbe: DiagnoseProbe | null = repairCheck
     ? (() => {
         const d = (repairCheck as Check & { diagnose?: Partial<DiagnoseProbe> }).diagnose;
@@ -407,17 +437,13 @@ export default function HealthDashboard() {
             </div>
         ) : undefined}
       >
-        {activeTab !== 'system' && (
-        <div className="relative flex-1 max-w-md min-w-[100px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-subtle" />
-            <Input
-                type="text"
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 rounded-card border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none text-sm"
-            />
-        </div>
+        {searchScope && (
+          <Search
+            label={searchScope}
+            value={searchQuery}
+            onChange={setSearchQuery}
+            className={SEARCH_SLOT_CLASS}
+          />
         )}
       </PageHeader>
       </div>

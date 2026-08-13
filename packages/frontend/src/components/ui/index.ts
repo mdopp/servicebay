@@ -28,6 +28,14 @@ export type { FieldProps } from './Field';
 
 export { Input } from './Input';
 
+export {
+  Search,
+  SEARCH_FIELD_CLASS,
+  SEARCH_SLOT_CLASS,
+  SEARCH_INPUT_CLASS,
+} from './Search';
+export type { SearchProps } from './Search';
+
 export { Select } from './Select';
 export type { SelectProps } from './Select';
 

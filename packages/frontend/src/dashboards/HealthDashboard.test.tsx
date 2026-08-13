@@ -85,7 +85,8 @@ describe('HealthDashboard (#2100 dashboards migration)', () => {
 
     // The search input (this dashboard's own chrome — the page-title bar is the
     // shared PageHeader, migrated separately) is on token classes.
-    const search = screen.getByPlaceholderText('Search...');
+    // #2550: the shared <Search> primitive, named after the tab it filters.
+    const search = screen.getByRole('searchbox', { name: 'Search checks' });
     expect(search.className).toContain('border-border');
     expect(search.className).toContain('bg-surface-2');
     expect(search.className).not.toMatch(/border-gray-|bg-white|focus:ring-blue/);

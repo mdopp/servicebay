@@ -26,6 +26,7 @@ const EXPECTED_ENTRIES = [
   'field',
   'data-table',
   'tabs',
+  'search',
   'page-scroll',
 ];
 

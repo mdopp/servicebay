@@ -8,8 +8,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { BookOpen, Loader2, Search } from 'lucide-react';
-import { Badge, Card, Button, Input, Select } from '@/components/ui';
+import { BookOpen, Loader2 } from 'lucide-react';
+import { Badge, Card, Button, Search, Select } from '@/components/ui';
 import { ASSIST_KINDS, type AssistKind } from '../knowledge/validation';
 import { useKnowledge } from '../knowledge/useKnowledge';
 import AssistDetail from '../knowledge/AssistDetail';
@@ -101,17 +101,7 @@ function Filters({
   const selectClass = 'flex-1 p-2 rounded-card border border-border bg-surface-2 text-text text-sm focus:ring-2 focus:ring-accent outline-none';
   return (
     <div className="space-y-2">
-      <div className="relative">
-        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-subtle" />
-        <Input
-          type="search"
-          value={query}
-          onChange={e => onQuery(e.target.value)}
-          placeholder="Search the catalog"
-          aria-label="Search the catalog"
-          className="w-full pl-8 pr-3 py-2 rounded-card border border-border bg-surface-2 text-text text-sm focus:ring-2 focus:ring-accent outline-none"
-        />
-      </div>
+      <Search label="Search the catalog" value={query} onChange={onQuery} />
       <div className="flex gap-2">
         <Select
           value={kind}

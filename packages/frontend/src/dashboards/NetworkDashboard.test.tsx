@@ -113,7 +113,8 @@ describe('NetworkDashboard (#2100 dashboards migration)', () => {
     expect(shell.className).not.toMatch(/bg-gray-|border-gray-/);
 
     // The search toolbar input is on tokens.
-    const search = screen.getByPlaceholderText('Search...');
+    // #2550: the shared <Search> primitive, named after its scope.
+    const search = screen.getByRole('searchbox', { name: 'Search the map' });
     expect(search.className).toContain('border-border');
     expect(search.className).toContain('bg-surface-2');
     expect(search.className).not.toMatch(/border-gray-|bg-white|focus:ring-blue/);
@@ -127,7 +128,7 @@ describe('NetworkDashboard (#2100 dashboards migration)', () => {
   it('wires the live-data layer (initial graph fetch is not regressed)', async () => {
     render(<NetworkDashboard />);
     // The map mounts the search toolbar regardless of graph state.
-    expect(await screen.findByPlaceholderText('Search...')).toBeDefined();
+    expect(await screen.findByRole('searchbox', { name: 'Search the map' })).toBeDefined();
   });
 
   it('#2108 applies the ?focus= deep-link → enters focus mode for the matching service node', async () => {
@@ -281,7 +282,7 @@ describe('NetworkDashboard (#2100 dashboards migration)', () => {
     focusSearchParam = 'gone.service';
 
     render(<NetworkDashboard />);
-    await screen.findByPlaceholderText('Search...');
+    await screen.findByRole('searchbox', { name: 'Search the map' });
     expect(screen.queryByTestId('focus-back')).toBeNull();
   });
 });

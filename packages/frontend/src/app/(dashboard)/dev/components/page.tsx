@@ -13,6 +13,8 @@ import {
   SectionHeading,
   Field,
   PageScroll,
+  Search,
+  SEARCH_SLOT_CLASS,
   Tabs,
   type ButtonVariant,
   type ButtonSize,
@@ -262,6 +264,25 @@ function TabsEntry() {
   );
 }
 
+function SearchEntry() {
+  const [query, setQuery] = useState('');
+  return (
+    <Entry id="search" title="Search">
+      <Specimen label="scope-named (label ⇒ accessible name + placeholder)">
+        <Search
+          label="Search containers"
+          value={query}
+          onChange={setQuery}
+          className={`${SEARCH_SLOT_CLASS} w-72`}
+        />
+      </Specimen>
+      <Specimen label="with a value ⇒ clear button">
+        <Search label="Search checks" value="nginx" onChange={() => {}} className="w-72" />
+      </Specimen>
+    </Entry>
+  );
+}
+
 function PageScrollEntry() {
   return (
     <Entry id="page-scroll" title="PageScroll">
@@ -297,6 +318,7 @@ export default function ComponentCatalogPage() {
       <FieldEntry />
       <DataTableEntry />
       <TabsEntry />
+      <SearchEntry />
       <PageScrollEntry />
     </PageScroll>
   );
