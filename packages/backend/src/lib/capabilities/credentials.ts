@@ -22,9 +22,11 @@
  * identical values. No duplicate accumulation.
  */
 import { buildCredentialsManifest, type Credential } from '@/lib/stackInstall/credentialsManifest';
+import { withCredentialsLock } from '@/lib/stackInstall/credentialsLock';
 import { getConfig, saveConfig } from '@/lib/config';
 import type { InstalledCredential, InstallManifest } from '@/lib/config';
 import { logger } from '@/lib/logger';
+import { syncCredentialsToVault } from '@/lib/vaultwarden/sync';
 import type { CapabilityBus } from './bus';
 import type {
   FeatureInstalledEvent,
@@ -34,15 +36,25 @@ import type {
 
 const HANDLER_NAME = 'credentials.manifest';
 
-/** Per-process serialization. `saveConfig` already holds its own lock,
- *  but the credentials manifest is a "read-merge-write" pattern where
- *  two concurrent emits would both compute their merge off the same
- *  snapshot and one would clobber the other. */
-let credentialsQueue: Promise<unknown> = Promise.resolve();
-function withCredentialsLock<T>(fn: () => Promise<T>): Promise<T> {
-  const next = credentialsQueue.then(fn, fn);
-  credentialsQueue = next.catch(() => undefined);
-  return next;
+// The read-merge-write lock now lives in `stackInstall/credentialsLock`
+// because the Vaultwarden push (#2519) is a second writer of the same
+// manifest — see that module for why sharing it matters.
+
+/**
+ * Hand the freshly-persisted credentials to the Vaultwarden push (#2519).
+ *
+ * Deliberately **not** awaited: an install must not stall behind a
+ * password manager that is down, and it must not fail because of one
+ * either. Everything that can go wrong is already represented as durable
+ * state — an entry that did not reach the vault keeps its password and
+ * stays "not yet secured" in Settings — so the worst case of a lost
+ * background run is that the operator's next install (or the Sync button)
+ * picks it up.
+ */
+function triggerVaultPush(trigger: string): void {
+  void syncCredentialsToVault({ trigger }).catch(e => {
+    logger.warn('CapabilityBus', `[${HANDLER_NAME}] Vaultwarden push failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
 }
 
 function toInstalledCredentials(creds: Credential[]): InstalledCredential[] {
@@ -78,6 +90,7 @@ export async function handleInstalled(event: FeatureInstalledEvent): Promise<Han
       await saveConfig({ ...config, installManifest: next });
     });
     logger.info('CapabilityBus', `[${HANDLER_NAME}] Persisted ${owned.length} credential entry(ies) for ${event.template}.`);
+    triggerVaultPush(`install:${event.template}`);
     return { ok: true };
   } catch (e) {
     return {

@@ -4,8 +4,10 @@ import {
   resolveCredentialUrl,
   isHttpUrl,
   buildBitwardenCsv,
+  credentialKey,
   isCredentialSecured,
   markCredentialsSecured,
+  markCredentialsSecuredByKey,
   summarizeCredentialSecurity,
   type Credential,
   type CredentialUrlContext,
@@ -223,5 +225,39 @@ describe('credential security state (#2519)', () => {
     const existing = [secured('lldap', '2026-08-01T00:00:00.000Z', 'auth')];
     const merged = mergeCredentials(existing, [cred('immich', 'immich')], ['immich']);
     expect(isCredentialSecured(merged.find(c => c.service === 'lldap')!)).toBe(true);
+  });
+});
+
+describe('per-entry securing (#2519 automated push)', () => {
+  it('keys an entry by template + service + username', () => {
+    expect(credentialKey(cred('immich', 'immich'))).toBe('immich::immich::admin');
+    // Two accounts on the same service must not collapse into one item.
+    expect(credentialKey({ ...cred('immich', 'immich'), username: 'service' }))
+      .not.toBe(credentialKey(cred('immich', 'immich')));
+  });
+
+  it('secures ONLY the confirmed entries and drops just their passwords', () => {
+    const creds = [cred('immich', 'immich'), cred('lldap', 'auth')];
+    const at = '2026-08-13T12:00:00.000Z';
+    const next = markCredentialsSecuredByKey(creds, new Set([credentialKey(creds[1])]), at);
+
+    expect(next[0].password).toBe('secret');
+    expect(next[0].securedAt).toBeUndefined();
+    expect(next[1].password).toBe('');
+    expect(next[1].securedAt).toBe(at);
+  });
+
+  it('never resurrects a password and never restamps an already-secured entry', () => {
+    const already: Credential = { ...cred('lldap', 'auth'), password: '', securedAt: '2026-08-01T00:00:00.000Z' };
+    const next = markCredentialsSecuredByKey([already], new Set([credentialKey(already)]), '2026-08-13T12:00:00.000Z');
+    expect(next[0].securedAt).toBe('2026-08-01T00:00:00.000Z');
+    expect(next[0].password).toBe('');
+  });
+
+  it('an unknown key secures nothing — no accidental blanket marking', () => {
+    const creds = [cred('immich', 'immich')];
+    const next = markCredentialsSecuredByKey(creds, new Set(['other::x::y']), '2026-08-13T12:00:00.000Z');
+    expect(next[0].password).toBe('secret');
+    expect(summarizeCredentialSecurity(next).unsecured).toBe(1);
   });
 });

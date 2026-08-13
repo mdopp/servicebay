@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { getConfig, saveConfig, type InstalledCredential, type InstallManifest } from '@/lib/config';
+import { getConfig, saveConfig, type AppConfig, type InstalledCredential, type InstallManifest } from '@/lib/config';
 import { withApiHandler } from '@/lib/api/handler';
+import { logger } from '@/lib/logger';
+import { isVaultwardenInstalled, syncCredentialsToVault } from '@/lib/vaultwarden/sync';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +37,22 @@ const ManifestBody = z.object({
   credentials: z.array(CredentialSchema).max(64),
 });
 
+/**
+ * Push state for the UI (#2519). Deliberately carries no secret: the
+ * account e-mail and the org/collection ids are pointers, and
+ * `credentialVault.password` is never read here.
+ */
+export function vaultStatus(config: AppConfig) {
+  const v = config.credentialVault;
+  return {
+    installed: isVaultwardenInstalled(config),
+    configured: Boolean(v?.accountEmail && v.password && v.organizationId && v.collectionId),
+    /** Which account writes — a pointer, not a credential. */
+    account: v?.accountEmail ?? null,
+    lastSync: v?.lastSync ?? null,
+  };
+}
+
 export const GET = withApiHandler({}, async () => {
   const config = await getConfig();
   const manifest = config.installManifest;
@@ -46,8 +64,9 @@ export const GET = withApiHandler({}, async () => {
     service: h.service,
   }));
   const publicDomain = config.reverseProxy?.publicDomain ?? null;
-  if (!manifest) return NextResponse.json({ manifest: null, proxyHosts, publicDomain });
-  return NextResponse.json({ manifest, proxyHosts, publicDomain });
+  const vault = vaultStatus(config);
+  if (!manifest) return NextResponse.json({ manifest: null, proxyHosts, publicDomain, vault });
+  return NextResponse.json({ manifest, proxyHosts, publicDomain, vault });
 });
 
 export const POST = withApiHandler({ body: ManifestBody }, async ({ body }) => {
@@ -57,6 +76,14 @@ export const POST = withApiHandler({ body: ManifestBody }, async ({ body }) => {
     credentials: body.credentials as InstalledCredential[],
   };
   await saveConfig({ ...config, installManifest: manifest });
+  // End-of-install write — the moment the freshly generated passwords
+  // exist. Push them straight at Vaultwarden (#2519) rather than waiting
+  // for an operator to notice. Not awaited: a vault that is down must not
+  // fail an install, and every failure is already durable state (the
+  // entry keeps its password and stays "not yet secured").
+  void syncCredentialsToVault({ trigger: 'install-manifest' }).catch(e => {
+    logger.warn('Credentials', `Vaultwarden push failed: ${e instanceof Error ? e.message : String(e)}`);
+  });
   return NextResponse.json({ ok: true, savedAt: manifest.savedAt, count: manifest.credentials.length });
 });
 
