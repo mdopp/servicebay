@@ -142,3 +142,28 @@ export function isWithinRoots(filePath: string, roots: string[]): boolean {
 export function findOutOfScopeExtraFiles(paths: string[], roots: string[]): string[] {
   return paths.filter(p => !isWithinRoots(p, roots));
 }
+
+/**
+ * The containment rule as ONE call, so every entry point that can ask the
+ * agent to write companion files enforces the same thing (#2503 the HTTP
+ * route, #2533 the MCP `deploy_service` tool). Returns the caller-facing
+ * detail string on rejection; `ok` means every path is inside the deploy's
+ * own scope (or there were no extraFiles at all).
+ */
+export function checkExtraFileScope(
+  extraFiles: readonly { path: string }[] | undefined,
+  yamlContent: string,
+  dataDir: string,
+  serviceName: string,
+): { ok: true } | { ok: false; detail: string; roots: string[]; outOfScope: string[] } {
+  if (!extraFiles?.length) return { ok: true };
+  const roots = collectAllowedExtraFileRoots(yamlContent, dataDir, serviceName);
+  const outOfScope = findOutOfScopeExtraFiles(extraFiles.map(f => f.path), roots);
+  if (outOfScope.length === 0) return { ok: true };
+  return {
+    ok: false,
+    roots,
+    outOfScope,
+    detail: `${outOfScope.join(', ')} — allowed roots: ${roots.join(', ') || '(none declared by the manifest)'}`,
+  };
+}

@@ -10,8 +10,7 @@ import { withApiHandler } from '@/lib/api/handler';
 import {
   CreateServiceRequest,
   DEFAULT_TEMPLATE_DATA_DIR,
-  collectAllowedExtraFileRoots,
-  findOutOfScopeExtraFiles,
+  checkExtraFileScope,
 } from '@/lib/services/deployRequest';
 import { logger } from '@/lib/logger';
 import crypto from 'crypto';
@@ -356,14 +355,10 @@ export const POST = withApiHandler<undefined, z.infer<typeof CreateQuery>>(
   if (extraFiles?.length) {
     const deployConfig = await getConfig();
     const dataDir = deployConfig.templateSettings?.DATA_DIR || DEFAULT_TEMPLATE_DATA_DIR;
-    const roots = collectAllowedExtraFileRoots(yamlContent, dataDir, name);
-    const outOfScope = findOutOfScopeExtraFiles(extraFiles.map(f => f.path), roots);
-    if (outOfScope.length > 0) {
+    const scope = checkExtraFileScope(extraFiles, yamlContent, dataDir, name);
+    if (!scope.ok) {
       return NextResponse.json(
-        {
-          error: 'extraFiles outside the service scope',
-          detail: `${outOfScope.join(', ')} — allowed roots: ${roots.join(', ') || '(none declared by the manifest)'}`,
-        },
+        { error: 'extraFiles outside the service scope', detail: scope.detail },
         { status: 400 },
       );
     }
