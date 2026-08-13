@@ -24,6 +24,8 @@
 import { getConfig, updateConfig, type AppConfig } from '@/lib/config';
 import { loadSavedSecrets } from '@/lib/install/savedSecrets';
 import { logger } from '@/lib/logger';
+import { getTemplateVariables } from '@/lib/registry';
+import { resolveEffectiveVariable } from '@/lib/template/effectiveVariables';
 
 /** Raised when Hermes is unreachable or returns a non-2xx response. */
 export class HermesError extends Error {
@@ -49,7 +51,14 @@ export interface HermesConnection {
 const HERMES_API_PORT_VAR = 'HERMES_API_PORT';
 /** Template-variable name holding the Hermes API bearer key (secret). */
 const HERMES_API_KEY_VAR = 'HERMES_API_KEY';
-/** Default Hermes API port (matches the hermes template variable default). */
+/** Template the API-port variable is declared by. */
+const HERMES_TEMPLATE = 'hermes';
+/**
+ * Last-resort port, used only when the hermes template's `variables.json`
+ * cannot be read at all (template not present in any registry). It is NOT
+ * the declared default any more — that is read from the template, so a
+ * template that bumps it can no longer drift away from this client (#2551).
+ */
 const DEFAULT_HERMES_API_PORT = 8642;
 
 /**
@@ -99,20 +108,28 @@ export const MAINTENANCE_PERSONA_PROMPT = [
 ].join('\n');
 
 /**
- * Resolve the Hermes loopback connection from config. The port comes from
- * the installed hermes template variable (or the default 8642); the bearer
- * key comes from `installedSecrets` (HERMES_API_KEY), decrypted by getConfig.
+ * Resolve the Hermes loopback connection from config. The bearer key comes
+ * from `installedSecrets` (HERMES_API_KEY), decrypted by getConfig.
+ *
+ * The port goes through the ONE shared read-path resolver (#2544):
+ * global Template Setting > operator-set `installedVariables` (#2531) >
+ * the hermes template's declared default. Reading only `templateSettings`
+ * and then a hard-coded 8642 (#2551) meant an operator who changed the API
+ * port in Configure got a client aimed at the wrong port, surfaced to them
+ * as an unexplained "unreachable / 503". We never log the port's value.
+ *
+ * Async because the declared default lives in the template's
+ * `variables.json`; all three callers are already async.
  *
  * The key may be absent (Hermes not installed / pre-secret config) — the
  * caller treats an empty key as "unreachable" and surfaces a 503.
  */
-export function resolveHermesConnection(config: AppConfig): HermesConnection {
+export async function resolveHermesConnection(config: AppConfig): Promise<HermesConnection> {
   const secrets = loadSavedSecrets(config);
   const apiKey = secrets[HERMES_API_KEY_VAR] ?? '';
 
-  // The port is a non-secret variable; honour an operator override stored in
-  // templateSettings, else fall back to the template default. We never log it.
-  const portRaw = config.templateSettings?.[HERMES_API_PORT_VAR];
+  const declarations = await getTemplateVariables(HERMES_TEMPLATE).catch(() => null);
+  const portRaw = resolveEffectiveVariable(config, declarations, HERMES_API_PORT_VAR);
   const parsed = portRaw ? Number.parseInt(portRaw, 10) : NaN;
   const port = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_HERMES_API_PORT;
 

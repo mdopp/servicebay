@@ -47,10 +47,6 @@ const ALLOWLIST: Record<string, string> = {
     'THE resolver — the one precedence every read path goes through.',
   'packages/backend/src/lib/install/manifestAssembler.ts':
     'The install path (assembleManifest), which the resolver mirrors. The write side of the same precedence; #2537 routes the reconfigure preview through it.',
-  'packages/backend/src/lib/hermes/client.ts':
-    'KNOWN GAP, filed as #2551: resolveHermesConnection reads templateSettings then a hard-coded default port, so an operator-set HERMES_API_PORT is invisible. Delete this entry when #2551 routes it through the resolver.',
-  'packages/backend/src/lib/capabilities/hostFirewall.ts':
-    'KNOWN GAP, filed as #2551: planLanBlockedPorts layers event variables over templateSettings and falls back to the declared default, so the boot re-assert LAN-blocks the DEFAULT port after an operator changes it. Delete this entry when #2551 routes it through the resolver.',
   'packages/frontend/src/app/api/system/stacks/[name]/wipe/route.ts':
     'Not a resolution chain: iterates templateSettings entries to SCRUB credentials belonging to a wiped stack. It reads keys, never resolves a value.',
 };
@@ -126,6 +122,18 @@ describe('template-variable resolution has exactly one idiom (#2544)', () => {
     expect(reads('packages/backend/src/lib/health/serviceHealthBootstrap.ts'))
       .toContain('buildEffectiveVariableView');
     expect(reads('packages/backend/src/lib/portal/services.ts'))
+      .toContain('resolveEffectiveVariable');
+  });
+
+  it('sees the two consumers #2551 fixed going through the resolver too', () => {
+    // Dropping their allowlist entries only proves they stopped matching the
+    // patterns above; a hand-rolled `installedVariables.find(...)` would slip
+    // through. These pin the shared route. hostFirewall is the load-bearing
+    // one — its boot re-assert is a security control (#2388).
+    const reads = (f: string) => fs.readFileSync(path.join(repoRoot, f), 'utf-8');
+    expect(reads('packages/backend/src/lib/capabilities/hostFirewall.ts'))
+      .toContain('buildEffectiveVariableView');
+    expect(reads('packages/backend/src/lib/hermes/client.ts'))
       .toContain('resolveEffectiveVariable');
   });
 });

@@ -35,6 +35,7 @@ import {
 } from '@/lib/hostFirewall';
 import { recordHandlerFailure, clearHandlerFailure } from '@/lib/install/handlerFailures';
 import { logger } from '@/lib/logger';
+import { buildEffectiveVariableView } from '@/lib/template/effectiveVariables';
 import type { CapabilityBus } from './bus';
 import type { FeatureInstalledEvent, FeatureUninstalledEvent, HandlerResult } from './types';
 import type { StackVariable } from '@/lib/stackInstall/types';
@@ -74,15 +75,30 @@ export async function planLanBlockedPorts(opts: ReconcileOpts = {}): Promise<Lan
   const installedTemplates = [...installed];
 
   const declarations: Record<string, Record<string, PortVarDeclaration> | null> = {};
+  // Effective value of every declared variable, resolved by the ONE shared
+  // read-path resolver (#2544): global Template Setting > operator-set
+  // `installedVariables` (#2531) > the template's declared default.
+  //
+  // The middle level is the whole point here (#2551). This used to be a
+  // private `{...config.templateSettings}` map with `collectLanBlockedPorts`
+  // falling back to the declared default, which is blind to a port the
+  // operator changed in Configure. On the paths that carry NO event
+  // variables — the boot re-assert, and any install/uninstall of a
+  // *different* template — an operator-changed `blockLanAccess` port
+  // therefore resolved to the template DEFAULT: nftables filtered a port
+  // nothing listens on while the port the service actually binds stayed
+  // LAN-reachable. A security control silently not covering what it claims
+  // is worse than none, so this resolution must not be hand-rolled.
+  const values: Record<string, string | undefined> = {};
   for (const template of installedTemplates) {
-    declarations[template] = await getTemplateVariables(template);
+    const declared = await getTemplateVariables(template);
+    declarations[template] = declared;
+    Object.assign(values, buildEffectiveVariableView(config, declared));
   }
 
-  // `templateSettings` holds the globals + whatever the wizard persisted.
-  // The event's own variables win for the template being installed —
-  // they are the values the pod was actually rendered with. Anything
-  // neither map knows falls back to the declared default.
-  const values: Record<string, string | undefined> = { ...(config.templateSettings ?? {}) };
+  // The event's own variables still win for the template being installed:
+  // they are the values the pod was actually rendered with, and at that
+  // moment they are newer than anything persisted.
   for (const v of opts.eventVariables ?? []) {
     if (v.value) values[v.name] = v.value;
   }

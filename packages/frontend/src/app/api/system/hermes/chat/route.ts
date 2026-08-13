@@ -57,7 +57,7 @@ export const GET = withApiHandler({}, async ({ auth }) => {
   const userId = auth?.user ?? 'servicebay-operator';
 
   const config = await getConfig();
-  const conn = resolveHermesConnection(config);
+  const conn = await resolveHermesConnection(config);
   const client = new HermesClient(conn);
 
   if (!client.configured) {
@@ -89,7 +89,7 @@ export const POST = withApiHandler({ body: bodySchema }, async ({ body, auth }) 
   const userId = auth?.user ?? 'servicebay-operator';
 
   const config = await getConfig();
-  const conn = resolveHermesConnection(config);
+  const conn = await resolveHermesConnection(config);
   const client = new HermesClient(conn);
 
   if (!client.configured) {

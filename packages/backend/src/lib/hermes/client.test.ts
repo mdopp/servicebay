@@ -31,6 +31,19 @@ vi.mock('@/lib/logger', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+// The hermes template's own `variables.json` — the DECLARED default the
+// resolver falls back to (#2551). Stubbed so these tests don't depend on a
+// registry checkout, but it is the real shape and the real default.
+type HermesDecls = Record<string, { type?: string; default?: string }> | null;
+const HERMES_DECLARATIONS: HermesDecls = {
+  HERMES_API_PORT: { type: 'text', default: '8642' },
+  HERMES_API_KEY: { type: 'secret' },
+};
+const getTemplateVariablesMock = vi.fn<(name: string) => Promise<HermesDecls>>();
+vi.mock('@/lib/registry', () => ({
+  getTemplateVariables: (name: string) => getTemplateVariablesMock(name),
+}));
+
 import type { AppConfig } from '@/lib/config';
 import {
   HermesClient,
@@ -53,23 +66,60 @@ function jsonResponse(obj: unknown, status = 200): Response {
 beforeEach(() => {
   mockConfigState = {};
   vi.restoreAllMocks();
+  getTemplateVariablesMock.mockReset();
+  getTemplateVariablesMock.mockResolvedValue(HERMES_DECLARATIONS);
 });
 
 describe('resolveHermesConnection', () => {
-  it('reads the key from installedSecrets and defaults the port to 8642', () => {
-    const conn = resolveHermesConnection({
+  it('reads the key from installedSecrets and falls back to the template default port', async () => {
+    const conn = await resolveHermesConnection({
       installedSecrets: [{ varName: 'HERMES_API_KEY', password: 'sekret' }],
     } as unknown as AppConfig);
     expect(conn.baseUrl).toBe('http://127.0.0.1:8642');
     expect(conn.apiKey).toBe('sekret');
   });
 
-  it('honours a HERMES_API_PORT override and an empty key', () => {
-    const conn = resolveHermesConnection({
+  it('honours a HERMES_API_PORT override and an empty key', async () => {
+    const conn = await resolveHermesConnection({
       templateSettings: { HERMES_API_PORT: '9999' },
     } as unknown as AppConfig);
     expect(conn.baseUrl).toBe('http://127.0.0.1:9999');
     expect(conn.apiKey).toBe('');
+  });
+
+  /**
+   * #2551 — the operator-set store. A port changed in Configure lands in
+   * `config.installedVariables` (#2531), NOT in templateSettings, so the
+   * old `templateSettings ?? hard-coded 8642` chain aimed the client at a
+   * port Hermes does not listen on and reported it as "unreachable".
+   */
+  it('honours an operator-set HERMES_API_PORT that lives only in installedVariables', async () => {
+    const conn = await resolveHermesConnection({
+      installedVariables: [{ varName: 'HERMES_API_PORT', value: '18642' }],
+    } as unknown as AppConfig);
+    expect(conn.baseUrl).toBe('http://127.0.0.1:18642');
+  });
+
+  it('lets a global Template Setting outrank the operator-set value', async () => {
+    const conn = await resolveHermesConnection({
+      templateSettings: { HERMES_API_PORT: '9999' },
+      installedVariables: [{ varName: 'HERMES_API_PORT', value: '18642' }],
+    } as unknown as AppConfig);
+    expect(conn.baseUrl).toBe('http://127.0.0.1:9999');
+  });
+
+  it('tracks the template default rather than a hard-coded copy of it', async () => {
+    // A template that BUMPS its declared default must not drift away from
+    // the client — the old code could never see variables.json at all.
+    getTemplateVariablesMock.mockResolvedValue({ HERMES_API_PORT: { type: 'text', default: '8700' } });
+    const conn = await resolveHermesConnection({} as unknown as AppConfig);
+    expect(conn.baseUrl).toBe('http://127.0.0.1:8700');
+  });
+
+  it('still resolves when the template cannot be read at all', async () => {
+    getTemplateVariablesMock.mockRejectedValue(new Error('no registry'));
+    const conn = await resolveHermesConnection({} as unknown as AppConfig);
+    expect(conn.baseUrl).toBe('http://127.0.0.1:8642');
   });
 });
 
