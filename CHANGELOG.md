@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.11.19](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.18...servicebay-v5.11.19) (2026-08-13)
+
+
+### Bug Fixes
+
+* **api:** mint the health-check id server-side instead of taking it from the body ([3df6769](https://github.com/mdopp/servicebay/commit/3df6769b3c69f9eb14e74cc5b9c93eccb9e3dcd8)), closes [#2536](https://github.com/mdopp/servicebay/issues/2536)
+* **api:** validate the whole POST /api/services body at the boundary ([a239461](https://github.com/mdopp/servicebay/commit/a239461931affb2fa177d3bf93c3cd55dbee57c9)), closes [#2503](https://github.com/mdopp/servicebay/issues/2503)
+* **autoloop:** flip the box-verify channel over the MCP token, not admin creds ([98a863b](https://github.com/mdopp/servicebay/commit/98a863b64231177e2ecba620749e928e89bdd464)), closes [#2532](https://github.com/mdopp/servicebay/issues/2532)
+* close the POST /api/services RCE class and stop reinstalls dropping operator config ([760b11a](https://github.com/mdopp/servicebay/commit/760b11afa016cfada6b142f66804f69c23d1131b))
+* **frontend:** align sidebar nav entries the same way in both groups ([363f57d](https://github.com/mdopp/servicebay/commit/363f57d0022c2206de8fb870bfa43a6e3814182d))
+* **frontend:** align sidebar nav entries the same way in both groups ([036618f](https://github.com/mdopp/servicebay/commit/036618f3031473ca477382435b3b7242189784cc))
+* **install:** keep operator-set non-secret variables across a reinstall ([de48581](https://github.com/mdopp/servicebay/commit/de48581f35d231eb9c8c656235938f5c8193af3b)), closes [#2531](https://github.com/mdopp/servicebay/issues/2531)
+* **install:** re-read template specs from the registry after the sync ([054a7e3](https://github.com/mdopp/servicebay/commit/054a7e34b18921c2e2f27a13f5329ac658c93204)), closes [#2530](https://github.com/mdopp/servicebay/issues/2530)
+* **mcp:** validate deploy file paths on the MCP tools like the HTTP route ([67d7f3d](https://github.com/mdopp/servicebay/commit/67d7f3ddafe2fc25ab97c50739fde585b047178d)), closes [#2533](https://github.com/mdopp/servicebay/issues/2533)
+
 ## [5.11.18](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.17...servicebay-v5.11.18) (2026-08-12)
 
 
