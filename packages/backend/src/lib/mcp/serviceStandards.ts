@@ -20,6 +20,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { logger } from '@/lib/logger';
+import { BOOTSTRAP_STEP, renderStandardsPointerBlock } from '@/lib/mcp/serviceRepoBootstrap';
 
 export const SERVICE_STANDARDS_FLAVORS = ['servicebay', 'generic'] as const;
 export type ServiceStandardsFlavor = (typeof SERVICE_STANDARDS_FLAVORS)[number];
@@ -121,6 +122,17 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
       summary:
         'Platform-agnostic development standards for any new project. Fetch the full text via get_assist("generic-project-standards").',
       fullTextAssist: 'generic-project-standards',
+      // #2513: the sibling repo that shipped past the ADRs was bootstrapped with
+      // the GENERIC standards, on a machine with no ServiceBay MCP — so the
+      // target-detection step belongs on this flavor too, not only on
+      // 'servicebay'. Without it, the generic flavor is a dead end for exactly
+      // the case that failed.
+      repoBootstrap: {
+        step: 'Before the first stack/CI/storage/auth decision: decide where this project will RUN.',
+        ifServiceBayTarget:
+          'If it will be installed on a ServiceBay box, these generic standards are not enough — fetch get_service_standards(flavor="servicebay") and follow its repoBootstrap block. The platform ADRs (SSO, non-destructive installs, network isolation, service tokens) are binding and are not derivable from generic dev discipline.',
+        ifMcpNotConnected: BOOTSTRAP_STEP.ifMcpNotConnected,
+      },
       standards: {
         commitConvention:
           'Conventional Commits: `type(scope): description`. Keep subjects parser-clean — no extra parentheses beyond the conventional (scope).',
@@ -143,6 +155,14 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
     summary:
       'Curated pointer index for building a new ServiceBay service. Read the referenced docs/ files directly and fetch each assist in full via get_assist(id). Full checklist: get_assist("new-service-standards").',
     fullTextAssist: 'new-service-standards',
+    // #2513: step 1 of building a service repo, served as finished text rather
+    // than as an instruction to compose one. A repo created without this block
+    // has no link back into the catalog, and the next agent in it re-derives
+    // everything the ADRs already decided.
+    repoBootstrap: {
+      ...BOOTSTRAP_STEP,
+      claudeMdBlock: renderStandardsPointerBlock(),
+    },
     mustRespectAdrs,
     enforcedInvariants: {
       pointer: 'docs/ARCHITECTURE_INVARIANTS.md',
@@ -168,6 +188,7 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
         { id: 'testing-and-ci-gate', why: 'Required standard: a real test suite, thread-aware coverage, and CI that gates image publish on green tests (build-only CI is non-compliant).' },
         { id: 'long-running-process', why: 'Standard for any operation over ~10s: server-owned durable job, reconnect via the server (not localStorage), survive restart, observable + cancelable.' },
         { id: 'service-ui-design-standard', why: 'UI/design standard for a user-facing service: real ServiceBay design tokens (palette/accent, radii, typography, spacing) + UX baseline (styled large file picker, streaming progress, responsive/mobile, focus states) so the service looks and behaves like ServiceBay.' },
+        { id: 'service-ui-user-language', why: 'Required for any rendered UI: state texts speak the user\'s language, not the implementation\'s. CLI commands, env-var and header names never reach rendered HTML; every state says what the user can do next; a named action the user cannot trigger is a product gap. Applies docs/UX_PHILOSOPHY.md §5 to a service frontend.' },
         { id: 'data-authority', why: 'Consume the canonical index (Jellyfin/Immich/Radicale) instead of re-scanning; one writer per store or an explicit coordination model.' },
         { id: 'recipe-roll-new-image-to-running-service', why: 'How to actually run a freshly-pushed image on an installed service (pull + restart), and the pinned-tag-vs-:latest versioning expectation.' },
         { id: 'report-standards-gaps', why: 'Convention: report missing/ambiguous/wrong standards back so the catalog improves from real friction.' },

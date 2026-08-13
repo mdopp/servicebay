@@ -32,6 +32,19 @@ describe('createMcpServer self-description (#1732)', () => {
     await client.close();
   });
 
+  it('tells a new-project session to call get_service_standards first (#2513)', async () => {
+    // The standards catalog was never consulted at repo-creation time because
+    // consulting it was not a step anywhere outside the catalog. The initialize
+    // handshake reaches every client BEFORE its first tool call — the one
+    // channel a fresh agent cannot skip.
+    const { client } = await connectClient();
+    const instructions = client.getInstructions() ?? '';
+    expect(instructions).toMatch(/get_service_standards/);
+    expect(instructions).toMatch(/new service\/project/i);
+    expect(instructions).toMatch(/repoBootstrap/);
+    await client.close();
+  });
+
   it('the service/container/log tool descriptions mention the naming model', async () => {
     const { client } = await connectClient();
     const { tools } = await client.listTools();

@@ -129,6 +129,45 @@ describe('get_service_standards — servicebay flavor (#2323)', () => {
   });
 });
 
+describe('UI language & state design is a standard (#2514)', () => {
+  it('is reachable through get_service_standards and resolves', async () => {
+    // The sibling frontend that shipped CLI commands as status texts had read
+    // every standard the catalog served — none of them covered what the UI SAYS.
+    const s = await buildServiceStandards('servicebay');
+    const ids = (s.assistsToRead as { ids: { id: string; why: string }[] }).ids;
+    const entry = ids.find(i => i.id === 'service-ui-user-language');
+    expect(entry, 'assistsToRead surfaces service-ui-user-language').toBeDefined();
+    expect(entry!.why).toMatch(/language/i);
+    expect(await getAssist('service-ui-user-language')).not.toBeNull();
+  });
+
+  it('references the existing UX philosophy instead of restating it', async () => {
+    const body = (await getAssist('service-ui-user-language')) ?? '';
+    // Prior art in this repo — the standard points at it, it is not a parallel
+    // second version of the same principle.
+    expect(body).toContain('docs/UX_PHILOSOPHY.md');
+    expect(body).toContain('docs/UX_DECISIONS.md');
+    expect(fs.existsSync(path.join(REPO_ROOT, 'docs', 'UX_PHILOSOPHY.md'))).toBe(true);
+    expect(fs.existsSync(path.join(REPO_ROOT, 'docs', 'UX_DECISIONS.md'))).toBe(true);
+  });
+
+  it('carries the rules the sibling frontend violated, incl. test enforcement', async () => {
+    const body = (await getAssist('service-ui-user-language')) ?? '';
+    // Every rejection from the #2514 review maps to a rule here.
+    expect(body, 'CLI/env/header names banned in rendered HTML').toMatch(/env-var names/i);
+    expect(body).toMatch(/header names/i);
+    expect(body, 'the ban is test-enforced, not a review habit').toMatch(/test-enforced|not a review habit/i);
+    expect(body, 'an untriggerable named action is a product gap').toMatch(/product gap/i);
+    expect(body, 'onboarding shows while its condition holds').toMatch(/condition the wizard resolves|not only on virgin state/i);
+    expect(body, 'settings group by user questions').toMatch(/group by user questions|Settings group by/i);
+  });
+
+  it('is cross-linked from the design standard, which was the doc that was silent', async () => {
+    const design = (await getAssist('service-ui-design-standard')) ?? '';
+    expect(design).toContain('service-ui-user-language');
+  });
+});
+
 describe('get_service_standards — generic flavor (#2323)', () => {
   it('returns platform-agnostic standards', async () => {
     const s = await buildServiceStandards('generic');

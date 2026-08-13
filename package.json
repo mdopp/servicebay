@@ -24,6 +24,7 @@
     "test:e2e": "playwright test --config tests/e2e/playwright.config.ts",
     "browser:sandbox": "tsx scripts/provision-browser-sandbox.ts",
     "gen-template-docs": "tsx scripts/gen-template-docs.ts",
+    "standards:bootstrap": "tsx scripts/bootstrap-service-repo.ts",
     "sb-config-upload": "tsx scripts/sb-config-upload.ts",
     "disk-import": "tsx scripts/disk-import.ts",
     "check:invariants": "tsx scripts/check-invariants.ts",

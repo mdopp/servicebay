@@ -297,6 +297,15 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
         'Always resolve service/container names and ids from `list_services` / `list_containers`',
         'rather than asking the user for them. Use `diagnose`, `get_health_checks`, and',
         '`get_service_files` when you need more depth on a service.',
+        '',
+        // #2513: the standards catalog was never *consulted* at repo-creation time
+        // because consulting it was not a step anywhere outside the catalog itself.
+        // The initialize handshake reaches every client before its first tool call,
+        // so this is the one place the pointer cannot be skipped.
+        'Building or bootstrapping a new service/project for this box? Call `get_service_standards`',
+        'FIRST — before choosing a stack, a CI shape, a storage engine or an auth design — and read',
+        'every id it lists under `assistsToRead` via `get_assist(id)`. Its `repoBootstrap` block holds',
+        "the pointer text the new repo's CLAUDE.md must carry so the next session finds the catalog too.",
       ].join('\n'),
     },
   );
