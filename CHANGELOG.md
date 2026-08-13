@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.12.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.19...servicebay-v5.12.0) (2026-08-13)
+
+
+### Features
+
+* **credentials:** push credentials into a Vaultwarden org collection and drop the local copy ([7370920](https://github.com/mdopp/servicebay/commit/737092033674df71423f119dfe9dc6092084be6b)), closes [#2519](https://github.com/mdopp/servicebay/issues/2519)
+* **credentials:** stop showing passwords in Settings, track the Vaultwarden hand-off ([ceed4fe](https://github.com/mdopp/servicebay/commit/ceed4fe811749a0e7006e48c17d6911b3b217513)), closes [#2519](https://github.com/mdopp/servicebay/issues/2519)
+* **diagnose:** surface a degraded RAID array ([5602610](https://github.com/mdopp/servicebay/commit/5602610064d44b0f33c1ed082cd876a7e4e68200)), closes [#2526](https://github.com/mdopp/servicebay/issues/2526)
+* **diagnose:** watch /boot and / for fill, not just the data array ([d7204ed](https://github.com/mdopp/servicebay/commit/d7204edf811413dace24a72c59be53ea91c8c87d)), closes [#2527](https://github.com/mdopp/servicebay/issues/2527)
+* **mcp:** reach the standards catalog at repo bootstrap, and cover UI language ([4dda957](https://github.com/mdopp/servicebay/commit/4dda9576c38827d3a63165701903c730a86cb90e)), closes [#2513](https://github.com/mdopp/servicebay/issues/2513) [#2514](https://github.com/mdopp/servicebay/issues/2514)
+
+
+### Bug Fixes
+
+* **capabilities:** LAN-block the operator-set port, not the template default ([f2cb332](https://github.com/mdopp/servicebay/commit/f2cb3322cbd6294da3897e70a504a13324115772)), closes [#2551](https://github.com/mdopp/servicebay/issues/2551)
+* **claude-dev:** move off hostNetwork into an isolated netns ([214001f](https://github.com/mdopp/servicebay/commit/214001f49903fc56d280dcb42faad3770d4b4dd0)), closes [#2522](https://github.com/mdopp/servicebay/issues/2522)
+* one variable resolution path, close two security exposures, unify the shell ([8452c94](https://github.com/mdopp/servicebay/commit/8452c94a4ba8b10adab166906be123d7e2a0bc8f))
+* **portal:** health probes and portal deep links honour operator-set variables ([c523f0e](https://github.com/mdopp/servicebay/commit/c523f0ea64086592bd0a6ddfa8cb3f535e4339e5)), closes [#2544](https://github.com/mdopp/servicebay/issues/2544)
+* **services:** clean up cross-service state on delete, rebuild it on restore ([aebdf8f](https://github.com/mdopp/servicebay/commit/aebdf8fc1fa19963aa6fe0858a6bfe2976f1ecd9)), closes [#2541](https://github.com/mdopp/servicebay/issues/2541)
+* **services:** re-render from template no longer blanks values or secrets ([74ad426](https://github.com/mdopp/servicebay/commit/74ad42645105f83bde57994b6654befc41e70e95)), closes [#2537](https://github.com/mdopp/servicebay/issues/2537)
+* **services:** refuse GPU limits in multi-container pods instead of dropping them ([9621c83](https://github.com/mdopp/servicebay/commit/9621c83cd5359a3ebd4e1b11d8f62a5ec75ffa15)), closes [#2517](https://github.com/mdopp/servicebay/issues/2517)
+* **shell:** one shared page width instead of a max-w per page ([f7cfdd0](https://github.com/mdopp/servicebay/commit/f7cfdd0210775cee509110e3f55783674ddbcb13)), closes [#2548](https://github.com/mdopp/servicebay/issues/2548)
+* stop silent config loss, surface degraded RAID and a filling /boot, gate GPU limits ([7ab4ad4](https://github.com/mdopp/servicebay/commit/7ab4ad49ab031fbee9f67a1f41a7316d252cd914))
+
 ## [5.11.19](https://github.com/mdopp/servicebay/compare/servicebay-v5.11.18...servicebay-v5.11.19) (2026-08-13)
 
 
