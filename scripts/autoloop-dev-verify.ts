@@ -10,6 +10,12 @@
  * the probes throw, hang, or the agent dies (CLAUDE.md "Deterministic → scripts;
  * LLMs coordinate + evaluate").
  *
+ * Both flips are MCP `set_channel` calls authorized by the `sb_` token (#2532) —
+ * the harness never obtains an admin session and never reads credentials off the
+ * box. That also *strengthens* the never-stranded invariant: out and back are the
+ * same call with the same static authority, so a box the harness can flip to
+ * `:dev` is by construction a box it can flip back.
+ *
  *   tsx scripts/autoloop-dev-verify.ts <sha> --probe-script <path> [--image-timeout 900] [--flipback-timeout 900]
  *
  * The probe script runs while the box is on `:dev @ <sha>`; its stdout/stderr +
@@ -236,7 +242,7 @@ const FLIP_BACK_HEALTH_SEC = 180;
  *    answers `/api/system/channel` after the flip POST is accepted — and
  *    `waitHealth` happily reports "up" from that same outgoing container, so it
  *    provides no settle time at all).
- * Both were terminal in the old loop, and a `setChannel` throw (admin login
+ * Both were terminal in the old loop, and a `setChannel` throw (the flip call
  * against a restarting box) burned a whole round with **no** delay, so all three
  * rounds could be spent in seconds.
  *
@@ -270,8 +276,9 @@ export async function confirmFlipBack(
         await deps.setChannel('latest');
         reissues++;
       } catch {
-        // Admin login / POST against a restarting box throws. NOT a verdict —
-        // the previous POST may already have been accepted; keep confirming.
+        // The `set_channel` call against a restarting box throws (its /mcp
+        // endpoint lives in the app being restarted). NOT a verdict — the
+        // previous call may already have been accepted; keep confirming.
       }
       // Give the async restart room, bounded by what's left of the budget.
       const remainingSec = Math.ceil((deadline - deps.now()) / 1000);
