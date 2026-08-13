@@ -285,7 +285,7 @@ export default function OnboardingWizard() {
     immich:           { recommendedWith: ['auth'], reason: 'OIDC SSO via authelia (optional)' },
     'home-assistant': { recommendedWith: ['auth'], reason: 'OIDC SSO via authelia (optional)' },
     radicale:         { recommendedWith: ['auth'] },
-    media:            { recommendedWith: ['auth'], reason: 'Audiobookshelf OIDC + Navidrome reverse-proxy SSO via authelia' },
+    media:            { recommendedWith: ['auth'], reason: 'Jellyfin LDAP-Auth via LLDAP from the auth stack' },
     'file-share':     { recommendedWith: ['auth'], reason: 'FileBrowser uses authelia forward-auth for family-facing access' },
   };
 

@@ -37,6 +37,7 @@ import { readManifestAnnotations } from '@/lib/template/contract';
 import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
 import { getConfig } from '@/lib/config';
 import { loadSavedSecrets, persistSingleSecret } from './savedSecrets';
+import { loadSavedVariables } from './savedVariables';
 import type { JobInput, JobInputItem, JobInputVariable } from './jobStore';
 
 /** A template the caller wants installed. Mirrors the wizard's
@@ -243,6 +244,118 @@ function withHelpText(
   return { ...(meta ?? {}), description: help };
 }
 
+/** The per-template artifacts an install carries in its `JobInputItem`. */
+interface TemplateArtifacts {
+  yaml: string;
+  dependencies: string[];
+  /** Config files only — these are scanned for `{{VAR}}` references. */
+  configFiles: { filename: string; content: string; targetPath?: string; renderContent?: boolean }[];
+  /** Config files + asset files, in the order the item carries them. */
+  allFiles: NonNullable<JobInputItem['configFiles']>;
+}
+
+/**
+ * Read one template's deploy-time artifacts out of the registry: the pod
+ * YAML, its declared install-time dependencies, its config files (with
+ * `targetPath` resolved) and its asset files.
+ *
+ * Shared by {@link assembleManifest} (which resolves them when the manifest
+ * is built) and {@link refreshTemplateArtifacts} (which re-resolves them at
+ * deploy time, after the registry sync). Both MUST read the same way — a
+ * divergence here means the deploy renders something the wizard never showed.
+ * Returns null when the template can't be resolved from `templateSource`.
+ */
+async function resolveTemplateArtifacts(
+  name: string,
+  templateSource: string | undefined,
+): Promise<TemplateArtifacts | null> {
+  const yamlText = await getTemplateYaml(name, templateSource).catch(() => null);
+  if (!yamlText) return null;
+
+  // Install-time dependencies — parsed off the un-rendered yaml
+  // (`servicebay.dependencies` has no Mustache placeholders).
+  const dependencies = parseTemplateDependencies(yamlText);
+
+  const cfgFiles = await getTemplateConfigFiles(name, templateSource).catch(() => []);
+  if (cfgFiles.length > 0) resolveConfigFilePaths(yamlText, cfgFiles);
+
+  // Asset files (#1156) — a template's `skills/` subdirectory ships
+  // to `{{DATA_DIR}}/<template>/skills/<relpath>` on the agent via
+  // the same `extraFiles` transport. `renderContent: false` so
+  // SKILL.md bodies aren't mangled by Mustache. No vars are
+  // discovered from asset content for the same reason — they're
+  // shipped verbatim.
+  const assetFiles = await getTemplateAssetFiles(name, templateSource).catch(() => []);
+
+  const allFiles = [...cfgFiles, ...assetFiles].map(cf => ({
+    filename: cf.filename,
+    content: cf.content,
+    targetPath: cf.targetPath,
+    renderContent: cf.renderContent,
+  }));
+  return { yaml: yamlText, dependencies, configFiles: cfgFiles, allFiles };
+}
+
+/** One template's outcome from {@link refreshTemplateArtifacts}. */
+export interface TemplateRefreshResult {
+  /** Templates whose registry spec differs from the one in the manifest. */
+  updated: string[];
+  /** Templates that could no longer be resolved — manifest spec kept. */
+  unresolved: string[];
+}
+
+/**
+ * #2530 — re-resolve every deployable item's template artifacts from the
+ * registry, in place, immediately after the install runner's `syncRegistries()`.
+ *
+ * Why this exists: `assembleManifest` reads `template.yml` when the MANIFEST is
+ * built, and a reinstall of a saved manifest replays the YAML captured back
+ * then. The registry pull (#1806) runs later, at the start of the deploy — so
+ * the pod spec that actually gets rendered is always one sync behind the
+ * registry, and a saved-manifest reinstall can be arbitrarily far behind. A
+ * template block added since (an `env:` entry on a second container, a new
+ * volume, a bumped image) is silently absent from the rendered pod YAML with no
+ * error anywhere — exactly the reported symptom, and NOT the per-`(container,
+ * name)` env dedupe the report guessed at: the renderer emits every occurrence
+ * of a reused variable name faithfully, it was just handed a stale template.
+ *
+ * Only items that ALREADY carry a `yaml` are refreshed. An item without one was
+ * deliberately skipped by the assembler (`alreadyInstalled`), and handing it a
+ * spec here would make the runner deploy a service this run never intended to
+ * touch.
+ *
+ * A template that can no longer be resolved is reported in `unresolved` and
+ * keeps its manifest spec — the caller MUST surface that, since deploying a
+ * spec we could not confirm is exactly the silent-staleness this fixes.
+ */
+export async function refreshTemplateArtifacts(
+  items: JobInputItem[],
+  templateSource?: string,
+): Promise<TemplateRefreshResult> {
+  const updated: string[] = [];
+  const unresolved: string[] = [];
+  for (const item of items) {
+    if (!item.checked || !item.yaml) continue;
+    let artifacts = await resolveTemplateArtifacts(item.name, templateSource);
+    // A pinned source that no longer carries the template (renamed registry,
+    // a manifest that recorded the defaulted 'Built-in' for an external
+    // template) — walk every source rather than deploy the stale spec.
+    if (!artifacts && templateSource) {
+      artifacts = await resolveTemplateArtifacts(item.name, undefined);
+    }
+    if (!artifacts) {
+      unresolved.push(item.name);
+      continue;
+    }
+    if (artifacts.yaml !== item.yaml) updated.push(item.name);
+    item.yaml = artifacts.yaml;
+    item.dependencies = artifacts.dependencies;
+    if (artifacts.allFiles.length > 0) item.configFiles = artifacts.allFiles;
+    else delete item.configFiles;
+  }
+  return { updated, unresolved };
+}
+
 /**
  * Assemble a stack-install manifest server-side.
  *
@@ -278,18 +391,21 @@ export async function assembleManifest(
   // Saved secret values — reused so a service with a pre-existing data
   // volume keeps the password it was initialised with (#615).
   const storedValues: Record<string, string> = loadSavedSecrets(config);
+  // Operator-set non-secret values from the last install (#2531) — the
+  // non-secret twin of `storedValues`. Without it a `text` variable the
+  // operator typed and that has no default came back empty on every
+  // reinstall, with no error.
+  const savedVariables: Record<string, string> = loadSavedVariables(config);
 
   const vars = new Set<string>();
   const allMeta: Record<string, VariableMeta> = {};
 
   for (const item of selected) {
-    const templateYaml = await getTemplateYaml(item.name, templateSource).catch(() => null);
-    if (!templateYaml) continue;
+    const artifacts = await resolveTemplateArtifacts(item.name, templateSource);
+    if (!artifacts) continue;
+    const templateYaml = artifacts.yaml;
     item.yaml = templateYaml;
-
-    // Install-time dependencies — parsed off the un-rendered yaml
-    // (`servicebay.dependencies` has no Mustache placeholders).
-    item.dependencies = parseTemplateDependencies(templateYaml);
+    item.dependencies = artifacts.dependencies;
 
     for (const m of templateYaml.matchAll(MUSTACHE_VAR_RE)) vars.add(m[1]);
 
@@ -305,31 +421,11 @@ export async function assembleManifest(
       }
     }
 
-    const cfgFiles = await getTemplateConfigFiles(item.name, templateSource).catch(() => []);
-    if (cfgFiles.length > 0) {
-      resolveConfigFilePaths(templateYaml, cfgFiles);
-      for (const cf of cfgFiles) {
-        for (const m of cf.content.matchAll(MUSTACHE_VAR_RE)) vars.add(m[1]);
-      }
+    for (const cf of artifacts.configFiles) {
+      for (const m of cf.content.matchAll(MUSTACHE_VAR_RE)) vars.add(m[1]);
     }
 
-    // Asset files (#1156) — a template's `skills/` subdirectory ships
-    // to `{{DATA_DIR}}/<template>/skills/<relpath>` on the agent via
-    // the same `extraFiles` transport. `renderContent: false` so
-    // SKILL.md bodies aren't mangled by Mustache. No vars are
-    // discovered from asset content for the same reason — they're
-    // shipped verbatim.
-    const assetFiles = await getTemplateAssetFiles(item.name, templateSource).catch(() => []);
-
-    const allFiles = [...cfgFiles, ...assetFiles];
-    if (allFiles.length > 0) {
-      item.configFiles = allFiles.map(cf => ({
-        filename: cf.filename,
-        content: cf.content,
-        targetPath: cf.targetPath,
-        renderContent: cf.renderContent,
-      }));
-    }
+    if (artifacts.allFiles.length > 0) item.configFiles = artifacts.allFiles;
   }
 
   // Variables declared via metadata but never referenced in YAML
@@ -406,6 +502,11 @@ export async function assembleManifest(
     if (name === 'OLLAMA_GPU_PASSTHROUGH' && !value && (await hostHasNvidiaCdi())) {
       value = 'yes';
     }
+    // #2531 — a value the operator set on a previous install outranks the
+    // template default. Only genuinely operator-set values are stored (see
+    // savedVariables.ts), so a template that BUMPS a default still reaches a
+    // box that never overrode it — the #1297 contract is preserved.
+    if (!value && savedVariables[name]) value = savedVariables[name];
     if (!value && meta?.default) value = meta.default;
 
     if (!value && meta?.type === 'secret') {
@@ -509,34 +610,69 @@ export async function assembleManifest(
  * so every path — wizard and replayed reinstall — gets the same defaults
  * applied. A non-empty manifest value always wins; a default only fills a
  * missing/empty slot. Returns the input unchanged when nothing needed filling.
+ *
+ * #2531 — the same slot-filling now also restores values the OPERATOR set on a
+ * previous install (`config.installedVariables`), which outrank the template
+ * default. This is the end-to-end point: it runs for the MCP `install_template`
+ * path and for `POST /api/install/start`, including the reinstall that replays
+ * a saved JobInput and never touches `assembleManifest`.
  */
-export async function applyVariableDefaults(
-  input: JobInput,
-  templateSource?: string,
-): Promise<JobInput> {
+/**
+ * `varName → value` to fill into any missing/empty slot of a JobInput, for the
+ * templates this install actually deploys.
+ *
+ * Precedence: an operator-set value from a previous install (#2531) outranks
+ * the template's `variables.json` default (#1297) — both only ever fill a gap,
+ * so a value the manifest already carries wins over either.
+ */
+async function collectVariableFills(
+  items: JobInputItem[],
+  templateSource: string | undefined,
+): Promise<Map<string, string>> {
   // First template to declare a variable owns its default (mirrors
   // assembleManifest's grouping), so only record the first non-empty default.
   const defaults = new Map<string, string>();
-  for (const item of input.items) {
+  const declared = new Set<string>();
+  for (const item of items) {
     if (!item.checked || item.alreadyInstalled) continue;
     const meta = await getTemplateVariables(item.name, templateSource).catch(() => null);
     if (!meta) continue;
     for (const [name, m] of Object.entries(meta)) {
+      declared.add(name);
       if (m.default !== undefined && m.default !== '' && !defaults.has(name)) {
         defaults.set(name, m.default);
       }
     }
   }
+
+  const cfg = await getConfig().catch(() => null);
+  const savedVariables = cfg ? loadSavedVariables(cfg) : {};
+  const fills = new Map<string, string>();
+  for (const name of declared) {
+    if (savedVariables[name]) fills.set(name, savedVariables[name]);
+  }
+  for (const [name, def] of defaults) {
+    if (!fills.has(name)) fills.set(name, def);
+  }
+  return fills;
+}
+
+export async function applyVariableDefaults(
+  input: JobInput,
+  templateSource?: string,
+): Promise<JobInput> {
+  const fills = await collectVariableFills(input.items, templateSource);
+
   const next: JobInputVariable[] = input.variables.map(v => ({ ...v }));
   const indexByName = new Map(next.map((v, i) => [v.name, i]));
   let changed = false;
-  for (const [name, def] of defaults) {
+  for (const [name, fill] of fills) {
     const idx = indexByName.get(name);
     if (idx === undefined) {
-      next.push({ name, value: def });
+      next.push({ name, value: fill });
       changed = true;
     } else if (!next[idx].value) {
-      next[idx].value = def;
+      next[idx].value = fill;
       changed = true;
     }
   }

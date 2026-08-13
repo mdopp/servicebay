@@ -485,6 +485,18 @@ export interface AppConfig {
    */
   installedSecrets?: Array<{ varName: string; password: string }>;
   /**
+   * Internal: every NON-secret template variable the operator set by hand on
+   * the most recent install — i.e. a non-empty value that differs from the
+   * template's own default (#2531). Read back by the manifest assembler so a
+   * plain reinstall doesn't rebuild the variable set from `variables.json`
+   * defaults and silently blank a value the operator typed. Only genuinely
+   * operator-set values are recorded, so a template bumping a default still
+   * reaches a box that never overrode it. Plaintext by design — `type: secret`
+   * variables are excluded and live in `installedSecrets` (encrypted at rest).
+   * See `install/savedVariables.ts`.
+   */
+  installedVariables?: Array<{ varName: string; value: string }>;
+  /**
    * Anonymous "request access" submissions from the family portal
    * (#242). Public POST endpoint appends here; admin Settings page
    * reads + resolves. Capped at 50 pending so spam can't fill the

@@ -4,6 +4,19 @@
  */
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
+// #2534 — the MCP health surface must be no weaker than the HTTP one. A check's
+// `target` is not inert: every probe feeds it somewhere (an argv, a URL, and for
+// `type: "script"` a `vm.runInContext` eval — health/probes/basic.ts). The REST
+// route `POST /api/health/checks` parses it with the shared `HealthCheckTarget`;
+// this tool used a bare `z.string()`, so a mutate-scope token could send content
+// a web session could not. Reuse the SAME shared schemas rather than a second
+// idiom, so the rejection happens in the tool schema before any handler runs.
+//
+// This is parity, NOT containment: `HealthCheckTarget` removes JS call syntax
+// (no parens, no backtick) but not member access or assignment, and the script
+// probe's vm context holds the host realm's `fetch`. Whether a caller-supplied
+// `script` check should exist at all is #2535 — deliberately not widened here.
+import { HealthCheckTarget, NodeName } from '@/lib/api/schemas';
 import { HealthStore } from '@/lib/health/store';
 import { CheckRunner } from '@/lib/health/runner';
 import type { CheckConfig, CheckType } from '@/lib/health/types';
@@ -34,10 +47,10 @@ export function registerHealthTools({ server }: ToolRegistration) {
     {
       name: z.string().min(1).describe('Display name'),
       type: checkTypeSchema.describe('Check type'),
-      target: z.string().min(1).describe('URL / IP / container id / service name / script depending on type'),
+      target: HealthCheckTarget.describe('URL / IP / container id / service name / script depending on type. Shell and JS metacharacters are rejected — the same rule POST /api/health/checks applies.'),
       interval: z.number().int().min(10).max(86400).describe('Interval in seconds (10s–24h)'),
       enabled: z.boolean().optional().describe('Default: true'),
-      nodeName: z.string().optional().describe('Node to run the check from (default: first available)'),
+      nodeName: NodeName.optional().describe('Node to run the check from (default: first available)'),
       httpExpectedStatus: z.number().int().optional().describe('For type=http: expected HTTP status'),
       httpBodyMatch: z.string().optional().describe('For type=http: substring or regex the response body must match'),
     },

@@ -8,18 +8,20 @@ import { expect, type Page } from '@playwright/test'
  */
 
 /**
- * Admin credentials read fresh from the environment. They rotate every install
- * (memory `reference_mcp_servicebay_access`), so the caller must export them
- * from the box at verify time — never hard-code or memorize the value.
+ * Admin credentials, taken from the environment and **supplied by the operator**
+ * (#2532). They rotate every install, so they are never hard-coded or memorized
+ * — and equally never harvested off the box by an automated run: an agent that
+ * finds them unset skips the browser layer and reports it owed rather than going
+ * to look for them.
  */
 export function credentials(): { username: string; password: string } {
   const username = process.env.SB_USERNAME
   const password = process.env.SB_PASSWORD
   if (!username || !password) {
     throw new Error(
-      'SB_USERNAME / SB_PASSWORD must be set (read fresh off the box: ' +
-        '~/.config/containers/systemd/servicebay.container). See memory ' +
-        'reference_mcp_servicebay_access.',
+      'SB_USERNAME / SB_PASSWORD must be exported by the operator before running ' +
+        'the browser specs. Do NOT derive them from the box (#2532) — an automated ' +
+        'run without them reports the browser criterion as owed.',
     )
   }
   return { username, password }

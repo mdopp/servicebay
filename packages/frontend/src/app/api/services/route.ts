@@ -7,6 +7,11 @@ import { HealthStore } from '@/lib/health/store';
 import { listNodes } from '@/lib/nodes';
 import { buildExternalLinkPorts, normalizeExternalTargets } from '@/lib/network/externalLinks';
 import { withApiHandler } from '@/lib/api/handler';
+import {
+  CreateServiceRequest,
+  DEFAULT_TEMPLATE_DATA_DIR,
+  checkExtraFileScope,
+} from '@/lib/services/deployRequest';
 import { logger } from '@/lib/logger';
 import crypto from 'crypto';
 
@@ -306,11 +311,25 @@ export const POST = withApiHandler<undefined, z.infer<typeof CreateQuery>>(
   }
 
   // Handle Container Creation
-  const { name, kubeContent, yamlContent, yamlFileName, extraFiles, postDeployScript, postDeployEnv, migrations } = body;
-
-  if (!name || !kubeContent || !yamlContent || !yamlFileName) {
-    return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
+  //
+  // #2503 — every field below reaches a shell command or a sudo-escalating
+  // file write on the box, so the whole body is schema-validated here, at the
+  // boundary, before anything is derived from it. The schema is `.strict()`:
+  // an inline `postDeployScript` (or any other unexpected field) is a hard
+  // 400, not a silently-honoured payload.
+  const parsed = CreateServiceRequest.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        error: 'invalid service creation request',
+        detail: parsed.error.issues
+          .map(i => `${i.path.join('.') || '(body)'}: ${i.message}`)
+          .join('; '),
+      },
+      { status: 400 },
+    );
   }
+  const { name, kubeContent, yamlContent, yamlFileName, extraFiles, postDeployEnv, templateSource, migrations } = parsed.data;
 
   // Validate the Pod manifest before the agent write. Catches typoed
   // apiVersion / missing spec.containers / cross-volume mismatches before
@@ -326,6 +345,59 @@ export const POST = withApiHandler<undefined, z.infer<typeof CreateQuery>>(
       },
       { status: 400 },
     );
+  }
+
+  // Companion files may only land inside this service's own storage: a
+  // hostPath its manifest declares, or its own subdirectory of the template
+  // data dir where asset files ship. Without this, a well-formed path like
+  // /etc/cron.d/pwn is a root-owned write (writeExtraConfigFiles retries
+  // the failed unprivileged write with sudo).
+  if (extraFiles?.length) {
+    const deployConfig = await getConfig();
+    const dataDir = deployConfig.templateSettings?.DATA_DIR || DEFAULT_TEMPLATE_DATA_DIR;
+    const scope = checkExtraFileScope(extraFiles, yamlContent, dataDir, name);
+    if (!scope.ok) {
+      return NextResponse.json(
+        { error: 'extraFiles outside the service scope', detail: scope.detail },
+        { status: 400 },
+      );
+    }
+  }
+
+  // Executable content is NEVER taken from the request. The template's
+  // post-deploy.py and any migration bodies are read server-side from the
+  // registry that ships them, keyed by the (validated) service name and
+  // template source. A migration step the registry doesn't ship is refused
+  // rather than silently skipped — the deploy would otherwise land on
+  // un-migrated data.
+  const { getTemplatePostDeployScript, getTemplateMigrationScripts } = await import('@/lib/registry');
+  const postDeployScript = (await getTemplatePostDeployScript(name, templateSource).catch(() => null)) || undefined;
+
+  let resolvedMigrations: { filename: string; fromVersion: number; toVersion: number; content: string }[] | undefined;
+  if (migrations?.length) {
+    const available = await getTemplateMigrationScripts(name, templateSource).catch(() => []);
+    resolvedMigrations = [];
+    for (const step of migrations) {
+      const shipped = available.find(a =>
+        a.filename === step.filename
+        && a.fromVersion === step.fromVersion
+        && a.toVersion === step.toVersion);
+      if (!shipped) {
+        return NextResponse.json(
+          {
+            error: 'unknown migration step',
+            detail: `${name} does not ship ${step.filename} (v${step.fromVersion}→v${step.toVersion})`,
+          },
+          { status: 400 },
+        );
+      }
+      resolvedMigrations.push({
+        filename: shipped.filename,
+        fromVersion: shipped.fromVersion,
+        toVersion: shipped.toVersion,
+        content: shipped.content,
+      });
+    }
   }
 
   // Streaming mode: return progress events as they happen
@@ -370,7 +442,7 @@ export const POST = withApiHandler<undefined, z.infer<typeof CreateQuery>>(
           (message) => { void safeWrite({ type: 'progress', message }); },
           postDeployScript,
           postDeployEnv,
-          migrations,
+          resolvedMigrations,
         );
         await safeWrite({ type: 'complete', success: true });
       } catch (e) {
@@ -401,7 +473,7 @@ export const POST = withApiHandler<undefined, z.infer<typeof CreateQuery>>(
     undefined,
     postDeployScript,
     postDeployEnv,
-    migrations,
+    resolvedMigrations,
   );
   return NextResponse.json({ success: true });
 });

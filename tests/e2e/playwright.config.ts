@@ -18,9 +18,12 @@ applyBrowserSandboxEnv()
  *
  * Target + credentials come from the environment so nothing box-specific is
  * committed (memory `reference_mcp_servicebay_access`):
- *   SB_BOX_URL   default http://192.168.178.100:5888  (the LAN box)
- *   SB_USERNAME  read fresh off the box (rotates every install)
- *   SB_PASSWORD  read fresh off the box (rotates every install)
+ *   SB_BOX_URL   default http://192.168.178.100:5888  (the LAN box; use the
+ *                public reverse-proxy origin when the LAN address is not
+ *                routable from the sandbox — #2532)
+ *   SB_USERNAME  operator-supplied (rotates every install; never derived from
+ *                the box by an automated run — #2532)
+ *   SB_PASSWORD  operator-supplied (as above)
  *
  * The Playwright browser binary is resolved deterministically from the pinned
  * `@playwright/test` devDependency (1.60.0 → chromium-1223), not the npx cache.

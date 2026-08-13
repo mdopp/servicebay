@@ -60,9 +60,10 @@ the routing-tree shape the disk-import page binds to. But it is no longer a
 
 ## Invocation
 
-From the repo root. Read the box admin credentials **fresh** off the box
-(`~/.config/containers/systemd/servicebay.container` — they rotate every install;
-see memory `reference_mcp_servicebay_access`):
+From the repo root. The box admin credentials are **operator-supplied** — export
+them yourself (they rotate every install). An automated run (autoloop box-verify)
+must **not** derive them from the box; without them it skips the browser layer and
+reports that criterion as owed (#2532).
 
 ```bash
 SB_BOX_URL=http://192.168.178.100:5888 \

@@ -35,6 +35,46 @@ export function assertTrashId(trashId: string): void {
   }
 }
 
+// Companion files a deploy writes into the Quadlet directory
+// (`~/.config/containers/systemd/<name>`). A path separator or a `..`
+// segment here escapes that directory and lets a request overwrite an
+// arbitrary file owned by the agent user, so this is a basename only.
+export const QuadletFileName = z.string()
+  .min(1)
+  .max(255)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9@_.\-]*$/, 'invalid file name')
+  .refine(s => !s.includes('..'), 'parent traversal not allowed');
+
+// Absolute host paths a deploy asks the agent to write (`extraFiles`). The
+// parent directory is interpolated UNQUOTED into `mkdir -p <dir>` and the
+// write auto-retries with `sudo: true` on failure (services/serviceLifecycle
+// .ts writeExtraConfigFiles), so a shell metacharacter here is command
+// execution and a `..` segment is a root-owned write anywhere on the box.
+// Containment to the service's own scope is a separate check — see
+// services/deployRequest.ts.
+export const HostFilePath = z.string()
+  .min(2)
+  .max(4096)
+  .regex(/^\/[A-Za-z0-9/@_.\-+]*$/, 'must be an absolute path without shell metacharacters')
+  .refine(s => !s.split('/').includes('..'), 'parent traversal not allowed')
+  .refine(s => !s.endsWith('/'), 'must name a file, not a directory');
+
+// Environment variable names supplied by a caller. They are written as
+// `KEY='value'` lines into a file the agent `source`s with bash, so an
+// unconstrained key escapes the assignment and runs as a command.
+export const EnvVarName = z.string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, 'invalid environment variable name');
+
+// Template migration scripts. The filename is both the registry lookup key
+// and a path segment interpolated into `python3 <dir>/<filename>`; the
+// `vN-to-vM.py` convention is enforced by the registry scanner
+// (registry.ts getTemplateMigrationScripts) and mirrored here.
+export const MigrationScriptFileName = z.string()
+  .max(64)
+  .regex(/^v\d+-to-v\d+\.py$/, 'invalid migration script filename');
+
 // Node names are user-supplied labels; allow alnum + `_-` only.
 export const NodeName = z.string()
   .min(1)

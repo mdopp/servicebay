@@ -10,7 +10,14 @@ import { getServices, getUnmanagedBundles } from '@/lib/store/repository';
 // surface validates them with the SAME strict schemas the REST routes use
 // (app/api/services/[name]/**), so a metacharacter or `../` payload is rejected
 // by the tool schema before any handler — and therefore any exec — runs.
-import { ServiceName, TrashId } from '@/lib/api/schemas';
+import { ServiceName, TrashId, QuadletFileName, HostFilePath } from '@/lib/api/schemas';
+// #2533 — `yamlFileName` and `extraFiles[].path` are the privileged fields of a
+// deploy (a Quadlet-dir write, and an unquoted `mkdir -p <dir>` whose write
+// retries with sudo). #2503 closed them on `POST /api/services`; these tools are
+// the second entry point to the same sink, so they reuse that boundary contract
+// verbatim — the same shared schemas plus the same containment rule.
+import { checkExtraFileScope, DEFAULT_TEMPLATE_DATA_DIR } from '@/lib/services/deployRequest';
+import { getConfig } from '@/lib/config';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { redactServiceFiles } from '../redact';
 import { nodeParam, resolveNode, textResult, errorResult, type ToolRegistration } from './context';
@@ -83,20 +90,33 @@ export function registerServiceTools({ server }: ToolRegistration) {
       name: ServiceName.describe('Service name'),
       kubeContent: z.string().describe('Kubernetes/Podman kube YAML content'),
       yamlContent: z.string().optional().describe('Companion compose/config YAML content'),
-      yamlFileName: z.string().optional().describe('Filename for the companion YAML'),
+      yamlFileName: QuadletFileName.optional().describe('Filename for the companion YAML. A basename only — it is written into the Quadlet directory, so separators and `..` are rejected.'),
       extraFiles: z
         .array(
           z.object({
-            path: z.string().describe('Absolute path on the node (e.g. /mnt/data/stacks/auth/authelia-config/configuration.yml)'),
+            path: HostFilePath.describe('Absolute path on the node (e.g. /mnt/data/stacks/auth/authelia-config/configuration.yml). Must sit inside this deploy\'s own scope: a hostPath its manifest declares, or its own subdirectory of the template data dir.'),
             content: z.string().describe('File content (already mustache-rendered)'),
           }),
         )
+        .max(500)
         .optional()
         .describe('Additional config files to write before the unit starts. Failures are fatal — the deploy aborts so the operator knows the service would have started misconfigured.'),
       node: nodeParam,
     },
     async ({ name, kubeContent, yamlFileName, extraFiles, node }) => {
       const nodeName = await resolveNode(node);
+      // Companion files may only land inside this service's own storage —
+      // identical rule and identical helper to POST /api/services (#2503).
+      // Without it a well-formed path like /etc/cron.d/pwn is a root-owned
+      // write, because writeExtraConfigFiles retries a failed unprivileged
+      // write with sudo.
+      if (extraFiles?.length) {
+        const dataDir = (await getConfig()).templateSettings?.DATA_DIR || DEFAULT_TEMPLATE_DATA_DIR;
+        const scope = checkExtraFileScope(extraFiles, kubeContent, dataDir, name);
+        if (!scope.ok) {
+          return errorResult(`Error deploying service: extraFiles outside the service scope — ${scope.detail}`);
+        }
+      }
       // `kubeContent` here is the Pod YAML (Kubernetes manifest). We generate
       // the systemd .kube unit internally — same pattern as the install runner
       // (src/lib/install/runner.ts:275-276). The parameter name is historical;
@@ -125,11 +145,11 @@ export function registerServiceTools({ server }: ToolRegistration) {
     'update_service_yaml',
     'Replace a service\'s on-disk definition and redeploy it. Use `get_service_files` first, modify, then call this. For a `.kube` service (quadletKind="kube"): the content this tool wants (in `kubeContent`/`podSpecContent`) is the POD SPEC — i.e. the `yamlContent` returned by get_service_files (apiVersion/kind/spec), NOT its `kubeContent` (the `.kube` Quadlet unit, regenerated automatically). For a single-container `.container` service (quadletKind="container", e.g. ollama): there is no pod spec — pass the edited `.container` unit body (the `kubeContent` from get_service_files, with a [Container] section) and it is written straight back. Either way the file is written and `systemctl --user daemon-reload` + restart is triggered.',
     {
-      name: z.string().regex(/^[a-zA-Z0-9_.-]+$/, 'invalid service name').describe('Service name'),
+      name: ServiceName.describe('Service name'),
       kubeContent: z.string().min(1).optional().describe('The Pod-spec `.yml` content (the `yamlContent` from get_service_files, apiVersion/kind/spec) — NOT the `.kube` Quadlet unit. Historical name; prefer `podSpecContent`. One of kubeContent / podSpecContent is required.'),
       podSpecContent: z.string().min(1).optional().describe('Alias for kubeContent — the Pod-spec `.yml` content (apiVersion/kind/spec). Clearer name for the same field; takes precedence if both are given.'),
       yamlContent: z.string().optional().describe('Optional companion compose/config YAML'),
-      yamlFileName: z.string().optional().describe('Filename for companion YAML (default: <name>.yaml)'),
+      yamlFileName: QuadletFileName.optional().describe('Filename for companion YAML (default: <name>.yml). A basename only — it is written into the Quadlet directory, so separators and `..` are rejected.'),
       node: nodeParam,
     },
     async ({ name, kubeContent, podSpecContent, yamlFileName, node }) => {

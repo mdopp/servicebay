@@ -785,7 +785,12 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   // starts; output streams back via `progress` events. Parsed below for
   // `__SB_CREDENTIAL__ {json}` markers. The body ships VERBATIM: values
   // travel via `postDeployEnv` below, not by text substitution (#2415).
-  const postDeployScript = await loadPostDeployScript(item.name, input.templateSource);
+  //
+  // #2503 — the BODY no longer travels on the wire. The deploy route reads
+  // it from the same registry, keyed by the template name + source we send;
+  // this call only tells us whether there is a script at all, which decides
+  // whether `postDeployEnv` is worth sending.
+  const hasPostDeployScript = Boolean(await loadPostDeployScript(item.name, input.templateSource));
 
   // Migration chain — discover via upgrade-preview; selected steps ship
   // VERBATIM, same contract as post-deploy.py above: values travel via
@@ -870,9 +875,12 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
           yamlContent,
           yamlFileName: `${item.name}.yml`,
           extraFiles,
-          postDeployScript,
-          postDeployEnv: postDeployScript || (migrations && migrations.length > 0) ? postDeployEnv : undefined,
-          migrations,
+          // #2503 — the route resolves post-deploy.py and each migration
+          // body from the registry itself; we send the source it should
+          // look in plus a by-reference migration chain, never a script.
+          templateSource: input.templateSource,
+          postDeployEnv: hasPostDeployScript || (migrations && migrations.length > 0) ? postDeployEnv : undefined,
+          migrations: migrations?.map(({ filename, fromVersion, toVersion }) => ({ filename, fromVersion, toVersion })),
         }),
       });
     } catch (networkErr) {
@@ -1085,6 +1093,34 @@ async function runJob(jobId: string): Promise<void> {
     await log(jobId, `⚠️ Registry refresh failed (${e instanceof Error ? e.message : String(e)}); installing from the existing on-disk clone.`);
   }
 
+  // #2530 — and re-resolve the pod specs from the registry we just pulled.
+  // `assembleManifest` captured `item.yaml` BEFORE the sync above (a replayed
+  // reinstall captured it whenever its manifest was saved), so without this the
+  // deploy always renders a template one sync behind — a block added to the
+  // template since is silently missing from the rendered pod YAML, with no
+  // error and no warning. Refresh in place so the render below uses what the
+  // registry actually holds.
+  try {
+    const { refreshTemplateArtifacts, applyVariableDefaults } = await import('./manifestAssembler');
+    const { updated, unresolved } = await refreshTemplateArtifacts(checked, input.templateSource);
+    if (updated.length > 0) {
+      await log(jobId, `🔄 Re-read ${updated.length} template spec${updated.length === 1 ? '' : 's'} from the refreshed registry — ${updated.join(', ')} changed since this manifest was assembled; deploying the registry version.`);
+      // A refreshed spec can reference a variable the manifest never had a
+      // value for. Re-apply defaults (fills empty slots only, so nothing the
+      // operator set is touched) rather than render the new ref empty.
+      const refilled = await applyVariableDefaults(input, input.templateSource);
+      input.variables = refilled.variables;
+    }
+    if (unresolved.length > 0) {
+      await log(jobId, `⚠️ Could not re-read the template spec for ${unresolved.join(', ')} from any registry — deploying the spec saved in this manifest, which may be out of date. Check that the template still exists in its registry.`);
+    }
+  } catch (e) {
+    // Never fail the install on the refresh itself — but never let it fail
+    // QUIETLY either: a skipped refresh means the specs below are the ones the
+    // manifest was assembled with, which is the staleness this guards against.
+    await log(jobId, `⚠️ Could not re-read template specs from the registry (${e instanceof Error ? e.message : String(e)}); deploying the specs saved in this manifest, which may be out of date.`);
+  }
+
   // Topo-sort by install-time dependencies. We also tag each item
   // with its `servicebay.tier` so the sort adds an implicit edge from
   // every feature to every infrastructure item — guaranteeing the
@@ -1180,6 +1216,23 @@ async function runJob(jobId: string): Promise<void> {
       // block the install. The wizard's regenerated values still flow
       // through; we just lose the reuse benefit for this run.
       await log(jobId, `(note) could not load saved secrets: ${e instanceof Error ? e.message : String(e)}. Continuing with wizard-generated values.`);
+    }
+  }
+
+  // #2531 — the loud backstop for the non-secret twin of the reuse above.
+  // `applyVariableDefaults` restores operator-set values at the install entry
+  // point, so a variable that STILL arrives empty despite having a saved value
+  // means the restore did not happen (config unreadable, the record lost). That
+  // is a value being destroyed, not a field left blank — it gets its own line
+  // instead of being folded into the generic #1318 "rendered empty" warning.
+  {
+    try {
+      const { loadSavedVariables, findUnrecoveredVariables, buildUnrecoveredVariablesWarning } =
+        await import('./savedVariables');
+      const lost = findUnrecoveredVariables(input.variables, loadSavedVariables(await getConfig()));
+      if (lost.length > 0) await log(jobId, buildUnrecoveredVariablesWarning(lost));
+    } catch {
+      // Best-effort: a config read failure must not block the install.
     }
   }
 
@@ -1806,6 +1859,17 @@ async function runJob(jobId: string): Promise<void> {
     await persistInstalledSecrets(input.variables, await getConfig());
   } catch (e) {
     await log(jobId, `(note) couldn't persist installed secrets: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // #2531 — and the same for the operator-set NON-secret variables, so the
+  // next reinstall doesn't rebuild them from `variables.json` defaults and
+  // blank a value the operator typed. Same post-`done` placement and
+  // best-effort contract as the secrets above.
+  try {
+    const { persistInstalledVariables } = await import('./savedVariables');
+    await persistInstalledVariables(input.variables, await getConfig());
+  } catch (e) {
+    await log(jobId, `(note) couldn't persist operator-set variables: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // The CoreOS first-boot installer writes `stackSetupPending: true`
