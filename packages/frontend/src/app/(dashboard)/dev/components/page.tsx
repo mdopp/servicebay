@@ -1,6 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import { notFound } from 'next/navigation';
+import { Network, Users } from 'lucide-react';
 import {
   Button,
   Card,
@@ -11,6 +13,7 @@ import {
   SectionHeading,
   Field,
   PageScroll,
+  Tabs,
   type ButtonVariant,
   type ButtonSize,
   type BadgeVariant,
@@ -226,6 +229,39 @@ function DataTableEntry() {
   );
 }
 
+function TabsEntry() {
+  const [tab, setTab] = useState('checks');
+  return (
+    <Entry id="tabs" title="Tabs">
+      <Specimen label="panel mode (role=tablist, arrow keys)">
+        <Tabs
+          label="Catalog demo tabs"
+          idBase="catalog-tabs"
+          value={tab}
+          onChange={setTab}
+          className="w-72"
+          items={[
+            { id: 'checks', label: 'Checks' },
+            { id: 'logs', label: 'Logs' },
+            { id: 'ports', label: 'Ports', count: 3 },
+          ]}
+        />
+      </Specimen>
+      <Specimen label="nav mode (href ⇒ links + aria-current)">
+        <Tabs
+          label="Catalog demo nav"
+          value="access"
+          className="w-72"
+          items={[
+            { id: 'network', label: 'Network', icon: Network, href: '#network' },
+            { id: 'access', label: 'Access', icon: Users, href: '#access' },
+          ]}
+        />
+      </Specimen>
+    </Entry>
+  );
+}
+
 function PageScrollEntry() {
   return (
     <Entry id="page-scroll" title="PageScroll">
@@ -260,6 +296,7 @@ export default function ComponentCatalogPage() {
       <SectionHeadingEntry />
       <FieldEntry />
       <DataTableEntry />
+      <TabsEntry />
       <PageScrollEntry />
     </PageScroll>
   );

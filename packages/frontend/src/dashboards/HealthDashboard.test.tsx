@@ -91,9 +91,13 @@ describe('HealthDashboard (#2100 dashboards migration)', () => {
     expect(search.className).not.toMatch(/border-gray-|bg-white|focus:ring-blue/);
 
     // The tab nav active/hover states are on accent/text tokens, not raw.
-    const checksTab = screen.getByRole('button', { name: 'Checks' });
+    // #2549: the strip is the shared <Tabs> primitive, so it is a real tablist
+    // — `getByRole('button')` no longer finds a tab, and that is the point.
+    const checksTab = screen.getByRole('tab', { name: 'Checks' });
     expect(checksTab.className).toMatch(/border-accent|text-accent/);
     expect(checksTab.className).not.toMatch(/blue-\d|gray-\d/);
+    expect(checksTab.getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tabpanel', { name: 'Checks' })).toBeDefined();
   });
 
   it('add-check action is a primitive Button that opens the editor drawer', async () => {
@@ -137,9 +141,21 @@ describe('HealthDashboard (#2100 dashboards migration)', () => {
     render(<HealthDashboard />);
     await waitFor(() => expect(screen.getByTestId('health-checks')).toBeDefined());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Logs' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Logs' }));
     // The checks panel unmounts when a non-checks tab is active.
     await waitFor(() => expect(screen.queryByTestId('health-checks')).toBeNull());
+  });
+
+  // #2549: the same switch, driven by the keyboard only. The hand-rolled strip
+  // had no arrow-key handling at all, so this could not have passed before.
+  it('arrow keys move between tabs and switch the panel', async () => {
+    render(<HealthDashboard />);
+    await waitFor(() => expect(screen.getByTestId('health-checks')).toBeDefined());
+
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Checks' }), { key: 'End' });
+    await waitFor(() => expect(screen.queryByTestId('health-checks')).toBeNull());
+    expect(screen.getByRole('tab', { name: 'System' }).getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'System' }));
   });
 
   // #2187 — Save Check disables + spins while the POST is in flight, so a

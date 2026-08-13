@@ -17,7 +17,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
 import DiagnoseProbeList, { type DiagnoseProbe } from '@/components/DiagnoseProbeList';
 import ContainersDashboard from '@/dashboards/ContainersDashboard';
-import { Button, Badge, Input, Select, Table } from '@/components/ui';
+import { Button, Badge, Input, Select, Table, Tabs, tabPanelProps, type TabItem } from '@/components/ui';
 
 interface Container {
   Id: string;
@@ -33,6 +33,13 @@ interface HistoryItem {
 }
 
 type HealthTab = 'checks' | 'logs' | 'system' | 'containers';
+
+const HEALTH_TABS: readonly TabItem<HealthTab>[] = [
+  { id: 'checks', label: 'Checks' },
+  { id: 'containers', label: 'Containers' },
+  { id: 'logs', label: 'Logs' },
+  { id: 'system', label: 'System' },
+];
 
 export default function HealthDashboard() {
   const [checks, setChecks] = useState<Check[]>([]);
@@ -415,30 +422,20 @@ export default function HealthDashboard() {
       </PageHeader>
       </div>
 
-      {/* Tab Navigation */}
-      <div className="flex gap-1 border-b border-border px-2 shrink-0 overflow-x-auto">
-        {([
-          { id: 'checks' as const, label: 'Checks' },
-          { id: 'containers' as const, label: 'Containers' },
-          { id: 'logs' as const, label: 'Logs' },
-          { id: 'system' as const, label: 'System' },
-        ]).map(tab => (
-          <Button
-            key={tab.id}
-            onClick={() => handleTabChange(tab.id)}
-            variant="ghost"
-            className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
-              activeTab === tab.id
-                ? 'border-accent text-accent'
-                : 'border-transparent text-text-muted hover:text-text'
-            }`}
-          >
-            {tab.label}
-          </Button>
-        ))}
-      </div>
+      {/* Tab Navigation — shared <Tabs> primitive (#2549). */}
+      <Tabs
+        label="Status views"
+        idBase="status"
+        value={activeTab}
+        onChange={handleTabChange}
+        className="px-2 shrink-0"
+        items={HEALTH_TABS}
+      />
 
-      <div className="flex-1 overflow-y-auto space-y-6 pb-6">
+      <div
+        {...tabPanelProps('status', activeTab)}
+        className="flex-1 overflow-y-auto space-y-6 pb-6"
+      >
       {activeTab === 'checks' && (
         <HealthChecks
           checks={checks}
