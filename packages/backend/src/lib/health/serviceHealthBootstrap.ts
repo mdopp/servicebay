@@ -20,6 +20,7 @@ import { ServiceManager } from '@/lib/services/ServiceManager';
 import { getTemplateYaml, getTemplateVariables } from '@/lib/registry';
 import { readManifestAnnotations } from '@/lib/template/contract';
 import { renderTemplate } from '@/lib/template/render';
+import { buildEffectiveVariableView } from '@/lib/template/effectiveVariables';
 import { getConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { parseHealthcheckYaml } from './serviceHealthcheck';
@@ -27,30 +28,31 @@ import { getServiceHealthPoller } from './serviceHealth';
 
 /**
  * Build the variable view used to render a healthcheck annotation.
- * Same precedence the wizard uses (operator overrides win over defaults),
- * minus the wizard-only fields (generated secrets, etc.) that have no
- * business in a probe URL. Phase 3B replaces this with the resolved
- * variable map from the deployed Quadlet YAML.
+ *
+ * Resolution is NOT done here — it goes through the shared
+ * {@link buildEffectiveVariableView}, the same precedence the install path
+ * uses (`templateSettings` > operator-set value > template default).
+ *
+ * #2544: this used to be a private `defaults, then Object.assign(
+ * templateSettings)` chain that never read `config.installedVariables`
+ * (#2531). A port the operator changed in Configure lives only in that
+ * store, so the poller probed the template's DEFAULT port instead of the
+ * one the service actually listens on — a healthy service reported
+ * unhealthy forever, with no clue why.
+ *
+ * Secrets are deliberately not resolvable here (see the module docs on the
+ * resolver): a probe URL is not a place for credential material.
+ *
+ * Phase 3B replaces this with the resolved variable map from the deployed
+ * Quadlet YAML.
  */
 async function buildVariableView(templateName: string): Promise<Record<string, string>> {
-  const view: Record<string, string> = {};
-  // 1. Template defaults
-  try {
-    const meta = await getTemplateVariables(templateName);
-    if (meta) {
-      for (const [name, def] of Object.entries(meta)) {
-        if (def && typeof def === 'object' && 'default' in def && typeof def.default === 'string') {
-          view[name] = def.default;
-        }
-      }
-    }
-  } catch { /* template lacks variables.json — fine */ }
-  // 2. Operator-set globals (Settings → Template Settings)
-  try {
-    const cfg = await getConfig();
-    Object.assign(view, cfg.templateSettings ?? {});
-  } catch { /* config missing — fall through with defaults */ }
-  return view;
+  const meta = await getTemplateVariables(templateName).catch(() => null);
+  // Config unreadable → an EMPTY config view, which resolves to
+  // defaults-only through the same function. Deliberately not a separate
+  // defaults-only branch: a second code path is how this bug class starts.
+  const cfg = await getConfig().catch(() => null);
+  return buildEffectiveVariableView(cfg ?? {}, meta);
 }
 
 export async function bootstrapServiceHealth(nodeName: string = 'Local'): Promise<{ registered: string[]; skipped: string[] }> {

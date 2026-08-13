@@ -26,6 +26,7 @@ import { HealthStore } from '@/lib/health/store';
 import { parseTemplateTier } from '@/lib/templateTier';
 import { parseTemplateLabel } from '@/lib/templateLabel';
 import { getTemplateUserGuide, readTemplateFile } from '@/lib/registry';
+import { resolveEffectiveVariable } from '@/lib/template/effectiveVariables';
 import { logger } from '@/lib/logger';
 import { parseUserGuide, DEFAULT_PORTAL_CATEGORY, type PortalIconName, type RecommendedApp, type SetupAsset, type ManualPairing, type PortalAction, type PortalCategory } from './userGuide';
 
@@ -242,20 +243,6 @@ export function interpolateActionHref(
   return { ...action, href };
 }
 
-/** Resolve a template variable's effective value (operator override in
- *  `templateSettings`, else schema default). Used for the SSH port in the
- *  VS Code deep link. Returns the schema/operator string as-is. */
-function resolveVarValue(
-  config: AppConfig,
-  variables: Record<string, { default?: string }>,
-  varName: string,
-): string | undefined {
-  const override = config.templateSettings?.[varName];
-  if (typeof override === 'string' && override.trim()) return override.trim();
-  const def = variables[varName]?.default;
-  return typeof def === 'string' && def.trim() ? def.trim() : undefined;
-}
-
 /** Read a template's variables.json (best-effort, returns empty record on miss).
  *
  *  Includes `proxyPort` so `resolveServiceUrl` can discriminate
@@ -339,9 +326,14 @@ export async function resolveServiceUrl(
   // deep-link bug fixed in #554.
   //
   // `proxyPort` can be a literal port string ("8123") or a variable
-  // name ("ABS_PORT"); resolve both. Operator-customized port values
-  // (via reconfigure) land in templateSettings — use those when
-  // present, else fall back to the schema default.
+  // name ("ABS_PORT"); resolve both. #2544: the reference lookup used to
+  // read `templateSettings ?? default` and claimed in this comment that
+  // "operator-customized port values (via reconfigure) land in
+  // templateSettings" — untrue since #2531 gave operator-set NON-global
+  // values their own store (`config.installedVariables`). A customised
+  // port therefore resolved to the template DEFAULT, no proxy host
+  // matched, and the card fell back to a URL on the wrong subdomain.
+  // Resolution now goes through the shared resolver.
   const proxyPortRaw = variables[chosenVar]?.proxyPort;
   let forwardPort: number | null = null;
   if (proxyPortRaw) {
@@ -349,9 +341,8 @@ export async function resolveServiceUrl(
     if (Number.isFinite(direct) && direct > 0) {
       forwardPort = direct;
     } else {
-      // Treat as a variable reference; look up its current value.
-      const refValue =
-        config.templateSettings?.[proxyPortRaw] ?? variables[proxyPortRaw]?.default;
+      // Treat as a variable reference; look up its effective value.
+      const refValue = resolveEffectiveVariable(config, variables, proxyPortRaw);
       const indirect = Number(refValue);
       if (Number.isFinite(indirect) && indirect > 0) forwardPort = indirect;
     }
@@ -466,13 +457,14 @@ export function resolveCardStatus(
 }
 
 /** Resolve the SSH-port substitution for an `external_scheme` deep link
- *  (#1682). Reads the template's first `*_SSH_PORT` variable (operator
- *  override > schema default); defaults to "2222" so the link is never
- *  left with a literal `PORT`. */
+ *  (#1682). Reads the template's first `*_SSH_PORT` variable through the
+ *  shared resolver (Template Settings > operator-set value > schema
+ *  default — #2544); defaults to "2222" so the link is never left with a
+ *  literal `PORT`. */
 async function resolveSshPort(config: AppConfig, templateName: string): Promise<string> {
   const variables = await readVariables(templateName);
   const portVar = Object.keys(variables).find(k => k.endsWith('_SSH_PORT'));
-  const resolved = portVar ? resolveVarValue(config, variables, portVar) : undefined;
+  const resolved = portVar ? resolveEffectiveVariable(config, variables, portVar) : undefined;
   return resolved ?? '2222';
 }
 
