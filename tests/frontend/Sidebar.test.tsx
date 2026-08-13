@@ -242,6 +242,30 @@ describe('Sidebar', () => {
             }
         });
 
+        it('aligns both groups identically when expanded (#2542)', async () => {
+            // The in-app entries render as <Button>, whose base class carries
+            // `justify-center`; the app-leaving entries are plain <a> and fall
+            // back to the flex default. Before #2542 that left the two groups at
+            // visibly different indents. Compare them against each other rather
+            // than asserting one literal, so a future third variant that skips
+            // navItemClass fails here instead of drifting silently.
+            lldapResponse.url = 'https://ldap.example.com';
+            const { container } = render(<Sidebar />);
+            await waitFor(() => expect(screen.getByText('Users & Groups')).toBeDefined());
+
+            const internal = container.querySelector('[data-testid="nav-services"]');
+            const external = container.querySelector('[data-testid="nav-users"]');
+            expect(internal).not.toBeNull();
+            expect(external).not.toBeNull();
+
+            const justify = (el: Element | null) =>
+                Array.from(el?.classList ?? []).filter(c => c.startsWith('justify-')).sort();
+            expect(justify(internal)).toEqual(justify(external));
+            // …and it is start, not centre — a nav row reads left-to-right.
+            expect(justify(internal)).toContain('justify-start');
+            expect(justify(internal)).not.toContain('justify-center');
+        });
+
         it('keeps both groups usable when collapsed (labels drop, divider stays)', async () => {
             lldapResponse.url = 'https://ldap.example.com';
             const { container } = render(<Sidebar />);

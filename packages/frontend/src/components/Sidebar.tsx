@@ -22,7 +22,14 @@ const navItemClass = (active: boolean, collapsed: boolean) =>
     active
       ? 'bg-accent/10 border-accent/20 text-accent font-bold shadow-sm shadow-accent/5'
       : 'border-transparent hover:bg-surface-2 text-text-muted hover:text-text'
-  } ${collapsed ? 'justify-center' : 'gap-3.5'}`;
+  } ${collapsed ? 'justify-center' : 'justify-start gap-3.5'}`;
+// `justify-start` is not redundant (#2542): the internal entries render as
+// <Button>, whose base class carries `justify-center` (ui/Button.tsx), while the
+// external entries are plain <a> and fall back to the flex default. Without it
+// the two groups sit at different indents — visible only when expanded, because
+// the collapsed branch already pins both to `justify-center`. Stating it here
+// keeps this function the single source of truth it claims to be, rather than
+// leaving the alignment to whichever element a caller happens to use.
 
 export default function Sidebar() {
     const pathname = usePathname() || '';
