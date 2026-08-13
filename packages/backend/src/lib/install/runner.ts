@@ -785,7 +785,12 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   // starts; output streams back via `progress` events. Parsed below for
   // `__SB_CREDENTIAL__ {json}` markers. The body ships VERBATIM: values
   // travel via `postDeployEnv` below, not by text substitution (#2415).
-  const postDeployScript = await loadPostDeployScript(item.name, input.templateSource);
+  //
+  // #2503 — the BODY no longer travels on the wire. The deploy route reads
+  // it from the same registry, keyed by the template name + source we send;
+  // this call only tells us whether there is a script at all, which decides
+  // whether `postDeployEnv` is worth sending.
+  const hasPostDeployScript = Boolean(await loadPostDeployScript(item.name, input.templateSource));
 
   // Migration chain — discover via upgrade-preview; selected steps ship
   // VERBATIM, same contract as post-deploy.py above: values travel via
@@ -870,9 +875,12 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
           yamlContent,
           yamlFileName: `${item.name}.yml`,
           extraFiles,
-          postDeployScript,
-          postDeployEnv: postDeployScript || (migrations && migrations.length > 0) ? postDeployEnv : undefined,
-          migrations,
+          // #2503 — the route resolves post-deploy.py and each migration
+          // body from the registry itself; we send the source it should
+          // look in plus a by-reference migration chain, never a script.
+          templateSource: input.templateSource,
+          postDeployEnv: hasPostDeployScript || (migrations && migrations.length > 0) ? postDeployEnv : undefined,
+          migrations: migrations?.map(({ filename, fromVersion, toVersion }) => ({ filename, fromVersion, toVersion })),
         }),
       });
     } catch (networkErr) {

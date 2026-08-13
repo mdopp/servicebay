@@ -225,11 +225,25 @@ describe('loadPostDeployScript — script bodies ship verbatim (#2415)', () => {
     // Guards the seam: the behavioural test above only proves the loader is
     // a pass-through, not that `deployItem` stopped wrapping it.
     const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
-    const assignment = src.match(/const postDeployScript = .*/);
+    const assignment = src.match(/const hasPostDeployScript = .*/);
     expect(assignment?.[0]).toBe(
-      'const postDeployScript = await loadPostDeployScript(item.name, input.templateSource);',
+      'const hasPostDeployScript = Boolean(await loadPostDeployScript(item.name, input.templateSource));',
     );
     expect(src).not.toMatch(/postDeployScript\s*=\s*renderTemplate/);
+  });
+
+  it('never puts a script body on the wire — the route reads it from the registry (#2503)', () => {
+    // The deploy POST may carry the template SOURCE, never the script. If
+    // this regresses, an arbitrary body is executable again via /api/services.
+    const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+    const bodyStart = src.indexOf('body: JSON.stringify({');
+    expect(bodyStart).toBeGreaterThan(-1);
+    const body = src.slice(bodyStart, src.indexOf('}),', bodyStart));
+    expect(body).not.toMatch(/\bpostDeployScript\b/);
+    expect(body).toMatch(/templateSource: input\.templateSource/);
+    // Migration steps ship by reference (filename + version pair) only.
+    expect(body).toMatch(/migrations\?\.map\(\(\{ filename, fromVersion, toVersion \}\)/);
+    expect(body).not.toMatch(/\bcontent\b/);
   });
 });
 
