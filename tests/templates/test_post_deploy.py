@@ -2703,6 +2703,68 @@ class ClaudeDevScript(unittest.TestCase):
 
 
 
+class MosquittoScript(unittest.TestCase):
+    """#2569 — the broker's credentials are auto-generated and mandatory
+    (anonymous access is off), so this script is the ONLY place the operator
+    ever sees them. It also has to answer "which host do I enter?", which has
+    two different right answers depending on who is connecting."""
+
+    def test_emits_broker_credential_and_both_addresses(self):
+        m = load_script("mosquitto")
+        env = {
+            "HOST": "servicebay.example",
+            "LAN_IP": "192.168.1.10",
+            "MQTT_PORT": "1883",
+            "MQTT_USERNAME": "mqtt-user",
+            "MQTT_PASSWORD": "br0ker-p4ss",
+        }
+        with run_with_env(env):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        creds = parse_credentials(out)
+        self.assertEqual(len(creds), 1)
+        self.assertEqual(creds[0]["service"], "MQTT Broker (Mosquitto)")
+        self.assertEqual(creds[0]["username"], "mqtt-user")
+        self.assertEqual(creds[0]["password"], "br0ker-p4ss")
+        self.assertEqual(creds[0]["url"], "mqtt://192.168.1.10:1883")
+        self.assertEqual(creds[0]["importance"], "critical")
+
+        # Devices connect to the LAN address; on-box containers use
+        # host.containers.internal (ADR 0007 Decision 3) — never a hardcoded
+        # IP for the container path, never `localhost` (that's the container).
+        self.assertIn("192.168.1.10", out)
+        self.assertIn("host.containers.internal", out)
+
+        # The password must NOT leak into user-visible log lines — it travels
+        # only via the __SB_CREDENTIAL__ marker, which ServiceBay stores
+        # encrypted (#321).
+        log_only = "\n".join(
+            line for line in out.splitlines()
+            if not line.startswith("__SB_CREDENTIAL__ ")
+        )
+        self.assertNotIn("br0ker-p4ss", log_only)
+
+    def test_falls_back_to_host_when_lan_ip_unknown(self):
+        m = load_script("mosquitto")
+        env = {"HOST": "servicebay.example", "MQTT_USERNAME": "u", "MQTT_PASSWORD": "p"}
+        with run_with_env(env):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        creds = parse_credentials(out)
+        self.assertEqual(creds[0]["url"], "mqtt://servicebay.example:1883")
+
+    def test_missing_credentials_explains_instead_of_emitting_nothing(self):
+        """The initContainer refuses to start an anonymous broker, so a blank
+        credential is a hard failure — say why in the install log rather than
+        leaving the operator to read pod logs."""
+        m = load_script("mosquitto")
+        with run_with_env({"HOST": "h"}):
+            rc, out = capture_main(m)
+        self.assertEqual(rc, 0)
+        self.assertEqual(parse_credentials(out), [])
+        self.assertIn("MQTT_USERNAME/MQTT_PASSWORD missing", out)
+
+
 class ImmichScript(unittest.TestCase):
     """#1556: on a wipe-configs reinstall Authelia regenerates the OIDC
     client secret (CONFIG) but Immich keeps its copy in its DB (survived

@@ -1,0 +1,159 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mosquitto
+  labels:
+    app: mosquitto
+  annotations:
+    servicebay.label: "MQTT Broker (Mosquitto)"
+    servicebay.schema-version: "1"
+    servicebay.ports: "{{MQTT_PORT}}/tcp"
+    # No `servicebay.dependencies`: MQTT is not an HTTP service, so it needs
+    # neither the nginx reverse proxy nor Authelia. Its own username/password
+    # (below) is the whole auth story, which is why anonymous access is off.
+    #
+    # Continuous health probe (#628). MQTT has no unauthenticated HTTP
+    # surface, so — like claude-dev's sshd — a raw TCP connect is the honest
+    # signal: it proves mosquitto parsed its config and accepted the listener.
+    # The poller runs in the HOST netns, so 127.0.0.1 reaches the `hostPort`
+    # published below.
+    servicebay.healthcheck: |
+      kind: tcp
+      host: 127.0.0.1
+      port: "{{MQTT_PORT}}"
+      interval: 30s
+      timeout: 5s
+      startup_timeout: 5m
+spec:
+  # ADR 0007 Decision 1: mosquitto runs in its OWN network namespace —
+  # deliberately NO `hostNetwork`. The carve-out list in Decision 2 was closed
+  # in #2523 and a new service does not join it by arguing its case.
+  #
+  #   - The MQTT port is published with a `hostPort` and NO `hostIP`, so
+  #     podman binds 0.0.0.0. That is required, not incidental: LAN devices
+  #     (a smart lock, a Shelly relay, a Tasmota plug, a Zigbee2MQTT bridge)
+  #     connect INTO the broker from Wi-Fi. A `hostIP: 127.0.0.1` pin like
+  #     radicale's (#2357) would make the broker reachable only from the box
+  #     itself and no device could ever connect.
+  #   - Other containers on this box reach it at
+  #     `host.containers.internal:{{MQTT_PORT}}` — the name podman writes into
+  #     every container's /etc/hosts. Never `{{LAN_IP}}` (rootless podman
+  #     refuses it) and never a hardcoded IP.
+  #   - Because the port is genuinely LAN-facing, the credentials below are
+  #     mandatory: `allow_anonymous false` + a password file is what stands
+  #     between the LAN and control of whatever devices publish here.
+  initContainers:
+  # Seed /mosquitto/config in-pod on every deploy — the same pattern radicale
+  # uses. The config and the password file are derived from the wizard's
+  # variables, so carrying them inside the pod manifest means every
+  # `podman kube play --replace` re-creates them deterministically; there is
+  # no host-side file to drift, be hand-edited, or go missing and leave the
+  # broker crash-looping.
+  #
+  # Pinned to the `2` tag rather than `latest` on purpose: mosquitto 2.0
+  # changed the auth defaults (an undeclared listener no longer implies
+  # anonymous access), and a future 3.x could move them again. Quadlet's
+  # AutoUpdate=registry still picks up 2.x patch releases within the tag.
+  - name: write-config
+    image: docker.io/library/eclipse-mosquitto:2
+    command: ["/bin/sh", "-c"]
+    env:
+      # Passed as env rather than spliced into the shell command: the operator
+      # may overwrite the generated values with anything, and a value with a
+      # quote or a space in it would otherwise break the `mosquitto_passwd`
+      # invocation below.
+      - name: MQTT_USERNAME
+        value: "{{MQTT_USERNAME}}"
+      - name: MQTT_PASSWORD
+        value: "{{MQTT_PASSWORD}}"
+    args:
+      - |
+        set -e
+        # Hard gate: no credentials, no broker. Failing the initContainer
+        # keeps the pod from starting at all, which is the safe direction —
+        # an MQTT broker that comes up without auth is a device-control
+        # surface open to everyone on the LAN.
+        if [ -z "$MQTT_USERNAME" ] || [ -z "$MQTT_PASSWORD" ]; then
+          echo "mosquitto: MQTT_USERNAME and MQTT_PASSWORD are required." >&2
+          echo "mosquitto: refusing to start a broker that accepts anonymous clients." >&2
+          exit 1
+        fi
+        cat > /mosquitto/config/mosquitto.conf <<'EOF'
+        # Rendered from templates/mosquitto/template.yml on every deploy.
+        # Hand edits inside the container are lost on the next re-render.
+        listener {{MQTT_PORT}} 0.0.0.0
+
+        # Credentials are mandatory. `allow_anonymous false` plus a
+        # password_file is the entire access-control story for this broker —
+        # do not flip it to true "just to test a device".
+        allow_anonymous false
+        password_file /mosquitto/config/passwd
+
+        # Retained messages + queued QoS 1/2 state are written to disk, so a
+        # box reboot does not blank every device's last known state until the
+        # device happens to publish again. autosave_interval bounds how much
+        # can be lost to a hard power cut.
+        persistence true
+        persistence_location /mosquitto/data/
+        autosave_interval 30
+
+        # Log to stdout so the lines land in `podman logs` / the ServiceBay
+        # log reader instead of a file inside the container nobody reads.
+        log_dest stdout
+        log_type error
+        log_type warning
+        log_type notice
+        log_type information
+        connection_messages true
+        EOF
+        # -c creates a fresh file (dropping any previous user), -b takes the
+        # password on the command line. mosquitto_passwd hashes it, so the
+        # cleartext password never lands on disk.
+        rm -f /mosquitto/config/passwd
+        mosquitto_passwd -b -c /mosquitto/config/passwd "$MQTT_USERNAME" "$MQTT_PASSWORD"
+        # mosquitto refuses to read a password file that is group/world
+        # readable, and warns loudly about world-readable ones. 1883 is the
+        # uid/gid of the `mosquitto` user in this image — the account
+        # mosquitto drops privileges to after reading its config as root.
+        chown 1883:1883 /mosquitto/config/passwd
+        chmod 0600 /mosquitto/config/passwd
+        # Same ownership story for the persistence dir: the hostPath below is
+        # created by podman owned by container-root, but the process that
+        # writes mosquitto.db into it runs as uid 1883.
+        mkdir -p /mosquitto/data
+        chown -R 1883:1883 /mosquitto/data
+    volumeMounts:
+      - mountPath: /mosquitto/config
+        name: mosquitto-config
+      - mountPath: /mosquitto/data
+        name: mosquitto-data
+  containers:
+  # We do NOT override command:/args:. The image's default is
+  # `/usr/sbin/mosquitto -c /mosquitto/config/mosquitto.conf`, which is
+  # exactly the file the initContainer just wrote.
+  - name: mosquitto
+    image: docker.io/library/eclipse-mosquitto:2
+    ports:
+      # No `hostIP` on purpose — see the spec comment above. Devices on the
+      # LAN must be able to open a TCP connection to this port on the box.
+      - containerPort: {{MQTT_PORT}}
+        hostPort: {{MQTT_PORT}}
+    volumeMounts:
+      - mountPath: /mosquitto/config
+        name: mosquitto-config
+        readOnly: true
+      - mountPath: /mosquitto/data
+        name: mosquitto-data
+  volumes:
+  # /mosquitto/config is an in-pod ephemeral volume the initContainer
+  # repopulates on every deploy. Nothing durable lives here: the config is
+  # derived from the wizard's variables and the password file is regenerated
+  # from them, so recreating it is always correct.
+  - name: mosquitto-config
+    emptyDir: {}
+  # …whereas the retained-message store must outlive the container, or the
+  # "survives a restart" property is lost.
+  - name: mosquitto-data
+    hostPath:
+      path: {{DATA_DIR}}/mosquitto/data
+      type: DirectoryOrCreate

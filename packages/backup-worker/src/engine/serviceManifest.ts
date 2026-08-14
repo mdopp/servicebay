@@ -219,6 +219,7 @@ export const EXCLUDED_BULK_VOLUMES: Readonly<Record<string, string>> = {
   'media/jellyfin-cache': 'Jellyfin transcode/artwork cache — regenerable.',
   'immich/model-cache': 'ML model cache — re-downloaded on demand.',
   'claude-dev/workspace': 'Ephemeral dev scratch workspace — not household config.',
+  'mosquitto/data': 'Retained MQTT messages — device state the devices republish; the broker’s config + password file are re-rendered from wizard variables on every deploy.',
   JELLYFIN_MEDIA_PATH: 'The media library itself — multi-TB, lives on the RAID.',
   'immich/upload': 'Immich photo/video library — multi-GB blobs, RAID-resident.',
   'file-share/data': 'The shared household files — bulk user data on the RAID.',
