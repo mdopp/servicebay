@@ -5,6 +5,7 @@ Smart-home automation.
 ## Included Services
 
 - [x] home-assistant — HA core + Z-Wave + Matter bridges
+- [x] mosquitto — MQTT broker for local devices (locks, plugs, sensors, Zigbee bridges)
 
 ## Voice
 
