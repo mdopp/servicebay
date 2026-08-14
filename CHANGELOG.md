@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.13.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.12.1...servicebay-v5.13.0) (2026-08-14)
+
+
+### Features
+
+* **credentials:** force a proven download at install end, remove the Vaultwarden push ([f7d5387](https://github.com/mdopp/servicebay/commit/f7d5387489abffa9019b450f9e06663611175a9a)), closes [#2560](https://github.com/mdopp/servicebay/issues/2560)
+* force a proven credential hand-over, drop the Vaultwarden push and the books subdomain ([c2c713c](https://github.com/mdopp/servicebay/commit/c2c713ce68a4f8f32f5bcaeb7565974127f35059))
+* **media:** retire the books subdomain, schema v7 ([395df8d](https://github.com/mdopp/servicebay/commit/395df8dd5d1970af7b9a6dcf713088d2908455f9)), closes [#2561](https://github.com/mdopp/servicebay/issues/2561)
+* **mosquitto:** an MQTT broker template, so local devices can reach Home Assistant without a cloud ([2481edc](https://github.com/mdopp/servicebay/commit/2481edcb4ee131a1aeedac5d60b87a64bd2b2c8e))
+* **templates:** add mosquitto MQTT broker with mandatory credentials ([3616a20](https://github.com/mdopp/servicebay/commit/3616a20f79eacd4f4c870ebe7df172fe927975f1)), closes [#2569](https://github.com/mdopp/servicebay/issues/2569)
+
+
+### Bug Fixes
+
+* **backend:** drive podman auto-update at the rootless user level ([63d6c52](https://github.com/mdopp/servicebay/commit/63d6c5248ee3dd49c92a47467bb13bf192feeb81)), closes [#2515](https://github.com/mdopp/servicebay/issues/2515)
+* **diagnose:** stop judging a read-only image root by free space ([b035585](https://github.com/mdopp/servicebay/commit/b0355857b9e1a14ed1be7218041c00dcbda0d516)), closes [#2564](https://github.com/mdopp/servicebay/issues/2564)
+* **diagnose:** stop watching /boot and correct the rpm-ostree cleanup hint ([a67de9a](https://github.com/mdopp/servicebay/commit/a67de9af1205e3d37844d251113bae95f53e85f8)), closes [#2567](https://github.com/mdopp/servicebay/issues/2567) [#2566](https://github.com/mdopp/servicebay/issues/2566)
+* **diagnose:** stop watching /boot, and describe the rpm-ostree flags correctly ([a233310](https://github.com/mdopp/servicebay/commit/a233310c97b9f54514008633f67e6d2cba7d404e))
+* stop the disk probe crying wolf on the OS root, and make container auto-updates actually run ([2548460](https://github.com/mdopp/servicebay/commit/25484605fab9c603de3624c60ba5aa821de0cbcd))
+
 ## [5.12.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.12.0...servicebay-v5.12.1) (2026-08-13)
 
 
