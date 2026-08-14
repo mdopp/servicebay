@@ -411,9 +411,10 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     exec('systemctl --user --failed --no-legend --no-pager 2>&1', 5000),
     exec('ss -ltn 2>/dev/null | tail -n +2 | awk \'{print $4}\' | awk -F: \'{print $NF}\' | sort -nu', 4000),
     exec('ls -la /dev/serial/by-id/ 2>/dev/null | grep -v "^total" | awk \'{print $NF}\' | grep -v "^$"', 3000),
-    // Fill level of every filesystem the box depends on, not just the data
-    // array (#2527). `/boot` used to be unwatched, and a `/boot` too full to
-    // stage the next kernel is how a box ends up unbootable after an update.
+    // Fill level of every filesystem whose exhaustion the operator can act on
+    // (#2527): the data array and the writable system state. `/boot` is
+    // deliberately not among them (#2567) — rpm-ostree keeps it near-full by
+    // design, so a threshold there fires on every healthy box.
     exec(DISK_FILL_COMMAND, 3000),
     // The kernel's own view of every md array (#2526). `df` above only
     // proves the filesystem mounts — it says nothing about whether the
@@ -577,10 +578,10 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     detail: serialDevices.length === 0 ? 'No USB serial devices (no Z-Wave / Zigbee stick plugged in).' : serialDevices.join('\n'),
   });
 
-  // 7) Fill level of /mnt/data, /boot and / (#2527). Each filesystem is
-  //    judged against what it is for — see the threshold rationale in
-  //    probes/diskFill.ts. Reporting only: the probe never frees space,
-  //    because reclaiming /boot means deleting kernels.
+  // 7) Fill level of /mnt/data, /var and / (#2527, #2564, #2567). Each
+  //    filesystem is judged against what it is for — see the threshold
+  //    rationale in probes/diskFill.ts, including why `/` is reported but
+  //    not judged on an ostree box and why `/boot` is not watched at all.
   const diskFill = evaluateDiskFill(disk.stdout ?? '', disk.code);
   probes.push({
     id: DISK_PROBE_ID,

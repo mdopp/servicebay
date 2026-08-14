@@ -2,9 +2,10 @@
  * `disk` probe action — registers the `show_largest_dirs` handler so
  * the operator can find what's eating /mnt/data when the probe says
  * "above 90%". The detection lives in `diskFill.ts` (which watches
- * /mnt/data, /boot, /var and / — see #2527, #2564); this file only
- * contributes the action, and only /mnt/data offers it: the others are
- * reclaimed by deleting kernels and images, which ServiceBay won't do.
+ * /mnt/data and /var, and reports / — see #2527, #2564, #2567); this file
+ * only contributes the action, and only /mnt/data offers it: /var is
+ * reclaimed by deleting container images and logs, which ServiceBay won't
+ * decide for you.
  *
  * Returns the top 10 directories under /mnt/data sorted by size as
  * multi-line `details`, which the UI renders as a code block under

@@ -53,9 +53,19 @@ function open(): InstanceType<typeof Database> {
   return d;
 }
 
+// #2558/#2571: insert inside ONE transaction. Row-by-row, each `stmt.run` is
+// its own implicit transaction and commits to disk, so seeding the 20 000 rows
+// the freelist cases need took whole seconds and blew vitest's 5 s default —
+// twice, on two different tests in this file, and the second time only after
+// the first had been "fixed" with a bigger timeout. The cost was never the
+// VACUUM; it was the seeding both tests share. One transaction commits once,
+// which removes the flake at its source instead of budgeting around it.
 function seed(d: InstanceType<typeof Database>, when: Date, count = 1) {
   const stmt = d.prepare('INSERT INTO logs (timestamp, level, tag, message) VALUES (?, ?, ?, ?)');
-  for (let i = 0; i < count; i++) stmt.run(ts(when), 'info', 'test', `msg-${i}`);
+  const insertAll = d.transaction((n: number) => {
+    for (let i = 0; i < n; i++) stmt.run(ts(when), 'info', 'test', `msg-${i}`);
+  });
+  insertAll(count);
 }
 
 function rowCount(d: InstanceType<typeof Database>): number {
@@ -136,14 +146,13 @@ describe('pruneLogsDb (#1869)', () => {
     // VACUUM rewrote the DB: page count collapsed and the freelist is empty.
     expect(pageCount(db)).toBeLessThan(before / 10);
     expect(freelist(db)).toBe(0);
-    // #2558: 30s, not the 5s default. This is the one case in the file that
-    // pays a real VACUUM — the sibling above seeds the same 20 000 rows and
-    // stays fast precisely because it skips it. Rewriting the file took 10.9s
-    // on a loaded machine and timed out CI, so the default is simply the wrong
-    // budget for the work; the seed size stays at 20 000 because both
-    // assertions depend on it (`before > 100` pages, and a collapse to under a
-    // tenth). Raising the ceiling does not weaken what the test proves.
-  }, 30_000);
+    // The 30s budget #2558 put here is gone: it rested on the VACUUM being the
+    // expensive part, and it wasn't — the sibling that skips the VACUUM timed
+    // out next. With `seed` batched into one transaction the whole file runs in
+    // ~0.6s, so the default applies again. The seed size stays at 20 000
+    // because both assertions depend on it (`before > 100` pages, and a
+    // collapse to under a tenth).
+  });
 
   it('does not delete when nothing is old (no-op prune leaves the DB untouched)', () => {
     seed(db, NOW, 5000);
