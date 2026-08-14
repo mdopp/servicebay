@@ -27,8 +27,40 @@ const ZINCATI_PATH = `${ZINCATI_DIR}/55-servicebay-window.toml`;
 const ZINCATI_LOCK_PATH = `${ZINCATI_DIR}/55-servicebay-lock.toml`;
 const ZINCATI_TMP = '/tmp/55-servicebay-zincati.toml';
 
-const PODMAN_TIMER_DROPIN = '/etc/systemd/system/podman-auto-update.timer.d/55-servicebay-window.conf';
-const PODMAN_TIMER_TMP = '/tmp/55-servicebay-podman-timer.conf';
+/**
+ * The podman auto-update timer is driven at the **user** (rootless) level,
+ * because that is the only level ServiceBay's containers exist at: every
+ * service is a Quadlet under `~/.config/containers/systemd/` (`dirs.ts:
+ * getLocalSystemdDir`) driven by `systemctl --user` (`serviceLifecycle.ts`),
+ * and `install/runner.ts` stamps `AutoUpdate=registry` into those user
+ * `.kube` units. The root systemd manager only ever sees root-owned
+ * containers, of which ServiceBay creates none — so a system-scope
+ * `podman-auto-update.timer` had nothing to act on and the `AutoUpdate=`
+ * label was never evaluated (#2515).
+ *
+ * The drop-in therefore has to land in the *user* unit search path, so the
+ * same manager that loads `podman-auto-update.timer` loads our override.
+ */
+const PODMAN_TIMER_UNIT = 'podman-auto-update.timer';
+const PODMAN_USER_TIMER_DROPIN = `~/.config/systemd/user/${PODMAN_TIMER_UNIT}.d/55-servicebay-window.conf`;
+
+/**
+ * Where ServiceBay *used* to write the drop-in, back when it drove the
+ * system-scope timer. Kept only so both paths can clean it up — see
+ * `retireSystemPodmanTimer`. Never written to again.
+ */
+const LEGACY_SYSTEM_TIMER_DROPIN = `/etc/systemd/system/${PODMAN_TIMER_UNIT}.d/55-servicebay-window.conf`;
+
+/**
+ * A `systemctl --user` invocation needs the user bus. The agent process is
+ * launched with `XDG_RUNTIME_DIR` exported (`agent/handler.ts`), but the
+ * value is re-derived here so a locally-spawned or re-parented executor is
+ * never left without a bus address. Lingering is provisioned for the host
+ * user in `fedora-coreos.bu`, so the user manager is up without a login.
+ */
+function userSystemctl(args: string): string {
+  return `export XDG_RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"; systemctl --user ${args}`;
+}
 
 type Window = NonNullable<AppConfig['updateWindow']>;
 
@@ -112,11 +144,32 @@ async function writeZincatiLock(executor: Executor): Promise<void> {
   await execIgnoringFailure(executor, 'sudo systemctl restart zincati', 'restart zincati');
 }
 
+/**
+ * One-shot migration, run from BOTH podman paths so it self-heals whichever
+ * way the operator flips the switch: undo the system-scope state older
+ * ServiceBay versions left behind (our drop-in, the enablement, the mask)
+ * and hand the unit back to its distro default (`preset: disabled`).
+ *
+ * ServiceBay does not manage root-owned containers, so it has no business
+ * owning a root-scope timer — leaving it enabled "just in case" would keep a
+ * second, invisible schedule for the same operator switch.
+ */
+async function retireSystemPodmanTimer(executor: Executor): Promise<void> {
+  await execIgnoringFailure(executor, `sudo rm -f ${LEGACY_SYSTEM_TIMER_DROPIN}`, 'rm legacy system dropin');
+  await execIgnoringFailure(executor, `sudo systemctl unmask ${PODMAN_TIMER_UNIT}`, 'unmask legacy system timer');
+  await execIgnoringFailure(executor, 'sudo systemctl daemon-reload', 'system daemon-reload');
+  await execIgnoringFailure(executor, `sudo systemctl disable --now ${PODMAN_TIMER_UNIT}`, 'disable legacy system timer');
+}
+
 async function writePodmanTimerWindow(executor: Executor, window: Window): Promise<void> {
-  await writeRoot(executor, PODMAN_TIMER_TMP, PODMAN_TIMER_DROPIN, renderPodmanTimerDropin(window));
-  await execIgnoringFailure(executor, 'sudo systemctl daemon-reload', 'daemon-reload');
-  await execIgnoringFailure(executor, 'sudo systemctl unmask podman-auto-update.timer', 'unmask podman timer');
-  await execIgnoringFailure(executor, 'sudo systemctl enable --now podman-auto-update.timer', 'enable podman timer');
+  // User-owned path — no sudo, no /tmp staging. `write_file` expands `~`
+  // and creates the `.d` directory, so the drop-in lands directly in the
+  // user unit search path.
+  await executor.writeFile(PODMAN_USER_TIMER_DROPIN, renderPodmanTimerDropin(window));
+  await execIgnoringFailure(executor, userSystemctl('daemon-reload'), 'user daemon-reload');
+  await execIgnoringFailure(executor, userSystemctl(`unmask ${PODMAN_TIMER_UNIT}`), 'unmask user podman timer');
+  await execIgnoringFailure(executor, userSystemctl(`enable --now ${PODMAN_TIMER_UNIT}`), 'enable user podman timer');
+  await retireSystemPodmanTimer(executor);
 }
 
 async function lockPodmanTimer(executor: Executor): Promise<void> {
@@ -124,10 +177,15 @@ async function lockPodmanTimer(executor: Executor): Promise<void> {
   // it can't be started by accident, only an explicit unmask brings
   // it back. We also remove our drop-in so a future operator who
   // unmasks manually doesn't get our schedule by surprise.
-  await execIgnoringFailure(executor, `sudo rm -f ${PODMAN_TIMER_DROPIN}`, 'rm podman dropin');
-  await execIgnoringFailure(executor, 'sudo systemctl daemon-reload', 'daemon-reload');
-  await execIgnoringFailure(executor, 'sudo systemctl disable --now podman-auto-update.timer', 'stop podman timer');
-  await execIgnoringFailure(executor, 'sudo systemctl mask podman-auto-update.timer', 'mask podman timer');
+  //
+  // This MUST act at the same level `writePodmanTimerWindow` enables at
+  // (user), or switching the window off would leave the rootless timer
+  // running on our schedule with nothing left to turn it off (#2515).
+  await execIgnoringFailure(executor, `rm -f ${PODMAN_USER_TIMER_DROPIN}`, 'rm user podman dropin');
+  await execIgnoringFailure(executor, userSystemctl('daemon-reload'), 'user daemon-reload');
+  await execIgnoringFailure(executor, userSystemctl(`disable --now ${PODMAN_TIMER_UNIT}`), 'stop user podman timer');
+  await execIgnoringFailure(executor, userSystemctl(`mask ${PODMAN_TIMER_UNIT}`), 'mask user podman timer');
+  await retireSystemPodmanTimer(executor);
 }
 
 /**
