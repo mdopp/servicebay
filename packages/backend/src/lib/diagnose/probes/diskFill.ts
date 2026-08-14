@@ -1,14 +1,37 @@
 /**
- * `disk` probe (#2527) — how full is every filesystem the box actually
- * depends on, not just the data array.
+ * `disk` probe (#2527, corrected by #2564 and #2567) — how full is every
+ * filesystem whose exhaustion the operator can actually do something about.
  *
- * Until now this probe read `df -h /mnt/data` and nothing else, so the two
- * filesystems whose exhaustion is *unrecoverable* were unwatched. `/boot`
- * filled to 91% (~33 MB free) on a live CoreOS box and nothing said a word:
- * a `/boot` too full to stage the next kernel leaves `rpm-ostree upgrade`
- * failing, and a failure partway through leaves the box without a bootable
- * entry. `/mnt/data` running out costs you writes; `/boot` running out can
- * cost you the box.
+ * Watched and judged: **`/mnt/data`** (the array) and **`/var`** (all
+ * writable system state). `/` is read and reported, but judged only where
+ * the root is an ordinary writable filesystem — see the next section.
+ *
+ * ## Why `/boot` is deliberately NOT watched (#2567)
+ *
+ * #2527 added a `/boot` row with an absolute free-space threshold. It was
+ * taken back out, and this note exists so it does not come back next quarter:
+ *
+ *   * `rpm-ostree` manages `/boot` itself. It keeps two deployments by
+ *     default and prunes the oldest when it stages a new one, so a nearly
+ *     full partition is the *healthy steady state* rather than a symptom.
+ *     Measured on the reference box: exactly two deployments, 140.6 MiB and
+ *     142.8 MiB of a 350 MiB partition — 91% used, and nothing wrong with it.
+ *   * A threshold on that fires on **every healthy box** at this partition
+ *     size. That is the same false-alarm class #2564 had just removed from
+ *     `/` (a composefs root is 100% used by construction), and a permanently
+ *     red card is how an operator learns to ignore the card.
+ *   * Whether a tight `/boot` actually blocks staging an update was never
+ *     established — it turns on whether rpm-ostree prunes before or after it
+ *     writes, which nobody measured. A threshold resting on an unproven
+ *     assumption is noise, not monitoring.
+ *
+ * Not overstated, on purpose: "rpm-ostree keeps `/boot` tidy" is the design,
+ * not a measurement of any particular box. On the reference box `/boot` fell
+ * from 55.8 to 32.6 MiB free in ~15 hours with **no OS update in between**,
+ * and a tidy steady state does not shrink. That observation is recorded and
+ * still open as **#2568**. If it turns out to have a real mechanism, what
+ * comes back is a rule about *that* mechanism — not a percentage threshold on
+ * a partition that is supposed to be full.
  *
  * ## Free space is only a signal where free space can move (#2564)
  *
@@ -32,11 +55,12 @@
  *   > and nothing to reclaim. Both directions are dead, so the number carries
  *   > no information about the box's health.
  *
- * Both halves are load-bearing. Read-only *alone* is not enough: `/boot` on
- * this same box is mounted `ro` too (rpm-ostree remounts it rw to stage a
- * kernel), and it is the filesystem whose exhaustion is most dangerous.
- * Zero-free *alone* is not enough either: a genuinely full writable disk also
- * reports 0 available, and that must still fail loudly.
+ * Both halves are load-bearing. Read-only *alone* is not enough: a mount can
+ * be `ro` at this instant and still be a store — Fedora CoreOS mounts both
+ * `/sysroot` and `/boot` `ro` and remounts them rw to write, so their free
+ * space is a real, movable resource. Zero-free *alone* is not enough either:
+ * a genuinely full writable disk also reports 0 available, and that must
+ * still fail loudly.
  *
  * Read-only detection needs the mount options, which `df` does not print, so
  * the read appends `/proc/self/mounts` and rows are matched to it by
@@ -53,18 +77,11 @@
  * is the one mounted `rw` (`/sysroot` is `ro`). On a box with no separate
  * `/var` the row folds into `/`, which there is an ordinary writable root.
  *
- * A percentage tuned for a multi-terabyte array is meaningless on a
- * fingernail-sized partition. On the reference box `/boot` is a **350 MiB**
- * usable ext4 partition (Fedora CoreOS lays down 384 MiB), so 91% there is
- * ~33-56 MiB — **less than a single kernel image**. "Warn at 90%" would have
- * fired only once the box was already past saving, while "warn at 80%" on a
- * 2 TB `/mnt/data` would page someone about 400 GB of free space.
+ * A percentage tuned for a multi-terabyte array is meaningless on a small
+ * partition, and an absolute floor tuned for a small partition is meaningless
+ * on a 2 TB array — "warn at 80%" there would page someone about 400 GB of
+ * free space. So each filesystem is measured against what it is *for*:
  *
- * So each filesystem is measured against what it is *for*:
- *
- *   * `/boot` — **absolute headroom only.** What matters is whether one more
- *     kernel + initramfs pair fits, and that cost is a fixed ~140-150 MiB
- *     regardless of how big the partition is.
  *   * `/var` (or `/` where the root is writable) — **absolute headroom, with
  *     a percentage backstop.** It carries the ostree repo, container images
  *     and journals; the things that fail are GB-scale, but the partition size
@@ -77,16 +94,14 @@
  * Detection is a plain `df` read (see `DISK_FILL_COMMAND`). The parse and the
  * verdict are pure functions so every shape — near-full, healthy, an image
  * root, and a partition that isn't there — is unit-testable without a host.
- * **This probe only reports; it never frees space.** Reclaiming `/boot` means
- * deleting kernels (`rpm-ostree cleanup -bm`), which is an operator decision,
- * so the rows here carry no one-click fix — the same call the `raid` probe
- * makes.
+ * **This probe only reports; it never frees space** beyond the one read-only
+ * `du` behind `/mnt/data`'s fix button — the same call the `raid` probe makes.
  */
 
 import type { ProbeItem } from '../actions';
 
 export const PROBE_ID = 'disk';
-export const PROBE_LABEL = 'Storage (/mnt/data, /boot, /var, /)';
+export const PROBE_LABEL = 'Storage (/mnt/data, /var, /)';
 
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
@@ -102,17 +117,21 @@ export const DISK_FILL_MOUNTS_MARKER = '---mounts---';
  *
  * The prefix is what makes a *missing* partition legible: `df` writes its
  * complaint to stderr and prints no row, so the line comes back as a bare
- * `"/boot|"` rather than silently vanishing into a shorter list. `-P` pins
- * the POSIX one-line-per-filesystem layout and `-B1` gives exact bytes,
- * because the whole point on `/boot` is an absolute number that `-h` would
- * have already rounded away.
+ * `"/mnt/data|"` rather than silently vanishing into a shorter list. `-P`
+ * pins the POSIX one-line-per-filesystem layout and `-B1` gives exact bytes,
+ * so the GiB floors on `/var` are compared against a real number rather than
+ * one `-h` already rounded.
+ *
+ * `/boot` is deliberately absent from this list (#2567) — see the module
+ * header: rpm-ostree keeps it near-full by design, so there is nothing here
+ * to judge.
  *
  * `/proc/self/mounts` is appended because `df` does not print mount options,
  * and read-only is half of the "is this an image or a store?" test (#2564).
  * It is a kernel file, always present on Linux, and costs one `cat`.
  */
 export const DISK_FILL_COMMAND =
-  'for p in /mnt/data /boot /var /; do echo "$p|$(df -P -B1 "$p" 2>/dev/null | tail -1)"; done; ' +
+  'for p in /mnt/data /var /; do echo "$p|$(df -P -B1 "$p" 2>/dev/null | tail -1)"; done; ' +
   `echo "${DISK_FILL_MOUNTS_MARKER}"; cat /proc/self/mounts 2>/dev/null`;
 
 /** What we watch, why, and the numbers — with the reasoning attached. */
@@ -161,47 +180,10 @@ export const MONITORED_FILESYSTEMS: MonitoredFilesystem[] = [
     absentDetail:
       '/mnt/data is not mounted — first-boot RAID setup may still be running, or the array failed to assemble.',
   },
-  {
-    path: '/boot',
-    purpose: 'the kernels and initramfs images the box boots from',
-    // ABSOLUTE ONLY, and small. Fedora CoreOS gives /boot a 384 MiB partition
-    // (~350 MiB usable) and keeps two deployments on it, so the numbers here
-    // are in the tens of megabytes and a percentage says nothing useful:
-    // the reference box sat at 91% with 56 MiB free, which is not "a bit
-    // tight", it is less than one kernel image.
-    //
-    // The unit that matters is a single deployment's boot payload — a vmlinuz
-    // plus its initramfs. MEASURED on the reference box (#2564), not guessed:
-    // the two retained deployments under /boot/ostree are 140.6 MiB and
-    // 142.8 MiB (initramfs ~123-125 MiB + vmlinuz ~17.6-17.8 MiB), 294 MiB of
-    // a 350 MiB partition. That is what `rpm-ostree` must be able to write
-    // before it can stage the next update.
-    //
-    //   warn  < 192 MiB free — was 128 MiB, which was BELOW a real payload:
-    //     at 130 MiB free the probe said "ok" while an upgrade needing
-    //     ~143 MiB could no longer be staged, so the early warning arrived
-    //     after the thing it was warning about. The warning has to fire while
-    //     acting is still possible, so it now sits above one measured payload
-    //     (~143 MiB) plus room for the next initramfs to grow. This is
-    //     deliberately the *early* warning: by the time an update fails it is
-    //     too late to have been warned about it.
-    //   fail  < 64 MiB free — kept exactly as shipped in #2527, on purpose.
-    //     "The next update cannot be staged" is now the warn band's job; fail
-    //     is reserved for the harsher state where not even a vmlinuz (~18 MiB)
-    //     and a fraction of its initramfs fit, i.e. an update attempted from
-    //     here dies partway through — which is how a box ends up unbootable.
-    warnFreeBytes: 192 * MiB,
-    failFreeBytes: 64 * MiB,
-    warnUsedPct: null,
-    consequence:
-      'There is not enough room to stage the next kernel, so the next OS update will fail — and an update that fails partway through can leave the box unable to boot.',
-    remedy:
-      'Reclaim /boot from a shell on the box: `rpm-ostree status` shows the retained deployments, `sudo rpm-ostree cleanup -bm` drops the pending and rollback ones, and any kernel left behind by a past failed update has to go too. ServiceBay will not delete kernels for you — getting that wrong is what makes a box unbootable.',
-    // Read-only on purpose: the fix deletes boot entries.
-    actionIds: [],
-    absentStatus: 'info',
-    absentDetail: '/boot is not a separate partition on this box, so there is nothing to run out.',
-  },
+  // NOTE: there is deliberately no `/boot` entry (#2567). rpm-ostree keeps
+  // two deployments on a ~350 MiB partition, so near-full IS the healthy
+  // state and any threshold here fires on every box — see the module header,
+  // including the still-open #2568 observation that keeps this honest.
   {
     path: '/var',
     purpose:
@@ -222,7 +204,7 @@ export const MONITORED_FILESYSTEMS: MonitoredFilesystem[] = [
     consequence:
       'Container image pulls, system logs and OS updates all fail once the writable filesystem fills.',
     remedy:
-      'Reclaim it from a shell on the box: `podman image prune -a` drops unused images, `journalctl --vacuum-size=200M` trims logs, and `sudo rpm-ostree cleanup -bm` drops staged deployments.',
+      'Reclaim it from a shell on the box: `podman image prune -a` drops unused images, `journalctl --vacuum-size=200M` trims logs, and `sudo rpm-ostree cleanup -bm` clears leftovers from interrupted rpm-ostree operations (-b) and the cached rpm metadata (-m), both of which live here. Note that -bm does not remove deployments — that is -p (the pending one) and -r (the rollback one), and what those free is /boot, not this filesystem.',
     actionIds: [],
     // /var exists on every Linux box; when it is not its own filesystem the
     // row folds into `/` below instead of landing here.
@@ -242,7 +224,7 @@ export const MONITORED_FILESYSTEMS: MonitoredFilesystem[] = [
     consequence:
       'Container image pulls, system logs and OS updates all fail once the root filesystem fills.',
     remedy:
-      'Reclaim it from a shell on the box: `podman image prune -a` drops unused images, `journalctl --vacuum-size=200M` trims logs, and `sudo rpm-ostree cleanup -bm` drops staged deployments.',
+      'Reclaim it from a shell on the box: `podman image prune -a` drops unused images, `journalctl --vacuum-size=200M` trims logs, and `sudo rpm-ostree cleanup -bm` clears leftovers from interrupted rpm-ostree operations (-b) and the cached rpm metadata (-m), both of which live here. Note that -bm does not remove deployments — that is -p (the pending one) and -r (the rollback one), and what those free is /boot, not this filesystem.',
     actionIds: [],
     // `/` always exists; an absent row here means the read itself failed.
     absentStatus: 'info',
@@ -316,9 +298,9 @@ export function parseMountTable(raw: string): Map<string, MountInfo> {
  * reclaim. Both conditions are required, and each rules out a case the other
  * would get wrong:
  *
- *   * read-only alone would excuse `/boot`, which Fedora CoreOS also mounts
- *     `ro` (rpm-ostree remounts it rw to stage a kernel) and whose exhaustion
- *     is the most dangerous of all;
+ *   * read-only alone would excuse a mount that is `ro` right now but is
+ *     still a store — Fedora CoreOS mounts `/sysroot` and `/boot` `ro` and
+ *     remounts them rw to write, and both have real, movable slack;
  *   * zero-free alone would excuse a genuinely full writable disk, which must
  *     keep failing loudly.
  *
@@ -494,10 +476,9 @@ export function evaluateDiskFill(raw: string, execCode: number | undefined): Dis
   const verdicts = MONITORED_FILESYSTEMS.map(spec => {
     const row = byPath.get(spec.path);
     // A path that is not its own partition lives on the root filesystem, so
-    // the root's thresholds are the ones that apply to it — measuring a
-    // 350 MiB-sized `/boot` rule against a 250 GB root would either never
-    // fire or fire on a box that is perfectly healthy. Report it as covered
-    // and evaluate it once, under `/`.
+    // the root's thresholds are the ones that apply to it — and counting it
+    // twice would report one filling disk as two separate problems. Report it
+    // as covered and evaluate it once, under `/`.
     if (spec.path !== '/' && row?.present && rootDevice && row.device === rootDevice) {
       return {
         spec,
