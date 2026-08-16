@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.13.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.13.0...servicebay-v5.13.1) (2026-08-16)
+
+
+### Bug Fixes
+
+* **install:** an explicitly supplied secret wins over the saved one ([8e42971](https://github.com/mdopp/servicebay/commit/8e429719eb9266625ed0db0329e304f8075ec666))
+* **install:** an explicitly supplied secret wins over the saved one ([54456aa](https://github.com/mdopp/servicebay/commit/54456aaf2694a365ccef26c844d0e758043df7a5)), closes [#2574](https://github.com/mdopp/servicebay/issues/2574)
+
 ## [5.13.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.12.1...servicebay-v5.13.0) (2026-08-14)
 
 
