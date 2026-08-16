@@ -67,6 +67,20 @@ export interface JobInputVariable {
   value: string;
   global?: boolean;
   meta?: unknown;
+  /**
+   * #2574 — this value was **supplied for this run** by the caller: the
+   * `install_template` MCP `variables` map / `POST /api/install/assemble`
+   * `prefilled`, or a field the operator edited in the wizard's Configure
+   * step. It is the caller's statement that the stored value should stop
+   * applying, so the install runner's saved-secret reuse (`reuseSavedSecrets`)
+   * must NOT overwrite it — which is what made a service password
+   * unrotatable.
+   *
+   * Per-run intent, not persisted state: nothing reads it back out of a saved
+   * manifest to decide anything later, and a value with no supplied input
+   * never carries the flag (so reuse behaves exactly as before).
+   */
+  explicit?: boolean;
 }
 
 /**

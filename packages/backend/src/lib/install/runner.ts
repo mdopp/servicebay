@@ -443,22 +443,38 @@ export function findSentinelSecretsInYaml(yaml: string, sentinel: string): strin
  *     value. NEVER persist that literal. Swap in the stored real secret if we
  *     have one (→ `sentinelRestored`); otherwise it's unresolvable (→
  *     `sentinelUnresolved`, and the caller must fail the deploy loudly).
+ *   - `v.explicit` and a different value was SUPPLIED for this run (#2574):
+ *     the supplied value wins and the stored one is left behind (→
+ *     `rotatedNames`). Input outranks stored state — without this there was no
+ *     supported way to rotate a service password at all: the reuse below
+ *     silently put the old one back, the install reported success, and the
+ *     only trace was a log line that reads like help.
  *   - otherwise, if a saved secret exists: reuse it (the #615 clean-install
  *     reuse path) and record the override.
  *
  * Mutates `v.value` in place and populates `reusedSecretNames`. Returns the
- * three name buckets the caller logs / gates on. A real supplied value with no
+ * name buckets the caller logs / gates on. A real supplied value with no
  * stored secret is left untouched (normal deploy).
+ *
+ * The sentinel check stays FIRST and is not weakened by `explicit`: a caller
+ * that read the masked value and re-sent `<redacted>` supplied a mask, not a
+ * password — "explicitly supplied" cannot mean "deploy the literal mask".
  */
 export function reuseSavedSecrets(
   variables: JobInputVariable[],
   saved: Record<string, string>,
   reusedSecretNames: Set<string>,
   sentinel: string,
-): { overrideNames: string[]; sentinelRestored: string[]; sentinelUnresolved: string[] } {
+): {
+  overrideNames: string[];
+  sentinelRestored: string[];
+  sentinelUnresolved: string[];
+  rotatedNames: string[];
+} {
   const overrideNames: string[] = [];
   const sentinelRestored: string[] = [];
   const sentinelUnresolved: string[] = [];
+  const rotatedNames: string[] = [];
   for (const v of variables) {
     // `meta` is `unknown` on the persisted JobInputVariable shape — narrow to
     // the {type} subset we need without reaching for VariableMeta (a UI type).
@@ -476,6 +492,14 @@ export function reuseSavedSecrets(
       continue;
     }
     if (!stored) continue;
+    // #2574 — an explicitly supplied value that differs from the stored one is
+    // a rotation. Keep it, and do NOT mark the var as reused: the Authelia
+    // storage self-heal reads `reusedSecretNames` to decide whether the key
+    // matches the on-disk DB, and a rotated key does not.
+    if (v.explicit && v.value && v.value !== stored) {
+      rotatedNames.push(v.name);
+      continue;
+    }
     // Track the reuse even when value already matches — downstream self-heals
     // only care whether the value came from saved state.
     reusedSecretNames.add(v.name);
@@ -483,7 +507,7 @@ export function reuseSavedSecrets(
     v.value = stored;
     overrideNames.push(v.name);
   }
-  return { overrideNames, sentinelRestored, sentinelUnresolved };
+  return { overrideNames, sentinelRestored, sentinelUnresolved, rotatedNames };
 }
 
 /** Render the `name1, name2, +N more` fragment used in the #2296 secret logs. */
@@ -500,6 +524,19 @@ export function formatSecretNameList(names: string[], head = 4): string {
 export function formatSentinelRestoredLog(sentinelRestored: string[], sentinel: string): string {
   const n = sentinelRestored.length;
   return `🔒 Ignored the masked value '${sentinel}' sent for ${n} secret variable${n === 1 ? '' : 's'} (${formatSecretNameList(sentinelRestored)}) and kept the previously-stored real secret (#2296).`;
+}
+
+/**
+ * #2574 — the operator-facing line for a ROTATION: a secret was supplied for
+ * this run and differs from the stored one, so the supplied value is what
+ * deploys. Says what changed and what the operator must now do (devices /
+ * clients still on the old credential will be rejected), because the previous
+ * behaviour — silently restoring the old value under a cheerful "Reusing …"
+ * line — is exactly what made the rotation look like it had worked.
+ */
+export function formatSecretRotationLog(rotatedNames: string[]): string {
+  const n = rotatedNames.length;
+  return `🔁 Applying the ${n === 1 ? 'value you supplied' : 'values you supplied'} for ${n} secret variable${n === 1 ? '' : 's'} (${formatSecretNameList(rotatedNames)}) — ${n === 1 ? 'it replaces the' : 'they replace the'} previously saved ${n === 1 ? 'one' : 'ones'}. Anything still using the old credential will be rejected until you update it (#2574).`;
 }
 
 /**
@@ -1184,6 +1221,15 @@ async function runJob(jobId: string): Promise<void> {
   // already collapsed to constant-true once cleanInstall was pinned false) is
   // dropped in favour of always reusing.
   //
+  // #2574 — reuse fills a GAP; it does not overrule INPUT. A variable the
+  // caller supplied for this run (`explicit`, set by `assembleManifest` from
+  // the MCP `variables` map / `/api/install/assemble` prefilled, and by the
+  // wizard on a field the operator edited) keeps its supplied value. Before
+  // this, the reuse below put the old secret back on every path, the install
+  // still reported success, and the only trace was the cheerful "Reusing …"
+  // line — so a service password could not be rotated at all, not for a device
+  // that cannot handle the generated one and not after a leak.
+  //
   // The legacy NPM-specific block below is now subsumed by this general
   // path; kept anyway because it has a specific cert-archive-was-just-
   // restored log line that helps operators reason about what happened.
@@ -1197,8 +1243,11 @@ async function runJob(jobId: string): Promise<void> {
       const { loadSavedSecrets } = await import('./savedSecrets');
       const { REDACTION_SENTINEL } = await import('@/lib/mcp/redact');
       const saved = loadSavedSecrets(await getConfig());
-      const { overrideNames, sentinelRestored, sentinelUnresolved } =
+      const { overrideNames, sentinelRestored, sentinelUnresolved, rotatedNames } =
         reuseSavedSecrets(input.variables, saved, reusedSecretNames, REDACTION_SENTINEL);
+      if (rotatedNames.length > 0) {
+        await log(jobId, formatSecretRotationLog(rotatedNames));
+      }
       if (sentinelRestored.length > 0) {
         await log(jobId, formatSentinelRestoredLog(sentinelRestored, REDACTION_SENTINEL));
       }

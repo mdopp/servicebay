@@ -378,7 +378,11 @@ export async function refreshTemplateArtifacts(
  *
  * Faithful port of `useStackInstall.startConfigure`. The variable
  * resolution order, per variable, is:
- *   1. `prefilled[name]` (caller / baked config) — marks the var global
+ *   1. `prefilled[name]` (caller / baked config) — marks the var global AND
+ *      `explicit` (#2574): a value supplied for this run outranks stored
+ *      state, so the runner's saved-secret reuse leaves it alone. Without
+ *      that marker a supplied secret was silently replaced by the saved one
+ *      and no service password could be rotated.
  *   2. `templateSettings[name]` (operator's Settings → Template Settings)
  *   3. `LLDAP_HOST` is always `localhost`
  *   4. `OLLAMA_GPU_PASSTHROUGH` → "yes" when `/app/data/.has-nvidia-cdi`
@@ -488,10 +492,18 @@ export async function assembleManifest(
     const meta = allMeta[name];
     let value = '';
     let isGlobal = false;
+    // #2574 — the caller SUPPLIED this value for this run (MCP
+    // `install_template({variables})`, `/api/install/assemble` prefilled, a
+    // baked first-boot config). That is the statement that whatever is stored
+    // should stop applying, so the runner's saved-secret reuse must not
+    // overwrite it. Only the `prefilled` branch sets it: `templateSettings`
+    // and the derived/defaulted branches below are stored state themselves.
+    let isExplicit = false;
 
     if (Object.prototype.hasOwnProperty.call(prefilled, name) && prefilled[name]) {
       value = prefilled[name];
       isGlobal = true;
+      isExplicit = true;
     } else if (globalSettings[name]) {
       value = globalSettings[name];
       isGlobal = true;
@@ -548,7 +560,13 @@ export async function assembleManifest(
       }
     }
 
-    variables.push({ name, value, global: isGlobal, meta: withHelpText(name, meta) });
+    variables.push({
+      name,
+      value,
+      global: isGlobal,
+      meta: withHelpText(name, meta),
+      ...(isExplicit ? { explicit: true } : {}),
+    });
   }
 
   // RSA private keys — reuse a stored key over generating a new one

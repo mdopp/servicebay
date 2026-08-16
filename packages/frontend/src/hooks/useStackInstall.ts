@@ -60,6 +60,12 @@ export interface StackVariable {
   value: string;
   global?: boolean;
   meta?: VariableMeta;
+  /** #2574 — the operator typed or regenerated this value in the Configure
+   *  step (or the caller prefilled it). Sent through to the install job so the
+   *  runner's saved-secret reuse keeps it instead of silently restoring the
+   *  previously saved secret — which is what made a service password
+   *  unrotatable from the wizard as well as from `install_template`. */
+  explicit?: boolean;
 }
 
 export interface StackItemInput {
@@ -396,7 +402,11 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
       const i = prev.findIndex(x => x.name === name);
       if (i === -1 || prev[i].value === value) return prev;
       const next = prev.slice();
-      next[i] = { ...next[i], value };
+      // #2574 — mark the field as operator-supplied for this run. The install
+      // runner reuses a saved secret over the manifest's value, so without
+      // this flag a new password typed (or regenerated) here was silently
+      // replaced by the old one and the install still reported success.
+      next[i] = { ...next[i], value, explicit: true };
       return next;
     });
   }, []);
@@ -501,6 +511,10 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
           value: v.value,
           global: v.global,
           meta: v.meta,
+          // #2574 — carry the operator-edited marker to the runner; dropping it
+          // here would put the wizard straight back to "the new password looked
+          // applied but the old one deployed".
+          explicit: v.explicit,
         })),
         node: node || undefined,
         templateSource,
