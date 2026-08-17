@@ -3110,6 +3110,604 @@ class MosquittoScript(unittest.TestCase):
         self.assertIn("MQTT_USERNAME/MQTT_PASSWORD missing", out)
 
 
+class MosquittoHomeAssistantLink(unittest.TestCase):
+    """#2578 — installing mosquitto next to Home Assistant used to leave the
+    operator typing broker/port/user/password into HA by hand, and a later
+    password rotation (#2574) silently broke that hand-entered connection.
+
+    The wiring goes through HA's config-flow REST API — the same endpoints HA's
+    own frontend posts to — and never through `.storage`, which a running HA
+    holds in memory and rewrites on its own schedule.
+
+    The four acceptance criteria pull in different directions, so each has its
+    own tests: wire it up unasked, follow a rotation, stay silent without HA,
+    and never touch a connection the operator made themselves."""
+
+    TOKEN = "ha-admin-token"
+    ENTRY_ID = "01ENTRY0000000000000000000"
+    USERNAME = "mqtt-user"
+    PASSWORD = "s3cret-broker-pass"
+    PWD_SENTINEL = "__**password_not_changed**__"
+
+    def _box(self, tmp, with_ha=True, token=TOKEN):
+        """Lay DATA_DIR out the way a real box has it, and return the env the
+        install runner would hand this script."""
+        os.makedirs(os.path.join(tmp, "mosquitto"), exist_ok=True)
+        if with_ha:
+            cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            os.makedirs(cfg, exist_ok=True)
+            if token is not None:
+                with open(os.path.join(cfg, ".solaris-long-lived-token"), "w") as fh:
+                    fh.write(token + "\n")
+        return {
+            "DATA_DIR": tmp,
+            "HOST": "box.example",
+            "LAN_IP": "192.168.1.10",
+            "MQTT_PORT": "1883",
+            "MQTT_USERNAME": self.USERNAME,
+            "MQTT_PASSWORD": self.PASSWORD,
+        }
+
+    def _http(self, calls, routes):
+        """Fake urlopen over HA's REST API. `routes` maps "METHOD /path-prefix"
+        to (status, body); the longest matching prefix wins so the flow-resource
+        route beats the flow-index one. An unrouted call is a test bug, not a
+        silent pass — that is how we assert "nothing was written"."""
+        class FakeResponse:
+            def __init__(self, status, body):
+                self.status = status
+                self._body = json.dumps(body if body is not None else {}).encode("utf-8")
+
+            def read(self):
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        ordered = sorted(routes.items(), key=lambda kv: -len(kv[0]))
+
+        def fake(req, *_a, **_kw):
+            method = req.get_method()
+            path = req.full_url.split("127.0.0.1:8123", 1)[1]
+            calls.append({
+                "method": method,
+                "path": path,
+                "body": json.loads(req.data.decode("utf-8")) if req.data else None,
+                "auth": req.headers.get("Authorization"),
+            })
+            for key, response in ordered:
+                route_method, _, prefix = key.partition(" ")
+                if method == route_method and path.startswith(prefix):
+                    if callable(response):
+                        response = response(len(calls))
+                    return FakeResponse(response[0], response[1])
+            raise AssertionError(f"unexpected {method} {path}")
+
+        return fake
+
+    # ── fixtures shaped like the forms HA 2026.8.2 actually returns ────────
+    #
+    # Captured from a live Home Assistant, not invented: `broker` is required
+    # with no default at all, the advanced settings sit in a required section,
+    # and two fields inside it are required with neither default nor suggestion
+    # — which is exactly what a hand-written payload gets wrong.
+
+    def _fresh_form(self, flow_id="flow-new"):
+        return {
+            "type": "form",
+            "flow_id": flow_id,
+            "handler": "mqtt",
+            "step_id": "broker",
+            "data_schema": [
+                {"name": "broker", "required": True, "selector": {"text": {}}},
+                {"name": "port", "type": "integer", "required": True, "default": 1883},
+                {"name": "protocol", "required": True, "default": "5"},
+                {"name": "username", "required": False, "optional": True},
+                {"name": "password", "required": False, "optional": True},
+                {
+                    "type": "expandable",
+                    "name": "other_settings",
+                    "required": True,
+                    "schema": [
+                        {"name": "client_id", "required": False, "optional": True},
+                        {"name": "keepalive", "required": False, "optional": True},
+                        {"name": "set_client_cert", "required": True},
+                        {"name": "set_ca_cert", "required": True},
+                        {"name": "transport", "required": True, "default": "tcp"},
+                    ],
+                },
+            ],
+        }
+
+    def _reconfigure_form(self, flow_id="flow-reconf"):
+        """A reconfigure form carries the entry's current values back as
+        `suggested_value` — including HA's password sentinel, never the real
+        password."""
+        return {
+            "type": "form",
+            "flow_id": flow_id,
+            "handler": "mqtt",
+            "step_id": "broker",
+            "data_schema": [
+                {"name": "broker", "required": True,
+                 "description": {"suggested_value": "host.containers.internal"}},
+                {"name": "port", "type": "integer", "required": True, "default": 1883,
+                 "description": {"suggested_value": 1883}},
+                {"name": "protocol", "required": True, "default": "5",
+                 "description": {"suggested_value": "3.1.1"}},
+                {"name": "username", "required": False, "optional": True,
+                 "description": {"suggested_value": "old-user"}},
+                {"name": "password", "required": False, "optional": True,
+                 "description": {"suggested_value": self.PWD_SENTINEL}},
+                {
+                    "type": "expandable",
+                    "name": "other_settings",
+                    "required": True,
+                    "schema": [
+                        {"name": "keepalive", "required": False, "optional": True,
+                         "description": {"suggested_value": 90}},
+                        {"name": "set_client_cert", "required": True,
+                         "description": {"suggested_value": True}},
+                        {"name": "set_ca_cert", "required": True,
+                         "description": {"suggested_value": "custom"}},
+                        {"name": "transport", "required": True, "default": "tcp",
+                         "description": {"suggested_value": "websockets"}},
+                    ],
+                },
+            ],
+        }
+
+    def _entry(self, entry_id=None, title="host.containers.internal", state="loaded"):
+        return {
+            "entry_id": entry_id or self.ENTRY_ID,
+            "domain": "mqtt",
+            "title": title,
+            "source": "user",
+            "state": state,
+            "supports_reconfigure": True,
+        }
+
+    def _diagnostics(self, broker="host.containers.internal", port=1883, connected=True):
+        """HA's own diagnostics for an MQTT entry. Username and password come
+        back redacted — we never need them, which is the point."""
+        return {
+            "home_assistant": {"version": "2026.8.2"},
+            "data": {
+                "connected": connected,
+                "mqtt_config": {
+                    "data": {
+                        "broker": broker,
+                        "port": port,
+                        "username": "**REDACTED**",
+                        "password": "**REDACTED**",
+                    },
+                    "options": {},
+                },
+            },
+        }
+
+    def _link(self, tmp):
+        with open(os.path.join(tmp, "mosquitto", ".home-assistant-link.json")) as fh:
+            return json.load(fh)
+
+    # ── criterion 1: mosquitto onto a box that already has HA ──────────────
+
+    def test_a_box_with_home_assistant_gets_mqtt_wired_up_with_no_manual_step(self):
+        import tempfile
+        m = load_script("mosquitto")
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp)
+            routes = {
+                "GET /api/config/config_entries/entry": (200, []),
+                "POST /api/config/config_entries/flow": (200, self._fresh_form()),
+                "POST /api/config/config_entries/flow/": (
+                    200, {"type": "create_entry", "result": self._entry()},
+                ),
+            }
+            with run_with_env(env), mock.patch.object(
+                m.urllib.request, "urlopen", self._http(calls, routes)
+            ):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+
+            submit = [c for c in calls
+                      if c["method"] == "POST" and c["path"].startswith("/api/config/config_entries/flow/")]
+            self.assertEqual(len(submit), 1, "the broker form is answered exactly once")
+            payload = submit[0]["body"]
+            # ADR 0007 Decision 3 — the container-to-container name, never a LAN IP.
+            self.assertEqual(payload["broker"], "host.containers.internal")
+            self.assertEqual(payload["port"], 1883)
+            self.assertEqual(payload["username"], self.USERNAME)
+            self.assertEqual(payload["password"], self.PASSWORD)
+            # …and the parts of HA's form we did not come to change are answered
+            # from HA's own defaults, including the required section that has none.
+            self.assertEqual(payload["protocol"], "5")
+            self.assertEqual(payload["other_settings"]["transport"], "tcp")
+            self.assertEqual(payload["other_settings"]["set_ca_cert"], "off")
+            self.assertIs(payload["other_settings"]["set_client_cert"], False)
+
+            self.assertEqual(self._link(tmp)["entry_id"], self.ENTRY_ID)
+            self.assertIn("Home Assistant is now connected to this broker", out)
+
+    def test_every_call_is_home_assistants_own_api_and_never_its_storage(self):
+        """The ticket's central ask: the way into HA's configuration must be
+        justified as safe. It is safe because nothing here knows the file
+        format — every write is a form post HA validates itself."""
+        import tempfile
+        m = load_script("mosquitto")
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp)
+            routes = {
+                "GET /api/config/config_entries/entry": (200, []),
+                "POST /api/config/config_entries/flow": (200, self._fresh_form()),
+                "POST /api/config/config_entries/flow/": (
+                    200, {"type": "create_entry", "result": self._entry()},
+                ),
+            }
+            with run_with_env(env), mock.patch.object(
+                m.urllib.request, "urlopen", self._http(calls, routes)
+            ):
+                capture_main(m)
+            for call in calls:
+                self.assertTrue(
+                    call["path"].startswith("/api/config/config_entries/")
+                    or call["path"].startswith("/api/diagnostics/"),
+                    f"unexpected endpoint {call['path']}",
+                )
+                self.assertEqual(call["auth"], f"Bearer {self.TOKEN}")
+            # Nothing was written anywhere inside HA's config dir.
+            ha_dir = os.path.join(tmp, "home-assistant", "homeassistant")
+            self.assertEqual(sorted(os.listdir(ha_dir)), [".solaris-long-lived-token"])
+
+    # ── criterion 2: a password rotation is carried over ───────────────────
+
+    def test_rotating_the_broker_password_updates_home_assistants_entry(self):
+        import tempfile
+        m = load_script("mosquitto")
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp)
+            # What the previous deploy left behind: our entry, wired with the
+            # OLD password.
+            with open(os.path.join(tmp, "mosquitto", ".home-assistant-link.json"), "w") as fh:
+                json.dump({
+                    "entry_id": self.ENTRY_ID,
+                    "fingerprint": m._fingerprint("host.containers.internal", 1883, self.USERNAME, "old-pass"),
+                }, fh)
+            routes = {
+                "GET /api/config/config_entries/entry": (200, [self._entry()]),
+                "POST /api/config/config_entries/flow": (200, self._reconfigure_form()),
+                "POST /api/config/config_entries/flow/": (
+                    200, {"type": "abort", "reason": "reconfigure_successful"},
+                ),
+            }
+            with run_with_env(env), mock.patch.object(
+                m.urllib.request, "urlopen", self._http(calls, routes)
+            ):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+
+            start = [c for c in calls if c["path"] == "/api/config/config_entries/flow"]
+            self.assertEqual(len(start), 1)
+            # A reconfigure, not a second entry: HA is told which entry to edit.
+            self.assertEqual(start[0]["body"]["entry_id"], self.ENTRY_ID)
+
+            payload = [c for c in calls if c["path"].startswith("/api/config/config_entries/flow/")][0]["body"]
+            self.assertEqual(payload["password"], self.PASSWORD)
+            self.assertNotEqual(payload["password"], self.PWD_SENTINEL)
+            self.assertEqual(payload["username"], self.USERNAME)
+            # Everything the operator set on that entry survives the update —
+            # this is a credential change, not a reset to our defaults.
+            self.assertEqual(payload["protocol"], "3.1.1")
+            self.assertEqual(payload["other_settings"]["keepalive"], 90)
+            self.assertEqual(payload["other_settings"]["transport"], "websockets")
+            self.assertEqual(payload["other_settings"]["set_ca_cert"], "custom")
+            self.assertIs(payload["other_settings"]["set_client_cert"], True)
+
+            self.assertEqual(
+                self._link(tmp)["fingerprint"],
+                m._fingerprint("host.containers.internal", 1883, self.USERNAME, self.PASSWORD),
+            )
+            self.assertIn("updated to the current credentials", out)
+
+    def test_a_deploy_that_changes_nothing_touches_home_assistant_not_at_all(self):
+        """The steady state. Reconfiguring on every deploy would reload HA's
+        MQTT integration — and every device with it — for no reason."""
+        import tempfile
+        m = load_script("mosquitto")
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp)
+            with open(os.path.join(tmp, "mosquitto", ".home-assistant-link.json"), "w") as fh:
+                json.dump({
+                    "entry_id": self.ENTRY_ID,
+                    "fingerprint": m._fingerprint(
+                        "host.containers.internal", 1883, self.USERNAME, self.PASSWORD),
+                }, fh)
+            routes = {"GET /api/config/config_entries/entry": (200, [self._entry()])}
+            with run_with_env(env), mock.patch.object(
+                m.urllib.request, "urlopen", self._http(calls, routes)
+            ):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertEqual([c["method"] for c in calls], ["GET"])
+            self.assertIn("already up to date", out)
+
+    # ── criterion 3: a box without Home Assistant, unchanged and unmentioned ──
+
+    def test_a_box_without_home_assistant_says_and_does_nothing(self):
+        """"Ohne Home Assistant läuft die Installation unverändert und ohne
+        Meldung durch" — no HTTP call, and not one line about a service the
+        operator never installed."""
+        import tempfile
+        m = load_script("mosquitto")
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp, with_ha=False)
+            with run_with_env(env), mock.patch.object(
+                m.urllib.request, "urlopen", self._http(calls, {})
+            ):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertEqual(calls, [])
+            for phrase in ("no admin token", "left alone", "left exactly as it is",
+                           "now connected to this broker", "⚠️"):
+                self.assertNotIn(phrase, out)
+            self.assertEqual(parse_credentials(out)[0]["password"], self.PASSWORD)
+
+    def test_home_assistant_without_a_token_asks_for_the_manual_step_and_exits_clean(self):
+        """Both installed in one wizard run: HA's own post-deploy mints the
+        token and may not have run yet. That is a "later", not a failure."""
+        import tempfile
+        m = load_script("mosquitto")
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp, token=None)
+            with run_with_env(env), mock.patch.object(
+                m.urllib.request, "urlopen", self._http(calls, {})
+            ):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertEqual(calls, [])
+            self.assertIn("no admin token", out)
+            self.assertIn("Settings → Devices & Services", out)
+            self.assertNotIn("⚠️", out)
+
+    def test_an_unreachable_home_assistant_never_fails_the_deploy(self):
+        import tempfile
+        import urllib.error
+        m = load_script("mosquitto")
+        m.HA_READY_ATTEMPTS = 2
+        m.HA_READY_INTERVAL = 0
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp)
+
+            def refused(*_a, **_kw):
+                raise urllib.error.URLError("connection refused")
+
+            with run_with_env(env), mock.patch.object(m.urllib.request, "urlopen", refused):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertIn("left alone", out)
+            self.assertFalse(os.path.exists(os.path.join(tmp, "mosquitto", ".home-assistant-link.json")))
+
+    # ── criterion 4: an existing hand-made connection is left alone ─────────
+
+    def test_a_hand_made_connection_to_a_different_broker_is_left_untouched(self):
+        import tempfile
+        m = load_script("mosquitto")
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp)
+            routes = {
+                "GET /api/config/config_entries/entry": (
+                    200, [self._entry(entry_id="OTHER", title="192.168.1.55")],
+                ),
+                "GET /api/diagnostics/config_entry/": (
+                    200, self._diagnostics(broker="192.168.1.55"),
+                ),
+            }
+            with run_with_env(env), mock.patch.object(
+                m.urllib.request, "urlopen", self._http(calls, routes)
+            ):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            # Not one write: no flow started, so nothing duplicated and nothing
+            # overwritten. `single_config_entry` on HA's side would have refused
+            # a second entry anyway — we do not even ask.
+            self.assertEqual([c["method"] for c in calls], ["GET", "GET"])
+            self.assertNotIn("/flow", "".join(c["path"] for c in calls))
+            self.assertIn("left exactly as it is", out)
+            self.assertFalse(os.path.exists(os.path.join(tmp, "mosquitto", ".home-assistant-link.json")))
+
+    def test_a_hand_made_connection_that_is_live_against_this_broker_is_recognised_not_rewritten(self):
+        """The case on a box that was wired by hand before this shipped. HA's
+        diagnostics say the entry is connected to this very broker — and the
+        broker accepts exactly one account, so it is already using these
+        credentials. Recording it writes NOTHING into HA today and means the
+        next rotation follows it instead of silently breaking it."""
+        import tempfile
+        m = load_script("mosquitto")
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp)
+            routes = {
+                "GET /api/config/config_entries/entry": (200, [self._entry()]),
+                "GET /api/diagnostics/config_entry/": (200, self._diagnostics()),
+            }
+            with run_with_env(env), mock.patch.object(
+                m.urllib.request, "urlopen", self._http(calls, routes)
+            ):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertEqual([c["method"] for c in calls], ["GET", "GET"])
+            self.assertEqual(self._link(tmp), {
+                "entry_id": self.ENTRY_ID,
+                "fingerprint": m._fingerprint(
+                    "host.containers.internal", 1883, self.USERNAME, self.PASSWORD),
+            })
+            self.assertIn("you set it up yourself", out)
+
+    def test_a_hand_made_connection_that_is_not_connected_is_not_claimed(self):
+        """Without a live connection there is no evidence it is this broker's
+        account, so the conservative branch wins: leave it, claim nothing."""
+        import tempfile
+        m = load_script("mosquitto")
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp)
+            routes = {
+                "GET /api/config/config_entries/entry": (
+                    200, [self._entry(state="setup_retry")],
+                ),
+                "GET /api/diagnostics/config_entry/": (200, self._diagnostics(connected=False)),
+            }
+            with run_with_env(env), mock.patch.object(
+                m.urllib.request, "urlopen", self._http(calls, routes)
+            ):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertNotIn("/flow", "".join(c["path"] for c in calls))
+            self.assertFalse(os.path.exists(os.path.join(tmp, "mosquitto", ".home-assistant-link.json")))
+            self.assertIn("left exactly as it is", out)
+
+    def test_a_connection_on_the_right_host_but_a_different_port_is_not_ours(self):
+        import tempfile
+        m = load_script("mosquitto")
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp)
+            routes = {
+                "GET /api/config/config_entries/entry": (200, [self._entry()]),
+                "GET /api/diagnostics/config_entry/": (200, self._diagnostics(port=1884)),
+            }
+            with run_with_env(env), mock.patch.object(
+                m.urllib.request, "urlopen", self._http(calls, routes)
+            ):
+                rc, _ = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertFalse(os.path.exists(os.path.join(tmp, "mosquitto", ".home-assistant-link.json")))
+
+    # ── failure handling: HA says no ────────────────────────────────────────
+
+    def test_a_refused_broker_form_closes_the_flow_and_leaves_no_link(self):
+        """HA opens a real connection to the broker before accepting the
+        settings. A rejection comes back as the same form with errors — leaving
+        it open would park a half-finished "Configure" prompt in HA's UI."""
+        import tempfile
+        m = load_script("mosquitto")
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp)
+            refused = dict(self._fresh_form(), errors={"base": "cannot_connect"})
+            routes = {
+                "GET /api/config/config_entries/entry": (200, []),
+                "POST /api/config/config_entries/flow": (200, self._fresh_form()),
+                "POST /api/config/config_entries/flow/": (200, refused),
+                "DELETE /api/config/config_entries/flow/": (200, {"message": "Flow aborted"}),
+            }
+            with run_with_env(env), mock.patch.object(
+                m.urllib.request, "urlopen", self._http(calls, routes)
+            ):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0, "the broker is up; the wiring never fails the deploy")
+            self.assertIn("DELETE", [c["method"] for c in calls])
+            self.assertIn("cannot_connect", out)
+            self.assertFalse(os.path.exists(os.path.join(tmp, "mosquitto", ".home-assistant-link.json")))
+
+    def test_an_unexpected_error_is_reported_without_failing_the_deploy(self):
+        import tempfile
+        m = load_script("mosquitto")
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp)
+            with run_with_env(env), mock.patch.object(
+                m, "configure_home_assistant", side_effect=RuntimeError("boom")
+            ):
+                rc, out = capture_main(m)
+            self.assertEqual(rc, 0)
+            self.assertIn("boom", out)
+            self.assertIn("broker itself is fine", out)
+
+    # ── secret hygiene ─────────────────────────────────────────────────────
+
+    def test_the_password_never_reaches_the_log_or_the_link_file(self):
+        """It travels in exactly two places: the __SB_CREDENTIAL__ marker
+        ServiceBay stores encrypted, and the form body HA gets over loopback."""
+        import tempfile
+        m = load_script("mosquitto")
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self._box(tmp)
+            routes = {
+                "GET /api/config/config_entries/entry": (200, []),
+                "POST /api/config/config_entries/flow": (200, self._fresh_form()),
+                "POST /api/config/config_entries/flow/": (
+                    200, {"type": "create_entry", "result": self._entry()},
+                ),
+            }
+            with run_with_env(env), mock.patch.object(
+                m.urllib.request, "urlopen", self._http(calls, routes)
+            ):
+                _, out = capture_main(m)
+            log_only = "\n".join(
+                line for line in out.splitlines() if not line.startswith("__SB_CREDENTIAL__ ")
+            )
+            self.assertNotIn(self.PASSWORD, log_only)
+            with open(os.path.join(tmp, "mosquitto", ".home-assistant-link.json")) as fh:
+                raw_link = fh.read()
+            self.assertNotIn(self.PASSWORD, raw_link)
+            self.assertNotIn(self.USERNAME, raw_link)
+
+    def test_the_fingerprint_changes_with_the_password_and_is_short(self):
+        m = load_script("mosquitto")
+        one = m._fingerprint("host.containers.internal", 1883, "u", "pass-a")
+        two = m._fingerprint("host.containers.internal", 1883, "u", "pass-b")
+        self.assertNotEqual(one, two)
+        self.assertEqual(m._fingerprint("host.containers.internal", 1883, "u", "pass-a"), one)
+        # Truncated on purpose: enough to notice a change, too short to be a
+        # usable handle on the password it came from.
+        self.assertEqual(len(one), 16)
+
+    # ── the form filler, which is where a hand-written payload goes wrong ───
+
+    def test_the_form_is_answered_from_home_assistants_own_schema(self):
+        m = load_script("mosquitto")
+        payload = m._form_payload(
+            self._fresh_form()["data_schema"],
+            {"broker": "b", "port": 1883, "username": "u", "password": "p"},
+        )
+        # The required section is sent even though everything we know about it
+        # comes from defaults — HA rejects the form outright when it is missing.
+        self.assertIn("other_settings", payload)
+        self.assertEqual(payload["other_settings"]["set_ca_cert"], "off")
+        # Optional fields HA did not suggest a value for are left out rather
+        # than sent as null: `PREVENT_EXTRA`/None would fail validation.
+        self.assertNotIn("client_id", payload["other_settings"])
+        self.assertNotIn("keepalive", payload["other_settings"])
+
+    def test_an_unknown_future_field_is_answered_from_its_own_default(self):
+        """The payload is not pinned to one HA version: a field this script has
+        never heard of is answered with what HA itself proposes."""
+        m = load_script("mosquitto")
+        schema = [
+            {"name": "broker", "required": True},
+            {"name": "some_new_thing", "required": True, "default": "sane"},
+            {"name": "another_new_thing", "required": True,
+             "description": {"suggested_value": "current"}},
+        ]
+        payload = m._form_payload(schema, {"broker": "host.containers.internal"})
+        self.assertEqual(payload, {
+            "broker": "host.containers.internal",
+            "some_new_thing": "sane",
+            "another_new_thing": "current",
+        })
+
+
 class ImmichScript(unittest.TestCase):
     """#1556: on a wipe-configs reinstall Authelia regenerates the OIDC
     client secret (CONFIG) but Immich keeps its copy in its DB (survived
@@ -3422,7 +4020,7 @@ class VerbatimScriptBodies(unittest.TestCase):
     quietly start depending on a render pass that no longer happens.
     """
 
-    # The eight `{{…}}` sites across templates/*/post-deploy.py, and the
+    # The nine `{{…}}` sites across templates/*/post-deploy.py, and the
     # env var that actually carries the value (None = prose only).
     SITES = [
         ("auth", "DATA_DIR"),            # authelia_db_path() docstring
@@ -3432,6 +4030,7 @@ class VerbatimScriptBodies(unittest.TestCase):
         ("file-share", "DATA_DIR"),      # _notes_dir() docstring
         ("home-assistant", "DATA_DIR"),  # _ha_config_dir() docstring
         ("home-assistant", "ZWAVE_DEVICE"),  # udev/zwave.port docstring
+        ("mosquitto", "DATA_DIR"),       # _ha_config_dir() comment (#2578)
         ("immich", None),                # comment: podman --format '{{.State}}'
     ]
 
@@ -3458,6 +4057,7 @@ class VerbatimScriptBodies(unittest.TestCase):
             ("nginx", "npm_db_path", ("nginx-proxy-manager", "data", "database.sqlite")),
             ("file-share", "_notes_dir", ("file-share", "data", "notes")),
             ("home-assistant", "_ha_config_dir", ("home-assistant", "homeassistant")),
+            ("mosquitto", "_ha_config_dir", ("home-assistant", "homeassistant")),
         ]
         for template, fn_name, tail in cases:
             with self.subTest(template=template):

@@ -53,7 +53,28 @@ networking, which a hardcoded IP does not.
 
 ## Connecting Home Assistant
 
-Settings → Devices & Services → **Add integration** → MQTT:
+**Nothing to do.** If Home Assistant is installed on this box, deploying
+mosquitto sets its MQTT integration up for you — broker
+`host.containers.internal`, the port above, and the credentials ServiceBay just
+generated. Changing the broker password later and deploying again carries the
+change over to Home Assistant too, so its devices do not quietly stop working.
+
+ServiceBay does this through the same interface the Home Assistant UI uses (its
+config-flow API), so Home Assistant validates the settings and tries the broker
+before it accepts them. It never edits Home Assistant's internal files.
+
+Two cases where it stays out of the way:
+
+- **You already set MQTT up by hand.** Your connection is left exactly as it
+  is — never duplicated, never overwritten. If it is already pointing at this
+  broker and connected, ServiceBay simply notes that and keeps its password in
+  step from then on.
+- **Home Assistant is not installed.** Nothing happens and nothing is said. The
+  broker is worth running on its own; there is no dependency in either
+  direction.
+
+If you do need to enter it manually — Settings → Devices & Services → **Add
+integration** → MQTT:
 
 ```
 Broker  : host.containers.internal
