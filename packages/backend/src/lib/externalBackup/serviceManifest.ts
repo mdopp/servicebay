@@ -390,6 +390,22 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     ],
     exclude: [],
   },
+  {
+    // Beets (#2581) — the tagger's own state, NOT the music it tags. Two small
+    // files under `beets/config/`: `config.yaml` is hand-tuned (plugin list, an
+    // AcoustID key, and the import safety settings that decide whether an
+    // import relocates files), and `musiclibrary.db` is what beets knows about
+    // the collection — crucially which directories it has already imported, so
+    // a restored box doesn't re-walk and re-tag the whole library. Everything
+    // else in that dir is disposable: `.cache`, the resume `state.pickle`, and
+    // the `<db>-before-<schema-change>.bak` copies beets writes on every
+    // database migration. The music and audiobooks are on the file-share
+    // volumes and are never backed up (EXCLUDED_BULK_VOLUMES).
+    service: 'beets',
+    dataSubdir: 'beets/config',
+    include: ['config.yaml', 'musiclibrary.db'],
+    exclude: [],
+  },
 ];
 
 /**
@@ -414,6 +430,8 @@ export const EXCLUDED_BULK_VOLUMES: Readonly<Record<string, string>> = {
   JELLYFIN_MEDIA_PATH: 'The media library itself — multi-TB, lives on the RAID.',
   'immich/upload': 'Immich photo/video library — multi-GB blobs, RAID-resident.',
   'file-share/data': 'The shared household files — bulk user data on the RAID.',
+  BEETS_MUSIC_PATH: 'The music library beets tags — the file-share bulk tree under another name, RAID-resident.',
+  BEETS_AUDIOBOOKS_PATH: 'The audiobook library — same file-share bulk tree, RAID-resident.',
   // Postgres data dirs: credential-coupled, reconciled by rekey (#2165), not
   // restored from a NAS tarball.
   'immich/pgdata': 'Immich Postgres data dir — RAID-resident, rekey-reconciled, not NAS-restored.',

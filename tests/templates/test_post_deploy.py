@@ -3163,5 +3163,189 @@ class VerbatimScriptBodies(unittest.TestCase):
         self.assertNotEqual(scope["FMT"].strip("'"), "|")
 
 
+class BeetsScript(unittest.TestCase):
+    """#2581 — beets post-deploy never imports; it makes the decision informed.
+
+    The property under test is the config warning: an operator carrying a
+    config over from an earlier install commonly has `import: move: yes`, and
+    with that set ANY import relocates and renames their whole music library.
+    The script must never rewrite that config, but it must never let it pass
+    unremarked either.
+    """
+
+    HEALTH_OK = {"/api/health/checks": {"status": 200, "body": {"ok": True}}}
+
+    def _run(self, config_text: str | None) -> tuple[int, str]:
+        import tempfile
+
+        module = load_script("beets")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_dir = Path(tmp) / "beets" / "config"
+            cfg_dir.mkdir(parents=True)
+            if config_text is not None:
+                (cfg_dir / "config.yaml").write_text(config_text, encoding="utf-8")
+            env = {
+                "DATA_DIR": tmp,
+                "BEETS_PORT": "8337",
+                "SB_API_URL": "http://localhost:3000",
+                "SB_API_TOKEN": "t",
+            }
+            with run_with_env(env), mock.patch(
+                "urllib.request.urlopen", fake_urlopen_factory(self.HEALTH_OK)
+            ):
+                rc, out = capture_main(module)
+            # The script must never write or alter the config.
+            after = (cfg_dir / "config.yaml").read_text(encoding="utf-8") if config_text is not None else None
+            self.assertEqual(after, config_text, "post-deploy must not touch config.yaml")
+        return rc, out
+
+    def test_warns_when_a_carried_over_config_will_relocate_files(self):
+        rc, out = self._run(
+            "directory: /music\n"
+            "import:\n"
+            "  move: yes\n"
+            "  write: yes\n"
+            "paths:\n"
+            "  default: $artist/$album/$track $title\n"
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("RELOCATE YOUR MUSIC", out)
+        self.assertIn("move: yes", out)
+
+    def test_quiet_when_the_config_writes_tags_in_place(self):
+        rc, out = self._run(
+            "directory: /music\nimport:\n  copy: false\n  move: false\n  write: true\n"
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("in place", out)
+        self.assertNotIn("RELOCATE YOUR MUSIC", out)
+
+    def test_move_under_another_top_level_key_is_not_a_false_positive(self):
+        # Only the `import:` block decides whether files get relocated — a
+        # `move` key belonging to some other plugin must not trip the warning.
+        rc, out = self._run(
+            "import:\n  move: false\n"
+            "somepluginn:\n  move: yes\n"
+        )
+        self.assertEqual(rc, 0)
+        self.assertNotIn("RELOCATE YOUR MUSIC", out)
+
+    def test_missing_config_is_not_an_error(self):
+        rc, out = self._run(None)
+        self.assertEqual(rc, 0)
+        self.assertIn("seeds one on start", out)
+
+    def test_registers_the_empty_library_check_and_prints_the_trigger(self):
+        rc, out = self._run("import:\n  move: false\n")
+        self.assertEqual(rc, 0)
+        self.assertIn("beets-library-populated", out)
+        # The service must be genuinely operable: the command is in the log.
+        self.assertIn("beet import /music", out)
+        self.assertIn("beet import -q -i /music", out)
+
+    def test_health_check_registration_failure_is_not_fatal(self):
+        module = load_script("beets")
+        import tempfile
+        import urllib.error
+
+        def boom(*_a, **_kw):
+            raise urllib.error.URLError("down")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "beets" / "config").mkdir(parents=True)
+            with run_with_env({"DATA_DIR": tmp, "BEETS_PORT": "8337"}), mock.patch(
+                "urllib.request.urlopen", boom
+            ):
+                rc, out = capture_main(module)
+        self.assertEqual(rc, 0)
+        self.assertIn("service:beets check still applies", out)
+
+
+class BeetsV1ToV2Migration(unittest.TestCase):
+    """#2581 — the v1→v2 migration re-owns /config and moves nothing."""
+
+    def _load(self):
+        path = TEMPLATES_DIR / "beets" / "migrations" / "v1-to-v2.py"
+        spec = importlib.util.spec_from_file_location("_beets_v1_to_v2", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_noop_when_the_config_dir_is_already_owned_by_the_podman_user(self):
+        import tempfile
+
+        module = self._load()
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "beets" / "config"
+            cfg.mkdir(parents=True)
+            (cfg / "musiclibrary.db").write_bytes(b"db")
+            with run_with_env({"DATA_DIR": tmp}), mock.patch(
+                "subprocess.run", side_effect=AssertionError("must not shell out")
+            ):
+                rc, out = capture_main(module)
+        self.assertEqual(rc, 0)
+        self.assertIn("nothing to do", out)
+
+    def test_noop_when_there_is_no_config_dir_at_all(self):
+        import tempfile
+
+        module = self._load()
+        with tempfile.TemporaryDirectory() as tmp:
+            with run_with_env({"DATA_DIR": tmp}):
+                rc, out = capture_main(module)
+        self.assertEqual(rc, 0)
+        self.assertIn("nothing to re-own", out)
+
+    def test_chowns_foreign_owned_entries_and_leaves_the_data_in_place(self):
+        import subprocess
+        import tempfile
+
+        module = self._load()
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "beets" / "config"
+            cfg.mkdir(parents=True)
+            db = cfg / "musiclibrary.db"
+            db.write_bytes(b"library")
+            calls: list[list[str]] = []
+
+            def fake_run(cmd, **_kw):
+                calls.append(list(cmd))
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            # Report the db as owned by a container sub-UID on the first scan
+            # and as re-owned on the verification scan.
+            scans = iter([[str(db)], []])
+            with run_with_env({"DATA_DIR": tmp}), mock.patch.object(
+                module, "foreign_owned_entries", lambda *_a: next(scans)
+            ), mock.patch("subprocess.run", fake_run):
+                rc, out = capture_main(module)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [["podman", "unshare", "chown", "-R", "0:0", str(cfg)]])
+        self.assertIn("No file is moved or deleted", out)
+
+    def test_a_failed_chown_warns_but_never_aborts_the_deploy(self):
+        import subprocess
+        import tempfile
+
+        module = self._load()
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "beets" / "config"
+            cfg.mkdir(parents=True)
+            (cfg / "musiclibrary.db").write_bytes(b"library")
+            with run_with_env({"DATA_DIR": tmp}), mock.patch.object(
+                module, "foreign_owned_entries", lambda *_a: [str(cfg / "musiclibrary.db")]
+            ), mock.patch(
+                "subprocess.run",
+                return_value=subprocess.CompletedProcess([], 1, "", "chown: denied"),
+            ):
+                rc, out = capture_main(module)
+        # Migrations are fail-fast by contract, but a permissions fixup is not
+        # a half-completed data migration — it must not strand the operator.
+        self.assertEqual(rc, 0)
+        self.assertIn("podman unshare chown -R 0:0", out)
+
+
 if __name__ == "__main__":
     unittest.main()

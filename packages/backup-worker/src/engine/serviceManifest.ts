@@ -203,6 +203,15 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     ],
     exclude: [],
   },
+  {
+    // Beets (#2581): the tagger's config and its library database — which
+    // directories it has already imported — NOT the music itself (that lives on
+    // the file-share bulk tree, excluded below).
+    service: 'beets',
+    dataSubdir: 'beets/config',
+    include: ['config.yaml', 'musiclibrary.db'],
+    exclude: [],
+  },
 ];
 
 /**
@@ -223,6 +232,8 @@ export const EXCLUDED_BULK_VOLUMES: Readonly<Record<string, string>> = {
   JELLYFIN_MEDIA_PATH: 'The media library itself — multi-TB, lives on the RAID.',
   'immich/upload': 'Immich photo/video library — multi-GB blobs, RAID-resident.',
   'file-share/data': 'The shared household files — bulk user data on the RAID.',
+  BEETS_MUSIC_PATH: 'The music library beets tags — the file-share bulk tree under another name, RAID-resident.',
+  BEETS_AUDIOBOOKS_PATH: 'The audiobook library — same file-share bulk tree, RAID-resident.',
   'immich/pgdata': 'Immich Postgres data dir — RAID-resident, rekey-reconciled, not NAS-restored.',
 };
 

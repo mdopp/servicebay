@@ -1,0 +1,204 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: beets
+  labels:
+    app: beets
+    servicebay.role: media
+  annotations:
+    servicebay.label: "Beets (Music Tagger)"
+    # v2 (#2581): supersedes the hand-rolled LOCAL template that shipped
+    # this service before. See CHANGELOG.md — the bump exists so an
+    # operator upgrading off that local copy sees the breaking-change
+    # acknowledgement, and so migrations/v1-to-v2.py runs.
+    servicebay.schema-version: "2"
+    servicebay.ports: "{{BEETS_PORT}}/tcp"
+    # The music/audiobook trees this pod mounts are file-share's data
+    # volume, so file-share must be installed and settled first.
+    servicebay.dependencies: "file-share"
+    # Continuous health probe (#628). `beet web`'s /stats returns
+    # `{"items": N, "albums": M}` — a 200 there proves more than "the
+    # process is up": it proves the web plugin loaded AND the library
+    # database opened. A pod that starts but can't read its DB answers
+    # 500 here. post-deploy.py registers a SECOND, stricter check
+    # (`beets-library-populated`) against the same URL that also asserts
+    # the item count is non-zero, which is what makes "beets is running
+    # but has never imported anything" visible instead of green (#2581).
+    servicebay.healthcheck: |
+      url: http://localhost:{{BEETS_PORT}}/stats
+      interval: 60s
+      timeout: 5s
+      startup_timeout: 5m
+    # Disable SELinux relabelling on this pod's bind mounts, for exactly
+    # the reason templates/media/template.yml documents: /music and
+    # /audiobooks point INTO the shared, multi-writer
+    # file-share/data tree. The default kube recursive relabel walks that
+    # whole tree calling `lsetxattr` on every entry, and one root-owned
+    # stray makes the rootless relabel fail `operation not permitted` and
+    # crash-loop the pod on a routine restart. The tree already carries
+    # `container_file_t` from its long-lived consumers.
+    io.podman.annotations.label/beets: "disable"
+spec:
+  # ADR 0007: beets runs in its own network namespace — no `hostNetwork`.
+  # It is not on the closed carve-out list and has no reason to be: it
+  # talks to nothing over the network except its own web UI, and it
+  # reaches the music through a bind mount, not a socket. The web UI is
+  # published to the host with a plain `hostPort` below.
+  #
+  # Deliberately LAN-only: NO `type: subdomain` variable, no nginx/auth
+  # dependency, no public hostname. `beet web` ships with no
+  # authentication of any kind — the only thing standing between a
+  # request and the library would be Authelia forward-auth on the proxy
+  # host, and this UI fronts a service that can rewrite a music
+  # collection. A music tagger has no business being reachable from
+  # outside the house, so it is reachable from the LAN and nowhere else.
+  # (The seeded config also pins `web.readonly: true` — see below.)
+  initContainers:
+  # Seed /config/config.yaml ONLY when there isn't one, before beets
+  # starts. Two reasons this is an initContainer rather than a companion
+  # `config.yaml.mustache` or a host-side write in post-deploy.py:
+  #
+  #   1. A `*.mustache` config file is re-rendered and written on EVERY
+  #      deploy, unconditionally. beets' config is a file operators tune
+  #      by hand (plugins, an AcoustID key, a `paths:` scheme), so
+  #      overwriting it on redeploy would silently discard their work —
+  #      and ADR 0004 says installs are non-destructive.
+  #   2. post-deploy.py runs AFTER the unit is up, which loses a race the
+  #      base image actually wins: started with an empty /config, this
+  #      image writes its OWN default config and beets is already serving
+  #      on it before post-deploy gets a turn (verified by running the
+  #      image bare — it opens `/config/musiclibrary.blb`, its default
+  #      library path, not ours). An initContainer runs before the beets
+  #      container exists, so the `test -e` answer is the real one, and
+  #      the image then leaves the file we wrote alone.
+  #
+  # Idempotent by construction: existing file → touch nothing. The
+  # defaults it writes are the safety property this template promises —
+  # `copy: false` + `move: false` means an import writes tags into the files
+  # where they already are and never relocates or renames them. No
+  # `paths:` scheme is seeded for the same reason.
+  - name: seed-config
+    image: docker.io/linuxserver/beets:latest
+    # Same UID-0 reasoning as the beets container below — /config is a
+    # host bind mount owned by the rootless podman user.
+    securityContext:
+      runAsUser: 0
+      runAsGroup: 0
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        if [ -e /config/config.yaml ]; then
+          echo "beets: /config/config.yaml already exists — leaving it untouched."
+          echo "beets: (post-deploy.py checks it for move/copy settings and warns.)"
+          exit 0
+        fi
+        echo "beets: no /config/config.yaml — seeding safe defaults."
+        cat > /config/config.yaml <<'EOF'
+        # Seeded by ServiceBay's beets template on first deploy.
+        # Yours to edit — this file is written only when it does not exist.
+        # Booleans are spelled true/false rather than beets' more common
+        # yes/no: both mean the same thing to beets' YAML 1.1 parser, but
+        # yes/no is a plain STRING to a YAML 1.2 parser, so the safety
+        # settings below cannot be misread by whatever else looks at this file.
+        directory: /music
+        library: /config/musiclibrary.db
+
+        plugins:
+          - web
+
+        web:
+          host: 0.0.0.0
+          # Fixed: the pod publishes this on the host via hostPort, so the
+          # host-side port can be changed without touching this file.
+          port: 8337
+          # This UI has no login of any kind. Keep it a browser, not an editor.
+          readonly: true
+
+        import:
+          # SAFETY — the whole point. beets writes tags into the files where
+          # they already are and never copies, moves or renames them. There is
+          # deliberately no `paths:` scheme here: with copy+move off it would
+          # do nothing, and its presence invites turning move back on.
+          copy: false
+          move: false
+          write: true
+          # With `beet import -q`, apply only confident matches and SKIP
+          # anything ambiguous rather than guessing at it.
+          quiet_fallback: skip
+          # Re-runs only look at directories not already imported.
+          incremental: true
+        EOF
+    volumeMounts:
+      - mountPath: /config
+        name: beets-config
+  containers:
+  - name: beets
+    # Same image reference the pre-v2 local template used, deliberately:
+    # switching registries (lscr.io) on an in-place takeover would force a
+    # fresh pull and re-point AutoUpdate=registry for no benefit.
+    image: docker.io/linuxserver/beets:latest
+    # Run as container UID 0. Under rootless podman that maps to the host
+    # user running podman (`core`, uid 1000), which OWNS the file-share
+    # data tree — the same reasoning file-share's own filebrowser/samba
+    # containers document. The pre-v2 local template used PUID/PGID 1000,
+    # which maps to a sub-UID (subuid base + 999) with NO write access to
+    # `core`-owned music files: beets could not have written a single tag
+    # even if an import had ever been triggered. This is the third half of
+    # the #2581 bug and the reason v1-to-v2.py has to re-own /config.
+    securityContext:
+      runAsUser: 0
+      runAsGroup: 0
+    env:
+      - name: TZ
+        value: "{{TZ}}"
+      # The linuxserver entrypoint runs `usermod` from these; keeping them
+      # at 0 stops s6 from dropping back to uid 1000 after the
+      # securityContext above put us at 0 (same trap file-share's
+      # syncthing container documents).
+      - name: PUID
+        value: "0"
+      - name: PGID
+        value: "0"
+      # beets reads its config + library from $BEETSDIR. Setting it
+      # explicitly means an operator's `podman exec` (the documented way to
+      # trigger an import) picks up the same config the web UI uses,
+      # without having to pass `-c` every time.
+      - name: BEETSDIR
+        value: "/config"
+    ports:
+      # The container side is FIXED at 8337 — it must agree with the
+      # `web.port` in /config/config.yaml, which post-deploy.py seeds and
+      # the operator may have carried over. BEETS_PORT is purely the
+      # host-side publication, so an operator can move the service off
+      # 8337 on the LAN without editing beets' own config.
+      #
+      # No `hostIP` (unlike radicale's loopback bind): there is no reverse
+      # proxy in front of this, so binding loopback-only would make the UI
+      # unreachable from the operator's laptop — i.e. exactly the #2581
+      # symptom, reintroduced.
+      - containerPort: 8337
+        hostPort: {{BEETS_PORT}}
+    volumeMounts:
+      - mountPath: /config
+        name: beets-config
+      # Read-WRITE, unlike jellyfin's /media mount. Writing tags into the
+      # files in place IS the job. What it will never do on a fresh
+      # install is move or rename them — `import.copy: false` +
+      # `import.move: false` in the seeded config, see README.md.
+      - mountPath: /music
+        name: music-data
+      - mountPath: /audiobooks
+        name: audiobooks-data
+  volumes:
+  - name: beets-config
+    hostPath:
+      path: {{DATA_DIR}}/beets/config
+      type: DirectoryOrCreate
+  - name: music-data
+    hostPath:
+      path: {{BEETS_MUSIC_PATH}}
+      type: DirectoryOrCreate
+  - name: audiobooks-data
+    hostPath:
+      path: {{BEETS_AUDIOBOOKS_PATH}}
+      type: DirectoryOrCreate

@@ -10,6 +10,7 @@ that handle private data the household relies on.
 - [x] file-share — Syncthing + Samba + FileBrowser (LDAP/SSO‑wired)
 - [x] media — Jellyfin streaming + Audiobookshelf for podcasts/books
 - [x] radicale — CalDAV/CardDAV (calendar + contacts), LDAP-bound
+- [ ] beets — Music tagger for the file-share music folder (LAN-only UI; imports are operator-triggered)
 
 ## Why a single stack
 
