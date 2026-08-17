@@ -9,7 +9,7 @@ metadata:
     # v7 (#2416): every admin/control port in this pod except Home
     # Assistant's own 8123 is bound to the host loopback. No data move;
     # requires a re-deploy so podman recreates the pod from this manifest.
-    servicebay.schema-version: "7"
+    servicebay.schema-version: "8"
     # Home Assistant is reached at home.<domain> via nginx and
     # authenticates via Authelia.
     servicebay.dependencies: "nginx,auth"

@@ -12,10 +12,13 @@ informed one:
      `seed-config` initContainer owns the "no config yet" case) and warn
      loudly if it is configured to move or copy files, because then an
      import relocates and renames the collection.
-  2. Register a health check that goes RED while the beets library is
-     empty, so "running but has never been given anything to do" stops
-     looking green — the #2581 complaint that a service waiting for a
-     command nobody gives should not count as healthy.
+  2. Register a health check that goes RED while the beets library
+     covers less of the music on disk than the configured floor, so
+     "running but has never been given anything to do" stops looking
+     green — the #2581 complaint that a service waiting for a command
+     nobody gives should not count as healthy, with the #2584 fix that
+     the same must hold for a library holding one album out of two
+     thousand.
   3. Print the commands that actually trigger an import.
 
 Exit 0 unconditionally: everything here is advisory, and post-deploy
@@ -32,6 +35,7 @@ import urllib.request
 
 CONTAINER = "beets-beets"
 DEFAULT_PORT = "8337"
+DEFAULT_COVERAGE_PORT = "8338"
 
 
 def log(msg: str) -> None:
@@ -113,27 +117,41 @@ def warn_about_existing_config() -> None:
     log("")
 
 
-def register_empty_library_check(sb_api: str, port: str) -> None:
-    """Health check: red while the beets library holds zero items.
+def register_coverage_check(sb_api: str, coverage_port: str) -> None:
+    """Health check: red while beets covers less of /music than the floor.
 
-    `beet web`'s /stats answers `{"items": N, "albums": M}`. A body match on a
-    non-zero item count turns "beets is up but has never imported anything"
-    into a visible red check instead of a green pod. Registered here rather
-    than as the template's `servicebay.healthcheck` annotation on purpose:
-    that annotation gates install settleWait, and a fresh install legitimately
-    has an empty library — it must not block the deploy.
+    This check used to point at `beet web`'s /stats with a body regex of
+    `"items"\\s*:\\s*[1-9]` — "at least one item". That is green after a
+    single album and stays green forever, which is precisely the state it
+    existed to catch (#2584): a 27k-file collection with 485 items in the
+    library reported healthy.
+
+    A ratio cannot be expressed in an HTTP status + body-regex check, and
+    extending that check type would not help — the denominator (how many
+    audio files are on disk) is not in the response at all, and baking a
+    count into the pattern is a threshold that ages into a lie. So the pod
+    computes it instead: the `coverage` sidecar mounts /music, asks beets
+    for its item count, and answers 200/503 against a percentage floor.
+    This check is back to a plain status-code assertion.
+
+    The check id is deliberately UNCHANGED. The POST is an upsert by id, so
+    a box that already carries the old regex row has it rewritten in place
+    rather than gaining a second, permanently-green one.
+
+    Registered here rather than as the template's `servicebay.healthcheck`
+    annotation on purpose: that annotation gates install settleWait, and a
+    fresh install legitimately has an empty library — it must not block the
+    deploy.
     """
     payload = {
         "id": "beets-library-populated",
-        "name": "Beets library populated",
+        "name": "Beets library coverage",
         "type": "http",
-        "target": f"http://127.0.0.1:{port}/stats",
+        "target": f"http://127.0.0.1:{coverage_port}/coverage",
         "interval": 300,
         "enabled": True,
         "httpConfig": {
             "expectedStatus": 200,
-            "bodyMatch": r'"items"\s*:\s*[1-9]',
-            "bodyMatchType": "regex",
         },
     }
     body = json.dumps(payload).encode("utf-8")
@@ -147,8 +165,10 @@ def register_empty_library_check(sb_api: str, port: str) -> None:
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             if resp.status == 200:
-                log("✅ Registered health check 'beets-library-populated' — it stays")
-                log("   RED until an import has actually put something in the library.")
+                log("✅ Registered health check 'Beets library coverage' — it is RED")
+                log("   while the library holds less of your music than the configured")
+                log("   floor, not merely while it is empty.")
+                log(f"     curl -s http://127.0.0.1:{coverage_port}/coverage   # the numbers behind it")
                 return
             log(f"⚠️ Health-check registration returned HTTP {resp.status}. "
                 "The auto-created service:beets check still applies.")
@@ -173,8 +193,9 @@ def print_import_instructions(port: str) -> None:
 
 def main() -> int:
     port = env("BEETS_PORT", DEFAULT_PORT)
+    coverage_port = env("BEETS_COVERAGE_PORT", DEFAULT_COVERAGE_PORT)
     warn_about_existing_config()
-    register_empty_library_check(env("SB_API_URL", "http://localhost:3000"), port)
+    register_coverage_check(env("SB_API_URL", "http://localhost:3000"), coverage_port)
     print_import_instructions(port)
     return 0
 

@@ -76,3 +76,52 @@ describe('StackVariableField — secret regenerate feedback (#2186)', () => {
     expect(onChange).toHaveBeenCalledWith('manual');
   });
 });
+
+// #2577 — the regenerate button must mint the SAME shape the install path
+// generates for a device-facing variable. Without this the operator can
+// regenerate their way back into a value the device truncates, and the
+// symptom (a device claiming the credentials are wrong) points nowhere near
+// this button. The length policy stays server-side; the browser only forwards
+// the declaration.
+describe('StackVariableField — device-safe regenerate (#2577)', () => {
+  type FetchMock = ReturnType<typeof vi.fn<(url: string, init: RequestInit) => Promise<Response>>>;
+  const stubFetch = (secret: string): FetchMock => {
+    const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(() =>
+      Promise.resolve(new Response(JSON.stringify({ secret }), { status: 200 })),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  };
+  const fetchBody = (fetchMock: FetchMock) =>
+    JSON.parse(String(fetchMock.mock.calls[0][1].body));
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('asks for the device-safe profile when the variable declares it', async () => {
+    const fetchMock = stubFetch('short');
+
+    render(
+      <StackVariableField
+        variable={{ name: 'MQTT_PASSWORD', value: 'old', meta: { type: 'secret', deviceSafe: true } }}
+        onChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTitle('Regenerate'));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/install/generate-secret');
+    expect(fetchBody(fetchMock)).toEqual({ deviceSafe: true });
+  });
+
+  it('leaves an ordinary secret on the default profile', async () => {
+    const fetchMock = stubFetch('long');
+
+    render(<StackVariableField variable={secretVar} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByTitle('Regenerate'));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(fetchBody(fetchMock)).toEqual({});
+  });
+});

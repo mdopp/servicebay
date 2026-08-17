@@ -10,6 +10,50 @@ operator's installed schema-version and the current one and surfaces
 them in the re-deploy dialog. Each `(breaking)` section needs an
 explicit acknowledgement before the deploy can proceed.
 
+## v8 — #2573
+
+**The reverse-proxy trust list moved out of `configuration.yaml` and into
+Home Assistant's own HTTP config store.**
+
+No action required — the deploy does it for you. This section exists
+because the change rewrites a file you may have edited.
+
+Home Assistant 2026.8 moved the `http:` integration out of YAML into its
+own store (Settings → System → Network). It imports an existing `http:`
+block once, then **ignores** the YAML and raises a permanent repair issue,
+*"HTTP YAML configuration is ignored after migration"*, for as long as the
+block is still in the file. ServiceBay both rendered that block into
+`configuration.yaml` and re-appended it from a pre-start hook on every
+deploy, so deleting it as the repair issue asked never stuck — it came
+back on the next deploy.
+
+What the deploy does now:
+
+* Sets `use_x_forwarded_for` + the trusted-proxy CIDRs through HA's own
+  `http/config/configure` websocket command, then **promotes** the result.
+  The promote matters: HA applies a new HTTP config as a five-minute trial
+  that reverts itself unless an admin confirms it, so an unattended import
+  would silently lose the trust list.
+* Removes the now-ignored `http:` block from `configuration.yaml` — but
+  only after HA's store is confirmed to carry the trust list, never before.
+  The whole file is backed up once to `configuration.yaml.pre-http-migration.bak`
+  first, in case you had your own settings (SSL paths, CORS, ban policy)
+  under that key. HA already imported those into the store; the backup is
+  there so you can read them back.
+* Leaves your migrated settings alone on every later deploy. If the store
+  already trusts the proxy, nothing is written and HA is not restarted.
+
+A Home Assistant older than 2026.8 has no store to write to. There the
+`http:` block stays in `configuration.yaml` and is still re-added when
+missing — the deploy asks the running HA which era it is on rather than
+guessing.
+
+If the deploy cannot reach HA's config API (no admin token on the box), it
+says so and changes nothing. Set it yourself under **Settings → System →
+Network → HTTP server**: turn on *Trust X-Forwarded-For* and add
+`127.0.0.1/32`, `192.168.0.0/16`, `10.0.0.0/8`, `172.16.0.0/12` to
+*Trusted proxies*.
+
 ## v7 (breaking) — #2416
 
 **Z-Wave and Matter admin/control ports bound to loopback — no longer

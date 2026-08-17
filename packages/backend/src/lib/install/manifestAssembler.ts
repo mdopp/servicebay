@@ -34,7 +34,7 @@ import {
 } from '@/lib/registry';
 import { parseTemplateDependencies } from '@/lib/stackInstall/dependencies';
 import { readManifestAnnotations } from '@/lib/template/contract';
-import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
+import { DEVICE_SAFE_SECRET_LENGTH, generateRandomSecret } from '@/lib/stackInstall/randomSecret';
 import { getConfig } from '@/lib/config';
 import { loadSavedSecrets, persistSingleSecret } from './savedSecrets';
 import { loadSavedVariables } from './savedVariables';
@@ -555,7 +555,12 @@ export async function assembleManifest(
         // post-deploy must handle absent values gracefully.
         value = '';
       } else {
-        value = generateRandomSecret();
+        // #2577 — a `deviceSafe` secret is one the operator retypes into a
+        // device's own credential field, which commonly caps its length and
+        // keeps the prefix; the device then reports a perfectly correct
+        // password as "wrong". Generate it shorter (still alphanumeric, like
+        // every other secret) so it survives the trip.
+        value = generateRandomSecret(meta.deviceSafe ? DEVICE_SAFE_SECRET_LENGTH : undefined);
         newlyGenerated.push({ name, value });
       }
     }

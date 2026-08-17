@@ -27,6 +27,14 @@ every MQTT device you will ever add.
 Both credentials appear in the **SAVE-THESE-NOW** banner (and the Bitwarden CSV)
 right after install. You need them again for every device you add, so save them.
 
+Both are generated **device-safe**: letters and digits only, 24 characters. The
+strength is in the length (~142 bits — nothing brute-forces that), not in
+punctuation, because these values have to survive being typed into a smart
+lock's app. Device firmware routinely rejects symbols or silently cuts a long
+password short, and then reports your perfectly correct credentials as *wrong
+username or password*. If you replace them with your own, keep to letters and
+digits and stay around this length.
+
 ## Which host do I enter?
 
 This is the question that eats an evening. There are two right answers,
@@ -45,7 +53,28 @@ networking, which a hardcoded IP does not.
 
 ## Connecting Home Assistant
 
-Settings → Devices & Services → **Add integration** → MQTT:
+**Nothing to do.** If Home Assistant is installed on this box, deploying
+mosquitto sets its MQTT integration up for you — broker
+`host.containers.internal`, the port above, and the credentials ServiceBay just
+generated. Changing the broker password later and deploying again carries the
+change over to Home Assistant too, so its devices do not quietly stop working.
+
+ServiceBay does this through the same interface the Home Assistant UI uses (its
+config-flow API), so Home Assistant validates the settings and tries the broker
+before it accepts them. It never edits Home Assistant's internal files.
+
+Two cases where it stays out of the way:
+
+- **You already set MQTT up by hand.** Your connection is left exactly as it
+  is — never duplicated, never overwritten. If it is already pointing at this
+  broker and connected, ServiceBay simply notes that and keeps its password in
+  step from then on.
+- **Home Assistant is not installed.** Nothing happens and nothing is said. The
+  broker is worth running on its own; there is no dependency in either
+  direction.
+
+If you do need to enter it manually — Settings → Devices & Services → **Add
+integration** → MQTT:
 
 ```
 Broker  : host.containers.internal
@@ -142,6 +171,7 @@ credentials are what protects the port.
 |---|---|
 | Service won't start, log says credentials are required | The username or password variable is empty. Re-run the wizard; the broker refuses to start without auth rather than come up open. |
 | Home Assistant: "unable to connect" | Wrong host. From a container it is `host.containers.internal`, not `localhost` — `localhost` inside a container is that container. |
+| Device says the username or password is wrong, but Home Assistant connects with the same ones | Believe the broker, not the device: its log shows `disconnected: not authorised` for that client. The credentials are fine — the device is mangling them, usually by cutting an over-long password short. Give it a shorter, letters-and-digits-only password (24 characters is plenty) and re-enter it everywhere. |
 | Device connects, then drops repeatedly | Two clients using the same client ID. Give each device a unique one. |
 | Device connects but nothing appears in Home Assistant | Discovery is off on the device, or Home Assistant's MQTT integration was added with discovery disabled. |
 | State is wrong or "unknown" right after a reboot | Expected only until the device republishes — if it persists, check that `{{DATA_DIR}}/mosquitto/data` is writable. |

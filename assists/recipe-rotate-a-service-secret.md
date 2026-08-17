@@ -42,6 +42,16 @@ integration on the old password shows up in the service log as a rejected
 connection (mosquitto: `Client <id> disconnected: not authorised`), not as an
 error on the ServiceBay side.
 
+**Unless a post-deploy carries it over.** A template whose post-deploy owns the
+consumer side updates it in the same deploy — mosquitto's does this for Home
+Assistant's MQTT integration (#2578), through HA's own config-flow API rather
+than by editing its files. That only covers a connection ServiceBay created (or
+recognised as pointing at this very service); one the operator built by hand is
+deliberately left alone, so it is still on the rotate-the-consumers list. If you
+wire a new cross-service credential, the same pattern belongs in the
+*producing* template's post-deploy: it is the only place that has the new value
+at the moment it changes.
+
 ## Gotchas
 
 - **Never send back a read-masked value.** Reads mask secrets as `<redacted>`; a

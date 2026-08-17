@@ -40,6 +40,10 @@ vi.mock('./savedVariables', () => ({
 }));
 
 import { assembleManifest, deriveLdapBaseDn } from './manifestAssembler';
+import {
+  DEFAULT_SECRET_LENGTH,
+  DEVICE_SAFE_SECRET_LENGTH,
+} from '@/lib/stackInstall/randomSecret';
 
 /** Minimal pod yaml carrying the dependency annotation + a `{{VAR}}`. */
 function tmplYaml(name: string, deps: string[], extra = ''): string {
@@ -315,6 +319,28 @@ describe('assembleManifest', () => {
     const secret = r.variables.find(v => v.name === 'SVC_SECRET')!;
     expect(secret.value).toMatch(/.{16,}/);
     expect(persistSingleSecret).toHaveBeenCalledWith('SVC_SECRET', secret.value);
+  });
+
+  // #2577 — a value the operator carries into a device's own credential field
+  // is generated shorter, because consumer firmware caps that field and keeps
+  // the prefix; the device then reports a correct password as "wrong".
+  it('generates a deviceSafe secret at the device-safe length, still alphanumeric', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('svc', []));
+    getTemplateVariables.mockResolvedValue({
+      MQTT_PASSWORD: { type: 'secret', deviceSafe: true },
+      SVC_SECRET: { type: 'secret' },
+    });
+    const r = await assembleManifest({
+      items: [{ name: 'svc', checked: true }],
+      templateSource: 'Built-in',
+    });
+    const device = r.variables.find(v => v.name === 'MQTT_PASSWORD')!.value;
+    const normal = r.variables.find(v => v.name === 'SVC_SECRET')!.value;
+    expect(device).toHaveLength(DEVICE_SAFE_SECRET_LENGTH);
+    expect(device).toMatch(/^[a-zA-Z0-9]+$/);
+    // The flag changes ONLY the length — the alphabet is platform-wide.
+    expect(normal).toHaveLength(DEFAULT_SECRET_LENGTH);
+    expect(normal).toMatch(/^[a-zA-Z0-9]+$/);
   });
 
   it('reuses a saved secret instead of generating a new one', async () => {

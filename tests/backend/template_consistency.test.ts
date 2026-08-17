@@ -515,8 +515,12 @@ describe('Home Assistant base configuration.yaml ships the include wiring', () =
     expect(cfg).toMatch(/^script: !include scripts\.yaml$/m);
     expect(cfg).toMatch(/^scene: !include scenes\.yaml$/m);
     // ServiceBay's required wiring is still present on a fresh install.
-    expect(cfg).toMatch(/^http:/m);
     expect(cfg).toMatch(/^auth_oidc:/m);
+    // …but NOT an `http:` block (#2573). HA 2026.8 keeps that setting in its
+    // own store and raises a permanent repair issue while the YAML block
+    // survives, so post-deploy.py sets it via HA's `http/config/configure`
+    // websocket command instead of this file re-seeding it every deploy.
+    expect(cfg).not.toMatch(/^http:/m);
   });
 
   it('every !include target file is shipped so the include never dangles', () => {
@@ -969,8 +973,13 @@ describe('Home Assistant template: Z-Wave and Matter ports are loopback-bound (#
     expect(ha.yamlContent).toMatch(/servicebay\.ports:\s*"8123\/tcp,8091\/tcp,3001\/tcp,5580\/tcp"/);
   });
 
-  it('schema-version is bumped to 7 with a CHANGELOG section and a v6-to-v7 migration', () => {
-    expect(ha.yamlContent).toMatch(/servicebay\.schema-version:\s*"7"/);
+  it('the v6-to-v7 hop stays in place with its CHANGELOG section and migration', () => {
+    // Pinned as "at least 7", not "exactly 7": later hops (v8 = #2573) must be
+    // free to land without re-opening this #2416 guard, but the template can
+    // never fall back below the hop that moved these binds to loopback.
+    const declared = ha.yamlContent.match(/servicebay\.schema-version:\s*"(\d+)"/);
+    expect(declared, 'home-assistant must declare a schema-version').toBeTruthy();
+    expect(Number(declared![1])).toBeGreaterThanOrEqual(7);
     const changelog = fs.readFileSync(
       path.join(TEMPLATES_DIR, 'home-assistant', 'CHANGELOG.md'), 'utf-8',
     );
@@ -1448,6 +1457,20 @@ describe('Mosquitto template: mandatory credentials, LAN reach, persistence (#25
     expect(mosquitto.yamlContent).toMatch(/value: "\{\{MQTT_PASSWORD\}\}"/);
   });
 
+  it('generates both credentials device-safe — they are typed INTO devices (#2577)', () => {
+    // Proven at a real device 2026-08-16: a Nuki lock was rejected
+    // (`disconnected: not authorised`) with the generated 32-char value —
+    // pasted, so complete — while Home Assistant took the same credentials;
+    // a 24-char alphanumeric value connected on the first try. This template
+    // exists so DEVICES can connect, so a credential a device cannot carry
+    // defeats its entire purpose. The flag is what makes the assembler use
+    // the shorter profile (manifestAssembler.ts); pinned here so a later
+    // variables.json edit cannot quietly drop it.
+    for (const name of ['MQTT_USERNAME', 'MQTT_PASSWORD']) {
+      expect(mosquitto.variables[name]?.deviceSafe, `${name} must be deviceSafe`).toBe(true);
+    }
+  });
+
   it('keeps retained messages across a restart: persistence on, store on a host path', () => {
     // Retained messages ARE the device-state store. Without persistence every
     // reboot blanks them and Home Assistant shows `unknown` until each device
@@ -1655,8 +1678,8 @@ describe('Beets template: reachable UI, in-place imports, no unattended rewrite 
     expect(byName['audiobooks-data']).toBe('/mnt/data/stacks/file-share/data/audiobooks');
   });
 
-  it('ships schema-version 2 with a breaking CHANGELOG entry and the v1→v2 migration', () => {
-    expect(beets.yamlContent).toMatch(/servicebay\.schema-version:\s*"2"/);
+  it('ships schema-version 3 with a breaking v2 CHANGELOG entry and the v1→v2 migration', () => {
+    expect(beets.yamlContent).toMatch(/servicebay\.schema-version:\s*"3"/);
     const changelog = fs.readFileSync(path.join(TEMPLATES_DIR, 'beets', 'CHANGELOG.md'), 'utf-8');
     // Breaking, so the wizard gates the deploy on an acknowledgement — the
     // right place for "this will touch your music" to reach a human.
@@ -1673,12 +1696,96 @@ describe('Beets template: reachable UI, in-place imports, no unattended rewrite 
   it('declares a healthcheck that proves the library opened, not just the process', () => {
     const hc = String(pod().metadata.annotations['servicebay.healthcheck']);
     expect(hc).toMatch(/\/stats/);
-    // The stricter "library is not empty" probe is registered from
-    // post-deploy.py, NOT here: this annotation gates install settleWait and
-    // a fresh install legitimately has an empty library.
+    // The stricter coverage probe is registered from post-deploy.py, NOT
+    // here: this annotation gates install settleWait and a fresh install
+    // legitimately has an empty library.
     const postDeploy = fs.readFileSync(path.join(TEMPLATES_DIR, 'beets', 'post-deploy.py'), 'utf-8');
     expect(postDeploy).toMatch(/beets-library-populated/);
-    expect(postDeploy).toMatch(/"bodyMatchType": "regex"/);
+  });
+
+  // ── #2584: the coverage sidecar ──────────────────────────────────────
+  //
+  // The "library populated" check asserted `"items":[1-9]` on beets' /stats
+  // and was therefore green on a 27k-file collection holding 485 items — the
+  // exact state it was introduced to catch. A ratio needs a denominator that
+  // is nowhere in that response, so the assertion moved into the pod. These
+  // tests pin the parts of that arrangement that are invisible when it is
+  // wrong: a green check.
+  describe('library-coverage endpoint (#2584)', () => {
+    const coverage = () =>
+      pod().spec.containers.find((c: { name: string }) => c.name === 'coverage');
+    const postDeploy = () =>
+      fs.readFileSync(path.join(TEMPLATES_DIR, 'beets', 'post-deploy.py'), 'utf-8');
+
+    it('the registered check is a status-code assertion against the sidecar, not a body regex', () => {
+      const script = postDeploy();
+      // The defect, spelled out: any regex over `{"albums":M,"items":N}` can
+      // only assert "N ≥ something", and any constant put there ages into a
+      // lie the moment the operator adds an album.
+      expect(script).not.toMatch(/bodyMatch/);
+      expect(script).toMatch(/BEETS_COVERAGE_PORT/);
+      expect(script).toMatch(/\/coverage/);
+      // The id is unchanged on purpose: the POST upserts by id, so an
+      // already-installed box has its stale green row rewritten rather than
+      // keeping it alongside a new one.
+      expect(script).toMatch(/"id": "beets-library-populated"/);
+    });
+
+    it('runs in the beets pod, reads /music read-only, and counts what beets should have tagged', () => {
+      const c = coverage();
+      expect(c, 'the coverage container must exist').toBeTruthy();
+      // Same image as beets — beets IS a Python app, so no second pull.
+      expect(c.image).toBe(pod().spec.containers[0].image);
+      const music = c.volumeMounts.find((v: { mountPath: string }) => v.mountPath === '/music');
+      expect(music.name).toBe('music-data');
+      expect(music.readOnly, 'the counter must never be able to write').toBe(true);
+      // UID 0 for the same reason as the beets container: under rootless
+      // podman anything else cannot even read the music tree.
+      expect(c.securityContext).toEqual({ runAsUser: 0, runAsGroup: 0 });
+    });
+
+    it('is loopback-bound — the health poller is its only consumer', () => {
+      const c = coverage();
+      expect(c.ports).toHaveLength(1);
+      expect(c.ports[0].containerPort).toBe(8338);
+      expect(c.ports[0].hostPort).toBe(8338);
+      // Unlike the UI port, this one is pinned to the host loopback: nothing
+      // on the LAN has a reason to reach an endpoint that walks the music
+      // tree (same reasoning as radicale's DAV port, #2357).
+      expect(c.ports[0].hostIP).toBe('127.0.0.1');
+      // …and it is declared, with the consumer-facing UI port still first
+      // (readPrimaryTcpPort takes the head of this list).
+      const ports = String(pod().metadata.annotations['servicebay.ports']);
+      expect(ports).toBe('8337/tcp,8338/tcp');
+    });
+
+    it('holds the library to a PERCENTAGE floor, never a fixed item count', () => {
+      // A count would have to be re-tuned every time the collection grows,
+      // which is the failure mode #2584 is about. The behaviour of the
+      // embedded script is exercised in tests/templates/test_post_deploy.py
+      // (BeetsCoverageEndpoint); this asserts the knob is a ratio.
+      const meta = beets.variables['BEETS_COVERAGE_MIN_PERCENT'] as { default?: string };
+      expect(meta, 'the floor must be an operator-visible variable').toBeTruthy();
+      expect(meta.default).toBe('90');
+      const script = String(coverage().args[0]);
+      expect(script).toMatch(/SB_COVERAGE_MIN_PERCENT/);
+      expect(script).toMatch(/100\.0 \* items \/ files/);
+    });
+
+    it('the v2→v3 hop is informational — no data moves for a health-check change', () => {
+      const mig = fs.readFileSync(
+        path.join(TEMPLATES_DIR, 'beets', 'migrations', 'v2-to-v3.py'), 'utf-8',
+      );
+      // It exists only because the install runner refuses a deploy with a
+      // gap in the migration chain (selectMigrationChain) — so it must not
+      // touch anything.
+      expect(mig).not.toMatch(/shutil\.(move|rmtree|copy)|os\.remove|\.unlink\(|\.rename\(|chown/);
+      const changelog = fs.readFileSync(path.join(TEMPLATES_DIR, 'beets', 'CHANGELOG.md'), 'utf-8');
+      expect(changelog).toMatch(/^## v3$/m);
+      // The operator must be told the check will go red on an untagged
+      // library — that is the fix landing, not a new fault.
+      expect(changelog).toMatch(/red after this upgrade/i);
+    });
   });
 
   it('is offered by a stack, unchecked — it rewrites files, so it is opt-in', () => {
