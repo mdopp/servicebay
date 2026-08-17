@@ -64,6 +64,29 @@ For Claude Desktop or `~/.claude.json` / `.mcp.json` direct edits:
 }
 ```
 
+## Client running on the box itself
+
+If the assistant runs **in a container on this machine** (an agent sandbox, a CI
+runner, `claude-dev`), don't use the URL above — use the app port directly:
+
+```bash
+claude mcp add --transport http servicebay \
+  http://host.containers.internal:5888/mcp \
+  --header "Authorization: Bearer sb_xxxxxxxx_YOUR_TOKEN_HERE"
+```
+
+Ports 80/443 are the reverse proxy, which routes by hostname, and this admin
+host is deliberately LAN-only. The app port has no hostname logic, so it needs
+no DNS, no TLS, no `Host` header — and **no `/etc/hosts` entry**.
+
+Same authentication either way: you're skipping the proxy's *routing*, not its
+*authorization*.
+
+> Going through the proxy from inside the box produces misleading errors — a
+> rejected TLS handshake, a bare `404`, or a redirect to the public URL that
+> looks like it's asking you to add a hosts entry. Adding one does work, and is
+> still the wrong fix: it breaks the next time the container is rebuilt.
+
 ## Heads-ups
 
 - **The session JWT expires after 24h.** When it does, the MCP server returns

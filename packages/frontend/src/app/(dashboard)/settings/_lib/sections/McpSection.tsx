@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, ShieldAlert, History, RefreshCw, ShieldCheck } from 'lucide-react';
 import SectionHelp from '@/components/SectionHelp';
-import { Button } from '@/components/ui';
+import { Button, Input } from '@/components/ui';
 import { copyToClipboard } from '../clipboard';
 
 interface AuditEntry {
@@ -217,9 +217,32 @@ function McpAuditFeed({ entries, loading, onRefresh }: { entries: AuditEntry[] |
   );
 }
 
+/**
+ * Endpoint an MCP client that runs **on this box** must use (ADR 0007,
+ * amendment 2026-08-17). The card's main field shows `window.location.origin`,
+ * which is the browser's view — a public hostname served by nginx-proxy-manager
+ * on :443. A container on the box cannot use that: the proxy routes by vhost and
+ * this admin host carries a `deny all` LAN-only access list, so the attempt
+ * fails as a TLS/404/301 trail that reads like three unrelated problems. The app
+ * port has no vhost logic, so it needs no DNS, TLS or `Host` header.
+ *
+ * The port is the documented default, deliberately NOT derived from
+ * `window.location.port`: that reads the port the *browser* reached, which
+ * behind a reverse proxy on a non-standard port (`https://box:8443`) is the
+ * proxy's port, not the app's — the field would then confidently show an
+ * address nothing listens on. `PORT` is a backend env var no client can see, and
+ * exposing it would mean a new API surface for one string. So the value is the
+ * stock default and the copy says so, which is true for every default install
+ * and honest about the one case where it isn't.
+ */
+const ON_BOX_HOST = 'host.containers.internal';
+const DEFAULT_APP_PORT = '5888';
+
 export default function McpSection() {
   const [mcpUrl, setMcpUrl] = useState('');
+  const [onBoxUrl, setOnBoxUrl] = useState('');
   const [copied, setCopied] = useState(false);
+  const [copiedOnBox, setCopiedOnBox] = useState(false);
   const [allowMutations, setAllowMutations] = useState<boolean | null>(null);
   const [allowDangerousExec, setAllowDangerousExec] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
@@ -270,6 +293,8 @@ export default function McpSection() {
     // Read window.location after mount to avoid SSR/hydration mismatch.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async settings fetch, guarded by a cancelled flag
     setMcpUrl(`${window.location.origin}/mcp`);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- same post-mount window read as above
+    setOnBoxUrl(`http://${ON_BOX_HOST}:${DEFAULT_APP_PORT}/mcp`);
   }, []);
 
   // Poll for pending destructive-tool approvals (#1766). In-memory + short TTL,
@@ -319,6 +344,14 @@ export default function McpSection() {
     }
   };
 
+  const handleCopyOnBox = async () => {
+    if (!onBoxUrl) return;
+    if (await copyToClipboard(onBoxUrl)) {
+      setCopiedOnBox(true);
+      setTimeout(() => setCopiedOnBox(false), 1500);
+    }
+  };
+
   return (
     <>
       <div className="flex justify-end">
@@ -353,6 +386,40 @@ export default function McpSection() {
         </div>
         <p className="text-xs text-text-muted mt-2">
           Authenticate with a scoped <span className="font-medium">API token</span> (see the API tokens section) or the same session cookie as this UI. Click <span className="font-medium">How to connect</span> for the full setup walk-through.
+        </p>
+      </div>
+
+      {/* ADR 0007 amendment 2026-08-17: a client running on this box cannot use
+          the endpoint above — that URL is served by nginx-proxy-manager, which
+          routes by vhost, and this admin host is deliberately LAN-only. Showing
+          the app-port URL here (rather than only in the help modal) is
+          deliberate: the failure mode is a TLS/404/301 trail that reads like
+          three unrelated problems, and the usual "fix" — an /etc/hosts entry —
+          works just long enough to be believed. */}
+      <div>
+        <label className="block text-xs font-semibold uppercase tracking-wider text-text-muted mb-1">
+          From a container on this box
+        </label>
+        <div className="flex items-stretch gap-2">
+          <Input
+            type="text"
+            readOnly
+            value={onBoxUrl}
+            onFocus={(e) => e.currentTarget.select()}
+            className="flex-1 font-mono text-sm px-3 py-2 rounded-card border border-border bg-surface-2 text-text-muted"
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleCopyOnBox}
+            title="Copy on-box URL"
+          >
+            {copiedOnBox ? <Check size={16} className="text-status-ok" /> : <Copy size={16} />}
+            {copiedOnBox ? 'Copied' : 'Copy'}
+          </Button>
+        </div>
+        <p className="text-xs text-text-muted mt-2">
+          For an assistant or CI runner that runs <span className="font-medium">on this machine</span>. It talks to the app port directly, so it needs no DNS, no TLS and no <span className="font-mono">/etc/hosts</span> entry — the endpoint above goes through the reverse proxy, which a container here cannot reach. Authentication is identical. Shows the default app port; if you set <span className="font-mono">PORT</span> on the ServiceBay service, use that instead.
         </p>
       </div>
 
