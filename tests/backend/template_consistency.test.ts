@@ -1495,6 +1495,198 @@ describe('Mosquitto template: mandatory credentials, LAN reach, persistence (#25
   });
 });
 
+// ─── 3i. Beets: the acceptance criteria of #2581, encoded ───────────────────
+//
+// beets shipped for three weeks as a local template that ran, looked healthy,
+// and did literally nothing: no `command:` so the image default `beet web`
+// ran, no ports at all so that UI answered only on a container-internal
+// address, and PUID 1000 so it could not have written a tag even if an import
+// had been triggered. Every one of those is invisible in a green deploy, which
+// is exactly why they get assertions rather than a code comment.
+describe('Beets template: reachable UI, in-place imports, no unattended rewrite (#2581)', () => {
+  const beets = templates.find(t => t.name === 'beets')!;
+
+  const view: Record<string, string> = {};
+  for (const v of catalogVars) view[v] = `stub-${v.toLowerCase()}`;
+  for (const [name, meta] of Object.entries(beets.variables)) {
+    if (meta && typeof meta === 'object' && 'default' in meta && typeof meta.default === 'string') {
+      view[name] = meta.default;
+    }
+  }
+  view.DATA_DIR = '/mnt/data/stacks';
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pod = (): any =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    yaml.loadAll(renderPodYaml(beets.yamlContent, view)).find((d: any) => d?.kind === 'Pod');
+
+  /** The shell body of the config-seeding initContainer. */
+  const initScript = (): string => String(pod().spec.initContainers[0].args[0]);
+
+  /** The beets config that initContainer writes, parsed. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const seededConfig = (): any => {
+    const m = initScript().match(/<<'EOF'\n([\s\S]*?)\nEOF/);
+    expect(m, 'seed-config initContainer must write a heredoc config').toBeTruthy();
+    return yaml.load(m![1]);
+  };
+
+  const readme = () => fs.readFileSync(path.join(TEMPLATES_DIR, 'beets', 'README.md'), 'utf-8');
+
+  it('publishes the web UI on the host — the #2581 "no ports at all" regression', () => {
+    const c = pod().spec.containers.find((x: { name: string }) => x.name === 'beets');
+    expect(c.ports, 'beets must declare a port; v1 declared none').toHaveLength(1);
+    // The container side is pinned to 8337 because the seeded config's
+    // `web.port` says 8337 — the two must agree or the hostPort forwards to
+    // nothing. Only the host side is operator-configurable.
+    expect(c.ports[0].containerPort).toBe(8337);
+    expect(c.ports[0].hostPort).toBe(8337);
+    // No `hostIP` pin: there is no reverse proxy in front, so a loopback-only
+    // bind would reproduce the original "UI unreachable" symptom exactly.
+    expect(c.ports[0].hostIP).toBeUndefined();
+    expect(seededConfig().web.port).toBe(c.ports[0].containerPort);
+    expect(seededConfig().web.host).toBe('0.0.0.0');
+  });
+
+  it('runs isolated and is NOT added to the closed ADR 0007 carve-out list', () => {
+    expect(pod().spec.hostNetwork).toBeUndefined();
+    const adr = fs.readFileSync(
+      path.join(REPO_ROOT, 'docs', 'adr', '0007-container-network-isolation-and-carveouts.md'),
+      'utf-8',
+    );
+    const decision2 = adr.slice(
+      adr.indexOf('2. **These stay on `hostNetwork` deliberately'),
+      adr.indexOf('3. **Consuming a loopback-bound sibling'),
+    );
+    expect(decision2.length).toBeGreaterThan(100);
+    expect(decision2).not.toMatch(/beets/);
+  });
+
+  it('stays LAN-local: no subdomain, no SSO, because the UI has no login', () => {
+    // `beet web` ships no authentication whatsoever, and it fronts a service
+    // that can rewrite a music library — so it deliberately gets no public
+    // hostname and therefore no nginx/auth dependency to register one with.
+    const subdomainVars = Object.entries(beets.variables)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .filter(([, meta]) => (meta as any)?.type === 'subdomain')
+      .map(([name]) => name);
+    expect(subdomainVars, 'beets must not expose a public subdomain').toEqual([]);
+    const deps = String(pod().metadata.annotations['servicebay.dependencies'] ?? '');
+    expect(deps).not.toMatch(/nginx|auth/);
+    // The UI is a browser, not an editor — the one lever that limits what an
+    // unauthenticated LAN request can do.
+    expect(seededConfig().web.readonly).toBe(true);
+    expect(readme()).toMatch(/no authentication/i);
+  });
+
+  it('never moves, copies or renames files on a fresh install', () => {
+    // The criterion the whole unit turns on: an import writes tags into the
+    // files where they already are. `move`/`copy` on would relocate and
+    // rename the operator's entire collection.
+    const cfg = seededConfig();
+    expect(cfg.import.move, 'import.move must be off').toBe(false);
+    expect(cfg.import.copy, 'import.copy must be off').toBe(false);
+    expect(cfg.import.write, 'import.write is the point — tags in place').toBe(true);
+    // A `paths:` scheme only takes effect when moving/copying; shipping one
+    // would be a loaded gun for whoever flips move back on.
+    expect(cfg.paths, 'no rename scheme may be seeded').toBeUndefined();
+    // `-q` must skip what it cannot match confidently rather than guess.
+    expect(cfg.import.quiet_fallback).toBe('skip');
+  });
+
+  it('never overwrites an existing config — it probes first', () => {
+    const script = initScript();
+    expect(script).toMatch(/if \[ -e \/config\/config\.yaml \]; then/);
+    expect(script).toMatch(/exit 0/);
+    // A companion `*.mustache` config would be re-rendered and written on
+    // EVERY deploy, silently discarding an operator's hand-tuned beets
+    // config (plugins, an AcoustID key). That is why there isn't one.
+    expect(
+      Object.keys(beets.configs),
+      'beets must not ship a *.mustache config — it would clobber the operator config on redeploy',
+    ).toEqual([]);
+  });
+
+  it('triggers no import on its own, and says so in plain language', () => {
+    // Neither the pod nor its init script may invoke `beet import`. An
+    // unattended import over somebody's music collection is a decision, not
+    // a default — README.md carries the reasoning.
+    // Comments may *mention* `beet import`; no line may RUN it. Strip
+    // comments (both YAML's and the init script's are `#`-led) first.
+    const executable = renderPodYaml(beets.yamlContent, view)
+      .split('\n')
+      .filter(l => !l.trim().startsWith('#'))
+      .join('\n');
+    expect(executable).not.toMatch(/beet\s+import/);
+    const doc = readme();
+    expect(doc).toMatch(/Why nothing is imported automatically/);
+    expect(doc).toMatch(/moves? and renames?/i);
+    // …and it must still be operable: a documented one-line trigger.
+    expect(doc).toMatch(/podman exec -it beets-beets beet import \/music/);
+  });
+
+  it('runs as container UID 0 so it can actually write to the music files', () => {
+    // Under rootless podman, container UID 0 maps to the host podman user
+    // that owns the file-share tree; UID 1000 (what v1 used) maps to a
+    // sub-UID with no write access at all.
+    const c = pod().spec.containers.find((x: { name: string }) => x.name === 'beets');
+    expect(c.securityContext).toEqual({ runAsUser: 0, runAsGroup: 0 });
+    const puid = c.env.find((e: { name: string }) => e.name === 'PUID');
+    const pgid = c.env.find((e: { name: string }) => e.name === 'PGID');
+    expect(puid.value).toBe('0');
+    expect(pgid.value).toBe('0');
+    // The initContainer writes into the same host-owned bind mount.
+    expect(pod().spec.initContainers[0].securityContext).toEqual({ runAsUser: 0, runAsGroup: 0 });
+    // /music must be writable — writing tags IS the job (unlike jellyfin's
+    // read-only /media mount).
+    const music = c.volumeMounts.find((v: { mountPath: string }) => v.mountPath === '/music');
+    expect(music.readOnly).toBeUndefined();
+  });
+
+  it('keeps the volume paths the previous local install already used', () => {
+    // The takeover is in-place: same service name, same host paths, so the
+    // library database and the music stay exactly where they are.
+    const byName = Object.fromEntries(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      pod().spec.volumes.map((v: any) => [v.name, v.hostPath.path]),
+    );
+    expect(byName['beets-config']).toBe('/mnt/data/stacks/beets/config');
+    expect(byName['music-data']).toBe('/mnt/data/stacks/file-share/data/music');
+    expect(byName['audiobooks-data']).toBe('/mnt/data/stacks/file-share/data/audiobooks');
+  });
+
+  it('ships schema-version 2 with a breaking CHANGELOG entry and the v1→v2 migration', () => {
+    expect(beets.yamlContent).toMatch(/servicebay\.schema-version:\s*"2"/);
+    const changelog = fs.readFileSync(path.join(TEMPLATES_DIR, 'beets', 'CHANGELOG.md'), 'utf-8');
+    // Breaking, so the wizard gates the deploy on an acknowledgement — the
+    // right place for "this will touch your music" to reach a human.
+    expect(changelog).toMatch(/^## v2 \(breaking\)$/m);
+    // The two things the operator must actually do.
+    expect(changelog).toMatch(/local-templates\/templates\/beets/);
+    expect(changelog).toMatch(/move: no/);
+    expect(
+      fs.existsSync(path.join(TEMPLATES_DIR, 'beets', 'migrations', 'v1-to-v2.py')),
+      'v2 needs its migration: the old /config is owned by a container sub-UID',
+    ).toBe(true);
+  });
+
+  it('declares a healthcheck that proves the library opened, not just the process', () => {
+    const hc = String(pod().metadata.annotations['servicebay.healthcheck']);
+    expect(hc).toMatch(/\/stats/);
+    // The stricter "library is not empty" probe is registered from
+    // post-deploy.py, NOT here: this annotation gates install settleWait and
+    // a fresh install legitimately has an empty library.
+    const postDeploy = fs.readFileSync(path.join(TEMPLATES_DIR, 'beets', 'post-deploy.py'), 'utf-8');
+    expect(postDeploy).toMatch(/beets-library-populated/);
+    expect(postDeploy).toMatch(/"bodyMatchType": "regex"/);
+  });
+
+  it('is offered by a stack, unchecked — it rewrites files, so it is opt-in', () => {
+    const stack = fs.readFileSync(path.join(REPO_ROOT, 'stacks', 'cloud', 'README.md'), 'utf-8');
+    expect(stack).toMatch(/^- \[ \] beets —/m);
+  });
+});
+
 // ─── 4. Subdomain proxyPort references resolve ──────────────────────────────
 describe('Subdomain proxyPort references', () => {
   for (const t of templates) {
