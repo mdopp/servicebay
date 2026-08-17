@@ -122,7 +122,20 @@ shadowing `.kube`/`.yml` on every redeploy so the swap survives
 on CPU with no error — which is why the multi-container shape above is
 refused outright rather than deployed.
 
-Worked reference: `templates/ollama/`.
+**Attaching the device is only half of it.** Whether the workload
+*uses* the card is the application's own setting, and it almost never
+defaults to on: Jellyfin re-encodes in software until its
+`HardwareAccelerationType` says `nvenc`, no matter what `/dev` holds. A
+template that adds `AddDevice=` and stops there ships a service that
+looks fixed and behaves exactly as before. Set the application-side
+option from `post-deploy.py` too, read-modify-write so an existing
+install keeps the rest of its configuration, and gate it on the device
+swap having actually succeeded — pointing an app at an absent
+accelerator turns a slow path into a broken one.
+
+Worked reference: `templates/media/` (`JELLYFIN_GPU_PASSTHROUGH` →
+`install_gpu_quadlet_fallback()` + `jellyfin_enable_nvenc()`, #2580).
+The pattern originates in `ollama`, which now lives outside this repo.
 
 ### `variables.json`
 
