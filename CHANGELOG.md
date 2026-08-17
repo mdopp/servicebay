@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.14.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.13.1...servicebay-v5.14.0) (2026-08-17)
+
+
+### Features
+
+* **templates:** add beets template with a reachable UI and operator-triggered imports ([efeaddc](https://github.com/mdopp/servicebay/commit/efeaddc37c2d6e4020a9135a3c909649dfc75b11)), closes [#2581](https://github.com/mdopp/servicebay/issues/2581)
+* **templates:** add beets with a reachable UI and operator-triggered imports ([0049730](https://github.com/mdopp/servicebay/commit/0049730c36d0378c81b23283f638303df9b048e5))
+
 ## [5.13.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.13.0...servicebay-v5.13.1) (2026-08-16)
 
 
