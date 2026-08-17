@@ -43,6 +43,12 @@ import {
   PROBE_ID as DISK_PROBE_ID,
   PROBE_LABEL as DISK_PROBE_LABEL,
 } from '@/lib/diagnose/probes/diskFill';
+import {
+  OS_UPDATE_COMMAND,
+  evaluateOsUpdate,
+  PROBE_ID as OS_UPDATE_PROBE_ID,
+  PROBE_LABEL as OS_UPDATE_PROBE_LABEL,
+} from '@/lib/diagnose/probes/osUpdateStuck';
 import { wasInstallActiveWithin } from '@/lib/install/jobStore';
 import { persistDiagnoseResults, buildProbeHistory, type ProbeHistory } from '@/lib/diagnose/persistDiagnoseResults';
 import '@/lib/diagnose/probes/register';
@@ -111,6 +117,12 @@ const PROBE_GROUP: Record<string, ProbeGroup> = {
   disk: 'storage-backups',
   raid: 'storage-backups',
   nas_backup_reachable: 'storage-backups',
+  // Host/OS state (#2585). Deliberately NOT `system-info`: that card is
+  // collapsed because it holds things that are never a problem, and a
+  // permanently-failing update loop is exactly the problem an operator is
+  // hunting when the box is pegged. `other` renders as a normal, expanded
+  // card, which is what this row needs.
+  os_update: 'other',
   // System info (collapsed — not a problem)
   serial: 'system-info',
   ports: 'system-info',
@@ -402,6 +414,7 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     serial,
     disk,
     mdstat,
+    osUpdate,
     firstBoot,
     uptimeRes,
     psStatus,
@@ -420,6 +433,12 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     // proves the filesystem mounts — it says nothing about whether the
     // RAID1 underneath it still has both members.
     exec('cat /proc/mdstat', 3000),
+    // Zincati's own state machine (#2585). `rpm-ostree status` prints it
+    // verbatim, including the consecutive-failure count of a staging retry,
+    // so a permanently-failing update loop is a single read away. The
+    // Zincati drop-ins ride along so a deliberate pause is never mistaken
+    // for a fault.
+    exec(OS_UPDATE_COMMAND, 5000),
     exec(
       'systemctl --no-pager status setup-raid install-python install-nginx 2>&1 | grep -E "(●|Active:)" | head -20',
       5000,
@@ -607,6 +626,23 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     detail: raid.detail,
     hint: raid.hint,
     _items: raid.items,
+  });
+
+  // 7c) Automatic OS updates (#2585). Separate from every service probe on
+  //     purpose: when a layered kernel-module package can no longer build,
+  //     Zincati re-attempts the same staging step on a timer and each attempt
+  //     burns minutes of CPU compiling it. Nothing else on the box reports
+  //     that — no unit is failed, no container misbehaves — so an operator
+  //     chasing the load searches the services and finds nothing. This row is
+  //     where the answer lives. A deliberately paused updater is information,
+  //     not a warning: see probes/osUpdateStuck.ts.
+  const osUpdateResult = evaluateOsUpdate(osUpdate.stdout ?? '', osUpdate.code);
+  probes.push({
+    id: OS_UPDATE_PROBE_ID,
+    label: OS_UPDATE_PROBE_LABEL,
+    status: osUpdateResult.status,
+    detail: osUpdateResult.detail,
+    hint: osUpdateResult.hint,
   });
 
   // 8) First-boot oneshot units (FCOS only)

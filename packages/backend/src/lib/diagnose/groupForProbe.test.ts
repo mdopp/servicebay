@@ -30,6 +30,10 @@ describe('groupForProbe (#1534 problem-domain grouping)', () => {
       // panel where an operator would never trip over it.
       raid: 'storage-backups',
       nas_backup_reachable: 'storage-backups',
+      // #2585 — a stuck OS-update loop must land in an EXPANDED card. It is
+      // the answer to "why is the box pegged", so `system-info` (collapsed,
+      // for things that are never a problem) would bury it.
+      os_update: 'other',
     };
     for (const [id, group] of Object.entries(cases)) {
       expect(groupForProbe(id)).toBe(group);
