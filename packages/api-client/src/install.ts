@@ -41,10 +41,15 @@ export const InstallStatusResponseSchema = z.object({
 // random secret using the same alphabet/length the install flow has
 // used since #19. Optional `length` lets callers override the default
 // 32 (currently nothing does, but keeps the schema flexible).
+//
+// `deviceSafe` (#2577) asks for the profile used by a value the operator
+// carries into a device's own credential field — the length policy stays
+// server-side, so the browser never has to know the number.
 // ---------------------------------------------------------------------------
 
 export const GenerateSecretRequestSchema = z.object({
   length: z.number().int().positive().max(256).optional(),
+  deviceSafe: z.boolean().optional(),
 });
 
 export const GenerateSecretResponseSchema = z.object({

@@ -849,6 +849,20 @@ export interface VariableMeta {
    */
   noAutoGenerate?: boolean;
   /**
+   * #2577 — For `type: secret`: this value ends up **inside a device**
+   * (an IoT firmware credential field, a device app's setup form), not
+   * only in a container's env. Generate it at
+   * `DEVICE_SAFE_SECRET_LENGTH` (24) instead of the 32-char default.
+   *
+   * The *alphabet* needs no flag: every generated secret is alphanumeric
+   * platform-wide (`SECRET_CHARS` in stackInstall/randomSecret.ts), so a
+   * template that forgets this flag still gets a symbol-free value — it
+   * just gets a longer one. The flag exists only for the length, because
+   * consumer firmware caps its credential field and silently keeps the
+   * prefix, which the device then reports as "wrong password".
+   */
+  deviceSafe?: boolean;
+  /**
    * Concrete example value shown next to the input in the Configure
    * step (small grey hint text). Use for fields whose `description`
    * tells the user *what* but not what a *valid value looks like* —

@@ -102,6 +102,24 @@ Work outside-in; each step rules out everything before it.
 
 ## The traps
 
+- **The device says the credentials are wrong — and they are right.** A
+  device reporting "wrong username or password" has told you only that the
+  broker turned it away; the broker log says *why*, and it is frequently not
+  what the device implies. Read it (`get_logs` on the broker) before
+  retyping anything:
+  - `disconnected: not authorised` while **Home Assistant connects with the
+    very same credentials** ⇒ the credentials are fine and the *device* is
+    mangling them. The usual culprit is a length cap on the device's
+    credential field: it keeps a prefix, sends that, and blames you. Try a
+    shorter password — ~24 alphanumeric characters is ~142 bits, plenty —
+    before suspecting anything else.
+  - no log line at all for the device's client ID ⇒ it never reached the
+    broker. That is host/port/firewall, not credentials, and retyping the
+    password cannot help.
+  This is why generated credentials should stay letters-and-digits and take
+  their strength from length: symbols are exactly where firmware, vendor
+  apps and copy-paste go wrong, and the failure surfaces as an accusation
+  against the operator rather than as a bug.
 - **`localhost` from inside a container.** It is the container. Use
   `host.containers.internal` for container→host, and the box's LAN address for
   device→box. The two are different answers to the same-sounding question.

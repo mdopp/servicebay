@@ -221,7 +221,14 @@ export default function StackVariableField({
   // regenerate request can drive a pending/disabled/error affordance
   // (hooks can't live behind these early-return branches).
   if (v.meta?.type === 'secret') {
-    return <SecretField value={v.value} onChange={onChange} cls={cls} />;
+    return (
+      <SecretField
+        value={v.value}
+        onChange={onChange}
+        cls={cls}
+        deviceSafe={v.meta.deviceSafe}
+      />
+    );
   }
 
   // Default — plain text. Placeholder prefers `meta.example`, then
@@ -239,11 +246,11 @@ export default function StackVariableField({
   );
 }
 
-const fetchGeneratedSecret = () =>
+const fetchGeneratedSecret = (deviceSafe?: boolean) =>
   typedFetch('/api/install/generate-secret', GenerateSecretResponseSchema, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify(deviceSafe ? { deviceSafe: true } : {}),
   });
 
 /**
@@ -252,15 +259,21 @@ const fetchGeneratedSecret = () =>
  * pending: the button disables + spins, and a failed request surfaces a
  * visible inline hint instead of silence (#2186). The field stays typeable
  * throughout — the operator can always enter a value manually.
+ *
+ * `deviceSafe` (#2577) forwards the variable's declaration so a regenerate
+ * mints the same device-safe shape the install path generates; the length
+ * policy itself stays server-side.
  */
 function SecretField({
   value,
   onChange,
   cls,
+  deviceSafe,
 }: {
   value: string;
   onChange: (value: string) => void;
   cls: string;
+  deviceSafe?: boolean;
 }) {
   const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState(false);
@@ -273,7 +286,7 @@ function SecretField({
     setRegenerating(true);
     setError(false);
     try {
-      onChange((await fetchGeneratedSecret()).secret);
+      onChange((await fetchGeneratedSecret(deviceSafe)).secret);
     } catch {
       setError(true);
     } finally {

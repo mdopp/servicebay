@@ -1448,6 +1448,20 @@ describe('Mosquitto template: mandatory credentials, LAN reach, persistence (#25
     expect(mosquitto.yamlContent).toMatch(/value: "\{\{MQTT_PASSWORD\}\}"/);
   });
 
+  it('generates both credentials device-safe — they are typed INTO devices (#2577)', () => {
+    // Proven at a real device 2026-08-16: a Nuki lock was rejected
+    // (`disconnected: not authorised`) with the generated 32-char value —
+    // pasted, so complete — while Home Assistant took the same credentials;
+    // a 24-char alphanumeric value connected on the first try. This template
+    // exists so DEVICES can connect, so a credential a device cannot carry
+    // defeats its entire purpose. The flag is what makes the assembler use
+    // the shorter profile (manifestAssembler.ts); pinned here so a later
+    // variables.json edit cannot quietly drop it.
+    for (const name of ['MQTT_USERNAME', 'MQTT_PASSWORD']) {
+      expect(mosquitto.variables[name]?.deviceSafe, `${name} must be deviceSafe`).toBe(true);
+    }
+  });
+
   it('keeps retained messages across a restart: persistence on, store on a host path', () => {
     // Retained messages ARE the device-state store. Without persistence every
     // reboot blanks them and Home Assistant shows `unknown` until each device

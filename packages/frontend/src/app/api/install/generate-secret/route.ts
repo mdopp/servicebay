@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withApiHandler } from '@/lib/api/handler';
-import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
+import { DEVICE_SAFE_SECRET_LENGTH, generateRandomSecret } from '@/lib/stackInstall/randomSecret';
 import { GenerateSecretRequestSchema } from '@servicebay/api-client';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +17,12 @@ export const dynamic = 'force-dynamic';
  * server-side as a logic primitive.
  */
 export const POST = withApiHandler({ body: GenerateSecretRequestSchema }, async ({ body }) => {
-  const secret = generateRandomSecret(body.length);
+  // #2577 — the regenerate button on a `deviceSafe` variable must mint the
+  // same shape the install path does, or the operator regenerates their way
+  // back into a value their device truncates. An explicit `length` still
+  // wins; the flag only supplies the default.
+  const secret = generateRandomSecret(
+    body.length ?? (body.deviceSafe ? DEVICE_SAFE_SECRET_LENGTH : undefined),
+  );
   return NextResponse.json({ secret });
 });

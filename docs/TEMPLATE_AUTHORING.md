@@ -151,6 +151,7 @@ Map of variable name to metadata. Recognized fields:
       "scopes": ["openid", "profile", "email"],
       "clientSecretVar": "MY_SSO_SECRET"  // optional — env-wired SSO
     },
+    "deviceSafe": true,      // type=secret only — value gets typed INTO a device
     "bcryptSource": "ADMIN_PASSWORD",  // for type=bcrypt — name of the var to hash
     "blockLanAccess": true   // port vars only — refuse LAN access at the host firewall
   }
@@ -161,7 +162,17 @@ What each `type` does generically (no per-template code needed):
 
 - **`text` / `select` / `device`** — rendered as a form input.
 - **`password` / `secret`** — auto-generated random string, shown
-  read-only with a regenerate button.
+  read-only with a regenerate button. Generated secrets are **always
+  alphanumeric** (`SECRET_CHARS`, `lib/stackInstall/randomSecret.ts`) —
+  strength comes from length, never from punctuation, because these
+  values get pasted into shells, config files and device firmware.
+- **`deviceSafe` on a `secret` var** — the value is carried *into a
+  device* (an IoT credential field, a vendor app's setup form). It is
+  then generated at 24 characters instead of 32 (~142 bits, still far
+  past reach). Set it whenever an operator will retype the value on
+  hardware: consumer firmware caps that field and silently keeps the
+  prefix, and the device reports the truncated value as "wrong
+  password" (#2577).
 - **`rsa-private`** — auto-generated PEM, hidden from the UI.
 - **`bcrypt`** — hash of `bcryptSource`'s value, hidden from the UI.
   Use this when you need both the plaintext (in env) and the hash
