@@ -9,6 +9,16 @@
     "description": "Host port for the beets web UI (library browser). LAN-only — beets' web plugin has no login of any kind, so this service deliberately gets no public subdomain and no SSO. Inside the container beets always serves 8337; this is only where it is published on the host.",
     "default": "8337"
   },
+  "BEETS_COVERAGE_PORT": {
+    "type": "text",
+    "description": "Host port for the library-coverage endpoint the health check reads. Bound to the host loopback only (127.0.0.1) — it is not reachable from the LAN and there is nothing on it a browser wants. Change it only if something else on this box already owns the port.",
+    "default": "8338"
+  },
+  "BEETS_COVERAGE_MIN_PERCENT": {
+    "type": "text",
+    "description": "How much of your music must be in the beets library before the 'Beets library coverage' health check counts as healthy, in percent of the audio files under /music. A percentage rather than a file count on purpose: it keeps meaning the same thing as the collection grows. 100 is rarely reachable — beets skips what it cannot match confidently.",
+    "default": "90"
+  },
   "BEETS_MUSIC_PATH": {
     "type": "text",
     "description": "Host path mounted at /music, read-write. Defaults to the file-share music folder, so anything dropped into the Samba/Syncthing share is what beets tags. beets writes tags into these files in place; on a fresh install it never moves or renames them.",

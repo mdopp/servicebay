@@ -3532,6 +3532,7 @@ class BeetsScript(unittest.TestCase):
             env = {
                 "DATA_DIR": tmp,
                 "BEETS_PORT": "8337",
+                "BEETS_COVERAGE_PORT": "8338",
                 "SB_API_URL": "http://localhost:3000",
                 "SB_API_TOKEN": "t",
             }
@@ -3580,13 +3581,47 @@ class BeetsScript(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("seeds one on start", out)
 
-    def test_registers_the_empty_library_check_and_prints_the_trigger(self):
+    def test_registers_the_coverage_check_and_prints_the_trigger(self):
         rc, out = self._run("import:\n  move: false\n")
         self.assertEqual(rc, 0)
-        self.assertIn("beets-library-populated", out)
+        self.assertIn("Beets library coverage", out)
         # The service must be genuinely operable: the command is in the log.
         self.assertIn("beet import /music", out)
         self.assertIn("beet import -q -i /music", out)
+
+    def test_the_registered_check_asks_about_coverage_not_existence(self):
+        """#2584 — the payload, not just the log line.
+
+        The old check was `"items"\\s*:\\s*[1-9]` against beets' /stats: green
+        at one item, forever. The replacement asserts a status code from the
+        coverage endpoint, and it keeps the same check id so an upgraded box
+        has its stale row rewritten instead of gaining a green twin.
+        """
+        import tempfile
+        import urllib.error
+
+        posted: list[dict[str, Any]] = []
+
+        def capture(req, *_a, **_kw):
+            posted.append(json.loads(req.data.decode("utf-8")))
+            raise urllib.error.URLError("registration response is not the point")
+
+        module = load_script("beets")
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "beets" / "config").mkdir(parents=True)
+            env = {"DATA_DIR": tmp, "BEETS_PORT": "8337", "BEETS_COVERAGE_PORT": "9338"}
+            with run_with_env(env), mock.patch("urllib.request.urlopen", capture):
+                rc, _out = capture_main(module)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(posted), 1)
+        check = posted[0]
+        self.assertEqual(check["id"], "beets-library-populated")
+        self.assertEqual(check["target"], "http://127.0.0.1:9338/coverage")
+        self.assertEqual(check["httpConfig"].get("expectedStatus"), 200)
+        # No body regex at all — a ratio is not expressible as one, and a
+        # baked-in item floor is the threshold that ages into a lie.
+        self.assertNotIn("bodyMatch", check["httpConfig"])
+        self.assertNotIn("bodyMatchType", check["httpConfig"])
 
     def test_health_check_registration_failure_is_not_fatal(self):
         module = load_script("beets")
@@ -3604,6 +3639,116 @@ class BeetsScript(unittest.TestCase):
                 rc, out = capture_main(module)
         self.assertEqual(rc, 0)
         self.assertIn("service:beets check still applies", out)
+
+
+class BeetsCoverageEndpoint(unittest.TestCase):
+    """#2584 — the coverage sidecar embedded in templates/beets/template.yml.
+
+    The script lives in a heredoc inside the pod spec (beets ships no
+    `*.mustache` companion — that would clobber the operator's config on every
+    redeploy, see template_consistency.test.ts), so the test extracts it and
+    exercises it directly. What is under test is the property the issue is
+    about: the verdict must depend on the RATIO, so it cannot go green on a
+    library holding one album out of thousands, and it must not need
+    re-tuning when the collection grows.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import re
+        import textwrap
+
+        raw = (TEMPLATES_DIR / "beets" / "template.yml").read_text(encoding="utf-8")
+        match = re.search(r"<<'PY'\n(.*?)\n\s*PY\n", raw, re.DOTALL)
+        assert match, "beets template.yml must embed the coverage script in a PY heredoc"
+        cls.source = textwrap.dedent(match.group(1))
+
+    def _module(self):
+        """A fresh instance of the extracted script (module state is global)."""
+        spec = importlib.util.spec_from_loader("_beets_coverage", loader=None)
+        assert spec is not None
+        module = importlib.util.module_from_spec(spec)
+        exec(compile(self.source, "beets-coverage.py", "exec"), module.__dict__)  # noqa: S102
+        return module
+
+    @contextlib.contextmanager
+    def _library(self, files: int, items: int, floor: str = "90"):
+        """A music tree with `files` audio files and a beets library of `items`."""
+        import tempfile
+
+        module = self._module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "Artist" / "Album"
+            root.mkdir(parents=True)
+            for i in range(files):
+                (root / f"{i:05d}.mp3").write_text("", encoding="utf-8")
+            module.MUSIC_DIR = str(tmp)
+            module.library_items = lambda: items
+            with run_with_env({"SB_COVERAGE_MIN_PERCENT": floor}):
+                module._state["files"] = module.count_audio_files(str(tmp))
+                module._state["scanned_at"] = 1.0
+                yield module
+
+    def test_one_album_out_of_a_full_collection_is_not_healthy(self):
+        # The exact defect: the old regex went green here.
+        with self._library(files=200, items=1) as module:
+            status, report = module.coverage_report()
+        self.assertEqual(status, 503)
+        self.assertEqual(report["status"], "behind")
+        self.assertEqual(report["percent"], 0.5)
+        self.assertIn("1 of 200", report["detail"])
+
+    def test_a_covered_library_is_healthy(self):
+        with self._library(files=200, items=195) as module:
+            status, report = module.coverage_report()
+        self.assertEqual(status, 200)
+        self.assertEqual(report["status"], "ok")
+
+    def test_the_floor_is_a_ratio_so_it_does_not_age(self):
+        # Same proportion, ten times the collection: same verdict. A
+        # hard-coded item floor would flip here, which is what #2584 forbids.
+        verdicts = []
+        for scale in (1, 10):
+            with self._library(files=50 * scale, items=48 * scale) as module:
+                verdicts.append(module.coverage_report()[0])
+            with self._library(files=50 * scale, items=10 * scale) as module:
+                verdicts.append(module.coverage_report()[0])
+        self.assertEqual(verdicts, [200, 503, 200, 503])
+
+    def test_syncthing_version_copies_do_not_inflate_the_denominator(self):
+        with self._library(files=10, items=10) as module:
+            versions = Path(module.MUSIC_DIR) / ".stversions" / "Artist"
+            versions.mkdir(parents=True)
+            for i in range(40):
+                (versions / f"old-{i}.mp3").write_text("", encoding="utf-8")
+            (Path(module.MUSIC_DIR) / "Artist" / "cover.jpg").write_text("", encoding="utf-8")
+            self.assertEqual(module.count_audio_files(module.MUSIC_DIR), 10)
+
+    def test_beets_not_answering_is_red_not_green(self):
+        with self._library(files=10, items=10) as module:
+            def boom():
+                raise OSError("connection refused")
+
+            module.library_items = boom
+            status, report = module.coverage_report()
+        self.assertEqual(status, 503)
+        self.assertEqual(report["status"], "unknown")
+
+    def test_the_first_scan_is_reported_as_scanning_never_as_ok(self):
+        # Transient and bounded (one walk), so it must not flap the check red —
+        # but it must not claim a coverage verdict it does not have either.
+        with self._library(files=10, items=1) as module:
+            module._state["files"] = None
+            status, report = module.coverage_report()
+        self.assertEqual(status, 200)
+        self.assertEqual(report["status"], "scanning")
+        self.assertNotIn("percent", report)
+
+    def test_an_empty_music_folder_is_not_a_failure(self):
+        with self._library(files=0, items=0) as module:
+            status, report = module.coverage_report()
+        self.assertEqual(status, 200)
+        self.assertEqual(report["status"], "ok")
 
 
 class BeetsV1ToV2Migration(unittest.TestCase):

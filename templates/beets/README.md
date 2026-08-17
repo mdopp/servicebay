@@ -48,9 +48,11 @@ unnoticed is worse.
   are and never relocates or renames anything. `web.readonly: yes` keeps the
   browser a browser.
 - **A health check that tells the truth.** Alongside the normal "is it up"
-  probe, the install registers a second check that goes **red when the beets
-  library is empty**. A service that is running but has never been given
-  anything to do no longer looks green.
+  probe, the install registers a second check that compares what is in the
+  beets library against the audio files actually sitting under `/music`, and
+  goes **red when the library covers less than `BEETS_COVERAGE_MIN_PERCENT`
+  of them** (default 90 %). See below for why it is a ratio and not "the
+  library has something in it".
 - **An import you can run in one line**, below.
 
 ## Running an import
@@ -86,6 +88,43 @@ them interactively.
 > or `copy: yes` under `import:`, an import **will relocate and rename** every
 > file it touches, whichever command above you use. Set them to `no` first
 > unless that is genuinely what you want.
+
+## The coverage check, and why it is a ratio
+
+The first version of this check asserted that beets' `/stats` endpoint reported
+at least one item. It went green after the first album and never went back —
+so a box with 27,000 audio files and 485 items in the library reported healthy
+while nearly all of the music was still untagged. A media server then scans
+that untagged remainder over and over, which is how "beets looks fine" turns
+into a machine under load.
+
+The number that was missing is the **denominator**: how many audio files are on
+disk. It is not in beets' answer, and ServiceBay's HTTP check is status code +
+body regex, so no pattern over `{"albums": M, "items": N}` can express it.
+Baking a file count into the check instead would only move the lie — it would
+be wrong again the next time you add an album.
+
+So a second container in the pod answers the question where both numbers exist:
+
+```bash
+curl -s http://127.0.0.1:8338/coverage
+{"music_dir": "/music", "files": 27268, "items": 485, "percent": 1.8,
+ "min_percent": 90.0, "status": "behind", "detail": "…"}
+```
+
+It walks `/music` once an hour (dot-directories such as Syncthing's
+`.stversions` are skipped so copies don't inflate the count), asks beets for
+its item count over the pod's own loopback, and answers `200` at or above the
+floor and `503` below it. That endpoint is bound to `127.0.0.1` on the host —
+its only consumer is ServiceBay's health poller.
+
+Two consequences worth knowing:
+
+- **100 % is not the target.** `beet import -q` skips albums it can't match
+  confidently, and a folder can hold audio beets has no business tagging. 90 %
+  is the default floor; `BEETS_COVERAGE_MIN_PERCENT` moves it.
+- **A red check here means "there is tagging work to do"**, not "the service is
+  broken". The liveness check is separate and stays green.
 
 ## Why it is LAN-only, with no subdomain and no SSO
 
