@@ -515,8 +515,12 @@ describe('Home Assistant base configuration.yaml ships the include wiring', () =
     expect(cfg).toMatch(/^script: !include scripts\.yaml$/m);
     expect(cfg).toMatch(/^scene: !include scenes\.yaml$/m);
     // ServiceBay's required wiring is still present on a fresh install.
-    expect(cfg).toMatch(/^http:/m);
     expect(cfg).toMatch(/^auth_oidc:/m);
+    // …but NOT an `http:` block (#2573). HA 2026.8 keeps that setting in its
+    // own store and raises a permanent repair issue while the YAML block
+    // survives, so post-deploy.py sets it via HA's `http/config/configure`
+    // websocket command instead of this file re-seeding it every deploy.
+    expect(cfg).not.toMatch(/^http:/m);
   });
 
   it('every !include target file is shipped so the include never dangles', () => {
@@ -969,8 +973,13 @@ describe('Home Assistant template: Z-Wave and Matter ports are loopback-bound (#
     expect(ha.yamlContent).toMatch(/servicebay\.ports:\s*"8123\/tcp,8091\/tcp,3001\/tcp,5580\/tcp"/);
   });
 
-  it('schema-version is bumped to 7 with a CHANGELOG section and a v6-to-v7 migration', () => {
-    expect(ha.yamlContent).toMatch(/servicebay\.schema-version:\s*"7"/);
+  it('the v6-to-v7 hop stays in place with its CHANGELOG section and migration', () => {
+    // Pinned as "at least 7", not "exactly 7": later hops (v8 = #2573) must be
+    // free to land without re-opening this #2416 guard, but the template can
+    // never fall back below the hop that moved these binds to loopback.
+    const declared = ha.yamlContent.match(/servicebay\.schema-version:\s*"(\d+)"/);
+    expect(declared, 'home-assistant must declare a schema-version').toBeTruthy();
+    expect(Number(declared![1])).toBeGreaterThanOrEqual(7);
     const changelog = fs.readFileSync(
       path.join(TEMPLATES_DIR, 'home-assistant', 'CHANGELOG.md'), 'utf-8',
     );

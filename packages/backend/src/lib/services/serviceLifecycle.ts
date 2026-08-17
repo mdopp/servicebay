@@ -1431,7 +1431,7 @@ export class ServiceLifecycle {
 
     /**
      * Append `block` to `cfgFile` (heredoc) only when `topKey` (an
-     * unindented YAML key, e.g. `http:` / `automation:`) is absent. Returns
+     * unindented YAML key, e.g. `automation:` / `script:`) is absent. Returns
      * true iff the block was appended. Shared by the HA self-heal hook so
      * each managed key is re-added independently after a backup-restore
      * brings back a user `configuration.yaml` without it. Idempotent: a
@@ -1467,17 +1467,25 @@ export class ServiceLifecycle {
      * Home Assistant configuration.yaml self-healing hook.
      *
      * A HA backup-restore replaces ServiceBay's base `configuration.yaml`
-     * with the snapshot's own — which carries the user's content but NONE of
-     * ServiceBay's required wiring (the `http:` trusted-proxies block, the
-     * `auth_oidc:` SSO block) and, on a pre-#1687 box, NOT the
-     * `automation:` / `script:` / `scene:` includes either. Without the
-     * includes a restored `automations.yaml` never loads (every automation
-     * `unavailable`); without `http:`/`auth_oidc:` the proxy + SSO break.
+     * with the snapshot's own — which carries the user's content but, on a
+     * pre-#1687 box, NOT the `automation:` / `script:` / `scene:` includes.
+     * Without those a restored `automations.yaml` never loads (every
+     * automation `unavailable`).
      *
      * We re-add each managed key independently when it's missing, and ensure
      * the three include target files exist (empty is fine — restore overwrote
      * them with real content), so a restored user config keeps all of the
      * user's own settings AND ServiceBay's needs are present again.
+     *
+     * The `http:` trusted-proxies block used to be re-added here too. It is
+     * NOT any more (#2573): HA 2026.8 moved that setting into its own store
+     * and raises a permanent repair issue for as long as an `http:` block is
+     * left in the YAML, so re-appending it every deploy meant the operator
+     * could never clear the warning. This hook runs BEFORE HA starts, so it
+     * cannot tell which HA era the box is on; `templates/home-assistant/
+     * post-deploy.py` owns the trust list now, where HA is running and can be
+     * asked. The `auth_oidc:` block was likewise already owned there, because
+     * it needs rendered variable values this hook does not have.
      *
      * Public for unit testing (`serviceLifecycle.homeAssistantHook.test.ts`);
      * the production caller is `runPreStartHooks`.
@@ -1492,22 +1500,6 @@ export class ServiceLifecycle {
         // (including post-restore), the file is there and we get to fix it.
         const exists = await agent.sendCommand('exec', { command: `test -f ${cfgFile} && echo yes` });
         if (exists.stdout?.trim() !== 'yes') return;
-
-        const trustedProxiesBlock = [
-            '',
-            '# Re-added by ServiceBay: NPM forwards X-Forwarded-For; HA needs',
-            '# trusted_proxies to accept proxied requests. Safe to edit, but',
-            '# ServiceBay will re-append this block on every deploy when the',
-            '# `http:` key is missing (e.g. after a HA backup-restore).',
-            'http:',
-            '  use_x_forwarded_for: true',
-            '  trusted_proxies:',
-            '    - 127.0.0.1',
-            '    - 192.168.0.0/16',
-            '    - 10.0.0.0/8',
-            '    - 172.16.0.0/12',
-        ].join('\n');
-        await ServiceLifecycle.appendYamlKeyIfMissing(agent, cfgFile, 'http:', trustedProxiesBlock, 'http: trusted_proxies block');
 
         // UI-editable automations/scripts/scenes only load when their
         // `!include` line is in configuration.yaml. A backup-restore brings
@@ -1671,7 +1663,8 @@ export class ServiceLifecycle {
                 for (const container of containers) {
                     const image = container.image || '';
 
-                    // Home Assistant self-healing trusted_proxies hook.
+                    // Home Assistant configuration.yaml self-healing hook
+                    // (the automation/script/scene includes + integrity guard).
                     if (image.includes('home-assistant') && container.name !== 'matter-server' && container.name !== 'zwave-js') {
                         const configMount = (container.volumeMounts || []).find(
                             (m: PodLikeVolumeMount) => m.mountPath === '/config'

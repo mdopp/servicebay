@@ -1,12 +1,20 @@
 # Home Assistant base config. ServiceBay writes this once on first
 # install. Edit freely afterwards — re-deploys don't overwrite.
 #
+# Reverse-proxy trust list: deliberately NOT here. Home Assistant
+# 2026.8 moved the `http:` integration out of YAML and into its own
+# store (Settings → System → Network), and raises a permanent repair
+# issue — "HTTP YAML configuration is ignored after migration" — for
+# as long as an `http:` block is still in this file. ServiceBay now
+# sets `use_x_forwarded_for` + `trusted_proxies` through HA's own
+# `http/config/configure` websocket command from post-deploy.py
+# instead, so the setting lands where HA actually reads it and the
+# repair issue stays cleared (#2573).
+#
 # Backup-restore caveat: when you restore a HA backup, the snapshot's
-# own configuration.yaml replaces this file. Re-add an `http:` block
-# with `use_x_forwarded_for: true` and the trusted-proxy CIDRs below,
-# otherwise NPM-proxied requests fail with HTTP 400 "request from
-# reverse proxy but HTTP integration is not set up for reverse
-# proxies".
+# own configuration.yaml replaces this file — but the HTTP settings
+# live in `.storage/http`, not here, so the trust list survives. The
+# `auth_oidc:` block below does not; post-deploy.py re-appends it.
 
 # Loads default set of integrations. Do not remove.
 default_config:
@@ -21,18 +29,6 @@ default_config:
 automation: !include automations.yaml
 script: !include scripts.yaml
 scene: !include scenes.yaml
-
-# Reverse-proxy trust list. NPM (on the same host) forwards
-# X-Forwarded-For for every proxied request. Trusting the private
-# RFC1918 ranges + loopback works regardless of which LAN subnet
-# ServiceBay sits on — no per-install variable injection needed.
-http:
-  use_x_forwarded_for: true
-  trusted_proxies:
-    - 127.0.0.1
-    - 192.168.0.0/16
-    - 10.0.0.0/8
-    - 172.16.0.0/12
 
 # OIDC auth via the `auth_oidc` custom component (installed by
 # post-deploy.py from a pinned tarball — see HA_OIDC_AUTH_VERSION).

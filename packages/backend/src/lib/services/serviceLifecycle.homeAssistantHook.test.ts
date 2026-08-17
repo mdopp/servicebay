@@ -72,7 +72,7 @@ const DIR = '/mnt/data/home-assistant/homeassistant';
 describe('runHomeAssistantHook (#1687 config-survival self-heal)', () => {
     beforeEach(() => vi.clearAllMocks());
 
-    it('re-adds http: + the 3 includes after a restore brought back a bare user config', async () => {
+    it('re-adds the 3 includes after a restore brought back a bare user config', async () => {
         // Simulate a restored user configuration.yaml: user content, but none
         // of ServiceBay's wiring and no automation/script/scene includes.
         const agent = makeHaAgent({ [CFG]: 'default_config:\n\nfrontend:\n' });
@@ -81,8 +81,6 @@ describe('runHomeAssistantHook (#1687 config-survival self-heal)', () => {
 
         const out = agent.files[CFG];
         expect(out).toContain('frontend:');                 // user content preserved
-        expect(out).toMatch(/^http:/m);                     // trusted_proxies re-added
-        expect(out).toContain('use_x_forwarded_for: true');
         expect(out).toMatch(/^automation: !include automations\.yaml$/m);
         expect(out).toMatch(/^script: !include scripts\.yaml$/m);
         expect(out).toMatch(/^scene: !include scenes\.yaml$/m);
@@ -91,6 +89,36 @@ describe('runHomeAssistantHook (#1687 config-survival self-heal)', () => {
         expect(agent.files[`${DIR}/automations.yaml`]).toBe('[]\n');
         expect(agent.files[`${DIR}/scripts.yaml`]).toBe('{}\n');
         expect(agent.files[`${DIR}/scenes.yaml`]).toBe('[]\n');
+    });
+
+    it('#2573: never writes an http: block — HA 2026.8 owns that setting now', async () => {
+        // Same bare restored config as above. Before #2573 this hook appended a
+        // trusted_proxies block on every deploy, which re-triggered HA's
+        // "HTTP YAML configuration is ignored after migration" repair issue
+        // however often the operator removed it. The hook runs BEFORE HA
+        // starts, so it cannot tell which HA era the box is on; the trust list
+        // is post-deploy.py's job now.
+        const agent = makeHaAgent({ [CFG]: 'default_config:\n\nfrontend:\n' });
+
+        await ServiceLifecycle.runHomeAssistantHook(agent as never, CFG);
+
+        expect(agent.files[CFG]).not.toMatch(/^http:/m);
+        expect(agent.files[CFG]).not.toContain('use_x_forwarded_for');
+        expect(agent.files[CFG]).not.toContain('trusted_proxies');
+        // …and it never even probed for the key, so no command can re-add it.
+        expect(agent.calls.some((c) => c.includes("grep -E '^http:'"))).toBe(false);
+    });
+
+    it('#2573: leaves an operator/legacy http: block in place — removal is post-deploy.py\'s call', async () => {
+        // The hook must not delete it either: only a running HA can confirm the
+        // setting has been migrated into `.storage/http` first.
+        const withHttp = 'default_config:\n\nhttp:\n  use_x_forwarded_for: true\n';
+        const agent = makeHaAgent({ [CFG]: withHttp });
+
+        await ServiceLifecycle.runHomeAssistantHook(agent as never, CFG);
+
+        expect(agent.files[CFG]).toContain('http:');
+        expect(agent.files[CFG]).toContain('use_x_forwarded_for: true');
     });
 
     it('is idempotent: a config that already has everything is left untouched', async () => {

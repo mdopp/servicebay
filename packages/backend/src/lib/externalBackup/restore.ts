@@ -291,9 +291,9 @@ export async function restoreServiceBackup(
  * After this runs, `autoRestoreServiceOnReinstall` re-seeds CONFIG from the NAS
  * (the wiped CONFIG paths are gone, so the restore re-creates them over the
  * kept DATA). ServiceBay-managed bits stamped into the restored
- * `configuration.yaml` (HA `http: trusted_proxies`, the OIDC client secret) are
- * re-applied by the existing post-deploy self-heal hooks (serviceLifecycle's
- * trusted_proxies append + the #989 OIDC dispatcher), which run on every deploy
+ * `configuration.yaml` (the OIDC client secret) are
+ * re-applied by the existing post-deploy self-heal hooks (the #989 OIDC
+ * dispatcher, plus the #2573 trust-list step), which run on every deploy
  * regardless of the restore — so the documented caveat is honoured without a
  * second stamping path here.
  *

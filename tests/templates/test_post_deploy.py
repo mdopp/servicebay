@@ -2455,6 +2455,351 @@ class HomeAssistantScript(unittest.TestCase):
             self.assertFalse(m._yaml_is_effectively_empty(body), body)
 
 
+class HomeAssistantHttpTrustedProxies(unittest.TestCase):
+    """#2573 — Home Assistant 2026.8 moved the `http:` integration out of
+    configuration.yaml into its own store, and raises a permanent repair issue
+    ("HTTP YAML configuration is ignored after migration") for as long as an
+    `http:` block is left in the YAML. ServiceBay used to re-render that block
+    on every deploy, so the operator could never make the warning stay gone.
+
+    The replacement has to hold two things at once: a FRESH install still ends
+    up with a working trust list (HA's defaults reject proxied requests
+    outright), and an ALREADY-MIGRATED install keeps whatever it migrated."""
+
+    TOKEN = "long-lived-tok"
+
+    def _cfg_dir(self, tmp, token=TOKEN):
+        cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+        os.makedirs(cfg, exist_ok=True)
+        if token is not None:
+            with open(os.path.join(cfg, ".solaris-long-lived-token"), "w") as fh:
+                fh.write(token + "\n")
+        return cfg
+
+    @staticmethod
+    def _store(stable, pending=None, active="stable"):
+        """One `http/config` result envelope, shaped like HA's."""
+        return {
+            "success": True,
+            "result": {"stable": stable, "pending": pending, "active_config_type": active},
+        }
+
+    @staticmethod
+    def _default_stable():
+        """What HA stores for an install that never configured HTTP: proxied
+        requests are rejected, because `use_x_forwarded_for` is off and the
+        trust list is empty."""
+        return {
+            "server_port": 8123,
+            "cors_allowed_origins": [],
+            "login_attempts_threshold": -1,
+            "ip_ban_enabled": True,
+            "ssl_profile": "modern",
+            "use_x_frame_options": True,
+            "created_at": "2026-08-17T10:00:00+00:00",
+            "error": None,
+            "error_message": None,
+        }
+
+    def _fake_ws(self, calls, responses):
+        """Record every websocket command and answer from `responses`, keyed by
+        command type. An unstubbed type is a test bug, not a silent pass."""
+        def fake(_token, commands, timeout=30):
+            kind = commands[0]["type"]
+            calls.append(commands[0])
+            if kind not in responses:
+                raise AssertionError(f"unexpected websocket command {kind}")
+            return [responses[kind]]
+        return fake
+
+    # ── criterion 1: the block is gone from what we render ────────────────
+    def test_rendered_configuration_yaml_carries_no_http_block(self):
+        """The seed template must not reintroduce the block on a fresh install
+        — that is what re-armed HA's repair issue every deploy."""
+        body = (TEMPLATES_DIR / "home-assistant" / "configuration.yaml.mustache").read_text()
+        # Comments may (and do) explain where the setting went; only what HA
+        # actually parses counts.
+        yaml_lines = [ln for ln in body.splitlines() if not ln.lstrip().startswith("#")]
+        for line in yaml_lines:
+            self.assertFalse(
+                line.startswith("http:"),
+                f"configuration.yaml.mustache still renders a top-level http: block: {line!r}",
+            )
+        self.assertNotIn("trusted_proxies", "\n".join(yaml_lines))
+        self.assertNotIn("use_x_forwarded_for", "\n".join(yaml_lines))
+        # …and it says where the setting went, so the next reader isn't puzzled.
+        self.assertIn("http/config/configure", body)
+
+    # ── criterion 2: a fresh install still ends up trusted ────────────────
+    def test_fresh_install_writes_the_trust_list_into_has_own_store(self):
+        import tempfile
+        m = load_script("home-assistant")
+        calls = []
+        responses = {
+            "http/config": self._store(self._default_stable()),
+            "http/config/configure": {"success": True, "result": {"restart": True}},
+            "http/config/promote": {"success": True, "result": None},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            self._cfg_dir(tmp)
+            with run_with_env({"DATA_DIR": tmp}), \
+                    mock.patch.object(m, "_ha_ws_commands", self._fake_ws(calls, responses)), \
+                    mock.patch.object(m, "_wait_ha_ready", lambda *_a, **_kw: True):
+                verdict = m.ensure_http_trusted_proxies()
+
+        self.assertEqual(verdict, "ok")
+        configure = next(c for c in calls if c["type"] == "http/config/configure")
+        sent = configure["config"]
+        self.assertIs(sent["use_x_forwarded_for"], True)
+        # Loopback + every RFC1918 range, in the network form HA requires.
+        self.assertEqual(
+            set(sent["trusted_proxies"]),
+            {"127.0.0.1/32", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"},
+        )
+        # HA applies a new HTTP config as a 5-minute trial that reverts itself
+        # unless it is promoted — so the promote is not optional.
+        self.assertIn("http/config/promote", [c["type"] for c in calls])
+
+    def test_a_config_that_is_never_promoted_is_reported_as_failed(self):
+        """An unpromoted trial silently auto-reverts. Reporting "ok" there
+        would hand back a box whose trust list disappears five minutes later."""
+        import tempfile
+        m = load_script("home-assistant")
+        calls = []
+        responses = {
+            "http/config": self._store(self._default_stable()),
+            "http/config/configure": {"success": True, "result": {"restart": True}},
+            "http/config/promote": {"success": False, "error": {"code": "not_allowed"}},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            self._cfg_dir(tmp)
+            with run_with_env({"DATA_DIR": tmp}), \
+                    mock.patch.object(m, "_ha_ws_commands", self._fake_ws(calls, responses)), \
+                    mock.patch.object(m, "_wait_ha_ready", lambda *_a, **_kw: True):
+                verdict = m.ensure_http_trusted_proxies()
+        self.assertEqual(verdict, "failed")
+
+    # ── criterion 3 + 5: an already-migrated install is left alone ────────
+    def test_already_trusted_store_is_left_untouched_on_every_later_deploy(self):
+        """The steady state. No configure, no promote, no HA restart — which is
+        what makes the fix survive the next deploy instead of fighting it."""
+        import tempfile
+        m = load_script("home-assistant")
+        calls = []
+        stable = dict(
+            self._default_stable(),
+            use_x_forwarded_for=True,
+            # HA stores what the operator typed in canonical network form.
+            trusted_proxies=["127.0.0.1/32", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"],
+        )
+        responses = {"http/config": self._store(stable)}
+        with tempfile.TemporaryDirectory() as tmp:
+            self._cfg_dir(tmp)
+            with run_with_env({"DATA_DIR": tmp}), \
+                    mock.patch.object(m, "_ha_ws_commands", self._fake_ws(calls, responses)):
+                verdict = m.ensure_http_trusted_proxies()
+        self.assertEqual(verdict, "ok")
+        self.assertEqual([c["type"] for c in calls], ["http/config"])
+
+    def test_ha_s_own_yaml_import_is_promoted_rather_than_overwritten(self):
+        """The real box: HA imported the old `http:` block into the PENDING
+        slot on this very start and is counting down to an auto-revert.
+        Confirming what it imported preserves the operator's migrated values
+        exactly, and costs one restart fewer than writing a second config."""
+        import tempfile
+        m = load_script("home-assistant")
+        calls = []
+        imported = dict(
+            self._default_stable(),
+            use_x_forwarded_for=True,
+            trusted_proxies=["127.0.0.1/32", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"],
+        )
+        responses = {
+            "http/config": self._store(self._default_stable(), pending=imported, active="pending"),
+            "http/config/promote": {"success": True, "result": None},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            self._cfg_dir(tmp)
+            with run_with_env({"DATA_DIR": tmp}), \
+                    mock.patch.object(m, "_ha_ws_commands", self._fake_ws(calls, responses)):
+                verdict = m.ensure_http_trusted_proxies()
+        self.assertEqual(verdict, "ok")
+        self.assertEqual([c["type"] for c in calls], ["http/config", "http/config/promote"])
+
+    def test_operator_settings_survive_and_their_own_proxies_are_kept(self):
+        """We add to the operator's stored config, never replace it: their port,
+        SSL paths and extra proxy stay, and HA's own bookkeeping keys are
+        stripped (HTTP_STORAGE_SCHEMA rejects unknown keys)."""
+        m = load_script("home-assistant")
+        stable = dict(
+            self._default_stable(),
+            server_port=8124,
+            ssl_certificate="/ssl/fullchain.pem",
+            cors_allowed_origins=["https://example.com"],
+            trusted_proxies=["172.30.0.0/16"],
+        )
+        desired = m._desired_http_config(stable)
+        self.assertEqual(desired["server_port"], 8124)
+        self.assertEqual(desired["ssl_certificate"], "/ssl/fullchain.pem")
+        self.assertEqual(desired["cors_allowed_origins"], ["https://example.com"])
+        self.assertIn("172.30.0.0/16", desired["trusted_proxies"])
+        self.assertIn("10.0.0.0/8", desired["trusted_proxies"])
+        for meta in ("created_at", "error", "error_message"):
+            self.assertNotIn(meta, desired)
+
+    def test_host_and_network_proxy_forms_compare_equal(self):
+        """`127.0.0.1` and `127.0.0.1/32` are the same trust entry; HA stores
+        the second. Without normalising, every deploy would rewrite the config
+        and restart HA in a loop."""
+        m = load_script("home-assistant")
+        self.assertTrue(m._http_config_trusts_proxies({
+            "use_x_forwarded_for": True,
+            "trusted_proxies": ["127.0.0.1", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"],
+        }))
+        # Trusting the proxy range but not reading the header is still broken:
+        # HA would report the proxy's own address as the client.
+        self.assertFalse(m._http_config_trusts_proxies({
+            "use_x_forwarded_for": False,
+            "trusted_proxies": ["127.0.0.1/32", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"],
+        }))
+        self.assertFalse(m._http_config_trusts_proxies({
+            "use_x_forwarded_for": True,
+            "trusted_proxies": ["192.168.0.0/16"],
+        }))
+
+    # ── criterion 1 + 4: what happens to the YAML block on disk ───────────
+    def test_block_is_removed_only_once_the_store_is_confirmed(self):
+        """Ordering is the safety property: strip the YAML only after HA's own
+        store is known to carry the trust list, never before."""
+        import tempfile
+        m = load_script("home-assistant")
+        legacy = (
+            "default_config:\n"
+            "\n"
+            "# Reverse-proxy trust list. NPM forwards X-Forwarded-For.\n"
+            "http:\n"
+            "  use_x_forwarded_for: true\n"
+            "  trusted_proxies:\n"
+            "    - 127.0.0.1\n"
+            "\n"
+            "auth_oidc:\n"
+            "  client_id: homeassistant\n"
+        )
+        for verdict, expect_removed in (("ok", True), ("failed", False), ("skipped", False)):
+            with tempfile.TemporaryDirectory() as tmp:
+                cfg = self._cfg_dir(tmp)
+                cfg_file = os.path.join(cfg, "configuration.yaml")
+                with open(cfg_file, "w") as fh:
+                    fh.write(legacy)
+                with run_with_env({"DATA_DIR": tmp}), \
+                        mock.patch.object(m, "ensure_http_trusted_proxies", lambda: verdict):
+                    m.configure_http_trusted_proxies()
+                with open(cfg_file) as fh:
+                    content = fh.read()
+                if expect_removed:
+                    self.assertNotIn("http:", content, verdict)
+                    self.assertNotIn("trusted_proxies", content, verdict)
+                else:
+                    self.assertIn("http:", content, verdict)
+
+    def test_removing_the_block_keeps_the_rest_of_the_file_and_backs_it_up(self):
+        import tempfile
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_file = os.path.join(tmp, "configuration.yaml")
+            original = (
+                "default_config:\n"
+                "\n"
+                "automation: !include automations.yaml\n"
+                "\n"
+                "# Reverse-proxy trust list, explained over\n"
+                "# two comment lines.\n"
+                "http:\n"
+                "  use_x_forwarded_for: true\n"
+                "  trusted_proxies:\n"
+                "    - 127.0.0.1\n"
+                "    - 10.0.0.0/8\n"
+                "\n"
+                "auth_oidc:\n"
+                "  client_id: homeassistant\n"
+            )
+            with open(cfg_file, "w") as fh:
+                fh.write(original)
+
+            self.assertTrue(m.remove_legacy_http_yaml_block(cfg_file))
+            with open(cfg_file) as fh:
+                    content = fh.read()
+            self.assertNotIn("http:", content)
+            self.assertNotIn("trusted_proxies", content)
+            self.assertNotIn("two comment lines", content)   # the block's own comment went with it
+            self.assertIn("default_config:", content)
+            self.assertIn("automation: !include automations.yaml", content)
+            self.assertIn("auth_oidc:", content)
+            self.assertIn("  client_id: homeassistant", content)
+            # The operator may have had their own settings under that key.
+            with open(cfg_file + ".pre-http-migration.bak") as fh:
+                self.assertEqual(fh.read(), original)
+
+            # Idempotent: nothing left to remove, and the backup is not
+            # overwritten with the already-stripped file.
+            self.assertFalse(m.remove_legacy_http_yaml_block(cfg_file))
+            with open(cfg_file + ".pre-http-migration.bak") as fh:
+                self.assertEqual(fh.read(), original)
+
+    def test_a_key_that_merely_starts_with_http_is_not_touched(self):
+        import tempfile
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_file = os.path.join(tmp, "configuration.yaml")
+            body = "http_response_sensor:\n  resource: http://x\nhttpx:\n  a: b\n"
+            with open(cfg_file, "w") as fh:
+                fh.write(body)
+            self.assertFalse(m.remove_legacy_http_yaml_block(cfg_file))
+            with open(cfg_file) as fh:
+                self.assertEqual(fh.read(), body)
+
+    def test_pre_2026_8_home_assistant_keeps_its_yaml_block(self):
+        """An older HA has no store to write to — there the YAML block is still
+        the only place the trust list can live, so it is re-added, not
+        removed. Only a running HA can tell us which era the box is on, which
+        is why this moved out of the pre-start hook."""
+        import tempfile
+        m = load_script("home-assistant")
+        calls = []
+        responses = {"http/config": {"success": False, "error": {"code": "unknown_command"}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg_dir(tmp)
+            cfg_file = os.path.join(cfg, "configuration.yaml")
+            with open(cfg_file, "w") as fh:
+                fh.write("default_config:\n")
+            with run_with_env({"DATA_DIR": tmp}), \
+                    mock.patch.object(m, "_ha_ws_commands", self._fake_ws(calls, responses)):
+                m.configure_http_trusted_proxies()
+            with open(cfg_file) as fh:
+                    content = fh.read()
+        self.assertIn("http:", content)
+        self.assertIn("use_x_forwarded_for: true", content)
+        self.assertIn("- 10.0.0.0/8", content)
+
+    def test_no_admin_token_explains_the_manual_step_instead_of_failing_silently(self):
+        import tempfile
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg_dir(tmp, token=None)
+            cfg_file = os.path.join(cfg, "configuration.yaml")
+            with open(cfg_file, "w") as fh:
+                fh.write("default_config:\n\nhttp:\n  use_x_forwarded_for: true\n")
+            buf = io.StringIO()
+            with run_with_env({"DATA_DIR": tmp}), contextlib.redirect_stdout(buf):
+                m.configure_http_trusted_proxies()
+            out = buf.getvalue()
+            # The existing block is the only working copy — leave it alone.
+            with open(cfg_file) as fh:
+                self.assertIn("http:", fh.read())
+        self.assertIn("Settings", out)
+        self.assertIn("Trust X-Forwarded-For", out)
+
+
 class HomeAssistantAuthOidcTarball(unittest.TestCase):
     """#2453: the auth_oidc release tarball is fetched over the network and
     unpacked as root. Extraction must not be able to write outside the staging

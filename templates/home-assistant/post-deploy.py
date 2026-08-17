@@ -33,12 +33,19 @@ Responsibilities:
      provider, so this is the bridge. Idempotent via a `.sb_installed_version`
      stamp; only re-downloads + extracts when HA_OIDC_AUTH_VERSION changes.
 
+  4. **Reverse-proxy trust list** — sets `use_x_forwarded_for` +
+     `trusted_proxies` through HA's own `http/config/configure` websocket
+     command, then removes the migrated `http:` block from configuration.yaml
+     (#2573). HA 2026.8 moved that setting into its own store and nags with a
+     permanent repair issue for as long as the YAML block is still around.
+
 Idempotent overall: safe to re-run on every deploy.
 """
 
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -474,11 +481,13 @@ def _ha_config_dir() -> str:
 # A HA backup-restore replaces ServiceBay's base configuration.yaml with the
 # snapshot's own, which carries the user's content but NOT ServiceBay's
 # `auth_oidc:` SSO block — so the "Sign in with Authelia" button disappears
-# and SSO breaks. The trusted_proxies (`http:`) self-heal lives in TS
-# (serviceLifecycle's runHomeAssistantHook), but auth_oidc needs the rendered
-# HA_OIDC_SECRET / group / domain values, which only exist here in the
-# post-deploy env. We re-append the block when the file has no `auth_oidc:`
-# key — coexisting with the restored user config rather than overwriting it.
+# and SSO breaks. It has to be re-added here rather than from the TS pre-start
+# hook (serviceLifecycle's runHomeAssistantHook) because it needs the rendered
+# HA_OIDC_SECRET / group / domain values, which only exist in the post-deploy
+# env. We re-append the block when the file has no `auth_oidc:` key —
+# coexisting with the restored user config rather than overwriting it.
+# (The reverse-proxy trust list is a separate story since #2573 — see
+# "Reverse-proxy trust list via HA's own HTTP config store" further down.)
 
 
 def _build_auth_oidc_block() -> str | None:
@@ -1145,6 +1154,366 @@ def configure_oscar_ha_onboarding() -> None:
         log(f"✅ HA admin '{username}' created + long-lived token persisted.")
 
 
+# ── Reverse-proxy trust list via HA's own HTTP config store (#2573) ──────────
+#
+# Home Assistant 2026.8 moved the `http:` integration out of configuration.yaml
+# into its own store (`<config>/.storage/http`, surfaced as Settings → System →
+# Network). On the first start after that upgrade HA imports an existing `http:`
+# block; from then on the YAML is IGNORED, and a permanent repair issue —
+# "HTTP YAML configuration is ignored after migration" — tells the operator to
+# delete it. ServiceBay used to render that block from
+# configuration.yaml.mustache AND re-append it from the pre-start hook on every
+# deploy, so the operator could delete it but never make the warning stay gone.
+#
+# Two things make "just stop writing the block" wrong on its own, which is why
+# this section exists rather than a one-line deletion:
+#
+#   1. A FRESH install with no `http:` block gets HA's DEFAULT http config —
+#      `use_x_forwarded_for` off, empty `trusted_proxies` — and HA then rejects
+#      every NPM-proxied request outright. Something has to put the trust list
+#      into the store.
+#   2. HA's own YAML import is not that something. It stages the imported
+#      config in the store's PENDING slot and schedules an auto-revert five
+#      minutes later unless an admin PROMOTES it. Unattended, the trust list
+#      silently reverts. Promotion is the part only an authenticated client
+#      can do — which is exactly what we are.
+#
+# We drive HA's own websocket commands (`http/config`, `http/config/configure`,
+# `http/config/promote`) instead of hand-editing `.storage/http`: HA holds that
+# store in memory and rewrites it on its own schedule, so a file written under
+# a running instance is both raced and version-unaware. Vehicle is the same one
+# the long-lived-token mint above already uses — a tiny `websockets` client run
+# inside HA's container, which ships the library as its own dependency.
+
+# Loopback + the RFC1918 ranges. NPM runs on this same host and forwards
+# X-Forwarded-For for every proxied request; trusting the private ranges works
+# on any LAN subnet, so no per-install variable injection is needed. HA
+# normalises each entry through `ipaddress.ip_network`, which REQUIRES a
+# network address (10.0.0.0/8), never a host address (10.1.2.3/8).
+HA_TRUSTED_PROXIES = [
+    "127.0.0.1/32",
+    "192.168.0.0/16",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+]
+# Bookkeeping HA adds to a stored config. `HTTP_STORAGE_SCHEMA` rejects unknown
+# keys, so these must be stripped before a config read from the store is handed
+# back to `http/config/configure`.
+HA_HTTP_META_KEYS = ("created_at", "error", "error_message")
+
+
+def _persisted_ha_token() -> str:
+    """The long-lived access token `configure_oscar_ha_onboarding` persists,
+    or "" when this box was set up without admin credentials."""
+    path = os.path.join(_ha_config_dir(), HA_LONG_LIVED_TOKEN_PATH.lstrip("/"))
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def _ha_ws_commands(token: str, commands: list[dict], timeout: int = 30) -> list[dict] | None:
+    """Run `commands` against HA's websocket API from inside HA's own container
+    and return one result envelope per command, or None if the call could not
+    be made at all.
+
+    The close handshake is deliberately swallowed: `http/config/configure`
+    answers and *then* restarts HA, so the socket often dies right after the
+    result we care about has already arrived."""
+    script = (
+        "import asyncio, json, os, sys, websockets\n"
+        "async def run(ws, cmds):\n"
+        "    out = []\n"
+        "    await ws.recv()  # auth_required hello\n"
+        "    await ws.send(json.dumps({'type': 'auth', 'access_token': os.environ['ACCESS']}))\n"
+        "    a = json.loads(await ws.recv())\n"
+        "    if a.get('type') != 'auth_ok':\n"
+        "        raise SystemExit('auth fail: ' + json.dumps(a))\n"
+        "    for i, cmd in enumerate(cmds, start=1):\n"
+        "        await ws.send(json.dumps(dict(cmd, id=i)))\n"
+        "        while True:\n"
+        "            r = json.loads(await ws.recv())\n"
+        "            if r.get('id') == i and r.get('type') == 'result':\n"
+        "                out.append(r)\n"
+        "                break\n"
+        "    return out\n"
+        "async def main():\n"
+        "    cmds = json.loads(os.environ['SB_WS_COMMANDS'])\n"
+        "    ws = await websockets.connect('ws://127.0.0.1:8123/api/websocket')\n"
+        "    try:\n"
+        "        out = await run(ws, cmds)\n"
+        "    finally:\n"
+        "        try:\n"
+        "            await ws.close()\n"
+        "        except Exception:\n"
+        "            pass\n"
+        "    print(json.dumps(out))\n"
+        "asyncio.run(main())\n"
+    )
+    try:
+        result = subprocess.run(
+            [
+                "podman", "exec",
+                "-e", f"ACCESS={token}",
+                "-e", f"SB_WS_COMMANDS={json.dumps(commands)}",
+                HA_CONTAINER_NAME, "python3", "-c", script,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (subprocess.SubprocessError, OSError) as e:
+        log(f"   ⚠️ HA websocket exec failed: {e}")
+        return None
+    if result.returncode != 0:
+        log(f"   ⚠️ HA websocket call exited {result.returncode}: {result.stderr.strip()[:400]}")
+        return None
+    try:
+        parsed = json.loads(result.stdout.strip())
+    except ValueError:
+        log(f"   ⚠️ HA websocket call returned unparseable output: {result.stdout.strip()[:200]}")
+        return None
+    return parsed if isinstance(parsed, list) else None
+
+
+def _ha_ws_call(token: str, command: dict, attempts: int = 3) -> dict | None:
+    """One websocket command, retried while HA reports it is still starting.
+
+    `http/config/configure` refuses with `not_running` until HA has finished
+    coming up — which is common right after a deploy, and is transient. A
+    substantive rejection is returned as-is so the caller can report it."""
+    envelope: dict | None = None
+    for attempt in range(attempts):
+        if attempt:
+            time.sleep(HA_READY_INTERVAL)
+        results = _ha_ws_commands(token, [command])
+        if not results:
+            continue
+        envelope = results[0]
+        if envelope.get("success"):
+            return envelope
+        if (envelope.get("error") or {}).get("code") == "not_running":
+            continue
+        return envelope
+    return envelope
+
+
+def _normalise_networks(values: object) -> set[str]:
+    """Canonical `ipaddress` form of each entry, so `127.0.0.1` and
+    `127.0.0.1/32` compare equal — HA stores the latter."""
+    out: set[str] = set()
+    if not isinstance(values, list):
+        return out
+    for value in values:
+        try:
+            out.add(str(ipaddress.ip_network(value, strict=False)))
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+def _http_config_trusts_proxies(conf: object) -> bool:
+    """True iff `conf` would let HA accept an NPM-proxied request AND read the
+    real client address out of X-Forwarded-For."""
+    if not isinstance(conf, dict) or not conf.get("use_x_forwarded_for"):
+        return False
+    return _normalise_networks(HA_TRUSTED_PROXIES) <= _normalise_networks(conf.get("trusted_proxies"))
+
+
+def _desired_http_config(stable: dict) -> dict:
+    """HA's current stored config plus ServiceBay's trust list. Everything the
+    operator set (port, SSL paths, CORS, ban policy) is carried through
+    untouched, and their own trusted proxies are kept alongside ours — this is
+    an addition to their config, not a replacement of it."""
+    desired = {k: v for k, v in stable.items() if k not in HA_HTTP_META_KEYS}
+    desired["use_x_forwarded_for"] = True
+    desired["trusted_proxies"] = sorted(
+        _normalise_networks(desired.get("trusted_proxies")) | _normalise_networks(HA_TRUSTED_PROXIES)
+    )
+    return desired
+
+
+def ensure_http_trusted_proxies() -> str:
+    """Make HA's *stored* HTTP config trust ServiceBay's reverse proxy.
+
+    Verdicts:
+      "ok"          — the store carries the trust list (already did, or now does)
+      "unsupported" — this HA predates the 2026.8 store; configuration.yaml still rules
+      "skipped"     — no usable admin token; only the operator can set it
+      "failed"      — HA has the store but we could not write it
+    """
+    token = _persisted_ha_token()
+    if not token:
+        log("   No HA long-lived token on disk — cannot reach HA's HTTP config API.")
+        return "skipped"
+
+    probe = _ha_ws_call(token, {"type": "http/config"})
+    if probe is None:
+        return "failed"
+    if not probe.get("success"):
+        error = probe.get("error") or {}
+        if error.get("code") in ("unknown_command", "invalid_format"):
+            log("   This Home Assistant predates the 2026.8 HTTP config store — "
+                "configuration.yaml is still the only place the trust list can live.")
+            return "unsupported"
+        if error.get("code") == "unauthorized":
+            log("   The persisted HA token is not an admin token — cannot set the HTTP config.")
+            return "skipped"
+        log(f"   ⚠️ HA rejected http/config: {error}")
+        return "failed"
+
+    result = probe.get("result") or {}
+    stable = result.get("stable") or {}
+    pending = result.get("pending")
+
+    if _http_config_trusts_proxies(stable):
+        # The steady state on every deploy after the first: already correct AND
+        # already confirmed, so we touch nothing and HA is not restarted.
+        log("✅ HA's stored HTTP config already trusts the reverse proxy — leaving it alone.")
+        return "ok"
+
+    if result.get("active_config_type") == "pending" and _http_config_trusts_proxies(pending):
+        # HA imported the old YAML block into the PENDING slot on this very
+        # start and is counting down to an auto-revert. Confirm what it
+        # imported rather than writing a second config — one restart fewer,
+        # and the operator's own imported values are preserved exactly.
+        promote = _ha_ws_call(token, {"type": "http/config/promote"})
+        if promote and promote.get("success"):
+            log("✅ Confirmed HA's imported HTTP config (it would have auto-reverted in 5 minutes).")
+            return "ok"
+        log(f"   ⚠️ Could not promote HA's pending HTTP config: {promote}")
+        return "failed"
+
+    log("Setting HA's reverse-proxy trust list through its own HTTP config API...")
+    configured = _ha_ws_call(token, {"type": "http/config/configure", "config": _desired_http_config(stable)})
+    if not configured or not configured.get("success"):
+        log(f"   ⚠️ HA rejected the HTTP config: {configured}")
+        return "failed"
+    if (configured.get("result") or {}).get("restart"):
+        # HA applies a new HTTP config by restarting into it, as a five-minute
+        # trial. Wait for it back, then promote — an unpromoted trial reverts.
+        if not _wait_ha_ready():
+            log("   ⚠️ HA did not come back after the HTTP config restart — the new config auto-reverts.")
+            return "failed"
+    promote = _ha_ws_call(token, {"type": "http/config/promote"})
+    if not promote or not promote.get("success"):
+        log(f"   ⚠️ HA took the trust list but promoting it failed — it auto-reverts in 5 minutes: {promote}")
+        return "failed"
+    log("✅ HA now trusts ServiceBay's reverse proxy (stored in HA, not in configuration.yaml).")
+    return "ok"
+
+
+def _find_top_level_block(lines: list[str], key: str) -> tuple[int, int] | None:
+    """Span of a top-level `<key>:` block as (start, end-exclusive) line
+    indices, or None when the key is absent. `start` reaches back over the
+    contiguous comment paragraph directly above the key so the block's own
+    explanation goes with it; trailing blank lines are left in place."""
+    for i, line in enumerate(lines):
+        if not re.match(rf"^{re.escape(key)}:(\s|$)", line):
+            continue
+        end = i + 1
+        while end < len(lines) and (not lines[end].strip() or lines[end][:1] in (" ", "\t")):
+            end += 1
+        while end > i + 1 and not lines[end - 1].strip():
+            end -= 1
+        start = i
+        while start > 0 and lines[start - 1].lstrip().startswith("#"):
+            start -= 1
+        return start, end
+    return None
+
+
+def remove_legacy_http_yaml_block(cfg_path: str) -> bool:
+    """Delete a migrated top-level `http:` block from configuration.yaml.
+
+    This is precisely the step HA's repair issue asks the operator to perform;
+    doing it here is what makes the warning stay gone across deploys. Only ever
+    called once HA's own store is CONFIRMED to carry the trust list, so it can
+    never remove the only copy of the setting — and the whole file is backed up
+    once before the first edit, because an operator may have put their own
+    settings (SSL paths, CORS, ban policy) under that key. HA already imported
+    those into the store; the backup is there in case they want to read them
+    back. Returns True iff the block was just removed."""
+    try:
+        with open(cfg_path, encoding="utf-8") as fh:
+            lines = fh.read().splitlines(keepends=True)
+    except OSError:
+        return False
+    span = _find_top_level_block(lines, "http")
+    if span is None:
+        return False
+    start, end = span
+    backup = cfg_path + ".pre-http-migration.bak"
+    try:
+        if not os.path.exists(backup):
+            shutil.copy2(cfg_path, backup)
+        with open(cfg_path, "w", encoding="utf-8") as fh:
+            fh.writelines(lines[:start] + lines[end:])
+    except OSError as exc:
+        log(f"   ⚠️ Could not remove the migrated http: block from {cfg_path}: {exc}")
+        return False
+    log(f"   Removed the migrated `http:` block from configuration.yaml — HA reads the "
+        f"trust list from its own store now. Backup: {backup}")
+    return True
+
+
+def ensure_legacy_http_yaml_block(cfg_path: str) -> bool:
+    """Re-add the pre-2026.8 `http:` block.
+
+    ONLY for a Home Assistant too old to have the HTTP config store. There,
+    configuration.yaml is still the only place the trust list can live, and a
+    backup-restore that replaced the file would otherwise leave every proxied
+    request rejected. This is the last remaining caller of the old self-heal
+    that used to run unconditionally from the pre-start hook — it lives here
+    now because only a *running* HA can tell us which era it is from."""
+    try:
+        with open(cfg_path, encoding="utf-8") as fh:
+            content = fh.read()
+    except OSError:
+        return False
+    if re.search(r"(?m)^http:", content):
+        return False
+    block = "\n".join([
+        "",
+        "# Re-added by ServiceBay: NPM forwards X-Forwarded-For; this Home",
+        "# Assistant predates the 2026.8 HTTP config store, so the trust list",
+        "# still has to live here. It is removed automatically once HA is new",
+        "# enough to keep it in its own store (#2573).",
+        "http:",
+        "  use_x_forwarded_for: true",
+        "  trusted_proxies:",
+    ] + [f"    - {proxy}" for proxy in HA_TRUSTED_PROXIES])
+    try:
+        with open(cfg_path, "a", encoding="utf-8") as fh:
+            fh.write(block + "\n")
+    except OSError as exc:
+        log(f"   ⚠️ Could not re-add the http: block to {cfg_path}: {exc}")
+        return False
+    log("   Re-added the http: trusted_proxies block (pre-2026.8 Home Assistant).")
+    return True
+
+
+def configure_http_trusted_proxies() -> None:
+    """Put ServiceBay's reverse-proxy trust list wherever this HA reads it
+    from, and leave exactly one copy behind."""
+    cfg_path = os.path.join(_ha_config_dir(), "configuration.yaml")
+    verdict = ensure_http_trusted_proxies()
+    if verdict == "ok":
+        remove_legacy_http_yaml_block(cfg_path)
+        return
+    if verdict == "unsupported":
+        ensure_legacy_http_yaml_block(cfg_path)
+        return
+    # Neither path is safe to act on: we could not read HA's store, so we do
+    # NOT touch configuration.yaml — leaving an existing block in place is the
+    # conservative choice even though it keeps HA's repair warning up.
+    log("⚠️ Could not set HA's reverse-proxy trust list. Proxied access may report the "
+        "proxy's own address, or be rejected outright. Set it under Settings → System → "
+        "Network → HTTP server: turn on 'Trust X-Forwarded-For' and add "
+        f"{', '.join(HA_TRUSTED_PROXIES)} to 'Trusted proxies'.")
+
+
 def _strip_first_component(member_path: str) -> str | None:
     """Tarballs from GitHub release tags are wrapped in a top-level
     directory like `hass-oidc-auth-0.6.0/`. We unwrap that prefix and
@@ -1440,8 +1809,12 @@ def main() -> int:
     report_orphaned_helpers()
     if _wait_ha_ready():
         configure_oscar_ha_onboarding()
+        # Needs a running HA and the token the onboarding above persists, so it
+        # runs last (#2573).
+        configure_http_trusted_proxies()
     else:
-        log("⚠️ HA did not become reachable in time — skipping OSCAR onboarding.")
+        log("⚠️ HA did not become reachable in time — skipping OSCAR onboarding "
+            "and the reverse-proxy trust list.")
 
     # ── Health check ─────────────────────────────────────────────────────────
     # Worked example for docs/TEMPLATE_AUTHORING.md § Health checks.
