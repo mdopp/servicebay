@@ -1215,9 +1215,15 @@ describe('Media template: Audiobookshelf retired for fresh installs (#1725)', ()
     expect(JSON.stringify(hosts)).not.toMatch(/books/);
   });
 
-  it('schema-version is bumped to 7 with a matching CHANGELOG section', () => {
-    expect(media.yamlContent).toMatch(/servicebay\.schema-version:\s*"7"/);
+  it('schema-version is bumped to 8 with a matching CHANGELOG section', () => {
+    expect(media.yamlContent).toMatch(/servicebay\.schema-version:\s*"8"/);
     const changelog = fs.readFileSync(path.join(TEMPLATES_DIR, 'media', 'CHANGELOG.md'), 'utf-8');
+    // v8 (#2580) is additive — no operator action, so it must NOT be
+    // marked breaking or the wizard would gate a deploy on an ack for a
+    // change that asks nothing of the operator.
+    expect(changelog).toMatch(/##\s*v8\b/);
+    const v8 = changelog.slice(changelog.indexOf('## v8'), changelog.indexOf('## v7'));
+    expect(v8).not.toMatch(/\(breaking\)/);
     expect(changelog).toMatch(/##\s*v7\b.*\(breaking\)/);
     // The operator's required action leads the section: they lose an address
     // and need to be told its replacement in the first sentence, not the last
@@ -1252,6 +1258,117 @@ describe('Media template: Audiobookshelf retired for fresh installs (#1725)', ()
     expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);
     // Best-effort like v5-to-v6: a leftover route must never abort a deploy.
     expect(mig).not.toMatch(/return 1|sys\.exit\(1\)/);
+  });
+});
+
+// ─── 3c2. Media: Jellyfin gets the card, and actually uses it (#2580) ───────
+// Two halves, and a change that ships only the first one closes nothing:
+//   1. the DEVICE — `AddDevice=nvidia.com/gpu=all` on a `.container`
+//      Quadlet, because `podman kube play` silently drops the pod-spec
+//      form (#1026/#2517) and leaves everything running on the CPU;
+//   2. the SETTING — Jellyfin re-encodes in software until its own
+//      `HardwareAccelerationType` says `nvenc`, device or no device.
+describe('Media template: Jellyfin GPU transcoding (#2580)', () => {
+  const media = templates.find(t => t.name === 'media')!;
+  const mediaPostDeploy = fs.readFileSync(
+    path.join(TEMPLATES_DIR, 'media', 'post-deploy.py'), 'utf-8',
+  );
+
+  const baseView: Record<string, string> = {};
+  for (const v of catalogVars) baseView[v] = `stub-${v.toLowerCase()}`;
+  for (const [name, meta] of Object.entries(media.variables)) {
+    if (meta && typeof meta === 'object' && 'default' in meta && typeof meta.default === 'string') {
+      baseView[name] = meta.default;
+    }
+  }
+  baseView.JELLYFIN_PORT = '8096';
+  baseView.DATA_DIR = '/mnt/data/stacks';
+  baseView.HOST_GATEWAY_IP = '10.88.0.1';
+  baseView.PUBLIC_DOMAIN = 'dopp.cloud';
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function renderPod(gpu?: string): any {
+    const view = { ...baseView };
+    if (gpu !== undefined) view.JELLYFIN_GPU_PASSTHROUGH = gpu;
+    // HTML escaping OFF, exactly like the production renderer
+    // (`lib/template/render.ts`). With it on, Mustache turns every `/`
+    // in a hostPath into `&#x2F;` and YAML then reads the leading `&`
+    // as an anchor — every volume path parses as null and the mount
+    // assertion below silently compares nothing.
+    const savedEscape = Mustache.escape;
+    Mustache.escape = (text: string) => text;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return yaml.loadAll(Mustache.render(media.yamlContent, view)).find((d: any) => d?.kind === 'Pod') as any;
+    } finally {
+      Mustache.escape = savedEscape;
+    }
+  }
+
+  it('requests the GPU at template defaults, on a pod the .container escape hatch can serve', () => {
+    const pod = renderPod();
+    expect(pod.spec.containers).toHaveLength(1);
+    expect(pod.spec.containers[0].resources?.limits?.['nvidia.com/gpu']).toBe('1');
+  });
+
+  it('renders an unchanged, GPU-free pod when the operator blanks the toggle', () => {
+    const pod = renderPod('');
+    expect(pod.spec.containers[0].resources).toBeUndefined();
+    expect(JSON.stringify(pod)).not.toMatch(/nvidia/i);
+  });
+
+  it('post-deploy attaches the card via the ONLY form that works on rootless podman', () => {
+    // Both lines are load-bearing: the device alone leaves NVML at
+    // "Insufficient Permissions" under SELinux (#1026).
+    expect(mediaPostDeploy).toMatch(/AddDevice=nvidia\.com\/gpu=all/);
+    expect(mediaPostDeploy).toMatch(/SecurityLabelDisable=true/);
+    // Gated on the host actually having a CDI-registered card, so a box
+    // without one installs unchanged and keeps transcoding in software.
+    expect(mediaPostDeploy).toMatch(/\/etc\/cdi\/nvidia\.yaml/);
+  });
+
+  it('the .container unit binds exactly the pod\'s host paths — a redeploy loses no data', () => {
+    // The swap replaces the deploy artifact, so if these drift the
+    // service comes back pointing at empty directories: new Jellyfin
+    // database, no library, no cache. Pin them to the pod spec.
+    const pod = renderPod();
+    const hostPathByName = new Map<string, string>(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (pod.spec.volumes ?? []).map((v: any) => [v.name, v.hostPath?.path]),
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fromPod = (pod.spec.containers[0].volumeMounts ?? []).map((m: any) =>
+      `${hostPathByName.get(m.name)}:${m.mountPath}${m.readOnly ? ':ro' : ''}`,
+    );
+
+    const mediaPath = String(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (media.variables as any).JELLYFIN_MEDIA_PATH?.default ?? '',
+    );
+    const fromUnit = [...mediaPostDeploy.matchAll(/f"Volume=([^"]+)"/g)].map(m =>
+      m[1].replace('{data_dir}', baseView.DATA_DIR).replace('{media_path}', mediaPath),
+    );
+
+    expect(fromUnit).toEqual(fromPod);
+  });
+
+  it('switches Jellyfin\'s own transcoding setting to NVENC — the device alone changes nothing', () => {
+    expect(mediaPostDeploy).toMatch(/System\/Configuration\/encoding/);
+    expect(mediaPostDeploy).toMatch(/"HardwareAccelerationType"\]\s*=\s*"nvenc"/);
+    expect(mediaPostDeploy).toMatch(/"EnableHardwareEncoding"\]\s*=\s*True/);
+    // Read-modify-write, not a blind overwrite: an existing install keeps
+    // the rest of its playback configuration.
+    expect(mediaPostDeploy).toMatch(/"GET",\s*f"\{base_url\}\/System\/Configuration\/encoding"/);
+  });
+
+  it('ships no VRAM budget and no cap on concurrent transcodes', () => {
+    // Explicit operator decision on 2026-08-17 (#2580), taken with the
+    // free/used VRAM figures in hand. A future "just to be safe" limit
+    // reopens that decision — it does not belong in a template edit.
+    for (const src of [media.yamlContent, mediaPostDeploy]) {
+      expect(src).not.toMatch(/NVIDIA_VISIBLE_DEVICES|nvidia\.com\/gpu=\d/);
+      expect(src).not.toMatch(/MaxConcurrent|TranscodingThrottl|VRAM_(BUDGET|LIMIT)/i);
+    }
   });
 });
 

@@ -23,6 +23,11 @@
     "description": "Host path mounted at /media (read-only). Defaults to the file-share volume so Music/, Movies/, TV/ etc. dropped into the Samba share appear in Jellyfin's library scan.",
     "default": "/mnt/data/stacks/file-share/data"
   },
+  "JELLYFIN_GPU_PASSTHROUGH": {
+    "type": "text",
+    "description": "NVIDIA hardware transcoding (NVENC/NVDEC). Non-blank (the default, 'yes') hands Jellyfin the host's CDI-registered NVIDIA GPU and switches Jellyfin's own transcoding setting to NVENC — without both, one film re-encode eats several CPU cores while the card idles (#2580). Safe to leave on: a host with no CDI GPU (`/etc/cdi/nvidia.yaml` absent) is detected at deploy time and keeps the plain pod + software transcoding. Set to blank to force software transcoding even on a GPU box. No VRAM budget and no cap on concurrent transcodes — a deliberate operator decision, see #2580.",
+    "default": "yes"
+  },
   "LLDAP_LDAP_PORT": {
     "type": "text",
     "description": "LLDAP LDAP-protocol port — Jellyfin's LDAP-Auth plugin binds LLDAP here for SSO (#1718). Inherited from the auth template.",

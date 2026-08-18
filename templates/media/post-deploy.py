@@ -98,8 +98,20 @@ JELLYFIN_WIZARD_PROBE_TIMEOUT = 60
 
 # Pod-container names. Podman names a Pod's containers `<pod>-<container>`;
 # this pod is `media`, the container is `jellyfin` (see template.yml).
-# Used by the Jellyfin LDAP plugin restart (#1718).
+# Used by the Jellyfin LDAP plugin restart (#1718) and kept as the
+# `ContainerName=` of the GPU `.container` Quadlet so every other caller
+# (LDAP restart, ServiceBay's discovery, the operator's `podman logs`)
+# keeps finding the same name after the swap.
 JELLYFIN_CONTAINER = "media-jellyfin"
+
+# Systemd user Quadlet directory — where `media.kube` / `media.yml` land
+# and where the GPU `.container` unit is written (#2580).
+SYSTEMD_USER_DIR = "~/.config/containers/systemd"
+
+# Presence of this file is how the host advertises a CDI-registered
+# NVIDIA GPU (`nvidia-ctk cdi generate`). No file → no card ServiceBay
+# can hand over → leave the pod alone and keep transcoding on the CPU.
+CDI_NVIDIA_SPEC = "/etc/cdi/nvidia.yaml"
 
 
 def request_json(
@@ -134,6 +146,172 @@ def request_json(
             return e.code, None
     except (urllib.error.URLError, TimeoutError, OSError):
         return 0, None
+
+
+# ── GPU passthrough: swap the .kube pod for a .container Quadlet ─────
+
+
+def gpu_requested() -> bool:
+    """Whether the operator wants NVIDIA hardware transcoding.
+
+    Blank means "force software transcoding"; anything else (the default
+    `yes`) means "use the card if this host has one". The *if* is
+    resolved in `install_gpu_quadlet_fallback`, not here — a GPU-less
+    box must install unchanged, so the toggle alone is never enough to
+    change the deploy shape."""
+    return env("JELLYFIN_GPU_PASSTHROUGH", "").strip() != ""
+
+
+def build_jellyfin_container_unit() -> str:
+    """Render the `.container` Quadlet that replaces the `media` pod when
+    the GPU is passed through (#2580).
+
+    It mirrors `template.yml`'s single jellyfin container one directive
+    at a time — image, published port, env, the three bind mounts, and
+    the `auth.<domain>` host alias — and adds the two lines that are the
+    entire point:
+
+      * `AddDevice=nvidia.com/gpu=all` — the CDI handle. Expressed as
+        `resources.limits.nvidia.com/gpu` in a Pod spec it is silently
+        dropped by `podman kube play` on rootless 5.x (#1026/#2517), so
+        the pod deploys healthy and transcodes on the CPU with nothing
+        in the logs to say why.
+      * `SecurityLabelDisable=true` — required, not cosmetic: without it
+        the container gets the device nodes but NVML fails to
+        initialise under SELinux ("Insufficient Permissions").
+
+    `SecurityLabelDisable=true` also subsumes the pod's
+    `io.podman.annotations.label/jellyfin: "disable"` annotation, which
+    exists for the same reason the mounts below carry no `:z`/`:Z`: the
+    /media tree is the SHARED multi-writer file-share volume, and a
+    recursive relabel of it crash-loops the service on a single
+    root-owned stray (#1731). Do not add relabel flags here.
+
+    Values come from the environment (every wizard variable is exported
+    into this script), so this stays in step with what the pod was
+    rendered from."""
+    port = env("JELLYFIN_PORT", "8096")
+    data_dir = env("DATA_DIR", "/mnt/data/stacks")
+    media_path = env("JELLYFIN_MEDIA_PATH", f"{data_dir}/file-share/data")
+    tz = env("TZ", "Europe/Berlin")
+    public_domain = env("PUBLIC_DOMAIN", "")
+    media_subdomain = env("MEDIA_SUBDOMAIN", "media")
+    gateway_ip = env("HOST_GATEWAY_IP", "169.254.1.2")
+
+    lines = [
+        "[Unit]",
+        "Description=Jellyfin (Movies & TV, NVIDIA passthrough #2580)",
+        "Wants=network-online.target",
+        "After=network-online.target",
+        "",
+        "[Container]",
+        "Image=docker.io/jellyfin/jellyfin:latest",
+        f"ContainerName={JELLYFIN_CONTAINER}",
+        f"PublishPort={port}:{port}",
+        f"Environment=TZ={tz}",
+    ]
+    if public_domain:
+        lines.append(
+            f"Environment=JELLYFIN_PublishedServerUrl=https://{media_subdomain}.{public_domain}"
+        )
+        # Mirrors the pod's hostAliases entry: an isolated container
+        # cannot reach the host's own LAN IP under rootless podman
+        # (#817), so server-side calls to Authelia go through the
+        # host-gateway address instead.
+        lines.append(f"AddHost=auth.{public_domain}:{gateway_ip}")
+    lines += [
+        "# CDI device — the only form that actually attaches the card on",
+        "# rootless podman 5.x. See #1026 / #2517 for the dead ends.",
+        "AddDevice=nvidia.com/gpu=all",
+        "# Required for NVML init under SELinux, and it is also what keeps",
+        "# the shared /media tree from being relabelled (#1731).",
+        "SecurityLabelDisable=true",
+        f"Volume={data_dir}/media/jellyfin-config:/config",
+        f"Volume={data_dir}/media/jellyfin-cache:/cache",
+        f"Volume={media_path}:/media:ro",
+        "AutoUpdate=registry",
+        "",
+        "[Service]",
+        "Restart=on-failure",
+        "RestartSec=5",
+        "",
+        "[Install]",
+        "WantedBy=default.target",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def install_gpu_quadlet_fallback() -> bool:
+    """Swap the just-deployed `media.kube` unit for a `.container` Quadlet
+    that carries the CDI device (#2580, mechanism from #1026).
+
+    Returns True when the service is (or has just become) GPU-backed,
+    False when it stays a plain CPU pod — the caller uses that to decide
+    whether to switch Jellyfin's own transcoding setting to NVENC.
+    Pointing Jellyfin at NVENC without the device would turn every
+    transcode into an error, so the two must move together.
+
+    Idempotent in both directions:
+      * no `/etc/cdi/nvidia.yaml` → no card → returns False, touches
+        nothing. This is what makes the default-on toggle safe on a box
+        with no GPU.
+      * `media.container` already present → the swap happened on an
+        earlier deploy; ServiceBay's `reconcileContainerQuadletShadow`
+        retires the freshly re-written `.kube`/`.yml` after this script
+        returns (#2174), so there is nothing to do here.
+
+    Data is untouched: the `.container` unit binds the same three host
+    paths the pod did, so an existing install keeps its Jellyfin
+    database, cache and library exactly where they were."""
+    if not os.path.exists(CDI_NVIDIA_SPEC):
+        log(f"ℹ️ No CDI NVIDIA spec at {CDI_NVIDIA_SPEC} — this host has no GPU to hand over. "
+            "Jellyfin stays on the plain pod and transcodes in software.")
+        return False
+
+    systemd_dir = os.path.expanduser(SYSTEMD_USER_DIR)
+    kube_path = os.path.join(systemd_dir, "media.kube")
+    container_path = os.path.join(systemd_dir, "media.container")
+
+    if os.path.exists(container_path):
+        log("ℹ️ media.container already in place — GPU passthrough is already wired; "
+            "ServiceBay retires the shadowing media.kube after this script (#2174).")
+        return True
+
+    # Stop the .kube-backed unit first. Both unit files generate
+    # `media.service`, so leaving the .kube in place would let systemd's
+    # generator pick either one at reload time.
+    subprocess.run(["systemctl", "--user", "stop", "media.service"], check=False, capture_output=True)
+    if os.path.exists(kube_path):
+        try:
+            os.unlink(kube_path)
+        except OSError as e:
+            log(f"⚠️ Could not remove {kube_path} ({e}) — Quadlet may generate two units for media.service. "
+                "Remove it by hand and run `systemctl --user daemon-reload`.")
+
+    try:
+        with open(container_path, "w") as f:
+            f.write(build_jellyfin_container_unit())
+        os.chmod(container_path, 0o644)
+    except OSError as e:
+        log(f"⚠️ Could not write {container_path} ({e}) — GPU passthrough not applied; "
+            "Jellyfin keeps transcoding in software.")
+        return False
+
+    # The old pod container holds the name; the generated unit runs
+    # `podman run --replace`, but clear it explicitly so a failure to
+    # replace can't leave the CPU container in place.
+    subprocess.run(["podman", "rm", "-f", JELLYFIN_CONTAINER], check=False, capture_output=True)
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False, capture_output=True)
+    started = subprocess.run(
+        ["systemctl", "--user", "start", "media.service"], capture_output=True, text=True,
+    )
+    if started.returncode != 0:
+        log(f"⚠️ media.service did not start from the .container Quadlet: {started.stderr.strip()[:400]}")
+        return False
+
+    log("✅ Jellyfin swapped to a .container Quadlet with AddDevice=nvidia.com/gpu=all — the card is attached.")
+    return True
 
 
 # ── Jellyfin first-run + Quick Connect + Music library ───────────────
@@ -850,6 +1028,77 @@ def ensure_jellyfin_dlna_server(base_url: str, token: str) -> bool:
     return False
 
 
+# Codecs to hand NVDEC when we are the ones switching hardware
+# acceleration on. Jellyfin's stock list is `h264, vc1` — fine while
+# acceleration is off, but it leaves HEVC (i.e. most 4K) decoding in
+# software on a box that has just been given a card. Jellyfin falls back
+# to software for any codec the hardware can't do, so an over-broad list
+# costs nothing.
+JELLYFIN_NVDEC_CODECS = ["h264", "hevc", "mpeg2video", "mpeg4", "vc1", "vp8", "vp9", "av1"]
+
+
+def jellyfin_enable_nvenc(base_url: str, token: str) -> bool:
+    """Point Jellyfin's own transcoding configuration at NVENC (#2580).
+
+    **Seeing the device is not using it.** Handing the container the card
+    changes nothing on its own: Jellyfin picks its encoder from
+    `HardwareAccelerationType` in its encoding configuration, which
+    defaults to `none`, so a deploy that stops at `AddDevice=` still
+    burns CPU cores on every re-encode. This is the other half.
+
+    Read-modify-write on the `encoding` named configuration — the same
+    shape `ensure_jellyfin_dlna_server` uses — so nothing else in the
+    operator's transcoding setup is disturbed. That is what makes it
+    safe on an EXISTING install: the settings survive, only the
+    acceleration keys move.
+
+    Non-destructive in the other direction too: an operator who
+    deliberately chose a different accelerator (vaapi, qsv, …) keeps it.
+    Only `none`/unset is taken over. Re-asserted on every deploy, so a
+    reinstall never silently drops back to software."""
+    auth = {"X-Emby-Authorization": f'{JELLYFIN_AUTH_HEADER}, Token="{token}"'}
+
+    code, options = request_json(
+        "GET", f"{base_url}/System/Configuration/encoding", None, extra_headers=auth,
+    )
+    if code not in (200, 204) or not isinstance(options, dict):
+        log(f"   (note) Could not read Jellyfin's transcoding configuration ({render_http_code(code)}); "
+            "set Dashboard → Playback → Hardware acceleration to 'Nvidia NVENC' by hand.")
+        return False
+
+    current = str(options.get("HardwareAccelerationType") or "").strip()
+    if current.lower() not in ("", "none", "nvenc"):
+        log(f"   (note) Jellyfin's hardware acceleration is already set to '{current}' — leaving it alone. "
+            "Switch it to 'Nvidia NVENC' in Dashboard → Playback if you want the card used.")
+        return False
+
+    turning_on = current.lower() in ("", "none")
+    options["HardwareAccelerationType"] = "nvenc"
+    options["EnableHardwareEncoding"] = True
+    if turning_on:
+        # We are switching acceleration on, so the decode side is ours to
+        # set: the list Jellyfin carries while acceleration is off is a
+        # default, not a decision. Once it IS on, leave the list alone —
+        # a narrower list from then on is the operator's choice.
+        options["HardwareDecodingCodecs"] = list(JELLYFIN_NVDEC_CODECS)
+        # Only touch keys this Jellyfin actually has — the encoding
+        # options object gains and loses fields across releases, and
+        # posting one it doesn't know is a needless 400 risk.
+        for key in ("EnableEnhancedNvdecDecoder", "EnableDecodingColorDepth10Hevc", "EnableDecodingColorDepth10Vp9"):
+            if key in options:
+                options[key] = True
+
+    code, _ = request_json(
+        "POST", f"{base_url}/System/Configuration/encoding", options, extra_headers=auth,
+    )
+    if code in (200, 204):
+        log("   ✅ Jellyfin transcoding set to NVENC (hardware encode + NVDEC decode).")
+        return True
+    log(f"   (note) Could not write Jellyfin's transcoding configuration ({render_http_code(code)}); "
+        "set Dashboard → Playback → Hardware acceleration to 'Nvidia NVENC' by hand.")
+    return False
+
+
 def main() -> int:
     host = env("HOST", "<server-ip>")
 
@@ -867,6 +1116,18 @@ def main() -> int:
             importance="critical",
             notes="Web UI admin. Mobile apps pair via Quick Connect (Dashboard → Quick Connect → enable on web; in-app shows 6-digit code).",
         )
+
+    # ── GPU passthrough (#2580) ──────────────────────────────────────
+    # Runs FIRST: the swap restarts the container, and everything below
+    # talks to the Jellyfin API — better to point it at the unit that
+    # will still be running when this script exits. `gpu_engaged` also
+    # gates the NVENC setting further down: telling Jellyfin to use a
+    # card it hasn't got turns every transcode into an error.
+    gpu_engaged = install_gpu_quadlet_fallback() if gpu_requested() else False
+    if not gpu_engaged and gpu_requested():
+        log("ℹ️ Jellyfin will transcode in software on this box. That costs several CPU cores per "
+            "stream — if this host does have an NVIDIA card, register it with `nvidia-ctk cdi generate` "
+            "and redeploy `media`.")
 
     # ── Jellyfin first-run + Quick Connect + Music library ───────────
     # `jellyfin_run_first_setup` waits for the UserManager's async init
@@ -914,6 +1175,11 @@ def main() -> int:
                 # Enable the built-in DLNA server by default so LAN TVs /
                 # DLNA clients can browse Jellyfin with no manual step (#2369).
                 ensure_jellyfin_dlna_server(jellyfin_base, jf_token)
+                # The card is attached — now make Jellyfin actually use it
+                # (#2580). Without this the device is present and every
+                # transcode still runs on the CPU.
+                if gpu_engaged:
+                    jellyfin_enable_nvenc(jellyfin_base, jf_token)
 
         # ── Jellyfin → LLDAP SSO (#1718) ──────────────────────────────
         # Wire the LDAP-Auth plugin against LLDAP so the family signs in

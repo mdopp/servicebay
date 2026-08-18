@@ -24,6 +24,19 @@ Jellyfin's post-deploy auto-adds two libraries: `/media/music` ("Music") and `/m
 
 Override `JELLYFIN_MEDIA_PATH` in the wizard's Configure step if your media lives elsewhere.
 
+## Hardware transcoding (NVIDIA)
+
+`JELLYFIN_GPU_PASSTHROUGH` is **on by default**. Two things have to happen for it to mean anything, and post-deploy does both:
+
+1. **The card is attached.** The pod-spec form (`resources.limits.nvidia.com/gpu`) is silently dropped by `podman kube play` on rootless podman — the pod comes up healthy and still transcodes on the CPU, with nothing in the logs (#1026, class #2517). So post-deploy swaps the service to a `.container` Quadlet carrying `AddDevice=nvidia.com/gpu=all` + `SecurityLabelDisable=true` (the second line is required, not cosmetic: without it NVML can't initialise under SELinux). ServiceBay retires the shadowing `.kube`/`.yml` on every later redeploy (#2174).
+2. **Jellyfin is told to use it.** Jellyfin re-encodes in software until its own `HardwareAccelerationType` says `nvenc`, device or no device. Post-deploy read-modify-writes `/System/Configuration/encoding`, so the rest of your playback settings survive — and if you already picked a different accelerator by hand, yours is kept.
+
+**No card, no problem.** The swap is gated on `/etc/cdi/nvidia.yaml`; a host with no CDI-registered GPU stays a plain pod and keeps transcoding in software. Set the variable to blank to force software transcoding on a machine that does have a card.
+
+There is deliberately **no VRAM budget and no cap on concurrent transcodes** — the card is shared with the local inference stack and the operator decided against a limit on 2026-08-17 with the free/used figures in hand. See #2580 before adding one.
+
+Check it worked: `nvidia-smi` should list `ffmpeg` as a process while something is actually transcoding (start a playback that forces a re-encode, e.g. by picking a lower bitrate in the client's quality menu).
+
 ## Authentication
 
 * **Jellyfin web UI + mobile** — LDAP → LLDAP (#1718). ServiceBay installs the LDAP-Authentication plugin and writes its config (host-side, every deploy → idempotent + self-healing) so family members sign in with their Authelia/LLDAP credentials. The local `admin` account (auto-seeded from `JELLYFIN_ADMIN_PASSWORD`) stays a working break-glass login.

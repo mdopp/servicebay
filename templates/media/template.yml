@@ -7,7 +7,7 @@ metadata:
     servicebay.role: media
   annotations:
     servicebay.label: "Movies & TV"
-    servicebay.schema-version: "7"
+    servicebay.schema-version: "8"
     # Jellyfin's public URL routes through nginx, and its LDAP-Auth
     # plugin binds LLDAP from the `auth` stack — both prerequisites.
     # (#1725: Audiobookshelf retired for fresh installs; audiobooks are
@@ -93,6 +93,34 @@ spec:
     ports:
       - containerPort: {{JELLYFIN_PORT}}
         hostPort: {{JELLYFIN_PORT}}
+    # GPU passthrough (CDI) — #2580. Jellyfin transcodes in SOFTWARE
+    # unless it gets the card, which cost ~3 of 6 cores for a single
+    # stream on the reference box while an idle RTX sat next to it.
+    #
+    # This block is inert on its own and kept for documentation + as the
+    # signal post-deploy.py reads: `podman kube play` on rootless 5.x
+    # silently drops every `resources.limits` key outside cpu/memory, so
+    # a `.kube` deploy comes up healthy and still runs on CPU (#1026,
+    # class documented as #2517). The passthrough that actually works is
+    # post-deploy.py's `install_gpu_quadlet_fallback()`, which swaps this
+    # service to a `.container` Quadlet carrying
+    # `AddDevice=nvidia.com/gpu=all` + `SecurityLabelDisable=true` — the
+    # second line is required, not cosmetic: without it the container
+    # sees the devices but NVML fails to init under SELinux.
+    #
+    # Hosts with no CDI-registered NVIDIA GPU are unaffected: the swap is
+    # gated on `/etc/cdi/nvidia.yaml`, so the service stays a plain
+    # `.kube` pod and Jellyfin keeps transcoding on the CPU.
+    #
+    # Deliberately NO VRAM budget and NO cap on concurrent transcodes —
+    # the operator was shown the numbers (16380 MiB total, ~5900 MiB held
+    # by the Solaris inference stack, ~10 GiB free) and chose the plain
+    # form on 2026-08-17. Don't add a limit here without reopening #2580.
+    {{#JELLYFIN_GPU_PASSTHROUGH}}
+    resources:
+      limits:
+        nvidia.com/gpu: "1"
+    {{/JELLYFIN_GPU_PASSTHROUGH}}
     volumeMounts:
       - mountPath: /config
         name: jellyfin-config

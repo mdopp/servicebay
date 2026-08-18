@@ -1,5 +1,46 @@
 # Media (Jellyfin) — template changelog
 
+## v8 — #2580
+
+**Jellyfin uses the graphics card to re-encode video, if the box has
+one.** Nothing for you to do: redeploy `media` and the next film that
+needs converting runs on the card instead of the processor. On a box
+with no NVIDIA card nothing changes at all.
+
+### Why
+
+Jellyfin was converting video in software. On the reference box a
+single stream took roughly three of six processor cores — enough to
+slow down everything else on the machine — while an idle graphics card
+sat next to it. That was never a misconfiguration: the template simply
+had no way to hand the card over.
+
+### What changed
+
+- New variable `JELLYFIN_GPU_PASSTHROUGH`, on by default. Blank it if
+  you want software conversion even on a machine that has a card.
+- `template.yml` renders the CDI request when the variable is set, and
+  `post-deploy.py` swaps the service to a `.container` unit carrying
+  `AddDevice=nvidia.com/gpu=all` — the only form that actually attaches
+  a card under rootless podman (#1026/#2517); expressed in the pod
+  spec it is silently dropped and everything keeps running on the CPU.
+- `post-deploy.py` also sets Jellyfin's own transcoding option to
+  **NVENC**. Handing over the device is not enough on its own —
+  Jellyfin re-encodes in software until its configuration says
+  otherwise. Your existing playback settings are read, amended and
+  written back, so nothing else moves; if you had already picked a
+  different accelerator by hand, yours is kept.
+- No VRAM budget and no cap on simultaneous conversions. The card is
+  shared with the local AI stack, and the operator decided on
+  2026-08-17 — with the free/used figures in hand — that the headroom
+  makes a limit unnecessary. The residual case (a much larger language
+  model plus several 4K streams at once) is documented in #2580.
+
+### Required action for existing installs
+
+None. Your Jellyfin database, cache and library stay exactly where they
+are — the new unit binds the same three directories the pod did.
+
 ## v7 (breaking) — #2561
 
 **`books.<domain>` goes away — use `media.<domain>` instead.** If you
