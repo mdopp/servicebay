@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.15.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.14.0...servicebay-v5.15.0) (2026-08-18)
+
+
+### Features
+
+* **diagnose:** surface an OS update that retries a staging step it can never finish ([361aa14](https://github.com/mdopp/servicebay/commit/361aa144b447732bd82a0fb95851be7f9e73a38a)), closes [#2585](https://github.com/mdopp/servicebay/issues/2585)
+* **media:** hand Jellyfin the NVIDIA card and switch its transcoding to NVENC ([86794d0](https://github.com/mdopp/servicebay/commit/86794d054066792110f8f6bda4344302be57587b)), closes [#2580](https://github.com/mdopp/servicebay/issues/2580)
+* **mosquitto:** wire Home Assistant to the broker instead of asking for it by hand ([bc18bab](https://github.com/mdopp/servicebay/commit/bc18babc382baf3b476802c99c075b55ecdb3838)), closes [#2578](https://github.com/mdopp/servicebay/issues/2578)
+* surface stuck OS-update loops, hand Jellyfin the GPU ([edb242d](https://github.com/mdopp/servicebay/commit/edb242d82bacfa231cc253b8e32827f4134b931f))
+
+
+### Bug Fixes
+
+* device-safe secrets, HA trusted proxies + MQTT auto-connect, DNS probe timeouts, beets coverage check ([3ca5ea5](https://github.com/mdopp/servicebay/commit/3ca5ea5fbf648d165e711ee3bd42fedb77fa3e29))
+* **diagnose:** stop reporting a dropped DNS query as a missing domain ([01db8c9](https://github.com/mdopp/servicebay/commit/01db8c9c18644d2924c9d63cef6b8c7189685365)), closes [#2579](https://github.com/mdopp/servicebay/issues/2579)
+* **home-assistant:** keep the reverse-proxy trust list in HA's own store ([a1266d2](https://github.com/mdopp/servicebay/commit/a1266d215f1d3d2ba53a1f48b1e3d0a801eb579d)), closes [#2573](https://github.com/mdopp/servicebay/issues/2573)
+* **install:** generate device-facing secrets at a length IoT firmware accepts ([1e8f356](https://github.com/mdopp/servicebay/commit/1e8f356ce230f1c2366d31cfba8009b7133760de)), closes [#2577](https://github.com/mdopp/servicebay/issues/2577)
+* **templates:** measure beets library coverage instead of one item ([4870d04](https://github.com/mdopp/servicebay/commit/4870d04941247c214d20b64093c6e25990b1f654)), closes [#2584](https://github.com/mdopp/servicebay/issues/2584)
+
 ## [5.14.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.13.1...servicebay-v5.14.0) (2026-08-17)
 
 
