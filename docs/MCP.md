@@ -131,6 +131,50 @@ Claude Code. Refreshing the JWT becomes a one-line `export`, no JSON edit.
   Then point Claude Code at `http://localhost:5888/mcp`. Many browsers and
   clients treat `localhost` as trustworthy, sidestepping cookie/CORS quirks.
 
+## Client running **on the box** (agent in a container)
+
+If the MCP client is itself a container on the ServiceBay host — an agent
+sandbox, a CI runner, `templates/claude-dev` — use the **app port directly**:
+
+```bash
+claude mcp add --transport http servicebay \
+  http://host.containers.internal:5888/mcp \
+  --header "Authorization: Bearer sb_<id>_<secret>"
+```
+
+**Do not use the public hostname from inside the box.** Ports 80/443 are
+nginx-proxy-manager, which routes by vhost name, and ServiceBay's admin host is
+permanently LAN-only with a `deny all` access list. The app port has no vhost
+logic at all, so none of that applies to it.
+
+What this buys you — every one of these is a prerequisite you *don't* have:
+
+| | on the app port |
+|---|---|
+| DNS resolution | not needed (link-local address) |
+| TLS / SNI | not needed (traffic never leaves the machine) |
+| `Host` header | not needed (no vhost matching) |
+| `/etc/hosts` entry or `--add-host` | **not needed** |
+| container rebuild | **not needed** |
+
+Authentication is unchanged: the app port enforces the same Bearer-token or
+session-cookie check. You are bypassing *routing*, not *authorization*.
+
+`169.254.1.2` is podman's fixed address for the host and works identically, but
+`host.containers.internal` survives a reconfiguration — prefer the name. If
+`PORT` is set on the ServiceBay service, use that instead of `5888`.
+
+> **The plausible wrong turn.** Trying the proxy first produces a trail of
+> answers that each look like the whole problem: a rejected TLS handshake (looks
+> like a certificate issue), a `404` without a `Host` header (looks like a moved
+> endpoint), and — with the right `Host` — a `301` to the public URL, which
+> looks like an instruction to map that name onto a reachable address with
+> `/etc/hosts` or `--add-host`. That last one even works. It is still the wrong
+> layer: it re-creates the dependency on the proxy and on the container's LAN
+> route, and it evaporates the next time the container is rebuilt. See
+> [ADR 0007](adr/0007-container-network-isolation-and-carveouts.md), amendment
+> 2026-08-17.
+
 ## What can the LLM actually do?
 
 A non-exhaustive list — call `claude mcp get servicebay` (or `/mcp` inside
@@ -331,6 +375,13 @@ Typical autonomous-verify workflow:
   401. Workaround: `headersHelper` script (Option B above).
 - **`405 Method not allowed`** — only `POST /mcp` is implemented. If you see
   this, your client is using GET or another verb.
+- **Client is on the box and nothing connects** — rejected TLS handshakes, a
+  bare `404`, or a `301` to the public URL all mean the same thing: you are
+  talking to nginx-proxy-manager on 80/443, not to ServiceBay. Switch to
+  `http://host.containers.internal:5888/mcp` — see
+  [Client running on the box](#client-running-on-the-box-agent-in-a-container).
+  Do **not** "fix" it with an `/etc/hosts` entry; that treats the symptom and
+  breaks on the next container rebuild.
 
 ## API tokens (recommended)
 

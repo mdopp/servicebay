@@ -81,6 +81,56 @@ grandfathered entries whose stated precondition is now met should be re-examined
 against Decision 3, and `templates/claude-dev` runs `hostNetwork: true` without
 appearing on the list at all — see #2522.
 
+## Amendment 2026-08-17 — an on-box client reaches ServiceBay on the app port, not through the proxy
+
+Decision 1 tells a container how to reach *another service*. It says nothing
+about reaching **ServiceBay itself** — its REST API and its `/mcp` endpoint —
+from a container on the same box. That gap cost a working session, so the rule
+is written down here:
+
+> **From inside the box, address ServiceBay as
+> `http://host.containers.internal:${PORT:-5888}` — the app port, directly.
+> Never the public hostname, and never port 80/443.**
+
+The reasoning is the same shape as Decision 1, one layer up. Ports 80/443 are
+**nginx-proxy-manager**, and a reverse proxy necessarily routes by **vhost
+name**. ServiceBay's own admin host is one of the six permanently LAN-only NPM
+hosts whose access list ends in `deny all` (see
+`packages/backend/src/lib/reverseProxy/lanDeniedPage.ts`), so every attempt to
+reach `/mcp` through the proxy from a container fails, and each failure looks
+like a *different* problem:
+
+| Attempt from a container | What happens | Why it misleads |
+|---|---|---|
+| `https://host.containers.internal/mcp` | TLS handshake rejected | reads as a certificate problem |
+| `https://169.254.1.2/mcp` | TLS handshake rejected | reads as a certificate problem |
+| `http://169.254.1.2/mcp` | `404` | reads as "the endpoint moved" |
+| `http://169.254.1.2/mcp` + `Host: admin.<domain>` | `301` to the public URL | reads as "just add the hosts entry" |
+| **`http://169.254.1.2:5888/mcp`** | **`200`** | — |
+
+The trap is that the last row is never reached by elimination: the `301` in row
+four points at a real, correct-looking answer (map the name to a reachable
+address via `/etc/hosts` or `--add-host`), and that answer *works*. It is simply
+the wrong layer — it re-creates the proxy dependency instead of dropping it, and
+it dies on the next container rebuild.
+
+Consequences of stating it this way:
+
+- **No DNS, no TLS, no `Host` header, no `/etc/hosts` entry, no container
+  rebuild.** The traffic is host-local link-local and never touches a network
+  interface, so plain HTTP is not a downgrade here.
+- **Authentication is unchanged.** The app port enforces the same session-cookie
+  or `Authorization: Bearer sb_…` check; bypassing the proxy bypasses only
+  *routing*, never authorization. Several route handlers already reason
+  explicitly about a "direct `:5888` call bypassing NPM" — this amendment names
+  the path they were already defending.
+- **`host.containers.internal` is the spelling**, per Decision 1. `169.254.1.2`
+  is podman's fixed host address and works, but the name survives a
+  reconfiguration; prefer it.
+- Losing the container's LAN route does **not** break this path, which is the
+  point — the public hostname resolves to the box's LAN address and is therefore
+  the fragile way in.
+
 ## Consequences
 
 - post-deploy scripts run in the **host** netns, so their `127.0.0.1` probes
