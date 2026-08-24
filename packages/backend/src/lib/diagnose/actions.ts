@@ -165,21 +165,34 @@ export interface ResolvedProbeItem {
 /**
  * Resolve a probe's items[] action-ids to the full ProbeAction
  * objects from the registry, so the UI doesn't need a second lookup.
- * Items whose actionIds reference unknown actions silently drop those
- * ids — better to render fewer buttons than crash the diagnose page.
+ * Items whose actionIds reference unknown actions still drop those ids
+ * — better to render fewer buttons than crash the diagnose page — but
+ * they no longer do it silently: an unresolvable id means a probe is
+ * offering a fix that cannot be dispatched, which renders as a row with
+ * no button and no explanation. That is a wiring bug in this repo, so
+ * it gets logged at error level rather than swallowed.
  */
 export function resolveItemActions(probeId: string, items: ProbeItem[]): ResolvedProbeItem[] {
   const actions = actionsForProbe(probeId);
   const byId = new Map(actions.map(a => [a.id, a]));
-  return items.map(item => ({
-    id: item.id,
-    label: item.label,
-    detail: item.detail,
-    status: item.status,
-    actions: item.actionIds
-      .map(id => byId.get(id))
-      .filter((a): a is ProbeAction => a !== undefined),
-  }));
+  return items.map(item => {
+    const unknown = item.actionIds.filter(id => !byId.has(id));
+    if (unknown.length > 0) {
+      logger.error(
+        'diagnose:actions',
+        `Probe ${probeId} item ${item.id} offers unregistered action${unknown.length === 1 ? '' : 's'} ${unknown.join(', ')} — no handler is registered, so the row renders without that button. Register it in lib/diagnose/probes/register.ts.`,
+      );
+    }
+    return {
+      id: item.id,
+      label: item.label,
+      detail: item.detail,
+      status: item.status,
+      actions: item.actionIds
+        .map(id => byId.get(id))
+        .filter((a): a is ProbeAction => a !== undefined),
+    };
+  });
 }
 
 interface RegistryEntry {

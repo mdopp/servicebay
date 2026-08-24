@@ -55,7 +55,10 @@ export interface ServiceBackupManifest {
   /** On-disk data subdir under the stacks root, when it differs from `service`. */
   dataSubdir?: string;
   /** Sibling-store manifest (#1594): gates on the named template, not its own
-   *  service name. */
+   *  service name — a sibling dir (`home-assistant/zwave-js`) or one app of a
+   *  multi-app template (#2595: `authelia`/`lldap` under `auth`, `jellyfin`
+   *  under `media`). A gate naming no shipped template can never activate and is
+   *  a build-breaking defect (scripts/check-backup-coverage.ts). */
   gateOn?: string;
   /** CONFIG paths/dirs worth preserving across a reinstall (the tar contents). */
   include: string[];
@@ -76,8 +79,14 @@ export interface ServiceBackupManifest {
 /** Per-service config scope, transcribed from the table in #1190 and extended
  *  in #2153 (lldap/vaultwarden/radicale/jellyfin/file-share + authelia
  *  db.sqlite3). Kept in sync with the backend copy; the coverage contract that
- *  gates new template volumes lives on the backend side
- *  (scripts/check-backup-coverage.ts + EXCLUDED_BULK_VOLUMES). */
+ *  gates new template volumes — and, since #2595, the reverse check that every
+ *  `gateOn ?? service` names a shipped template — lives on the backend side
+ *  (scripts/check-backup-coverage.ts + EXCLUDED_BULK_VOLUMES).
+ *
+ *  #2595 also removed the `syncthing` and `hermes` entries: syncthing's config
+ *  lives in the podman PVC `file-share-syncthing-config` (no DATA_DIR path for
+ *  this file-copy path to read — #2596), and `hermes` is the retired Solaris
+ *  name with no template. See the backend copy for the full reasoning. */
 export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
   {
     service: 'home-assistant',
@@ -118,8 +127,10 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     // configuration.yml is re-rendered per deploy (regenerable), so it's excluded.
     // WAL-mode → stage the -wal/-shm sidecars so a live copy restores whole.
     // Encrypted at rest, kept verbatim (trusted-NAS class) — no strip.
+    // An APP of the `auth` template — gates on `auth`, not on its own name (#2595).
     service: 'authelia',
     dataSubdir: 'auth/authelia-data',
+    gateOn: 'auth',
     include: ['db.sqlite3', 'db.sqlite3-wal', 'db.sqlite3-shm'],
     exclude: [],
   },
@@ -128,19 +139,7 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     include: ['conf/AdGuardHome.yaml'],
     exclude: ['data/querylog.json', 'data/stats.db', 'data/sessions.db', 'data/filters'],
   },
-  {
-    service: 'syncthing',
-    include: ['config.xml'],
-    exclude: ['index-v0.14.0.db', 'index'],
-    data: ['index-v0.14.0.db', 'index'],
-  },
-  {
-    service: 'hermes',
-    include: ['config.yaml'],
-    exclude: ['vectordb', 'embeddings', 'conversations', 'history'],
-    data: ['vectordb', 'embeddings'],
-    strip: [{ file: 'config.yaml', dropYamlKeys: ['api_key', 'apiKey', 'llm_api_key'] }],
-  },
+  // (`syncthing` and `hermes` used to sit here — removed in #2595.)
   {
     service: 'nginx',
     dataSubdir: 'nginx-proxy-manager',
@@ -150,9 +149,11 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
   },
   {
     // LLDAP (#2153): users.db is the family identity store (LLDAP 0.6.x SQLite
-    // under /data → auth/lldap/). Kept verbatim; sidecars ride along.
+    // under /data → auth/lldap/). Kept verbatim; sidecars ride along. The other
+    // app of the `auth` template — same gate as authelia (#2595).
     service: 'lldap',
     dataSubdir: 'auth/lldap',
+    gateOn: 'auth',
     include: ['users.db', 'users.db-wal', 'users.db-shm'],
     exclude: [],
   },
@@ -178,9 +179,11 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
   {
     // Jellyfin (#2153): server config + users/libraries DB + plugins; caches,
     // logs, transcodes and re-scannable metadata excluded. The media library is
-    // a separate volume, never backed up.
+    // a separate volume, never backed up. An app of the `media` template — gates
+    // on `media`, not on its own name (#2595).
     service: 'jellyfin',
     dataSubdir: 'media/jellyfin-config',
+    gateOn: 'media',
     include: [
       'config',
       'data/jellyfin.db', 'data/jellyfin.db-wal', 'data/jellyfin.db-shm',

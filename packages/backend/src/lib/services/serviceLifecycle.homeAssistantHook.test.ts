@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// runPreStartHooks resolves the agent itself; the rest of this file passes a
+// fake agent in directly and is unaffected by the mock.
+const ensureAgentMock = vi.fn();
+vi.mock('../agent/manager', () => ({
+    agentManager: { ensureAgent: (...args: unknown[]) => ensureAgentMock(...args) },
+}));
+
 import { ServiceLifecycle } from './serviceLifecycle';
 
 vi.mock('../logger', () => ({
@@ -212,5 +220,69 @@ describe('runHomeAssistantHook (#1687 config-survival self-heal)', () => {
         await expect(
             ServiceLifecycle.runHomeAssistantHook(agent as never, CFG),
         ).resolves.toBeUndefined();
+    });
+});
+
+/**
+ * #2590 — `runPreStartHooks` wraps every hook in a catch-all that logs at
+ * `debug` and lets the deploy continue. That is right for an incidental hook
+ * failure and WRONG for the #1864 integrity guard, whose only job is to refuse
+ * the deploy: on the owner's box the guard's condition was live for eight
+ * consecutive diagnose runs while deploys kept sailing through.
+ */
+describe('runPreStartHooks — a refusing guard must abort the deploy (#2590)', () => {
+    const HA_POD = `
+apiVersion: v1
+kind: Pod
+metadata:
+  name: home-assistant
+spec:
+  containers:
+    - name: homeassistant
+      image: ghcr.io/home-assistant/home-assistant:stable
+      volumeMounts:
+        - mountPath: /config
+          name: ha-config
+  volumes:
+    - name: ha-config
+      hostPath:
+        path: ${DIR}
+`;
+
+    const REGISTRY = `${DIR}/.storage/core.entity_registry`;
+
+    /** `runPreStartHooks` is private; production reaches it through deploy. */
+    const runPreStartHooks = (yamlContent: string) =>
+        (ServiceLifecycle as unknown as {
+            runPreStartHooks(node: string, name: string, yaml: string): Promise<void>;
+        }).runPreStartHooks('Local', 'home-assistant', yamlContent);
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        ensureAgentMock.mockReset();
+    });
+
+    it('propagates the integrity refusal instead of swallowing it', async () => {
+        const agent = makeHaAgent({
+            [CFG]: 'default_config:\nautomation: !include automations.yaml\nscript: !include scripts.yaml\nscene: !include scenes.yaml\n',
+            [REGISTRY]: JSON.stringify({
+                data: { entities: [{ platform: 'automation', entity_id: 'automation.morning' }] },
+            }),
+            [`${DIR}/automations.yaml`]: '[]',
+            [`${DIR}/scripts.yaml`]: '{}',
+            [`${DIR}/scenes.yaml`]: '[]',
+        });
+        ensureAgentMock.mockResolvedValue(agent);
+
+        await expect(runPreStartHooks(HA_POD)).rejects.toThrow(/integrity check FAILED/i);
+    });
+
+    it('still swallows an ordinary hook failure (unchanged behaviour)', async () => {
+        ensureAgentMock.mockRejectedValue(new Error('agent unreachable'));
+        await expect(runPreStartHooks(HA_POD)).resolves.toBeUndefined();
+    });
+
+    it('still swallows unparseable pod yaml (unchanged behaviour)', async () => {
+        await expect(runPreStartHooks('::: not yaml :::')).resolves.toBeUndefined();
     });
 });

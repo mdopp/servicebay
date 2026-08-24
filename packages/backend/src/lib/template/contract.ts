@@ -58,6 +58,19 @@ export interface TemplateManifest {
    */
   configMount?: string;
   /**
+   * `metadata.annotations['servicebay.seed-only-configs']` — companion config
+   * filenames ServiceBay may write ONLY when they do not already exist on the
+   * box (#2590). Empty array when the annotation is missing, i.e. the default
+   * stays "re-render this file on every deploy".
+   *
+   * This is the declaration side of ADR 0004 ("installs are non-destructive")
+   * for companion config files: a file the *application* owns after first
+   * install — Home Assistant's `automations.yaml` is rewritten by HA's own
+   * editor — must never be re-seeded over. See `writeExtraConfigFiles` in
+   * `services/serviceLifecycle.ts` for the enforcement side.
+   */
+  seedOnlyConfigs: string[];
+  /**
    * `metadata.annotations['servicebay.ports']` — comma-separated `port/proto`
    * list (e.g. `"8080/tcp,8443/tcp"`). Recommended; no validation beyond
    * "is a string" today.
@@ -94,6 +107,12 @@ export interface ParseContext {
    *  the annotation the resolver falls back to a `/config`-suffix heuristic
    *  that silently picks the wrong mount in multi-volume pods. */
   hasMustacheConfigs?: boolean;
+  /** Deployed filenames of the `*.mustache` companion configs the template
+   *  directory ships (i.e. with the `.mustache` suffix stripped). When
+   *  provided, every entry of `servicebay.seed-only-configs` must name one of
+   *  them — a typo'd or stale entry would otherwise silently protect nothing,
+   *  which is the failure mode the annotation exists to prevent. */
+  mustacheConfigFilenames?: string[];
 }
 
 export type ParseResult =
@@ -145,6 +164,19 @@ export const TEMPLATE_FIELDS: readonly TemplateFieldSpec[] = [
     description:
       'Container mountPath that companion `*.mustache` files should land in. ' +
       'Avoids the `/config`-suffix heuristic picking the wrong volume in multi-container pods.',
+  },
+  {
+    annotation: 'servicebay.seed-only-configs',
+    field: 'seedOnlyConfigs',
+    required: false,
+    default: [],
+    description:
+      'Comma-separated companion config filenames (e.g. `"automations.yaml,scenes.yaml,scripts.yaml"`) that ' +
+      'ServiceBay writes **only when they are absent** on the box. Use it for any `*.mustache` file whose ' +
+      'real owner after first install is the application or the operator — an app that rewrites the file from ' +
+      'its own UI, or a file the operator edits by hand. Without the annotation a deploy re-renders the file ' +
+      'every time, which overwrites that content (#2590). Each name must match a `*.mustache` file the ' +
+      'template ships, minus the suffix.',
   },
   {
     annotation: 'servicebay.schema-version',
@@ -276,6 +308,7 @@ function validateTemplateMetadata(
   label: string | undefined;
   ports: string | undefined;
   configMount: string | undefined;
+  seedOnlyConfigs: string[];
   schemaVersion: number;
   tier: TemplateTier;
   dependencies: string[];
@@ -302,6 +335,36 @@ function validateTemplateMetadata(
       'wrong mount in multi-volume pods. Add `servicebay.config-mount: "<container mountPath>"` ' +
       'pointing at the volume the configs should land in.',
     );
+  }
+
+  // #2590 — the files a deploy is only allowed to SEED, never to overwrite.
+  // Two rules, both errors rather than warnings: an entry that names nothing
+  // the template ships protects nothing, and an entry with a path separator
+  // would be compared against a basename and therefore also never match. Both
+  // shapes fail silently at runtime (the file is simply re-rendered over the
+  // operator's content), so they have to fail loudly here instead.
+  const seedOnlyConfigs: string[] = [];
+  const seedOnlyRaw = readAnnotation(yamlText, 'servicebay.seed-only-configs');
+  if (seedOnlyRaw !== undefined) {
+    const shipped = ctx.mustacheConfigFilenames;
+    for (const entry of seedOnlyRaw.split(',').map(s => s.trim()).filter(Boolean)) {
+      if (entry.includes('/') || entry === '.' || entry === '..') {
+        errors.push(
+          `Annotation \`servicebay.seed-only-configs\` entry "${entry}" must be a bare filename ` +
+          `(no path separators) — it is matched against the config file's own name.`,
+        );
+        continue;
+      }
+      if (shipped && !shipped.includes(entry)) {
+        errors.push(
+          `Annotation \`servicebay.seed-only-configs\` names "${entry}", but the template ships no ` +
+          `\`${entry}.mustache\` config file${shipped.length > 0 ? ` (it ships: ${shipped.join(', ')})` : ''}. ` +
+          `An entry that matches nothing protects nothing — fix the name or drop it.`,
+        );
+        continue;
+      }
+      seedOnlyConfigs.push(entry);
+    }
   }
 
   let schemaVersion = 1;
@@ -356,6 +419,7 @@ function validateTemplateMetadata(
     label,
     ports,
     configMount,
+    seedOnlyConfigs,
     schemaVersion,
     tier,
     dependencies,
@@ -404,6 +468,7 @@ export function parseTemplateManifest(
       schemaVersion: meta.schemaVersion,
       dependencies: meta.dependencies,
       configMount: meta.configMount,
+      seedOnlyConfigs: meta.seedOnlyConfigs,
       ports: meta.ports,
       requiresApi: meta.requiresApi,
       healthcheckRaw,
@@ -456,6 +521,17 @@ function resolveAnnotationDefaults(yamlText: string): Partial<TemplateManifest> 
   const depsRaw = readAnnotation(yamlText, 'servicebay.dependencies');
   if (depsRaw !== undefined) {
     out.dependencies = depsRaw.split(',').map(s => s.trim()).filter(Boolean);
+  }
+
+  // #2590 — permissive read of the seed-only list. Entries carrying a path
+  // separator are dropped rather than kept: they can never match a basename,
+  // and the runtime consumer must not be handed something path-shaped.
+  const seedOnlyRaw = readAnnotation(yamlText, 'servicebay.seed-only-configs');
+  if (seedOnlyRaw !== undefined) {
+    out.seedOnlyConfigs = seedOnlyRaw
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s !== '' && !s.includes('/') && s !== '.' && s !== '..');
   }
 
   let requiresApi: TemplateApiVersions | undefined;

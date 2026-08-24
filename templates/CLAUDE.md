@@ -28,6 +28,9 @@ metadata:
     servicebay.ports: "8080/tcp"
     servicebay.schema-version: "1"     # bump on every breaking change
     # servicebay.config-mount: "/config"   # required iff *.mustache files exist
+    # servicebay.seed-only-configs: "automations.yaml"  # *.mustache files the app
+    #   or the operator owns after first install — written ONLY when absent, so a
+    #   redeploy never overwrites what they put there (#2590)
     # servicebay.tier: "infrastructure"    # auto-include + lock checked
     # servicebay.dependencies: "nginx,auth" # comma-separated install-time deps
     # servicebay.healthcheck: |             # continuous health probe (#626/#628)

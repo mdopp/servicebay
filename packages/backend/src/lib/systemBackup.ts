@@ -1015,7 +1015,7 @@ export async function createSystemBackup(kind: 'auto' | 'manual' = 'manual', pro
 
         // Stage per-service CONFIG (not bulk data) from every installed service
         // that has a backup manifest — HA `.storage`/automations/zwave keys,
-        // adguard, authelia, syncthing, hermes, and nginx (just another atom).
+        // adguard, authelia, lldap, jellyfin, and nginx (just another atom).
         // This reuses the per-service producer (`stageServiceBackup` via the
         // host-agent backend, #1597) so the Snapshot's service-config section is
         // byte-identical to the NAS atom (epic invariant #1607/#1608). It
@@ -1180,7 +1180,7 @@ export async function previewSystemBackup(archivePath: string): Promise<BackupPr
         }
 
         // Preview per-service config (HA `.storage`/automations/zwave keys,
-        // adguard, authelia, syncthing, hermes, nginx). Falls back to the legacy
+        // adguard, authelia, lldap, jellyfin, nginx). Falls back to the legacy
         // `service-data/` dir name so a v2 backup still previews.
         let serviceConfigDir = path.join(stagingDir, 'service-config');
         if (!(await pathExists(serviceConfigDir))) {

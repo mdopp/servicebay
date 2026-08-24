@@ -13,7 +13,14 @@ import {
   toCoverageKey,
   extractHostPathVolumes,
   uncoveredVolumes,
+  unknownGateManifests,
+  shippedTemplateNames,
 } from '../../scripts/check-backup-coverage';
+import {
+  SERVICE_BACKUP_MANIFESTS,
+  getBackupGate,
+} from '../../packages/backend/src/lib/externalBackup/serviceManifest';
+import { SERVICE_BACKUP_MANIFESTS as WORKER_MANIFESTS } from '../../packages/backup-worker/src/engine/serviceManifest';
 
 /**
  * #2428 / #2429 / #2427 — the two ways a quality gate lies, and the doc that
@@ -304,6 +311,85 @@ describe('#2465 — backup-coverage fails closed on volume variables of any name
       });
     expect(vols.length).toBeGreaterThan(10);
     expect(uncoveredVolumes(vols)).toEqual([]);
+  });
+});
+
+describe('#2595 — a backup manifest gating on a name no template has is build-breaking', () => {
+  /**
+   * The third way a gate lies, alongside "scans nothing" and "runs nowhere":
+   * it scans and runs, but the thing it protects opted itself out. A manifest
+   * entry activates on an `installedTemplates` KEY, so an entry whose
+   * `gateOn ?? service` matches no template name is dormant on every box
+   * forever — and looked exactly like a template that merely wasn't installed.
+   * That is how authelia / lldap / jellyfin went un-backed-up while the nightly
+   * run logged "8/8 services backed up" against a shrunken denominator.
+   */
+  const templateNames = shippedTemplateNames();
+
+  it('finds the shipped templates at all (the gate is not vacuous)', () => {
+    expect(templateNames.length).toBeGreaterThan(5);
+    expect(templateNames).toEqual(expect.arrayContaining(['auth', 'media', 'file-share']));
+  });
+
+  it('every manifest entry at HEAD gates on a template this repo ships', () => {
+    expect(unknownGateManifests(SERVICE_BACKUP_MANIFESTS, templateNames)).toEqual([]);
+  });
+
+  it('the worker mirror gates identically — a divergence is the same defect', () => {
+    // The worker's copy is what actually SELECTS services for the nightly run
+    // (backupWorker/service.ts imports it, not the backend copy), so a gate that
+    // is right here and wrong there still loses the backup.
+    expect(WORKER_MANIFESTS.map(m => [m.service, m.gateOn ?? m.service]))
+      .toEqual(SERVICE_BACKUP_MANIFESTS.map(m => [m.service, m.gateOn ?? m.service]));
+  });
+
+  it('the three #2595 entries resolve to the templates that own their data dirs', () => {
+    const gateOf = (service: string) =>
+      getBackupGate(SERVICE_BACKUP_MANIFESTS.find(m => m.service === service)!);
+    // Multi-app templates: `auth` ships authelia + lldap, `media` ships jellyfin.
+    expect(gateOf('authelia')).toBe('auth');
+    expect(gateOf('lldap')).toBe('auth');
+    expect(gateOf('jellyfin')).toBe('media');
+    // The sibling-store precedent that was always right stays right.
+    expect(gateOf('home-assistant-zwave')).toBe('home-assistant');
+    // A single-app template still gates on its own name.
+    expect(gateOf('adguard')).toBe('adguard');
+  });
+
+  it('flags a permanently-inactive entry but NOT a merely-uninstalled one', () => {
+    // The distinction the runtime cannot make. `radicale` here is a real
+    // template that a given box may simply not have installed — not a defect.
+    const manifests = [
+      { service: 'radicale', include: ['collections'], exclude: [] },
+      { service: 'jellyfin', dataSubdir: 'media/jellyfin-config', include: ['config'], exclude: [] },
+      { service: 'ghost', gateOn: 'nowhere', include: ['x'], exclude: [] },
+    ];
+    expect(unknownGateManifests(manifests, ['auth', 'media', 'radicale'])).toEqual([
+      // jellyfin defaulted its gate to its own name — the exact pre-fix bug.
+      { service: 'jellyfin', gate: 'jellyfin', explicit: false },
+      // an explicit gateOn pointing nowhere is the same class of defect.
+      { service: 'ghost', gate: 'nowhere', explicit: true },
+    ]);
+  });
+
+  it('would have failed on the pre-fix manifests (the bug is actually caught)', () => {
+    const preFix = SERVICE_BACKUP_MANIFESTS.map(m =>
+      ['authelia', 'lldap', 'jellyfin'].includes(m.service) ? { ...m, gateOn: undefined } : m,
+    );
+    expect(unknownGateManifests(preFix, templateNames).map(g => g.service))
+      .toEqual(['authelia', 'lldap', 'jellyfin']);
+  });
+
+  it('the two retired entries are gone, not re-added under a dead gate', () => {
+    // syncthing's config lives in the podman PVC `file-share-syncthing-config`
+    // (no DATA_DIR path for the file-copy producer to read); `hermes` is the
+    // retired Solaris name with no template. Re-adding either would fail the
+    // gate above — this pins the decision so it isn't quietly reversed.
+    const names = SERVICE_BACKUP_MANIFESTS.map(m => m.service);
+    expect(names).not.toContain('syncthing');
+    expect(names).not.toContain('hermes');
+    expect(existsSync(path.join(REPO_ROOT, 'templates', 'syncthing'))).toBe(false);
+    expect(existsSync(path.join(REPO_ROOT, 'templates', 'hermes'))).toBe(false);
   });
 });
 

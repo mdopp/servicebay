@@ -25,6 +25,7 @@ const MANIFEST: TemplateManifest = {
   tier: 'feature',
   schemaVersion: 1,
   dependencies: [],
+  seedOnlyConfigs: [],
 };
 const VARS: StackVariable[] = [];
 

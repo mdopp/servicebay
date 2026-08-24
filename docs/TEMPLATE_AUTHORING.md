@@ -37,6 +37,7 @@ the wizard substitutes at deploy time. Use these annotations under
 | `servicebay.label` | yes | Friendly UI label shown in the wizard's configure step (e.g. `"Vaultwarden (Passwords)"`). Without it the section header falls back to the raw template name. |
 | `servicebay.ports` | optional | Comma-separated `port/proto` list (e.g. `"8080/tcp,8443/tcp"`). Drives gateway probes + the network graph. |
 | `servicebay.config-mount` | required if any `*.mustache` files | Container mountPath that companion `*.mustache` files should land in. Avoids the `/config`-suffix heuristic picking the wrong volume in multi-container pods. |
+| `servicebay.seed-only-configs` | optional (default `[]`) | Comma-separated companion config filenames (e.g. `"automations.yaml,scenes.yaml,scripts.yaml"`) that ServiceBay writes **only when they are absent** on the box. Use it for any `*.mustache` file whose real owner after first install is the application or the operator — an app that rewrites the file from its own UI, or a file the operator edits by hand. Without the annotation a deploy re-renders the file every time, which overwrites that content (#2590). Each name must match a `*.mustache` file the template ships, minus the suffix. |
 | `servicebay.schema-version` | optional (default `1`) | Bump when the pod structure or variable shape changes in a way operators need to be aware of (containers extracted, variables renamed, data paths moved). Plain image-tag bumps don't need this — Quadlet's `AutoUpdate=registry` handles those silently. Each bump should ship a `CHANGELOG.md` section + (if data needs to move) a `migrations/v{N-1}-to-v{N}.py` script. See #352. |
 | `servicebay.tier` | optional (default `"feature"`) | `"infrastructure"` for platform templates that the wizard auto-includes (DNS / proxy / SSO) and pins checked; everything else defaults to `"feature"` and starts unchecked. Stacks don't carry this annotation. |
 | `servicebay.dependencies` | optional (default `[]`) | Comma-separated list of template names that must install before this one. Drives three things in the wizard: (1) the red **`requires X`** badge under the template name; (2) auto-checking those templates when the operator checks this one; (3) the uncheck-guard that prompts before removing a template another selected template needs. The install loop then topo-sorts the deploy order so deps land first. Example: `servicebay.dependencies: "nginx,auth"`. |
@@ -283,6 +284,18 @@ container's `servicebay.config-mount`.
 Use these for service config files that need substituted values
 on first start (AdGuard's `AdGuardHome.yaml`, Authelia's
 `configuration.yml`).
+
+**Every deploy re-renders and rewrites them** — that is the right default
+for a file ServiceBay owns end to end, and the wrong one for a file the
+application or the operator takes over after first install. If the running
+service rewrites the file itself (Home Assistant's automation editor owns
+`automations.yaml`), or you tell operators they may edit it, list it in
+[`servicebay.seed-only-configs`](#templateyml): ServiceBay then writes
+it only when it is **absent**, and a redeploy leaves the on-disk content
+byte-for-byte alone (#2590, [ADR 0004](adr/0004-installs-are-non-destructive.md)).
+A seed-only file must therefore be self-sufficient after seeding — anything
+that has to stay in sync with a changed variable belongs in `post-deploy.py`,
+which runs against the live service, not in a file nobody rewrites.
 
 ### `post-deploy.py`
 

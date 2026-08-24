@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseTemplateManifest, tryParseTemplateManifest } from '@/lib/template/contract';
+import { parseTemplateManifest, tryParseTemplateManifest, readManifestAnnotations } from '@/lib/template/contract';
 
 function fixture(annotations: Record<string, string | number>, opts: { quotes?: 'double' | 'single' | 'bare' } = {}) {
   const quotes = opts.quotes ?? 'double';
@@ -64,6 +64,9 @@ describe('parseTemplateManifest — happy path', () => {
       schemaVersion: 1,
       dependencies: [],
       configMount: undefined,
+      // #2590 — no declaration means "ServiceBay owns every config file",
+      // i.e. the pre-existing re-render-on-every-deploy behaviour.
+      seedOnlyConfigs: [],
       ports: undefined,
     });
   });
@@ -157,6 +160,76 @@ describe('parseTemplateManifest — invalid values', () => {
     if (r.ok) return;
     // label missing + tier invalid + schema-version invalid
     expect(r.errors.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('parseTemplateManifest — seed-only configs (#2590)', () => {
+  const shipped = { mustacheConfigFilenames: ['automations.yaml', 'scenes.yaml', 'scripts.yaml'] };
+
+  it('defaults to an empty list — every config file is re-rendered unless declared', () => {
+    const r = parseTemplateManifest(fixture({ 'servicebay.label': 'X' }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.manifest.seedOnlyConfigs).toEqual([]);
+  });
+
+  it('parses the comma-separated list', () => {
+    const r = parseTemplateManifest(
+      fixture({ 'servicebay.label': 'X', 'servicebay.seed-only-configs': 'automations.yaml, scenes.yaml' }),
+      shipped,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.manifest.seedOnlyConfigs).toEqual(['automations.yaml', 'scenes.yaml']);
+  });
+
+  it('rejects an entry the template ships no mustache file for', () => {
+    // The whole failure mode this annotation guards against is a protection
+    // that silently matches nothing — so a typo has to be a build error, not
+    // a quietly re-enabled overwrite.
+    const r = parseTemplateManifest(
+      fixture({ 'servicebay.label': 'X', 'servicebay.seed-only-configs': 'automation.yaml' }),
+      shipped,
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors.some(e => e.includes('automation.yaml') && e.includes('protects nothing'))).toBe(true);
+  });
+
+  it('rejects a path-shaped entry', () => {
+    const r = parseTemplateManifest(
+      fixture({ 'servicebay.label': 'X', 'servicebay.seed-only-configs': 'sub/automations.yaml' }),
+      shipped,
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors.some(e => e.includes('bare filename'))).toBe(true);
+  });
+
+  it('accepts any name when the caller cannot supply the shipped file list', () => {
+    // Runtime parses have no template directory to check against.
+    const r = parseTemplateManifest(
+      fixture({ 'servicebay.label': 'X', 'servicebay.seed-only-configs': 'whatever.yaml' }),
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.manifest.seedOnlyConfigs).toEqual(['whatever.yaml']);
+  });
+});
+
+describe('readManifestAnnotations — seed-only configs (#2590)', () => {
+  // The deploy path uses the permissive reader so an unrelated missing
+  // annotation can never disable the data-loss guard.
+  it('reads the list off a manifest that would fail strict validation', () => {
+    const m = readManifestAnnotations(
+      fixture({ 'servicebay.seed-only-configs': 'automations.yaml,scenes.yaml' }),
+    );
+    expect(tryParseTemplateManifest(fixture({ 'servicebay.seed-only-configs': 'automations.yaml' }))).toBeNull();
+    expect(m.seedOnlyConfigs).toEqual(['automations.yaml', 'scenes.yaml']);
+  });
+
+  it('drops path-shaped entries rather than passing them on', () => {
+    const m = readManifestAnnotations(
+      fixture({ 'servicebay.label': 'X', 'servicebay.seed-only-configs': '../../etc/passwd, ok.yaml' }),
+    );
+    expect(m.seedOnlyConfigs).toEqual(['ok.yaml']);
   });
 });
 

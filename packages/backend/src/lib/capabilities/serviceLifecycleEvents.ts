@@ -158,7 +158,7 @@ async function loadManifest(template: string): Promise<TemplateManifest> {
     if (parsed.ok) return parsed.manifest;
     logger.warn(LOG_SCOPE, `template.yml for ${template} did not parse (${parsed.errors.join('; ')}); using a minimal manifest`);
   }
-  return { label: template, tier: 'feature', schemaVersion: 1, dependencies: [] };
+  return { label: template, tier: 'feature', schemaVersion: 1, dependencies: [], seedOnlyConfigs: [] };
 }
 
 /**

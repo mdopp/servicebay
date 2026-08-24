@@ -14,6 +14,13 @@ metadata:
     # authenticates via Authelia.
     servicebay.dependencies: "nginx,auth"
     servicebay.config-mount: "/config"
+    # The three UI-editable include targets are Home Assistant's to own after
+    # the first install: HA's own automation/script/scene editors rewrite them,
+    # and the operator edits them by hand. ServiceBay seeds each one empty when
+    # it is missing and never writes it again (#2590 — before this annotation
+    # every convergence pass re-rendered the empty seed over the operator's
+    # real automations, silently).
+    servicebay.seed-only-configs: "automations.yaml,scenes.yaml,scripts.yaml"
     # 8123 = Home Assistant (own login + OIDC, public via home.<domain>).
     # 8091 = Z-Wave JS UI, 3001 = the raw Z-Wave JS control websocket,
     # 5580 = python-matter-server's control websocket. Those three carry no
