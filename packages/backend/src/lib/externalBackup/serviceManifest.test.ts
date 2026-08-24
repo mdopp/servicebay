@@ -18,11 +18,16 @@ describe('service backup manifests', () => {
     const names = SERVICE_BACKUP_MANIFESTS.map(m => m.service);
     expect(names).toEqual(
       expect.arrayContaining([
-        'home-assistant', 'authelia', 'adguard', 'syncthing', 'hermes',
+        'home-assistant', 'authelia', 'adguard', 'nginx',
         // #2153 — previously unprotected services now covered.
         'lldap', 'vaultwarden', 'radicale', 'jellyfin', 'file-share',
       ]),
     );
+    // #2595 — `syncthing` (config lives in a podman PVC, not under DATA_DIR) and
+    // `hermes` (retired Solaris name, no template) could never activate and were
+    // removed rather than left as entries that promise a backup and stage nothing.
+    expect(names).not.toContain('syncthing');
+    expect(names).not.toContain('hermes');
   });
 
   it('backs up LLDAP users.db — the family identity store (#2153)', () => {
@@ -102,10 +107,35 @@ describe('service backup manifests', () => {
     expect(getBackupGate(getServiceManifest('adguard')!)).toBe('adguard');
   });
 
+  it('the apps of a multi-app template gate on the TEMPLATE name (#2595)', () => {
+    // installedTemplates carries template names — `auth` and `media` — never the
+    // app names. Defaulting the gate to the app name (the pre-fix state) left
+    // these three permanently dormant: the SSO server, the whole identity store,
+    // and the media server's config, none of them ever backed up.
+    expect(getBackupGate(getServiceManifest('authelia')!)).toBe('auth');
+    expect(getBackupGate(getServiceManifest('lldap')!)).toBe('auth');
+    expect(getBackupGate(getServiceManifest('jellyfin')!)).toBe('media');
+    // Their data dirs are the ones the template declares — the gate change does
+    // not move them.
+    expect(getServiceManifest('authelia')!.dataSubdir).toBe('auth/authelia-data');
+    expect(getServiceManifest('lldap')!.dataSubdir).toBe('auth/lldap');
+    expect(getServiceManifest('jellyfin')!.dataSubdir).toBe('media/jellyfin-config');
+  });
+
   it('getSiblingBackupServices lists the stores that ride a template deploy (#1594)', () => {
     expect(getSiblingBackupServices('home-assistant')).toEqual(['home-assistant-zwave']);
     // A template with no sibling stores gets an empty list.
     expect(getSiblingBackupServices('adguard')).toEqual([]);
+  });
+
+  it('the auth/media deploys now carry their app stores through wipe+restore (#2595)', () => {
+    // This is the RESTORE direction: install/runner.ts's deployItem builds
+    // `[item.name, ...getSiblingBackupServices(item.name)]` and runs
+    // wipeServiceForReinstall + autoRestoreServiceOnReinstall over each. Before
+    // the gate fix these lists were empty, so a reinstall of `auth` or `media`
+    // restored nothing for the apps inside them — there was never a tar either.
+    expect(getSiblingBackupServices('auth')).toEqual(['authelia', 'lldap']);
+    expect(getSiblingBackupServices('media')).toEqual(['jellyfin']);
   });
 
   it('excludes the recorder DB from home-assistant', () => {
@@ -200,13 +230,27 @@ describe('config/data classification (#1585)', () => {
 });
 
 describe('applyStripRules', () => {
+  // No shipped manifest declares a strip rule today (#2595 retired the last one
+  // with the `hermes` entry), so the rule engine is exercised against an
+  // explicit manifest — it stays live for the next service that needs it.
+  const withStrip = {
+    service: 'probe',
+    include: ['config.yaml'],
+    exclude: [],
+    strip: [{ file: 'config.yaml', dropYamlKeys: ['api_key'] }],
+  };
+
   it('strips a targeted file and passes other files through untouched', () => {
-    // hermes strips LLM api keys from config.yaml; other files pass through.
-    const hermes = getServiceManifest('hermes')!;
-    const stripped = applyStripRules(hermes, 'config.yaml', 'api_key: SEKRIT\nmodel: gemma\n');
+    const stripped = applyStripRules(withStrip, 'config.yaml', 'api_key: SEKRIT\nmodel: gemma\n');
     expect(stripped).not.toContain('SEKRIT');
-    const passthrough = applyStripRules(hermes, 'some-other-file.yml', 'api_key: keep\n');
+    expect(stripped).toContain('gemma');
+    const passthrough = applyStripRules(withStrip, 'some-other-file.yml', 'api_key: keep\n');
     expect(passthrough).toBe('api_key: keep\n');
+  });
+
+  it('passes everything through for a manifest with no strip rules', () => {
+    const lldap = getServiceManifest('lldap')!;
+    expect(applyStripRules(lldap, 'users.db', 'IDENTITY-BYTES')).toBe('IDENTITY-BYTES');
   });
 });
 

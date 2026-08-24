@@ -17,13 +17,19 @@
  * `adguard/work` + `adguard/conf` volumes are both under the `adguard` manifest,
  * and `file-share/samba-private` is under the `file-share` manifest.
  *
- * Exits 0 (all covered) or 1 (one or more uncovered volumes).
+ * The REVERSE direction (#2595) is checked too: every manifest entry must gate
+ * on a template this repo ships. See {@link unknownGateManifests}.
+ *
+ * Exits 0 (all covered) or 1 (an uncovered volume, or a gate that names no
+ * template).
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import {
   SERVICE_BACKUP_MANIFESTS,
   EXCLUDED_BULK_VOLUMES,
+  getBackupGate,
+  type ServiceBackupManifest,
 } from '../packages/backend/src/lib/externalBackup/serviceManifest.js';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -126,20 +132,89 @@ function uncoveredVolumes(vols: readonly TemplateVolume[]): TemplateVolume[] {
   return vols.filter(v => !isUnder(v.key, manifestRoots) && !isUnder(v.key, excludedRoots));
 }
 
-function main(): void {
-  const templates = readdirSync(TEMPLATES_DIR, { withFileTypes: true })
+/** A manifest entry whose activation key names no shipped template. */
+interface UnknownGate {
+  service: string;
+  gate: string;
+  /** True when the gate came from `gateOn` rather than defaulting to `service`. */
+  explicit: boolean;
+}
+
+/**
+ * The reverse of the volume check (#2595). A manifest entry activates when
+ * `getBackupGate(m)` — `gateOn ?? service` — is a key in `installedTemplates`,
+ * i.e. a template NAME. Two situations look identical at runtime and are not:
+ *
+ *   - the gate names a real template that this box has not installed → the entry
+ *     is correctly dormant. Normal, expected, nothing to report.
+ *   - the gate names something no template is ever called → the entry is
+ *     PERMANENTLY dormant on every box, and the backup it promises silently does
+ *     not exist. That is always a defect.
+ *
+ * Only a repo-level check can tell the two apart, because only here is the full
+ * set of template names known; at runtime the backup selector just sees a key
+ * that is absent and moves on — which is exactly how `authelia`, `lldap` and
+ * `jellyfin` sat un-backed-up while the nightly run reported "8/8 services
+ * backed up" against a denominator that had quietly shrunk.
+ *
+ * Pure over its inputs so the gate's own decision is testable without the
+ * filesystem (tests/scripts/gate-config-truth.test.ts).
+ */
+function unknownGateManifests(
+  manifests: readonly ServiceBackupManifest[],
+  templateNames: readonly string[],
+): UnknownGate[] {
+  const known = new Set(templateNames);
+  return manifests
+    .filter(m => !known.has(getBackupGate(m)))
+    .map(m => ({ service: m.service, gate: getBackupGate(m), explicit: m.gateOn !== undefined }));
+}
+
+/** The names of the templates this repo ships (a dir with a `template.yml`). */
+function shippedTemplateNames(): string[] {
+  return readdirSync(TEMPLATES_DIR, { withFileTypes: true })
     .filter(e => e.isDirectory())
-    .map(e => e.name);
+    .map(e => e.name)
+    .filter(name => existsSync(path.join(TEMPLATES_DIR, name, 'template.yml')));
+}
+
+function main(): void {
+  const templates = shippedTemplateNames();
 
   const all: TemplateVolume[] = [];
   for (const template of templates) {
-    const tmplPath = path.join(TEMPLATES_DIR, template, 'template.yml');
-    if (!existsSync(tmplPath)) continue;
-    all.push(...extractHostPathVolumes(template, readFileSync(tmplPath, 'utf8')));
+    all.push(
+      ...extractHostPathVolumes(
+        template,
+        readFileSync(path.join(TEMPLATES_DIR, template, 'template.yml'), 'utf8'),
+      ),
+    );
   }
 
   const checked = all.length;
   const uncovered = uncoveredVolumes(all);
+
+  // Fail closed: an empty template list would make BOTH checks vacuously green.
+  if (templates.length === 0) {
+    console.error('✗ backup-coverage: no templates found under templates/ — the gate would scan nothing.');
+    process.exit(1);
+  }
+
+  const unknownGates = unknownGateManifests(SERVICE_BACKUP_MANIFESTS, templates);
+  if (unknownGates.length > 0) {
+    console.error('✗ backup-coverage contract (#2595): manifest entr(ies) gating on a name no template has — permanently inactive, so the backup they promise never runs:\n');
+    for (const g of unknownGates) {
+      const source = g.explicit ? `gateOn: '${g.gate}'` : `service: '${g.gate}' (no gateOn)`;
+      console.error(`  ${g.service}: ${source} — no templates/${g.gate}/template.yml`);
+    }
+    console.error('\nThis is NOT the same as "the template is not installed on this box" — that is fine and expected.');
+    console.error('A gate that matches no template can never activate anywhere. Fix it by setting `gateOn` to the');
+    console.error('template that owns the data dir (an app of a multi-app template gates on the template, e.g.');
+    console.error("jellyfin → 'media', authelia/lldap → 'auth'), or by deleting the entry if the service is retired.");
+    console.error('Both copies must change: packages/backend/src/lib/externalBackup/serviceManifest.ts and the');
+    console.error('packages/backup-worker/src/engine/serviceManifest.ts mirror.');
+    process.exit(1);
+  }
 
   if (uncovered.length > 0) {
     console.error('✗ backup-coverage contract (#2153): persistent volume(s) with no manifest entry and no EXCLUDED_BULK_VOLUMES marker:\n');
@@ -154,14 +229,22 @@ function main(): void {
   }
 
   console.log(`✓ backup-coverage: ${checked} persistent template volume(s) all covered (manifest or explicit bulk-exclude).`);
+  console.log(`✓ backup-gates: ${SERVICE_BACKUP_MANIFESTS.length} manifest entr(ies) all gate on a shipped template.`);
 }
 
 // Run only when invoked as the CLI — `toCoverageKey` / `extractHostPathVolumes`
-// / `uncoveredVolumes` are imported by tests/scripts/gate-config-truth.test.ts,
-// which must not trigger a full run (and a `process.exit`) just by importing.
+// / `uncoveredVolumes` / `unknownGateManifests` are imported by
+// tests/scripts/gate-config-truth.test.ts, which must not trigger a full run
+// (and a `process.exit`) just by importing.
 if (/check-backup-coverage\.ts$/.test(process.argv[1] ?? '')) {
   main();
 }
 
-export { toCoverageKey, extractHostPathVolumes, uncoveredVolumes };
-export type { TemplateVolume };
+export {
+  toCoverageKey,
+  extractHostPathVolumes,
+  uncoveredVolumes,
+  unknownGateManifests,
+  shippedTemplateNames,
+};
+export type { TemplateVolume, UnknownGate };

@@ -93,15 +93,22 @@ export interface ServiceBackupManifest {
   dataSubdir?: string;
   /**
    * A SIBLING-store manifest (#1594): this entry has no `installedTemplates`
-   * key of its own — it backs up a store that lives in a sibling dir of a real
-   * template (e.g. the zwave-js store at `home-assistant/zwave-js/`, beside
-   * HA's own `home-assistant/homeassistant/` config). `gateOn` names the
-   * template whose presence activates this backup, and whose deploy carries
-   * this entry through the per-service wipe/restore. Crucially this is a plain
-   * `dataSubdir` under DATA_DIR — NOT a `../` traversal off the parent's dir —
-   * so it never trips safeTarExtract's `..` refusal or wipeServiceForReinstall's
-   * dataDir-prefix guard (those security ratchets stay intact). Omitted for a
-   * normal service that gates on its own `service` name.
+   * key of its own — it backs up a store that belongs to a template installed
+   * under a DIFFERENT name. Two shapes, same mechanism:
+   *   - a sibling dir of a template's own config (the zwave-js store at
+   *     `home-assistant/zwave-js/`, beside HA's `home-assistant/homeassistant/`);
+   *   - one app inside a MULTI-APP template (#2595 — `authelia` and `lldap` are
+   *     both apps of the `auth` template; `jellyfin` is an app of `media`).
+   * `gateOn` names the template whose presence activates this backup, and whose
+   * deploy carries this entry through the per-service wipe/restore. Crucially
+   * this is a plain `dataSubdir` under DATA_DIR — NOT a `../` traversal off the
+   * parent's dir — so it never trips safeTarExtract's `..` refusal or
+   * wipeServiceForReinstall's dataDir-prefix guard (those security ratchets stay
+   * intact). Omitted for a normal service that gates on its own `service` name.
+   *
+   * A gate — `gateOn ?? service` — that names no shipped template is ALWAYS a
+   * defect, not a config choice: the entry can never activate on any box.
+   * `scripts/check-backup-coverage.ts` fails the build on one (#2595).
    */
   gateOn?: string;
   /**
@@ -152,6 +159,24 @@ export interface ServiceBackupManifest {
  * persistent `{{DATA_DIR}}/…` volume must either appear here (a manifest entry)
  * or be listed in `EXCLUDED_BULK_VOLUMES` below — enforced by
  * `scripts/check-backup-coverage.ts` so a new template can't silently opt out.
+ *
+ * The same gate also enforces the REVERSE direction (#2595): every entry's
+ * `gateOn ?? service` must name a template this repo ships. Two entries were
+ * removed when that gate went in, because neither could ever activate:
+ *   - `syncthing` — Syncthing is an app of the `file-share` template, so the
+ *     gate name was wrong; but re-gating it would not have helped. Its config
+ *     (`config.xml`, the device identity) lives in the podman-managed PVC
+ *     `file-share-syncthing-config`, deliberately NOT a `{{DATA_DIR}}` hostPath
+ *     (see templates/file-share/template.yml: a bind mount there fails
+ *     Syncthing's startup `chmod` under rootless podman). The producer/worker
+ *     only ever read DATA_DIR-relative paths, so there is nothing here for a
+ *     manifest to point at. Backing a named volume up needs machinery this
+ *     file-copy path does not have — tracked in #2596, not faked with an entry
+ *     that silently stages nothing.
+ *   - `hermes` — the retired Solaris name (CLAUDE.md: legacy `hermes` path
+ *     references are deprecated; the stack now ships from `mdopp/solaris` as
+ *     `solaris-*`). No `templates/hermes` exists and none will; the leftover
+ *     `/mnt/data/stacks/hermes` dir on an old box is not a ServiceBay template.
  */
 export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
   {
@@ -244,8 +269,13 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     // preserved nothing useful while the actual secrets were lost on reinstall.
     // `configuration.yml` is NOT backed up: ServiceBay re-renders it from
     // `configuration.yml.mustache` on every deploy (it's regenerable, not state).
+    // Authelia is an APP of the `auth` template (which also ships LLDAP), so
+    // there is no `authelia` key in installedTemplates to gate on (#2595 — the
+    // missing `gateOn` here silently kept the SSO server's secret store out of
+    // every nightly backup since #2153 shipped).
     service: 'authelia',
     dataSubdir: 'auth/authelia-data',
+    gateOn: 'auth',
     // db.sqlite3 is WAL-mode (post-deploy.py flips journal_mode=WAL, #1679). We
     // stage the main DB plus its `-wal`/`-shm` sidecars byte-for-byte so a live
     // copy stays whole on restore (the same reason NPM ships a snapshot). The DB
@@ -260,27 +290,8 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     include: ['conf/AdGuardHome.yaml'],
     exclude: ['data/querylog.json', 'data/stats.db', 'data/sessions.db', 'data/filters'],
   },
-  {
-    service: 'syncthing',
-    // device list + folder-share definitions; the synced data re-syncs from peers.
-    include: ['config.xml'],
-    exclude: ['index-v0.14.0.db', 'index'],
-    // The synced-folder index re-syncs from peers, but it's a heavy on-RAID
-    // artifact worth keeping through a wipe-config rather than re-indexing.
-    data: ['index-v0.14.0.db', 'index'],
-  },
-  {
-    service: 'hermes',
-    // model selection, prompts, household persona, MCP endpoint list,
-    // installed-skills git URLs, household-member personalization.
-    include: ['config.yaml'],
-    exclude: ['vectordb', 'embeddings', 'conversations', 'history'],
-    // The vector store + embeddings are large and rebuildable, but kept on the
-    // RAID through a wipe-config (re-embedding is expensive).
-    data: ['vectordb', 'embeddings'],
-    // LLM API keys are re-entered after a restore.
-    strip: [{ file: 'config.yaml', dropYamlKeys: ['api_key', 'apiKey', 'llm_api_key'] }],
-  },
+  // (`syncthing` and `hermes` used to sit here — removed in #2595, see the
+  // block comment above this array for why neither could ever activate.)
   {
     // Nginx Proxy Manager (#1528). Template name is `nginx`; data lives under
     // `nginx-proxy-manager/` (`data/` ← /data, `letsencrypt/` ← /etc/letsencrypt).
@@ -321,8 +332,12 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     // container's /data → `auth/lldap/`. Kept verbatim (identities can't be
     // regenerated; trusted-NAS class). The `-wal`/`-shm` sidecars ride along so
     // a live copy restores whole.
+    // LLDAP is the other app of the `auth` template — same gate as authelia
+    // (#2595). Without it the family identity store was never backed up, so a
+    // reinstall would have left nobody able to sign in to anything.
     service: 'lldap',
     dataSubdir: 'auth/lldap',
+    gateOn: 'auth',
     include: ['users.db', 'users.db-wal', 'users.db-shm'],
     exclude: [],
   },
@@ -360,8 +375,11 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     // the regenerable bulk: transcode/artwork caches, logs, and re-scannable
     // metadata. The media files themselves live on a separate volume
     // (`JELLYFIN_MEDIA_PATH`) that is never backed up (EXCLUDED_BULK_VOLUMES).
+    // Jellyfin is an app of the `media` template, so it gates on `media`, not on
+    // its own name (#2595).
     service: 'jellyfin',
     dataSubdir: 'media/jellyfin-config',
+    gateOn: 'media',
     include: [
       'config',
       'data/jellyfin.db', 'data/jellyfin.db-wal', 'data/jellyfin.db-shm',

@@ -96,6 +96,31 @@ describe('runBackupForInstalled', () => {
     expect(arg.services).toEqual(expect.arrayContaining(['adguard', 'home-assistant', 'home-assistant-zwave']));
   });
 
+  it('selects the apps of a multi-app template — auth ⇒ authelia+lldap, media ⇒ jellyfin (#2595)', async () => {
+    // The box's real shape: installedTemplates carries TEMPLATE names. Before
+    // the gate fix, these three manifest entries waited on `authelia`/`lldap`/
+    // `jellyfin` keys that no box has, so they silently dropped out of the
+    // nightly run — which then reported "8/8 services backed up" against a
+    // denominator that had lost the SSO server and the whole identity store.
+    mockCfg.getConfig.mockResolvedValue({
+      installedTemplates: { nginx: {}, auth: {}, adguard: {}, media: {}, 'home-assistant': {} },
+      templateSettings: { DATA_DIR: '/mnt/data/stacks' },
+    });
+    mockLauncher.readBackupStatus.mockResolvedValue(doneStatus([{ service: 'authelia', ok: true }]));
+
+    await runBackupForInstalled();
+    const { services } = mockLauncher.launchBackupWorker.mock.calls[0][0];
+    expect(services).toEqual(expect.arrayContaining(['authelia', 'lldap', 'jellyfin']));
+    // Nothing gates on a name no template has any more, so nothing is dropped:
+    // every entry whose gate is installed is selected.
+    expect(services).toEqual(
+      expect.arrayContaining(['nginx', 'adguard', 'home-assistant', 'home-assistant-zwave']),
+    );
+    // …and an entry for a template this box does NOT have stays correctly out.
+    expect(services).not.toContain('vaultwarden');
+    expect(services).not.toContain('radicale');
+  });
+
   it('returns null (no launch) when nothing with a manifest is installed', async () => {
     mockCfg.getConfig.mockResolvedValue({ installedTemplates: { 'unmanaged-thing': {} } });
     expect(await runBackupForInstalled()).toBeNull();

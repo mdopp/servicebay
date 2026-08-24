@@ -26,7 +26,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { buildServiceBackupTar } from '../../packages/backup-worker/src/engine/staging';
-import { getServiceManifest } from '../../packages/backup-worker/src/engine/serviceManifest';
+import {
+  getServiceManifest,
+  type ServiceBackupManifest,
+} from '../../packages/backup-worker/src/engine/serviceManifest';
 import { safeTarExtract } from '@/lib/systemBackup';
 
 function tarPresent(): boolean {
@@ -68,8 +71,10 @@ afterEach(async () => {
 async function roundTrip(
   service: string,
   seed: (src: string) => Promise<void>,
+  /** Explicit manifest, for a shape no shipped service declares (strip rules). */
+  manifestOverride?: ServiceBackupManifest,
 ): Promise<string> {
-  const manifest = getServiceManifest(service)!;
+  const manifest = manifestOverride ?? getServiceManifest(service)!;
   expect(manifest, `manifest for ${service} must exist`).toBeDefined();
   const src = await mkTmp(`${service}-src`);
   await seed(src);
@@ -162,10 +167,22 @@ describe('backup round-trip (#2154) — content survives backup→wipe→restore
     await expect(fs.access(path.join(restored, 'users_database.yml'))).rejects.toThrow();
   });
 
-  maybeIt('hermes: strip removes LLM api keys before the tar (secret never lands)', async () => {
-    const restored = await roundTrip('hermes', async src => {
-      await write(src, 'config.yaml', 'api_key: SUPER-SECRET-KEY\nmodel: gemma-e4b\n');
-    });
+  maybeIt('strip removes api keys before the tar (secret never lands on the NAS)', async () => {
+    // #2595 retired the last shipped strip rule with the `hermes` entry, so the
+    // staging path's strip step is exercised against an explicit manifest — the
+    // machinery stays covered for the next service that needs it.
+    const restored = await roundTrip(
+      'strip-probe',
+      async src => {
+        await write(src, 'config.yaml', 'api_key: SUPER-SECRET-KEY\nmodel: gemma-e4b\n');
+      },
+      {
+        service: 'strip-probe',
+        include: ['config.yaml'],
+        exclude: [],
+        strip: [{ file: 'config.yaml', dropYamlKeys: ['api_key', 'apiKey', 'llm_api_key'] }],
+      },
+    );
     const cfg = await read(restored, 'config.yaml');
     // The strip rule removed the secret but kept the rest of the config.
     expect(cfg).not.toContain('SUPER-SECRET-KEY');

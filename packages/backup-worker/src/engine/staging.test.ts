@@ -24,6 +24,18 @@ async function write(base: string, rel: string, content: string): Promise<void> 
   await fs.writeFile(full, content);
 }
 
+/**
+ * A manifest with a strip rule. No SHIPPED manifest declares one since #2595
+ * retired the `hermes` entry, so the strip step is exercised against an explicit
+ * manifest — the machinery stays covered for the next service that needs it.
+ */
+const STRIPS_API_KEYS: ServiceBackupManifest = {
+  service: 'strip-probe',
+  include: ['config.yaml'],
+  exclude: [],
+  strip: [{ file: 'config.yaml', dropYamlKeys: ['api_key', 'apiKey', 'llm_api_key'] }],
+};
+
 beforeEach(() => { tmpDirs = []; });
 afterEach(async () => {
   await Promise.all(tmpDirs.map(d => fs.rm(d, { recursive: true, force: true })));
@@ -58,12 +70,11 @@ describe('stageServiceBackup', () => {
   });
 
   it('applies strip rules (secrets never enter the tar)', async () => {
-    // hermes strips LLM api keys from config.yaml before it enters the tarball.
     const src = await mkTmp();
     await write(src, 'config.yaml', 'api_key: SEKRIT\nmodel: gemma-e4b\n');
     const staging = await mkTmp();
 
-    await stageServiceBackup(src, getServiceManifest('hermes')!, staging);
+    await stageServiceBackup(src, STRIPS_API_KEYS, staging);
 
     const out = await fs.readFile(path.join(staging, 'config.yaml'), 'utf8');
     expect(out).not.toContain('SEKRIT');
@@ -119,7 +130,7 @@ describe('stageServiceBackup', () => {
       await fs.symlink(path.join(victim, 'config.yaml'), path.join(src, 'config.yaml'));
       const staging = await mkTmp();
 
-      const staged = await stageServiceBackup(src, getServiceManifest('hermes')!, staging);
+      const staged = await stageServiceBackup(src, STRIPS_API_KEYS, staging);
 
       expect(staged).toEqual([]);
       await expect(fs.access(path.join(staging, 'config.yaml'))).rejects.toThrow();

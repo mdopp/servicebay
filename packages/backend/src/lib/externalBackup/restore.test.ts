@@ -327,6 +327,105 @@ describe('wipeServiceForReinstall (#1585)', () => {
   });
 });
 
+describe('#2595 — the multi-app template stores round-trip through wipe + auto-restore', () => {
+  /**
+   * The backup half of #2595 (adding `gateOn`) only matters if the RESTORE half
+   * lands the bytes back where the app reads them. These three paths had never
+   * been backed up, so they had never been restored either — the install
+   * runner's `[item.name, ...getSiblingBackupServices(item.name)]` list was
+   * empty for `auth` and `media`. Assert the whole per-service path end to end:
+   * data-dir resolution (via `dataSubdir`), the wipe's CONFIG/DATA split, and
+   * the auto-restore that re-seeds over it.
+   */
+  const APP_STORES = [
+    { service: 'authelia', dir: ['auth', 'authelia-data'], config: 'db.sqlite3', payload: 'TOTP-WEBAUTHN-SECRETS' },
+    { service: 'lldap', dir: ['auth', 'lldap'], config: 'users.db', payload: 'FAMILY-IDENTITY-BYTES' },
+    { service: 'jellyfin', dir: ['media', 'jellyfin-config'], config: 'data/jellyfin.db', payload: 'JELLYFIN-USERS-DB' },
+  ] as const;
+
+  /** Serve `<service>.tar` off the NAS with the given file contents. */
+  async function serveServiceTar(service: string, files: Record<string, string>) {
+    const tar = await buildServiceTar(files);
+    mockNas.nasList.mockResolvedValue([{ name: `${service}.tar`, size: tar.length }]);
+    mockNas.nasDownload.mockImplementation(async (p: string) => {
+      if (p === `${NAS_BACKUP_DIR}/${service}.tar`) return tar;
+      throw new Error('not found'); // no meta sidecar
+    });
+  }
+
+  it.each(APP_STORES)(
+    '$service: restores into <DATA_DIR>/$dir.0/$dir.1 — the dir the template actually mounts',
+    async ({ service, dir, config, payload }) => {
+      const target = path.join(tmpRoot, ...dir);
+      await serveServiceTar(service, { [config]: payload });
+      const logs: string[] = [];
+      await autoRestoreServiceOnReinstall(
+        service,
+        { wipeMode: 'install', node: 'Local', local: true },
+        async l => { logs.push(l); },
+      );
+      expect(await fs.readFile(path.join(target, config), 'utf8')).toBe(payload);
+      expect(logs.some(l => l.includes('restored') && l.includes(service))).toBe(true);
+    },
+  );
+
+  it('lldap: wipe-config clears the identity store, then the restore puts it back', async () => {
+    const target = path.join(tmpRoot, 'auth', 'lldap');
+    await fs.mkdir(target, { recursive: true });
+    await fs.writeFile(path.join(target, 'users.db'), 'STALE-IDENTITIES');
+    await fs.writeFile(path.join(target, 'lldap_config.toml'), 'NOT-CONFIG-CLASS');
+
+    const logs: string[] = [];
+    await wipeServiceForReinstall('lldap', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
+    // The manifest's CONFIG path went; anything unclassified stayed.
+    await expect(fs.access(path.join(target, 'users.db'))).rejects.toThrow();
+    expect(await fs.readFile(path.join(target, 'lldap_config.toml'), 'utf8')).toBe('NOT-CONFIG-CLASS');
+    // Pre-fix this logged "no backup manifest" for the template name `auth`,
+    // because `lldap` was never in the deploy's service list at all.
+    expect(logs.some(l => l.includes('wipe-config') && l.includes('lldap'))).toBe(true);
+
+    await serveServiceTar('lldap', { 'users.db': 'RESTORED-IDENTITIES' });
+    await autoRestoreServiceOnReinstall('lldap', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
+    expect(await fs.readFile(path.join(target, 'users.db'), 'utf8')).toBe('RESTORED-IDENTITIES');
+    // The force-restore did not disturb the kept, unclassified file.
+    expect(await fs.readFile(path.join(target, 'lldap_config.toml'), 'utf8')).toBe('NOT-CONFIG-CLASS');
+  });
+
+  it('jellyfin: wipe-config clears CONFIG, KEEPS the re-scannable metadata DATA', async () => {
+    const target = path.join(tmpRoot, 'media', 'jellyfin-config');
+    await fs.mkdir(path.join(target, 'config'), { recursive: true });
+    await fs.mkdir(path.join(target, 'data'), { recursive: true });
+    await fs.mkdir(path.join(target, 'metadata'), { recursive: true });
+    await fs.writeFile(path.join(target, 'config/system.xml'), '<ServerConfiguration/>');
+    await fs.writeFile(path.join(target, 'data/jellyfin.db'), 'USERS-AND-LIBRARIES');
+    await fs.writeFile(path.join(target, 'metadata/poster.jpg'), 'BULK-ARTWORK');
+
+    await wipeServiceForReinstall('jellyfin', { wipeMode: 'wipe-config', node: 'Local', local: true }, async () => {});
+    await expect(fs.access(path.join(target, 'config/system.xml'))).rejects.toThrow();
+    await expect(fs.access(path.join(target, 'data/jellyfin.db'))).rejects.toThrow();
+    // metadata is DATA — heavy and re-scannable, kept on the RAID.
+    expect(await fs.readFile(path.join(target, 'metadata/poster.jpg'), 'utf8')).toBe('BULK-ARTWORK');
+
+    await serveServiceTar('jellyfin', { 'data/jellyfin.db': 'RESTORED-USERS' });
+    await autoRestoreServiceOnReinstall('jellyfin', { wipeMode: 'wipe-config', node: 'Local', local: true }, async () => {});
+    expect(await fs.readFile(path.join(target, 'data/jellyfin.db'), 'utf8')).toBe('RESTORED-USERS');
+    expect(await fs.readFile(path.join(target, 'metadata/poster.jpg'), 'utf8')).toBe('BULK-ARTWORK');
+  });
+
+  it('authelia: an install into a live data dir still refuses to clobber (#1584 guard holds)', async () => {
+    const target = path.join(tmpRoot, 'auth', 'authelia-data');
+    await fs.mkdir(target, { recursive: true });
+    await fs.writeFile(path.join(target, 'db.sqlite3'), 'LIVE-SECRETS');
+    await serveServiceTar('authelia', { 'db.sqlite3': 'BACKUP-SECRETS' });
+
+    const logs: string[] = [];
+    await autoRestoreServiceOnReinstall('authelia', { wipeMode: 'install', node: 'Local', local: true }, async l => { logs.push(l); });
+    // Newly-gated entries inherit the existing safety rule, not a new one.
+    expect(await fs.readFile(path.join(target, 'db.sqlite3'), 'utf8')).toBe('LIVE-SECRETS');
+    expect(logs.some(l => l.includes('not empty') && l.includes('skipping restore'))).toBe(true);
+  });
+});
+
 describe('NPM credential reconcile after restore (#1529)', () => {
   /** Serve an nginx.tar (restored into tmpRoot/nginx-proxy-manager). The bare
    *  slot is a valid undated snapshot the latest-resolver finds (#1865). */
