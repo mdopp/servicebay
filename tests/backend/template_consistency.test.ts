@@ -1007,6 +1007,25 @@ describe('Home Assistant template: Z-Wave and Matter ports are loopback-bound (#
     expect(mig).toMatch(/serverHost/);
     expect(mig).toMatch(/def migrate_zwave_ws_bind\(/);
   });
+
+  it('the v7-to-v8 hop exists and moves nothing (#2601)', () => {
+    // The v8 (#2573) work — importing the reverse-proxy trust list into HA's
+    // own HTTP store — needs a RUNNING Home Assistant, so it lives in
+    // post-deploy.py and cannot happen in a migration (which runs fail-fast
+    // before the new spec lands). The hop still has to exist: without it
+    // selectMigrationChain aborts every redeploy from v7, which is what left
+    // the reference box eight days stale with a green-looking dialog.
+    const mig = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'home-assistant', 'migrations', 'v7-to-v8.py'), 'utf-8',
+    );
+    expect(mig).not.toMatch(/shutil\.(move|rmtree|copy)|os\.remove|\.unlink\(|\.rename\(|chown/);
+    expect(mig).not.toMatch(/return 1|sys\.exit\(1\)/);
+    // The real work stays where it can actually run.
+    const postDeploy = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'home-assistant', 'post-deploy.py'), 'utf-8',
+    );
+    expect(postDeploy).toMatch(/pre-http-migration\.bak/);
+  });
 });
 
 // ─── 3b3. Radicale template: rights ruleset is baked in (#2411) ─────────────
@@ -1268,6 +1287,18 @@ describe('Media template: Audiobookshelf retired for fresh installs (#1725)', ()
     // Route cleanup only — no on-disk data may move.
     expect(mig).not.toMatch(/shutil\.(move|rmtree)|os\.remove|\.unlink\(|\.rename\(/);
     // Best-effort like v5-to-v6: a leftover route must never abort a deploy.
+    expect(mig).not.toMatch(/return 1|sys\.exit\(1\)/);
+  });
+
+  it('the v7-to-v8 hop exists and moves nothing (#2601)', () => {
+    // v8 (#2580) is a unit-shape + Jellyfin-setting change; nothing on disk
+    // moves. It shipped without this script, so every box recorded at v7 —
+    // including the reference box — aborted its `media` redeploy at the
+    // migration gate, before deployItem, with no service redeployed.
+    const mig = fs.readFileSync(
+      path.join(TEMPLATES_DIR, 'media', 'migrations', 'v7-to-v8.py'), 'utf-8',
+    );
+    expect(mig).not.toMatch(/shutil\.(move|rmtree|copy)|os\.remove|\.unlink\(|\.rename\(|chown/);
     expect(mig).not.toMatch(/return 1|sys\.exit\(1\)/);
   });
 });
@@ -2244,7 +2275,87 @@ describe('Template tier classification', () => {
   });
 });
 
-// ─── 9. post-deploy.py scripts parse as valid Python ───────────────────────
+// ─── 8b. The migration chain reaches the declared schema-version (#2601) ───
+//
+// `selectMigrationChain` (lib/stackInstall/migrations.ts) walks
+// installedVersion → schemaVersion one hop at a time and ABORTS the deploy
+// when a hop has no script. A schema bump that ships no `v{N-1}-to-v{N}.py`
+// therefore doesn't just skip a migration — it makes the template
+// undeployable for every box still recorded at the previous version, and the
+// abort happens before `deployItem`, which is easy to read as a finished run.
+// That is exactly what #2601 hit: media and home-assistant both went to v8
+// with their chains stopping at v7.
+//
+// The rule is deliberately anchored at the TOP of the chain rather than at
+// v1: a template that has never shipped a migration (adguard, nginx,
+// file-share) is left alone here, because filling those historic hops means
+// reconstructing what did or didn't move on disk years ago — a separate
+// decision, not something to guess in a guard. What this pins is the hop the
+// author is adding right now: once a template ships ANY migration, its chain
+// must reach its current schema-version.
+describe('Template migration chain reaches the schema-version', () => {
+  for (const t of templates) {
+    const migDir = path.join(TEMPLATES_DIR, t.name, 'migrations');
+    if (!fs.existsSync(migDir)) continue;
+    const hops = fs.readdirSync(migDir)
+      .map(f => /^v(\d+)-to-v(\d+)\.py$/.exec(f))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map(m => ({ from: Number(m[1]), to: Number(m[2]) }));
+    if (hops.length === 0) continue;
+
+    it(`${t.name}: every hop up to its schema-version has a script`, () => {
+      const declared = /servicebay\.schema-version:\s*"(\d+)"/.exec(t.yamlContent);
+      const schemaVersion = declared ? Number(declared[1]) : 1;
+      const froms = new Set(hops.map(h => h.from));
+      // Walk from the newest hop the template already ships up to the version
+      // it now declares. Historic gaps further down the chain (home-assistant
+      // has no v2→v3, v4→v5 or v5→v6) are left alone on purpose — see the
+      // note above; what must never regress is the tail the author is
+      // extending right now.
+      const missing: string[] = [];
+      for (let v = Math.max(...hops.map(h => h.from)); v < schemaVersion; v++) {
+        if (!froms.has(v)) missing.push(`v${v}-to-v${v + 1}.py`);
+      }
+      expect(
+        missing,
+        `${t.name} declares schema-version ${schemaVersion} but ships no ${missing.join(', ')}. `
+        + 'selectMigrationChain aborts the deploy on a missing hop, so every box still at the '
+        + 'previous version cannot upgrade at all. If nothing on disk moves, ship an '
+        + 'informational no-op script (see templates/beets/migrations/v2-to-v3.py).',
+      ).toEqual([]);
+    });
+  }
+
+  // The end-to-end shape of the #2601 abort: run the runner's own chain
+  // selector over the scripts actually on disk, from the version the
+  // reference box was recorded at, and assert it does not refuse the deploy.
+  it.each([
+    ['media', 7, 8],
+    ['home-assistant', 7, 8],
+  ])('%s at v%i produces a usable chain to v%i instead of aborting the deploy', async (name, from, to) => {
+    const { selectMigrationChain } = await import('@/lib/stackInstall/migrations');
+    const migDir = path.join(TEMPLATES_DIR, name, 'migrations');
+    const scripts = fs.readdirSync(migDir)
+      .map(f => ({ f, m: /^v(\d+)-to-v(\d+)\.py$/.exec(f) }))
+      .filter((e): e is { f: string; m: RegExpExecArray } => e.m !== null)
+      .map(e => ({
+        filename: e.f,
+        fromVersion: Number(e.m[1]),
+        toVersion: Number(e.m[2]),
+        content: fs.readFileSync(path.join(migDir, e.f), 'utf-8'),
+      }));
+
+    const result = selectMigrationChain(from, to, scripts);
+    expect(
+      result.ok,
+      result.ok ? '' : `selectMigrationChain refuses the v${from}→v${to} deploy: ${JSON.stringify(result)}`,
+    ).toBe(true);
+    if (!result.ok) return;
+    expect(result.chain.map(s => s.filename)).toEqual([`v${to - 1}-to-v${to}.py`]);
+  });
+});
+
+// ─── 9. post-deploy.py + migration scripts parse as valid Python ───────────
 describe('Template post-deploy.py syntax', () => {
   // The wizard executes templates/<name>/post-deploy.py on the agent host
   // after a successful deploy. A syntax error there would silently break
@@ -2274,6 +2385,29 @@ describe('Template post-deploy.py syntax', () => {
         throw new Error(`${t.name}/post-deploy.py has a Python syntax error:\n${msg}`);
       }
     });
+  }
+
+  // Migration scripts had no syntax gate at all, and they are strictly
+  // less forgiving than post-deploy.py: a non-zero exit aborts the deploy
+  // BEFORE the new spec lands, so a typo here bricks the upgrade path for
+  // every box on the older version (#2601).
+  for (const t of templates) {
+    const migDir = path.join(TEMPLATES_DIR, t.name, 'migrations');
+    if (!fs.existsSync(migDir)) continue;
+    for (const f of fs.readdirSync(migDir).filter(n => n.endsWith('.py')).sort()) {
+      const script = path.join(migDir, f);
+      const testFn = pythonAvailable ? it : it.skip;
+      testFn(`${t.name}/migrations/${f} is syntactically valid Python`, () => {
+        try {
+          execSync(`python3 -m py_compile ${JSON.stringify(script)}`, { stdio: 'pipe' });
+        } catch (e) {
+          const msg = e instanceof Error && 'stderr' in e
+            ? String((e as { stderr: Buffer }).stderr)
+            : String(e);
+          throw new Error(`${t.name}/migrations/${f} has a Python syntax error:\n${msg}`);
+        }
+      });
+    }
   }
 });
 

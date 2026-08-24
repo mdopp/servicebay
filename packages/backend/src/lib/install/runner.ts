@@ -388,6 +388,28 @@ export async function waitForDependencies(
   }
 }
 
+/**
+ * One line stating what a run that did not deploy everything it was asked to
+ * actually left behind (#2601).
+ *
+ * This exists because "success reported, nothing done" is the failure mode
+ * that hurts here: the pre-fix runner could end a run having rolled out
+ * nothing at all and still hand the dialog its finished-run buttons. The
+ * denominator — how many of the requested services reached the box — is the
+ * thing to state, not the return status.
+ */
+export function summariseIncompleteRun(
+  deployed: ReadonlyArray<string>,
+  requested: ReadonlyArray<string>,
+): string {
+  const missing = requested.filter(n => !deployed.includes(n));
+  if (missing.length === 0) return `✅ ${deployed.length}/${requested.length} requested service(s) deployed.`;
+  if (deployed.length === 0) {
+    return `❌ Nothing was deployed: 0 of ${requested.length} requested service(s) reached the box (${missing.join(', ')}).`;
+  }
+  return `❌ ${deployed.length}/${requested.length} requested service(s) deployed (${deployed.join(', ')}). NOT deployed: ${missing.join(', ')}.`;
+}
+
 interface DeployContext {
   jobId: string;
   input: JobInput;
@@ -674,7 +696,13 @@ export function buildMigrationSteps(
  *  failures up to MAX_DEPLOY_ATTEMPTS. */
 async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boolean> {
   const { jobId, input } = ctx;
-  if (!item.yaml) return false;
+  if (!item.yaml) {
+    // #2601 — this used to return false with no log at all: the job then ran
+    // to `done` having deployed nothing, which is indistinguishable from a
+    // successful install. Say it instead.
+    await log(jobId, `❌ ${item.name} carries no template spec in this manifest — nothing was deployed for it.`);
+    return false;
+  }
 
   await log(jobId, `Installing ${item.name}...`);
   await patchJob(jobId, {
@@ -1551,6 +1579,14 @@ async function runJob(jobId: string): Promise<void> {
   }
 
   // Deploy loop.
+  //
+  // #2601 — track what this run actually rolled out, separately from
+  // `ctx.deployed` (which also carries the already-installed dependency
+  // satisfiers it skipped). `toDeploy` is the set the operator asked for;
+  // `deployedNew` is what reached the box. A run that ends with the two
+  // unequal is NOT a success, and must not be reported as one.
+  const toDeploy = selected.filter(s => !s.alreadyInstalled).map(s => s.name);
+  const deployedNew: string[] = [];
   for (const item of selected) {
     if (abortFlags.get(jobId)) {
       await patchJob(jobId, {
@@ -1582,10 +1618,29 @@ async function runJob(jobId: string): Promise<void> {
     }
     try {
       const ok = await deployItem(ctx, item);
-      if (ok) ctx.deployed.push({ name: item.name });
+      if (ok) {
+        ctx.deployed.push({ name: item.name });
+        deployedNew.push(item.name);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      await patchJob(jobId, { phase: 'error', endedAt: new Date().toISOString(), error: msg });
+      // #2601 — the throw path used to set `phase: 'error'` and return without
+      // writing a single line to the job log. The dialog's last visible line
+      // was therefore whatever succeeded just before (typically the green
+      // "dependencies are healthy"), under the buttons of a finished run.
+      // State the stop explicitly, and say what it cost.
+      await log(jobId, `❌ Install stopped at ${item.name}: ${msg}`);
+      await log(jobId, summariseIncompleteRun(deployedNew, toDeploy));
+      await patchJob(jobId, {
+        phase: 'error',
+        endedAt: new Date().toISOString(),
+        error: msg,
+        progress: {
+          currentItem: null,
+          deployedNames: ctx.deployed.map(d => d.name),
+          totalCount: input.items.filter(i => i.checked).length,
+        },
+      });
       return;
     }
   }
@@ -1899,9 +1954,19 @@ async function runJob(jobId: string): Promise<void> {
     await log(jobId, `(note) box resolver re-point failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // #2601 — the terminal verdict follows what actually reached the box, not
+  // the fact that the loop ran to the end. `deployItem` can return false
+  // (fatal 4xx, retries exhausted, no spec in the manifest) for every single
+  // item and the run would still have landed here as `done`, which is what
+  // made a no-op upgrade indistinguishable from a real one. The post-install
+  // work above still runs either way — only the verdict changes.
+  const runSummary = summariseIncompleteRun(deployedNew, toDeploy);
+  const incomplete = deployedNew.length < toDeploy.length;
+  if (incomplete) await log(jobId, runSummary);
   await patchJob(jobId, {
-    phase: 'done',
+    phase: incomplete ? 'error' : 'done',
     endedAt: new Date().toISOString(),
+    ...(incomplete ? { error: runSummary.replace(/^❌ /, '') } : {}),
     progress: {
       currentItem: null,
       deployedNames: ctx.deployed.map(d => d.name),
@@ -2000,6 +2065,10 @@ export function startJob(jobId: string): void {
       await runJob(jobId);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      // #2601 — log before patching. A runner that only sets `error` on the
+      // job state leaves the operator staring at whatever line succeeded last,
+      // under the buttons of a finished run.
+      await log(jobId, `❌ Internal runner error: ${msg}`);
       await patchJob(jobId, {
         phase: 'error',
         endedAt: new Date().toISOString(),

@@ -25,7 +25,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, RefreshCcw, XCircle, ChevronDown, ChevronRight, CheckCircle2, Circle } from 'lucide-react';
-import type { StackItem } from '@/hooks/useStackInstall';
+import type { StackItem, StackInstallPhase } from '@/hooks/useStackInstall';
 import StackVariableField from './StackVariableField';
 import { groupVariablesByTemplate } from '@servicebay/api-client';
 import { notifyCredentialsChanged } from '@/components/CredentialHandoverGate';
@@ -152,7 +152,7 @@ interface ProgressProps extends CommonProps {
 }
 
 export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
-  const { items, logs, phase, installingNow, deployedNames, npmCredPrompt, npmCredFallback, npmCredError, retryNpmCredentials, skipNpmCredentials, abortInstall, reset } = controller;
+  const { items, logs, phase, installingNow, deployedNames, error, npmCredPrompt, npmCredFallback, npmCredError, retryNpmCredentials, skipNpmCredentials, abortInstall, reset } = controller;
   const logTailRef = useRef<HTMLDivElement | null>(null);
   const [credEmail, setCredEmail] = useNpmCredFallback(npmCredFallback.email);
   const [credPassword, setCredPassword] = useNpmCredFallback(npmCredFallback.password);
@@ -174,8 +174,10 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
   // Skip attribution when there are no items to render rows for (e.g.
   // the StackInstallModal path, or a controller spun up without the
   // wizard's items prefetch); a flat log is the correct fallback there.
-  const { perService, globalLines } = useMemo(
-    () => (items.length > 0 ? attributeLogs(logs) : { perService: new Map<string, string[]>(), globalLines: logs }),
+  const { perService, globalLines, failedServices } = useMemo(
+    () => (items.length > 0
+      ? attributeLogs(logs)
+      : { perService: new Map<string, string[]>(), globalLines: logs, failedServices: new Set<string>() }),
     [items.length, logs],
   );
 
@@ -183,12 +185,15 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
     <div>
       {beforeLog}
 
+      <InstallOutcomeBanner items={items} phase={phase} deployedNames={deployedNames} error={error} />
+
       {items.length > 0 && (
         <InstallServiceRows
           items={items}
           installingNow={installingNow}
           deployedNames={deployedNames}
           perService={perService}
+          failedServices={failedServices}
         />
       )}
 
@@ -293,6 +298,55 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The run's outcome, in words, above the log (#2601).
+ *
+ * Before this, a run that stopped before `deployItem` — the migration-gate
+ * abort that left two services on the reference box nine days stale — ended
+ * with a green `✅ <svc>'s dependencies are healthy.` as its last visible
+ * line and a finished run's buttons underneath. `controller.error` was
+ * populated by the status poll and read by no component at all.
+ *
+ * The count it reports is deliberately over the REQUESTED services, not over
+ * `deployedNames`: the latter also carries the already-installed dependency
+ * satisfiers the runner skipped, so a run that rolled out nothing would
+ * otherwise report sixteen deployments. Check the denominator, not the
+ * return status.
+ */
+function InstallOutcomeBanner({
+  items, phase, deployedNames, error,
+}: {
+  items: StackItem[];
+  phase: StackInstallPhase;
+  deployedNames: string[];
+  error: string | null;
+}) {
+  const requested = items.filter(i => i.checked && !i.alreadyInstalled).map(i => i.name);
+  const rolledOut = requested.filter(n => deployedNames.includes(n));
+  const isTerminal = phase === 'done' || phase === 'error';
+  const deployedNothing = isTerminal && requested.length > 0 && rolledOut.length === 0;
+  if (phase !== 'error' && !deployedNothing) return null;
+
+  const missing = requested.filter(n => !rolledOut.includes(n));
+  return (
+    <div role="alert" className="mb-3 p-3 rounded-md border border-status-fail bg-surface text-sm space-y-1">
+      <p className="font-semibold text-status-fail flex items-center gap-1.5">
+        <XCircle size={15} className="shrink-0" />
+        {deployedNothing ? 'Nothing was deployed' : 'The install did not finish'}
+      </p>
+      {error && <p className="text-text break-words">{error}</p>}
+      {requested.length > 0 && (
+        <p className="text-subtle">
+          {rolledOut.length} of {requested.length} requested service
+          {requested.length === 1 ? '' : 's'} rolled out
+          {rolledOut.length > 0 ? ` (${rolledOut.join(', ')})` : ''}.
+          {missing.length > 0 && <> Still on the previous version: {missing.join(', ')}.</>}
+        </p>
       )}
     </div>
   );
@@ -430,9 +484,15 @@ function useNpmCredFallback(fallback: string): [string, (v: string) => void] {
 export function attributeLogs(logs: string[]): {
   perService: Map<string, string[]>;
   globalLines: string[];
+  /** Services whose block contains a `❌` line (#2601). Derived from where
+   *  the line sits, not from parsing its text — the runner emits several
+   *  differently-worded failures and the service name is not reliably in
+   *  any of them. */
+  failedServices: Set<string>;
 } {
   const perService = new Map<string, string[]>();
   const globalLines: string[] = [];
+  const failedServices = new Set<string>();
   let currentService: string | null = null;
 
   const startInstall = /^Installing (\S+)\.{3}\s*$/;
@@ -463,6 +523,22 @@ export function attributeLogs(logs: string[]): {
       continue;
     }
 
+    // #2601 — a failure line is the run's OUTCOME, not per-service detail.
+    // Attributing it to the open service alone buried it inside a row that
+    // is collapsed by default, so the last line the operator could actually
+    // see was the green "✅ <svc>'s dependencies are healthy." that came
+    // before it. It goes to both places: the row (for context) and the
+    // global tail (so it is on screen), and it closes the block.
+    if (line.startsWith('❌')) {
+      if (currentService) {
+        pushToService(perService, currentService, line);
+        failedServices.add(currentService);
+        currentService = null;
+      }
+      globalLines.push(line);
+      continue;
+    }
+
     if (currentService) {
       pushToService(perService, currentService, line);
     } else {
@@ -470,7 +546,7 @@ export function attributeLogs(logs: string[]): {
     }
   }
 
-  return { perService, globalLines };
+  return { perService, globalLines, failedServices };
 }
 
 function pushToService(map: Map<string, string[]>, svc: string, line: string) {
@@ -484,6 +560,7 @@ interface InstallServiceRowsProps {
   installingNow: string | null;
   deployedNames: string[];
   perService: Map<string, string[]>;
+  failedServices?: Set<string>;
 }
 
 /**
@@ -495,10 +572,47 @@ interface InstallServiceRowsProps {
  * by `servicebay.dependencies` before it emits items via job state, so
  * the array already arrives in dependency order. (Falls back to input
  * order when dependencies aren't declared.)
+ *
+ * #2600 — the list is split by *why* an item is in it, which is the
+ * distinction the flat list lost. `InstallerModal` seeds every already-
+ * deployed service as an `alreadyInstalled` item so the runner's topo-sort
+ * recognises pre-deployed dependency satisfiers; the runner then skips them
+ * (`runner.ts`, `if (item.alreadyInstalled) … continue`). They emit no
+ * `Installing X...` marker, so status inferred from the log left them on
+ * "Pending" forever — sixteen rows of apparent pending work around the one
+ * service actually being upgraded. They are still listed (the order carries
+ * meaning on a real stack install), just behind one labelled, collapsed
+ * summary row instead of sixteen fake ones.
  */
-function InstallServiceRows({ items, installingNow, deployedNames, perService }: InstallServiceRowsProps) {
+/**
+ * One row's status. `Failed` is the state #2601 added — before it, a service
+ * whose deploy aborted sat on the same "Pending" the untouched dependency
+ * satisfiers showed, so the row that broke looked exactly like the rows that
+ * were never going to move.
+ */
+function rowStatus(
+  name: string,
+  state: { failed?: Set<string>; deployed: Set<string>; installingNow: string | null },
+): { icon: React.ReactNode; text: string; tone: string } {
+  if (state.failed?.has(name)) {
+    return { icon: <XCircle size={14} className="text-status-fail shrink-0" />, text: 'Failed', tone: 'text-status-fail' };
+  }
+  if (state.deployed.has(name)) {
+    return { icon: <CheckCircle2 size={14} className="text-status-ok shrink-0" />, text: 'Deployed', tone: 'text-status-ok' };
+  }
+  if (state.installingNow === name) {
+    return { icon: <Loader2 size={14} className="animate-spin text-status-info shrink-0" />, text: 'Installing…', tone: 'text-status-info' };
+  }
+  return { icon: <Circle size={14} className="text-text-subtle shrink-0" />, text: 'Pending', tone: 'text-subtle' };
+}
+
+function InstallServiceRows({ items, installingNow, deployedNames, perService, failedServices }: InstallServiceRowsProps) {
   const deployedSet = useMemo(() => new Set(deployedNames), [deployedNames]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [satisfiersOpen, setSatisfiersOpen] = useState(false);
+
+  const working = items.filter(i => !i.alreadyInstalled);
+  const satisfiers = items.filter(i => i.alreadyInstalled);
 
   const toggle = (name: string) => {
     setExpanded(prev => {
@@ -511,17 +625,13 @@ function InstallServiceRows({ items, installingNow, deployedNames, perService }:
 
   return (
     <div className="mb-3 border border-border rounded-md overflow-hidden">
-      {items.map(item => {
-        const isDone = deployedSet.has(item.name);
-        const isInstalling = installingNow === item.name;
+      {working.map(item => {
+        const { icon: statusIcon, text: statusText, tone } = rowStatus(
+          item.name,
+          { failed: failedServices, deployed: deployedSet, installingNow },
+        );
         const lines = perService.get(item.name) || [];
         const isOpen = expanded.has(item.name);
-        const statusIcon = isDone
-          ? <CheckCircle2 size={14} className="text-status-ok shrink-0" />
-          : isInstalling
-            ? <Loader2 size={14} className="animate-spin text-status-info shrink-0" />
-            : <Circle size={14} className="text-text-subtle shrink-0" />;
-        const statusText = isDone ? 'Deployed' : isInstalling ? 'Installing…' : 'Pending';
         return (
           <div key={item.name} className="border-b border-border last:border-b-0">
             {/* `!h-auto !px-3` forces out Button's default size="md" (h-10/px-space-4) so it
@@ -539,9 +649,7 @@ function InstallServiceRows({ items, installingNow, deployedNames, perService }:
               {isOpen ? <ChevronDown size={14} className="text-text-subtle shrink-0" /> : <ChevronRight size={14} className="text-text-subtle shrink-0" />}
               {statusIcon}
               <span className="text-sm font-medium text-text flex-1 truncate">{item.name}</span>
-              <span className={`text-xs ${isDone ? 'text-status-ok' : isInstalling ? 'text-status-info' : 'text-subtle'}`}>
-                {statusText}
-              </span>
+              <span className={`text-xs ${tone}`}>{statusText}</span>
               {lines.length > 0 && (
                 <span className="text-[10px] text-text-subtle tabular-nums">{lines.length} ln</span>
               )}
@@ -558,6 +666,34 @@ function InstallServiceRows({ items, installingNow, deployedNames, perService }:
           </div>
         );
       })}
+
+      {satisfiers.length > 0 && (
+        <div className="border-b border-border last:border-b-0">
+          <Button
+            type="button"
+            onClick={() => setSatisfiersOpen(o => !o)}
+            variant="ghost"
+            className="!h-auto !px-3 w-full justify-start py-2 flex items-center gap-2 text-left hover:bg-surface-2 transition-colors"
+          >
+            {satisfiersOpen ? <ChevronDown size={14} className="text-text-subtle shrink-0" /> : <ChevronRight size={14} className="text-text-subtle shrink-0" />}
+            <CheckCircle2 size={14} className="text-status-ok shrink-0" />
+            <span className="text-sm font-medium text-text flex-1 truncate">
+              {satisfiers.length} already-installed {satisfiers.length === 1 ? 'dependency' : 'dependencies'}
+            </span>
+            <span className="text-xs text-subtle">Not touched</span>
+          </Button>
+          {satisfiersOpen && (
+            <div className="bg-surface-muted text-text px-3 py-2 text-[11px]">
+              <p className="text-subtle mb-1">
+                Listed so the install order is complete. This run does not redeploy them.
+              </p>
+              <ul className="font-mono leading-snug">
+                {satisfiers.map(s => <li key={s.name}>{s.name}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -79,4 +79,49 @@ describe('attributeLogs — install log per-service attribution (#822)', () => {
     expect(perService.size).toBe(0);
     expect(globalLines).toEqual([]);
   });
+
+  // #2601 — the real log from the reference box. Everything after
+  // `Installing media...` was attributed to the (collapsed-by-default) media
+  // row, so the last line visible in the dialog's tail was the GREEN
+  // dependency tick, with a finished run's buttons underneath it.
+  it('lifts a ❌ failure line into the global tail instead of burying it in the row', () => {
+    const logs = [
+      'Captured LAN IP: 192.168.178.100',
+      "Waiting for media's dependencies to become healthy: nginx, auth...",
+      "✅ media's dependencies are healthy.",
+      'Installing media...',
+      '(note) media: no config backup found on the NAS — starting on existing/blank data.',
+      '❌ Migration chain for media is incomplete: no script for v7→v8 (have v1, v3, v4, v5, v6). Aborting deploy.',
+    ];
+    const { perService, globalLines, failedServices } = attributeLogs(logs);
+
+    // Visible without expanding anything — and it is the LAST line, not the tick.
+    expect(globalLines[globalLines.length - 1]).toMatch(/^❌ Migration chain for media/);
+    // Still in the row too, so the per-service view keeps its context.
+    expect(perService.get('media')).toContain(logs[5]);
+    expect(failedServices.has('media')).toBe(true);
+  });
+
+  it('a ❌ line outside any service block stays global and marks nothing failed', () => {
+    const { globalLines, failedServices } = attributeLogs([
+      'Installing nginx...',
+      '✅ nginx deployed.',
+      '❌ Nothing was deployed: 0 of 1 requested service(s) reached the box (media).',
+    ]);
+    expect(globalLines).toEqual(['❌ Nothing was deployed: 0 of 1 requested service(s) reached the box (media).']);
+    expect(failedServices.size).toBe(0);
+  });
+
+  it('closes the service block so later lines are global again', () => {
+    const { perService, globalLines } = attributeLogs([
+      'Installing media...',
+      '❌ Install stopped at media: boom',
+      'Provisioning AdGuard DNS rewrites + portal routing...',
+    ]);
+    expect(perService.get('media')).toEqual(['Installing media...', '❌ Install stopped at media: boom']);
+    expect(globalLines).toEqual([
+      '❌ Install stopped at media: boom',
+      'Provisioning AdGuard DNS rewrites + portal routing...',
+    ]);
+  });
 });
