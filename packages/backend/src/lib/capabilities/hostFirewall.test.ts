@@ -41,7 +41,7 @@ import {
 } from './hostFirewall';
 import type { TemplateManifest } from '@/lib/template/contract';
 
-const MANIFEST: TemplateManifest = { label: 'Sign-In Gate', tier: 'infrastructure', schemaVersion: 3, dependencies: [] };
+const MANIFEST: TemplateManifest = { label: 'Sign-In Gate', tier: 'infrastructure', schemaVersion: 3, dependencies: [], seedOnlyConfigs: [] };
 
 const AUTH_VARS = {
   LLDAP_LDAP_PORT: { blockLanAccess: true, default: '3890' },

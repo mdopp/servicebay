@@ -24,6 +24,8 @@ import { injectServiceDirectives } from './quadletDirectives';
 import { ServiceListing } from './serviceListing';
 import { buildExpectedContainerNames } from './containerNameMatcher';
 import { assertTrashId } from '../api/schemas';
+import { readManifestAnnotations } from '../template/contract';
+import { writeExtraConfigFiles } from './extraConfigFiles';
 import {
     reconstructTemplateVariables,
     emitFeatureUninstalling,
@@ -67,113 +69,26 @@ export interface RestartSettleResult {
  */
 export const RESTART_SETTLE_TUNING = { timeoutMs: 180_000, pollIntervalMs: 2_000 };
 
-/** Minimal agent shape needed to ship files to a node. */
-interface FileWritingAgent {
-    sendCommand(action: string, params?: unknown): Promise<unknown>;
-}
-
 /**
- * Write a template's rendered config + asset files to the node, creating
- * parent dirs first.
+ * A pre-start hook failure that must ABORT the deploy.
  *
- * Failures are FATAL — the previous behaviour was to log a warning and
- * continue, which produced the radicale crash-loop class of bug: the
- * service starts, finds its config file missing, dies, and the operator
- * has no breadcrumb back to the silent write_file failure during deploy.
- * Throwing surfaces the problem at deploy time with a useful path.
- *
- * #1171 — a write target can sit under a hostPath pre-provisioned by a
- * consumer container (owned by its uid, not the agent's `core`/uid-1000),
- * e.g. the asset-transport `skills/` dir on a volume the hermes/syncthing
- * pod created. The plain write EACCESes there, so a failed write is
- * retried once via the agent's #1000 privileged path (`core` has
- * passwordless sudo on FCoS) before being recorded as a failure.
- *
- * #1258 — the agent rejects (the promise throws) when a command replies
- * with an error, e.g. the EACCES above. The retry therefore has to catch
- * the thrown error, not inspect a returned value — the original `res !==
- * 'ok'` check never fired because the await threw first, so the raw
- * `[Errno 13]` propagated straight to the deploy loop and the sudo retry
- * was dead code.
- *
- * #1298 — a sudo write lands the new file owned by root (uid 0). But the
- * only reason the unprivileged write failed is that the asset dir is owned
- * by the consuming rootless pod's subuid; a root-owned file inside it
- * breaks the next `podman kube play --replace` of that pod — rootless
- * podman can't `lsetxattr` (relabel) a path it doesn't own, so the volume
- * relabel fails and the pod won't restart. After a sudo write we therefore
- * realign the file's ownership to its parent directory (i.e. the subuid the
- * siblings already use) so the relabel stays possible. Best-effort: the file
- * is already written, and an ownership mismatch only bites a later relabel,
- * so a chown failure is logged but does not fail the deploy.
+ * `runPreStartHooks` deliberately swallows hook errors — a malformed pod spec
+ * or an unreachable optional path should not fail an otherwise fine deploy.
+ * But that catch-all also swallowed the #1864 HA config-integrity guard, whose
+ * entire job is to refuse the deploy when the config on disk is already
+ * hollowed out (#2590: the guard's condition was live on the owner's box for
+ * eight diagnose runs while deploys kept sailing through). Errors of this type
+ * are re-thrown by the catch-all instead.
  */
-/**
- * #1298 — realign a sudo-written (root-owned) file to its parent dir's owner so
- * a later rootless `kube play --replace` relabel of the dir can still lsetxattr
- * it. Best-effort; logged but never fatal (the file is already written, and an
- * ownership mismatch only bites a later relabel).
- */
-async function alignOwnershipToDir(agent: FileWritingAgent, path: string, dir: string): Promise<void> {
-    try {
-        const res = await agent.sendCommand('exec', { command: `sudo chown --reference=${dir} ${path}` });
-        if (res && typeof res === 'object' && 'code' in res && (res as { code: unknown }).code !== 0) {
-            logger.warn('ServiceManager', `chown to match ${dir} owner failed for ${path}: ${JSON.stringify(res)}`);
-        }
-    } catch (err) {
-        logger.warn('ServiceManager', `chown to match ${dir} owner failed for ${path}: ${err instanceof Error ? err.message : String(err)}`);
+export class FatalPreStartHookError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'FatalPreStartHookError';
     }
 }
 
-export async function writeExtraConfigFiles(
-    agent: FileWritingAgent,
-    serviceName: string,
-    extraFiles: { path: string; content: string }[],
-): Promise<void> {
-    const failures: string[] = [];
-    // Returns 'ok' on success, otherwise the failure reason as a string —
-    // covering both the rejection (agent error reply) and the defensive
-    // non-'ok' return value cases.
-    const attemptWrite = async (target: { path: string; content: string }, sudo: boolean): Promise<string> => {
-        try {
-            const res = await agent.sendCommand('write_file', { path: target.path, content: target.content, ...(sudo ? { sudo: true } : {}) });
-            return res === 'ok' ? 'ok' : JSON.stringify(res);
-        } catch (err) {
-            return err instanceof Error ? err.message : String(err);
-        }
-    };
-    for (const f of extraFiles) {
-        // Ensure parent directory exists.
-        const dir = f.path.substring(0, f.path.lastIndexOf('/'));
-        if (dir) {
-            await agent.sendCommand('exec', { command: `mkdir -p ${dir}` });
-        }
-        let outcome = await attemptWrite(f, false);
-        let usedSudo = false;
-        if (outcome !== 'ok') {
-            logger.warn('ServiceManager', `write_file for ${f.path} failed (${outcome}); retrying with sudo.`);
-            outcome = await attemptWrite(f, true);
-            usedSudo = true;
-        }
-        if (outcome !== 'ok') {
-            failures.push(f.path);
-            logger.error('ServiceManager', `Failed to write extra file ${f.path}: ${outcome}`);
-        } else {
-            // The plain (core-owned) write lands in a core-owned dir — fine.
-            // Only the sudo path leaves a root-owned file in a subuid-owned
-            // asset dir, which is what #1298 has to repair.
-            if (usedSudo && dir) {
-                await alignOwnershipToDir(agent, f.path, dir);
-            }
-            logger.info('ServiceManager', `Wrote extra config file: ${f.path}`);
-        }
-    }
-    if (failures.length > 0) {
-        throw new Error(
-            `Failed to write ${failures.length} required config file(s) for service "${serviceName}":\n  ${failures.join('\n  ')}\n\n` +
-            `The service was not started. Re-run the deploy or check the agent's write permissions on the target paths.`,
-        );
-    }
-}
+// Companion config/asset file delivery lives in its own module (#2590).
+export { writeExtraConfigFiles } from './extraConfigFiles';
 
 /** Extract string content from agent read_file response. */
 function extractFileContent(res: unknown): string {
@@ -1019,9 +934,19 @@ export class ServiceLifecycle {
 
         // Write extra config files (e.g. Authelia configuration.yml) to the
         // node filesystem. Failures are FATAL (see writeExtraConfigFiles).
+        //
+        // #2590 — the manifest itself says which of those files ServiceBay may
+        // only SEED. Read from the rendered pod YAML this deploy is about to
+        // apply, so every entry point (install runner, MCP `deploy_service`,
+        // the HTTP route) is covered by one rule and no caller can forget to
+        // pass the flag. `readManifestAnnotations` (permissive) rather than
+        // `parseTemplateManifest` on purpose: a manifest missing some
+        // UNRELATED required annotation must not silently drop this
+        // protection.
         if (extraFiles?.length) {
             const agent = await agentManager.ensureAgent(nodeName);
-            await writeExtraConfigFiles(agent, name, extraFiles);
+            const seedOnly = new Set(readManifestAnnotations(yamlContent).seedOnlyConfigs ?? []);
+            await writeExtraConfigFiles(agent, name, extraFiles, seedOnly);
         }
 
         // Ensure unprivileged port binding if any port < 1024 is used
@@ -1644,7 +1569,7 @@ export class ServiceLifecycle {
                 `This is the fingerprint of the automations/scripts/scenes data-loss incident: the entity registry still references these entities but their config file is empty, so starting HA would let it overwrite the only remaining copy. ` +
                 `ServiceBay has NOT modified or deleted anything. Restore ${includeDir} from a backup (or confirm the data really was removed) before redeploying.`;
             logger.error('ServiceManager', message);
-            throw new Error(message);
+            throw new FatalPreStartHookError(message);
         }
     }
 
@@ -1703,6 +1628,10 @@ export class ServiceLifecycle {
                 }
             }
         } catch (e) {
+            // A guard that refuses the deploy on purpose must survive this
+            // catch-all — otherwise "refuse and shout" degrades to "log at
+            // debug and carry on" (#2590).
+            if (e instanceof FatalPreStartHookError) throw e;
             logger.debug('ServiceManager', 'Pre-start hooks skipped:', e);
         }
     }

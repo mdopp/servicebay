@@ -100,6 +100,13 @@ function extractMustacheVars(text: string): Set<string> {
   return out;
 }
 
+/** Deployed names of a template's companion configs — `automations.yaml`
+ *  for `automations.yaml.mustache`. This is the name a deploy writes and the
+ *  name `servicebay.seed-only-configs` has to match (#2590). */
+function mustacheTargetNames(t: TemplateInfo): string[] {
+  return Object.keys(t.configs).map(f => f.replace(/\.mustache$/, ''));
+}
+
 const templates = listTemplates();
 const templateNames = new Set(templates.map(t => t.name));
 const globalVars = new Set(readSettingsGlobals());
@@ -219,6 +226,10 @@ describe('Template ↔ source-name consistency', () => {
     for (const t of templates) {
       const result = parseTemplateManifest(t.yamlContent, {
         hasMustacheConfigs: Object.keys(t.configs).length > 0,
+        // #2590 — the shipped file list turns `servicebay.seed-only-configs`
+        // into a checkable claim: an entry naming a file the template does
+        // not ship would protect nothing and is a build error here.
+        mustacheConfigFilenames: mustacheTargetNames(t),
       });
       if (!result.ok) {
         for (const err of result.errors) {
@@ -2281,6 +2292,7 @@ describe('Healthcheck contract', () => {
     for (const t of templates) {
       manifests.set(t.name, parseTemplateManifest(t.yamlContent, {
         hasMustacheConfigs: Object.keys(t.configs).length > 0,
+        mustacheConfigFilenames: mustacheTargetNames(t),
       }));
     }
     const dependedOn = new Set<string>();

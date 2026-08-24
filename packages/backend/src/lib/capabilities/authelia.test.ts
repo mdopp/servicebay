@@ -23,7 +23,7 @@ import type { StackVariable } from '@/lib/stackInstall/types';
 const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
 const MANIFEST: TemplateManifest = {
-  label: 'Test', tier: 'feature', schemaVersion: 1, dependencies: [],
+  label: 'Test', tier: 'feature', schemaVersion: 1, dependencies: [], seedOnlyConfigs: [],
 };
 
 const VARS_PUBLIC: StackVariable[] = [
