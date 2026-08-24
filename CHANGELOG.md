@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.15.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.15.0...servicebay-v5.15.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* back up the identity store, stop overwriting operator configs, stop offering impossible cert renewals ([c336b7e](https://github.com/mdopp/servicebay/commit/c336b7eae39cddbb2fc0d4ca30581ed2a551761c))
+* **backup:** gate authelia, lldap and jellyfin on the templates that own them ([6b0aa66](https://github.com/mdopp/servicebay/commit/6b0aa660eff233c865e5f6f21154c37faf2bfd9d)), closes [#2595](https://github.com/mdopp/servicebay/issues/2595)
+* **health:** offer deletion, not renewal, for a certificate no route uses ([e4644b2](https://github.com/mdopp/servicebay/commit/e4644b2d05c748100ad1a0dff7fcf9653afd7b35)), closes [#2594](https://github.com/mdopp/servicebay/issues/2594)
+* **services:** drop the dead re-export knip flagged after the [#2590](https://github.com/mdopp/servicebay/issues/2590) extraction ([d6da3c0](https://github.com/mdopp/servicebay/commit/d6da3c0bd20b59377728c5e4981e4267b5a154b1))
+* **services:** never re-seed a config file the service or operator owns ([9de9101](https://github.com/mdopp/servicebay/commit/9de9101e97abbbe8e3c30d10e3b84fc734cf1551)), closes [#2590](https://github.com/mdopp/servicebay/issues/2590)
+
 ## [5.15.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.14.0...servicebay-v5.15.0) (2026-08-18)
 
 
