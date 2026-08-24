@@ -87,8 +87,9 @@ export class FatalPreStartHookError extends Error {
     }
 }
 
-// Companion config/asset file delivery lives in its own module (#2590).
-export { writeExtraConfigFiles } from './extraConfigFiles';
+// Companion config/asset file delivery lives in its own module (#2590):
+// `./extraConfigFiles`. Import it from there — this file deliberately keeps no
+// re-export, so there is exactly one path to it and knip can see the truth.
 
 /** Extract string content from agent read_file response. */
 function extractFileContent(res: unknown): string {
