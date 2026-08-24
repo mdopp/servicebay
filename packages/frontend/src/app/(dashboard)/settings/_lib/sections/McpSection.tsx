@@ -293,7 +293,6 @@ export default function McpSection() {
     // Read window.location after mount to avoid SSR/hydration mismatch.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async settings fetch, guarded by a cancelled flag
     setMcpUrl(`${window.location.origin}/mcp`);
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- same post-mount window read as above
     setOnBoxUrl(`http://${ON_BOX_HOST}:${DEFAULT_APP_PORT}/mcp`);
   }, []);
 
