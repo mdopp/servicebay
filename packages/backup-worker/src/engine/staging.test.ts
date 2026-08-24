@@ -28,8 +28,16 @@ async function write(base: string, rel: string, content: string): Promise<void> 
  * A manifest with a strip rule. No SHIPPED manifest declares one since #2595
  * retired the `hermes` entry, so the strip step is exercised against an explicit
  * manifest — the machinery stays covered for the next service that needs it.
+ *
+ * The name matters: this held no secret when it was called `STRIPS_API_KEYS`
+ * either — `dropYamlKeys` lists the field NAMES to remove, and `service` is
+ * `strip-probe` — but CodeQL's `js/clear-text-logging` treats every property
+ * read off a variable whose name matches its secret heuristic as tainted, and
+ * flagged the `#2454` symlink-escape `console.warn` (which logs a service name
+ * and a relative path) as a high-severity leak. Renaming removes the false
+ * positive without a suppression comment and without weakening that log.
  */
-const STRIPS_API_KEYS: ServiceBackupManifest = {
+const MANIFEST_WITH_STRIP_RULE: ServiceBackupManifest = {
   service: 'strip-probe',
   include: ['config.yaml'],
   exclude: [],
@@ -74,7 +82,7 @@ describe('stageServiceBackup', () => {
     await write(src, 'config.yaml', 'api_key: SEKRIT\nmodel: gemma-e4b\n');
     const staging = await mkTmp();
 
-    await stageServiceBackup(src, STRIPS_API_KEYS, staging);
+    await stageServiceBackup(src, MANIFEST_WITH_STRIP_RULE, staging);
 
     const out = await fs.readFile(path.join(staging, 'config.yaml'), 'utf8');
     expect(out).not.toContain('SEKRIT');
@@ -130,7 +138,7 @@ describe('stageServiceBackup', () => {
       await fs.symlink(path.join(victim, 'config.yaml'), path.join(src, 'config.yaml'));
       const staging = await mkTmp();
 
-      const staged = await stageServiceBackup(src, STRIPS_API_KEYS, staging);
+      const staged = await stageServiceBackup(src, MANIFEST_WITH_STRIP_RULE, staging);
 
       expect(staged).toEqual([]);
       await expect(fs.access(path.join(staging, 'config.yaml'))).rejects.toThrow();
