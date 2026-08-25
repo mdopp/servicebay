@@ -52,11 +52,13 @@ backed up. Think "a private, opinionated PaaS for one household server."
   and discover help via `list_assists` / `get_assist`. Scopes: `read` <
   `lifecycle` < `mutate` < `reboot` < `destroy`, plus `exec`.
 
-## Key decisions (see `docs/adr/`)
+## Key decisions (ADRs — in this catalog, `list_assists(kind="adr")`)
 SSO-everywhere (0001), tiered backup (0002), release-please-only (0003),
 non-destructive installs (0004), DNS Pattern A (0005), apex-deny (0006), network
-isolation with carve-outs (0007), desired-state TUI (0008), repair =
-reconciliation (0009), service tokens & trust (0009-service-tokens).
+isolation with carve-outs (0007), desired-state TUI (0008), service tokens &
+trust (0009), Node LTS line (0010), server-side app integrations (0011), repair =
+reconciliation (0012). Full text: `get_assist("adr-0007-container-network-isolation-and-carveouts")`
+and siblings.
 
 ## Related assists
 `solaris-overview` (the household-AI tier on top), `create-service` (build +

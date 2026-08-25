@@ -60,6 +60,13 @@ export interface ServiceBackupManifest {
    *  under `media`). A gate naming no shipped template can never activate and is
    *  a build-breaking defect (scripts/check-backup-coverage.ts). */
   gateOn?: string;
+  /** The service's state lives in a PODMAN-MANAGED NAMED VOLUME (#2596) — a kube
+   *  `PersistentVolumeClaim`'s claimName — instead of a stacks subdir. Mutually
+   *  exclusive with `dataSubdir`; the `include` paths are relative to the
+   *  VOLUME root. servicebay binds the volume read-only into this worker under
+   *  `--volumes`, and resolveServiceDataDir() points there instead of at
+   *  `--stacks`. See the backend copy for the full reasoning. */
+  volume?: string;
   /** CONFIG paths/dirs worth preserving across a reinstall (the tar contents). */
   include: string[];
   /** Paths/dirs to never back up — bulk data, logs, caches, valueless secrets. */
@@ -83,10 +90,11 @@ export interface ServiceBackupManifest {
  *  `gateOn ?? service` names a shipped template — lives on the backend side
  *  (scripts/check-backup-coverage.ts + EXCLUDED_BULK_VOLUMES).
  *
- *  #2595 also removed the `syncthing` and `hermes` entries: syncthing's config
- *  lives in the podman PVC `file-share-syncthing-config` (no DATA_DIR path for
- *  this file-copy path to read — #2596), and `hermes` is the retired Solaris
- *  name with no template. See the backend copy for the full reasoning. */
+ *  #2595 removed the `syncthing` and `hermes` entries; #2596 brought syncthing
+ *  back with a `volume` (its config lives in the podman named volume
+ *  `file-share-syncthing-config`, not under DATA_DIR) and the correct
+ *  `file-share` gate. `hermes` is the retired Solaris name with no template and
+ *  stays gone. See the backend copy for the full reasoning. */
 export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
   {
     service: 'home-assistant',
@@ -139,7 +147,22 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     include: ['conf/AdGuardHome.yaml'],
     exclude: ['data/querylog.json', 'data/stats.db', 'data/sessions.db', 'data/filters'],
   },
-  // (`syncthing` and `hermes` used to sit here — removed in #2595.)
+  {
+    // Syncthing (#2596) — the only VOLUME-held manifest: its state lives in the
+    // podman named volume `file-share-syncthing-config`, not under the stacks
+    // root (a hostPath there fails syncthing's startup chmod under rootless
+    // podman). An app of the `file-share` template, so it gates on that.
+    // config.xml carries the folder shares + the device ID; cert.pem/key.pem are
+    // the certificate that ID is derived from — without them every paired peer
+    // must re-trust a brand-new device. The sync index is regenerable + large.
+    service: 'syncthing',
+    gateOn: 'file-share',
+    volume: 'file-share-syncthing-config',
+    include: ['config.xml', 'cert.pem', 'key.pem', 'https-cert.pem', 'https-key.pem'],
+    exclude: ['index-v0.14.0.db', 'index-v2', 'csrftokens.txt', 'syncthing.log'],
+    data: ['index-v0.14.0.db', 'index-v2'],
+  },
+  // (`hermes` used to sit here too — removed in #2595, and not coming back.)
   {
     service: 'nginx',
     dataSubdir: 'nginx-proxy-manager',

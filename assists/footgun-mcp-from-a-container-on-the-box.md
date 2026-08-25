@@ -87,7 +87,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST \
 
 ## Where the rule lives
 
-- `docs/adr/0007-container-network-isolation-and-carveouts.md` — amendment
+- `assists/adr-0007-container-network-isolation-and-carveouts.md` — amendment
   2026-08-17 states the rule and why the proxy is the wrong layer.
 - `docs/MCP.md` — "Client running on the box (agent in a container)".
 - Settings → MCP in the UI shows the on-box URL next to the browser one.

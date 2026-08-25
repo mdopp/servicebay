@@ -167,6 +167,32 @@ describe('backup round-trip (#2154) — content survives backup→wipe→restore
     await expect(fs.access(path.join(restored, 'users_database.yml'))).rejects.toThrow();
   });
 
+  maybeIt('syncthing: the device identity round-trips out of the podman volume (#2596)', async () => {
+    // The src dir here stands in for the named volume `file-share-syncthing-config`
+    // as the worker sees it (bound read-only at /mnt/volumes/<claim>) — the
+    // staging engine is the same either way, which is the point of #2596: the
+    // manifest reads a VOLUME root instead of a DATA_DIR subdir.
+    //
+    // Before this, `check:backup-coverage` said green and the nightly run said
+    // "N/N services backed up" while config.xml existed in no backup at all.
+    const restored = await roundTrip('syncthing', async src => {
+      await write(src, 'config.xml', '<configuration><device id="AAAAAAA-BBBBBBB"/><folder id="notes"/></configuration>');
+      await write(src, 'cert.pem', 'DEVICE-CERT-BYTES');
+      await write(src, 'key.pem', 'DEVICE-KEY-BYTES');
+      await write(src, 'index-v0.14.0.db/000123.ldb', 'REGENERABLE-SYNC-INDEX'); // excluded bulk
+    });
+    // CONTENT, not just presence: the device id and the folder shares.
+    const cfg = await read(restored, 'config.xml');
+    expect(cfg).toContain('AAAAAAA-BBBBBBB');
+    expect(cfg).toContain('folder id="notes"');
+    // The certificate the device ID is derived from — without it every paired
+    // peer has to re-trust a brand-new device even though config.xml survived.
+    expect(await read(restored, 'cert.pem')).toBe('DEVICE-CERT-BYTES');
+    expect(await read(restored, 'key.pem')).toBe('DEVICE-KEY-BYTES');
+    // The sync index is regenerable + large — it must NOT ride to the NAS.
+    await expect(fs.access(path.join(restored, 'index-v0.14.0.db/000123.ldb'))).rejects.toThrow();
+  });
+
   maybeIt('strip removes api keys before the tar (secret never lands on the NAS)', async () => {
     // #2595 retired the last shipped strip rule with the `hermes` entry, so the
     // staging path's strip step is exercised against an explicit manifest — the

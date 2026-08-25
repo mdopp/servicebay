@@ -5,20 +5,20 @@ import { Check, Copy, Plus, Trash2 } from 'lucide-react';
 import { Button, Input } from '@/components/ui';
 import ConfirmModal from '@/components/ConfirmModal';
 import { copyToClipboard } from '../clipboard';
+import {
+  SELECTION_FILTERS,
+  bulkConfirmPhrase,
+  isExpired,
+  isPrivileged,
+  summarizeRevokeRun,
+  type ApiScope,
+  type SelectionFilterId,
+  type TokenSummary,
+  type TokenView,
+} from '../apiTokenSelection';
+import { useBulkTokenRevoke, type BulkRevokeReport as BulkRevokeReportData } from '../useBulkTokenRevoke';
 
-type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'reboot' | 'destroy' | 'exec';
 const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'reboot', 'destroy', 'exec'];
-
-interface TokenView {
-  id: string;
-  name: string;
-  scopes: ApiScope[];
-  prefix: string;
-  createdAt: string;
-  expiresAt?: string;
-  lastUsedAt?: string;
-  createdBy: string;
-}
 
 type BootstrapStatus =
   | { active: false; present?: boolean }
@@ -101,28 +101,68 @@ function RevealedSecretBox({ secret, copied, onCopy, onDismiss }: { secret: stri
   );
 }
 
-function TokenRow({ token, onRevoke }: { token: TokenView; onRevoke: (id: string, name: string) => void }) {
+interface TokenRowProps {
+  token: TokenView;
+  selected: boolean;
+  isCurrent: boolean;
+  onToggleSelect: (id: string) => void;
+  onRevoke: (id: string, name: string) => void;
+}
+
+/** Scope badges + the expiry/last-used line. Split out of TokenRow purely to
+ *  keep each function inside the 50-line lint budget. */
+function TokenMeta({ token }: { token: TokenView }) {
+  const expired = isExpired(token);
+  return (
+    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+      {token.scopes.map(s => (
+        <span key={s} className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-chip ${SCOPE_BADGE[s]}`}>{s}</span>
+      ))}
+      {/* A token minted with "Never Expires" carries no expiresAt (#2299) —
+          surface it so the operator can tell a long-lived machine token from
+          an expiring one at a glance. An already-lapsed one is called out
+          too: it is kept for a short grace so it can be recognised as the
+          reason a client started failing, then removed (#2606). */}
+      {expired ? (
+        <span className="text-[10px] font-medium text-status-warn">
+          expired {new Date(token.expiresAt as string).toLocaleString()} — removed after the grace period
+        </span>
+      ) : (
+        <span className="text-[10px] text-text-subtle">
+          {token.expiresAt ? `expires ${new Date(token.expiresAt).toLocaleString()}` : 'Expires: Never'}
+        </span>
+      )}
+      <span className="text-[10px] text-text-subtle">
+        {token.lastUsedAt ? `last used ${new Date(token.lastUsedAt).toLocaleString()}` : 'never used'}
+      </span>
+    </div>
+  );
+}
+
+function TokenRow({ token, selected, isCurrent, onToggleSelect, onRevoke }: TokenRowProps) {
   return (
     <li className="flex items-center justify-between gap-3 px-2 py-1.5 rounded-card border border-border bg-surface-2">
+      {/* The session's own bridged token stays listed and individually
+          revocable, but is locked out of bulk selection — a cleanup must not
+          end by logging the operator out mid-list (#2608). */}
+      <Input
+        type="checkbox"
+        checked={selected}
+        disabled={isCurrent}
+        onChange={() => onToggleSelect(token.id)}
+        className="shrink-0 rounded accent-accent"
+        aria-label={isCurrent ? `${token.name} (this session — cannot be bulk-revoked)` : `Select ${token.name}`}
+        title={isCurrent ? 'This is the token your current session is using.' : undefined}
+      />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 text-sm">
           <span className="font-medium text-text truncate">{token.name}</span>
           <span className="font-mono text-xs text-text-subtle">sb_{token.id}_{token.prefix}…</span>
+          {isCurrent && (
+            <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-chip bg-accent/10 text-accent border border-accent/20">This session</span>
+          )}
         </div>
-        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-          {token.scopes.map(s => (
-            <span key={s} className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-chip ${SCOPE_BADGE[s]}`}>{s}</span>
-          ))}
-          {/* A token minted with "Never Expires" carries no expiresAt (#2299) —
-              surface it so the operator can tell a long-lived machine token from
-              an expiring one at a glance. */}
-          <span className="text-[10px] text-text-subtle">
-            {token.expiresAt ? `expires ${new Date(token.expiresAt).toLocaleString()}` : 'Expires: Never'}
-          </span>
-          <span className="text-[10px] text-text-subtle">
-            {token.lastUsedAt ? `last used ${new Date(token.lastUsedAt).toLocaleString()}` : 'never used'}
-          </span>
-        </div>
+        <TokenMeta token={token} />
       </div>
       <Button
         type="button"
@@ -136,6 +176,144 @@ function TokenRow({ token, onRevoke }: { token: TokenView; onRevoke: (id: string
         <Trash2 size={14} />
       </Button>
     </li>
+  );
+}
+
+/**
+ * The counted states from #2606. Never-expiring and never-used tokens are
+ * shown, not swept: an unattended consumer that runs once a quarter looks
+ * exactly like a dead credential from here, so the call is the operator's.
+ */
+function TokenHygiene({ summary }: { summary: TokenSummary }) {
+  const parts = [
+    `${summary.total} token${summary.total === 1 ? '' : 's'}`,
+    summary.neverExpires > 0 ? `${summary.neverExpires} never expire` : null,
+    summary.neverUsed > 0 ? `${summary.neverUsed} never used` : null,
+    summary.dormant > 0 ? `${summary.dormant} never used and never expiring` : null,
+    summary.privileged > 0 ? `${summary.privileged} carry destroy` : null,
+    summary.expiredInGrace > 0 ? `${summary.expiredInGrace} expired (auto-removed after ${summary.graceDays} days)` : null,
+  ].filter(Boolean);
+  return (
+    <p role="status" className="text-[11px] text-text-muted">
+      {parts.join(' · ')}
+    </p>
+  );
+}
+
+interface SelectionToolbarProps {
+  selectedCount: number;
+  selectableCount: number;
+  allSelected: boolean;
+  onToggleAll: () => void;
+  onFilter: (id: SelectionFilterId) => void;
+  onClear: () => void;
+  onRevokeSelected: () => void;
+}
+
+/** Multi-select controls (#2608). The filters are the actual value here —
+ *  "all never used", "all without an expiry" — since hand-ticking 34 rows is
+ *  the same chore with fewer clicks. */
+function SelectionToolbar(props: SelectionToolbarProps) {
+  return (
+    <div className="flex items-center gap-2 flex-wrap px-2 py-1.5 rounded-card border border-border bg-surface">
+      <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
+        <Input
+          type="checkbox"
+          checked={props.allSelected}
+          onChange={props.onToggleAll}
+          className="rounded accent-accent"
+          aria-label="Select all tokens"
+        />
+        <span>All ({props.selectableCount})</span>
+      </label>
+      <span className="text-[11px] text-text-subtle">Select:</span>
+      {SELECTION_FILTERS.map(f => (
+        <Button key={f.id} type="button" variant="ghost" size="sm" onClick={() => props.onFilter(f.id)}>
+          {f.label}
+        </Button>
+      ))}
+      <div className="ml-auto flex items-center gap-2">
+        {props.selectedCount > 0 && (
+          <Button type="button" variant="ghost" size="sm" onClick={props.onClear}>
+            Clear
+          </Button>
+        )}
+        <Button
+          type="button"
+          variant="danger"
+          size="sm"
+          disabled={props.selectedCount === 0}
+          onClick={props.onRevokeSelected}
+        >
+          <Trash2 size={12} />
+          Revoke selected ({props.selectedCount})
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** The per-token outcome list. Rendered inside ConfirmModal's message, which
+ *  is a `<p>` — so every element here is an inline-level `<span>` made block
+ *  by class, never a `<div>`/`<ul>`. */
+function BulkRevokeReport({ requested, revoked, results, names }: BulkRevokeReportData) {
+  const failed = results.filter(r => !r.ok);
+  return (
+    <span role="alert" className={`mt-2 block ${failed.length > 0 ? 'text-status-fail' : 'text-text-muted'}`}>
+      <span className="block font-medium">{summarizeRevokeRun(requested, revoked)}</span>
+      {failed.map(r => (
+        <span key={r.id} className="mt-1 block text-xs">
+          <span className="font-mono">{r.name ?? names[r.id] ?? r.id}</span> — {r.error ?? 'revoke failed'}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * Bulk revoke (#2608): ONE typed confirmation over a list that names every
+ * token, its scopes and its last use — a count alone ("revoke 12 tokens?") is
+ * not enough to decide when 20 of 34 carry destroy. The phrase the operator
+ * types scales with the selection's blast radius (see `bulkConfirmPhrase`).
+ */
+function BulkRevokeModal({ bulk }: { bulk: ReturnType<typeof useBulkTokenRevoke> }) {
+  const { selectedTokens, running, report, error } = bulk;
+  return (
+    <ConfirmModal
+      isOpen={bulk.open}
+      title={`Revoke ${selectedTokens.length} API token${selectedTokens.length === 1 ? '' : 's'}`}
+      isDestructive
+      requireTypedConfirm
+      resourceName={bulkConfirmPhrase(selectedTokens)}
+      isLoading={running}
+      confirmText={running ? 'Revoking…' : `Revoke ${selectedTokens.length}`}
+      message={
+        <>
+          Every client using one of these tokens — an MCP assistant, the ServiceBay TUI, or a script — is locked out immediately. This cannot be undone.
+          <span className="mt-2 block max-h-60 overflow-y-auto rounded-card border border-border bg-surface-2 p-2 text-xs">
+            {selectedTokens.map(t => (
+              <span key={t.id} className="block py-0.5">
+                <span className="font-medium text-text">{t.name}</span>{' '}
+                <span className={isPrivileged(t) ? 'font-mono text-status-fail' : 'font-mono text-text-subtle'}>
+                  [{t.scopes.join(',')}]
+                </span>{' '}
+                <span className="text-text-subtle">
+                  {t.lastUsedAt ? `last used ${new Date(t.lastUsedAt).toLocaleDateString()}` : 'never used'}
+                </span>
+              </span>
+            ))}
+          </span>
+          {report && <BulkRevokeReport {...report} />}
+          {error && (
+            <span role="alert" className="mt-2 block text-status-fail">
+              {error} — nothing was revoked.
+            </span>
+          )}
+        </>
+      }
+      onConfirm={() => { if (selectedTokens.length > 0) void bulk.run(selectedTokens); }}
+      onCancel={() => { if (!running) bulk.setDialogOpen(false); }}
+    />
   );
 }
 
@@ -256,6 +434,11 @@ export default function ApiTokensSection() {
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
   const [revoking, setRevoking] = useState(false);
   const [revokeError, setRevokeError] = useState<string | null>(null);
+  // Bulk revoke (#2608): one typed confirmation over a visible selection,
+  // replacing N repetitions of the same gesture — which is habituation, not
+  // care. `summary` and `currentTokenId` come from the same GET.
+  const [summary, setSummary] = useState<TokenSummary | null>(null);
+  const [currentTokenId, setCurrentTokenId] = useState<string | null>(null);
 
   // The hash is set by the install script; this UI just reflects status +
   // offers a manual revoke. Auto-revoked when the operator mints their first
@@ -270,9 +453,16 @@ export default function ApiTokensSection() {
   const loadTokens = useCallback(() => {
     fetch('/api/system/api-tokens')
       .then(r => r.ok ? r.json() : { tokens: [] })
-      .then(data => setTokens(data.tokens ?? []))
+      .then(data => {
+        const list: TokenView[] = data.tokens ?? [];
+        setTokens(list);
+        setSummary(data.summary ?? null);
+        setCurrentTokenId(data.currentTokenId ?? null);
+      })
       .catch(() => setTokens([]));
   }, []);
+
+  const bulk = useBulkTokenRevoke(tokens, currentTokenId, loadTokens);
 
   useEffect(() => {
     loadBootstrap();
@@ -394,9 +584,30 @@ export default function ApiTokensSection() {
         )}
 
         {tokens && tokens.length > 0 && (
-          <ul className="space-y-1.5">
-            {tokens.map(t => <TokenRow key={t.id} token={t} onRevoke={revokeOneToken} />)}
-          </ul>
+          <>
+            {summary && <TokenHygiene summary={summary} />}
+            <SelectionToolbar
+              selectedCount={bulk.selectedTokens.length}
+              selectableCount={bulk.selectable.length}
+              allSelected={bulk.allSelected}
+              onToggleAll={bulk.toggleAll}
+              onFilter={bulk.applyFilter}
+              onClear={bulk.clear}
+              onRevokeSelected={() => bulk.setDialogOpen(true)}
+            />
+            <ul className="space-y-1.5">
+              {tokens.map(t => (
+                <TokenRow
+                  key={t.id}
+                  token={t}
+                  selected={bulk.selected.has(t.id)}
+                  isCurrent={t.id === currentTokenId}
+                  onToggleSelect={bulk.toggle}
+                  onRevoke={revokeOneToken}
+                />
+              ))}
+            </ul>
+          </>
         )}
         {tokens && tokens.length === 0 && !showCreate && (
           <p className="text-xs text-text-subtle italic">No tokens yet. Create one per client — an MCP assistant (Claude Code, Claude Desktop, …), the ServiceBay TUI, or a script.</p>
@@ -453,6 +664,8 @@ export default function ApiTokensSection() {
           setRevokeTarget(null);
         }}
       />
+
+      <BulkRevokeModal bulk={bulk} />
     </>
   );
 }

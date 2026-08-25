@@ -34,6 +34,7 @@ import {
   syncRegistries,
   type TemplateMigrationScript,
 } from '@/lib/registry';
+import { formatRegistrySyncLog } from '@/lib/registrySyncState';
 import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
 import { parseTemplateManifest } from '@/lib/template/contract';
 import { topoSortByDependencies, resolveAlreadyInstalled } from '@/lib/stackInstall/dependencies';
@@ -1151,9 +1152,18 @@ async function runJob(jobId: string): Promise<void> {
   // artifacts. Best-effort: syncRegistries isolates per-registry errors and
   // no-ops when no external registries are configured, so a transient fetch
   // failure must not block the install — it falls back to the existing clone.
+  //
+  // #2610 — and say what the sync actually did. The old line claimed
+  // "Refreshed external registries" whether two of two, one of two or none of
+  // them refreshed: an operator who had just committed a template to a registry
+  // this box cannot clone read it as confirmation that their commit was picked
+  // up. The message is now derived from the per-registry outcome and always
+  // carries the denominator.
   try {
-    await syncRegistries();
-    await log(jobId, 'Refreshed external registries to latest committed templates/scripts.');
+    const summary = await syncRegistries();
+    for (const line of formatRegistrySyncLog(summary)) {
+      await log(jobId, line);
+    }
   } catch (e) {
     await log(jobId, `⚠️ Registry refresh failed (${e instanceof Error ? e.message : String(e)}); installing from the existing on-disk clone.`);
   }

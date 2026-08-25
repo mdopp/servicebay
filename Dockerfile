@@ -122,10 +122,10 @@ COPY --from=builder /app/stacks ./stacks
 # tools; resolves at /app/assists via process.cwd(), like templates/ + stacks/.
 COPY --from=builder /app/assists ./assists
 
-# ADR titles scanned at runtime by the get_service_standards MCP tool (#2323)
-# so its mustRespectAdrs one-liners never drift from the source. Resolves at
-# /app/docs/adr via process.cwd(), like assists/. Only the ADR dir is shipped.
-COPY --from=builder /app/docs/adr ./docs/adr
+# (The ADRs used to be copied in from docs/adr/ for get_service_standards.
+# #2607 MOVED them into assists/ above — one copy, in the only place an MCP
+# agent can actually read: docs/ is not reachable from a session, assists/ is.
+# docs/adr/ now holds signposts for old links and is deliberately NOT shipped.)
 
 # Markdown content rendered at runtime by /api/help (per-page contextual
 # help, plus the CHANGELOG entry for the sidebar "What's new" modal). The

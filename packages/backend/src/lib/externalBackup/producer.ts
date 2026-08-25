@@ -20,7 +20,7 @@ import path from 'path';
 // story) — that would make every tar come back empty without tests noticing.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getConfig } from '../config';
+import { getConfig, updateConfig } from '../config';
 import { logger } from '../logger';
 import { nasUpload, nasDownload, nasList, nasRemove } from './nasClient';
 import {
@@ -370,10 +370,25 @@ export async function buildServiceBackupTar(
 
 /** Resolve a service's on-disk config dir from the configured DATA_DIR. Honors
  *  a manifest's `dataSubdir` override (NPM stores under `nginx-proxy-manager/`
- *  though its template/service name is `nginx`). */
+ *  though its template/service name is `nginx`).
+ *
+ *  Throws for a VOLUME-held manifest (#2596): that service's state is in a
+ *  podman named volume, not under DATA_DIR, so there is no such dir. Returning
+ *  `<DATA_DIR>/<service>` instead would be the fail-open shape this whole gate
+ *  exists to prevent — the restore/wipe callers would happily write config into
+ *  a directory the service never reads, and report success. The backup side
+ *  reads the volume through the worker (backupWorker/launcher.ts); the restore
+ *  side has no equivalent yet and says so. */
 export async function resolveServiceDataDir(service: string): Promise<string> {
+  const manifest = getServiceManifest(service);
+  if (manifest?.volume) {
+    throw new Error(
+      `"${service}" keeps its config in the podman volume "${manifest.volume}", not under DATA_DIR — ` +
+      `it is backed up from the volume, but restoring into a named volume is not supported yet (#2596).`,
+    );
+  }
   const dataDir = (await getConfig()).templateSettings?.DATA_DIR || DEFAULT_STACKS_DIR;
-  const subdir = getServiceManifest(service)?.dataSubdir ?? service;
+  const subdir = manifest?.dataSubdir ?? service;
   return path.join(dataDir, subdir);
 }
 
@@ -472,9 +487,56 @@ async function uploadBackupRun(
  */
 export async function backupInstalledServicesToNas(): Promise<ServiceBackupRunEntry[]> {
   const { runBackupForInstalled } = await import('../backupWorker/service');
-  const completed = await runBackupForInstalled();
-  if (!completed) return []; // nothing installed with a manifest
-  return uploadBackupRun(completed);
+  try {
+    const completed = await runBackupForInstalled();
+    // Nothing installed ships a manifest — a real, recordable 0/0 outcome, not
+    // a success and not a failure. The probe names that state; recording it
+    // here is what stops "never ran" and "had nothing to do" looking alike.
+    const results = completed ? await uploadBackupRun(completed) : [];
+    await recordExternalBackupRun(results);
+    return results;
+  } catch (e) {
+    await recordExternalBackupRun([], e);
+    throw e;
+  }
+}
+
+/**
+ * Persist the run's outcome to `config.externalBackup` (#2615) so the
+ * `config_backup` diagnose probe can report last-run + freshness without
+ * anyone reading the journal. Best-effort by construction: a config write that
+ * fails must never turn a completed backup into a failed one, so it is logged
+ * and swallowed — the probe then reports the previous (stale) run, which is
+ * itself the honest answer.
+ */
+async function recordExternalBackupRun(results: ServiceBackupRunEntry[], error?: unknown): Promise<void> {
+  const total = results.length;
+  const ok = results.filter(r => r.ok).length;
+  const failed = results.filter(r => !r.ok);
+  const lastStatus = error ? 'error' : ok < total ? 'partial' : 'success';
+  const lastMessage = error
+    ? error instanceof Error ? error.message : String(error)
+    : failed.length > 0
+      ? `Not backed up: ${failed.slice(0, 5).map(r => `${r.service} (${r.error ?? 'no reason recorded'})`).join('; ')}`
+      : `${ok}/${total} services backed up`;
+  try {
+    const current = (await getConfig()).externalBackup;
+    await updateConfig({
+      externalBackup: {
+        ...current,
+        // Absent means enabled (config-survival is the safe default), so
+        // materialising `true` here keeps the effective behaviour identical.
+        enabled: current?.enabled ?? true,
+        lastRun: new Date().toISOString(),
+        lastStatus,
+        lastMessage,
+        servicesOk: ok,
+        servicesTotal: total,
+      },
+    });
+  } catch (e) {
+    logger.warn('ExternalBackup', `Could not record the run outcome: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 // ─── Nightly scheduler (#1217) ───────────────────────────────────────

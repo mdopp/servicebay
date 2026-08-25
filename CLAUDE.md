@@ -7,6 +7,12 @@ sandboxed one-shot workers `packages/{backup-worker,disk-import-worker}`;
 services ship as **templates** under `templates/` (not as code in `packages/`).
 
 Orientation:
+- **`assists/adr-*.md` — the architecture decisions (ADRs). They live in the assist
+  catalog, not in `docs/`** (#2607), so read them with `list_assists` /
+  `get_assist("adr-0007-…")` — or straight off disk. **Look there before deciding
+  anything about auth, networking, backups, installs, tokens, releases or the
+  runtime**; the weirdness you are about to "fix" is usually one of these.
+  `docs/adr/` holds signposts only. Index: `docs/adr/README.md`.
 - `docs/ARCHITECTURE_INVARIANTS.md` — invariants; run `npm run check:arch && npm run lint` before architecture changes.
 - `docs/TEMPLATE_AUTHORING.md` + `templates/CLAUDE.md` — the template contract (auto-loads under `templates/`).
 - `docs/UX_DECISIONS.md` — locked UX decisions; don't re-litigate.
@@ -46,6 +52,13 @@ the next agent/operator finds it via the `list_assists` / `get_assist` MCP tools
 - Overviews of the platform itself are assists too — see `servicebay-overview`
   and `solaris-overview`, and the `new-service-architecture` ADR-style
   recommendations. A client should read those instead of re-deriving structure.
+- **Architecture decisions are assists too, and this is where they live** (#2607):
+  `assists/adr-NNNN-<slug>.md`, `kind: adr`, Status · Context · Decision ·
+  Consequences. A new decision gets the next free number (see
+  `docs/adr/README.md` for the index) and a `whenToUse` line written for the
+  *situation* someone will be in when they need it — "you are about to add a
+  reconciler…", not "this is the ADR about reconcilers". A vague `whenToUse` is
+  how 13 decisions ended up unfindable in the first place.
 - **Abstract, don't transcribe.** Turn "how I fixed tor.dopp.cloud today" into
   "how to add a public SSO subdomain, and the acme footgun to avoid." Reference
   files/functions by path, not by a specific deployment's values.

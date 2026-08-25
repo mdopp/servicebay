@@ -1379,6 +1379,7 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                 serviceConfigDir = path.join(stagingDir, 'service-data');
             }
             const { resolveServiceDataDir } = await import('./externalBackup/producer');
+            const { getServiceManifest } = await import('./externalBackup/serviceManifest');
             const { getExecutor } = await import('./executor');
 
             // Normalize selection: support both string[] (all files) and ServiceDataSelection[]
@@ -1405,6 +1406,19 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                         targetNodeName = entry.nodeName || 'Local';
                         serviceName = entry.service || dirName;
                     }
+                }
+                // Volume-held config (#2596) is captured into the snapshot from a
+                // podman named volume, but there is no supported way to write it
+                // back into one. Skip it loudly instead of extracting into a
+                // DATA_DIR path the service never reads and logging "Restored".
+                const volume = getServiceManifest(serviceName)?.volume;
+                if (volume) {
+                    logger.warn(
+                        'SystemBackup',
+                        `Skipping service-config "${dirName}": it belongs to the podman volume "${volume}"; ` +
+                        `restore into a named volume is not supported yet (#2596) — extract it by hand from the snapshot.`,
+                    );
+                    continue;
                 }
                 if (!targetPath) {
                     // No metadata (legacy/missing) — re-resolve from the manifest.

@@ -54,6 +54,41 @@ describe('DiagnoseProbeList — design-system tokens (#2100)', () => {
     expect(fix.className).not.toMatch(/violet-\d|red-\d/);
   });
 
+  // #2615 — the two backup mechanisms must reach the operator as two rows with
+  // two verdicts. A single "backups: ok" row is what let a healthy nightly
+  // config push stand in for a content backup that had never been configured.
+  it('renders content backup and config backup as two separate rows under Storage & backups', () => {
+    render(
+      <DiagnoseProbeList
+        node="Local"
+        probes={[
+          probe({
+            id: 'content_backup',
+            label: 'Content backup (Backup Sync)',
+            status: 'warn',
+            group: 'storage-backups',
+            detail: 'Content backup (Backup Sync) has never been configured — there is no source directory and no target.',
+          }),
+          probe({
+            id: 'config_backup',
+            label: 'Config backup (last nightly run)',
+            status: 'ok',
+            group: 'storage-backups',
+            detail: 'The nightly config backup ran 6 hours ago: 11/11 services written to the NAS. Covers per-service configuration only — the bulk content under /mnt/data is excluded by design.',
+          }),
+        ]}
+      />,
+    );
+    expect(screen.getByText('Storage & backups')).toBeTruthy();
+    // Two distinct, separately-labelled rows — not one collapsed "backups" row.
+    expect(screen.getByText('Content backup (Backup Sync)')).toBeTruthy();
+    expect(screen.getByText('Config backup (last nightly run)')).toBeTruthy();
+    // The never-configured state is legible as text, not as an exception.
+    expect(screen.getByText(/has never been configured/)).toBeTruthy();
+    // …and the green row states its own limit right where it is read.
+    expect(screen.getByText(/excluded by design/)).toBeTruthy();
+  });
+
   it('compact mode hides ok probes (behavior preserved)', () => {
     render(
       <DiagnoseProbeList

@@ -10,9 +10,9 @@ tags: [standards, new-service, adr, invariants, template-contract, index, servic
 A curated *pointer* index (not the full text) for building a new ServiceBay
 service. Fetch the referenced assists in full via `get_assist(id)`, and read the
 referenced `docs/` files directly. The `get_service_standards` MCP tool
-(`flavor: 'servicebay'`) assembles a live version of this index — the ADR
-one-liners are scanned from `docs/adr/*.md` titles at runtime so they never
-drift from the source.
+(`flavor: 'servicebay'`) assembles a live version of this index — the ADRs are
+read from the assist catalog at runtime, so their titles never drift and every
+pointer is one you can actually follow with `get_assist(id)`.
 
 ## repoBootstrap — step 1, before any stack/CI/storage/auth choice
 
@@ -38,18 +38,18 @@ A new service does not get to re-litigate these. Read the one-liner, then the
 full ADR at the given path when it touches your service.
 
 - **0001** — every user-facing service authenticates via Authelia SSO (or at
-  minimum LDAP against LLDAP). `docs/adr/0001-authentication-via-authelia-sso-or-lldap.md`
+  minimum LDAP against LLDAP). `assists/adr-0001-authentication-via-authelia-sso-or-lldap.md`
 - **0003** — versioning and releases go through release-please only; never
   hand-bump a version, keep commit subjects parser-clean.
-  `docs/adr/0003-releases-via-release-please-only.md`
+  `assists/adr-0003-releases-via-release-please-only.md`
 - **0004** — installs/redeploys are non-destructive; they never wipe other
-  services. `docs/adr/0004-installs-are-non-destructive.md`
+  services. `assists/adr-0004-installs-are-non-destructive.md`
 - **0007** — app containers run in an isolated netns; only named carve-outs stay
-  on host networking. `docs/adr/0007-container-network-isolation-and-carveouts.md`
+  on host networking. `assists/adr-0007-container-network-isolation-and-carveouts.md`
 - **0009** — the token & trust model between services (scoped, short-lived
-  grants; no ambient authority). `docs/adr/0009-service-tokens-and-trust.md`
+  grants; no ambient authority). `assists/adr-0009-service-tokens-and-trust.md`
 - **0010** — the Node runtime tracks the Node 20 line, kept consistent across
-  all sources. `docs/adr/0010-node-20-minor-floats.md`
+  all sources. `assists/adr-0010-node-20-minor-floats.md`
 
 ## enforcedInvariants — mechanically checked, run the gates
 

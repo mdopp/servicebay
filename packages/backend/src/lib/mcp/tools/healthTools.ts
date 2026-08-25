@@ -17,6 +17,7 @@ import { randomUUID } from 'crypto';
 // enum below, so this tool can no longer store one.
 import { HealthCheckTarget, NodeName } from '@/lib/api/schemas';
 import { HealthStore } from '@/lib/health/store';
+import { getDiagnoseChecksEnriched } from '@/lib/diagnose/diagnoseChecks';
 import { CheckRunner } from '@/lib/health/runner';
 import type { CheckConfig, CheckType } from '@/lib/health/types';
 import { textResult, errorResult, type ToolRegistration } from './context';
@@ -31,14 +32,24 @@ const checkTypeSchema = z.enum([
 // eslint-disable-next-line max-lines-per-function
 export function registerHealthTools({ server }: ToolRegistration) {
   // --- Get Health Checks ---
-  server.tool('get_health_checks', 'List all health checks with their latest results', {}, async () => {
-    const checks = HealthStore.getChecks();
-    const result = checks.map(check => ({
-      ...check,
-      lastResult: HealthStore.getLastResult(check.id),
-    }));
-    return textResult(result);
-  });
+  server.tool(
+    'get_health_checks',
+    'List all health checks with their latest results, including the self-diagnose probe rows (backup coverage, TLS, DNS, …) the dashboard shows.',
+    {},
+    async () => {
+      const checks = HealthStore.getChecks();
+      const result = checks.map(check => ({
+        ...check,
+        lastResult: HealthStore.getLastResult(check.id),
+      }));
+      // #2615: `/api/health/checks` folds the synthetic `diagnose:<probeId>`
+      // rows in at read time, this tool did not — so every diagnose-backed
+      // signal was present on the dashboard and absent over MCP. That is how
+      // "no backup check exists anywhere" looked true when the probes did
+      // exist. Same reader, same rows, so the two surfaces cannot drift.
+      return textResult([...result, ...getDiagnoseChecksEnriched()]);
+    },
+  );
 
   server.tool(
     'create_health_check',

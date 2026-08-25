@@ -27,7 +27,7 @@ const { mockNas, mockGetConfig, mockSendCommand, mockExecutor, mockGetExecutor }
 }));
 
 vi.mock('./nasClient', () => mockNas);
-vi.mock('../config', () => ({ getConfig: () => mockGetConfig() }));
+vi.mock('../config', () => ({ getConfig: () => mockGetConfig(), updateConfig: vi.fn(async () => ({})) }));
 vi.mock('../agent/manager', () => ({
   agentManager: { ensureAgent: vi.fn(async () => ({ sendCommand: mockSendCommand })) },
 }));
@@ -439,6 +439,14 @@ describe('resolveServiceDataDir', () => {
   it('falls back to /mnt/data/stacks when DATA_DIR is unset', async () => {
     mockGetConfig.mockResolvedValue({ templateSettings: {} });
     expect(await resolveServiceDataDir('adguard')).toBe('/mnt/data/stacks/adguard');
+  });
+
+  it('refuses to invent a DATA_DIR path for a volume-held manifest (#2596)', async () => {
+    // syncthing's config is in the podman volume `file-share-syncthing-config`.
+    // Returning `<DATA_DIR>/syncthing` would let the restore/wipe callers write
+    // into a directory the service never reads — and report success.
+    mockGetConfig.mockResolvedValue({ templateSettings: { DATA_DIR: '/srv/stacks' } });
+    await expect(resolveServiceDataDir('syncthing')).rejects.toThrow(/podman volume "file-share-syncthing-config"/);
   });
 });
 

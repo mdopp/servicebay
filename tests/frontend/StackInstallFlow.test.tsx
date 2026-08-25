@@ -7,6 +7,7 @@ import StackInstallFlow, {
 } from '@/components/StackInstallFlow';
 import type { UseStackInstallReturn } from '@/hooks/useStackInstall';
 import { CREDENTIALS_CHANGED_EVENT } from '@/components/CredentialHandoverGate';
+import { formatRegistrySyncLog } from '@/lib/registrySyncState';
 
 /** Build a minimal controller stub the components can render against. */
 function makeController(overrides: Partial<UseStackInstallReturn> = {}): UseStackInstallReturn {
@@ -420,5 +421,40 @@ describe('StackInstallSummary', () => {
       />,
     );
     expect(screen.getByTestId('footer')).toBeDefined();
+  });
+});
+
+// ─── #2610 — the registry lines the runner writes must be readable in the dialog
+describe('StackInstallProgress — the registry refresh line the runner emits', () => {
+  it('renders the partial-refresh report, denominator and all, in the log tail', () => {
+    // The exact lines the install runner logs for the reference box's state:
+    // one registry refreshed, one that has never been clonable.
+    const logs = formatRegistrySyncLog({
+      requested: 2,
+      synced: 1,
+      failed: 0,
+      skipped: 1,
+      results: [
+        { name: 'solbay', url: 'https://github.com/mdopp/solarisbay', status: 'synced' },
+        {
+          name: 'ServiceBay Templates',
+          url: 'https://github.com/mdopp/servicebay-templates',
+          status: 'skipped',
+          kind: 'credentials',
+          reason: 'the repository is private and this box has no credentials for it',
+          advice: 'Make the repository public, or remove the registry in Settings.',
+          consecutiveFailures: 3,
+        },
+      ],
+    });
+    const controller = makeController({ phase: 'installing', logs });
+    render(<StackInstallProgress controller={controller} />);
+
+    expect(screen.getByText(/Refreshed 1 of 2 external registries/)).toBeDefined();
+    expect(screen.getByText(/Not refreshed: ServiceBay Templates/)).toBeDefined();
+    expect(screen.getByText(/private and this box has no credentials/)).toBeDefined();
+    expect(screen.getByText(/installed from the copy already on disk/)).toBeDefined();
+    // …and no blanket claim anywhere in the dialog.
+    expect(screen.queryByText(/Refreshed external registries to latest/)).toBeNull();
   });
 });

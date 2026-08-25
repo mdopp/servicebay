@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 const { mockNas, mockCfg, mockNpmCredStatus, mockRekeyNpm, mockGetExecutor } = vi.hoisted(() => ({
   mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn() },
-  mockCfg: { getConfig: vi.fn(), saveConfig: vi.fn() },
+  mockCfg: { getConfig: vi.fn(), saveConfig: vi.fn(), updateConfig: vi.fn(async () => ({})) },
   mockNpmCredStatus: vi.fn(),
   mockRekeyNpm: vi.fn(),
   mockGetExecutor: vi.fn(),
@@ -324,6 +324,33 @@ describe('wipeServiceForReinstall (#1585)', () => {
     const logs: string[] = [];
     await wipeServiceForReinstall('not-a-service', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
     expect(logs.some(l => l.includes('no backup manifest'))).toBe(true);
+  });
+});
+
+describe('#2596 — volume-held config is backed up, and says plainly that it is not auto-restorable', () => {
+  /**
+   * Half a feature is the dangerous half. syncthing's config now RIDES the
+   * nightly backup out of a podman named volume — but nothing here can write
+   * back INTO a named volume yet. Both paths must therefore say so out loud
+   * rather than resolve a `<DATA_DIR>/syncthing` directory the service never
+   * reads and then log "restored"/"wiped".
+   */
+  it('never wipes a volume-held service, and explains why', async () => {
+    const logs: string[] = [];
+    await wipeServiceForReinstall('syncthing', { wipeMode: 'wipe-all', node: 'Local', local: true }, async l => { logs.push(l); });
+    expect(logs.join('\n')).toMatch(/podman volume "file-share-syncthing-config"/);
+    expect(logs.join('\n')).toContain('#2596');
+  });
+
+  it('reports the restore limitation as a calm note, not as a FAILED restore', async () => {
+    // Falling through would throw in resolveServiceDataDir and dress a known
+    // limitation up as a restore failure (plus a standing diagnose finding) on
+    // every single file-share deploy.
+    const logs: string[] = [];
+    await autoRestoreServiceOnReinstall('syncthing', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
+    const text = logs.join('\n');
+    expect(text).toMatch(/backed up to the NAS/);
+    expect(text).not.toMatch(/FAILED/);
   });
 });
 

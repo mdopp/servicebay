@@ -12,96 +12,88 @@
  * Single source of truth: the prose lives in the backing assist files
  * `assists/new-service-standards.md` and `assists/generic-project-standards.md`
  * (kind: checklist), not as hard-coded prose here — this handler only assembles
- * pointers. The ADR one-liners are scanned from `docs/adr/*.md` titles at
- * runtime (below) so the *selection* is hand-curated but the *titles* never
- * drift from the source.
+ * pointers. The ADRs themselves are read from the **assist catalog**
+ * (`assists/adr-NNNN-*.md`, `kind: adr`) at runtime, so the titles never drift
+ * and — unlike the old `docs/adr/` path, which no MCP tool could open (#2607) —
+ * the pointer this tool hands back is one the caller can actually follow with
+ * `get_assist(id)`.
  */
 
-import { promises as fs } from 'fs';
-import path from 'path';
 import { logger } from '@/lib/logger';
+import { listAssists, type AssistSummary } from '@/lib/assists/catalog';
 import { BOOTSTRAP_STEP, renderStandardsPointerBlock } from '@/lib/mcp/serviceRepoBootstrap';
 
 export const SERVICE_STANDARDS_FLAVORS = ['servicebay', 'generic'] as const;
 export type ServiceStandardsFlavor = (typeof SERVICE_STANDARDS_FLAVORS)[number];
 
-/** Repo-root `docs/adr/` (shipped to /app/docs/adr in the container image). */
-const ADR_DIR = () => path.join(process.cwd(), 'docs', 'adr');
+/** Assist ids of the numbered ADRs: `adr-NNNN-<slug>`. */
+const ADR_ASSIST_ID = /^adr-(\d{4})-/;
 
-/** The curated ADR selection a new ServiceBay service is bound by (#2323). */
-const CURATED_ADRS: { num: string; note: string }[] = [
-  { num: '0001', note: 'Every user-facing service authenticates via Authelia SSO (or at minimum LDAP against LLDAP).' },
-  { num: '0003', note: 'Versioning and releases go through release-please only; never hand-bump a version, keep commit subjects parser-clean.' },
-  { num: '0004', note: 'Installs/redeploys are non-destructive — they never wipe other services.' },
-  { num: '0007', note: 'App containers run in an isolated netns; only named carve-outs stay on host networking.' },
-  { num: '0009', note: 'The token & trust model between services: scoped, short-lived grants; no ambient authority.' },
-  { num: '0010', note: 'The Node runtime tracks the Node 20 line, kept consistent across all sources.' },
-];
-
-// The 0009 slot has two files (repair-is-reconciliation and service-tokens);
-// this tool means the tokens-and-trust one for its trust-model pointer.
-const ADR_FILE_HINTS: Record<string, string> = {
-  '0009': 'service-tokens',
+/**
+ * Extra emphasis for the ADRs a *new service* most often walks into. Purely
+ * additive: an ADR without an entry here is still returned — the note falls
+ * back to the record's own `whenToUse`, which is written for exactly this job.
+ * (Before #2607 this list WAS the selection, and the other seven ADRs — 0011
+ * among them — appeared in no answer at all.)
+ */
+const NEW_SERVICE_NOTES: Record<string, string> = {
+  '0001': 'Every user-facing service authenticates via Authelia SSO (or at minimum LDAP against LLDAP).',
+  '0003': 'Versioning and releases go through release-please only; never hand-bump a version, keep commit subjects parser-clean.',
+  '0004': 'Installs/redeploys are non-destructive — they never wipe other services.',
+  '0007': 'App containers run in an isolated netns; only named carve-outs stay on host networking.',
+  '0009': 'The token & trust model between services: scoped, short-lived grants; no ambient authority.',
+  '0010': 'The Node runtime tracks one LTS line, kept consistent across all sources.',
 };
 
 export interface AdrPointer {
   adr: string;
   title: string;
   note: string;
-  path: string;
+  /** Catalog id — fetch the FULL text with `get_assist(assist)`. */
+  assist: string;
+  /** Ready-to-paste call, so the pointer is followable without extra guessing. */
+  fetch: string;
 }
 
 /**
- * Scan `docs/adr/*.md` and return the title + relative path for each curated
- * ADR number, keyed by its `# ADR NNNN — <title>` heading. Drift-free: only the
- * *selection* (`CURATED_ADRS`) is hand-maintained; titles come from the source.
- * If the dir is unavailable at runtime, falls back to the curated note as title
- * so the tool still returns a usable pointer.
+ * Return every numbered ADR in the assist catalog, ascending, as a *followable*
+ * pointer. Drift-free by construction: nothing about an ADR is restated here —
+ * the title and the note come from the record itself.
+ *
+ * An empty catalog read is logged and returned as an empty list rather than
+ * faked: a fabricated pointer is worse than a visibly missing one, because the
+ * caller cannot tell it apart from a real answer.
  */
 export async function scanCuratedAdrs(): Promise<AdrPointer[]> {
-  const dir = ADR_DIR();
-  let files: string[] = [];
+  let entries: AssistSummary[] = [];
   try {
-    files = (await fs.readdir(dir)).filter(f => f.endsWith('.md') && /^\d{4}-/.test(f));
+    entries = await listAssists({ kind: 'adr' });
   } catch (e) {
-    logger.warn('mcp', `get_service_standards: docs/adr unavailable, using curated fallbacks: ${e instanceof Error ? e.message : String(e)}`);
+    logger.warn('mcp', `get_service_standards: assist catalog unreadable: ${e instanceof Error ? e.message : String(e)}`);
+    return [];
   }
 
-  const result: AdrPointer[] = [];
-  for (const { num, note } of CURATED_ADRS) {
-    // Prefer a hinted file when the number has more than one ADR (0009).
-    const candidates = files.filter(f => f.startsWith(`${num}-`));
-    const hint = ADR_FILE_HINTS[num];
-    const file = (hint && candidates.find(f => f.includes(hint))) ?? candidates[0];
+  const adrs = entries
+    .map(e => ({ e, m: ADR_ASSIST_ID.exec(e.id) }))
+    .filter((x): x is { e: AssistSummary; m: RegExpExecArray } => x.m !== null)
+    .sort((a, b) => a.m[1].localeCompare(b.m[1]));
 
-    let title = '';
-    if (file) {
-      try {
-        const raw = await fs.readFile(path.join(dir, file), 'utf-8');
-        title = extractAdrTitle(raw);
-      } catch {
-        /* fall through to fallback title */
-      }
-    }
-    result.push({
-      adr: num,
-      title: title || note,
-      note,
-      path: file ? `docs/adr/${file}` : `docs/adr/${num}-*.md`,
-    });
+  if (adrs.length === 0) {
+    logger.warn('mcp', 'get_service_standards: no adr-NNNN-* assists found — mustRespectAdrs is empty.');
   }
-  return result;
+
+  return adrs.map(({ e, m }) => ({
+    adr: m[1],
+    title: extractAdrTitle(e.title),
+    note: NEW_SERVICE_NOTES[m[1]] ?? e.whenToUse,
+    assist: e.id,
+    fetch: `get_assist("${e.id}")`,
+  }));
 }
 
-/** Pull the human title out of an ADR's `# ADR NNNN — <title>` heading. */
-function extractAdrTitle(raw: string): string {
-  const line = raw.split('\n').find(l => /^#\s+/.test(l));
-  if (!line) return '';
-  // Strip the leading `# ADR NNNN — ` prefix, keep the descriptive title.
-  return line
-    .replace(/^#\s+/, '')
-    .replace(/^ADR\s+\d{4}\s*[—-]\s*/, '')
-    .trim();
+/** Strip the `ADR NNNN — ` prefix from a record's title, keeping the descriptive part. */
+export function extractAdrTitle(title: string): string {
+  return title.replace(/^ADR\s+\d{4}\s*[—-]\s*/, '').trim();
 }
 
 interface StandardsBlocks {
@@ -153,7 +145,7 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
   return {
     flavor,
     summary:
-      'Curated pointer index for building a new ServiceBay service. Read the referenced docs/ files directly and fetch each assist in full via get_assist(id). Full checklist: get_assist("new-service-standards").',
+      'Curated pointer index for building a new ServiceBay service. Every platform ADR is in the assist catalog — fetch any of them, and each assist below, in full via get_assist(id). Full checklist: get_assist("new-service-standards").',
     fullTextAssist: 'new-service-standards',
     // #2513: step 1 of building a service repo, served as finished text rather
     // than as an instruction to compose one. A repo created without this block
@@ -164,6 +156,15 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
       claudeMdBlock: renderStandardsPointerBlock(),
     },
     mustRespectAdrs,
+    // #2607: the ADRs are catalog entries now, so they are ALSO reachable
+    // without this tool — which mattered, because this tool's own entry
+    // condition is "building a new service", and whoever is fixing a probe or
+    // touching a template never had a reason to call it.
+    adrCatalog: {
+      note: 'Every ADR is an assist (kind "adr", id "adr-NNNN-<slug>"). Fetch full text with get_assist(id), or find one by situation with list_assists(kind="adr") — each whenToUse line names when that decision applies.',
+      listCall: 'list_assists(kind="adr")',
+      count: mustRespectAdrs.length,
+    },
     enforcedInvariants: {
       pointer: 'docs/ARCHITECTURE_INVARIANTS.md',
       note: 'Enforced by scripts, not prose. Run the gates before an architecture change and before opening a PR.',

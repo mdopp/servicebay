@@ -51,6 +51,13 @@ export class WorkerArgError extends Error {}
 export interface WorkerOptions {
   /** Path the host stacks root is mounted at (read-only) inside the container. */
   stacks: string;
+  /**
+   * Directory under which servicebay bind-mounted the podman NAMED VOLUMES this
+   * run needs, one per subdir named after its claim (#2596) — e.g.
+   * `/mnt/volumes/file-share-syncthing-config`. Only manifests with a `volume`
+   * read from here; omitted when no requested service has one.
+   */
+  volumes?: string;
   /** Shared out-volume dir the per-service tars + status.json are written to. */
   out: string;
   /** Services to back up (manifest names). */
@@ -59,7 +66,7 @@ export interface WorkerOptions {
   runId: string;
 }
 
-export const USAGE = `Usage: backup-worker --stacks <path> --out <dir> --services a,b,c [--run-id <id>]
+export const USAGE = `Usage: backup-worker --stacks <path> --out <dir> --services a,b,c [--volumes <dir>] [--run-id <id>]
 
 One-shot config-backup worker. For each service, walks its config dir under the
 RO-mounted stacks root, applies the backup manifest, and writes <service>.tar plus
@@ -68,12 +75,14 @@ writes back into a stack.
 
 Options:
   --stacks <path>     Host stacks root mounted read-only (e.g. /mnt/stacks)
+  --volumes <dir>     Root of the RO-mounted podman named volumes (e.g. /mnt/volumes);
+                      required when a requested service's manifest has a \`volume\`
   --out <dir>         Shared out-volume for <service>.tar + status.json
   --services <list>   Comma-separated service names to back up
   --run-id <id>       Run id (default: env BACKUP_RUN_ID or a random id)
   --help, -h          Show this help`;
 
-const VALUE_ARGS = new Set(['--stacks', '--out', '--services', '--run-id']);
+const VALUE_ARGS = new Set(['--stacks', '--volumes', '--out', '--services', '--run-id']);
 
 function defaultRunId(): string {
   return process.env.BACKUP_RUN_ID ?? Math.random().toString(36).slice(2, 14);
@@ -88,6 +97,7 @@ export function parseWorkerArgs(argv: string[]): WorkerOptions | { help: true } 
       const value = argv[++i];
       if (value === undefined) throw new WorkerArgError(`Missing value for ${arg}`);
       if (arg === '--stacks') draft.stacks = value;
+      else if (arg === '--volumes') draft.volumes = value;
       else if (arg === '--out') draft.out = value;
       else if (arg === '--run-id') draft.runId = value;
       else draft.services = value.split(',').map(s => s.trim()).filter(Boolean);
@@ -100,14 +110,39 @@ export function parseWorkerArgs(argv: string[]): WorkerOptions | { help: true } 
   if (!draft.services || draft.services.length === 0) throw new WorkerArgError('--services is required');
   return {
     stacks: draft.stacks,
+    volumes: draft.volumes,
     out: draft.out,
     services: draft.services,
     runId: draft.runId ?? defaultRunId(),
   };
 }
 
-/** Resolve a service's config dir under the (RO-mounted) stacks root. */
-export function resolveServiceDataDir(stacksRoot: string, manifest: ServiceBackupManifest): string {
+/**
+ * Resolve a service's config dir: a subdir of the (RO-mounted) stacks root, or —
+ * for a `volume` manifest (#2596) — the RO-mounted podman named volume under
+ * `volumesRoot`.
+ *
+ * FAIL CLOSED: a volume-held manifest with no `--volumes` root is a WIRING bug
+ * (servicebay launched the worker without binding the volume), so it throws
+ * instead of falling back to a stacks path that would silently stage nothing.
+ * A missing/empty mount is a different case — that is "no config on disk yet"
+ * and the staging engine reports it as a skip, exactly as for a hostPath dir
+ * that hasn't been created yet.
+ */
+export function resolveServiceDataDir(
+  stacksRoot: string,
+  manifest: ServiceBackupManifest,
+  volumesRoot?: string,
+): string {
+  if (manifest.volume) {
+    if (!volumesRoot) {
+      throw new Error(
+        `"${manifest.service}" is backed by the podman volume "${manifest.volume}", but this run got no --volumes root — ` +
+        `servicebay must bind the named volume into the worker (backupWorker/launcher.ts).`,
+      );
+    }
+    return path.join(volumesRoot, manifest.volume);
+  }
   return path.join(stacksRoot, manifest.dataSubdir ?? manifest.service);
 }
 
@@ -167,9 +202,12 @@ export async function runWorker(opts: WorkerOptions, io: WorkerIO): Promise<Work
       continue;
     }
     tick({ step: `Backing up ${service} …` });
-    const serviceDataDir = resolveServiceDataDir(opts.stacks, manifest);
     const tarName = `${service}.tar`;
     try {
+      // Inside the try: a volume-held manifest with no --volumes root throws
+      // here (#2596), and that must land as a visible per-service `error` like
+      // any other failure rather than aborting the whole run.
+      const serviceDataDir = resolveServiceDataDir(opts.stacks, manifest, opts.volumes);
       const effective = await applyCollectorRemap(serviceDataDir, manifest);
       const { files, bytes } = await io.buildTar(serviceDataDir, effective, path.join(opts.out, tarName));
       results.push({ service, ok: true, tarName, bytes, files, outcome: 'ok', detail: null });

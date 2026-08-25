@@ -6,6 +6,8 @@ Each invariant below is **mechanically enforced** by one of three tools running 
 
 Decisions that **can't** be mechanically enforced — operator-facing UX choices, incident-driven safety cascades, the user's deliberate config quirks — live in [UX_DECISIONS.md](UX_DECISIONS.md). Read both before changing anything that looks weird.
 
+The durable **architecture decisions (ADRs)** — why SSO is mandatory, why installs are non-destructive, which pods may keep `hostNetwork`, how service tokens are scoped — live in the **assist catalog** as [`assists/adr-*.md`](../assists/) (`get_assist("adr-0007-…")`, `list_assists`), not under `docs/adr/`, which now holds signposts only. Index: [adr/README.md](adr/README.md). This file says what a script enforces; the ADRs say what was decided and why.
+
 This document is the *intent* layer; the configs are the *enforcement* layer:
 
 | Tool | Config | Catches |
@@ -29,11 +31,12 @@ podman run --rm -v "$PWD:/src:Z" docker.io/returntocorp/semgrep:1.172.0 \
 
 CI: see the `invariants`, `depcruise`, and `semgrep` jobs in `.github/workflows/ci.yml`.
 
-### Two meta-invariants: a gate that scans nothing, and a gate that runs nowhere
+### Three meta-invariants: a gate that scans nothing, a gate that runs nowhere, and a gate that never asked
 
-Both failure modes report **green** and are indistinguishable from a real pass.
-Both have bitten this repo, so both are now themselves enforced by
-`scripts/check-invariants.ts`:
+All three report **green** and are indistinguishable from a real pass. All three
+have bitten this repo. The first two are enforced by
+`scripts/check-invariants.ts`; the third is enforced inside the gate that had it
+(`scripts/check-backup-coverage.ts`, see the bullet after these two):
 
 - **`gate-path-resolves`** — every path/glob a gate config names must match at
   least one tracked file. Covers each glob under a `paths:` block in
@@ -54,6 +57,18 @@ Both have bitten this repo, so both are now themselves enforced by
   dropped `check:backup-coverage` — the only gate between "a template ships a
   new persistent volume" and "the box loses that data on a disk-loss
   reinstall".)
+- **`backup-coverage enumerates, it does not grep`** — the third shape: the gate
+  ran, over the right files, and still reported green **about a question it
+  never asked**. `check:backup-coverage` used to scan `hostPath:` blocks, so a
+  template keeping real config in a `PersistentVolumeClaim` was not "uncovered"
+  — it never entered the check (#2596: Syncthing's device identity + folder
+  shares). It now parses each `template.yml` and enumerates every
+  `spec.volumes[]` entry, classifying each by kind: an unknown kind is an
+  **error**, not a skip; a template that will not parse is an **error**, not
+  zero volumes; and the kinds that hold no state are listed with reasons in
+  `EPHEMERAL_VOLUME_KINDS`. Same ratchet direction as #2465 (a bare `{{VAR}}`
+  hostPath now fails closed instead of being dropped for being off-pattern):
+  when the gate cannot tell, it fails.
 
 ---
 

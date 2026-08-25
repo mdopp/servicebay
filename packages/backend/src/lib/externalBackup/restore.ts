@@ -309,9 +309,20 @@ export async function wipeServiceForReinstall(
   const mode = opts.wipeMode ?? 'install';
   if (mode === 'install') return;
   if (opts.node && opts.node !== 'Local') return;
-  if (!getServiceManifest(service)) {
+  const manifest = getServiceManifest(service);
+  if (!manifest) {
     // No manifest → no declared config/data classes → nothing safe to wipe.
     await log(`(note) ${service}: no backup manifest, skipping ${mode} wipe (no config/data classification).`);
+    return;
+  }
+  if (manifest.volume) {
+    // Volume-held config (#2596): the state is in a podman named volume this
+    // path cannot address, and — crucially — cannot restore afterwards. Wiping
+    // it would destroy state with no way to put it back, so don't.
+    await log(
+      `(note) ${service}: config lives in the podman volume "${manifest.volume}" — skipping the ${mode} wipe ` +
+      `(it is backed up to the NAS, but restore into a named volume isn't supported yet, #2596).`,
+    );
     return;
   }
   // The stacks dir isn't mounted into the container, so the wipe runs on the
@@ -341,6 +352,23 @@ export async function wipeServiceForReinstall(
   } catch (e) {
     await log(`(note) ${service}: ${mode} wipe skipped — ${e instanceof Error ? e.message : String(e)}.`);
   }
+}
+
+/**
+ * The breadcrumb to log when a service's config lives in a podman named volume
+ * (#2596), or null for the normal DATA_DIR case. Such a service IS backed up
+ * (the worker reads the volume read-only), but nothing here can write back into
+ * a named volume yet — so the restore path stops and says so, instead of
+ * throwing out of `resolveServiceDataDir` and reporting a known limitation as a
+ * restore FAILURE on every deploy of the owning template.
+ */
+function volumeHeldRestoreNote(service: string): string | null {
+  const volume = getServiceManifest(service)?.volume;
+  if (!volume) return null;
+  return (
+    `(note) ${service}: config lives in the podman volume "${volume}" — it is backed up to the NAS, but ` +
+    `automatic restore into a named volume isn't supported yet (#2596); restore it by hand from the snapshot.`
+  );
 }
 
 /**
@@ -375,6 +403,15 @@ export async function autoRestoreServiceOnReinstall(
   // #1584/#1585: gated on the wipeMode + safe conditions, NOT the retired
   // cleanInstall flag (which #1520 pinned false, silently killing restore).
   if (opts.node && opts.node !== 'Local') return;
+  // Volume-held config (#2596). Backed up, not auto-restorable — say exactly
+  // that once, calmly. Falling through would throw in resolveServiceDataDir and
+  // dress a known limitation up as a restore FAILURE (plus a standing diagnose
+  // finding) on every single file-share deploy.
+  const volumeNote = volumeHeldRestoreNote(service);
+  if (volumeNote) {
+    await log(volumeNote);
+    return;
+  }
   const forceRestore = mode === 'wipe-config' || mode === 'wipe-all';
   // The stacks dir isn't mounted into the container, so the freshness check (and
   // the restore it gates) run on the host via the agent (#1600). Without this

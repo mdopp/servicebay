@@ -112,6 +112,32 @@ export interface ServiceBackupManifest {
    */
   gateOn?: string;
   /**
+   * The service's state lives in a PODMAN-MANAGED NAMED VOLUME (#2596) — the
+   * `claimName` of a kube `PersistentVolumeClaim` — instead of a `{{DATA_DIR}}`
+   * subdir. Mutually exclusive with `dataSubdir`: the `include` paths are then
+   * relative to the VOLUME's root, not to a stacks subdir.
+   *
+   * Why this exists: a template sometimes cannot use a hostPath at all.
+   * Syncthing's startup `chmod` of its config dir returns EPERM against a bind
+   * mount under rootless podman on FCOS (see templates/file-share/template.yml),
+   * so `file-share` keeps `config.xml` — the device identity and every folder
+   * share — in the named volume `file-share-syncthing-config`. Before #2596 the
+   * whole backup path only ever read DATA_DIR-relative paths, so that state was
+   * unbackupable AND invisible to the coverage gate.
+   *
+   * The mechanism: servicebay binds the named volume READ-ONLY into the backup
+   * worker container (backupWorker/launcher.ts) under the worker's `--volumes`
+   * root; the staging logic is otherwise unchanged. A `volume` no template
+   * declares as a PVC is a build-breaking defect, same class as a dead `gateOn`
+   * (scripts/check-backup-coverage.ts).
+   *
+   * RESTORE is deliberately NOT wired for a volume-held manifest yet — writing
+   * back into a live service's named volume needs machinery this file-copy path
+   * does not have. `resolveServiceDataDir` throws for one, so the restore/wipe
+   * paths say so instead of resolving a bogus DATA_DIR path.
+   */
+  volume?: string;
+  /**
    * The CONFIG class (#1585): small, backed up to the NAS, restorable.
    * These relative paths/dirs ARE the per-service config worth preserving
    * across a reinstall (HA `configuration.yaml`/automations/`.storage`, the
@@ -163,16 +189,14 @@ export interface ServiceBackupManifest {
  * The same gate also enforces the REVERSE direction (#2595): every entry's
  * `gateOn ?? service` must name a template this repo ships. Two entries were
  * removed when that gate went in, because neither could ever activate:
- *   - `syncthing` — Syncthing is an app of the `file-share` template, so the
- *     gate name was wrong; but re-gating it would not have helped. Its config
- *     (`config.xml`, the device identity) lives in the podman-managed PVC
- *     `file-share-syncthing-config`, deliberately NOT a `{{DATA_DIR}}` hostPath
- *     (see templates/file-share/template.yml: a bind mount there fails
- *     Syncthing's startup `chmod` under rootless podman). The producer/worker
- *     only ever read DATA_DIR-relative paths, so there is nothing here for a
- *     manifest to point at. Backing a named volume up needs machinery this
- *     file-copy path does not have — tracked in #2596, not faked with an entry
- *     that silently stages nothing.
+ *   - `syncthing` — RESTORED in #2596, correctly this time. It is an app of the
+ *     `file-share` template (so it gates on `file-share`, not on its own name),
+ *     and its config lives in the podman-managed named volume
+ *     `file-share-syncthing-config` rather than under `{{DATA_DIR}}` (a bind
+ *     mount there fails Syncthing's startup `chmod` under rootless podman — see
+ *     templates/file-share/template.yml). #2595 removed the entry because the
+ *     file-copy path could only read DATA_DIR-relative paths; #2596 gave it the
+ *     `volume` field instead of leaving the device identity unprotected.
  *   - `hermes` — the retired Solaris name (CLAUDE.md: legacy `hermes` path
  *     references are deprecated; the stack now ships from `mdopp/solaris` as
  *     `solaris-*`). No `templates/hermes` exists and none will; the leftover
@@ -290,8 +314,36 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
     include: ['conf/AdGuardHome.yaml'],
     exclude: ['data/querylog.json', 'data/stats.db', 'data/sessions.db', 'data/filters'],
   },
-  // (`syncthing` and `hermes` used to sit here — removed in #2595, see the
-  // block comment above this array for why neither could ever activate.)
+  {
+    // Syncthing (#2596) — the ONLY volume-held manifest. Its state is not under
+    // `{{DATA_DIR}}` at all: it lives in the podman named volume
+    // `file-share-syncthing-config` (templates/file-share/template.yml explains
+    // why a hostPath is impossible there). Syncthing is an app of the
+    // `file-share` template, so it gates on `file-share` — the mistake #2595
+    // caught was an entry gating on the non-existent template `syncthing`.
+    //
+    // What is worth preserving is small and irreplaceable:
+    //   - `config.xml` — the folder-share definitions AND the device ID.
+    //   - `cert.pem` / `key.pem` — the device certificate the ID is DERIVED
+    //     from. Lose these and the box comes back as a brand-new device that
+    //     every paired phone and laptop has to re-trust by hand, even if
+    //     config.xml survived. Kept verbatim (trusted-NAS class, the same call
+    //     already made for NPM's Let's Encrypt keys and HA's zwave_js keys).
+    //   - `https-cert.pem` / `https-key.pem` — the GUI's TLS pair; cheap to
+    //     carry and avoids a fresh self-signed warning after a reinstall.
+    // The sync INDEX (`index-*`, a LevelDB sized by the shared tree) is
+    // regenerable by rescanning and can be large — excluded, and declared as
+    // DATA so a wipe-config keeps it on the volume rather than forcing a full
+    // re-hash of the household files.
+    service: 'syncthing',
+    gateOn: 'file-share',
+    volume: 'file-share-syncthing-config',
+    include: ['config.xml', 'cert.pem', 'key.pem', 'https-cert.pem', 'https-key.pem'],
+    exclude: ['index-v0.14.0.db', 'index-v2', 'csrftokens.txt', 'syncthing.log'],
+    data: ['index-v0.14.0.db', 'index-v2'],
+  },
+  // (`hermes` used to sit here too — removed in #2595, see the block comment
+  // above this array; unlike syncthing it is never coming back.)
   {
     // Nginx Proxy Manager (#1528). Template name is `nginx`; data lives under
     // `nginx-proxy-manager/` (`data/` ← /data, `letsencrypt/` ← /etc/letsencrypt).
@@ -427,14 +479,23 @@ export const SERVICE_BACKUP_MANIFESTS: readonly ServiceBackupManifest[] = [
 ];
 
 /**
- * Templates that declare a persistent `{{DATA_DIR}}/…` volume which is
- * DELIBERATELY not in a backup manifest — bulk/regenerable/credential-coupled
- * data that must never enter a NAS tarball (multi-GB media, photo blobs, the
- * recorder DB, Postgres data dirs reconciled by rekey, caches). Each key is the
- * `{{DATA_DIR}}`-relative volume path exactly as the template declares it; the
- * value is the reason. `scripts/check-backup-coverage.ts` treats a volume as
- * covered if it maps to a manifest entry OR appears here — so a new template
- * volume can't silently opt out of the backup contract (#2153).
+ * Template volumes that are DELIBERATELY not in a backup manifest —
+ * bulk/regenerable/credential-coupled data that must never enter a NAS tarball
+ * (multi-GB media, photo blobs, the recorder DB, Postgres data dirs reconciled
+ * by rekey, caches). The value is the reason. `scripts/check-backup-coverage.ts`
+ * treats a volume as covered if it maps to a manifest entry OR appears here — so
+ * a new template volume can't silently opt out of the backup contract (#2153).
+ *
+ * A key is either:
+ *   - the `{{DATA_DIR}}`-relative path of a `hostPath` volume (or the bare
+ *     `{{VAR}}` name for a whole-volume variable), exactly as the template
+ *     declares it; or
+ *   - since #2596, the `claimName` of a `PersistentVolumeClaim` — a podman
+ *     named volume that holds bulk data rather than config. There is no such
+ *     entry today (`file-share-syncthing-config`, the only PVC any template
+ *     ships, is small config and IS backed up), but the gate accepts one so a
+ *     future bulk named volume opts out on purpose, with a reason, instead of
+ *     being invisible.
  */
 export const EXCLUDED_BULK_VOLUMES: Readonly<Record<string, string>> = {
   // Regenerable / re-syncable / re-scannable bulk.

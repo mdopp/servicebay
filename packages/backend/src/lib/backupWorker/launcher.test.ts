@@ -10,6 +10,7 @@ import { DATA_DIR } from '@/lib/dirs';
 
 import {
   launchBackupWorker,
+  requiredVolumeClaims,
   readBackupStatus,
   isBackupWorkerRunning,
   stopBackupWorker,
@@ -71,6 +72,52 @@ describe('launchBackupWorker', () => {
     await expect(
       launchBackupWorker({ exec, services: [], runId: 'x', dataDir: '/d', stacksDir: '/s' }),
     ).rejects.toThrow(/no services/);
+  });
+
+  it('binds no named volume for a run that needs none', async () => {
+    const { exec, calls } = recExec();
+    await launchBackupWorker({ exec, services: ['adguard'], runId: 'x', dataDir: '/d', stacksDir: '/s' });
+    expect(calls.some(c => c[1] === 'volume')).toBe(false);
+    const podmanRun = calls.find(c => c[0] === 'podman' && c[1] === 'run')!;
+    expect(podmanRun).not.toContain('--volumes');
+  });
+});
+
+describe('podman named volumes (#2596)', () => {
+  it('lists the claims a run needs, de-duped, and nothing for hostPath services', () => {
+    expect(requiredVolumeClaims(['adguard', 'nginx'])).toEqual([]);
+    expect(requiredVolumeClaims(['adguard', 'syncthing', 'syncthing']))
+      .toEqual(['file-share-syncthing-config']);
+  });
+
+  it('binds the named volume READ-ONLY and points the worker at it', async () => {
+    // Syncthing's config.xml (device identity + folder shares) lives in a podman
+    // named volume, which the stacks bind mount cannot see — without this bind
+    // the worker has nothing to read and the backup silently protects nothing.
+    const { exec, calls } = recExec({ 'podman volume exists': { code: 0 } });
+    await launchBackupWorker({
+      exec, services: ['file-share', 'syncthing'], runId: 'v1', dataDir: '/d', stacksDir: '/s',
+    });
+
+    const podmanRun = calls.find(c => c[0] === 'podman' && c[1] === 'run')!;
+    expect(podmanRun).toContain('file-share-syncthing-config:/mnt/volumes/file-share-syncthing-config:ro');
+    const vIdx = podmanRun.indexOf('--volumes');
+    expect(podmanRun[vIdx + 1]).toBe('/mnt/volumes');
+    // Read-only, like the stacks mount: the backup never writes into a service's
+    // own state (feedback_fileshare_relabel_crashloop).
+    expect(podmanRun.filter(a => a.startsWith('file-share-syncthing-config:')).every(a => a.endsWith(':ro'))).toBe(true);
+  });
+
+  it('does not bind a claim that does not exist yet — `podman run -v` would CREATE it empty', async () => {
+    const { exec, calls } = recExec({ 'podman volume exists': { code: 1 } });
+    await launchBackupWorker({
+      exec, services: ['syncthing'], runId: 'v2', dataDir: '/d', stacksDir: '/s',
+    });
+    const podmanRun = calls.find(c => c[0] === 'podman' && c[1] === 'run')!;
+    expect(podmanRun.some(a => a.includes('/mnt/volumes/file-share-syncthing-config'))).toBe(false);
+    // …but --volumes is still passed, so the worker reports the honest
+    // "nothing there yet" skip rather than a wiring error.
+    expect(podmanRun).toContain('--volumes');
   });
 });
 

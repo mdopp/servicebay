@@ -132,8 +132,11 @@ describe('token request flow (#2139)', () => {
     // Expired → verify rejects it.
     expect(await verifyToken(secret)).toBeNull();
 
-    // ...and the sweeper deletes the dead row from api-tokens.json.
-    const swept = await sweepExpiredTokens();
+    // ...and once the #2606 grace has passed, the sweeper deletes the dead row
+    // from api-tokens.json. (Inside the grace it stays listed, visibly expired —
+    // that is what makes a lapsed grant explainable rather than just gone.)
+    const { EXPIRY_GRACE_MS } = await loadTokens();
+    const swept = await sweepExpiredTokens(Date.now() + EXPIRY_GRACE_MS + 1000);
     expect(swept).toContain(tokenId);
     const remaining = (await listTokens()).map(t => t.id);
     expect(remaining).not.toContain(tokenId);

@@ -27,7 +27,7 @@ export function registerAssistTools({ server, caller }: ToolRegistration) {
   // right one, then fetch its full content with `get_assist`.
   server.tool(
     'list_assists',
-    'Discover task-help entries (guides, recipes, ADR-style architecture recommendations, checklists, footguns, snippets) from the ServiceBay assist catalog. Pass a free-text `query` describing your task to rank relevant entries; read the returned `whenToUse` to pick one, then fetch it with get_assist. Use this FIRST when authoring/deploying a new service, when you need an overview of ServiceBay or Solaris, or when unsure how to perform a ServiceBay task — so you don\'t re-derive knowledge that already exists.',
+    'Discover task-help entries from the ServiceBay assist catalog: guides, recipes, checklists, footguns, snippets — AND the platform\'s architecture decision records (kind "adr", ids `adr-NNNN-<slug>`), which live here and nowhere else. Pass a free-text `query` describing your task to rank relevant entries; read the returned `whenToUse` to pick one, then fetch it with get_assist. Use this FIRST when authoring/deploying a new service, when you need an overview of ServiceBay or Solaris, when unsure how to perform a ServiceBay task, or BEFORE deciding anything about auth, networking, backups, installs, tokens, releases or the runtime (there is probably an ADR on it) — so you don\'t re-derive knowledge that already exists.',
     {
       query: z.string().optional().describe('Free-text task description to rank matching entries (e.g. "deploy a new service behind SSO"). Omit to list everything.'),
       kind: z.enum(ASSIST_KINDS).optional().describe('Restrict to one kind: guide | recipe | adr | template | checklist | footgun | snippet.'),
@@ -181,14 +181,15 @@ export function registerAssistTools({ server, caller }: ToolRegistration) {
   // --- Get Service Standards (#2323) ---
   // A curated *pointer* index (not full text) for building a new project. The
   // `servicebay` flavor lists the platform ADRs a new service must respect
-  // (titles scanned from docs/adr/*.md at runtime so they don't drift), the
+  // (read live from the ADR entries in the assist catalog, so titles can't
+  // drift and every pointer is followable with get_assist — #2607), the
   // enforced invariants + gate commands, the assists to read in full, and the
   // template contract. The `generic` flavor returns platform-agnostic dev
   // standards. Backing prose lives in the new-service-standards /
   // generic-project-standards assists (single source of truth).
   server.tool(
     'get_service_standards',
-    'Fetch a curated pointer index of the standards for building a new project. flavor="servicebay" (default) returns the platform ADRs a new ServiceBay service must respect (with titles scanned live from docs/adr), the enforced invariants + gate commands, the assists to read in full via get_assist, and the template contract. flavor="generic" returns platform-agnostic dev standards (commit convention, release discipline, coverage floor, secret hygiene, scripts-over-prose). Use this FIRST when starting a new service/project so you build against the standards instead of re-deriving them.',
+    'Fetch a curated pointer index of the standards for building a new project. flavor="servicebay" (default) returns the platform ADRs a new ServiceBay service must respect, each with the get_assist id that returns its full text, the enforced invariants + gate commands, the assists to read in full via get_assist, and the template contract. flavor="generic" returns platform-agnostic dev standards (commit convention, release discipline, coverage floor, secret hygiene, scripts-over-prose). Use this FIRST when starting a new service/project so you build against the standards instead of re-deriving them.',
     {
       flavor: z.enum(SERVICE_STANDARDS_FLAVORS).optional().default('servicebay')
         .describe('"servicebay" (default) for a new ServiceBay service; "generic" for platform-agnostic dev standards.'),

@@ -95,7 +95,7 @@ describe('Node major version consistency (#2166, ADR 0010)', () => {
       mismatches,
       `Node major mismatch (package.json engines = ${expected}):\n  ${mismatches.join('\n  ')}\n\n` +
       'All four sources (package.json / .nvmrc / workflows / Dockerfiles) must share the same Node ' +
-      'major or a native module compiled under one ABI can crash under another. See docs/adr/0010.',
+      'major or a native module compiled under one ABI can crash under another. See assists/adr-0010-node-20-minor-floats.md.',
     ).toEqual([]);
   });
 });

@@ -13,7 +13,7 @@ const { mockWorker, mockNas, mockCfg } = vi.hoisted(() => ({
     cleanupBackupRun: vi.fn(),
   },
   mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn(), nasRemove: vi.fn() },
-  mockCfg: { getConfig: vi.fn() },
+  mockCfg: { getConfig: vi.fn(), updateConfig: vi.fn() },
 }));
 vi.mock('../backupWorker/service', () => mockWorker);
 vi.mock('./nasClient', () => mockNas);
@@ -41,6 +41,7 @@ function completed(results: Array<{ service: string; ok: boolean; outcome?: stri
 beforeEach(() => {
   vi.clearAllMocks();
   mockCfg.getConfig.mockResolvedValue({});
+  mockCfg.updateConfig.mockResolvedValue({});
   mockNas.nasUpload.mockResolvedValue(undefined);
   mockNas.nasList.mockResolvedValue([]); // prune lists then removes; empty NAS
   mockNas.nasRemove.mockResolvedValue(undefined);
@@ -81,5 +82,59 @@ describe('backupInstalledServicesToNas', () => {
     mockWorker.runBackupForInstalled.mockResolvedValue(null);
     expect(await backupInstalledServicesToNas()).toEqual([]);
     expect(mockNas.nasUpload).not.toHaveBeenCalled();
+  });
+});
+
+// #2615 — before this, the ONLY trace of a nightly run was one journal line, so
+// a healthy push and a mechanism that had stopped a year ago looked identical
+// from outside. The run now records its own outcome, denominator included.
+describe('backupInstalledServicesToNas — recording the run outcome (#2615)', () => {
+  const recorded = () => mockCfg.updateConfig.mock.calls.at(-1)?.[0]?.externalBackup;
+
+  it('records a full run as success with the ok/total tally', async () => {
+    mockWorker.runBackupForInstalled.mockResolvedValue(
+      completed([{ service: 'adguard', ok: true }, { service: 'nginx', ok: true }]),
+    );
+    await backupInstalledServicesToNas();
+    expect(recorded()).toMatchObject({ lastStatus: 'success', servicesOk: 2, servicesTotal: 2 });
+    expect(recorded().lastRun).toEqual(expect.any(String));
+  });
+
+  it('records a mixed run as partial, naming what was NOT backed up', async () => {
+    mockWorker.runBackupForInstalled.mockResolvedValue(
+      completed([
+        { service: 'adguard', ok: false, outcome: 'skip', detail: 'No config files to back up' },
+        { service: 'nginx', ok: true },
+      ]),
+    );
+    await backupInstalledServicesToNas();
+    expect(recorded()).toMatchObject({ lastStatus: 'partial', servicesOk: 1, servicesTotal: 2 });
+    expect(recorded().lastMessage).toMatch(/adguard/);
+  });
+
+  it('records a 0/0 run rather than leaving it indistinguishable from never-ran', async () => {
+    mockWorker.runBackupForInstalled.mockResolvedValue(null);
+    await backupInstalledServicesToNas();
+    expect(recorded()).toMatchObject({ servicesOk: 0, servicesTotal: 0 });
+  });
+
+  it('records a thrown run as an error and still rethrows', async () => {
+    mockWorker.runBackupForInstalled.mockRejectedValue(new Error('worker never came up'));
+    await expect(backupInstalledServicesToNas()).rejects.toThrow('worker never came up');
+    expect(recorded()).toMatchObject({ lastStatus: 'error', lastMessage: 'worker never came up' });
+  });
+
+  it('never turns a completed backup into a failure when the config write fails', async () => {
+    mockCfg.updateConfig.mockRejectedValue(new Error('config is read-only'));
+    mockWorker.runBackupForInstalled.mockResolvedValue(completed([{ service: 'adguard', ok: true }]));
+    const results = await backupInstalledServicesToNas();
+    expect(results).toMatchObject([{ service: 'adguard', ok: true }]);
+  });
+
+  it('preserves the existing externalBackup settings it writes alongside', async () => {
+    mockCfg.getConfig.mockResolvedValue({ externalBackup: { enabled: true, time: '04:15', retention: 3 } });
+    mockWorker.runBackupForInstalled.mockResolvedValue(completed([{ service: 'adguard', ok: true }]));
+    await backupInstalledServicesToNas();
+    expect(recorded()).toMatchObject({ enabled: true, time: '04:15', retention: 3 });
   });
 });
