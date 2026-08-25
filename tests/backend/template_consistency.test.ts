@@ -1493,8 +1493,8 @@ describe('Claude Dev template: isolated netns, SSH reachability preserved (#2522
     // The list was closed in #2518/#2523. Migrating the consumer is the
     // decision; growing the list again would hollow that out.
     const adr = fs.readFileSync(
-      path.join(__dirname, '..', '..', 'docs', 'adr',
-        '0007-container-network-isolation-and-carveouts.md'), 'utf-8',
+      path.join(__dirname, '..', '..', 'assists',
+        'adr-0007-container-network-isolation-and-carveouts.md'), 'utf-8',
     );
     const decision2 = adr.slice(
       adr.indexOf('2. **These stay on `hostNetwork` deliberately'),
@@ -1561,7 +1561,7 @@ describe('Mosquitto template: mandatory credentials, LAN reach, persistence (#25
   it('runs in its own netns and is NOT added to the closed ADR 0007 carve-out list', () => {
     expect(pod().spec.hostNetwork).toBeUndefined();
     const adr = fs.readFileSync(
-      path.join(REPO_ROOT, 'docs', 'adr', '0007-container-network-isolation-and-carveouts.md'),
+      path.join(REPO_ROOT, 'assists', 'adr-0007-container-network-isolation-and-carveouts.md'),
       'utf-8',
     );
     const decision2 = adr.slice(
@@ -1733,7 +1733,7 @@ describe('Beets template: reachable UI, in-place imports, no unattended rewrite 
   it('runs isolated and is NOT added to the closed ADR 0007 carve-out list', () => {
     expect(pod().spec.hostNetwork).toBeUndefined();
     const adr = fs.readFileSync(
-      path.join(REPO_ROOT, 'docs', 'adr', '0007-container-network-isolation-and-carveouts.md'),
+      path.join(REPO_ROOT, 'assists', 'adr-0007-container-network-isolation-and-carveouts.md'),
       'utf-8',
     );
     const decision2 = adr.slice(
