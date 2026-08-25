@@ -36,7 +36,8 @@
     "prepare": "husky || true",
     "autoloop:seal": "tsx scripts/autoloop-seal.ts",
     "autoloop:box": "tsx scripts/autoloop-box.ts",
-    "autoloop:dev-verify": "tsx scripts/autoloop-dev-verify.ts"
+    "autoloop:dev-verify": "tsx scripts/autoloop-dev-verify.ts",
+    "autoloop:journal-redaction": "tsx scripts/check-journal-redaction.ts"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx}": [
