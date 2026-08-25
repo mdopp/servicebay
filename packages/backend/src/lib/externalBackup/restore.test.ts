@@ -327,6 +327,33 @@ describe('wipeServiceForReinstall (#1585)', () => {
   });
 });
 
+describe('#2596 — volume-held config is backed up, and says plainly that it is not auto-restorable', () => {
+  /**
+   * Half a feature is the dangerous half. syncthing's config now RIDES the
+   * nightly backup out of a podman named volume — but nothing here can write
+   * back INTO a named volume yet. Both paths must therefore say so out loud
+   * rather than resolve a `<DATA_DIR>/syncthing` directory the service never
+   * reads and then log "restored"/"wiped".
+   */
+  it('never wipes a volume-held service, and explains why', async () => {
+    const logs: string[] = [];
+    await wipeServiceForReinstall('syncthing', { wipeMode: 'wipe-all', node: 'Local', local: true }, async l => { logs.push(l); });
+    expect(logs.join('\n')).toMatch(/podman volume "file-share-syncthing-config"/);
+    expect(logs.join('\n')).toContain('#2596');
+  });
+
+  it('reports the restore limitation as a calm note, not as a FAILED restore', async () => {
+    // Falling through would throw in resolveServiceDataDir and dress a known
+    // limitation up as a restore failure (plus a standing diagnose finding) on
+    // every single file-share deploy.
+    const logs: string[] = [];
+    await autoRestoreServiceOnReinstall('syncthing', { wipeMode: 'wipe-config', node: 'Local', local: true }, async l => { logs.push(l); });
+    const text = logs.join('\n');
+    expect(text).toMatch(/backed up to the NAS/);
+    expect(text).not.toMatch(/FAILED/);
+  });
+});
+
 describe('#2595 — the multi-app template stores round-trip through wipe + auto-restore', () => {
   /**
    * The backup half of #2595 (adding `gateOn`) only matters if the RESTORE half

@@ -11,10 +11,13 @@ import {
 } from '../../scripts/check-invariants';
 import {
   toCoverageKey,
-  extractHostPathVolumes,
+  extractTemplateVolumes,
   uncoveredVolumes,
   unknownGateManifests,
+  unknownVolumeManifests,
   shippedTemplateNames,
+  TemplateScanError,
+  EPHEMERAL_VOLUME_KINDS,
 } from '../../scripts/check-backup-coverage';
 import {
   SERVICE_BACKUP_MANIFESTS,
@@ -281,6 +284,7 @@ describe('#2465 — backup-coverage fails closed on volume variables of any name
 
   it('an off-pattern uncovered volume reaches the uncovered list end to end', () => {
     const yaml = [
+      'kind: Pod',
       'spec:',
       '  volumes:',
       '    - name: media',
@@ -294,23 +298,185 @@ describe('#2465 — backup-coverage fails closed on volume variables of any name
       '      hostPath:',
       '        path: {{DATA_DIR}}/adguard/conf',
     ].join('\n');
-    const vols = extractHostPathVolumes('probe', yaml);
+    const { volumes } = extractTemplateVolumes('probe', yaml);
     // The device is not a volume at all; the other two are candidates.
-    expect(vols.map(v => v.raw)).toEqual(['{{MEDIA_ROOT}}', '{{DATA_DIR}}/adguard/conf']);
+    expect(volumes.map(v => v.raw)).toEqual(['{{MEDIA_ROOT}}', '{{DATA_DIR}}/adguard/conf']);
     // `adguard/conf` is manifest-covered; the off-pattern variable is not.
-    expect(uncoveredVolumes(vols).map(v => v.raw)).toEqual(['{{MEDIA_ROOT}}']);
+    expect(uncoveredVolumes(volumes).map(v => v.raw)).toEqual(['{{MEDIA_ROOT}}']);
   });
 
   it('leaves the volumes the real templates ship covered (no false positives)', () => {
-    const templatesDir = path.join(REPO_ROOT, 'templates');
-    const vols = readdirSync(templatesDir, { withFileTypes: true })
-      .filter(e => e.isDirectory())
-      .flatMap(e => {
-        const f = path.join(templatesDir, e.name, 'template.yml');
-        return existsSync(f) ? extractHostPathVolumes(e.name, readFileSync(f, 'utf-8')) : [];
-      });
-    expect(vols.length).toBeGreaterThan(10);
-    expect(uncoveredVolumes(vols)).toEqual([]);
+    expect(realTemplateScan.volumes.length).toBeGreaterThan(10);
+    expect(uncoveredVolumes(realTemplateScan.volumes)).toEqual([]);
+  });
+});
+
+/** Every shipped template, scanned exactly as the gate scans it. */
+const realTemplateScan = (() => {
+  const templatesDir = path.join(REPO_ROOT, 'templates');
+  const volumes = [];
+  const unclassified = [];
+  for (const e of readdirSync(templatesDir, { withFileTypes: true })) {
+    const f = path.join(templatesDir, e.name, 'template.yml');
+    if (!e.isDirectory() || !existsSync(f)) continue;
+    const scan = extractTemplateVolumes(e.name, readFileSync(f, 'utf-8'));
+    volumes.push(...scan.volumes);
+    unclassified.push(...scan.unclassified);
+  }
+  return { volumes, unclassified };
+})();
+
+describe('#2596 — the coverage gate can SEE a podman named volume, and fails on an uncovered one', () => {
+  /**
+   * The fourth way a gate lies, and the worst: it reports green about a question
+   * it never asked. The pre-fix scan grepped `hostPath:` blocks, so a template
+   * that kept real config in a `PersistentVolumeClaim` did not come out
+   * "uncovered" — it never entered the check. `file-share`'s syncthing-config
+   * PVC (Syncthing's device identity + folder shares) sat outside the contract
+   * that way while `check:backup-coverage` printed ✓.
+   */
+  const PVC_YAML = [
+    'kind: Pod',
+    'spec:',
+    '  volumes:',
+    '    - name: syncthing-config',
+    '      persistentVolumeClaim:',
+    '        claimName: file-share-syncthing-config',
+    '    - name: rogue-config',
+    '      persistentVolumeClaim:',
+    '        claimName: some-template-unbacked-config',
+  ].join('\n');
+
+  it('extracts PersistentVolumeClaim volumes, not just hostPath ones', () => {
+    const { volumes } = extractTemplateVolumes('probe', PVC_YAML);
+    expect(volumes.map(v => [v.kind, v.key])).toEqual([
+      ['persistentVolumeClaim', 'file-share-syncthing-config'],
+      ['persistentVolumeClaim', 'some-template-unbacked-config'],
+    ]);
+  });
+
+  it('FAILS on a volume-held path that no manifest covers (the mutation this gate exists for)', () => {
+    const { volumes } = extractTemplateVolumes('probe', PVC_YAML);
+    // The covered one is the real manifest's claim; the other is a template
+    // reaching for a PVC without deciding anything — exactly what used to pass.
+    expect(uncoveredVolumes(volumes).map(v => v.key)).toEqual(['some-template-unbacked-config']);
+  });
+
+  it('named-volume coverage is EXACT, not prefix-based (a volume is atomic)', () => {
+    // `file-share-syncthing-config` is covered; a sibling volume sharing its
+    // prefix is a different volume and must NOT ride along on that match.
+    const yaml = [
+      'kind: Pod',
+      'spec:',
+      '  volumes:',
+      '    - name: c',
+      '      persistentVolumeClaim:',
+      '        claimName: file-share-syncthing-config-extra',
+    ].join('\n');
+    const { volumes } = extractTemplateVolumes('probe', yaml);
+    expect(uncoveredVolumes(volumes)).toHaveLength(1);
+  });
+
+  it("file-share's syncthing PVC is covered at HEAD — and by a manifest, not by a skip", () => {
+    const pvcs = realTemplateScan.volumes.filter(v => v.kind === 'persistentVolumeClaim');
+    // The gate actually looked at it (the pre-fix scan found zero PVCs).
+    expect(pvcs.map(v => v.key)).toContain('file-share-syncthing-config');
+    expect(uncoveredVolumes(pvcs)).toEqual([]);
+    const syncthing = SERVICE_BACKUP_MANIFESTS.find(m => m.service === 'syncthing');
+    expect(syncthing?.volume).toBe('file-share-syncthing-config');
+    expect(syncthing?.include).toContain('config.xml');
+    // The device ID is derived from the certificate — config.xml alone would
+    // still cost every paired peer a manual re-trust.
+    expect(syncthing?.include).toEqual(expect.arrayContaining(['cert.pem', 'key.pem']));
+  });
+
+  it('drops the syncthing manifest → the PVC goes uncovered (mutation-verified)', () => {
+    // Prove the green above is earned. `uncoveredVolumes` reads the real
+    // manifest list, so mutate the input instead: a claim name nothing covers
+    // is the same shape as the syncthing entry not being there.
+    const { volumes } = extractTemplateVolumes(
+      'probe',
+      PVC_YAML.replace('file-share-syncthing-config', 'file-share-syncthing-config-UNMANIFESTED'),
+    );
+    expect(uncoveredVolumes(volumes)).toHaveLength(2);
+  });
+
+  it('a manifest volume that no template declares is a defect, like a dead gate', () => {
+    const manifests = [
+      { service: 'syncthing', gateOn: 'file-share', volume: 'file-share-syncthing-config', include: ['config.xml'], exclude: [] },
+      { service: 'ghost', gateOn: 'file-share', volume: 'no-such-volume', include: ['x'], exclude: [] },
+      // `volume` + `dataSubdir` name two different storage locations — one of
+      // the two would silently be a lie, so the pair is rejected outright.
+      { service: 'both', gateOn: 'file-share', volume: 'file-share-syncthing-config', dataSubdir: 'x', include: ['x'], exclude: [] },
+    ];
+    expect(unknownVolumeManifests(manifests, ['file-share-syncthing-config'])).toEqual([
+      { service: 'ghost', volume: 'no-such-volume' },
+      { service: 'both', volume: 'file-share-syncthing-config' },
+    ]);
+  });
+
+  it('every manifest `volume` at HEAD names a claim a template really declares', () => {
+    const claims = realTemplateScan.volumes
+      .filter(v => v.kind === 'persistentVolumeClaim')
+      .map(v => v.key);
+    expect(unknownVolumeManifests(SERVICE_BACKUP_MANIFESTS, claims)).toEqual([]);
+  });
+
+  it('a volume kind the gate does not know is an ERROR, never a silent skip', () => {
+    const yaml = [
+      'kind: Pod',
+      'spec:',
+      '  volumes:',
+      '    - name: mystery',
+      '      csi:',
+      '        driver: something.example.com',
+      '    - name: scratch',
+      '      emptyDir: {}',
+    ].join('\n');
+    const { volumes, unclassified } = extractTemplateVolumes('probe', yaml);
+    expect(volumes).toEqual([]);
+    // emptyDir is enumerated as stateless WITH a reason; `csi` is not, so it is
+    // reported rather than dropped — the gate never guesses that it is safe.
+    expect(EPHEMERAL_VOLUME_KINDS).toHaveProperty('emptyDir');
+    expect(unclassified.map(u => u.kind)).toEqual(['csi']);
+  });
+
+  it('the real templates leave nothing unclassified (the enumeration is complete)', () => {
+    expect(realTemplateScan.unclassified).toEqual([]);
+    // …and the scan is not vacuous: it saw both storage kinds.
+    const kinds = new Set(realTemplateScan.volumes.map(v => v.kind));
+    expect([...kinds].sort()).toEqual(['hostPath', 'persistentVolumeClaim']);
+  });
+
+  it('a template.yml that will not parse FAILS the gate instead of contributing zero volumes', () => {
+    // The "scans nothing" failure shape, template-sized: the old line scan
+    // simply found no `hostPath:` lines in a broken file and moved on.
+    expect(() => extractTemplateVolumes('probe', 'kind: Pod\nspec:\n  volumes:\n  - name: a\n   bad: [')).toThrow(TemplateScanError);
+    expect(() => extractTemplateVolumes('probe', 'kind: ConfigMap\ndata: {}')).toThrow(/no .kind: Pod. document/);
+    expect(() => extractTemplateVolumes('probe', 'kind: Pod\nspec:\n  volumes: not-a-list')).toThrow(TemplateScanError);
+  });
+
+  it('reads a volume that a mustache section makes conditional (always visible)', () => {
+    // A volume only some installs get is still a volume that must be covered,
+    // so the section markers are stripped rather than evaluated.
+    const yaml = [
+      'kind: Pod',
+      'spec:',
+      '  volumes:',
+      '  {{#ZWAVE_DEVICE}}',
+      '    - name: stick',
+      '      hostPath:',
+      '        path: {{ZWAVE_DEVICE}}',
+      '  {{/ZWAVE_DEVICE}}',
+      '    - name: conf',
+      '      hostPath:',
+      '        path: {{DATA_DIR}}/adguard/conf',
+    ].join('\n');
+    const { volumes, unclassified } = extractTemplateVolumes('probe', yaml);
+    expect(unclassified).toEqual([]);
+    // The stick is a device (exempt by name); the conf dir round-tripped back
+    // to its `{{DATA_DIR}}` spelling rather than staying a scan token.
+    expect(volumes.map(v => v.raw)).toEqual(['{{DATA_DIR}}/adguard/conf']);
   });
 });
 
@@ -339,8 +505,12 @@ describe('#2595 — a backup manifest gating on a name no template has is build-
     // The worker's copy is what actually SELECTS services for the nightly run
     // (backupWorker/service.ts imports it, not the backend copy), so a gate that
     // is right here and wrong there still loses the backup.
-    expect(WORKER_MANIFESTS.map(m => [m.service, m.gateOn ?? m.service]))
-      .toEqual(SERVICE_BACKUP_MANIFESTS.map(m => [m.service, m.gateOn ?? m.service]));
+    // Storage location too (#2596): a `volume` set on one side only would make
+    // the worker read a stacks path while the gate believes the named volume is
+    // covered — the same lie, one level down.
+    const shape = (m: { service: string; gateOn?: string; volume?: string; dataSubdir?: string }) =>
+      [m.service, m.gateOn ?? m.service, m.volume ?? null, m.dataSubdir ?? null];
+    expect(WORKER_MANIFESTS.map(shape)).toEqual(SERVICE_BACKUP_MANIFESTS.map(shape));
   });
 
   it('the three #2595 entries resolve to the templates that own their data dirs', () => {
@@ -380,16 +550,19 @@ describe('#2595 — a backup manifest gating on a name no template has is build-
       .toEqual(['authelia', 'lldap', 'jellyfin']);
   });
 
-  it('the two retired entries are gone, not re-added under a dead gate', () => {
-    // syncthing's config lives in the podman PVC `file-share-syncthing-config`
-    // (no DATA_DIR path for the file-copy producer to read); `hermes` is the
-    // retired Solaris name with no template. Re-adding either would fail the
-    // gate above — this pins the decision so it isn't quietly reversed.
+  it('neither retired entry came back under a DEAD gate', () => {
+    // Both were removed in #2595 because their gate named no template. `hermes`
+    // is the retired Solaris name and stays gone. `syncthing` came back in
+    // #2596 — but only because it now gates on the template that actually ships
+    // it and reads the podman volume its config really lives in. Re-adding
+    // either under its own name would fail the gate above.
     const names = SERVICE_BACKUP_MANIFESTS.map(m => m.service);
-    expect(names).not.toContain('syncthing');
     expect(names).not.toContain('hermes');
-    expect(existsSync(path.join(REPO_ROOT, 'templates', 'syncthing'))).toBe(false);
     expect(existsSync(path.join(REPO_ROOT, 'templates', 'hermes'))).toBe(false);
+    expect(existsSync(path.join(REPO_ROOT, 'templates', 'syncthing'))).toBe(false);
+    const syncthing = SERVICE_BACKUP_MANIFESTS.find(m => m.service === 'syncthing');
+    expect(getBackupGate(syncthing!)).toBe('file-share');
+    expect(syncthing?.dataSubdir).toBeUndefined(); // it has no DATA_DIR path at all
   });
 });
 

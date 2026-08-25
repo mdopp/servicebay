@@ -23,11 +23,31 @@ describe('service backup manifests', () => {
         'lldap', 'vaultwarden', 'radicale', 'jellyfin', 'file-share',
       ]),
     );
-    // #2595 — `syncthing` (config lives in a podman PVC, not under DATA_DIR) and
-    // `hermes` (retired Solaris name, no template) could never activate and were
-    // removed rather than left as entries that promise a backup and stage nothing.
-    expect(names).not.toContain('syncthing');
+    // #2595 removed `syncthing` and `hermes`: both gated on a name no template
+    // has, so they promised a backup and staged nothing. `hermes` (the retired
+    // Solaris name) stays gone; `syncthing` came back in #2596 once the backup
+    // path learned to read a podman named volume — see below.
     expect(names).not.toContain('hermes');
+    expect(names).toContain('syncthing');
+  });
+
+  it('backs up syncthing out of its podman named volume, gated on file-share (#2596)', () => {
+    const syncthing = getServiceManifest('syncthing')!;
+    // Not a DATA_DIR path at all: a hostPath there fails syncthing's startup
+    // chmod under rootless podman, so the template uses a PVC.
+    expect(syncthing.volume).toBe('file-share-syncthing-config');
+    expect(syncthing.dataSubdir).toBeUndefined();
+    // An app of `file-share`, so it activates on that template's presence —
+    // gating on its own name is the #2595 defect that made it permanently dead.
+    expect(getBackupGate(syncthing)).toBe('file-share');
+    expect(getSiblingBackupServices('file-share')).toContain('syncthing');
+    // config.xml holds the folder shares + device ID; cert/key ARE the identity.
+    expect(syncthing.include).toEqual(
+      expect.arrayContaining(['config.xml', 'cert.pem', 'key.pem']),
+    );
+    // The sync index is regenerable bulk — excluded from the tar, kept on disk.
+    expect(syncthing.exclude).toContain('index-v0.14.0.db');
+    expect(getDataPaths('syncthing')).toContain('index-v0.14.0.db');
   });
 
   it('backs up LLDAP users.db — the family identity store (#2153)', () => {

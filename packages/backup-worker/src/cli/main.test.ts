@@ -20,6 +20,13 @@ describe('parseWorkerArgs', () => {
     expect(opts).toMatchObject({ stacks: '/mnt/stacks', out: '/out', services: ['a', 'b', 'c'], runId: 'r1' });
   });
 
+  it('parses the optional --volumes root (#2596)', () => {
+    const opts = parseWorkerArgs(['--stacks', '/s', '--out', '/o', '--services', 'a', '--volumes', '/mnt/volumes']);
+    expect(opts).toMatchObject({ volumes: '/mnt/volumes' });
+    // …and stays undefined when the run needs no named volume.
+    expect(parseWorkerArgs(['--stacks', '/s', '--out', '/o', '--services', 'a'])).toMatchObject({ volumes: undefined });
+  });
+
   it('trims + drops empty service tokens', () => {
     const opts = parseWorkerArgs(['--stacks', '/s', '--out', '/o', '--services', 'a, ,b,']);
     expect('services' in opts && opts.services).toEqual(['a', 'b']);
@@ -44,6 +51,21 @@ describe('resolveServiceDataDir', () => {
   it('honours the manifest dataSubdir', () => {
     expect(resolveServiceDataDir('/mnt/stacks', getServiceManifest('nginx')!)).toBe('/mnt/stacks/nginx-proxy-manager');
     expect(resolveServiceDataDir('/mnt/stacks', getServiceManifest('adguard')!)).toBe('/mnt/stacks/adguard');
+  });
+
+  it('reads a volume-held manifest from the mounted named volume, not the stacks root (#2596)', () => {
+    const syncthing = getServiceManifest('syncthing')!;
+    expect(syncthing.volume).toBe('file-share-syncthing-config');
+    expect(resolveServiceDataDir('/mnt/stacks', syncthing, '/mnt/volumes'))
+      .toBe('/mnt/volumes/file-share-syncthing-config');
+  });
+
+  it('THROWS for a volume-held manifest with no --volumes root instead of silently using the stacks path', () => {
+    // The fail-open shape this whole issue is about: a stacks fallback would
+    // resolve to a directory that does not exist, stage nothing, and report the
+    // service as "no config on disk yet" — a backup that quietly does nothing.
+    expect(() => resolveServiceDataDir('/mnt/stacks', getServiceManifest('syncthing')!))
+      .toThrow(/no --volumes root/);
   });
 });
 
@@ -117,6 +139,28 @@ describe('runWorker', () => {
     const final = await runWorker(opts, io);
     expect(final.phase).toBe('done');
     expect(final.results.find(r => r.service === 'adguard')).toMatchObject({ ok: false, outcome: 'error', detail: 'disk exploded' });
+  });
+
+  it('stages a volume-held service from the --volumes root (#2596)', async () => {
+    const seen: string[] = [];
+    const { io } = fakeIO({
+      buildTar: vi.fn(async (dir: string) => { seen.push(dir); return { files: 1, bytes: 10 }; }),
+    });
+    const final = await runWorker(
+      { ...opts, services: ['syncthing'], volumes: '/mnt/volumes' },
+      io,
+    );
+    expect(seen).toEqual(['/mnt/volumes/file-share-syncthing-config']);
+    expect(final.results[0]).toMatchObject({ service: 'syncthing', ok: true, outcome: 'ok' });
+  });
+
+  it('reports a volume-held service launched WITHOUT --volumes as a visible error, not a skip', async () => {
+    const { io } = fakeIO();
+    const final = await runWorker({ ...opts, services: ['syncthing', 'adguard'] }, io);
+    expect(final.phase).toBe('done'); // one bad service still doesn't abort the run
+    expect(final.results[0]).toMatchObject({ service: 'syncthing', ok: false, outcome: 'error' });
+    expect(final.results[0].detail).toMatch(/no --volumes root/);
+    expect(final.results[1]).toMatchObject({ service: 'adguard', ok: true });
   });
 
   it('marks an unknown service as an error', async () => {

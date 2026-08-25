@@ -29,11 +29,12 @@ podman run --rm -v "$PWD:/src:Z" docker.io/returntocorp/semgrep:1.172.0 \
 
 CI: see the `invariants`, `depcruise`, and `semgrep` jobs in `.github/workflows/ci.yml`.
 
-### Two meta-invariants: a gate that scans nothing, and a gate that runs nowhere
+### Three meta-invariants: a gate that scans nothing, a gate that runs nowhere, and a gate that never asked
 
-Both failure modes report **green** and are indistinguishable from a real pass.
-Both have bitten this repo, so both are now themselves enforced by
-`scripts/check-invariants.ts`:
+All three report **green** and are indistinguishable from a real pass. All three
+have bitten this repo. The first two are enforced by
+`scripts/check-invariants.ts`; the third is enforced inside the gate that had it
+(`scripts/check-backup-coverage.ts`, see the bullet after these two):
 
 - **`gate-path-resolves`** — every path/glob a gate config names must match at
   least one tracked file. Covers each glob under a `paths:` block in
@@ -54,6 +55,18 @@ Both have bitten this repo, so both are now themselves enforced by
   dropped `check:backup-coverage` — the only gate between "a template ships a
   new persistent volume" and "the box loses that data on a disk-loss
   reinstall".)
+- **`backup-coverage enumerates, it does not grep`** — the third shape: the gate
+  ran, over the right files, and still reported green **about a question it
+  never asked**. `check:backup-coverage` used to scan `hostPath:` blocks, so a
+  template keeping real config in a `PersistentVolumeClaim` was not "uncovered"
+  — it never entered the check (#2596: Syncthing's device identity + folder
+  shares). It now parses each `template.yml` and enumerates every
+  `spec.volumes[]` entry, classifying each by kind: an unknown kind is an
+  **error**, not a skip; a template that will not parse is an **error**, not
+  zero volumes; and the kinds that hold no state are listed with reasons in
+  `EPHEMERAL_VOLUME_KINDS`. Same ratchet direction as #2465 (a bare `{{VAR}}`
+  hostPath now fails closed instead of being dropped for being off-pattern):
+  when the gate cannot tell, it fails.
 
 ---
 

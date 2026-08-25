@@ -440,6 +440,14 @@ describe('resolveServiceDataDir', () => {
     mockGetConfig.mockResolvedValue({ templateSettings: {} });
     expect(await resolveServiceDataDir('adguard')).toBe('/mnt/data/stacks/adguard');
   });
+
+  it('refuses to invent a DATA_DIR path for a volume-held manifest (#2596)', async () => {
+    // syncthing's config is in the podman volume `file-share-syncthing-config`.
+    // Returning `<DATA_DIR>/syncthing` would let the restore/wipe callers write
+    // into a directory the service never reads — and report success.
+    mockGetConfig.mockResolvedValue({ templateSettings: { DATA_DIR: '/srv/stacks' } });
+    await expect(resolveServiceDataDir('syncthing')).rejects.toThrow(/podman volume "file-share-syncthing-config"/);
+  });
 });
 
 // The box backup (no serviceDataDir) now routes the HEAVY walk/copy/tar through

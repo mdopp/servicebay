@@ -370,10 +370,25 @@ export async function buildServiceBackupTar(
 
 /** Resolve a service's on-disk config dir from the configured DATA_DIR. Honors
  *  a manifest's `dataSubdir` override (NPM stores under `nginx-proxy-manager/`
- *  though its template/service name is `nginx`). */
+ *  though its template/service name is `nginx`).
+ *
+ *  Throws for a VOLUME-held manifest (#2596): that service's state is in a
+ *  podman named volume, not under DATA_DIR, so there is no such dir. Returning
+ *  `<DATA_DIR>/<service>` instead would be the fail-open shape this whole gate
+ *  exists to prevent — the restore/wipe callers would happily write config into
+ *  a directory the service never reads, and report success. The backup side
+ *  reads the volume through the worker (backupWorker/launcher.ts); the restore
+ *  side has no equivalent yet and says so. */
 export async function resolveServiceDataDir(service: string): Promise<string> {
+  const manifest = getServiceManifest(service);
+  if (manifest?.volume) {
+    throw new Error(
+      `"${service}" keeps its config in the podman volume "${manifest.volume}", not under DATA_DIR — ` +
+      `it is backed up from the volume, but restoring into a named volume is not supported yet (#2596).`,
+    );
+  }
   const dataDir = (await getConfig()).templateSettings?.DATA_DIR || DEFAULT_STACKS_DIR;
-  const subdir = getServiceManifest(service)?.dataSubdir ?? service;
+  const subdir = manifest?.dataSubdir ?? service;
   return path.join(dataDir, subdir);
 }
 

@@ -12,8 +12,9 @@
 // (the agent doesn't allowlist `base64`, which broke the tar→NAS read, #1973).
 //
 //   servicebay ──"Back up config"──▶ podman run --rm --memory=2g <worker> --stacks …
-//      reads status.json (compact)        (stacks ro at /mnt/stacks, out volume /out)
-//      streams <service>.tar → NAS        (one tar at a time, bounded I/O)
+//      reads status.json (compact)        (stacks ro at /mnt/stacks, any named
+//      streams <service>.tar → NAS         volume ro at /mnt/volumes/<claim>,
+//                                          out volume /out; one tar at a time)
 //
 // The control plane never holds all the tars at once — an OOM/kill of the worker
 // kills the JOB, not servicebay/UI/HA. Liveness is `podman ps`, not in-memory
@@ -23,7 +24,7 @@
 import { readFile } from 'node:fs/promises';
 
 import type { WorkerStatus } from '@servicebay/backup-worker';
-import { STATUS_FILE } from '@servicebay/backup-worker';
+import { STATUS_FILE, getServiceManifest } from '@servicebay/backup-worker';
 
 import { DATA_DIR } from '@/lib/dirs';
 
@@ -52,6 +53,19 @@ export const BACKUP_WORKER_MEMORY = '2g';
 /** Where the host stacks dir is mounted (read-only) inside the worker. */
 const STACKS_MOUNT = '/mnt/stacks';
 
+/**
+ * Where podman NAMED VOLUMES are mounted (read-only) inside the worker (#2596),
+ * one subdir per claim name. Some service state cannot live on a hostPath at
+ * all — Syncthing's config dir fails its startup `chmod` against a bind mount
+ * under rootless podman, so `file-share` keeps `config.xml` (the device identity
+ * + every folder share) in the named volume `file-share-syncthing-config`. The
+ * stacks bind mount cannot see it: a named volume lives in podman's own storage
+ * graph, not under the stacks root. Binding it BY NAME is what lets the
+ * unchanged staging engine read it — and `:ro`, so the worker still never writes
+ * into a service's state (feedback_fileshare_relabel_crashloop).
+ */
+const VOLUMES_MOUNT = '/mnt/volumes';
+
 /** A launched backup-worker run servicebay tracks by container name + out dir. */
 export interface BackupWorkerRun {
   /** Opaque run id (also the container name suffix + out-dir name). */
@@ -74,6 +88,18 @@ function containerName(runId: string): string {
  */
 export function backupWorkerOutBase(dataDir: string): string {
   return `${dataDir}/backup-runs`;
+}
+
+/**
+ * The podman named volumes this run must bind, in request order and de-duped —
+ * the `volume` claim of every requested service whose manifest has one (#2596).
+ * Pure over its input so the launch wiring is testable without podman.
+ */
+export function requiredVolumeClaims(services: readonly string[]): string[] {
+  const claims = services
+    .map(s => getServiceManifest(s)?.volume)
+    .filter((v): v is string => typeof v === 'string' && v.length > 0);
+  return [...new Set(claims)];
 }
 
 /**
@@ -111,12 +137,26 @@ export async function launchBackupWorker(args: {
     );
   }
 
+  // Bind each named volume this run needs, READ-ONLY, under /mnt/volumes/<claim>
+  // (#2596). Only volumes that ALREADY exist are bound: `podman run -v <name>:…`
+  // CREATES a missing named volume, which would hand the worker an empty dir and
+  // leave a stray volume behind. A claim that doesn't exist yet (the template was
+  // never deployed) simply isn't mounted, and the worker reports that service as
+  // a skip — the same outcome as a hostPath dir that isn't there yet.
+  const claims = requiredVolumeClaims(services);
+  const volumeArgs: string[] = [];
+  for (const claim of claims) {
+    const { code } = await exec(['podman', 'volume', 'exists', claim]);
+    if (code === 0) volumeArgs.push('-v', `${claim}:${VOLUMES_MOUNT}/${claim}:ro`);
+  }
+
   await exec([
     'podman', 'run', '-d', '--rm',
     '--name', container,
     `--memory=${BACKUP_WORKER_MEMORY}`,
     `--memory-swap=${BACKUP_WORKER_MEMORY}`,
     '-v', `${stacksDir}:${STACKS_MOUNT}:ro`,
+    ...volumeArgs,
     // `:z` relabels the out dir to a SHARED SELinux label so the worker
     // container can write it. Without it the dir keeps servicebay's private
     // MCS categories (container_file_t:s0:cNNN,cMMM) and the freshly-spawned
@@ -127,6 +167,10 @@ export async function launchBackupWorker(args: {
     '-e', `BACKUP_RUN_ID=${runId}`,
     BACKUP_WORKER_IMAGE,
     '--stacks', STACKS_MOUNT,
+    // Passed whenever a requested service is volume-held, even if the claim
+    // didn't exist — without it the worker throws a WIRING error for that
+    // service instead of reporting the honest "nothing on disk yet" skip.
+    ...(claims.length > 0 ? ['--volumes', VOLUMES_MOUNT] : []),
     '--out', '/out',
     '--services', services.join(','),
     '--run-id', runId,
