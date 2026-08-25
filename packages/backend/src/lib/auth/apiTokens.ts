@@ -251,7 +251,8 @@ export async function createToken(input: {
  * (epic #2047). A *holder* of a raw parent token ("sb_<id>_<secret>") mints a
  * child whose authority is strictly bounded by the parent:
  *   - scopes ⊆ parent.scopes (implied scopes count — a `destroy` parent may
- *     mint a `reboot`/`exec` child; see scopesAreSubset)
+ *     mint a `reboot` child; since #2623 it may NOT mint an `exec` child, since
+ *     nothing implies `exec` any more; see scopesAreSubset)
  *   - expiresAt ≤ parent.expiresAt (TTL can only narrow, never extend; if the
  *     parent never expires the child may set any expiry)
  * The parent must be present, unexpired, and verify against its stored hash.

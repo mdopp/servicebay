@@ -59,16 +59,37 @@ describe('createDelegatedToken (#2048)', () => {
     ).rejects.toBeInstanceOf(DelegateError);
   });
 
-  it('allows an implied scope: a destroy parent may mint a reboot/exec child', async () => {
+  it('allows an implied scope: a destroy parent may mint a reboot child', async () => {
     const { createToken, createDelegatedToken } = await load();
     const { secret: parentRaw } = await createToken({
       name: 'parent', scopes: ['read', 'destroy'], createdBy: 'admin',
     });
 
     const { token: child } = await createDelegatedToken({
-      parentRaw, name: 'child', scopes: ['reboot', 'exec'],
+      parentRaw, name: 'child', scopes: ['reboot'],
     });
-    expect(child.scopes).toEqual(['reboot', 'exec']);
+    expect(child.scopes).toEqual(['reboot']);
+  });
+
+  // #2623: `destroy` no longer implies `exec`, so a destroy parent can no
+  // longer delegate shell it never held. Only a parent literally holding
+  // `exec` may mint an `exec` child.
+  it('refuses an exec child from a destroy-only parent, allows it from an exec parent', async () => {
+    const { createToken, createDelegatedToken } = await load();
+    const { secret: destroyParent } = await createToken({
+      name: 'destroy-parent', scopes: ['read', 'destroy'], createdBy: 'admin',
+    });
+    await expect(
+      createDelegatedToken({ parentRaw: destroyParent, name: 'child', scopes: ['exec'] }),
+    ).rejects.toMatchObject({ status: 403 });
+
+    const { secret: execParent } = await createToken({
+      name: 'exec-parent', scopes: ['read', 'exec'], createdBy: 'admin',
+    });
+    const { token: child } = await createDelegatedToken({
+      parentRaw: execParent, name: 'child', scopes: ['exec'],
+    });
+    expect(child.scopes).toEqual(['exec']);
   });
 
   it('rejects a child whose expiry is later than the parent (403)', async () => {
@@ -141,9 +162,12 @@ describe('createDelegatedToken (#2048)', () => {
 });
 
 describe('apiScope subset helpers (#2048)', () => {
-  it('scopesAreSubset honors destroy→reboot/exec implication', async () => {
+  it('scopesAreSubset honors destroy→reboot, but never destroy→exec (#2623)', async () => {
     const { scopesAreSubset } = await import('@/lib/auth/apiScope');
-    expect(scopesAreSubset(['reboot', 'exec'], ['destroy'])).toBe(true);
+    expect(scopesAreSubset(['reboot'], ['destroy'])).toBe(true);
+    expect(scopesAreSubset(['exec'], ['destroy'])).toBe(false);
+    expect(scopesAreSubset(['reboot', 'exec'], ['destroy'])).toBe(false);
+    expect(scopesAreSubset(['exec'], ['exec'])).toBe(true);
     expect(scopesAreSubset(['read'], ['read', 'mutate'])).toBe(true);
     expect(scopesAreSubset(['destroy'], ['reboot'])).toBe(false);
     expect(scopesAreSubset(['mutate'], ['read'])).toBe(false);

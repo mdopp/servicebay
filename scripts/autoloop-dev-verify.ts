@@ -21,21 +21,43 @@
  * The probe script runs while the box is on `:dev @ <sha>`; its stdout/stderr +
  * exit code are captured and returned. Emits one machine-readable last line:
  *   AUTOLOOP_DEV_VERIFY_RESULT {"reachedDev":true,"probeExit":0,"flippedBack":true,"channel":"latest",
- *                               "devImage":{"revision":"…","reads":3,"readFailures":1,"detail":"…"},"probeOutput":"…"}
+ *                               "devImage":{"revision":"…","reads":3,"readFailures":1,"detail":"…"},
+ *                               "failure":null,"probeOutput":"…"}
  *
  * `reachedDev` and `flippedBack` are trustworthy on their own — both poll
  * through the whole restart window and carry their evidence (`devImage`,
  * `flipBack`), so no manual `list_containers`/image-tag cross-check is needed
  * (#2387, #2493).
  *
+ * **Every failure carries a named reason (#2622).** A run that does not reach
+ * `:dev` is exactly one of two shapes, told apart from the result line alone:
+ *  - `failure:null` + a `devImage` object ⇒ the harness ran its full wait and the
+ *    image never showed up (`devImage.detail` says which flavour — "still in
+ *    flight" vs. "the box never answered a read").
+ *  - `failure:{step,message}` ⇒ the run **aborted at a named step** (the flip
+ *    POST was refused, `/mcp` was down, the probe capture blew up …). This used
+ *    to be the blind case: the whole flip/confirm block sat in a `try` with a
+ *    `finally` and **no `catch`**, and the `finally` called `process.exit()` —
+ *    which discards the in-flight exception, so the run emitted `devImage:null`,
+ *    `probeOutput:""` and no stderr at all, then exited early. `devImage:null`
+ *    with no explanation is now impossible (`devVerifyResultLine` synthesises a
+ *    reason if the shape ever regresses).
+ *
+ * **`channel` is the CONFIGURED channel** (MCP `get_channel`), not proof of what
+ * is running: on 2026-08-25 it reported `latest` while the box was demonstrably
+ * running `:dev @f42dac70`. Only the OCI revision label read off the *running*
+ * container is authoritative, so `reachedDev` is derived from `devImage` and
+ * never from `get_channel` — see the structural guard in the test file.
+ *
  * Exit 0 = harness ran and flipped back (READ probeExit/probeOutput to judge
- * green/red — that's the LLM's job); exit 2 = harness setup failure (never
- * reached :dev) but ALWAYS attempted flip-back; exit 5 = flip-back FAILED (box
- * may be stranded on :dev — hard alert, orchestrator recovers).
+ * green/red — that's the LLM's job); exit 2 = harness failure (never reached
+ * `:dev`, or aborted at a named step — read `failure`) but ALWAYS attempted
+ * flip-back; exit 5 = flip-back FAILED (box may be stranded on :dev — hard
+ * alert, orchestrator recovers).
  */
 
 import { execFileSync } from 'node:child_process';
-import { getChannel, setChannel, waitHealth, mcpExec } from './autoloop-box';
+import { getChannel, setChannel, waitHealth, mcpCall, mcpExec } from './autoloop-box';
 
 /**
  * Does the running image's OCI revision label identify `sha`?
@@ -57,41 +79,50 @@ export function revisionMatchesSha(revisionLabel: string, sha: string): boolean 
   return label.startsWith(want);
 }
 
-/** The last non-empty line of a `podman inspect --format` stdout, with Go
- *  template's `<no value>` (label absent from the image) normalised to `''`.
- *  Exported for unit tests. */
-export function parseRevisionOutput(stdout: string): string {
-  const lines = stdout
-    .split('\n')
-    .map(l => l.trim())
-    .filter(Boolean);
-  const last = lines[lines.length - 1] ?? '';
-  return last === '<no value>' ? '' : last;
+/** A `list_containers` row, narrowed to the two fields this harness reads. */
+export interface BoxContainerRow {
+  names?: string[];
+  labels?: Record<string, string>;
 }
 
 /**
  * The OCI revision label (full git SHA) of the running `servicebay` container.
  *
- * `null` means **the read itself failed** — `/mcp` is served by the very app the
- * channel flip restarts, so a refused connection / non-zero `podman inspect`
- * (container momentarily absent) is expected mid-flip. That is categorically
- * different from a *successful* read returning a revision that isn't the target
- * yet, and the two must not collapse into one value: collapsing them is what
- * made a `reachedDev:false` verdict unreadable (#2493).
+ * Read through the **`list_containers` read tool**, not `exec_command`: the
+ * labels are already in that payload, the box-verify playbook mandates the
+ * read-tool path, and it keeps the load-bearing `reachedDev` confirmation off
+ * the `exec` scope entirely (#2623 — `destroy` no longer implies `exec`, so a
+ * harness token without an explicit `exec` grant must still be able to judge
+ * which image is running).
  *
- * This is the SHA baked into the image, NOT the tag (`{{.Config.Image}}`
- * returns the tag name, which never carries a SHA).
+ * `null` means **the read itself failed** — `/mcp` is served by the very app the
+ * channel flip restarts, so a refused connection (or a list that momentarily
+ * lacks the container) is expected mid-flip. That is categorically different
+ * from a *successful* read returning a revision that isn't the target yet, and
+ * the two must not collapse into one value: collapsing them is what made a
+ * `reachedDev:false` verdict unreadable (#2493).
+ *
+ * This is the SHA baked into the image, NOT the tag (`image` is the tag name,
+ * which never carries a SHA).
  */
 async function runningRevision(): Promise<string | null> {
   try {
-    const { code, stdout } = await mcpExec(
-      'podman inspect --format \'{{index .Config.Labels "org.opencontainers.image.revision"}}\' servicebay',
-    );
-    if (code !== 0) return null; // no such container / podman busy → mid-restart
-    return parseRevisionOutput(stdout);
+    const rows = await mcpCall<BoxContainerRow[]>('list_containers', {}, 20000);
+    if (!Array.isArray(rows)) return null;
+    return pickServicebayRevision(rows);
   } catch {
     return null; // /mcp unreachable (it lives in the app being restarted)
   }
+}
+
+/** Pull the `servicebay` container's revision label out of a `list_containers`
+ *  payload. `null` = the container isn't in the list (mid-restart — a FAILED
+ *  read, same class as no answer at all); `''` = it is there but its image
+ *  carries no `org.opencontainers.image.revision` label. Exported for tests. */
+export function pickServicebayRevision(rows: readonly BoxContainerRow[]): string | null {
+  const row = rows.find(r => (r.names ?? []).includes('servicebay'));
+  if (!row) return null;
+  return (row.labels?.['org.opencontainers.image.revision'] ?? '').trim();
 }
 
 // ---------- :dev image confirmation (#2493) ----------
@@ -381,6 +412,196 @@ export function parseDevVerifyArgs(argv: string[]): { args: DevVerifyArgs } | { 
   };
 }
 
+// ---------- the run, with a named reason on every abort (#2622) ----------
+
+/** Where a run can abort. The step is the *named reason* half of the #2622 fix:
+ *  a failure that says `flip-to-dev` is a different bug report than one that says
+ *  `probe-script`, and neither can be confused with "the :dev image never
+ *  landed" (which is `failure:null` + a `devImage` verdict). */
+export type DevVerifyStep =
+  | 'preflight-health'
+  | 'flip-to-dev'
+  | 'health-after-flip'
+  | 'confirm-dev-image'
+  | 'health-on-dev'
+  | 'probe-script'
+  | 'flip-back';
+
+export interface DevVerifyFailure {
+  step: DevVerifyStep;
+  message: string;
+}
+
+/** A thrown value rendered as a one-line reason. An `Error` with an empty
+ *  message (some `fetch`/abort rejections) still has to name *something* —
+ *  returning `''` here would put the blind failure straight back. */
+export function describeError(e: unknown): string {
+  if (e instanceof Error) return e.message.trim() || e.name || 'Error (no message)';
+  if (typeof e === 'string' && e.trim()) return e.trim();
+  try {
+    const s = JSON.stringify(e);
+    if (s && s !== '{}' && s !== 'null') return s;
+  } catch {
+    /* fall through to the generic shape below */
+  }
+  return `non-Error thrown: ${Object.prototype.toString.call(e)}`;
+}
+
+/** Box I/O the run needs, injected so every abort path is unit-testable without
+ *  a real box (the flip-back guarantee included). */
+export interface DevVerifyRunDeps {
+  setChannel: (target: 'dev') => Promise<void>;
+  waitHealth: (timeoutSec: number) => Promise<boolean>;
+  confirmDevImage: (sha: string, timeoutSec: number) => Promise<DevImageResult>;
+  runProbe: () => Promise<{ exit: number; output: string }>;
+  flipBack: (timeoutSec: number) => Promise<FlipBackResult>;
+}
+
+export interface DevVerifyOutcome {
+  reachedDev: boolean;
+  devImage: DevImageResult | null;
+  probeExit: number;
+  probeOutput: string;
+  /** `null` on a clean run *and* on a clean "image never landed" verdict; a
+   *  named `{step,message}` whenever the run aborted instead. */
+  failure: DevVerifyFailure | null;
+  flipBack: FlipBackResult;
+}
+
+const HEALTH_WAIT_SEC = 180;
+
+/**
+ * Flip to `:dev`, confirm the image, run the probes, **always flip back**.
+ *
+ * Never throws and never calls `process.exit` — both were how the reason got
+ * lost. The old shape had a bare `try { … } finally { … process.exit(…) }`: an
+ * exception from `setChannel('dev')` (a refused/timed-out `/mcp` POST against a
+ * box still restarting from a previous run — the live 2026-08-25 08:03 case) hit
+ * the `finally`, which flipped back correctly and then `process.exit`ed, and a
+ * `process.exit` inside a `finally` **discards the pending exception**: the
+ * top-level `.catch` never ran, nothing reached stderr, and the emitted line
+ * carried `devImage:null` with an empty `probeOutput`. Now the same throw is
+ * caught and recorded as `failure:{step:'flip-to-dev',…}`.
+ *
+ * The flip-back stays in the `finally` — that is the load-bearing invariant
+ * ("never leave the box stranded on `:dev`"), and it is structural, not a rule
+ * the catch happens to honour. A throw from the flip-back itself is turned into
+ * `flippedBack:false` (exit 5, hard alert) rather than escaping unreported.
+ */
+export async function runDevVerify(
+  sha: string,
+  deps: DevVerifyRunDeps,
+  opts: { imageTimeout: number; flipBackTimeout: number },
+): Promise<DevVerifyOutcome> {
+  let reachedDev = false;
+  let devImage: DevImageResult | null = null;
+  let probeExit = -1;
+  let probeOutput = '';
+  let failure: DevVerifyFailure | null = null;
+  let step: DevVerifyStep = 'flip-to-dev';
+  let flipBack: FlipBackResult;
+
+  try {
+    // Flip to :dev and wait for the SHA's image to be live + healthy.
+    await deps.setChannel('dev');
+    // Not a settle window: the OUTGOING container keeps answering /api/health
+    // right through the flip (#2387), so the revision poll below — not this
+    // wait — is the authority on whether the :dev image is actually live.
+    step = 'health-after-flip';
+    await deps.waitHealth(HEALTH_WAIT_SEC);
+    step = 'confirm-dev-image';
+    devImage = await deps.confirmDevImage(sha, opts.imageTimeout);
+    reachedDev = devImage.reached;
+    if (!reachedDev) {
+      probeOutput = `did not confirm :dev image with revision ${sha}: ${devImage.detail}`;
+    } else {
+      step = 'health-on-dev';
+      await deps.waitHealth(HEALTH_WAIT_SEC);
+      // Run the agent-supplied probes against the box on :dev.
+      step = 'probe-script';
+      const probe = await deps.runProbe();
+      probeExit = probe.exit;
+      probeOutput = probe.output;
+    }
+  } catch (e) {
+    failure = { step, message: describeError(e) };
+    probeOutput = probeOutput || `run failed at step ${step}: ${failure.message}`;
+  } finally {
+    // STRUCTURAL INVARIANT: always flip back to :latest, whatever happened above.
+    // Confirmation tolerates the full restart window (#2387) — a null/stale
+    // read is "not yet", only budget exhaustion is a verdict.
+    try {
+      flipBack = await deps.flipBack(opts.flipBackTimeout);
+    } catch (e) {
+      const message = describeError(e);
+      flipBack = {
+        flippedBack: false,
+        channel: null,
+        reissues: 0,
+        polls: 0,
+        detail: `flip-back itself threw (${message}) — the box may be stranded on :dev`,
+      };
+      failure = failure ?? { step: 'flip-back', message };
+    }
+  }
+
+  return { reachedDev, devImage, probeExit, probeOutput, failure, flipBack };
+}
+
+/**
+ * The emitted result object — and the last line of defence for #2622.
+ *
+ * A run that did not reach `:dev` must carry a reason: either a `devImage`
+ * verdict ("still in flight" / "the box never answered") or a named `failure`.
+ * If a future edit ever produces neither, this synthesises a failure rather than
+ * emitting the blind `devImage:null` shape again.
+ */
+export function devVerifyResultLine(o: DevVerifyOutcome): Record<string, unknown> {
+  let failure = o.failure;
+  let probeOutput = o.probeOutput;
+  if (!o.reachedDev && o.devImage === null && failure === null) {
+    failure = {
+      step: 'confirm-dev-image',
+      message:
+        'aborted before image confirmation with no reason recorded — harness bug (#2622); treat as UNVERIFIED, not as "image missing"',
+    };
+    probeOutput = probeOutput || `run failed at step ${failure.step}: ${failure.message}`;
+  }
+  return {
+    reachedDev: o.reachedDev,
+    probeExit: o.probeExit,
+    flippedBack: o.flipBack.flippedBack,
+    // The CONFIGURED channel (get_channel), NOT proof of the running image —
+    // it reported `latest` on a box running :dev on 2026-08-25. `reachedDev`
+    // above is the image-level answer (podman inspect revision label).
+    channel: o.flipBack.channel,
+    // Evidence behind reachedDev, so a `false` is diagnosable from the result
+    // line alone — reads:0 means "the box never answered", not "no :dev image"
+    // (#2493). No manual list_containers cross-check needed either way.
+    devImage: o.devImage
+      ? {
+          revision: o.devImage.revision,
+          reads: o.devImage.reads,
+          readFailures: o.devImage.readFailures,
+          detail: o.devImage.detail,
+        }
+      : null,
+    // The named abort reason (#2622). null ⇒ the run completed its own steps.
+    failure,
+    flipBack: { reissues: o.flipBack.reissues, polls: o.flipBack.polls, detail: o.flipBack.detail },
+    probeOutput: probeOutput.slice(0, 4000),
+  };
+}
+
+/** Exit code from the outcome: 5 = flip-back failed (box may be stranded — hard
+ *  alert), 2 = harness failure or never reached `:dev`, 0 = ran and flipped back
+ *  (probeExit/probeOutput are the LLM's to judge). */
+export function devVerifyExitCode(o: DevVerifyOutcome): number {
+  if (!o.flipBack.flippedBack) return 5;
+  if (o.failure !== null || !o.reachedDev) return 2;
+  return 0;
+}
+
 async function main(): Promise<void> {
   const parsed = parseDevVerifyArgs(process.argv.slice(2));
   if ('error' in parsed) {
@@ -391,9 +612,28 @@ async function main(): Promise<void> {
 
   const emit = (o: Record<string, unknown>) => console.log(`AUTOLOOP_DEV_VERIFY_RESULT ${JSON.stringify(o)}`);
 
-  // Confirm the box is up before touching the channel.
+  // Confirm the box is up before touching the channel. Nothing has been flipped
+  // yet, so there is nothing to flip back — but the reason is still named.
   if (!(await waitHealth(120))) {
-    emit({ reachedDev: false, flippedBack: false, detail: 'box not reachable before flip' });
+    emit(
+      devVerifyResultLine({
+        reachedDev: false,
+        devImage: null,
+        probeExit: -1,
+        probeOutput: 'box not reachable before flip',
+        failure: {
+          step: 'preflight-health',
+          message: 'box did not answer /api/health within 120s — no channel flip was attempted',
+        },
+        flipBack: {
+          flippedBack: false,
+          channel: null,
+          reissues: 0,
+          polls: 0,
+          detail: 'no flip-back needed — the run never flipped to :dev',
+        },
+      }),
+    );
     process.exit(2);
   }
 
@@ -401,75 +641,48 @@ async function main(): Promise<void> {
   // exec caps — memory feedback_box_update_slow_pull_timeout).
   await mcpExec('systemd-run --user --unit=sb-prepull-dev --quiet podman pull ghcr.io/mdopp/servicebay:dev || true').catch(() => {});
 
-  let reachedDev = false;
-  let devImage: DevImageResult | null = null;
-  let probeExit = -1;
-  let probeOutput = '';
-  try {
-    // Flip to :dev and wait for the SHA's image to be live + healthy.
-    await setChannel('dev');
-    // Not a settle window: the OUTGOING container keeps answering /api/health
-    // right through the flip (#2387), so the revision poll below — not this
-    // wait — is the authority on whether the :dev image is actually live.
-    await waitHealth(180);
-    devImage = await confirmDevImage(
-      sha,
-      { readRevision: runningRevision, sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now() },
-      { timeoutSec: imageTimeout },
-    );
-    reachedDev = devImage.reached;
-    if (reachedDev) await waitHealth(180);
-    if (!reachedDev) {
-      probeOutput = `did not confirm :dev image with revision ${sha}: ${devImage.detail}`;
-    } else {
-      // Run the agent-supplied probes against the box on :dev.
-      try {
-        probeOutput = execFileSync('bash', [probeScript], { encoding: 'utf8', timeout: 15 * 60 * 1000 });
-        probeExit = 0;
-      } catch (e) {
-        const err = e as { status?: number; stdout?: string; stderr?: string; message?: string };
-        probeExit = typeof err.status === 'number' ? err.status : 1;
-        probeOutput = `${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`;
-      }
-    }
-  } finally {
-    // STRUCTURAL INVARIANT: always flip back to :latest, whatever happened above.
-    // Confirmation tolerates the full restart window (#2387) — a null/stale
-    // read is "not yet", only budget exhaustion is a verdict.
-    const back = await confirmFlipBack(
-      {
-        setChannel: target => setChannel(target),
-        waitHealth: timeoutSec => waitHealth(timeoutSec),
-        getChannel,
-        sleep: ms => new Promise(r => setTimeout(r, ms)),
-        now: () => Date.now(),
+  const outcome = await runDevVerify(
+    sha,
+    {
+      setChannel: target => setChannel(target),
+      waitHealth: timeoutSec => waitHealth(timeoutSec),
+      confirmDevImage: (s, timeoutSec) =>
+        confirmDevImage(
+          s,
+          { readRevision: runningRevision, sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now() },
+          { timeoutSec },
+        ),
+      runProbe: async () => {
+        try {
+          return { exit: 0, output: execFileSync('bash', [probeScript], { encoding: 'utf8', timeout: 15 * 60 * 1000 }) };
+        } catch (e) {
+          // A probe that exits non-zero is a RED verdict, not a harness failure —
+          // it is captured here rather than thrown, so `failure` stays reserved
+          // for the harness's own aborts.
+          const err = e as { status?: number; stdout?: string; stderr?: string; message?: string };
+          return {
+            exit: typeof err.status === 'number' ? err.status : 1,
+            output: `${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`,
+          };
+        }
       },
-      { timeoutSec: flipBackTimeout },
-    );
-    const { flippedBack, channel } = back;
-    emit({
-      reachedDev,
-      probeExit,
-      flippedBack,
-      channel,
-      // Evidence behind reachedDev, so a `false` is diagnosable from the result
-      // line alone — reads:0 means "the box never answered", not "no :dev image"
-      // (#2493). No manual list_containers cross-check needed either way.
-      devImage: devImage
-        ? {
-            revision: devImage.revision,
-            reads: devImage.reads,
-            readFailures: devImage.readFailures,
-            detail: devImage.detail,
-          }
-        : null,
-      flipBack: { reissues: back.reissues, polls: back.polls, detail: back.detail },
-      probeOutput: probeOutput.slice(0, 4000),
-    });
-    if (!flippedBack) process.exit(5); // box may be stranded on :dev — hard alert
-    if (!reachedDev) process.exit(2);
-    process.exit(0);
-  }
+      flipBack: timeoutSec =>
+        confirmFlipBack(
+          {
+            setChannel: target => setChannel(target),
+            waitHealth: sec => waitHealth(sec),
+            getChannel,
+            sleep: ms => new Promise(r => setTimeout(r, ms)),
+            now: () => Date.now(),
+          },
+          { timeoutSec },
+        ),
+    },
+    { imageTimeout, flipBackTimeout },
+  );
+
+  emit(devVerifyResultLine(outcome));
+  process.exit(devVerifyExitCode(outcome));
 }
 
 const invoked = process.argv[1] ?? '';

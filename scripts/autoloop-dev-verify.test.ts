@@ -1,14 +1,24 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   revisionMatchesSha,
   confirmFlipBack,
   confirmDevImage,
   parseDevVerifyArgs,
-  parseRevisionOutput,
+  pickServicebayRevision,
+  runDevVerify,
+  devVerifyResultLine,
+  devVerifyExitCode,
+  describeError,
   DEV_IMAGE_TIMEOUT_SEC,
   FLIP_BACK_TIMEOUT_SEC,
   type DevImageDeps,
+  type DevImageResult,
+  type DevVerifyOutcome,
+  type DevVerifyRunDeps,
+  type DevVerifyStep,
   type FlipBackDeps,
+  type FlipBackResult,
 } from './autoloop-dev-verify';
 
 const FULL = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'; // 40-char git sha
@@ -287,14 +297,33 @@ async function legacyWaitForDevImage(sha: string, deps: DevImageDeps, timeoutSec
   return false;
 }
 
-describe('parseRevisionOutput', () => {
-  it('takes the last non-empty line of a podman inspect --format stdout', () => {
-    expect(parseRevisionOutput(`warning: something\n${FULL}\n`)).toBe(FULL);
+// The revision read goes through the `list_containers` READ tool (#2623) — the
+// labels are already in that payload, so the harness's load-bearing "which image
+// is running" confirmation no longer needs the `exec` scope.
+describe('pickServicebayRevision', () => {
+  const row = (names: string[], labels?: Record<string, string>) => ({ names, labels });
+
+  it('reads the revision label off the servicebay container', () => {
+    expect(pickServicebayRevision([
+      row(['media-jellyfin'], { 'org.opencontainers.image.revision': 'deadbeef' }),
+      row(['servicebay'], { 'org.opencontainers.image.revision': FULL, 'org.opencontainers.image.version': '5.16.0' }),
+    ])).toBe(FULL);
   });
 
-  it("normalises Go template's <no value> (image carries no revision label) to empty", () => {
-    expect(parseRevisionOutput('<no value>\n')).toBe('');
-    expect(parseRevisionOutput('   \n')).toBe('');
+  it('returns null when the container is absent (mid-restart) — a FAILED read, not "no label"', () => {
+    expect(pickServicebayRevision([row(['media-jellyfin'], {})])).toBeNull();
+    expect(pickServicebayRevision([])).toBeNull();
+  });
+
+  it("returns '' when the container is there but its image carries no revision label", () => {
+    expect(pickServicebayRevision([row(['servicebay'], {})])).toBe('');
+    expect(pickServicebayRevision([row(['servicebay'])])).toBe('');
+  });
+
+  it('never mistakes the image TAG for a revision (the original #2387 bug)', () => {
+    // A row whose only hint is the tag must not yield something that could
+    // prefix-match a sha — `revisionMatchesSha` rejects non-hex anyway.
+    expect(revisionMatchesSha(pickServicebayRevision([row(['servicebay'], {})]) ?? '', SHORT)).toBe(false);
   });
 });
 
@@ -419,5 +448,362 @@ describe('parseDevVerifyArgs (#2493)', () => {
     expect(err([SHORT])).toContain('--probe-script');
     expect(err([SHORT, '--probe-script', '/tmp/p.sh', '--nope', '1'])).toContain('unknown option');
     expect(err([SHORT, 'extra', '--probe-script', '/tmp/p.sh'])).toContain('extra argument');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runDevVerify (#2622) — a failure must always carry a NAMED reason.
+//
+// The live 2026-08-25 08:03 run emitted
+//   {"reachedDev":false,"probeExit":-1,"flippedBack":true,"channel":"latest",
+//    "devImage":null,"flipBack":{…},"probeOutput":""}
+// — no reason anywhere, and an early abort instead of the 900s window. Cause:
+// the flip/confirm block was a `try` with a `finally` and NO `catch`, and the
+// `finally` called `process.exit()`, which discards the pending exception.
+// ---------------------------------------------------------------------------
+
+const REACHED: DevImageResult = {
+  reached: true,
+  revision: FULL,
+  reads: 1,
+  readFailures: 0,
+  detail: `:dev image with revision ${FULL} live after 1 read(s), 0 failed read(s)`,
+};
+const NOT_PUBLISHED: DevImageResult = {
+  reached: false,
+  revision: OLD,
+  reads: 71,
+  readFailures: 1,
+  detail: `running image revision ${OLD} never matched ${SHORT} within 900s (71 read(s), 1 failed read(s)) — :dev build likely still in flight`,
+};
+const FLIPPED_BACK: FlipBackResult = {
+  flippedBack: true,
+  channel: 'latest',
+  reissues: 1,
+  polls: 2,
+  detail: 'confirmed :latest after 2 poll(s)',
+};
+
+const RUN_OPTS = { imageTimeout: DEV_IMAGE_TIMEOUT_SEC, flipBackTimeout: FLIP_BACK_TIMEOUT_SEC };
+
+function makeRunDeps(overrides: Partial<DevVerifyRunDeps> = {}) {
+  const calls = { flipBacks: 0, probes: 0, setChannel: 0 };
+  const deps: DevVerifyRunDeps = {
+    setChannel: async () => {
+      calls.setChannel++;
+    },
+    waitHealth: async () => true,
+    confirmDevImage: async () => REACHED,
+    runProbe: async () => {
+      calls.probes++;
+      return { exit: 0, output: 'probe ok' };
+    },
+    flipBack: async () => {
+      calls.flipBacks++;
+      return FLIPPED_BACK;
+    },
+    ...overrides,
+  };
+  // Count the flip-backs even when the caller supplies its own implementation:
+  // the "it always fires" assertions must not depend on the default dep.
+  const wrapped: DevVerifyRunDeps = {
+    ...deps,
+    flipBack: async timeoutSec => {
+      if (overrides.flipBack) calls.flipBacks++;
+      return (overrides.flipBack ?? deps.flipBack)(timeoutSec);
+    },
+  };
+  return { deps: wrapped, calls };
+}
+
+const boom = (message: string) => async (): Promise<never> => {
+  throw new Error(message);
+};
+
+/** Every step that can abort *before* the probes, plus the probe capture — each
+ *  paired with the dep whose throw lands there. */
+const ABORT_CASES: Array<{ step: DevVerifyStep; deps: () => Partial<DevVerifyRunDeps>; devImageSeen: boolean }> = [
+  {
+    // The live case: the flip POST against a box still restarting from the
+    // previous run's flip-back. `/mcp` lives in the app being restarted.
+    step: 'flip-to-dev',
+    deps: () => ({ setChannel: boom('mcp set_channel failed (HTTP 502): bad gateway') }),
+    devImageSeen: false,
+  },
+  { step: 'health-after-flip', deps: () => ({ waitHealth: boom('fetch failed: ECONNRESET') }), devImageSeen: false },
+  {
+    step: 'confirm-dev-image',
+    deps: () => ({ confirmDevImage: boom('mcpExec: could not parse /mcp response (HTTP 401)') }),
+    devImageSeen: false,
+  },
+  {
+    step: 'health-on-dev',
+    // The first wait (health-after-flip) succeeds, the post-image one throws.
+    // A factory, not a shared object: the counter must reset per test case.
+    deps: () => {
+      let n = 0;
+      return {
+        waitHealth: async () => {
+          if (++n > 1) throw new Error('fetch failed: socket hang up');
+          return true;
+        },
+      };
+    },
+    devImageSeen: true,
+  },
+  { step: 'probe-script', deps: () => ({ runProbe: boom('spawnSync bash EAGAIN') }), devImageSeen: true },
+];
+
+describe('runDevVerify (#2622) — no blind failures', () => {
+  describe.each(ABORT_CASES)('abort at $step', ({ step, deps: makeOverrides, devImageSeen }) => {
+    it('names the step and the error instead of returning a bare devImage:null', async () => {
+      const { deps } = makeRunDeps(makeOverrides());
+      const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+
+      expect(outcome.failure).not.toBeNull();
+      expect(outcome.failure?.step).toBe(step);
+      expect(outcome.failure?.message).toBeTruthy();
+      // …and the reason is visible in the field a reader looks at first.
+      expect(outcome.probeOutput).not.toBe('');
+      if (!devImageSeen) expect(outcome.devImage).toBeNull();
+    });
+
+    it('emits a result line that can never be the blind 08:03 shape', async () => {
+      const { deps } = makeRunDeps(makeOverrides());
+      const line = devVerifyResultLine(await runDevVerify(SHORT, deps, RUN_OPTS));
+      const blind = line.devImage === null && line.failure === null;
+      expect(blind).toBe(false);
+      expect(line.probeOutput).not.toBe('');
+      expect(JSON.stringify(line.failure)).toContain(step);
+    });
+
+    it('STILL flips back — the finally fires on this path too', async () => {
+      const { deps, calls } = makeRunDeps(makeOverrides());
+      const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+      expect(calls.flipBacks).toBe(1);
+      expect(outcome.flipBack.flippedBack).toBe(true);
+      expect(devVerifyResultLine(outcome).flippedBack).toBe(true);
+    });
+
+    it('is exit 2 (harness failure), never a silent exit 0', async () => {
+      const { deps } = makeRunDeps(makeOverrides());
+      expect(devVerifyExitCode(await runDevVerify(SHORT, deps, RUN_OPTS))).toBe(2);
+    });
+  });
+
+  it('keeps "image not published yet" DISTINGUISHABLE from "the run failed at step X"', async () => {
+    const clean = await runDevVerify(SHORT, makeRunDeps({ confirmDevImage: async () => NOT_PUBLISHED }).deps, RUN_OPTS);
+    const aborted = await runDevVerify(
+      SHORT,
+      makeRunDeps({ setChannel: boom('mcp set_channel failed (HTTP 502)') }).deps,
+      RUN_OPTS,
+    );
+
+    // Same reachedDev, same exit code — the difference must be readable from the
+    // result object itself, which is the whole acceptance criterion.
+    expect(clean.reachedDev).toBe(false);
+    expect(aborted.reachedDev).toBe(false);
+    expect(devVerifyExitCode(clean)).toBe(devVerifyExitCode(aborted));
+
+    const cleanLine = devVerifyResultLine(clean);
+    expect(cleanLine.failure).toBeNull(); // the harness ran its full wait
+    expect(JSON.stringify(cleanLine.devImage)).toContain('still in flight');
+    expect(String(cleanLine.probeOutput)).toContain('still in flight');
+
+    const abortedLine = devVerifyResultLine(aborted);
+    expect(abortedLine.failure).toMatchObject({ step: 'flip-to-dev' });
+    expect(String(abortedLine.probeOutput)).toContain('flip-to-dev');
+    expect(abortedLine.devImage).toBeNull();
+  });
+
+  it('reports a probe RED as a probe result, not as a harness failure', async () => {
+    const { deps } = makeRunDeps({ runProbe: async () => ({ exit: 1, output: 'probe: nginx -t failed' }) });
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(outcome).toMatchObject({ reachedDev: true, probeExit: 1, failure: null });
+    expect(devVerifyExitCode(outcome)).toBe(0); // the LLM judges probeOutput
+  });
+
+  it('runs clean on the happy path — no failure, exit 0, flipped back', async () => {
+    const { deps, calls } = makeRunDeps();
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(outcome).toMatchObject({ reachedDev: true, probeExit: 0, failure: null });
+    expect(calls.probes).toBe(1);
+    expect(calls.flipBacks).toBe(1);
+    expect(devVerifyExitCode(outcome)).toBe(0);
+  });
+
+  it('does not run the probes when the :dev image never landed', async () => {
+    const { deps, calls } = makeRunDeps({ confirmDevImage: async () => NOT_PUBLISHED });
+    await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(calls.probes).toBe(0);
+    expect(calls.flipBacks).toBe(1);
+  });
+});
+
+describe('the flip-back guarantee is unchanged (#2387/#2622 criterion 3)', () => {
+  it('fires exactly once on EVERY path — success, image-missing, and each abort step', async () => {
+    const paths: Array<Partial<DevVerifyRunDeps>> = [
+      {}, // happy
+      { confirmDevImage: async () => NOT_PUBLISHED },
+      { runProbe: async () => ({ exit: 3, output: 'red' }) },
+      ...ABORT_CASES.map(c => c.deps()),
+    ];
+    for (const overrides of paths) {
+      const { deps, calls } = makeRunDeps(overrides);
+      await runDevVerify(SHORT, deps, RUN_OPTS);
+      expect(calls.flipBacks).toBe(1);
+    }
+  });
+
+  it('never lets an abort escape as an exception — a throwing run still RETURNS a result', async () => {
+    // The old shape lost the exception to `process.exit` inside the `finally`.
+    // Whatever happens, the caller gets an outcome it can emit and act on.
+    const { deps } = makeRunDeps({ setChannel: boom('anything at all') });
+    await expect(runDevVerify(SHORT, deps, RUN_OPTS)).resolves.toMatchObject({ reachedDev: false });
+  });
+
+  it('turns a THROWING flip-back into flippedBack:false + exit 5, not an escaped error', async () => {
+    const { deps } = makeRunDeps({ flipBack: boom('mcp set_channel failed (HTTP 500)') });
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(outcome.flipBack.flippedBack).toBe(false);
+    expect(outcome.flipBack.detail).toContain('stranded');
+    expect(outcome.failure).toMatchObject({ step: 'flip-back' });
+    expect(devVerifyExitCode(outcome)).toBe(5); // hard alert — box may be on :dev
+  });
+
+  it('keeps exit 5 dominant even when the run itself was green', async () => {
+    const stuck: FlipBackResult = {
+      flippedBack: false,
+      channel: 'dev',
+      reissues: 5,
+      polls: 60,
+      detail: 'box still reports :dev after 900s (60 poll(s), 5 flip POST(s)) — stranded on :dev',
+    };
+    const { deps } = makeRunDeps({ flipBack: async () => stuck });
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(outcome).toMatchObject({ reachedDev: true, probeExit: 0, failure: null });
+    expect(devVerifyExitCode(outcome)).toBe(5);
+  });
+
+  // Structural half: the behavioural tests above pass whether the flip-back sits
+  // in a `finally` or merely runs after a catch-all. The invariant is that it is
+  // STRUCTURAL — and that the `finally` never re-grows the `process.exit` that
+  // discarded the pending exception in the first place.
+  const source = readFileSync('scripts/autoloop-dev-verify.ts', 'utf8');
+  const runBody = source.slice(
+    source.indexOf('export async function runDevVerify'),
+    source.indexOf('export function devVerifyResultLine'),
+  );
+
+  it('calls the flip-back from inside a `finally` block', () => {
+    expect(runBody).not.toBe('');
+    expect(runBody).toMatch(/\}\s*catch\s*\([\s\S]*?\}\s*finally\s*\{[\s\S]*deps\.flipBack\(/);
+  });
+
+  it('never calls process.exit inside the run — that is what swallowed the reason', () => {
+    expect(runBody).not.toMatch(/process\.exit/);
+  });
+});
+
+describe('devVerifyResultLine — the last line of defence', () => {
+  it('synthesises a named reason if a future edit ever produces the blind shape', () => {
+    const blind: DevVerifyOutcome = {
+      reachedDev: false,
+      devImage: null,
+      probeExit: -1,
+      probeOutput: '',
+      failure: null, // the exact 08:03 shape
+      flipBack: FLIPPED_BACK,
+    };
+    const line = devVerifyResultLine(blind);
+    expect(line.failure).not.toBeNull();
+    expect(JSON.stringify(line.failure)).toContain('#2622');
+    expect(String(line.probeOutput)).not.toBe('');
+  });
+
+  it('carries the flip-back evidence and the configured channel through unchanged', () => {
+    const line = devVerifyResultLine({
+      reachedDev: true,
+      devImage: REACHED,
+      probeExit: 0,
+      probeOutput: 'ok',
+      failure: null,
+      flipBack: FLIPPED_BACK,
+    });
+    expect(line).toMatchObject({
+      flippedBack: true,
+      channel: 'latest',
+      flipBack: { reissues: 1, polls: 2, detail: 'confirmed :latest after 2 poll(s)' },
+    });
+  });
+
+  it('truncates a huge probeOutput but keeps it non-empty', () => {
+    const line = devVerifyResultLine({
+      reachedDev: true,
+      devImage: REACHED,
+      probeExit: 0,
+      probeOutput: 'x'.repeat(10_000),
+      failure: null,
+      flipBack: FLIPPED_BACK,
+    });
+    expect(String(line.probeOutput)).toHaveLength(4000);
+  });
+});
+
+describe('describeError', () => {
+  it('never returns an empty reason, whatever was thrown', () => {
+    expect(describeError(new Error('boom'))).toBe('boom');
+    expect(describeError(new Error(''))).toBe('Error'); // an abort with no message
+    expect(describeError('plain string')).toBe('plain string');
+    expect(describeError({ code: 'ECONNREFUSED' })).toContain('ECONNREFUSED');
+    expect(describeError(undefined)).toBeTruthy();
+    expect(describeError(null)).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `get_channel` reports the CONFIGURED channel, not the running image (it said
+// `latest` on 2026-08-25 while the box ran :dev @f42dac70). Only the OCI
+// revision label off the RUNNING container is authoritative — this guard keeps
+// the reachedDev verdict from ever regressing onto the channel read.
+// ---------------------------------------------------------------------------
+
+describe('reachedDev never trusts get_channel', () => {
+  const source = readFileSync('scripts/autoloop-dev-verify.ts', 'utf8');
+  const imageSection = source.slice(
+    source.indexOf('async function runningRevision'),
+    source.indexOf('// ---------- flip-back confirmation'),
+  );
+  const runBody = source.slice(
+    source.indexOf('export async function runDevVerify'),
+    source.indexOf('export function devVerifyResultLine'),
+  );
+
+  it('reads the running container\'s revision label, not the channel', () => {
+    expect(imageSection).toContain('list_containers');
+    expect(imageSection).toContain('org.opencontainers.image.revision');
+    expect(imageSection).not.toMatch(/getChannel|get_channel/);
+  });
+
+  // #2623 ratchet: the revision read must stay on the read tool. `exec_command`
+  // is exec-scoped, and `destroy` no longer implies `exec` — a harness token
+  // without an explicit exec grant must still be able to confirm the image.
+  it('confirms the image with a read tool, never exec_command', () => {
+    expect(imageSection).not.toMatch(/mcpExec|exec_command|podman inspect/);
+  });
+
+  it('derives reachedDev from the image confirmation alone', () => {
+    expect(runBody).toContain('reachedDev = devImage.reached');
+    expect(runBody).not.toMatch(/getChannel|get_channel/);
+  });
+
+  it('never lets a channel read stand in for the image verdict', async () => {
+    // A box whose configured channel is already `dev` while the OLD image is
+    // still running must still report reachedDev:false.
+    const { deps } = makeRunDeps({ confirmDevImage: async () => NOT_PUBLISHED });
+    const outcome = await runDevVerify(SHORT, deps, RUN_OPTS);
+    expect(outcome.reachedDev).toBe(false);
+    expect(devVerifyResultLine(outcome).channel).toBe('latest'); // the flip-back's configured read
+    expect(JSON.stringify(devVerifyResultLine(outcome).devImage)).toContain(OLD);
   });
 });

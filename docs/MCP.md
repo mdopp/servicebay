@@ -305,8 +305,8 @@ privilege. The mapping lives in `packages/backend/src/lib/mcp/assistCatalog.ts`.
 `tools/list` returns **only the tools your token could actually call**. A tool
 is advertised iff its required scope (`TOOL_SCOPES` in
 `packages/backend/src/lib/mcp/toolPolicy.ts`) is within your token's granted scopes,
-using the same implication ladder the gate uses (`destroy` implies `reboot` +
-`exec`; see `SCOPE_AUDIT.md`). So:
+using the same implication ladder the gate uses (`destroy` implies `reboot`;
+`exec` is never implied — #2623; see `SCOPE_AUDIT.md`). So:
 
 - a **read-only** token sees only the `read`-tier tools — no
   mutate/destroy/exec/lifecycle tools ever appear in its list;

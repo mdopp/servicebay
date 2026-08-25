@@ -8,13 +8,21 @@
  * `exec_command` into its own `exec` scope, with a back-compat rule
  * that existing `destroy` tokens still get `exec`.
  *
- * These tests pin the scope table + the back-compat rule. Future
+ * #2623 removed that back-compat rule: it re-merged the tier #591 had just
+ * split, so `destroy` silently meant shell — for the majority of live tokens
+ * and for every admin browser session. `exec` is now held only where it was
+ * granted explicitly, and the last describe block is the exhaustive ratchet
+ * that keeps any implication from creeping back.
+ *
+ * These tests pin the scope table + the implication rules. Future
  * regressions would surface here before reaching any deployed token.
  */
 
+import fs from 'fs';
+import path from 'path';
 import { describe, it, expect } from 'vitest';
 import { TOOL_SCOPES, tokenHasScope } from '@/lib/mcp/server';
-import { ALL_SCOPES, type ApiScope } from '@/lib/auth/apiScope';
+import { ALL_SCOPES, scopeSatisfiedBy, type ApiScope } from '@/lib/auth/apiScope';
 
 describe('MCP scope mapping (#591)', () => {
   it('update_config is mutate, not destroy', () => {
@@ -66,11 +74,16 @@ describe('tokenHasScope — least-privilege check', () => {
     expect(tokenHasScope(scopes, TOOL_SCOPES.exec_command)).toBe(false);
   });
 
-  // Back-compat per the issue's migration note.
-  it('[destroy] token implicitly gets exec (back-compat with pre-#591 tokens)', () => {
+  // #2623: the pre-#591 back-compat carve-out is GONE. `destroy` no longer
+  // hands out shell — it re-merged the tier #591 had split, so 20 of 34 live
+  // tokens (and every admin browser session, via the /mcp cookie bridge) had
+  // exec nobody granted them.
+  it('[destroy] token does NOT get exec (#2623 — the implication is gone)', () => {
     const scopes: ApiScope[] = ['destroy'];
-    expect(tokenHasScope(scopes, 'exec')).toBe(true);
-    // ... but doesn't grant mutate or other scopes by transitivity:
+    expect(tokenHasScope(scopes, 'exec')).toBe(false);
+    expect(tokenHasScope(scopes, TOOL_SCOPES.exec_command)).toBe(false);
+    expect(tokenHasScope(scopes, TOOL_SCOPES.container_exec)).toBe(false);
+    // ... and it never granted mutate or the lower tiers by transitivity:
     expect(tokenHasScope(scopes, 'mutate')).toBe(false);
     expect(tokenHasScope(scopes, 'lifecycle')).toBe(false);
     expect(tokenHasScope(scopes, 'read')).toBe(false);
@@ -93,5 +106,81 @@ describe('tokenHasScope — least-privilege check', () => {
     const scopes: ApiScope[] = ['exec'];
     expect(tokenHasScope(scopes, TOOL_SCOPES.exec_command)).toBe(true);
     expect(tokenHasScope(scopes, TOOL_SCOPES.delete_service)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RATCHET (#2623) — `exec` is reachable ONLY by an explicit grant.
+//
+// The implication that had to go (`destroy ⇒ exec`) was one line, and the same
+// line can come back as a "back-compat" convenience the next time a token
+// somewhere gets refused. So this is not a spot-check of `['destroy']`: it is
+// EXHAUSTIVE over every subset of the scope ladder. Any future rule — from any
+// scope, or from a combination — that lets `scopeSatisfiedBy` answer `true` for
+// `exec` without `exec` in the held set fails here, naming the culprit set.
+// ---------------------------------------------------------------------------
+
+describe('scopeSatisfiedBy: exec is never implied (#2623 ratchet)', () => {
+  /** Every subset of ALL_SCOPES (2^7 = 128 sets). */
+  function allSubsets(scopes: readonly ApiScope[]): ApiScope[][] {
+    return scopes.reduce<ApiScope[][]>(
+      (acc, s) => [...acc, ...acc.map(sub => [...sub, s])],
+      [[]],
+    );
+  }
+
+  const subsets = allSubsets(ALL_SCOPES);
+
+  it('no scope set WITHOUT exec ever satisfies exec', () => {
+    const leaks = subsets
+      .filter(held => !held.includes('exec'))
+      .filter(held => scopeSatisfiedBy(held, 'exec') || tokenHasScope(held, 'exec'));
+    expect(
+      leaks.map(l => `[${l.join(',')}]`),
+      'these scope sets derive exec without holding it — an implication crept back in',
+    ).toEqual([]);
+  });
+
+  it('every scope set WITH exec still satisfies exec (the ratchet did not over-tighten)', () => {
+    const denied = subsets
+      .filter(held => held.includes('exec'))
+      .filter(held => !scopeSatisfiedBy(held, 'exec'));
+    expect(denied.map(l => `[${l.join(',')}]`)).toEqual([]);
+  });
+
+  it('the exec-gated tools are reachable only with an explicit exec grant', () => {
+    for (const tool of ['exec_command', 'container_exec'] as const) {
+      expect(TOOL_SCOPES[tool], `${tool} must stay exec-tier`).toBe('exec');
+      expect(tokenHasScope(['destroy'], TOOL_SCOPES[tool]), tool).toBe(false);
+      expect(tokenHasScope(['exec'], TOOL_SCOPES[tool]), tool).toBe(true);
+    }
+  });
+
+  // The surviving carve-out, pinned so the ratchet can't be "fixed" by deleting
+  // the wrong line: #1765's destroy ⇒ reboot stays.
+  it('keeps destroy ⇒ reboot (#1765) — only the exec implication was removed', () => {
+    expect(scopeSatisfiedBy(['destroy'], 'reboot')).toBe(true);
+  });
+
+  // Criterion: the /mcp cookie bridge must not regain exec, implicitly or
+  // literally. Read the real grant out of server.ts and run it through the real
+  // gate — an edit that adds 'exec' to that array, or an implication that hands
+  // it over, fails here.
+  it('the /mcp cookie-session bridge does not hold exec', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '..', '..', 'packages', 'backend', 'src', 'server.ts'),
+      'utf-8',
+    );
+    const m = src.match(/auth = \{ user: session\.user, scopes: \[([^\]]*)\] \}/);
+    expect(m, 'the cookie-session bridge grant moved — re-point this guard').not.toBeNull();
+    const granted = m![1]
+      .split(',')
+      .map(s => s.trim().replace(/^'|'$/g, ''))
+      .filter(Boolean) as ApiScope[];
+    expect(granted).not.toContain('exec');
+    expect(tokenHasScope(granted, 'exec'), 'a browser session must not reach exec_command').toBe(false);
+    // It keeps the rest of the operator surface, including reboot by implication.
+    expect(tokenHasScope(granted, 'destroy')).toBe(true);
+    expect(tokenHasScope(granted, 'reboot')).toBe(true);
   });
 });

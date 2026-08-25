@@ -18,6 +18,7 @@ import path from 'path';
 import { DATA_DIR } from '@/lib/dirs';
 import { logger } from '@/lib/logger';
 import { currentTraceId } from '@/lib/util/traceContext';
+import { isSecretKey, redactLogText } from './redact';
 
 const AUDIT_FILE = path.join(DATA_DIR, 'mcp-audit.log');
 const AUDIT_BACKUP_FILE = path.join(DATA_DIR, 'mcp-audit.1.log');
@@ -40,34 +41,96 @@ export interface AuditEntry {
   traceId?: string;
 }
 
-/** Args fields that get masked. Full-redact rather than truncate so the
- *  log is safe to share verbatim with support. */
-const REDACT_KEYS = new Set([
-  'password', 'secret', 'token', 'apiKey', 'api_key',
-  'authToken', 'credentials', 'pass', 'cookie',
-  'privateKey', 'private_key', 'sshKey',
-  'kubeContent', 'yamlContent',  // can contain inline credentials
-]);
-/** Truncate-rather-than-redact: keep the head so the log is still useful. */
-const TRUNCATE_KEYS = new Set([
-  'command',  // exec_command — keep first 200 chars
+/**
+ * Args whose value is a whole *file/config body* rather than a parameter
+ * (#2624). The bytes are masked, the length is kept.
+ *
+ * The old redactor was a flat, exact-name denylist over the TOP LEVEL of
+ * `args` — so it covered `kubeContent`/`yamlContent` but not `content`, and
+ * `write_file({path, content, node})` wrote every byte an agent ever pushed
+ * under /mnt/data (restored `.env` files, API keys, private keys) into
+ * `mcp-audit.log` in plaintext, forever. That is the same fault as #1211 →
+ * #2603 → #2616, in its fourth sink: redaction decided per call site, with a
+ * top-level-only pass that nested payloads walk straight past.
+ *
+ * Masking, not dropping: the audit log exists so an operator can see what an
+ * agent DID. `write_file` still records the tool, the caller, the outcome, the
+ * `path` and `<N chars redacted>` — the event and its target survive intact;
+ * only the bytes go. Same rendering as the agent log sink (#2603) so the two
+ * read alike.
+ *
+ * `check-invariants`' `mcp-audit-redaction` rule fails the build if a tool
+ * grows a new `*Content` arg that is not listed here.
+ */
+const BODY_KEYS = new Set([
+  'content',          // write_file, deploy_service extraFiles[].content
+  'kubecontent',      // deploy_service, update_service_yaml
+  'yamlcontent',      // deploy_service companion YAML
+  'podspeccontent',   // update_service_yaml — newer alias for kubeContent
+  'advancedconfig',   // create/add_proxy_route — raw nginx directives
+  'body',             // create_assist — free-form markdown
 ]);
 
-function redactArgs(args?: Record<string, unknown>): Record<string, unknown> | undefined {
-  if (!args) return undefined;
+/** Key names `isSecretKey`'s word matcher deliberately does not reach, but
+ *  which this sink has always masked. Keep them masked. */
+const EXTRA_SECRET_KEYS = new Set(['cookie']);
+
+/** Exec-shaped args: keep them legible (that IS the forensic value), but run
+ *  them through the log redactor so an inline `--password X` / `token=…` /
+ *  `Bearer …` is masked, then cap the head. Covers `exec_command`'s `command`
+ *  string and `container_exec`'s argv array. */
+const COMMAND_KEYS = new Set(['command', 'args']);
+const COMMAND_HEAD = 200;
+
+/** Guard against a pathological/self-referential payload while walking it —
+ *  same cap as the agent sink (#2603). */
+const REDACT_MAX_DEPTH = 12;
+
+const REDACTED = '[redacted]';
+
+const maskBody = (value: string): string => `<${value.length} chars redacted>`;
+
+function maskCommand(value: string): string {
+  const masked = redactLogText(value);
+  return masked.length > COMMAND_HEAD
+    ? `${masked.slice(0, COMMAND_HEAD)}…(+${masked.length - COMMAND_HEAD} chars)`
+    : masked;
+}
+
+function redactAuditField(key: string, value: unknown, depth: number): unknown {
+  const lower = key.toLowerCase();
+  if (isSecretKey(key) || EXTRA_SECRET_KEYS.has(lower)) return REDACTED;
+  if (BODY_KEYS.has(lower)) {
+    return typeof value === 'string' ? maskBody(value) : REDACTED;
+  }
+  if (COMMAND_KEYS.has(lower)) {
+    if (typeof value === 'string') return maskCommand(value);
+    if (Array.isArray(value)) {
+      return value.map(item => (typeof item === 'string' ? maskCommand(item) : redactAuditValue(item, depth + 1)));
+    }
+  }
+  return redactAuditValue(value, depth + 1);
+}
+
+/** Walk an arg payload to any depth. The nesting is not hypothetical:
+ *  `deploy_service` carries `extraFiles: [{path, content}]` and
+ *  `install_template` carries `variables: {<NAME>: <value>}`, where the
+ *  secret-shaped NAMEs are exactly the template's `type: "secret"` vars. */
+function redactAuditValue(value: unknown, depth: number): unknown {
+  if (depth >= REDACT_MAX_DEPTH) return '<redacted: max depth>';
+  if (Array.isArray(value)) return value.map(item => redactAuditValue(item, depth + 1));
+  if (value === null || typeof value !== 'object') return value;
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(args)) {
-    if (REDACT_KEYS.has(k)) {
-      out[k] = '[redacted]';
-      continue;
-    }
-    if (TRUNCATE_KEYS.has(k) && typeof v === 'string' && v.length > 200) {
-      out[k] = `${v.slice(0, 200)}…(+${v.length - 200} chars)`;
-      continue;
-    }
-    out[k] = v;
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    out[key] = redactAuditField(key, item, depth);
   }
   return out;
+}
+
+/** Exported for the test suite — `recordAudit` is the only production caller. */
+export function redactArgs(args?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!args) return undefined;
+  return redactAuditValue(args, 0) as Record<string, unknown>;
 }
 
 let rotating = false;

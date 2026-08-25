@@ -23,6 +23,15 @@ import { saveSnapshot } from '../history';
 import { injectServiceDirectives } from './quadletDirectives';
 import { ServiceListing } from './serviceListing';
 import { buildExpectedContainerNames } from './containerNameMatcher';
+import {
+    containerNameForQuadlet,
+    decideContainerRecreate,
+    isSafeShellName,
+    parseExecStartArgv,
+    parseInspectFacts,
+    readUnitDirective,
+    type RecreateDecision,
+} from './containerQuadletState';
 import { assertTrashId } from '../api/schemas';
 import { readManifestAnnotations } from '../template/contract';
 import { writeExtraConfigFiles } from './extraConfigFiles';
@@ -985,7 +994,17 @@ export class ServiceLifecycle {
         // The plain-start path (first install / unchanged render) is untouched:
         // no wait is added there, since nothing was torn down.
         try {
-             const alreadyActive = specChanged && (await ServiceLifecycle.isServiceActive(nodeName, name));
+             // #2618 — for a service that runs from a `.container` Quadlet the
+             // `.kube`/`.yml` written above is a shadow that
+             // reconcileContainerQuadletShadow retires a few steps below, so
+             // `specChanged` is structurally always true here (last deploy
+             // trashed those very files) and this restart fired on every single
+             // deploy — evicting ollama's warm VRAM cache before post-deploy had
+             // even run. The `.container` unit, not the pod spec, is what runs;
+             // the reconcile owns the restart decision for it and makes it on
+             // desired-vs-actual evidence.
+             const containerQuadletInUse = await ServiceLifecycle.hasContainerQuadletUnit(nodeName, name);
+             const alreadyActive = specChanged && !containerQuadletInUse && (await ServiceLifecycle.isServiceActive(nodeName, name));
              if (alreadyActive) {
                  onProgress?.(`Pod spec changed — restarting ${name} to apply the new topology...`);
                  const before = await ServiceLifecycle.readServiceRunState(nodeName, name);
@@ -1145,12 +1164,9 @@ export class ServiceLifecycle {
 
             // Guard: only act when a `.container` unit is actually on disk.
             // Absent → this is an ordinary `.kube` deploy; nothing to shadow.
-            const containerCheck = await agent.sendCommand('exec', {
-                command: `test -f ~/${SYSTEMD_DIR}/${name}.container && echo present || echo absent`,
-            });
-            if ((containerCheck?.stdout ?? '').trim() !== 'present') return;
+            if (!await ServiceLifecycle.hasContainerQuadletUnit(nodeName, name)) return;
 
-            onProgress?.(`${name}: a .container GPU Quadlet is in use — retiring the shadowing .kube/.yml and force-recreating the container.`);
+            onProgress?.(`${name}: a .container GPU Quadlet is in use — retiring the shadowing .kube/.yml.`);
             logger.info('ServiceManager', `${name}: reconciling .container over shadowing .kube/.yml (#2174)`);
 
             // Move the shadowing units into the trash bucket (recoverable),
@@ -1166,6 +1182,19 @@ export class ServiceLifecycle {
             });
 
             await ServiceLifecycle.reloadDaemon(nodeName);
+
+            // #2618 — the force-recreate below is what makes the GPU device
+            // stick, and it is also what evicts every bit of warm state the
+            // container holds (ollama's VRAM-resident models). Only pay it when
+            // the running container isn't already the one this unit describes.
+            // The check errs toward recreating: see containerQuadletState.ts.
+            const decision = await ServiceLifecycle.decideContainerQuadletRecreate(nodeName, name);
+            if (!decision.recreate) {
+                onProgress?.(`${name}: left running, NOT recreated — ${decision.reason}. Warm in-container state (e.g. ollama's VRAM-resident models) survives this deploy.`);
+                logger.info('ServiceManager', `${name}: .container matches the running container — skipping the force-recreate (#2618)`);
+                return;
+            }
+            onProgress?.(`${name}: force-recreating the container — ${decision.reason}.`);
 
             // Force-recreate: stop the unit, remove every plausible container
             // name (the old CPU container survives a restart by holding the
@@ -1193,6 +1222,61 @@ export class ServiceLifecycle {
             onProgress?.(`${name}: container force-recreated from the .container Quadlet — GPU device should now be attached.`);
         } catch (e) {
             logger.warn('ServiceManager', `${name}: .container shadow reconcile failed (non-fatal):`, e);
+        }
+    }
+
+    /** Is a `.container` Quadlet on disk for this service? (#2174/#2618) */
+    static async hasContainerQuadletUnit(nodeName: string, name: string): Promise<boolean> {
+        try {
+            const agent = await agentManager.ensureAgent(nodeName);
+            const res = await agent.sendCommand('exec', {
+                command: `test -f ~/${SYSTEMD_DIR}/${name}.container && echo present || echo absent`,
+            });
+            return (res?.stdout ?? '').trim() === 'present';
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Does the container that's actually running still match the `.container`
+     * Quadlet on disk? (#2618 — the reasoning lives in containerQuadletState.ts.)
+     * Must run AFTER the daemon-reload so `systemctl show` reports the unit
+     * regenerated from the current file. Any failure ⇒ `recreate: true`.
+     */
+    static async decideContainerQuadletRecreate(nodeName: string, name: string): Promise<RecreateDecision> {
+        try {
+            const agent = await agentManager.ensureAgent(nodeName);
+            const unitContent = (await ServiceLifecycle.readExistingQuadletFile(nodeName, `${name}.container`)) ?? '';
+            const containerName = containerNameForQuadlet(name, unitContent);
+            const imageRef = readUnitDirective(unitContent, 'Image');
+            if (!isSafeShellName(containerName)) {
+                return { recreate: true, reason: 'the unit names a container this cannot inspect safely' };
+            }
+
+            const show = await agent.sendCommand('exec', {
+                command: `systemctl --user show ${name}.service --property=ExecStart`,
+            });
+            const inspect = await agent.sendCommand('exec', {
+                command: `podman inspect --format '{{.State.Running}}|{{.Image}}|{{json .Config.CreateCommand}}' ${containerName} 2>/dev/null || true`,
+            });
+
+            let imageId = '';
+            if (isSafeShellName(imageRef)) {
+                const img = await agent.sendCommand('exec', {
+                    command: `podman image inspect --format '{{.Id}}' ${imageRef} 2>/dev/null || true`,
+                });
+                imageId = String(img?.stdout ?? '').trim().split('\n').filter(Boolean).pop() ?? '';
+            }
+
+            return decideContainerRecreate({
+                desired: { execStartArgv: parseExecStartArgv(String(show?.stdout ?? '')), imageId },
+                running: parseInspectFacts(String(inspect?.stdout ?? '')),
+                unitActive: await ServiceLifecycle.isServiceActive(nodeName, name),
+            });
+        } catch (e) {
+            logger.warn('ServiceManager', `${name}: could not compare the running container to its .container unit:`, e);
+            return { recreate: true, reason: 'the running container could not be inspected' };
         }
     }
 
