@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.17.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.16.0...servicebay-v5.17.0) (2026-08-25)
+
+
+### Features
+
+* **auth:** retire lapsed API tokens on a grace period and revoke many at once ([870ae58](https://github.com/mdopp/servicebay/commit/870ae58d47a0b1cef6ea8128d6158ca9f761c32d)), closes [#2606](https://github.com/mdopp/servicebay/issues/2606) [#2608](https://github.com/mdopp/servicebay/issues/2608)
+* **backup:** back up config held in a podman volume, and stop the coverage gate skipping them ([ac9b823](https://github.com/mdopp/servicebay/commit/ac9b8232cca283d988aa3a29a957ac39f48e283c)), closes [#2596](https://github.com/mdopp/servicebay/issues/2596)
+* **diagnose:** report both backup mechanisms as two named, separate states ([f0983c9](https://github.com/mdopp/servicebay/commit/f0983c98e67db0859e5cbf37eb8e20ae89378035)), closes [#2615](https://github.com/mdopp/servicebay/issues/2615)
+
+
+### Bug Fixes
+
+* **diagnose:** offer a repoint, not a deletion, when a route's service moved port ([98aa43c](https://github.com/mdopp/servicebay/commit/98aa43c21cf7fdcad8d6a3fce6b6efaaa980cf05)), closes [#2611](https://github.com/mdopp/servicebay/issues/2611)
+* **registry:** stop reporting a registry that never syncs as refreshed ([7939293](https://github.com/mdopp/servicebay/commit/793929339d1e194022f94d44d22003f2ff34adc8)), closes [#2610](https://github.com/mdopp/servicebay/issues/2610)
+* **tests:** read ADR 0007 from the assist catalog, where it now lives ([7bb6c88](https://github.com/mdopp/servicebay/commit/7bb6c88077a9c286f61bfb043c3aa7994c8b00ee))
+
 ## [5.16.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.15.1...servicebay-v5.16.0) (2026-08-25)
 
 
