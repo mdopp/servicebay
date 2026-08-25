@@ -36,7 +36,7 @@ function isTab(v: string | null): v is OperateTab {
  * sidebar — which now all reuse the same shared ServiceDetailSummary header.
  */
 export default function OperatePage({ name }: { name: string }) {
-  const { service, loading } = useOperateService(name);
+  const { service, state } = useOperateService(name);
 
   return (
     // Canonical scroll pattern (#2077): the dashboard <main> is overflow-hidden,
@@ -50,10 +50,22 @@ export default function OperatePage({ name }: { name: string }) {
         <ArrowLeft size={16} /> Services
       </Link>
 
-      {loading ? (
+      {/* Three states, never collapsed into one (#2629): we're still waiting,
+          we asked and it isn't there, or we couldn't ask at all. Only the
+          middle one may claim "not found". */}
+      {state === 'loading' ? (
         <div className="flex items-center justify-center gap-2 p-8 text-text-muted">
           <RefreshCw className="w-4 h-4 animate-spin" /> Loading service…
         </div>
+      ) : state === 'unavailable' ? (
+        <Card padding="lg" className="text-center text-text-muted">
+          <p>
+            Can&apos;t reach ServiceBay, so <strong>{name}</strong> couldn&apos;t be loaded.
+          </p>
+          <p className="text-sm mt-1">
+            The page recovers on its own once the connection is back.
+          </p>
+        </Card>
       ) : !service ? (
         <Card padding="lg" className="text-center text-text-muted">
           <p>Service <strong>{name}</strong> was not found.</p>
