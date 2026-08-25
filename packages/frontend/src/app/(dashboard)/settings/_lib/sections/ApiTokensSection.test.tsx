@@ -171,6 +171,176 @@ describe('ApiTokensSection (#2100 settings migration)', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /^revoke token$/i })).toBeDefined());
   });
 
+  // ── #2606 / #2608: hygiene readout + multi-select bulk revoke ──────────────
+  describe('bulk revoke (#2608) and hygiene counts (#2606)', () => {
+    const FLEET = [
+      { id: 'aaaaaaaa', name: 'dormant-destroy', scopes: ['read', 'destroy'], prefix: 'ab12', createdAt: '2026-06-01T10:00:00Z', createdBy: 'admin' },
+      { id: 'bbbbbbbb', name: 'used-read', scopes: ['read'], prefix: 'cd34', createdAt: '2026-06-02T10:00:00Z', createdBy: 'admin', lastUsedAt: '2026-08-20T10:00:00Z' },
+      { id: 'cccccccc', name: 'this-session', scopes: ['read'], prefix: 'ef56', createdAt: '2026-06-03T10:00:00Z', createdBy: 'admin', lastUsedAt: '2026-08-24T10:00:00Z' },
+    ];
+    const SUMMARY = { total: 3, expiredInGrace: 0, neverExpires: 3, neverUsed: 1, dormant: 1, privileged: 1, graceDays: 3 };
+
+    /** GET returns the fleet + summary + the session's own token id; POST
+     *  /revoke returns whatever the test dictates. */
+    function mockFleet(revokeResponse: () => Promise<Response>, currentTokenId: string | null = 'cccccccc') {
+      const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+        if (url === '/api/system/mcp-bootstrap') {
+          return Promise.resolve(new Response(JSON.stringify({ active: false }), { status: 200 }));
+        }
+        if (url === '/api/system/api-tokens/revoke') return revokeResponse();
+        if (url.startsWith('/api/system/api-tokens')) {
+          if (init?.method === 'DELETE') return Promise.resolve(new Response('{}', { status: 200 }));
+          return Promise.resolve(new Response(JSON.stringify({ tokens: FLEET, summary: SUMMARY, currentTokenId }), { status: 200 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      return fetchMock;
+    }
+
+    const openBulkModal = async () => {
+      fireEvent.click(screen.getByRole('checkbox', { name: /select all tokens/i }));
+      fireEvent.click(screen.getByRole('button', { name: /revoke selected \(2\)/i }));
+      return screen.findByRole('dialog');
+    };
+
+    it('shows the counted never-expiring / never-used states instead of deleting them (#2606)', async () => {
+      mockFleet(() => Promise.resolve(new Response('{}', { status: 200 })));
+      render(<ApiTokensSection />);
+      const status = await screen.findByRole('status');
+      expect(status.textContent).toMatch(/3 tokens/);
+      expect(status.textContent).toMatch(/3 never expire/);
+      expect(status.textContent).toMatch(/1 never used/);
+      expect(status.textContent).toMatch(/1 carry destroy/);
+      // Nothing was deleted to produce that readout.
+      expect(screen.getByText('dormant-destroy')).toBeDefined();
+    });
+
+    it('excludes the session’s own token from select-all and locks its checkbox (#2608)', async () => {
+      mockFleet(() => Promise.resolve(new Response('{}', { status: 200 })));
+      render(<ApiTokensSection />);
+      await waitFor(() => expect(screen.getByText('this-session')).toBeDefined());
+
+      const own = screen.getByRole('checkbox', { name: /this-session \(this session/i }) as HTMLInputElement;
+      expect(own.disabled).toBe(true);
+
+      // "All" counts only the two selectable rows.
+      expect(screen.getByText(/^All \(2\)$/)).toBeDefined();
+      fireEvent.click(screen.getByRole('checkbox', { name: /select all tokens/i }));
+      expect(screen.getByRole('button', { name: /revoke selected \(2\)/i })).toBeDefined();
+      expect(own.checked).toBe(false);
+    });
+
+    it('one typed confirmation lists each token’s name, scopes and last use — not just a count', async () => {
+      mockFleet(() => Promise.resolve(new Response(JSON.stringify({ requested: 2, revoked: 2, results: [] }), { status: 200 })));
+      render(<ApiTokensSection />);
+      await waitFor(() => expect(screen.getByText('used-read')).toBeDefined());
+      const dialog = await openBulkModal();
+
+      expect(dialog.textContent).toMatch(/dormant-destroy/);
+      expect(dialog.textContent).toMatch(/\[read,destroy\]/);
+      expect(dialog.textContent).toMatch(/never used/);
+      expect(dialog.textContent).toMatch(/last used/);
+    });
+
+    it('the typed phrase spells out the destroy count, so extra friction lands on the dangerous selection', async () => {
+      mockFleet(() => Promise.resolve(new Response(JSON.stringify({ requested: 2, revoked: 2, results: [{ id: 'aaaaaaaa', ok: true }, { id: 'bbbbbbbb', ok: true }] }), { status: 200 })));
+      render(<ApiTokensSection />);
+      await waitFor(() => expect(screen.getByText('used-read')).toBeDefined());
+      const dialog = await openBulkModal();
+
+      const confirmBtn = screen.getByRole('button', { name: /^revoke 2$/i }) as HTMLButtonElement;
+      expect(confirmBtn.disabled).toBe(true);
+      const input = dialog.querySelector('input[type="text"]') as HTMLInputElement;
+
+      // The short phrase is NOT enough — the selection carries `destroy`.
+      fireEvent.change(input, { target: { value: 'revoke 2' } });
+      expect(confirmBtn.disabled).toBe(true);
+      fireEvent.change(input, { target: { value: 'revoke 2 including 1 destroy' } });
+      expect(confirmBtn.disabled).toBe(false);
+
+      fireEvent.click(confirmBtn);
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    });
+
+    it('reports a PARTIAL bulk run per token and keeps the dialog open (#2461 at bulk scale)', async () => {
+      mockFleet(() => Promise.resolve(new Response(JSON.stringify({
+        requested: 2,
+        revoked: 1,
+        results: [
+          { id: 'aaaaaaaa', name: 'dormant-destroy', ok: true },
+          // No `name`: the server can only name a token it found, and a row
+          // that failed *because it was already gone* comes back nameless. The
+          // report must still say "used-read", not the 8-hex id the operator
+          // never saw.
+          { id: 'bbbbbbbb', ok: false, error: 'token store is read-only' },
+        ],
+      }), { status: 207 })));
+      render(<ApiTokensSection />);
+      await waitFor(() => expect(screen.getByText('used-read')).toBeDefined());
+      const dialog = await openBulkModal();
+      fireEvent.change(dialog.querySelector('input[type="text"]') as HTMLInputElement, {
+        target: { value: 'revoke 2 including 1 destroy' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /^revoke 2$/i }));
+
+      const alert = await screen.findByRole('alert');
+      // The denominator, not a bare "revoked".
+      expect(alert.textContent).toMatch(/1 of 2 revoked/);
+      expect(alert.textContent).toMatch(/still active/);
+      // …and the token that failed is named (from the selection, since the
+      // server couldn't name it), with the reason — never a bare id.
+      expect(alert.textContent).toMatch(/used-read/);
+      expect(alert.textContent).not.toMatch(/bbbbbbbb/);
+      expect(alert.textContent).toMatch(/token store is read-only/);
+      // The dialog stays open — a failed revoke must never look like a success.
+      expect(screen.getByRole('dialog')).toBeDefined();
+    });
+
+    it('surfaces a network failure on a bulk run without closing the dialog or claiming success', async () => {
+      mockFleet(() => Promise.reject(new Error('network down')));
+      render(<ApiTokensSection />);
+      await waitFor(() => expect(screen.getByText('used-read')).toBeDefined());
+      const dialog = await openBulkModal();
+      fireEvent.change(dialog.querySelector('input[type="text"]') as HTMLInputElement, {
+        target: { value: 'revoke 2 including 1 destroy' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /^revoke 2$/i }));
+
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toMatch(/network down/);
+      expect(alert.textContent).toMatch(/nothing was revoked/i);
+      expect(screen.getByRole('dialog')).toBeDefined();
+    });
+
+    it('a selection filter picks the never-used tokens in one click', async () => {
+      mockFleet(() => Promise.resolve(new Response('{}', { status: 200 })));
+      render(<ApiTokensSection />);
+      await waitFor(() => expect(screen.getByText('used-read')).toBeDefined());
+      fireEvent.click(screen.getByRole('button', { name: /^never used$/i }));
+      expect(screen.getByRole('button', { name: /revoke selected \(1\)/i })).toBeDefined();
+    });
+
+    it('marks an expired token as expired-pending-removal rather than hiding it (#2606)', async () => {
+      const expiredFleet = [{ ...FLEET[1], expiresAt: '2026-08-24T10:00:00Z' }];
+      vi.stubGlobal('fetch', vi.fn((url: string) => {
+        if (url === '/api/system/mcp-bootstrap') return Promise.resolve(new Response(JSON.stringify({ active: false }), { status: 200 }));
+        if (url.startsWith('/api/system/api-tokens')) {
+          return Promise.resolve(new Response(JSON.stringify({
+            tokens: expiredFleet,
+            summary: { ...SUMMARY, total: 1, expiredInGrace: 1, neverExpires: 0, neverUsed: 0, dormant: 0, privileged: 0 },
+            currentTokenId: null,
+          }), { status: 200 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      }));
+      render(<ApiTokensSection />);
+      await waitFor(() => expect(screen.getByText('used-read')).toBeDefined());
+      expect(screen.getByText(/removed after the grace period/i)).toBeDefined();
+      expect((await screen.findByRole('status')).textContent).toMatch(/1 expired \(auto-removed after 3 days\)/);
+    });
+  });
+
   it('surfaces a network failure on revoke without closing the modal', async () => {
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       if (url === '/api/system/mcp-bootstrap') {

@@ -536,6 +536,24 @@ app.prepare().then(() => {
     setTimeout(() => { void purgeTrashAcrossNodes(); }, 60_000);
     setInterval(() => { void purgeTrashAcrossNodes(); }, TRASH_PURGE_INTERVAL_MS);
 
+    // Retire API tokens that lapsed more than their grace period ago (#2606).
+    // sweepExpiredTokens' own docs claimed a boot timer since #2139 — there
+    // never was one, so the only cleanup that ever ran was the opportunistic
+    // pass on the verify path, which cannot fire for a token nobody uses. That
+    // is precisely the token that needs sweeping. Twice a day is ample against
+    // a three-day grace; it no-ops (no write) when nothing is past grace.
+    const TOKEN_SWEEP_INTERVAL_MS = 12 * 60 * 60 * 1000;
+    const sweepApiTokens = async () => {
+      try {
+        const { sweepExpiredTokens } = await import('./lib/auth/apiTokens');
+        await sweepExpiredTokens();
+      } catch (e) {
+        logger.warn('Server', `API token expiry sweep failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    };
+    setTimeout(() => { void sweepApiTokens(); }, 60_000);
+    setInterval(() => { void sweepApiTokens(); }, TOKEN_SWEEP_INTERVAL_MS);
+
   // Periodic Agent Health Sync (every 30 seconds)
   setInterval(() => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -309,29 +309,104 @@ export async function createDelegatedToken(input: {
 }
 
 /**
- * Sweep expired tokens out of `api-tokens.json` (#2139). `verifyToken`
- * already *rejects* an expired token, but a rejected-yet-present row is a
- * dead credential lingering in the store — noisy in the UI and a latent
- * data-at-rest liability. This deletes every row whose `expiresAt` is in the
- * past, so a self-expiring token (e.g. a short-TTL grant from the MCP
- * request_token flow) leaves no trace once it lapses.
+ * Grace period between a token's expiry and its removal from the store
+ * (#2606). #2139 originally deleted a row the instant `expiresAt` passed;
+ * that left the operator staring at a bare "Invalid token" from their client
+ * with nothing in the UI to explain it — the credential had already vanished.
+ * Holding a lapsed token for three days keeps it listed, plainly marked
+ * *expired*, long enough to be recognised as the cause; then it goes.
+ *
+ * Three days is the operator's own stated figure ("Ablaufdatum + 3 Tage") and
+ * comfortably spans a weekend, which is when a token typically lapses
+ * unnoticed. An expired-but-still-listed token grants nothing: `verifyToken`
+ * refuses it on `expiresAt` before the hash check, exactly as before.
+ */
+export const EXPIRY_GRACE_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** Has this token's expiry passed? Such a token is already refused by
+ *  `verifyToken`; it is kept listed (see EXPIRY_GRACE_MS) so the operator can
+ *  see *why* their client stopped authenticating. */
+export function isExpired(token: Pick<ApiToken, 'expiresAt'>, now: number = Date.now()): boolean {
+  return Boolean(token.expiresAt) && Date.parse(token.expiresAt as string) < now;
+}
+
+/** Is this token past expiry + grace, i.e. safe to delete from the store? */
+export function isSweepable(token: Pick<ApiToken, 'expiresAt'>, now: number = Date.now()): boolean {
+  return Boolean(token.expiresAt) && Date.parse(token.expiresAt as string) + EXPIRY_GRACE_MS < now;
+}
+
+/**
+ * Counts of the token-store states an operator needs to act on (#2606). The
+ * reference box holds 34 tokens: 0 expired, 22 with no expiry at all, 8 never
+ * used, 20 carrying `destroy`. The expiry sweep below cannot touch any of
+ * that — a token with no expiry never becomes sweepable — so the answer for
+ * those is to make the state *visible and counted*, never to guess and delete:
+ * an unattended consumer that runs once a quarter is indistinguishable from a
+ * dead credential, and deleting it would lock out a working client.
+ */
+export interface TokenHygiene {
+  total: number;
+  /** Expired, still listed, will be removed after EXPIRY_GRACE_MS. */
+  expiredInGrace: number;
+  /** No `expiresAt` at all — valid until someone revokes it by hand. */
+  neverExpires: number;
+  /** No `lastUsedAt` — never authenticated a single request. */
+  neverUsed: number;
+  /** Never expires AND never used — the sharpest state: it has never served a
+   *  purpose and will never lapse on its own. */
+  dormant: number;
+  /** Carries `destroy` (or the scopes split out of it, `exec`/`reboot`) —
+   *  full blast radius on the box. */
+  privileged: number;
+}
+
+const PRIVILEGED_SCOPES: ApiScope[] = ['destroy', 'exec', 'reboot'];
+
+/** Build the hygiene counts for a token list. Pure — takes the rows so the
+ *  route, the tests and any future CLI readout share one definition. */
+export function summarizeTokenHygiene(
+  tokens: Array<Pick<ApiToken, 'expiresAt' | 'lastUsedAt' | 'scopes'>>,
+  now: number = Date.now(),
+): TokenHygiene {
+  const neverExpiresRows = tokens.filter(t => !t.expiresAt);
+  const neverUsedRows = tokens.filter(t => !t.lastUsedAt);
+  return {
+    total: tokens.length,
+    expiredInGrace: tokens.filter(t => isExpired(t, now)).length,
+    neverExpires: neverExpiresRows.length,
+    neverUsed: neverUsedRows.length,
+    dormant: tokens.filter(t => !t.expiresAt && !t.lastUsedAt).length,
+    privileged: tokens.filter(t => t.scopes.some(s => PRIVILEGED_SCOPES.includes(s))).length,
+  };
+}
+
+/**
+ * Sweep long-expired tokens out of `api-tokens.json` (#2139, grace added in
+ * #2606). `verifyToken` already *rejects* an expired token, but a
+ * rejected-yet-present row is a dead credential lingering in the store — noisy
+ * in the UI and a latent data-at-rest liability. This deletes every row that
+ * lapsed more than `EXPIRY_GRACE_MS` ago, so a self-expiring token (e.g. a
+ * short-TTL grant from the MCP request_token flow) leaves no trace once its
+ * grace runs out, while a *just*-expired one stays visible as the explanation
+ * for a client's sudden 401.
  *
  * Fire-and-forget-safe: it settles any in-flight lastUsedAt stamp first (so a
- * stale snapshot can't resurrect a swept row), no-ops when nothing is expired
+ * stale snapshot can't resurrect a swept row), no-ops when nothing is sweepable
  * (no write), and returns the ids it removed for the audit log. Called on a
- * timer by the server bootstrap AND opportunistically off the verify path, so
- * expiry cleanup happens without a dedicated cron.
+ * timer by the server bootstrap, from the token-list route, AND
+ * opportunistically off the verify path, so expiry cleanup happens without a
+ * dedicated cron.
  */
 export async function sweepExpiredTokens(now: number = Date.now()): Promise<string[]> {
   await pendingStamp; // settle any in-flight stamp so it can't re-add a swept row
   const data = await loadFile();
-  const expired = data.tokens.filter(t => t.expiresAt && Date.parse(t.expiresAt) < now);
+  const expired = data.tokens.filter(t => isSweepable(t, now));
   if (expired.length === 0) return []; // nothing to do → no write
   const expiredIds = new Set(expired.map(t => t.id));
   data.tokens = data.tokens.filter(t => !expiredIds.has(t.id));
   await saveFile(data);
   const ids = [...expiredIds];
-  logger.info('auth:apiTokens', `Swept ${ids.length} expired API token(s): [${ids.join(',')}]`);
+  logger.info('auth:apiTokens', `Swept ${ids.length} expired API token(s) past the ${EXPIRY_GRACE_MS / 86_400_000}-day grace: [${ids.join(',')}]`);
   return ids;
 }
 
@@ -344,6 +419,61 @@ export async function revokeToken(id: string): Promise<boolean> {
   await saveFile(data);
   logger.info('auth:apiTokens', `Revoked API token ${id}`);
   return true;
+}
+
+/** Outcome of one id in a bulk revoke. `name` is captured *before* the row is
+ *  deleted so the caller can name what it removed (and what it didn't). */
+export interface RevokeResult {
+  id: string;
+  name?: string;
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Revoke many tokens in ONE read-modify-write (#2608). Not a loop over
+ * `revokeToken`: N sequential loads/saves over the same file is N chances for
+ * a fire-and-forget stamp to interleave and resurrect a row, and it would
+ * report a store-level write failure as N separate mysteries.
+ *
+ * Every requested id gets its own result row, including the ones that did
+ * nothing — an id that isn't in the store comes back `ok:false` rather than
+ * being quietly counted as revoked. That denominator is the point: a caller
+ * must be able to say "9 of 12 revoked" and name the other three (#2461 fixed
+ * exactly this for the single-token case; a bulk run makes swallowing worse).
+ *
+ * Duplicate ids collapse to one result, in first-seen order.
+ */
+export async function revokeTokens(ids: string[]): Promise<RevokeResult[]> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return [];
+  await pendingStamp; // settle any in-flight stamp so it can't resurrect a revoked row
+  const data = await loadFile();
+  const byId = new Map(data.tokens.map(t => [t.id, t]));
+
+  const results: RevokeResult[] = unique.map(id => {
+    const token = byId.get(id);
+    return token
+      ? { id, name: token.name, ok: true }
+      : { id, ok: false, error: 'token not found — already revoked, or it expired and was swept' };
+  });
+
+  const removing = new Set(results.filter(r => r.ok).map(r => r.id));
+  if (removing.size === 0) return results;
+
+  data.tokens = data.tokens.filter(t => !removing.has(t.id));
+  try {
+    await saveFile(data);
+  } catch (e) {
+    // The store write failed, so NOTHING was revoked. Say so on every row that
+    // was going to be removed rather than letting the caller report a success
+    // that never happened.
+    const detail = e instanceof Error ? e.message : String(e);
+    logger.error('auth:apiTokens', `Bulk revoke of ${removing.size} token(s) failed to persist: ${detail}`);
+    return results.map(r => (removing.has(r.id) ? { ...r, ok: false, error: `Could not write the token store: ${detail}` } : r));
+  }
+  logger.info('auth:apiTokens', `Revoked ${removing.size} API token(s) in one bulk action: [${[...removing].join(',')}]`);
+  return results;
 }
 
 /**
@@ -466,10 +596,12 @@ export async function verifyToken(raw: string): Promise<Omit<ApiToken, 'hash'> |
     const now = Date.now();
     // Opportunistic expiry sweep (#2139): drop any dead rows in the same
     // read-modify-write that stamps this token, so expired grants don't
-    // linger between the periodic sweeps. Never touches this token (it just
-    // verified, so it isn't expired).
+    // linger between the periodic sweeps. Uses the same past-grace predicate
+    // as sweepExpiredTokens (#2606) — a just-lapsed token stays listed and
+    // visibly expired. Never touches this token (it just verified, so it
+    // isn't expired).
     const before = fresh.tokens.length;
-    fresh.tokens = fresh.tokens.filter(t => !(t.expiresAt && Date.parse(t.expiresAt) < now));
+    fresh.tokens = fresh.tokens.filter(t => !isSweepable(t, now));
     const t = fresh.tokens.find(tok => tok.id === id);
     if (!t) return; // token revoked/removed in the meantime — nothing to stamp
     t.lastUsedAt = stampedAt;

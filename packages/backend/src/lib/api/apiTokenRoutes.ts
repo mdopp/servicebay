@@ -1,6 +1,19 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { listTokens, createToken, createDelegatedToken, DelegateError, revokeToken, ALL_SCOPES, type ApiScope } from '@/lib/auth/apiTokens';
+import {
+  listTokens,
+  createToken,
+  createDelegatedToken,
+  DelegateError,
+  revokeToken,
+  revokeTokens,
+  sweepExpiredTokens,
+  summarizeTokenHygiene,
+  EXPIRY_GRACE_MS,
+  ALL_SCOPES,
+  type ApiScope,
+  type RevokeResult,
+} from '@/lib/auth/apiTokens';
 import { revokeBootstrapToken } from '@/lib/mcp/bootstrapToken';
 import { requireSession } from '@/lib/api/requireSession';
 import { apiError } from '@/lib/api/errors';
@@ -16,8 +29,23 @@ import { logger } from '@/lib/logger';
 export async function getTokensHandler({ request }: { request: Request }) {
   const auth = await requireSession(request);
   if (auth instanceof NextResponse) return auth;
+  // Opening the list is the natural moment to retire what has been dead for
+  // longer than the grace window (#2606). The periodic server timer is the
+  // real guarantee; this just means the operator never reads a stale list.
+  await sweepExpiredTokens().catch(e =>
+    logger.warn('api:system:api-tokens:get', `Expiry sweep failed: ${e instanceof Error ? e.message : String(e)}`));
   const tokens = await listTokens();
-  return NextResponse.json({ tokens });
+  return NextResponse.json({
+    tokens,
+    // Counted states the operator has to decide about (#2606) — notably the
+    // never-expiring and never-used rows, which no sweep will ever remove.
+    summary: { ...summarizeTokenHygiene(tokens), graceDays: EXPIRY_GRACE_MS / 86_400_000 },
+    // The token this very session is riding on, when it was minted through the
+    // token→session bridge. The UI locks it out of bulk selection so a cleanup
+    // can't end with the operator logged out (#2608). `null` for a normal
+    // password login — there is no "own token" to protect in that case.
+    currentTokenId: auth.viaToken ?? null,
+  });
 }
 
 const CreateBody = z.object({
@@ -123,11 +151,73 @@ export async function delegateTokenHandler({ request }: { request: Request }) {
   }
 }
 
+const TOKEN_ID = /^[0-9a-f]{8}$/;
+
+export const BulkRevokeBody = z.object({
+  // Capped so a malformed/hostile caller can't ask the store to rewrite an
+  // unbounded list; 200 is far above any real token population (the reference
+  // box holds 34) and far below anything that would stall the write.
+  ids: z.array(z.string()).min(1).max(200),
+});
+
+/**
+ * Bulk revoke (#2608). One request, one confirmation, N tokens — because 34
+ * separate typed confirmations is not extra care, it is training the operator
+ * to confirm without reading (#2164's rule is preserved by the *single* typed
+ * confirmation the UI puts in front of this, not by repeating it).
+ *
+ * Two things this must never do:
+ *  - **Swallow a partial failure.** Every requested id comes back with its own
+ *    `ok`, and the response carries `requested`/`revoked` so the caller can
+ *    state the denominator ("9 of 12 revoked") instead of implying a clean run
+ *    (#2461 — the single-revoke version of this bug).
+ *  - **Lock the caller out of their own session.** A session bridged from a
+ *    token (`viaToken`) refuses that token: revoking it kills the very session
+ *    issuing the request, and it would happen mid-list with no way back.
+ *
+ * Status: 200 only when every id was revoked, 207 when some were, 422 when
+ * none were. A caller that inspects nothing but the status code still cannot
+ * read "nothing happened" as success.
+ */
+export async function bulkRevokeTokensHandler(
+  { body, auth }: { body: z.infer<typeof BulkRevokeBody>; auth?: { viaToken?: string } },
+) {
+  const requested = [...new Set(body.ids)];
+  const malformed = requested.filter(id => !TOKEN_ID.test(id));
+  if (malformed.length > 0) {
+    return NextResponse.json({ error: `invalid token id: ${malformed[0]}` }, { status: 400 });
+  }
+
+  const ownTokenId = auth?.viaToken;
+  const refused: RevokeResult[] = [];
+  const revokable = requested.filter(id => {
+    if (ownTokenId && id === ownTokenId) {
+      refused.push({ id, ok: false, error: 'this is the token your current session is using — revoking it would log you out' });
+      return false;
+    }
+    return true;
+  });
+
+  const revoked = revokable.length > 0 ? await revokeTokens(revokable) : [];
+  // Keep the caller's order so the UI can line results up with its selection.
+  const byId = new Map([...revoked, ...refused].map(r => [r.id, r]));
+  const results = requested.map(id => byId.get(id)!);
+  const okCount = results.filter(r => r.ok).length;
+
+  logger.info(
+    'api:system:api-tokens:bulk-revoke',
+    `Bulk revoke: ${okCount} of ${results.length} token(s) revoked${okCount < results.length ? `; failed: [${results.filter(r => !r.ok).map(r => r.id).join(',')}]` : ''}`,
+  );
+
+  const status = okCount === results.length ? 200 : okCount > 0 ? 207 : 422;
+  return NextResponse.json({ requested: results.length, revoked: okCount, results }, { status });
+}
+
 export const DeleteTokenQuery = z.object({ id: z.string().optional() });
 
 export async function deleteTokenHandler({ query }: { query: z.infer<typeof DeleteTokenQuery> }) {
   const id = query.id;
-  if (!id || !/^[0-9a-f]{8}$/.test(id)) {
+  if (!id || !TOKEN_ID.test(id)) {
     return NextResponse.json({ error: 'invalid token id' }, { status: 400 });
   }
   const ok = await revokeToken(id);
