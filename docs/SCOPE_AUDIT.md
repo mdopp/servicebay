@@ -27,14 +27,21 @@ Plus one **independent, off-ladder** capability scope:
 
 Scopes are **not** automatically nested — holding `mutate` does **not** imply
 `read`. A token carries an explicit set, and `scopeSatisfiedBy(held, required)`
-checks membership with exactly two implication rules (the back-compat carve-outs
-from when `reboot`/`exec` were folded into `destroy`):
+checks membership with exactly **one** implication rule (the back-compat
+carve-out from when `reboot` was folded into `destroy`):
 
 - `destroy` implies `reboot` (#1765 — `reboot` was split out of `destroy`)
-- `destroy` implies `exec` (pre-#591 exec-via-destroy back-compat)
 
-So a `destroy` token may call a `reboot`- or `exec`-gated capability; nothing else
-crosses tiers. The same function gates MCP tool calls (`tokenHasScope`) and the
+So a `destroy` token may call a `reboot`-gated capability; nothing else crosses
+tiers.
+
+**`exec` is never implied (#2623).** `destroy` used to imply it as pre-#591
+back-compat, which re-merged the tier #591 had just split: 20 of 34 live tokens
+carried `destroy`, and every one of them could open a host shell nobody had
+granted — as could every logged-in admin browser session, because the `/mcp`
+cookie bridge grants `destroy`. Shell is now held only where it is written down.
+A caller that genuinely needs `exec_command`/`container_exec` gets an explicit
+`exec` grant. The same function gates MCP tool calls (`tokenHasScope`) and the
 delegated child-mint subset check (`scopesAreSubset`, #2048) — one source of truth.
 
 | Scope | Intent |
@@ -44,7 +51,7 @@ delegated child-mint subset check (`scopesAreSubset`, #2048) — one source of t
 | `mutate` | create/update/add + config writes — **additive** changes |
 | `reboot` | `reboot_node` — transient, recoverable host restart (#1765); split out so a token can operate+reboot **without** irreversible delete/wipe |
 | `destroy` | delete/restore/purge/factory_reset — **irreversible** state edits |
-| `exec` | `exec_command` / `container_exec` — arbitrary shell |
+| `exec` | `exec_command` / `container_exec` — arbitrary shell. **Explicit grant only** — no scope implies it (#2623) |
 | `propose` | `propose_learning` — submit a knowledge proposal (#2326); **off-ladder**, low-privilege, submit-only |
 
 ## Two enforcement surfaces
@@ -56,6 +63,10 @@ ladder:
    (`packages/backend/src/lib/mcp/toolPolicy.ts`). The dispatcher checks
    `tokenHasScope(auth.scopes, TOOL_SCOPES[tool] ?? 'read')` before any tool runs.
    This map is centralized and complete by construction — every tool has a row.
+   A **cookie session** reaching `/mcp` is bridged to a fixed operator scope set
+   (`packages/backend/src/server.ts`) that deliberately excludes `exec`: since
+   #2623 an admin browser session can no longer run `exec_command` /
+   `container_exec` over MCP.
 
 2. **REST routes** — there is **no** central map. Each route opts into Bearer-token
    acceptance per-handler via `withApiHandler({ tokenScope })`

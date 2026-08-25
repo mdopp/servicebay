@@ -5,7 +5,7 @@ import {
   confirmFlipBack,
   confirmDevImage,
   parseDevVerifyArgs,
-  parseRevisionOutput,
+  pickServicebayRevision,
   runDevVerify,
   devVerifyResultLine,
   devVerifyExitCode,
@@ -297,14 +297,33 @@ async function legacyWaitForDevImage(sha: string, deps: DevImageDeps, timeoutSec
   return false;
 }
 
-describe('parseRevisionOutput', () => {
-  it('takes the last non-empty line of a podman inspect --format stdout', () => {
-    expect(parseRevisionOutput(`warning: something\n${FULL}\n`)).toBe(FULL);
+// The revision read goes through the `list_containers` READ tool (#2623) — the
+// labels are already in that payload, so the harness's load-bearing "which image
+// is running" confirmation no longer needs the `exec` scope.
+describe('pickServicebayRevision', () => {
+  const row = (names: string[], labels?: Record<string, string>) => ({ names, labels });
+
+  it('reads the revision label off the servicebay container', () => {
+    expect(pickServicebayRevision([
+      row(['media-jellyfin'], { 'org.opencontainers.image.revision': 'deadbeef' }),
+      row(['servicebay'], { 'org.opencontainers.image.revision': FULL, 'org.opencontainers.image.version': '5.16.0' }),
+    ])).toBe(FULL);
   });
 
-  it("normalises Go template's <no value> (image carries no revision label) to empty", () => {
-    expect(parseRevisionOutput('<no value>\n')).toBe('');
-    expect(parseRevisionOutput('   \n')).toBe('');
+  it('returns null when the container is absent (mid-restart) — a FAILED read, not "no label"', () => {
+    expect(pickServicebayRevision([row(['media-jellyfin'], {})])).toBeNull();
+    expect(pickServicebayRevision([])).toBeNull();
+  });
+
+  it("returns '' when the container is there but its image carries no revision label", () => {
+    expect(pickServicebayRevision([row(['servicebay'], {})])).toBe('');
+    expect(pickServicebayRevision([row(['servicebay'])])).toBe('');
+  });
+
+  it('never mistakes the image TAG for a revision (the original #2387 bug)', () => {
+    // A row whose only hint is the tag must not yield something that could
+    // prefix-match a sha — `revisionMatchesSha` rejects non-hex anyway.
+    expect(revisionMatchesSha(pickServicebayRevision([row(['servicebay'], {})]) ?? '', SHORT)).toBe(false);
   });
 });
 
@@ -761,9 +780,16 @@ describe('reachedDev never trusts get_channel', () => {
   );
 
   it('reads the running container\'s revision label, not the channel', () => {
-    expect(imageSection).toContain('podman inspect');
+    expect(imageSection).toContain('list_containers');
     expect(imageSection).toContain('org.opencontainers.image.revision');
     expect(imageSection).not.toMatch(/getChannel|get_channel/);
+  });
+
+  // #2623 ratchet: the revision read must stay on the read tool. `exec_command`
+  // is exec-scoped, and `destroy` no longer implies `exec` — a harness token
+  // without an explicit exec grant must still be able to confirm the image.
+  it('confirms the image with a read tool, never exec_command', () => {
+    expect(imageSection).not.toMatch(/mcpExec|exec_command|podman inspect/);
   });
 
   it('derives reachedDev from the image confirmation alone', () => {

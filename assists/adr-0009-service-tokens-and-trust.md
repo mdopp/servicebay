@@ -79,7 +79,8 @@ is for UI display. **One token authenticates both the MCP server and the REST AP
 
 - **Scope ladder** (`ApiScope`, `packages/backend/src/lib/auth/apiScope.ts`):
   `read` < `lifecycle` < `mutate` < `reboot` < `destroy` < `exec` (`destroy` implies
-  `reboot` and `exec`). The authoritative per-capability / per-route mapping —
+  `reboot` only; **`exec` is never implied** — an explicit grant is the only way to
+  hold shell, #2623). The authoritative per-capability / per-route mapping —
   *which scope gates which endpoint* — lives in [`SCOPE_AUDIT.md`](../docs/SCOPE_AUDIT.md).
 - **Consumers:** the `sb` CLI, OSCAR/Hermes (`oscar-hermes`, `hermes-mcp`), scripts.
 - **Decision:** named scoped tokens are the **preferred** machine credential — least
@@ -136,7 +137,10 @@ For an incoming request the backend resolves the principal in this order:
 
 1. **Bearer named token** (`sb_<id>_<secret>`) → its scopes;
 2. **Bearer bootstrap token** (LAN-only, `read`) — only if (1) didn't match;
-3. **Cookie session** → **full scopes** (legacy, back-compat for pre-token clients).
+3. **Cookie session** → the broad operator scopes (legacy, back-compat for pre-token
+   clients) — `read,lifecycle,mutate,destroy,propose`, i.e. everything **except
+   `exec`**: a browser session cannot run `exec_command`/`container_exec` over
+   `/mcp` (#2623). It used to, via the removed `destroy`⇒`exec` implication.
 
 Token paths are preferred; the full-access cookie is retained only so clients that
 predate tokens keep working — fresh installs use named tokens.

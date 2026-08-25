@@ -187,9 +187,12 @@ describe('isToolVisibleForScopes helper (#2325)', () => {
     expect(isToolVisibleForScopes('deploy_service', ['read'])).toBe(false);
     expect(isToolVisibleForScopes('deploy_service', ['read', 'mutate'])).toBe(true);
     expect(isToolVisibleForScopes('list_services', ['read'])).toBe(true);
-    // destroy implies exec + reboot (apiScope ladder).
-    expect(isToolVisibleForScopes('exec_command', ['destroy'])).toBe(true);
+    // destroy implies reboot (apiScope ladder) — but NOT exec (#2623), so a
+    // destroy token no longer even SEES the shell tools in tools/list.
     expect(isToolVisibleForScopes('reboot_node', ['destroy'])).toBe(true);
+    expect(isToolVisibleForScopes('exec_command', ['destroy'])).toBe(false);
+    expect(isToolVisibleForScopes('container_exec', ['destroy'])).toBe(false);
+    expect(isToolVisibleForScopes('exec_command', ['exec'])).toBe(true);
     // No auth ⇒ all visible.
     expect(isToolVisibleForScopes('exec_command', undefined)).toBe(true);
   });

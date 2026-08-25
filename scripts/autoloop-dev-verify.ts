@@ -57,7 +57,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { getChannel, setChannel, waitHealth, mcpExec } from './autoloop-box';
+import { getChannel, setChannel, waitHealth, mcpCall, mcpExec } from './autoloop-box';
 
 /**
  * Does the running image's OCI revision label identify `sha`?
@@ -79,41 +79,50 @@ export function revisionMatchesSha(revisionLabel: string, sha: string): boolean 
   return label.startsWith(want);
 }
 
-/** The last non-empty line of a `podman inspect --format` stdout, with Go
- *  template's `<no value>` (label absent from the image) normalised to `''`.
- *  Exported for unit tests. */
-export function parseRevisionOutput(stdout: string): string {
-  const lines = stdout
-    .split('\n')
-    .map(l => l.trim())
-    .filter(Boolean);
-  const last = lines[lines.length - 1] ?? '';
-  return last === '<no value>' ? '' : last;
+/** A `list_containers` row, narrowed to the two fields this harness reads. */
+export interface BoxContainerRow {
+  names?: string[];
+  labels?: Record<string, string>;
 }
 
 /**
  * The OCI revision label (full git SHA) of the running `servicebay` container.
  *
- * `null` means **the read itself failed** — `/mcp` is served by the very app the
- * channel flip restarts, so a refused connection / non-zero `podman inspect`
- * (container momentarily absent) is expected mid-flip. That is categorically
- * different from a *successful* read returning a revision that isn't the target
- * yet, and the two must not collapse into one value: collapsing them is what
- * made a `reachedDev:false` verdict unreadable (#2493).
+ * Read through the **`list_containers` read tool**, not `exec_command`: the
+ * labels are already in that payload, the box-verify playbook mandates the
+ * read-tool path, and it keeps the load-bearing `reachedDev` confirmation off
+ * the `exec` scope entirely (#2623 — `destroy` no longer implies `exec`, so a
+ * harness token without an explicit `exec` grant must still be able to judge
+ * which image is running).
  *
- * This is the SHA baked into the image, NOT the tag (`{{.Config.Image}}`
- * returns the tag name, which never carries a SHA).
+ * `null` means **the read itself failed** — `/mcp` is served by the very app the
+ * channel flip restarts, so a refused connection (or a list that momentarily
+ * lacks the container) is expected mid-flip. That is categorically different
+ * from a *successful* read returning a revision that isn't the target yet, and
+ * the two must not collapse into one value: collapsing them is what made a
+ * `reachedDev:false` verdict unreadable (#2493).
+ *
+ * This is the SHA baked into the image, NOT the tag (`image` is the tag name,
+ * which never carries a SHA).
  */
 async function runningRevision(): Promise<string | null> {
   try {
-    const { code, stdout } = await mcpExec(
-      'podman inspect --format \'{{index .Config.Labels "org.opencontainers.image.revision"}}\' servicebay',
-    );
-    if (code !== 0) return null; // no such container / podman busy → mid-restart
-    return parseRevisionOutput(stdout);
+    const rows = await mcpCall<BoxContainerRow[]>('list_containers', {}, 20000);
+    if (!Array.isArray(rows)) return null;
+    return pickServicebayRevision(rows);
   } catch {
     return null; // /mcp unreachable (it lives in the app being restarted)
   }
+}
+
+/** Pull the `servicebay` container's revision label out of a `list_containers`
+ *  payload. `null` = the container isn't in the list (mid-restart — a FAILED
+ *  read, same class as no answer at all); `''` = it is there but its image
+ *  carries no `org.opencontainers.image.revision` label. Exported for tests. */
+export function pickServicebayRevision(rows: readonly BoxContainerRow[]): string | null {
+  const row = rows.find(r => (r.names ?? []).includes('servicebay'));
+  if (!row) return null;
+  return (row.labels?.['org.opencontainers.image.revision'] ?? '').trim();
 }
 
 // ---------- :dev image confirmation (#2493) ----------

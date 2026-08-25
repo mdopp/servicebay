@@ -50,8 +50,10 @@ export const MUTATING_TOOLS = new Set([
  *              split off `destroy` so a token can operate+reboot without
  *              also granting irreversible delete/wipe. `destroy` implies it.
  *   destroy    delete/restore/purge/factory_reset — irreversible state edits
- *   exec       exec_command — split off from `destroy` (#591) so a token
- *              can grant config writes without shell access
+ *   exec       exec_command / container_exec — split off from `destroy` (#591)
+ *              so a token can grant config writes without shell access. Since
+ *              #2623 nothing implies it: only an explicit `exec` grant opens
+ *              the shell tools.
  *   propose    propose_learning — an INDEPENDENT, low-privilege capability
  *              scope (#2326), NOT on the read<…<exec ladder. A `propose`-only
  *              token may submit knowledge proposals and nothing else; a
@@ -135,11 +137,13 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
 
 /**
  * Decide whether a token with `tokenScopes` may call a tool that
- * requires `required`. Encapsulates the back-compat rules:
- *   - tokens issued before the exec split (#591) — when `exec_command`
- *     was tagged `destroy` — still get exec via their `destroy` grant.
+ * requires `required`. One back-compat rule remains:
  *   - `destroy` implies `reboot` (#1765): the reboot tier was carved out
  *     of `destroy`, so a legacy `destroy` token can still reboot a node.
+ *
+ * `exec` is NOT implied by anything (#2623). The pre-#591 "a `destroy` token
+ * still gets exec" carve-out is gone: it re-merged the tier #591 split, so a
+ * `destroy` token — and the cookie/session bridge — silently had shell.
  *
  * Exported pure helper so the scope semantics are testable without
  * spinning up the whole MCP server.

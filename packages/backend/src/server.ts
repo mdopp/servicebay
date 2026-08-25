@@ -246,8 +246,14 @@ app.prepare().then(() => {
         if (!auth) {
           const session = await getSessionFromCookieHeader(req.headers.cookie);
           if (session) {
-            // Cookie auth retains full scopes for back-compat. Fresh
-            // installs that want stricter behaviour use named tokens.
+            // Cookie auth retains the broad operator scopes for back-compat.
+            // Fresh installs that want stricter behaviour use named tokens.
+            // `exec` is deliberately ABSENT and must stay absent (#2623): this
+            // list never carried it literally — it only ever arrived through
+            // the `destroy`⇒`exec` implication, which is gone. An admin browser
+            // session therefore can no longer call exec_command/container_exec
+            // over /mcp; that is the point, not an oversight. `reboot` is still
+            // reached via the surviving `destroy`⇒`reboot` rule (#1765).
             auth = { user: session.user, scopes: ['read', 'lifecycle', 'mutate', 'destroy', 'propose'] };
           }
         }

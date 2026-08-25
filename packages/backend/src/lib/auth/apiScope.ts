@@ -28,7 +28,11 @@
  *             WITHOUT also granting irreversible delete/wipe. `destroy`
  *             implies `reboot` (see tokenHasScope).
  *   destroy   delete/restore/purge/factory_reset — irreversible state edits
- *   exec      exec_command — shell access
+ *   exec      exec_command / container_exec — shell access. Held ONLY when
+ *             granted EXPLICITLY: no other scope implies it (#2623). It used to
+ *             be implied by `destroy` (pre-#591 back-compat), which silently
+ *             undid the very split #591 made — 20 of 34 live tokens carried
+ *             `destroy`, and every one of them had shell nobody had granted.
  *   propose   submit a learning proposal (#2326) — an INDEPENDENT, low-privilege
  *             capability scope, NOT part of the read<…<exec blast-radius ladder.
  *             A `propose` token may submit knowledge proposals and NOTHING else;
@@ -39,10 +43,18 @@ export type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'reboot' | 'destroy' | 
 export const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'reboot', 'destroy', 'exec', 'propose'];
 
 /**
- * Whether a held scope set satisfies a single `required` scope, honoring the
- * implication rules carved out of the original `destroy` tier:
- *   - `destroy` implies `exec`  (the pre-#591 exec-via-destroy back-compat)
+ * Whether a held scope set satisfies a single `required` scope. Exactly ONE
+ * implication rule survives:
  *   - `destroy` implies `reboot` (#1765 — reboot split out of destroy)
+ *
+ * **`exec` is never implied (#2623).** `destroy` used to imply it as pre-#591
+ * back-compat, which handed shell access to every `destroy` holder — the
+ * majority of live tokens *and* every logged-in admin browser session (the
+ * `/mcp` cookie bridge in `server.ts` grants `destroy` but has never listed
+ * `exec`). Shell is now held only where it was written down. Do NOT re-add an
+ * implication here: `scopeSatisfiedBy` deriving `exec` from anything but an
+ * explicit grant is pinned by an exhaustive test in
+ * `tests/backend/mcp_token_scopes.test.ts`.
  *
  * Single source of truth for scope implication. `mcp/server.ts`'s
  * `tokenHasScope` and the delegated-mint subset check (#2048) both route
@@ -50,7 +62,6 @@ export const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'reboot', 
  */
 export function scopeSatisfiedBy(held: readonly ApiScope[], required: ApiScope): boolean {
   if (held.includes(required)) return true;
-  if (required === 'exec' && held.includes('destroy')) return true;
   if (required === 'reboot' && held.includes('destroy')) return true;
   return false;
 }
@@ -59,7 +70,9 @@ export function scopeSatisfiedBy(held: readonly ApiScope[], required: ApiScope):
  * Whether `child` is a (possibly implied) subset of `parent` — every scope the
  * child wants is held, directly or by implication, by the parent. Used to gate
  * delegated child-token minting (#2048): a parent with `destroy` may mint a
- * child with `reboot`/`exec`, but a child may never widen beyond its parent.
+ * child with `reboot`, but a child may never widen beyond its parent — and,
+ * since #2623, a `destroy` parent can no longer mint an `exec` child. Only a
+ * parent that literally holds `exec` may delegate it.
  */
 export function scopesAreSubset(child: readonly ApiScope[], parent: readonly ApiScope[]): boolean {
   return child.every(s => scopeSatisfiedBy(parent, s));

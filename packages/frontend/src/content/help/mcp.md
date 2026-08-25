@@ -18,7 +18,9 @@ this client to have:
   force-update (re-pull a service's image and recreate its containers — you get
   a snapshot and an email each time one runs).
 - **mutate** — adds deploy/update/add-route/create-check.
-- **destroy** — adds delete/exec/restore/purge. Use sparingly.
+- **destroy** — adds delete/restore/purge. Use sparingly.
+- **exec** — adds `exec_command`/`container_exec` (a shell on the box). Nothing
+  else grants it: a token has shell only if you tick this box.
 
 The token is shown **once** when you create it — copy it now. Format:
 `sb_<id>_<secret>`. Revoke any time without affecting other clients.
