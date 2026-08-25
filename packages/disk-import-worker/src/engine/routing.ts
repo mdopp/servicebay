@@ -201,6 +201,31 @@ export function destinationArea(owner: Owner): string {
   return owner === 'shared' ? 'shared' : owner;
 }
 
+/** The set of category folder names a target path can start with when SHARED. */
+const CATEGORY_FOLDERS: ReadonlySet<string> = new Set(
+  Object.values(CATEGORIES)
+    .map(c => c.folder.replace(/\/+$/, ''))
+    .filter(f => f !== ''),
+);
+
+/**
+ * The INVERSE of `resolveTargetPath`'s owner prefix: recover the destination area
+ * from a target path. `resolveTargetPath` emits `<category>/…` for `shared` and
+ * `<owner>/<category>/…` for a user, so the first segment decides — a known
+ * CATEGORY folder means shared, anything else is the owner id.
+ *
+ * Used by the APPLY path (plan.ts), whose catalog reads/writes must be scoped to
+ * the same area the planner deduped under (#2631) — reading `shared` for a
+ * private-area target makes a prior import invisible, which turns a conflict into
+ * a silent `rsync -a` overwrite. Prefer the item's own `area` (stamped by
+ * `buildPlan`); this is the fallback for a plan sidecar written before #2631.
+ */
+export function areaOfTarget(target: string): string {
+  const first = relSegments(target)[0];
+  if (first === undefined) return 'shared';
+  return CATEGORY_FOLDERS.has(first) ? 'shared' : first;
+}
+
 // --- target-path resolution (issue #1913) ----------------------------------
 //
 // Derive a file's TARGET path (relative to `file-share/data/`) from its resolved

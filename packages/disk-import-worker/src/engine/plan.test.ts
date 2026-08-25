@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { applyPlan, resolveTargetPath, type AsyncHashResolver } from './plan';
+import { buildPlan } from './dedup';
 import { ImportCatalog } from './catalog';
 import { resolveShareTarget, resolveSupersededPath, type SafeExec, type SafeExecResult } from './hostExec';
 import type { ImportPlan, ImportPlanItem, ImportRecord } from './types';
@@ -443,6 +444,117 @@ describe('applyPlan — dry run + skips', () => {
     expect(calls).toHaveLength(0);
     expect(res.items.map(i => i.outcome)).toEqual(['skipped-junk', 'skipped-dupe']);
     catalog.close();
+  });
+});
+
+describe('applyPlan — the catalog is scoped to the item DESTINATION AREA (#2631)', () => {
+  const sha = (c: string) => c.repeat(64);
+  const TARGET = 'mdopp/documents/report.pdf';
+  const docRecord = (over: Partial<ImportRecord> = {}) =>
+    record({ sourcePath: `${MOUNT}/report.pdf`, name: 'report.pdf', ext: 'pdf', size: 5000, ...over });
+  const docItem = (over: Partial<ImportPlanItem> = {}) =>
+    item({ category: 'documents', target: TARGET, record: docRecord(), ...over });
+
+  it('writes the catalog row under the OWNER area — not silently under shared', async () => {
+    const { exec } = mockExec();
+    const catalog = new ImportCatalog(':memory:');
+    await applyPlan(planOf(docItem({ area: 'mdopp' })), baseOpts(exec, catalog, hashConst(sha('a'))));
+
+    // The row must be readable with the SAME area the planner deduped under …
+    expect(catalog.getByTarget(TARGET, 'mdopp')?.sha256).toBe(sha('a'));
+    expect(catalog.has(sha('a'), TARGET, 'mdopp')).toBe(true);
+    // … and must NOT have landed in the shared area (that mismatch is the bug).
+    expect(catalog.getByTarget(TARGET, 'shared')).toBeUndefined();
+    catalog.close();
+  });
+
+  it('derives the area from the target when a legacy plan sidecar carries no `area`', async () => {
+    const { exec } = mockExec();
+    const catalog = new ImportCatalog(':memory:');
+    // A plan.json written before #2631 has no `area` on its items — the owner is
+    // still recoverable from the target's owner prefix, so the row is still
+    // area-correct rather than defaulting to shared.
+    await applyPlan(planOf(docItem()), baseOpts(exec, catalog, hashConst(sha('a'))));
+    expect(catalog.getByTarget(TARGET, 'mdopp')?.sha256).toBe(sha('a'));
+    expect(catalog.getByTarget(TARGET, 'shared')).toBeUndefined();
+    catalog.close();
+  });
+
+  it('resume skip still bites within the owner area (same bytes, same area+target)', async () => {
+    const { exec, calls } = mockExec();
+    const catalog = new ImportCatalog(':memory:');
+    catalog.upsert({ sha256: sha('a'), area: 'mdopp', target: TARGET, sourcePath: `${MOUNT}/report.pdf`, size: 5000, importedAtMs: 0 });
+
+    const res = await applyPlan(planOf(docItem({ area: 'mdopp' })), baseOpts(exec, catalog, hashConst(sha('a'))));
+
+    expect(res.items[0].outcome).toBe('skipped-cataloged');
+    expect(calls.some(c => c[0] === 'rsync')).toBe(false);
+    catalog.close();
+  });
+
+  it('REFUSES a plain overwrite: different bytes already cataloged at this area+target are superseded first', async () => {
+    const { exec, calls } = mockExec();
+    const catalog = new ImportCatalog(':memory:');
+    // The catalog says a DIFFERENT file already occupies this exact area+target.
+    catalog.upsert({ sha256: sha('a'), area: 'mdopp', target: TARGET, sourcePath: '/oldDisk/report.pdf', size: 4000, importedAtMs: 0 });
+
+    // The plan item says plain `copy` (a stale/legacy plan, or one built before the
+    // catalog gained the row). The apply is the LAST line of defence: it must park
+    // the existing file in _superseded/ rather than rsync straight over it.
+    const res = await applyPlan(planOf(docItem({ area: 'mdopp', action: 'copy' })), baseOpts(exec, catalog, hashConst(sha('b'))));
+
+    expect(res.items[0].outcome).toBe('superseded');
+    const mvAt = calls.findIndex(c => c[0] === 'mv');
+    const rsyncAt = calls.findIndex(c => c[0] === 'rsync');
+    expect(mvAt).toBeGreaterThanOrEqual(0);
+    expect(calls[mvAt]).toEqual(['mv', resolveShareTarget(TARGET), resolveSupersededPath(`2026-06-05/${TARGET}`)]);
+    // The existing file is parked BEFORE the newer one is written over its slot.
+    expect(mvAt).toBeLessThan(rsyncAt);
+    catalog.close();
+  });
+
+  it('plan → apply → re-plan: a genuinely different file at a used private target is flagged `conflict`', async () => {
+    const { exec } = mockExec();
+    const catalog = new ImportCatalog(':memory:');
+    const routing = {
+      relPathOf: (r: ImportRecord) => r.sourcePath.slice(MOUNT.length + 1),
+      explicit: new Map(),
+      rootDefault: { owner: 'mdopp' },
+    };
+
+    // Pass 1 — plan + apply the first disk's file into the private area.
+    const first = buildPlan([docRecord()], () => sha('a'), { catalog, routing });
+    expect(first.items[0].target).toBe(TARGET);
+    expect(first.items[0].action).toBe('copy');
+    await applyPlan(first, baseOpts(exec, catalog, hashConst(sha('a'))));
+
+    // Pass 2 — a SECOND disk holds a different file that routes to the same target.
+    // The planner must see the cataloged row (same area, same target, other bytes)
+    // and flag a conflict, so the apply parks the existing file instead of
+    // overwriting it. This is the whole point of the catalog.
+    const second = buildPlan([docRecord({ size: 6000 })], () => sha('b'), { catalog, routing });
+    expect(second.items[0].action).toBe('conflict');
+    expect(second.conflicts).toHaveLength(1);
+    expect(second.conflicts[0]).toMatchObject({
+      target: TARGET,
+      existing: { sha256: sha('a') },
+      incoming: { sha256: sha('b') },
+    });
+    catalog.close();
+  });
+
+  it('buildPlan stamps every planned item with the area it deduped under', () => {
+    const routing = {
+      relPathOf: (r: ImportRecord) => r.sourcePath.slice(MOUNT.length + 1),
+      explicit: new Map([['cdopp', { owner: 'cdopp' as const }]]),
+      rootDefault: {},
+    };
+    const mine = docRecord({ sourcePath: `${MOUNT}/cdopp/report.pdf` });
+    const ours = docRecord({ sourcePath: `${MOUNT}/report.pdf`, size: 6000 });
+    const plan = buildPlan([mine, ours], () => sha('a'), { routing });
+
+    expect(plan.items.find(i => i.record.sourcePath === mine.sourcePath)?.area).toBe('cdopp');
+    expect(plan.items.find(i => i.record.sourcePath === ours.sourcePath)?.area).toBe('shared');
   });
 });
 

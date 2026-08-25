@@ -168,6 +168,16 @@ export interface ImportPlanItem {
   target: string | null;
   action: ImportAction;
   /**
+   * The DESTINATION AREA this item was deduped under (owner-derived, #1912):
+   * `shared` or a box-user id. The catalog key is (sha256, area, target), so the
+   * apply path MUST read/write with this same area — scoping its reads to
+   * `shared` while the planner deduped under a private area hides a prior import
+   * from conflict detection and turns an overwrite into a silent one (#2631).
+   * Absent on plan sidecars written before #2631; the apply then recovers it from
+   * the target's owner prefix (`areaOfTarget`).
+   */
+  area?: string;
+  /**
    * True when `target` was disambiguated because a different-content file already
    * claimed the natural name (in-tree, #2006). The action is still `copy` (the
    * file IS imported); this flag only drives the review wording ("renamed, nothing

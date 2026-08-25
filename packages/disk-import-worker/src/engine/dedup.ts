@@ -239,6 +239,10 @@ export function buildPlan(
       category: c.category,
       target: decision.target,
       action: decision.action,
+      // Carry the dedup AREA onto the item so the apply pass keys the catalog the
+      // same way the planner just did (#2631) — the plan sidecar is the only thing
+      // that crosses into the apply, and re-deriving the area there guesses.
+      area,
       ...(decision.renamed ? { renamed: true } : {}),
     });
   }

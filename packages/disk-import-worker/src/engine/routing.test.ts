@@ -4,6 +4,7 @@ import {
   effectiveRule,
   autoAssignOwners,
   destinationArea,
+  areaOfTarget,
   dedupsFor,
   parentDir,
   topLevelSegment,
@@ -145,6 +146,33 @@ describe('destinationArea + dedupsFor', () => {
     expect(dedupsFor('archive_1to1')).toBe(false);
     expect(dedupsFor('skip')).toBe(false);
     expect(dedupsFor('photos_immich')).toBe(false);
+  });
+});
+
+describe('areaOfTarget — the inverse of the owner prefix (#2631)', () => {
+  it('a shared target (starts at a category folder) → shared, for EVERY category', () => {
+    // The pre-#2631 helper only special-cased `photos`, so every other shared
+    // target reported its CATEGORY folder as the owner.
+    for (const folder of ['photos', 'movies', 'music', 'audiobooks', 'podcasts', 'documents']) {
+      expect(areaOfTarget(`${folder}/deep/file.bin`)).toBe('shared');
+    }
+  });
+
+  it('an owner-prefixed target → that owner, for EVERY category', () => {
+    for (const folder of ['photos', 'movies', 'music', 'audiobooks', 'podcasts', 'documents']) {
+      expect(areaOfTarget(`mdopp/${folder}/deep/file.bin`)).toBe('mdopp');
+    }
+  });
+
+  it('round-trips whatever resolveTargetPath emits', () => {
+    for (const owner of ['shared', 'mdopp', 'cdopp']) {
+      const target = resolveTargetPath('Docs/inbox/a.pdf', 'documents', { owner, anchor: 'Docs' })!;
+      expect(areaOfTarget(target)).toBe(destinationArea(owner));
+    }
+  });
+
+  it('an empty target is shared (nothing addressable)', () => {
+    expect(areaOfTarget('')).toBe('shared');
   });
 });
 
