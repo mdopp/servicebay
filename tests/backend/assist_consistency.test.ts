@@ -151,6 +151,57 @@ describe('MCP tool-name drift in agent-facing docs', () => {
   });
 });
 
+// --- ESLint sb/* rule-name drift (#2634) -------------------------------------
+// The custom rules are the documented enforcement point for several
+// architecture decisions, so the docs name them — and a name that no longer
+// exists (or never did) fails silently in the direction that matters: a
+// developer who writes `// eslint-disable-next-line sb/<wrong-name>` gets no
+// "rule not found" error, the disable comment no-ops, and the real rule keeps
+// firing. `docs/UX_DECISIONS.md` carried `sb/no-backend-from-frontend` for the
+// rule actually called `sb/no-fe-backend-import` until #2634.
+//
+// eslint.config.mjs is the source of truth: a rule is usable under the `sb/`
+// prefix iff the config registers it there.
+const ESLINT_CONFIG = path.join(REPO_ROOT, 'eslint.config.mjs');
+/** `sb/<rule>` occurrences, ignoring path segments like `tools/sb/internal`. */
+const SB_RULE_RE = /(?<![\w/-])sb\/([a-z][a-z0-9-]*)/g;
+
+describe('ESLint sb/* rule-name drift in docs', () => {
+  const registered = new Set(
+    [...fs.readFileSync(ESLINT_CONFIG, 'utf-8').matchAll(SB_RULE_RE)].map(m => m[1]),
+  );
+
+  it('extracted the registered sb/* rule names from eslint.config.mjs', () => {
+    expect(registered.size).toBeGreaterThanOrEqual(5);
+    expect(registered.has('no-fe-backend-import')).toBe(true);
+    expect(registered.has('no-raw-color-literal')).toBe(true);
+  });
+
+  it('every sb/* rule the docs and assists name is registered', () => {
+    const docFiles = [
+      path.join(REPO_ROOT, 'CLAUDE.md'),
+      path.join(TEMPLATES_DIR, 'CLAUDE.md'),
+      ...walk(path.join(REPO_ROOT, 'docs')).filter(f => f.endsWith('.md')),
+      ...walk(ASSISTS_DIR).filter(f => f.endsWith('.md')),
+    ].filter(f => fs.existsSync(f));
+    expect(docFiles.length).toBeGreaterThan(5);
+
+    const hits: string[] = [];
+    for (const file of docFiles) {
+      for (const m of fs.readFileSync(file, 'utf-8').matchAll(SB_RULE_RE)) {
+        if (!registered.has(m[1])) {
+          hits.push(`${path.relative(REPO_ROOT, file)} — \`sb/${m[1]}\` is not a registered ESLint rule`);
+        }
+      }
+    }
+    expect(
+      [...new Set(hits)],
+      `Stale ESLint rule name(s) in docs:\n${[...new Set(hits)].join('\n')}\n`
+      + `Registered: ${[...registered].map(r => `sb/${r}`).sort().join(', ')}`,
+    ).toEqual([]);
+  });
+});
+
 describe('secret hygiene', () => {
   it('no committed template or assist contains a real secret', () => {
     const files = [...walk(ASSISTS_DIR), ...walk(TEMPLATES_DIR)];

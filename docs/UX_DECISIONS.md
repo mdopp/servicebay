@@ -295,8 +295,9 @@ production.
 - `packages/api-client/src/*.ts` — Zod schemas (the source of truth).
 - `packages/frontend/tsconfig.json` paths — only `@servicebay/api-client`
   is import-visible from frontend.
-- ESLint rule `sb/no-backend-from-frontend` — blocks
-  `@/lib/...` imports from `packages/frontend/src/components/**` / `packages/frontend/src/hooks/**`.
+- ESLint rule `sb/no-fe-backend-import` — blocks `@/lib/...` and
+  `@servicebay/backend/...` imports from `packages/frontend/src/components/**`,
+  `packages/frontend/src/hooks/**` and `packages/frontend/src/dashboards/**`.
 - depcruise rule in `.dependency-cruiser.cjs` — fails the build
   on backend → frontend or frontend → backend-internal imports.
 - `docs/ARCHITECTURE_INVARIANTS.md` "FE/BE workspace boundary" row.
