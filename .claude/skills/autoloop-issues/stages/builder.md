@@ -25,9 +25,9 @@ Rationale: `check:arch` (global, fast) catches import/structure breakage per iss
 
 **Claim FIRST — before you touch a file.** The claim is what stops a second loop instance building the same issue:
 ```bash
-npm run autoloop:queue -- claim <unit id>     # exit 0 = yours; exit 3 = someone else's
+npm run autoloop:queue -- claim <unit id>     # exit 0 = yours; exit 3 = NOT yours
 ```
-**Exit 3 means another instance holds it — do NOT build.** Return `Builder: unit <id> already claimed by another instance, nothing built.` The claim is an atomic `refs/autoloop/claim/<issue>` create (SKILL.md § state), so this is a real lock, not a hint; `autoloop:building` on the issue is its visible projection. If you bounce or abandon the unit, give the claim back with `npm run autoloop:queue -- unclaim <unit id>`.
+**Exit 3 means you do not hold it — do NOT build.** It prints why: `held by another loop instance` (a rival won the ref) or `the claim could not be taken` (it could not be proven — fail closed). Return `Builder: unit <id> not claimed (<the reason>), nothing built.` The claim is an atomic `refs/autoloop/claim/<issue>` create (SKILL.md § state), so this is a real lock, not a hint; `autoloop:building` on the issue is its visible projection. If you bounce or abandon the unit, give the claim back with `npm run autoloop:queue -- unclaim <unit id>`.
 
 Then the branch:
 - `npm run autoloop:queue -- summary` — if `batch` is null: `git checkout main && git pull --ff-only && git checkout -b batch/$(date +%Y-%m-%d)<letter>`, then `npm run autoloop:queue -- batch new --branch <that branch>`.

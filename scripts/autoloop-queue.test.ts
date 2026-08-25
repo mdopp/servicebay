@@ -16,6 +16,12 @@
  *      by POSIX `mkdir` (the same create-if-not-exists semantics GitHub's
  *      `POST /git/refs` gives: HTTP 422 "Reference already exists", verified
  *      live against this repo on 2026-08-25). Exactly one may win.
+ *
+ * The stub also enforces GitHub's OTHER 422 — "Object does not exist" when the
+ * ref's target is not an object the remote has (#2646). That is what made every
+ * real claim fail: the target was local `HEAD`, i.e. the batch branch, which is
+ * deliberately never pushed while building. So the fixture is a real git repo
+ * with a real "remote", and its HEAD is deliberately unpushed.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -41,6 +47,7 @@ import {
   freshCache,
   parkUnits,
   pruneState,
+  resolveClaimSha,
   runVerb,
   splitGlobalArgs,
   verifyLabels,
@@ -50,6 +57,10 @@ import {
 } from './autoloop-queue';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
+const TSX = path.join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
+const SCRIPT = path.join(REPO_ROOT, 'scripts', 'autoloop-queue.ts');
+/** Any 40-hex string: `acquireClaim` refuses a target that is not object-shaped. */
+const REMOTE_SHA = 'a'.repeat(40);
 
 /** A recording `gh` whose per-call verdict the test controls. */
 function fakeGh(verdict: (args: string[]) => { ok: boolean; out: string } = () => ({ ok: true, out: '' })) {
@@ -67,7 +78,7 @@ const isLabelAdd = (a: string[]) => a.includes('issue') && a.includes('--add-lab
 describe('claim — the cross-instance lock', () => {
   it('is granted ONLY by the atomic ref create, and the label follows it', () => {
     const { gh, calls } = fakeGh();
-    const r = acquireClaim([2639], gh, { sha: 'abc' });
+    const r = acquireClaim([2639], gh, { sha: REMOTE_SHA });
     expect(r.ok).toBe(true);
     // First call must be the create-if-not-exists; the label projection is after.
     expect(isRefCreate(calls[0])).toBe(true);
@@ -82,7 +93,7 @@ describe('claim — the cross-instance lock', () => {
     const { gh, calls } = fakeGh(a =>
       isRefCreate(a) ? { ok: false, out: 'Reference already exists (HTTP 422)' } : { ok: true, out: '' },
     );
-    const r = acquireClaim([2639], gh, { sha: 'abc' });
+    const r = acquireClaim([2639], gh, { sha: REMOTE_SHA });
     expect(r.ok).toBe(false);
     expect(r.lostOn).toBe(2639);
     // THE mutation guard: a lost claim must not reach the label, and must not
@@ -93,8 +104,21 @@ describe('claim — the cross-instance lock', () => {
 
   it('fails CLOSED on a transport error too (an unproven claim is not a claim)', () => {
     const { gh, calls } = fakeGh(a => (isRefCreate(a) ? { ok: false, out: 'dial tcp: i/o timeout' } : { ok: true, out: '' }));
-    expect(acquireClaim([2639], gh, { sha: 'abc' }).ok).toBe(false);
+    expect(acquireClaim([2639], gh, { sha: REMOTE_SHA }).ok).toBe(false);
     expect(calls.some(isLabelAdd)).toBe(false);
+  });
+
+  it('fails CLOSED with no usable target — no create is even attempted (#2646)', () => {
+    // A ref we cannot point at an object the remote has can never be won, so
+    // this must not grant a claim. Dropping the guard turns this red.
+    const { gh, calls } = fakeGh();
+    for (const sha of ['', 'HEAD', 'abc']) {
+      const r = acquireClaim([2639], gh, { sha });
+      expect(r.ok).toBe(false);
+      expect(r.won).toEqual([]);
+      expect(r.detail).toContain('no remote-known claim target');
+    }
+    expect(calls).toEqual([]);
   });
 
   it('claims a cluster all-or-nothing: a partial win is rolled back', () => {
@@ -104,7 +128,7 @@ describe('claim — the cross-instance lock', () => {
         ? { ok: false, out: 'Reference already exists (HTTP 422)' }
         : { ok: true, out: '' },
     );
-    const r = acquireClaim([20, 10], gh, { sha: 'abc' });
+    const r = acquireClaim([20, 10], gh, { sha: REMOTE_SHA });
     expect(r.ok).toBe(false);
     expect(r.won).toEqual([]);
     // #10 must be given back, or both instances deadlock holding half a cluster.
@@ -114,70 +138,209 @@ describe('claim — the cross-instance lock', () => {
 
   it('claims in ascending issue order so racers collide on the same ref first', () => {
     const { gh, calls } = fakeGh();
-    acquireClaim([30, 10, 20], gh, { sha: 'abc' });
+    acquireClaim([30, 10, 20], gh, { sha: REMOTE_SHA });
     const created = calls.filter(isRefCreate).map(a => a.find(x => x.startsWith('ref='))!);
     expect(created).toEqual([`ref=${claimRef(10)}`, `ref=${claimRef(20)}`, `ref=${claimRef(30)}`]);
   });
+});
+
+describe('resolveClaimSha — a target the remote is guaranteed to have (#2646)', () => {
+  it('prefers the origin/main tracking ref, and spends no API call doing it', () => {
+    const { gh, calls } = fakeGh();
+    expect(resolveClaimSha(gh, { git: () => REMOTE_SHA })).toBe(REMOTE_SHA);
+    expect(calls).toEqual([]);
+  });
+
+  it('asks the API for the default-branch tip when the checkout has no origin/main', () => {
+    const { gh, calls } = fakeGh(() => ({ ok: true, out: JSON.stringify({ object: { sha: REMOTE_SHA } }) }));
+    expect(resolveClaimSha(gh, { repo: 'o/r', git: () => null })).toBe(REMOTE_SHA);
+    expect(calls[0]).toEqual(['api', 'repos/o/r/git/ref/heads/main']);
+  });
+
+  it('yields nothing when neither resolves — the caller must then fail CLOSED', () => {
+    const { gh } = fakeGh(() => ({ ok: false, out: 'dial tcp: i/o timeout' }));
+    expect(resolveClaimSha(gh, { git: () => null })).toBe('');
+  });
+
+  it('refuses anything that is not object-shaped rather than passing it on', () => {
+    // e.g. a `git rev-parse` that echoed the ref name back, or a truncated sha.
+    const { gh } = fakeGh(() => ({ ok: true, out: JSON.stringify({ object: { sha: 'HEAD' } }) }));
+    expect(resolveClaimSha(gh, { git: () => 'refs/remotes/origin/main' })).toBe('');
+  });
+});
+
+/**
+ * A REAL git checkout with a REAL remote, plus a `gh` stub that enforces BOTH of
+ * GitHub's create-ref 422s: "Reference already exists" (the lock) and "Object
+ * does not exist" (#2646 — the target must be something the remote already has).
+ *
+ * The work tree sits on a batch branch whose commit was deliberately never
+ * pushed, which is exactly the state a builder claims from. `mkdir` is atomic
+ * create-if-not-exists on POSIX, the same contract POST /git/refs offers.
+ */
+function claimFixture() {
+  const root = mkdtempSync(path.join(tmpdir(), 'autoloop-claim-'));
+  const remote = path.join(root, 'remote.git');
+  const work = path.join(root, 'work');
+  const store = path.join(root, 'refs'); // the shared "GitHub" ref namespace
+  const log = path.join(root, 'gh.log');
+  const bin = path.join(root, 'bin');
+  for (const d of [store, bin]) mkdirSync(d, { recursive: true });
+  writeFileSync(log, '');
+
+  const gitEnv = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_AUTHOR_NAME: 'autoloop-test',
+    GIT_AUTHOR_EMAIL: 'autoloop@test.invalid',
+    GIT_COMMITTER_NAME: 'autoloop-test',
+    GIT_COMMITTER_EMAIL: 'autoloop@test.invalid',
+  };
+  const git = (args: string[], cwd = work): string => {
+    const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: gitEnv });
+    if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  git(['init', '--bare', '-b', 'main', remote], root);
+  git(['init', '-b', 'main', work], root);
+  git(['remote', 'add', 'origin', remote]);
+  git(['commit', '--allow-empty', '-m', 'published']);
+  git(['push', '-u', 'origin', 'main']);
+  git(['checkout', '-b', 'batch/2026-01-01a']);
+  git(['commit', '--allow-empty', '-m', 'batch work, NOT pushed']); // the builder's HEAD
+
+  const ghStub = path.join(bin, 'gh');
+  writeFileSync(
+    ghStub,
+    [
+      '#!/usr/bin/env bash',
+      `echo "$@" >> ${JSON.stringify(log)}`,
+      'if [[ "$1" == "api" && "$*" == *"/git/ref/heads/main"* ]]; then',
+      '  [[ -n "$GH_STUB_OFFLINE" ]] && { echo "dial tcp: i/o timeout" >&2; exit 1; }',
+      `  printf '{"object":{"sha":"%s"}}' "$(git -C ${JSON.stringify(remote)} rev-parse main)"; exit 0`,
+      'fi',
+      'if [[ "$1" == "api" && "$*" == *"POST"* && "$*" == *"/git/refs"* ]]; then',
+      '  for a in "$@"; do',
+      '    [[ "$a" == ref=* ]] && REF="${a#ref=}"',
+      '    [[ "$a" == sha=* ]] && SHA="${a#sha=}"',
+      '  done',
+      `  git -C ${JSON.stringify(remote)} cat-file -e "\${SHA}^{commit}" 2>/dev/null || {`,
+      '    echo "Object does not exist (HTTP 422)" >&2; exit 1; }',
+      `  mkdir ${JSON.stringify(store)}/"\${REF//\\//_}" 2>/dev/null || {`,
+      '    echo "Reference already exists (HTTP 422)" >&2; exit 1; }',
+      '  exit 0',
+      'fi',
+      'if [[ "$1" == "api" && "$*" == *"DELETE"* && "$*" == *"/git/refs/"* ]]; then',
+      '  for a in "$@"; do [[ "$a" == repos/* ]] && P="$a"; done',
+      '  REF="${P#*/git/}"',
+      `  rmdir ${JSON.stringify(store)}/"\${REF//\\//_}" 2>/dev/null`,
+      '  exit 0',
+      'fi',
+      'exit 0',
+    ].join('\n'),
+  );
+  chmodSync(ghStub, 0o755);
+
+  /** Each instance gets its OWN cache — that is what a second loop instance is. */
+  const seedCache = (name: string): string => {
+    const p = path.join(root, `cache-${name}.json`);
+    const d = freshCache();
+    d.units.u1 = { id: 'u1', kind: 'issue', issues: [2639], status: 'planned' } satisfies Unit;
+    new Cache(p).save(d);
+    return p;
+  };
+  const run = (verb: string[], cachePath: string, env: Record<string, string> = {}) =>
+    spawnSync(TSX, [SCRIPT, '--cache', cachePath, '--repo', 'mdopp/servicebay', ...verb], {
+      cwd: work, // the builder's cwd: a batch branch, unpushed
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...env },
+      timeout: 60_000,
+    });
+
+  return {
+    root,
+    store,
+    seedCache,
+    run,
+    /** Move the remote's main on, as a merge on `main` does between two claims. */
+    advanceOriginMain(): string {
+      git(['checkout', 'main']);
+      git(['commit', '--allow-empty', '-m', 'someone merged a PR']);
+      git(['push', 'origin', 'main']);
+      git(['checkout', 'batch/2026-01-01a']);
+      return git(['rev-parse', 'refs/remotes/origin/main']);
+    },
+    originMain: (): string => git(['rev-parse', 'refs/remotes/origin/main']),
+    head: (): string => git(['rev-parse', 'HEAD']),
+    ghLog: (): string[] => readFileSync(log, 'utf8').split('\n').filter(Boolean),
+    refCreates: (): string[] => readFileSync(log, 'utf8').split('\n').filter(l => l.includes('POST') && l.includes('/git/refs')),
+  };
+}
+
+describe('claim — against a remote that validates the ref target (#2646)', () => {
+  it('targets the published origin/main tip, NOT the unpushed batch HEAD', () => {
+    // The reproduction: with local HEAD as the target this exits 3 with
+    // "Object does not exist" — no claim is ever taken, so the only real
+    // cross-instance lock in the pipeline is absent in the normal case.
+    const f = claimFixture();
+    const p = f.run(['claim', 'u1'], f.seedCache('solo'));
+    expect(`${p.stdout}${p.stderr}`).not.toContain('Object does not exist');
+    expect(p.status).toBe(0);
+    expect(p.stdout).toContain('claimed u1');
+    const create = f.refCreates();
+    expect(create).toHaveLength(1);
+    expect(create[0]).toContain(`sha=${f.originMain()}`);
+    expect(create[0]).not.toContain(f.head());
+    expect(readdirSync(f.store)).toEqual([claimRef(2639).replaceAll('/', '_')]);
+  }, 90_000);
+
+  it('round-trips: unclaim gives the ref back and the unit can be re-claimed', () => {
+    const f = claimFixture();
+    expect(f.run(['claim', 'u1'], f.seedCache('a')).status).toBe(0);
+    expect(f.run(['unclaim', 'u1'], f.seedCache('a')).status).toBe(0);
+    expect(readdirSync(f.store)).toEqual([]);
+    const again = f.run(['claim', 'u1'], f.seedCache('b'));
+    expect(again.status).toBe(0);
+    expect(again.stdout).toContain('claimed u1');
+  }, 90_000);
+
+  it('stays atomic on the ref NAME when origin/main moves between two claims', () => {
+    // The target is free, so two claims may aim at DIFFERENT objects; the
+    // create-if-not-exists is on the name, so the second one still loses.
+    const f = claimFixture();
+    expect(f.run(['claim', 'u1'], f.seedCache('first')).status).toBe(0);
+    const moved = f.advanceOriginMain();
+    const second = f.run(['claim', 'u1'], f.seedCache('second'));
+    expect(second.status).toBe(3);
+    expect(second.stdout).toContain('held by another loop instance');
+    expect(second.stdout).toContain('Reference already exists');
+    // …and it really did aim at the NEW tip — a different object, same name.
+    expect(f.refCreates().at(-1)).toContain(`sha=${moved}`);
+    expect(readdirSync(f.store)).toEqual([claimRef(2639).replaceAll('/', '_')]);
+  }, 90_000);
+
+  it('fails CLOSED when no remote-known target can be resolved', () => {
+    // No origin tracking ref (a shallow/detached checkout) AND an API that is
+    // unreachable => nothing to point the ref at. That must not grant a claim.
+    const f = claimFixture();
+    spawnSync('git', ['update-ref', '-d', 'refs/remotes/origin/main'], { cwd: path.join(f.root, 'work') });
+    const p = f.run(['claim', 'u1'], f.seedCache('closed'), { GH_STUB_OFFLINE: '1' });
+    expect(p.status).toBe(3);
+    expect(p.stdout).toContain('no remote-known claim target');
+    expect(f.refCreates()).toEqual([]); // never even attempted
+    expect(f.ghLog().some(l => l.includes('--add-label') && l.includes(L_BUILDING))).toBe(false);
+  }, 90_000);
 });
 
 describe('claim — six concurrent loop instances (the double-claim proof)', () => {
   const INSTANCES = 6;
 
   it('lets exactly ONE instance win, and only that one labels the issue', () => {
-    const root = mkdtempSync(path.join(tmpdir(), 'autoloop-claim-'));
-    const store = path.join(root, 'refs'); // the shared "GitHub" ref namespace
-    const log = path.join(root, 'gh.log');
-    mkdirSync(store, { recursive: true });
-    writeFileSync(log, '');
-
-    // A `gh` stub. `mkdir` is atomic create-if-not-exists on POSIX — the same
-    // contract GitHub's POST /git/refs offers (422 when the ref exists).
-    const bin = path.join(root, 'bin');
-    mkdirSync(bin, { recursive: true });
-    const ghStub = path.join(bin, 'gh');
-    writeFileSync(
-      ghStub,
-      [
-        '#!/usr/bin/env bash',
-        `echo "$@" >> ${JSON.stringify(log)}`,
-        'if [[ "$1" == "api" && "$*" == *"POST"* && "$*" == *"/git/refs"* ]]; then',
-        '  for a in "$@"; do [[ "$a" == ref=* ]] && REF="${a#ref=}"; done',
-        `  mkdir ${JSON.stringify(store)}/"\${REF//\\//_}" 2>/dev/null || {`,
-        '    echo "Reference already exists (HTTP 422)" >&2; exit 1; }',
-        '  exit 0',
-        'fi',
-        'exit 0',
-      ].join('\n'),
-    );
-    chmodSync(ghStub, 0o755);
-
-    const unit: Unit = { id: 'u1', kind: 'issue', issues: [2639], status: 'planned' };
-    const runs = Array.from({ length: INSTANCES }, (_, i) => {
-      // Each instance gets its OWN cache — that is what a second loop instance
-      // is, and exactly the case the old local-file claim could not survive.
-      const cachePath = path.join(root, `cache-${i}.json`);
-      const c = new Cache(cachePath);
-      const d = freshCache();
-      d.units.u1 = { ...unit };
-      c.save(d);
-      return cachePath;
-    });
-
-    const tsx = path.join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
-    const script = path.join(REPO_ROOT, 'scripts', 'autoloop-queue.ts');
+    const f = claimFixture();
+    const caches = Array.from({ length: INSTANCES }, (_, i) => f.seedCache(String(i)));
     // Start them as close to simultaneously as possible, then collect.
-    const procs = runs.map(cachePath =>
-      spawnSync(
-        tsx,
-        [script, '--cache', cachePath, '--repo', 'mdopp/servicebay', 'claim', 'u1'],
-        {
-          cwd: REPO_ROOT,
-          encoding: 'utf8',
-          env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
-          timeout: 60_000,
-        },
-      ),
-    );
+    const procs = caches.map(cachePath => f.run(['claim', 'u1'], cachePath));
 
     const winners = procs.filter(p => p.status === 0);
     const losers = procs.filter(p => p.status === 3);
@@ -185,11 +348,13 @@ describe('claim — six concurrent loop instances (the double-claim proof)', () 
     expect(losers).toHaveLength(INSTANCES - 1);
     expect(winners[0].stdout).toContain('claimed u1');
     for (const l of losers) expect(l.stdout).toContain('held by another loop instance');
+    // Every instance aimed at an object the remote HAS — none was rejected for
+    // the target (the #2646 failure would make all six lose, "winners" = 0).
+    for (const p of procs) expect(`${p.stdout}${p.stderr}`).not.toContain('Object does not exist');
 
     // Exactly one ref exists, and the label was projected exactly once.
-    expect(readdirSync(store)).toEqual([claimRef(2639).replaceAll('/', '_')]);
-    const ghLog = readFileSync(log, 'utf8').split('\n').filter(Boolean);
-    expect(ghLog.filter(l => l.includes('--add-label') && l.includes(L_BUILDING))).toHaveLength(1);
+    expect(readdirSync(f.store)).toEqual([claimRef(2639).replaceAll('/', '_')]);
+    expect(f.ghLog().filter(l => l.includes('--add-label') && l.includes(L_BUILDING))).toHaveLength(1);
   }, 90_000);
 });
 
@@ -251,7 +416,7 @@ describe('verbs — batch, verify, park', () => {
     const f = fakeGh();
     calls = f.calls;
     out = [];
-    ctx = { cache, gh: f.gh, offline: false, sha: () => 'deadbee', now: () => 1_000_000, out: s => out.push(s) };
+    ctx = { cache, gh: f.gh, offline: false, sha: () => REMOTE_SHA, now: () => 1_000_000, out: s => out.push(s) };
   });
 
   it('counts the batch in ISSUES, not units (a cluster carries several)', () => {
