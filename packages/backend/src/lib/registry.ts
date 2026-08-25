@@ -8,6 +8,18 @@ import { DATA_DIR } from './dirs';
 import { readManifestAnnotations } from './template/contract';
 import { parseStackManifest, type StackManifest } from './template/stackContract';
 import { logger } from './logger';
+import {
+    REGISTRY_GIVE_UP_AFTER,
+    hasGivenUp,
+    loadRegistrySyncState,
+    nextFailureRecord,
+    redactRegistryUrl,
+    redactSecrets,
+    registryStateKey,
+    saveRegistrySyncState,
+    type RegistrySyncOutcome,
+    type RegistrySyncSummary,
+} from './registrySyncState';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -471,11 +483,34 @@ async function cloneRegistry(reg: RegistryConfig, regPath: string): Promise<void
     }
 }
 
-export async function syncRegistries() {
+/**
+ * Pull every configured registry and report, per registry, what actually
+ * happened (#2610).
+ *
+ * Two behaviours the caller can rely on:
+ *  - the return value carries the denominator (`requested`) next to `synced`,
+ *    so no caller can render "refreshed" from a run that refreshed a subset;
+ *  - a registry that has failed `REGISTRY_GIVE_UP_AFTER` times in a row is not
+ *    attempted again on an automatic sync. It comes back as `status:'skipped'`
+ *    with the reason, instead of burning a clone and a WARN line every cycle
+ *    for a cause that never fixes itself (a private repo with no credentials).
+ *
+ * `force: true` — the operator's explicit "Sync Registries" click — ignores the
+ * give-up state, so fixing the cause is one button away from being re-checked.
+ */
+export async function syncRegistries(opts: { force?: boolean } = {}): Promise<RegistrySyncSummary> {
     const config = await getConfig();
     const registries = getRegistries(config);
+    const results: RegistrySyncOutcome[] = [];
+    const summarise = (): RegistrySyncSummary => ({
+        requested: results.length,
+        synced: results.filter(r => r.status === 'synced').length,
+        failed: results.filter(r => r.status === 'failed').length,
+        skipped: results.filter(r => r.status === 'skipped').length,
+        results,
+    });
 
-    if (registries.length === 0) return;
+    if (registries.length === 0) return summarise();
 
     // The official ServiceBay container bundles git (#443). This guard
     // stays for unofficial runtime environments — without git we can
@@ -484,7 +519,17 @@ export async function syncRegistries() {
     // and skip rather than fail every server start.
     if (!(await isGitAvailable())) {
         logger.info('registry', 'Registry sync skipped: git not available (built-in templates still served).');
-        return;
+        for (const reg of registries) {
+            results.push({
+                name: reg.name,
+                url: redactRegistryUrl(reg.url),
+                status: 'skipped',
+                kind: 'unknown',
+                reason: 'git is not available in this runtime',
+                advice: 'Built-in templates are still served; external registries need git in the container.',
+            });
+        }
+        return summarise();
     }
 
     try {
@@ -495,8 +540,36 @@ export async function syncRegistries() {
     // this round are picked up. Pre-existing readers will re-read once.
     manifestCache.clear();
 
+    const state = await loadRegistrySyncState();
+    const now = new Date().toISOString();
+
     for (const reg of registries) {
         const regPath = path.join(REGISTRIES_DIR, reg.name);
+        const safeUrl = redactRegistryUrl(reg.url);
+        const key = registryStateKey(reg.name, reg.url);
+        const record = state[key];
+
+        // A registry whose failure has already proven permanent is not tried
+        // again on an automatic sync (#2610). It stays in the state file and in
+        // the summary — visible and explained — instead of producing an
+        // identical WARN on every boot and every install, forever.
+        if (!opts.force && hasGivenUp(record)) {
+            logger.debug(
+                'registry',
+                `Registry ${reg.name} (${safeUrl}) not retried: ${record.reason} after ${record.consecutiveFailures} attempts.`,
+            );
+            results.push({
+                name: reg.name,
+                url: safeUrl,
+                status: 'skipped',
+                kind: record.kind,
+                reason: record.reason,
+                advice: record.advice,
+                consecutiveFailures: record.consecutiveFailures,
+            });
+            continue;
+        }
+
         // Isolate each registry: a single bad URL (a 404'd repo, an
         // unreachable mirror) used to abort the entire loop, so the
         // registries listed *after* it never got synced — which is why
@@ -552,11 +625,34 @@ export async function syncRegistries() {
             if (manifest) {
                 await widenSparseForManifest(regPath, manifest);
             }
+            state[key] = { name: reg.name, url: safeUrl, consecutiveFailures: 0, lastAttemptAt: now, lastSuccessAt: now };
+            results.push({ name: reg.name, url: safeUrl, status: 'synced' });
         } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            logger.warn('registry', `Registry ${reg.name} (${reg.url}) sync failed — skipping (other registries continue): ${msg}`);
+            const msg = redactSecrets(err instanceof Error ? err.message : String(err));
+            const { record: failure, diagnosis } = nextFailureRecord(record, reg, msg, now);
+            state[key] = failure;
+            const consecutiveFailures = failure.consecutiveFailures;
+            const givingUp = consecutiveFailures >= REGISTRY_GIVE_UP_AFTER;
+            logger.warn(
+                'registry',
+                `Registry ${reg.name} (${safeUrl}) sync failed — ${diagnosis.reason} ` +
+                `(attempt ${consecutiveFailures}${givingUp ? `; not retried automatically from now on — ${diagnosis.advice}` : ''}). ` +
+                `Other registries continue. git: ${msg}`,
+            );
+            results.push({
+                name: reg.name,
+                url: safeUrl,
+                status: 'failed',
+                kind: diagnosis.kind,
+                reason: diagnosis.reason,
+                advice: diagnosis.advice,
+                consecutiveFailures,
+            });
         }
     }
+
+    await saveRegistrySyncState(state);
+    return summarise();
 }
 
 export async function getTemplates(): Promise<Template[]> {

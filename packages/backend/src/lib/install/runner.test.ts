@@ -342,6 +342,22 @@ describe('summariseIncompleteRun — report the denominator, not the return stat
   });
 });
 
+// ─── #2610 — the registry line says what refreshed, not that something did ──
+describe('the install dialog’s registry refresh line (#2610)', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+
+  it('no longer claims "Refreshed external registries" regardless of outcome', () => {
+    // The exact string the reference box printed while one of its two
+    // registries had never synced once.
+    expect(src).not.toContain('Refreshed external registries to latest committed');
+  });
+
+  it('derives every logged line from the per-registry sync summary', () => {
+    expect(src).toMatch(/const summary = await syncRegistries\(\);/);
+    expect(src).toMatch(/for \(const line of formatRegistrySyncLog\(summary\)\) \{\s*await log\(jobId, line\);/);
+  });
+});
+
 describe('runJob terminal verdict + failure logging (#2601)', () => {
   const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
 
