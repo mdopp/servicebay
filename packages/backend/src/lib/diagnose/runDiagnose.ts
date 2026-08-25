@@ -14,6 +14,7 @@ import { agentManager } from '@/lib/agent/manager';
 import { logger } from '@/lib/logger';
 import { HealthStore } from '@/lib/health/store';
 import { getNodeTwin } from '@/lib/store/repository';
+import { getConfig } from '@/lib/config';
 import { actionsForProbe, resolveItemActions, type ProbeAction, type ProbeItem, type ResolvedProbeItem } from '@/lib/diagnose/actions';
 import { buildPortSourceMap, renderUnexpectedPort, type TwinPortService, type TwinPortContainer } from '@/lib/diagnose/portsProbe';
 import { checkNpmDataStale } from '@/lib/diagnose/probes/npmDataStale';
@@ -24,6 +25,17 @@ import { checkInstallHandlerFailed } from '@/lib/diagnose/probes/installHandlerF
 import { checkHostFirewallRule } from '@/lib/diagnose/probes/hostFirewallRule';
 import { checkMediaLibraryAccess } from '@/lib/diagnose/probes/mediaLibraryAccess';
 import { checkProxyRouteMissing } from '@/lib/diagnose/probes/proxyRouteMissing';
+import {
+  classifyDanglingRoute,
+  buildRouteItem,
+  tallyRouteStates,
+  formatRouteStateDetail,
+  formatRouteStateHint,
+  type DanglingRouteVerdict,
+  type PublishedPort,
+  type RouteOwner,
+  type RouteTargetService,
+} from '@/lib/diagnose/probes/danglingRouteState';
 import { checkNginxOnlineFailed } from '@/lib/diagnose/probes/nginxOnlineFailed';
 import { checkCertExpiry } from '@/lib/diagnose/probes/certExpiry';
 import { checkCertRequestFailure } from '@/lib/diagnose/probes/certRequestFailure';
@@ -810,6 +822,12 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
   //     action. The action handler lives in
   //     `lib/diagnose/probes/danglingProxy.ts` (registers
   //     `delete_route`).
+  //
+  //     #2611: "not served" is three different situations, and only one
+  //     of them is fixed by deleting. A redeploy that moves the published
+  //     host port leaves the route pointing at the old one while the
+  //     service is up and well — `classifyDanglingRoute` separates that
+  //     case out and it gets `repoint_route` instead.
   try {
     const twin = getNodeTwin(nodeName);
     type ProxyServer = {
@@ -819,7 +837,7 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
       server_name?: string[];
       locations?: { proxy_pass?: string }[];
     };
-    type TwinService = { ports?: { hostPort?: number; hostIp?: string }[] };
+    type TwinService = { name?: string; ports?: PublishedPort[] };
     type TwinContainer = { ports?: { hostPort?: number }[] };
     const proxyService = twin?.services?.find((s: { name?: string; proxyConfiguration?: unknown }) =>
       typeof s.proxyConfiguration === 'object' && s.proxyConfiguration !== null,
@@ -841,7 +859,17 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
         if (typeof p.hostPort === 'number') knownPorts.add(p.hostPort);
       }
     }
+    // Domain → owning service, as recorded when the route was created.
+    // The recorded `forwardPort` is deliberately NOT used as the repoint
+    // target: on a moved port it is precisely the stale value.
+    const routeOwners: RouteOwner[] = ((await getConfig()).reverseProxy?.hosts ?? [])
+      .map(h => ({ domain: h.domain, service: h.service }));
+    const targetServices: RouteTargetService[] = ((twin?.services ?? []) as TwinService[])
+      .filter((s): s is TwinService & { name: string } => typeof s.name === 'string')
+      .map(s => ({ name: s.name, ports: s.ports }));
+
     const danglingItems: ProbeItem[] = [];
+    const verdicts: DanglingRouteVerdict[] = [];
     for (const server of proxyConfig) {
       const targetHost = server.variable_fields?.targetHost;
       const targetPort = server.variable_fields?.targetPort ?? server._targetPort;
@@ -851,31 +879,15 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
       const isProxySelfRef = ['127.0.0.1', 'localhost', '::1'].includes(targetHost ?? '');
       if (isProxySelfRef) continue;
       if (!knownPorts.has(targetPort)) {
+        // The action handlers map domain → NPM proxy_host id at dispatch
+        // time (the digital twin doesn't track NPM's primary key — see
+        // danglingProxy.ts header comment), so the item id is the domain.
+        const route = { domain: server.server_name?.[0], targetHost, targetPort };
+        const verdict = classifyDanglingRoute(route, routeOwners, targetServices);
+        verdicts.push(verdict);
+        const item = buildRouteItem(route, verdict);
         const names = server.server_name ?? [];
-        const primaryDomain = names[0];
-        const label = names.join(', ') || '(unnamed)';
-        if (!primaryDomain) {
-          // No server_name — nothing to dispatch against. Surface as a
-          // read-only row instead of skipping entirely.
-          danglingItems.push({
-            id: `unnamed-${targetHost}-${targetPort}`,
-            label,
-            detail: `→ ${targetHost}:${targetPort}`,
-            status: 'warn',
-            actionIds: [],
-          });
-          continue;
-        }
-        // The action handler maps domain → NPM proxy_host id at
-        // dispatch time (the digital twin doesn't track NPM's primary
-        // key — see danglingProxy.ts header comment).
-        danglingItems.push({
-          id: primaryDomain,
-          label,
-          detail: `→ ${targetHost}:${targetPort}`,
-          status: 'warn',
-          actionIds: ['delete_route'],
-        });
+        danglingItems.push(names.length > 1 ? { ...item, label: names.join(', ') } : item);
       }
     }
 
@@ -894,9 +906,7 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     }
 
     const routeItems = [...danglingItems, ...missingItems];
-    const detailParts: string[] = [];
-    if (danglingItems.length) detailParts.push(`${danglingItems.length} dangling (target not served)`);
-    if (missingCount) detailParts.push(`${missingCount} missing (creation failed on install)`);
+    const tally = tallyRouteStates(proxyConfig.length, verdicts, missingCount);
     probes.push({
       id: 'dangling_proxy',
       label: 'Reverse-proxy routes',
@@ -907,12 +917,8 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
         ? (missingCount > 0
             ? `${missingCount} proxy host(s) failed to create on install — traffic hits NPM's default 404.`
             : 'No managed reverse proxy yet (or its config is not synced to the twin).')
-        : routeItems.length === 0
-          ? `${proxyConfig.length} proxy route(s), all reach a known service.`
-          : `${detailParts.join(' · ')}.`,
-      hint: routeItems.length > 0
-        ? 'Each row has a fix: "Delete route" removes a dangling NPM host (target gone); "Retry create" pushes a missing route back into NPM (most often a wrong-creds failure — see npm_data_stale).'
-        : undefined,
+        : formatRouteStateDetail(tally),
+      hint: routeItems.length > 0 ? formatRouteStateHint(tally) : undefined,
       _items: routeItems.length > 0 ? routeItems : undefined,
     });
   } catch (e) {
