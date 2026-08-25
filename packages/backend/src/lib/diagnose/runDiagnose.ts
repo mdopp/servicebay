@@ -45,6 +45,7 @@ import { checkDomainUnreachable } from '@/lib/diagnose/probes/domainUnreachable'
 import { checkDomainResolvesToBox } from '@/lib/diagnose/probes/domainResolvesToBox';
 import { checkOidcProviderReachable } from '@/lib/diagnose/probes/oidcProviderReachable';
 import { checkNasBackupReachable } from '@/lib/diagnose/probes/nasBackupReachable';
+import { checkContentBackup, checkConfigBackup } from '@/lib/diagnose/probes/backupCoverage';
 import { checkHaAutomationIntegrity } from '@/lib/diagnose/probes/haAutomationIntegrity';
 import { checkSsoVerify } from '@/lib/diagnose/probes/ssoVerify';
 import { checkHermesChat } from '@/lib/diagnose/probes/hermesChat';
@@ -129,6 +130,12 @@ const PROBE_GROUP: Record<string, ProbeGroup> = {
   disk: 'storage-backups',
   raid: 'storage-backups',
   nas_backup_reachable: 'storage-backups',
+  // #2615: two rows, never one. `nas_backup_reachable` says the NAS target is
+  // usable; `config_backup` says the nightly push actually ran; `content_backup`
+  // says whether the household data under /mnt/data is covered at all. Three
+  // green-looking things that mean three different things.
+  config_backup: 'storage-backups',
+  content_backup: 'storage-backups',
   // Host/OS state (#2585). Deliberately NOT `system-info`: that card is
   // collapsed because it holds things that are never a problem, and a
   // permanently-failing update loop is exactly the problem an operator is
@@ -1243,6 +1250,49 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     probes.push({
       id: 'nas_backup_reachable',
       label: 'Config backup (FritzBox NAS)',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 18a) The two backup MECHANISMS, as two separate rows (#2615). Probe 18
+  //      above only says the NAS *target* is usable. These say whether each
+  //      mechanism has actually run, and — for the content backup — whether it
+  //      was ever configured at all. On the reference box it never was: no
+  //      config, one failed run in 2026-07, and no signal of any kind for over
+  //      a year. They stay two rows because a green nightly config push says
+  //      nothing about the household data the other one covers.
+  try {
+    const cb = await checkContentBackup();
+    probes.push({
+      id: 'content_backup',
+      label: 'Content backup (Backup Sync)',
+      status: cb.status,
+      detail: cb.detail,
+      hint: cb.hint,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'content_backup',
+      label: 'Content backup (Backup Sync)',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  try {
+    const cfb = await checkConfigBackup();
+    probes.push({
+      id: 'config_backup',
+      label: 'Config backup (last nightly run)',
+      status: cfb.status,
+      detail: cfb.detail,
+      hint: cfb.hint,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'config_backup',
+      label: 'Config backup (last nightly run)',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

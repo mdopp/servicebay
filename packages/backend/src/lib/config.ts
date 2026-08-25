@@ -360,6 +360,23 @@ export interface AppConfig {
      *  (#1865). Bounded so the NAS can't fill; defaults to 7 when unset. */
     retention?: number;
     target?: ExternalBackupTarget;
+    /**
+     * Outcome of the LAST run of `backupInstalledServicesToNas` (#2615) —
+     * nightly cron or on-demand, whichever ran last. Before this existed the
+     * run's only trace was one journal line, so a healthy nightly push and a
+     * mechanism that had stopped years ago were indistinguishable from
+     * outside. The `config_backup` diagnose probe reads these fields; nothing
+     * else writes them. Mirrors the `backup.lastRun/lastStatus/lastMessage`
+     * shape so the two mechanisms report the same way.
+     */
+    lastRun?: string;
+    lastStatus?: 'success' | 'partial' | 'error';
+    lastMessage?: string;
+    /** Denominator first: how many services the run wrote, out of how many it
+     *  attempted. `0/0` means nothing installed ships a backup manifest — which
+     *  is emphatically not the same as a successful run. */
+    servicesOk?: number;
+    servicesTotal?: number;
   };
   /**
    * LLDAP admin credentials, persisted by the install wizard so the user can

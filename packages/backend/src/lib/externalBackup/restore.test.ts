@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 
 const { mockNas, mockCfg, mockNpmCredStatus, mockRekeyNpm, mockGetExecutor } = vi.hoisted(() => ({
   mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn() },
-  mockCfg: { getConfig: vi.fn(), saveConfig: vi.fn() },
+  mockCfg: { getConfig: vi.fn(), saveConfig: vi.fn(), updateConfig: vi.fn(async () => ({})) },
   mockNpmCredStatus: vi.fn(),
   mockRekeyNpm: vi.fn(),
   mockGetExecutor: vi.fn(),

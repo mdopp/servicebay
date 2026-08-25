@@ -27,7 +27,7 @@ const { mockNas, mockGetConfig, mockSendCommand, mockExecutor, mockGetExecutor }
 }));
 
 vi.mock('./nasClient', () => mockNas);
-vi.mock('../config', () => ({ getConfig: () => mockGetConfig() }));
+vi.mock('../config', () => ({ getConfig: () => mockGetConfig(), updateConfig: vi.fn(async () => ({})) }));
 vi.mock('../agent/manager', () => ({
   agentManager: { ensureAgent: vi.fn(async () => ({ sendCommand: mockSendCommand })) },
 }));

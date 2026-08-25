@@ -12,7 +12,7 @@ import path from 'path';
 // the production code path.
 const { mockNas, mockCfg } = vi.hoisted(() => ({
   mockNas: { nasUpload: vi.fn(), nasDownload: vi.fn(), nasList: vi.fn(), nasRemove: vi.fn() },
-  mockCfg: { getConfig: vi.fn() },
+  mockCfg: { getConfig: vi.fn(), updateConfig: vi.fn(async () => ({})) },
 }));
 vi.mock('./nasClient', () => mockNas);
 vi.mock('../config', () => mockCfg);
