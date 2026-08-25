@@ -25,6 +25,7 @@ import path from 'node:path';
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   Cache,
+  CACHE_DEFAULT,
   CACHE_VERSION,
   L_BUILDING,
   L_QUEUED,
@@ -41,6 +42,7 @@ import {
   parkUnits,
   pruneState,
   runVerb,
+  splitGlobalArgs,
   verifyLabels,
   type CacheState,
   type GhRunner,
@@ -355,6 +357,121 @@ describe('verbs — batch, verify, park', () => {
     const d = freshCache();
     d.units = { u1: { id: 'u1', issues: [1, 2] } };
     expect(batchIssueCount(d, { branch: 'b', count: 0, unit_ids: ['u1', 'gone'] })).toBe(2);
+  });
+});
+
+describe('CLI entry point — every verb is reachable however the globals are passed (#2644)', () => {
+  // WHY this exists, and why it spawns: `runVerb` was thoroughly tested while
+  // `main()` had NO coverage, so a CLI that printed usage for every real
+  // invocation shipped through a fully green suite. The one test that did spawn
+  // the script (the six-instance claim race) happened to pass BOTH --repo and
+  // --cache — the single argv shape the broken index arithmetic survived.
+  // So: drive it as a caller does (a real process), across the flag matrix.
+  const tsx = path.join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
+  const script = path.join(REPO_ROOT, 'scripts', 'autoloop-queue.ts');
+
+  /** A cache holding one planned unit, so a reachable `next` has something to print. */
+  const seededCache = (): string => {
+    const p = path.join(mkdtempSync(path.join(tmpdir(), 'autoloop-cli-')), 'cache.json');
+    const d = freshCache();
+    d.units.u1 = { id: 'u1', kind: 'issue', issues: [2644], status: 'planned' };
+    new Cache(p).save(d);
+    return p;
+  };
+
+  /** Run the script for real. `next` touches no network, so no `gh` stub is needed. */
+  const run = (args: string[], env: Record<string, string> = {}) => {
+    const base = { ...process.env, ...env };
+    delete base.AUTOLOOP_REPO;
+    return spawnSync(tsx, [script, ...args], { cwd: REPO_ROOT, encoding: 'utf8', env: base, timeout: 60_000 });
+  };
+
+  const REPO = 'mdopp/servicebay';
+  // Each flag combination is exercised in BOTH positions: an absent flag only
+  // ate the verb when the verb sat at argv[0], so a matrix that always puts the
+  // flags first would have passed straight through the bug.
+  const cases: [name: string, args: (cache: string) => string[], env?: (cache: string) => Record<string, string>][] = [
+    ['no flags at all', () => ['next'], cache => ({ AUTOLOOP_CACHE: cache })],
+    ['--repo only, before the verb', () => ['--repo', REPO, 'next'], cache => ({ AUTOLOOP_CACHE: cache })],
+    ['--repo only, after the verb', () => ['next', '--repo', REPO], cache => ({ AUTOLOOP_CACHE: cache })],
+    ['--cache only, before the verb', cache => ['--cache', cache, 'next']],
+    ['--cache only, after the verb', cache => ['next', '--cache', cache]],
+    ['both flags, before the verb', cache => ['--repo', REPO, '--cache', cache, 'next']],
+    ['both flags, after the verb', cache => ['next', '--cache', cache, '--repo', REPO]],
+  ];
+
+  for (const [name, args, env] of cases) {
+    it(`reaches the verb with ${name}`, () => {
+      const cache = seededCache();
+      const p = run(args(cache), env?.(cache));
+      // The regression's signature: usage text + exit 2 instead of running.
+      expect(`${p.stdout}${p.stderr}`).not.toContain('usage: npm run autoloop:queue');
+      expect(p.status).toBe(0);
+      expect(JSON.parse(p.stdout)).toMatchObject({ id: 'u1', issues: [2644] });
+    }, 60_000);
+  }
+
+  it('still prints usage when the verb really is missing', () => {
+    const p = run([], { AUTOLOOP_CACHE: seededCache() });
+    expect(p.stdout).toContain('usage: npm run autoloop:queue');
+    expect(p.status).toBe(2);
+  }, 60_000);
+});
+
+describe('splitGlobalArgs — the argv split main() uses', () => {
+  const env = { AUTOLOOP_CACHE: '/env/cache.json', AUTOLOOP_REPO: 'env/repo' };
+
+  it('keeps the verb when no global flag is present (the #2644 regression)', () => {
+    // `indexOf('--repo')` is -1 when absent, and -1 + 1 === 0 dropped argv[0].
+    expect(splitGlobalArgs(['rebuild'], {}).rest).toEqual(['rebuild']);
+    expect(splitGlobalArgs(['park', '99', 'refinement', '--comment', 'A or B?'], {}).rest).toEqual([
+      'park',
+      '99',
+      'refinement',
+      '--comment',
+      'A or B?',
+    ]);
+  });
+
+  it('takes --repo alone, in either position, without eating the verb', () => {
+    for (const argv of [
+      ['--repo', 'mdopp/servicebay', 'rebuild'],
+      ['rebuild', '--repo', 'mdopp/servicebay'], // the shape reported in #2644
+    ]) {
+      const g = splitGlobalArgs(argv, env);
+      expect(g.rest).toEqual(['rebuild']);
+      expect(g.repo).toBe('mdopp/servicebay');
+      expect(g.cachePath).toBe('/env/cache.json'); // absent flag falls back to env
+    }
+  });
+
+  it('takes --cache alone, in either position, without eating the verb', () => {
+    for (const argv of [
+      ['--cache', '/tmp/c.json', 'summary'],
+      ['summary', '--cache', '/tmp/c.json'],
+    ]) {
+      const g = splitGlobalArgs(argv, env);
+      expect(g.rest).toEqual(['summary']);
+      expect(g.cachePath).toBe('/tmp/c.json');
+      expect(g.repo).toBe('env/repo');
+    }
+  });
+
+  it('takes both flags, in either position, and strips exactly them', () => {
+    const before = splitGlobalArgs(['--repo', 'o/r', '--cache', '/c.json', 'claim', 'u1'], {});
+    const after = splitGlobalArgs(['claim', 'u1', '--repo', 'o/r', '--cache', '/c.json'], {});
+    for (const g of [before, after]) {
+      expect(g.rest).toEqual(['claim', 'u1']);
+      expect(g.repo).toBe('o/r');
+      expect(g.cachePath).toBe('/c.json');
+    }
+  });
+
+  it('handles --offline anywhere and defaults the cache path', () => {
+    const g = splitGlobalArgs(['--offline', 'summary'], {});
+    expect(g).toMatchObject({ offline: true, rest: ['summary'], cachePath: CACHE_DEFAULT, repo: undefined });
+    expect(splitGlobalArgs(['summary', '--offline'], {}).rest).toEqual(['summary']);
+    expect(splitGlobalArgs(['summary'], {}).offline).toBe(false);
   });
 });
 

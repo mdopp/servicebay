@@ -643,22 +643,60 @@ export function runVerb(verb: string, argv: string[], ctx: Omit<Ctx, 'out'> & { 
   return fn({ ...ctx, out: ctx.out ?? (s => console.log(s)) } as Ctx, { ...values, _: positionals });
 }
 
+// -------------------------------------------------------------- global args
+
+export interface GlobalArgs {
+  offline: boolean;
+  repo?: string;
+  cachePath: string;
+  rest: string[];
+}
+
+const GLOBAL_FLAGS = new Set(['--offline']);
+const GLOBAL_VALUE_FLAGS = new Set(['--repo', '--cache']);
+
+/**
+ * Split the process-wide flags off the front of the verb's own argv.
+ *
+ * Scanned, never index-arithmetic'd (#2644): the previous shape derived
+ * `indexOf('--repo') + 1` and filtered that index out, so an ABSENT flag gave
+ * `-1 + 1 === 0` and silently ate `argv[0]` — the verb itself. Every invocation
+ * without BOTH flags therefore printed usage and exited 2, and only the one
+ * test that happened to pass both flags exercised the entry point at all.
+ * Exported so the entry point's arg handling is directly assertable.
+ */
+export function splitGlobalArgs(
+  argv: string[],
+  env: Record<string, string | undefined> = process.env,
+): GlobalArgs {
+  let offline = false;
+  let repo: string | undefined;
+  let cachePath: string | undefined;
+  const rest: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (GLOBAL_FLAGS.has(a)) {
+      offline = true;
+    } else if (GLOBAL_VALUE_FLAGS.has(a)) {
+      const value = argv[++i]; // the flag consumes exactly its own value
+      if (a === '--repo') repo = value;
+      else cachePath = value;
+    } else {
+      rest.push(a);
+    }
+  }
+  return {
+    offline,
+    repo: repo ?? env.AUTOLOOP_REPO,
+    cachePath: cachePath ?? env.AUTOLOOP_CACHE ?? CACHE_DEFAULT,
+    rest,
+  };
+}
+
 // ---- everything below runs only when invoked as a script ----
 
 function main(): void {
-  const argv = process.argv.slice(2);
-  const globals = new Set(['--offline']);
-  const offline = argv.some(a => globals.has(a));
-  const repoIdx = argv.indexOf('--repo');
-  const repo = repoIdx >= 0 ? argv[repoIdx + 1] : process.env.AUTOLOOP_REPO;
-  const cacheIdx = argv.indexOf('--cache');
-  const cachePath = cacheIdx >= 0 ? argv[cacheIdx + 1] : (process.env.AUTOLOOP_CACHE ?? CACHE_DEFAULT);
-  const rest = argv.filter((a, i) => {
-    if (globals.has(a)) return false;
-    if (i === repoIdx || i === repoIdx + 1) return false;
-    if (i === cacheIdx || i === cacheIdx + 1) return false;
-    return true;
-  });
+  const { offline, repo, cachePath, rest } = splitGlobalArgs(process.argv.slice(2));
   const verb = rest.shift();
   if (!verb) {
     console.log(`usage: npm run autoloop:queue -- <verb> [args]\nverbs: ${Object.keys(VERBS).join(' ')}`);
@@ -666,7 +704,7 @@ function main(): void {
   }
   process.exit(
     runVerb(verb, rest, {
-      cache: new Cache(cachePath!),
+      cache: new Cache(cachePath),
       gh: offline ? OFFLINE_GH : realGh,
       repo,
       offline,
