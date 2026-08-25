@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.17.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.17.1...servicebay-v5.17.2) (2026-08-25)
+
+
+### Bug Fixes
+
+* **adguard:** make AdGuardHome.yaml seed-only and reconcile the two managed values ([639c6d8](https://github.com/mdopp/servicebay/commit/639c6d82a63ef1a16d6c9e68b1c0002489cbb2fe)), closes [#2632](https://github.com/mdopp/servicebay/issues/2632)
+* **dashboards:** guard the network-map layout commit against a superseded run ([4ae475d](https://github.com/mdopp/servicebay/commit/4ae475d3ac75699617c7057fb85b893a7cdb6cc9)), closes [#2630](https://github.com/mdopp/servicebay/issues/2630)
+* **disk-import:** scope the apply-time catalog to the item destination area ([799fef6](https://github.com/mdopp/servicebay/commit/799fef633c252a9ff0404d793a1d6429f87a5a8d)), closes [#2631](https://github.com/mdopp/servicebay/issues/2631)
+* **frontend:** copy the failure details instead of claiming an AI was dispatched ([ef85c95](https://github.com/mdopp/servicebay/commit/ef85c955702bbffe99981746ae6e2e080e2934b3)), closes [#2628](https://github.com/mdopp/servicebay/issues/2628)
+* **frontend:** make the /diagnose recovery link land on Status ([2672ba3](https://github.com/mdopp/servicebay/commit/2672ba3a238cec95292f262152c38ff53116d484)), closes [#2625](https://github.com/mdopp/servicebay/issues/2625)
+* **services:** don't claim not-found before the twin snapshot lands ([ed26470](https://github.com/mdopp/servicebay/commit/ed26470d6d46f06283cd376ccd62e66c951299e8)), closes [#2629](https://github.com/mdopp/servicebay/issues/2629)
+* **wizard:** stop the express install when the data array is not mounted ([e56c6e6](https://github.com/mdopp/servicebay/commit/e56c6e6f3c8a0d2ba82c865eac3257dbaa8cce1c)), closes [#2626](https://github.com/mdopp/servicebay/issues/2626) [#2627](https://github.com/mdopp/servicebay/issues/2627)
+
 ## [5.17.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.17.0...servicebay-v5.17.1) (2026-08-25)
 
 
