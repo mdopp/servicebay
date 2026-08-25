@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getConfig, saveConfig, type InstalledCredential, type InstallManifest } from '@/lib/config';
+import { toCredentialViews, type Credential } from '@/lib/stackInstall/credentialsManifest';
 import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
@@ -9,7 +10,7 @@ export const dynamic = 'force-dynamic';
  * Install-credentials manifest persistence (#19 / A1, migrated to
  * withApiHandler in #603).
  *
- *   GET    — return the manifest stored at install time
+ *   GET    — list what is stored, WITHOUT the secrets (`CredentialView`)
  *   POST   — replace the manifest (wizard end-of-install)
  *   DELETE — wipe the manifest ("I saved these — wipe from server")
  *
@@ -18,6 +19,22 @@ export const dynamic = 'force-dynamic';
  * because it reached the operator is NOT this route's job — that is the
  * hand-over in `./handover`, which only deletes against proof of delivery
  * (#2560).
+ *
+ * ## Why GET projects instead of returning the stored manifest (#2605)
+ *
+ * It used to hand back `config.installManifest` verbatim. Encryption at rest
+ * says nothing about what goes out on the wire: `getConfig()` decrypts, so
+ * every plaintext password ended up in the response — in the network tab, in
+ * any HAR someone attaches to a bug report, in any extension that can read the
+ * page. #2560 removed the password *column*; not rendered is not the same as
+ * not sent.
+ *
+ * Neither caller ever wanted the secret. `CredentialsSection` renders
+ * service/URL/username plus "handed over or not", and `CredentialHandoverGate`
+ * counts the ones still pending — both of which `CredentialView.secured`
+ * carries. The plaintext leaves this box on exactly one path, `./handover`,
+ * which trades it against proof of delivery and then drops the local copy;
+ * shipping it here for free defeated that entire mechanism.
  */
 
 const CredentialSchema = z.object({
@@ -46,7 +63,15 @@ export const GET = withApiHandler({}, async () => {
   }));
   const publicDomain = config.reverseProxy?.publicDomain ?? null;
   if (!manifest) return NextResponse.json({ manifest: null, proxyHosts, publicDomain });
-  return NextResponse.json({ manifest, proxyHosts, publicDomain });
+  // The projection, not the manifest. `toCredentialViews` drops `password`
+  // from the object entirely and replaces it with the one derived bit the UI
+  // needs (#2605) — see credentialsManifest.ts.
+  const credentials = toCredentialViews((manifest.credentials ?? []) as Credential[]);
+  return NextResponse.json({
+    manifest: { savedAt: manifest.savedAt, credentials },
+    proxyHosts,
+    publicDomain,
+  });
 });
 
 export const POST = withApiHandler({ body: ManifestBody }, async ({ body }) => {

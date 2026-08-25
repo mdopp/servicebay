@@ -122,9 +122,57 @@ export function mergeCredentials(
  * state from the secret itself makes the inconsistent case unrepresentable
  * — and there is now exactly one way out of "not yet handed over" (a
  * proven download), so a timestamp adds nothing a reader needs.
+ *
+ * That holds for the *stored* entry. Over the wire the secret is gone
+ * altogether (`CredentialView`, #2605), so there the state has to be carried
+ * explicitly — hence the second accepted shape. It is still one fact with one
+ * origin: the view's `secured` is computed from the stored password at
+ * serialisation time and never persisted.
  */
-export function isCredentialSecured(cred: Pick<Credential, 'password'>): boolean {
-  return !cred.password;
+export function isCredentialSecured(cred: CredentialSecurityState): boolean {
+  return 'secured' in cred ? cred.secured : !cred.password;
+}
+
+/**
+ * Either half of the same fact: the stored entry (which holds the secret, so
+ * its absence *is* the state) or the wire view (which carries the state as a
+ * boolean precisely because it does not carry the secret).
+ */
+export type CredentialSecurityState =
+  | Pick<Credential, 'password'>
+  | Pick<CredentialView, 'secured'>;
+
+/**
+ * What a credential looks like once it leaves the box over HTTP (#2605).
+ *
+ * `password` is **structurally absent**, not blanked: a view cannot be
+ * serialised with the secret still in it, and a UI cannot read one off it,
+ * because the field does not exist on the type. That is the whole point —
+ * #1211, #2603 and #2605 are all the same bug, "redaction decided per caller",
+ * and the only fix that doesn't come back is one the type system enforces.
+ *
+ * `secured` carries the one thing the absent field used to tell the UI: has
+ * this entry been handed over (ServiceBay dropped its copy), or is ServiceBay
+ * still the only place the secret lives? Dropping the field without it would
+ * make every entry read "handed over" and silently disable the hand-over gate.
+ *
+ * This is not the `securedAt` marker `isCredentialSecured` deliberately
+ * rejects: nothing *stores* `secured`. It is derived at serialisation time
+ * from the stored password, so the two can't drift apart.
+ *
+ * The one path that may still ship the plaintext is the hand-over
+ * (`credentialsHandover.ts` → CSV, against proof of delivery), which builds
+ * from `Credential`, never from this.
+ */
+export interface CredentialView extends Omit<Credential, 'password'> {
+  /** True once ServiceBay no longer holds this entry's password. */
+  secured: boolean;
+}
+
+/** Project stored credentials onto the wire shape. The only way the
+ *  credentials list is allowed to reach a browser (#2605). */
+export function toCredentialViews(creds: readonly Credential[]): CredentialView[] {
+  return creds.map(({ password, ...rest }) => ({ ...rest, secured: !password }));
 }
 
 export interface CredentialSecuritySummary {
@@ -137,7 +185,7 @@ export interface CredentialSecuritySummary {
 
 /** Roll a manifest up into the counts Settings renders instead of passwords. */
 export function summarizeCredentialSecurity(
-  creds: readonly Credential[],
+  creds: readonly CredentialSecurityState[],
 ): CredentialSecuritySummary {
   let secured = 0;
   for (const c of creds) if (isCredentialSecured(c)) secured++;

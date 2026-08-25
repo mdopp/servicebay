@@ -1,6 +1,19 @@
 # Home Assistant base config. ServiceBay writes this once on first
 # install. Edit freely afterwards — re-deploys don't overwrite.
 #
+# That promise is enforced since #2597 by `servicebay.seed-only-configs`
+# in template.yml: the deploy writes this file only when it is absent.
+# Before that annotation it was prose only, and every deploy re-rendered
+# the file over whatever the operator had added.
+#
+# Two values in here still belong to ServiceBay and would otherwise go
+# stale the moment this file stopped being re-rendered: the auth_oidc
+# `client_secret` and `discovery_url` (plus the two role groups). Those
+# are reconciled key-by-key from post-deploy.py on every deploy — see
+# `ensure_auth_oidc_config_block()` — so a rotated HA_OIDC_SECRET or a
+# changed PUBLIC_DOMAIN still reaches Home Assistant. Everything else in
+# this file is yours.
+#
 # Reverse-proxy trust list: deliberately NOT here. Home Assistant
 # 2026.8 moved the `http:` integration out of YAML and into its own
 # store (Settings → System → Network), and raises a permanent repair
@@ -36,6 +49,13 @@ scene: !include scenes.yaml
 # Restart HA after first install for the integration to register the
 # `/auth/oidc/*` endpoints; subsequent re-deploys skip the reinstall
 # when the version stamp on disk already matches HA_OIDC_AUTH_VERSION.
+#
+# post-deploy.py owns the VALUES below from here on (#2597): it rewrites
+# `client_secret` / `discovery_url` / the two role groups in place when
+# the deploy's env differs from what is on disk, and restarts HA when it
+# does. It only ever touches those keys — anything you add to this block
+# stays. Delete a key and ServiceBay leaves it deleted rather than
+# re-inventing your structure; it says so in the deploy log.
 auth_oidc:
   client_id: homeassistant
   client_secret: {{HA_OIDC_SECRET}}

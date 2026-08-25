@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import type { ServiceImageUpdate } from '@/hooks/useImageUpdates';
-import { Button, Card, StatusDot } from '@/components/ui';
+import { Button, StatusDot } from '@/components/ui';
+import UpdatesNotice from './UpdatesNotice';
 
 /**
  * Pending-updates overview for managed stacks (#1860, child 2 of #1858).
@@ -27,10 +28,15 @@ import { Button, Card, StatusDot } from '@/components/ui';
  * Without `onUpdate` it stays purely informational. The button owns only its
  * own in-flight flag; success/error feedback comes from the parent's toast.
  *
- * Migrated onto the design-system primitives (#2093): a `Card` with a
- * token-driven accent (an "update available" tint via the `accent` token, no
- * raw blue literals) + the shared `Button`/`StatusDot`. Dark-mode-correct by
+ * Migrated onto the design-system primitives (#2093): a token-driven accent
+ * surface (an "update available" tint via the `accent` token, no raw blue
+ * literals) + the shared `Button`/`StatusDot`. Dark-mode-correct by
  * construction — every colour resolves through a semantic CSS variable.
+ *
+ * Wrapped in `UpdatesNotice` (#2604) so the per-service rows collapse behind
+ * the count on a phone: the summary line and the "Update now" button stay in
+ * the summary row, the list of affected services is one tap away. Desktop
+ * (≥ md) still renders expanded.
  */
 export default function ImageUpdatesPendingBanner({
   updates,
@@ -56,40 +62,41 @@ export default function ImageUpdatesPendingBanner({
   };
 
   return (
-    <Card padding="md" className="border-accent/40 bg-accent/5">
-      <div className="flex items-start gap-space-3">
-        <div className="shrink-0 rounded-card bg-accent/10 p-1.5 text-accent">
+    <UpdatesNotice
+      className="border-accent/40 bg-accent/5"
+      data-testid="image-updates-notice"
+      icon={
+        <span className="flex items-center gap-space-2 rounded-card bg-accent/10 p-1.5 text-accent">
           <Download size={16} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-start justify-between gap-space-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-space-2 text-sm font-semibold text-text">
-                <StatusDot state="warn" label="Update available" />
-                {updates.length} service image update{updates.length === 1 ? '' : 's'} available
-              </div>
-              <p className="mt-0.5 text-xs text-text-muted">
-                The registry is serving a newer image than what these services are running.
-                Re-deploy a service to pull its latest image.
-              </p>
-            </div>
-            {onUpdate && (
-              <Button size="sm" onClick={handleUpdate} disabled={running}>
-                {running ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                {running ? 'Updating…' : 'Update now'}
-              </Button>
-            )}
-          </div>
-          <ul className="mt-space-2 space-y-1.5 text-xs text-text-muted">
-            {updates.map(u => (
-              <li key={`${u.service}:${u.image}`} className="flex flex-wrap items-center gap-space-2">
-                <span className="font-mono font-medium text-text">{u.service}</span>
-                <span className="break-all font-mono text-text-subtle">{u.image}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </Card>
+          <StatusDot state="warn" label="Update available" />
+        </span>
+      }
+      title={
+        <>
+          {updates.length} service image update{updates.length === 1 ? '' : 's'} available
+        </>
+      }
+      action={
+        onUpdate ? (
+          <Button size="sm" onClick={handleUpdate} disabled={running}>
+            {running ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            {running ? 'Updating…' : 'Update now'}
+          </Button>
+        ) : undefined
+      }
+    >
+      <p className="text-xs text-text-muted">
+        The registry is serving a newer image than what these services are running.
+        Re-deploy a service to pull its latest image.
+      </p>
+      <ul className="mt-space-2 space-y-1.5 text-xs text-text-muted">
+        {updates.map(u => (
+          <li key={`${u.service}:${u.image}`} className="flex flex-wrap items-center gap-space-2">
+            <span className="font-mono font-medium text-text">{u.service}</span>
+            <span className="break-all font-mono text-text-subtle">{u.image}</span>
+          </li>
+        ))}
+      </ul>
+    </UpdatesNotice>
   );
 }

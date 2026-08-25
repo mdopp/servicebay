@@ -48,7 +48,7 @@ vi.mock('@/lib/registry', () => ({
   syncRegistries: vi.fn(),
 }));
 
-import { isServiceReady, waitForDependencies, ensureProxyHosts, authDynamicVars, loadPostDeployScript, buildMigrationSteps } from './runner';
+import { isServiceReady, waitForDependencies, ensureProxyHosts, authDynamicVars, loadPostDeployScript, buildMigrationSteps, summariseIncompleteRun } from './runner';
 import type { StackVariable } from '@/lib/stackInstall/postInstall';
 
 const fetchSpy = vi.spyOn(globalThis, 'fetch');
@@ -313,5 +313,63 @@ describe('buildMigrationSteps — migration bodies ship verbatim (#2435)', () =>
     expect(src).toMatch(/migrations = buildMigrationSteps\(result\.chain\);/);
     expect(src).not.toMatch(/renderTemplate\(s\.content/);
     expect(src).not.toMatch(/migrations\s*=\s*renderTemplate/);
+  });
+});
+
+// ─── #2601 — a run that rolled nothing out is not a success ────────────────
+describe('summariseIncompleteRun — report the denominator, not the return status', () => {
+  it('names the zero case explicitly', () => {
+    // The reference-box case: a single `media` upgrade that stopped at the
+    // migration gate. Nothing reached the box, and the run still ended in the
+    // dialog's finished state.
+    expect(summariseIncompleteRun([], ['media'])).toBe(
+      '❌ Nothing was deployed: 0 of 1 requested service(s) reached the box (media).',
+    );
+  });
+
+  it('reports a partial run as partial, with both sides named', () => {
+    expect(summariseIncompleteRun(['nginx'], ['nginx', 'auth', 'immich'])).toBe(
+      '❌ 1/3 requested service(s) deployed (nginx). NOT deployed: auth, immich.',
+    );
+  });
+
+  it('only calls a run successful when every requested service landed', () => {
+    expect(summariseIncompleteRun(['nginx', 'auth'], ['nginx', 'auth'])).toMatch(/^✅ 2\/2/);
+  });
+
+  it('an install that requested nothing is not reported as a failure', () => {
+    expect(summariseIncompleteRun([], [])).toMatch(/^✅ 0\/0/);
+  });
+});
+
+describe('runJob terminal verdict + failure logging (#2601)', () => {
+  const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+
+  it('the deploy-loop catch logs before it patches the job to error', () => {
+    // Pre-fix this catch set `phase: 'error'` and returned WITHOUT writing a
+    // line, so the dialog's last visible log line was the green dependency
+    // tick that came just before it.
+    const catchBlock = src.slice(src.indexOf('const ok = await deployItem(ctx, item);'));
+    const logIdx = catchBlock.indexOf('❌ Install stopped at');
+    const patchIdx = catchBlock.indexOf('await patchJob(');
+    expect(logIdx).toBeGreaterThan(-1);
+    expect(logIdx).toBeLessThan(patchIdx);
+  });
+
+  it('the final phase is derived from what deployed, not from reaching the end', () => {
+    expect(src).toMatch(/phase: incomplete \? 'error' : 'done'/);
+    expect(src).toMatch(/const incomplete = deployedNew\.length < toDeploy\.length;/);
+    // `deployedNew` must stay separate from ctx.deployed, which also collects
+    // the skipped already-installed satisfiers — counting those would report a
+    // no-op upgrade as a multi-service success.
+    expect(src).toMatch(/const toDeploy = selected\.filter\(s => !s\.alreadyInstalled\)\.map\(s => s\.name\);/);
+  });
+
+  it('an item with no spec in the manifest says so instead of returning silently', () => {
+    expect(src).toMatch(/carries no template spec in this manifest/);
+  });
+
+  it('the internal-runner-error path writes to the job log too', () => {
+    expect(src).toMatch(/❌ Internal runner error:/);
   });
 });

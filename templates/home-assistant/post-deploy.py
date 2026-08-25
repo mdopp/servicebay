@@ -476,7 +476,7 @@ def _ha_config_dir() -> str:
     return os.path.join(base, "home-assistant", "homeassistant")
 
 
-# ── auth_oidc configuration.yaml self-heal (#1687) ───────────────────────────
+# ── auth_oidc configuration.yaml self-heal + value reconcile (#1687, #2597) ──
 #
 # A HA backup-restore replaces ServiceBay's base configuration.yaml with the
 # snapshot's own, which carries the user's content but NOT ServiceBay's
@@ -486,44 +486,169 @@ def _ha_config_dir() -> str:
 # HA_OIDC_SECRET / group / domain values, which only exist in the post-deploy
 # env. We re-append the block when the file has no `auth_oidc:` key —
 # coexisting with the restored user config rather than overwriting it.
+#
+# #2597 — configuration.yaml is `servicebay.seed-only-configs` now, so the
+# deploy no longer re-renders it and the HA_OIDC_SECRET / PUBLIC_DOMAIN
+# values rendered into it would freeze at their first-install state: a
+# rotated secret or a changed public domain would silently stop reaching HA
+# and SSO would break on the next Authelia-side rotation. So this function
+# also RECONCILES the values of an existing block against the deploy env.
+# It rewrites only the keys ServiceBay owns (`client_id`, `client_secret`,
+# `discovery_url`, and `roles.admin` / `roles.user`) and only when the
+# on-disk value actually differs — anything else the operator put inside the
+# block, and the file's byte-for-byte content when nothing changed, is left
+# exactly as found. A key the operator deleted is reported, not re-invented:
+# re-adding it would be the same "the template knows better" overwrite this
+# issue is about.
 # (The reverse-proxy trust list is a separate story since #2573 — see
 # "Reverse-proxy trust list via HA's own HTTP config store" further down.)
+
+# Keys inside `auth_oidc:` whose value comes from the deploy env, mapped to
+# the YAML path we accept them at. `roles.admin`/`roles.user` are nested one
+# level deeper, which is why the walker below tracks the `roles:` sub-block
+# instead of matching on the key name alone.
+AUTH_OIDC_MANAGED_TOP_KEYS = ("client_id", "client_secret", "discovery_url")
+AUTH_OIDC_MANAGED_ROLE_KEYS = ("admin", "user")
+
+
+def _auth_oidc_desired_values() -> dict[str, str] | None:
+    """The values this deploy wants inside `auth_oidc:`, keyed by the same
+    names `_reconcile_auth_oidc_values` matches on (`roles.*` for the nested
+    ones). None when the OIDC secret or the public domain is unset (manual /
+    opted-out setup) so we never write a half-filled block."""
+    secret = env("HA_OIDC_SECRET")
+    domain = env("PUBLIC_DOMAIN")
+    if not secret or not domain:
+        return None
+    return {
+        "client_id": "homeassistant",
+        "client_secret": secret,
+        "discovery_url": f"https://auth.{domain}/.well-known/openid-configuration",
+        "roles.admin": env("HA_OIDC_ADMIN_GROUP", "admins"),
+        "roles.user": env("HA_OIDC_USER_GROUP", "family"),
+    }
 
 
 def _build_auth_oidc_block() -> str | None:
     """Render the auth_oidc YAML block from post-deploy env. Returns None
     when the OIDC secret is unset (manual / opted-out setup) so we never
     write a half-filled block."""
-    secret = env("HA_OIDC_SECRET")
-    domain = env("PUBLIC_DOMAIN")
-    if not secret or not domain:
+    want = _auth_oidc_desired_values()
+    if want is None:
         return None
-    admin_group = env("HA_OIDC_ADMIN_GROUP", "admins")
-    user_group = env("HA_OIDC_USER_GROUP", "family")
     return "\n".join([
         "",
         "# Re-added by ServiceBay: OIDC SSO via the auth_oidc custom component.",
         "# ServiceBay re-appends this block on every deploy when the",
-        "# `auth_oidc:` key is missing (e.g. after a HA backup-restore).",
+        "# `auth_oidc:` key is missing (e.g. after a HA backup-restore), and",
+        "# keeps the values below in step with the deploy env (#2597).",
         "auth_oidc:",
-        "  client_id: homeassistant",
-        f"  client_secret: {secret}",
-        f"  discovery_url: https://auth.{domain}/.well-known/openid-configuration",
+        f"  client_id: {want['client_id']}",
+        f"  client_secret: {want['client_secret']}",
+        f"  discovery_url: {want['discovery_url']}",
         "  features:",
         "    automatic_user_linking: true",
         "    automatic_person_creation: true",
         "  roles:",
-        f'    admin: "{admin_group}"',
-        f'    user:  "{user_group}"',
+        f'    admin: "{want["roles.admin"]}"',
+        f'    user:  "{want["roles.user"]}"',
     ])
 
 
+def _split_inline_comment(rest: str) -> tuple[str, str]:
+    """Split the text after a YAML `key:` into (value, comment-tail). YAML
+    only starts a comment at a `#` preceded by whitespace, so a `#` inside a
+    value is left alone. Keeping the tail out of the comparison matters: an
+    operator's `client_secret: x  # rotated 2026-01` would otherwise never
+    compare equal, and every deploy would rewrite the file and restart HA."""
+    match = re.search(r"\s+#.*$", rest)
+    if not match:
+        return rest, ""
+    return rest[:match.start()], rest[match.start():]
+
+
+def _yaml_scalar_value(line: str) -> str:
+    """The scalar to the right of the first `:` on a YAML line, unquoted and
+    without any trailing comment. `  discovery_url: https://a/b` →
+    `https://a/b`; `    admin: "x"  # note` → `x`."""
+    raw, _comment = _split_inline_comment(line.split(":", 1)[1])
+    raw = raw.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+        raw = raw[1:-1]
+    return raw
+
+
+def _rewrite_scalar_line(line: str, value: str) -> str:
+    """`line` with its scalar replaced by `value`, keeping the original
+    indentation, key spelling, quoting style, trailing comment and line
+    ending. Preserving the quoting matters for the roles, which the shipped
+    template writes quoted."""
+    body = line.rstrip("\r\n")
+    ending = line[len(body):]
+    key, _, rest = body.partition(":")
+    rest, comment = _split_inline_comment(rest)
+    old = rest.strip()
+    quote = old[0] if len(old) >= 2 and old[0] == old[-1] and old[0] in "\"'" else ""
+    gap = rest[:len(rest) - len(rest.lstrip())] or " "
+    return f"{key}:{gap}{quote}{value}{quote}{comment}{ending}"
+
+
+def _reconcile_auth_oidc_values(
+    lines: list[str], want: dict[str, str],
+) -> tuple[list[str], list[str], list[str]]:
+    """Bring the values of an existing `auth_oidc:` block in step with `want`.
+
+    Returns `(lines, changed, missing)`: the (possibly rewritten) lines, the
+    names of the managed keys whose value was updated, and the names of the
+    managed keys that are not in the block at all. A key is only rewritten
+    when its on-disk value differs, so a deploy that changes nothing returns
+    the input unchanged and the file is never rewritten."""
+    span = _find_top_level_block(lines, "auth_oidc")
+    if span is None:
+        return lines, [], sorted(want)
+    start, end = span
+    out = list(lines)
+    changed: list[str] = []
+    seen: set[str] = set()
+    in_roles = False
+    for i in range(start, end):
+        match = re.match(r"^(\s+)([A-Za-z_][\w-]*)\s*:", out[i])
+        if not match:
+            continue
+        indent, key = len(match.group(1)), match.group(2)
+        if indent <= 2:
+            # Any key back at the block's own top level closes `roles:`.
+            in_roles = key == "roles"
+        if in_roles and indent > 2:
+            name = f"roles.{key}" if key in AUTH_OIDC_MANAGED_ROLE_KEYS else None
+        elif not in_roles and indent <= 2:
+            name = key if key in AUTH_OIDC_MANAGED_TOP_KEYS else None
+        else:
+            name = None
+        if name is None or name not in want:
+            continue
+        seen.add(name)
+        if _yaml_scalar_value(out[i]) == want[name]:
+            continue
+        out[i] = _rewrite_scalar_line(out[i], want[name])
+        changed.append(name)
+    return out, changed, sorted(set(want) - seen)
+
+
 def ensure_auth_oidc_config_block() -> bool:
-    """Append ServiceBay's auth_oidc block to configuration.yaml when it's
-    absent (and the file already exists — first-install seeding is owned by
-    the mustache deploy). Idempotent: a subsequent deploy finds the
-    `auth_oidc:` key and leaves the file alone. Returns True iff the block
-    was just appended (caller restarts HA so the route registers)."""
+    """Make configuration.yaml's `auth_oidc:` block match this deploy.
+
+    Two jobs, one pass:
+      * block ABSENT (e.g. after a HA backup-restore) → append it, rendered
+        from the deploy env, leaving the rest of the file alone;
+      * block PRESENT → rewrite only the ServiceBay-owned values that drifted
+        (a rotated HA_OIDC_SECRET, a changed PUBLIC_DOMAIN or role group).
+        Since #2597 this is the ONLY path by which those values reach an
+        installed box — the file itself is seed-only and no longer re-rendered.
+
+    Idempotent: a deploy that changes nothing leaves the file byte-identical.
+    Returns True iff the file was written (caller restarts HA so the running
+    instance picks the values up — HA reads configuration.yaml at start)."""
     cfg = os.path.join(_ha_config_dir(), "configuration.yaml")
     try:
         with open(cfg, encoding="utf-8") as fh:
@@ -531,9 +656,27 @@ def ensure_auth_oidc_config_block() -> bool:
     except OSError:
         # No file yet → first-install path; the mustache deploy seeds it.
         return False
+    want = _auth_oidc_desired_values()
     if re.search(r"(?m)^auth_oidc:", content):
-        log("   configuration.yaml already has auth_oidc: — leaving it alone.")
-        return False
+        if want is None:
+            log("   HA_OIDC_SECRET / PUBLIC_DOMAIN unset — leaving the existing auth_oidc block alone.")
+            return False
+        lines, changed, missing = _reconcile_auth_oidc_values(content.splitlines(keepends=True), want)
+        if missing:
+            log(f"   configuration.yaml's auth_oidc block has no {', '.join(missing)} — "
+                f"left as it is (ServiceBay updates those keys, it does not re-add ones you removed).")
+        if not changed:
+            log("   configuration.yaml's auth_oidc values already match this deploy — leaving it alone.")
+            return False
+        try:
+            with open(cfg, "w", encoding="utf-8") as fh:
+                fh.writelines(lines)
+        except OSError as exc:
+            log(f"   ⚠️ Could not update the auth_oidc values in {cfg}: {exc}")
+            return False
+        # Key NAMES only — never the rotated secret itself.
+        log(f"   Updated auth_oidc {', '.join(changed)} in configuration.yaml from this deploy's settings.")
+        return True
     block = _build_auth_oidc_block()
     if block is None:
         log("   HA_OIDC_SECRET / PUBLIC_DOMAIN unset — skipping auth_oidc re-seed.")
@@ -1732,12 +1875,15 @@ def configure_auth_oidc() -> None:
         log(f"   ⚠️ HA did not respond within {HA_READY_TIMEOUT}s. Skipping auth_oidc install — re-run the deploy once HA is up.")
         return  # noqa: RET502 — explicit early-out for the unreachable path
 
-    # Self-heal the auth_oidc config block first (#1687): a backup-restore
-    # can leave configuration.yaml without it. If we re-add it, force the
-    # restart path below so HA reloads and re-registers /auth/oidc/*.
-    oidc_block_readded = ensure_auth_oidc_config_block()
+    # Self-heal / reconcile the auth_oidc config block first (#1687, #2597):
+    # a backup-restore can leave configuration.yaml without it, and since the
+    # file is seed-only this is the only path by which a rotated
+    # HA_OIDC_SECRET or a changed PUBLIC_DOMAIN reaches an installed box. Any
+    # write here forces the restart path below — HA reads configuration.yaml
+    # at start, so an updated secret only takes effect once it restarts.
+    oidc_config_written = ensure_auth_oidc_config_block()
 
-    changed = install_auth_oidc(version) or oidc_block_readded
+    changed = install_auth_oidc(version) or oidc_config_written
     if not changed:
         # Already at the pinned version — but configuration.yaml might
         # have been edited between deploys, so still verify the

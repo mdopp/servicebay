@@ -24,12 +24,22 @@ ENTRYPOINT="$REPO_ROOT/templates/claude-dev/docker-entrypoint.sh"
 
 FAILURES=0
 CASES=0
+SKIPPED=0
 
 pass() { CASES=$((CASES + 1)); echo "ok   - $1"; }
 fail() {
   CASES=$((CASES + 1))
   FAILURES=$((FAILURES + 1))
   echo "FAIL - $1"
+  [ $# -gt 1 ] && printf '       %s\n' "${@:2}"
+  return 0
+}
+# A case whose PRECONDITION this environment cannot establish. It is NOT
+# counted as run — the summary reports skips separately, so a suite that
+# checked nothing can never look like a suite that checked everything.
+skip() { # skip <desc> <reason...>
+  SKIPPED=$((SKIPPED + 1))
+  echo "SKIP - $1"
   [ $# -gt 1 ] && printf '       %s\n' "${@:2}"
   return 0
 }
@@ -308,6 +318,188 @@ check "the entrypoint no longer passes the bind password with -w" \
   "$(grep -q -- '-w "\$LLDAP_ADMIN_PASSWORD"' "$ENTRYPOINT" && echo 1 || echo 0)"
 
 # =========================================================================
+# 5. safe.directory registration (#2612): git must WORK in a checkout the
+#    entrypoint's non-recursive chown never reaches (a root-owned clone), the
+#    registration must be idempotent, and it must not rewrite entries this
+#    entrypoint does not own.
+#
+#    Real git, real config file. Ownership is forced with
+#    GIT_TEST_ASSUME_DIFFERENT_OWNER=1, git's own switch for exercising the
+#    "detected dubious ownership" path — so the case reproduces the reported
+#    failure shape without needing root to chown a checkout.
+#
+#    …but only if nothing ELSE has already whitelisted the checkout. git's
+#    ownership verdict is `not owned AND not listed in safe.directory`, and
+#    that lookup reads the SYSTEM config too (read_very_early_config), which
+#    HOME= does not cover. GitHub's hosted runners append
+#
+#        [safe]
+#                directory = *
+#
+#    to /etc/gitconfig (actions/runner-images, images/ubuntu/scripts/build/
+#    install-git.sh — added for actions/checkout#760). With that in scope every
+#    repository is "safe" regardless of owner, GIT_TEST_ASSUME_DIFFERENT_OWNER
+#    stops having any visible effect, and the negative control below asserts
+#    nothing — which is exactly how it went red on CI while passing locally on
+#    a box with no /etc/gitconfig (#2613).
+#
+#    So every git call in this section runs in a HERMETIC config environment:
+#    system config off, global config pinned to the fake $HOME, and the
+#    GIT_CONFIG_* overrides cleared so an inherited one can't re-inject either.
+# =========================================================================
+GITCONFIG="$DEV_HOME_FAKE/.gitconfig"
+GIT_HERMETIC=(env -u GIT_CONFIG -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM
+              -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS
+              GIT_CONFIG_NOSYSTEM=1 HOME="$DEV_HOME_FAKE"
+              XDG_CONFIG_HOME="$DEV_HOME_FAKE/.config")
+gitg() { "${GIT_HERMETIC[@]}" git config --global "$@"; }
+safe_entries() { "${GIT_HERMETIC[@]}" git config --global --get-all safe.directory 2>/dev/null; }
+count_entries() { safe_entries | grep -Fxc -- "$1" || true; }
+# git run against a checkout it is told it does not own.
+git_unowned() { "${GIT_HERMETIC[@]}" GIT_TEST_ASSUME_DIFFERENT_OWNER=1 git "$@"; }
+
+# A REAL repo, additionally to the fake `.git` files above, so the ownership
+# check has something to run against.
+OWNED_REPO='root-owned-repo'
+git init -q "$DEV_HOME_FAKE/$OWNED_REPO" 2>/dev/null
+
+# The state the reference box was found in: the same repo added over and over,
+# an entry for a path that no longer exists, and entries OUTSIDE $DEV_HOME that
+# belong to the operator, not to us.
+rm -f "$GITCONFIG"
+for _ in 1 2 3; do gitg --add safe.directory "$DEV_HOME_FAKE/normal-repo"; done
+gitg --add safe.directory "$DEV_HOME_FAKE/solbay-gone"
+gitg --add safe.directory '/tmp/dotfiles-edit'
+gitg --add safe.directory '/tmp/dotfiles-edit'
+
+# Precondition probe: can the "not owned" state be induced AT ALL here? If
+# even the hermetic environment cannot make git refuse (a build without the
+# ownership guard, a future rename of the test switch), the negative control
+# would pass while checking nothing — so it is skipped, loudly and counted.
+if git_unowned -C "$DEV_HOME_FAKE/$OWNED_REPO" status --porcelain >/dev/null 2>&1; then
+  OWNERSHIP_GUARD_INDUCIBLE=0
+else
+  OWNERSHIP_GUARD_INDUCIBLE=1
+fi
+
+if [ "$OWNERSHIP_GUARD_INDUCIBLE" -eq 1 ]; then
+  check "reproducer: git refuses to run in a checkout it does not own" \
+    "$(git_unowned -C "$DEV_HOME_FAKE/$OWNED_REPO" status --porcelain >/dev/null 2>&1 && echo 1 || echo 0)"
+else
+  skip "reproducer: git refuses to run in a checkout it does not own" \
+    "this git ($(git --version)) still runs in a checkout forced not-owned," \
+    "so the dubious-ownership precondition cannot be established here and the" \
+    "negative control would assert nothing. The positive cases below still run."
+fi
+
+repos=()
+discover_repos
+check "discover_repos picks up the real checkout too" \
+  "$(printf '%s\n' "${repos[@]}" | grep -Fqx -- "$OWNED_REPO" && echo 0 || echo 1)"
+
+register_safe_directories "${repos[@]}"
+reg_rc=$?
+check "register_safe_directories exits 0" \
+  "$([ "$reg_rc" -eq 0 ] && echo 0 || echo 1)" "exit=$reg_rc"
+
+check "THE FIX: git now runs in the not-owned checkout" \
+  "$(git_unowned -C "$DEV_HOME_FAKE/$OWNED_REPO" status --porcelain >/dev/null 2>&1 && echo 0 || echo 1)" \
+  "entries: $(safe_entries | tr '\n' '|')"
+
+for name in "${REPO_NAMES[@]}" "$OWNED_REPO"; do
+  n="$(count_entries "$DEV_HOME_FAKE/$name")"
+  check "exactly one safe.directory entry for [$name]" \
+    "$([ "$n" -eq 1 ] && echo 0 || echo 1)" "count=$n"
+done
+
+check "the duplicate pile-up for one repo is collapsed to a single entry" \
+  "$([ "$(count_entries "$DEV_HOME_FAKE/normal-repo")" -eq 1 ] && echo 0 || echo 1)" \
+  "entries: $(safe_entries | tr '\n' '|')"
+
+check "the dead entry under \$DEV_HOME is dropped" \
+  "$([ "$(count_entries "$DEV_HOME_FAKE/solbay-gone")" -eq 0 ] && echo 0 || echo 1)"
+
+# The scope guard: everything outside $DEV_HOME is the operator's, duplicates
+# included. De-duplicating the whole config is NOT this entrypoint's business.
+check "entries outside \$DEV_HOME are left exactly as they were" \
+  "$([ "$(count_entries '/tmp/dotfiles-edit')" -eq 2 ] && echo 0 || echo 1)" \
+  "count=$(count_entries '/tmp/dotfiles-edit')"
+
+# Idempotency — the actual bug. Re-running must not grow the list by one entry
+# per repo per boot.
+before_total="$(safe_entries | grep -c '' || true)"
+register_safe_directories "${repos[@]}"
+register_safe_directories "${repos[@]}"
+after_total="$(safe_entries | grep -c '' || true)"
+check "re-running the registration twice more does not grow safe.directory" \
+  "$([ "$before_total" = "$after_total" ] && echo 0 || echo 1)" \
+  "before=$before_total after=$after_total"
+
+# A checkout that appears AFTER boot still gets an entry + a session, because
+# the reconcile pass re-discovers.
+mkdir -p "$DEV_HOME_FAKE/late-clone"
+: > "$DEV_HOME_FAKE/late-clone/.git"
+: > "$SC_ARGS_RECORD"
+reconcile_repos
+check "a checkout created after boot gets a safe.directory entry" \
+  "$([ "$(count_entries "$DEV_HOME_FAKE/late-clone")" -eq 1 ] && echo 0 || echo 1)"
+check "a checkout created after boot is handed to start-claude" \
+  "$(read_nul "$SC_ARGS_RECORD" | grep -Fqx -- 'late-clone' && echo 0 || echo 1)" \
+  "argv: $(read_nul "$SC_ARGS_RECORD" | tr '\n' '|')"
+
+# The #2418 guarantee must hold for the new code path too: hostile directory
+# names reach `git config` as literal argv, never as shell source.
+leaked="$(find "$WORK" -name 'pwned-*' 2>/dev/null | tr '\n' ' ')"
+check "safe.directory registration evaluates no directory name as shell" \
+  "$([ -z "$leaked" ] && echo 0 || echo 1)" "marker files created: $leaked"
+
+# Structural guard: `--add` is what made the list grow unbounded.
+check "the entrypoint never registers safe.directory with --add" \
+  "$(grep -q -- '--add safe.directory' "$ENTRYPOINT" && echo 1 || echo 0)"
+check "the entrypoint pins the value-pattern with --fixed-value" \
+  "$(grep -q -- '--fixed-value' "$ENTRYPOINT" && echo 0 || echo 1)"
+
+# =========================================================================
+# 6. start-claude reports "everything already running" as SUCCESS, so the
+#    entrypoint's periodic reconcile doesn't log a warning on every quiet
+#    pass (#2612).
+# =========================================================================
+START_CLAUDE="$REPO_ROOT/templates/claude-dev/start-claude.sh"
+TMUX_BIN="$WORK/tmux-bin"
+mkdir -p "$TMUX_BIN"
+cat > "$TMUX_BIN/tmux" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+  has-session)  exit 0 ;;                       # the boot session exists
+  list-windows) cat "$TMUX_WINDOWS" ;;
+  new-window|new-session) printf '%s\0' "$@" >> "$TMUX_RECORD" ;;
+esac
+exit 0
+STUB
+cat > "$TMUX_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$TMUX_BIN/tmux" "$TMUX_BIN/claude"
+export TMUX_WINDOWS="$RECORD/tmux-windows.txt"
+export TMUX_RECORD="$RECORD/tmux-new.txt"
+printf '%s\n' 'normal-repo' > "$TMUX_WINDOWS"
+
+sc_out="$(cd "$DEV_HOME_FAKE" && PATH="$TMUX_BIN:$PATH" TMUX= CLAUDE_START_NO_ATTACH=1 \
+            bash "$START_CLAUDE" --continue -- normal-repo 2>&1)"
+sc_rc=$?
+check "start-claude exits 0 when every requested repo already has a window" \
+  "$([ "$sc_rc" -eq 0 ] && echo 0 || echo 1)" "exit=$sc_rc out=$sc_out"
+
+sc_out="$(cd "$DEV_HOME_FAKE" && PATH="$TMUX_BIN:$PATH" TMUX= CLAUDE_START_NO_ATTACH=1 \
+            bash "$START_CLAUDE" --continue -- no-such-directory 2>&1)"
+sc_rc=$?
+check "start-claude still fails when it started nothing and found nothing" \
+  "$([ "$sc_rc" -ne 0 ] && echo 0 || echo 1)" "exit=$sc_rc out=$sc_out"
+
+# =========================================================================
 echo
-echo "claude-dev entrypoint: $((CASES - FAILURES))/$CASES checks passed"
+# The denominator is always printed, skips included: a case whose precondition
+# could not be established must never disappear into a smaller, greener total.
+echo "claude-dev entrypoint: $((CASES - FAILURES))/$CASES checks passed, $SKIPPED skipped"
 [ "$FAILURES" -eq 0 ] || exit 1

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Download, KeyRound, Loader2 } from 'lucide-react';
-import { summarizeCredentialSecurity, type Credential } from '@servicebay/api-client';
+import { summarizeCredentialSecurity, type CredentialView } from '@servicebay/api-client';
 import FocusTrap from '@/components/FocusTrap';
 import { Button } from '@/components/ui';
 import { useCredentialHandover } from '@/hooks/useCredentialHandover';
@@ -48,7 +48,7 @@ async function countPending(): Promise<number> {
   const res = await fetch('/api/system/credentials');
   if (!res.ok) return 0;
   const data = await res.json().catch(() => null);
-  const creds: Credential[] = data?.manifest?.credentials ?? [];
+  const creds: CredentialView[] = data?.manifest?.credentials ?? [];
   return summarizeCredentialSecurity(creds).unsecured;
 }
 

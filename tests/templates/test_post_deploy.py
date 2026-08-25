@@ -22,6 +22,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import sys
 import tarfile
 import unittest
@@ -2263,6 +2264,185 @@ class HomeAssistantScript(unittest.TestCase):
                 changed = m.ensure_auth_oidc_config_block()
             self.assertFalse(changed)
             self.assertNotIn("auth_oidc:", open(cfg_file).read())
+
+    # ── #2597: configuration.yaml is seed-only, so post-deploy owns the
+    #    auth_oidc VALUES ─────────────────────────────────────────────────────
+
+    OIDC_ENV = {
+        "HA_OIDC_SECRET": "first-install-secret",
+        "PUBLIC_DOMAIN": "dopp.cloud",
+        "HA_OIDC_ADMIN_GROUP": "admins",
+        "HA_OIDC_USER_GROUP": "family",
+    }
+
+    def _seed_configuration_yaml(self, cfg_dir: str, env_values: dict) -> str:
+        """Write the SHIPPED configuration.yaml.mustache rendered with
+        `env_values` — i.e. exactly what a first install leaves on the box —
+        and return its path. Using the real template (not a hand-rolled
+        fixture) is the point: it pins the seed and the reconciler together,
+        so a future edit that renames a key in one of them fails here."""
+        body = (TEMPLATES_DIR / "home-assistant" / "configuration.yaml.mustache").read_text()
+        for key, value in env_values.items():
+            body = body.replace("{{" + key + "}}", value)
+        self.assertNotIn("{{", body, "unrendered placeholder left in the seed fixture")
+        path = os.path.join(cfg_dir, "configuration.yaml")
+        with open(path, "w") as fh:
+            fh.write(body)
+        return path
+
+    def test_configuration_yaml_is_declared_seed_only(self):
+        """Criterion 1 at the template level: the deploy path only skips a
+        rewrite for files named in `servicebay.seed-only-configs`, so the
+        promise in the file's header is only real once it is listed there."""
+        yaml_text = (TEMPLATES_DIR / "home-assistant" / "template.yml").read_text()
+        match = re.search(r'servicebay\.seed-only-configs:\s*"([^"]+)"', yaml_text)
+        self.assertIsNotNone(match, "home-assistant declares no seed-only-configs")
+        names = [n.strip() for n in match.group(1).split(",")]
+        self.assertIn("configuration.yaml", names)
+
+    def test_first_install_render_is_left_byte_identical_by_a_redeploy(self):
+        """Criteria 1+3: the shipped seed is complete AND a redeploy whose env
+        is unchanged rewrites nothing — including the operator's own YAML."""
+        import tempfile
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            os.makedirs(cfg, exist_ok=True)
+            cfg_file = self._seed_configuration_yaml(cfg, self.OIDC_ENV)
+            # What an operator adds by hand after the install.
+            with open(cfg_file, "a") as fh:
+                fh.write("\nmqtt:\n  sensor:\n    - name: Kitchen\n      state_topic: home/kitchen\n")
+            before = open(cfg_file).read()
+            # A complete first-install config: includes + the SSO block.
+            for expected in ("default_config:", "automation: !include automations.yaml",
+                             "auth_oidc:", "client_secret: first-install-secret"):
+                self.assertIn(expected, before)
+
+            with run_with_env({"DATA_DIR": tmp, **self.OIDC_ENV}):
+                changed = m.ensure_auth_oidc_config_block()
+
+            self.assertFalse(changed, "an unchanged deploy must not rewrite configuration.yaml")
+            self.assertEqual(before, open(cfg_file).read())
+
+    def test_rotated_secret_and_domain_are_reconciled_into_an_existing_block(self):
+        """Criterion 2: the file is no longer re-rendered, so a rotated
+        HA_OIDC_SECRET / changed PUBLIC_DOMAIN has to reach HA through this
+        reconcile — otherwise seed-only would trade config loss for silent
+        SSO breakage."""
+        import tempfile
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            os.makedirs(cfg, exist_ok=True)
+            cfg_file = self._seed_configuration_yaml(cfg, self.OIDC_ENV)
+            with open(cfg_file, "a") as fh:
+                fh.write("\nlogger:\n  default: warning\n")
+
+            rotated = {
+                "HA_OIDC_SECRET": "rotated-secret",
+                "PUBLIC_DOMAIN": "example.org",
+                "HA_OIDC_ADMIN_GROUP": "hausadmins",
+                "HA_OIDC_USER_GROUP": "haushalt",
+            }
+            with run_with_env({"DATA_DIR": tmp, **rotated}):
+                changed = m.ensure_auth_oidc_config_block()
+            self.assertTrue(changed, "a rotated secret must be written to configuration.yaml")
+
+            content = open(cfg_file).read()
+            self.assertIn("client_secret: rotated-secret", content)
+            self.assertNotIn("first-install-secret", content)
+            self.assertIn("discovery_url: https://auth.example.org/.well-known/openid-configuration", content)
+            self.assertNotIn("auth.dopp.cloud", content)
+            self.assertIn('admin: "hausadmins"', content)
+            self.assertIn('user:  "haushalt"', content)  # original spacing kept
+            # Only ONE auth_oidc block, and everything else is untouched.
+            self.assertEqual(1, len(re.findall(r"(?m)^auth_oidc:", content)))
+            self.assertIn("logger:\n  default: warning", content)
+            self.assertIn("automatic_person_creation: true", content)
+            self.assertIn("automation: !include automations.yaml", content)
+
+            # And it settles: a second pass with the same env changes nothing.
+            settled = content
+            with run_with_env({"DATA_DIR": tmp, **rotated}):
+                again = m.ensure_auth_oidc_config_block()
+            self.assertFalse(again)
+            self.assertEqual(settled, open(cfg_file).read())
+
+    def test_restart_is_forced_when_the_oidc_values_were_rewritten(self):
+        """HA reads configuration.yaml at start, so a rewritten secret that
+        does not restart HA has not actually reached the running instance —
+        the criterion is 'lands in the running HA', not 'lands in the file'."""
+        import tempfile
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            os.makedirs(cfg, exist_ok=True)
+            self._seed_configuration_yaml(cfg, self.OIDC_ENV)
+            restarts = []
+            rotated = {**self.OIDC_ENV, "HA_OIDC_SECRET": "rotated-secret"}
+            with run_with_env({"DATA_DIR": tmp, "HA_OIDC_AUTH_VERSION": "v1.1.0", **rotated}), \
+                    mock.patch.object(m, "_wait_ha_ready", lambda *_a, **_kw: True), \
+                    mock.patch.object(m, "install_auth_oidc", lambda *_a, **_kw: False), \
+                    mock.patch.object(m, "restart_home_assistant",
+                                      lambda: (restarts.append(1), True)[1]), \
+                    mock.patch.object(m, "verify_oidc_endpoint", lambda *_a, **_kw: True):
+                m.configure_auth_oidc()
+            self.assertEqual(1, len(restarts),
+                             "a rewritten auth_oidc value must restart HA to take effect")
+
+    def test_an_operators_inline_comment_neither_churns_nor_is_lost(self):
+        """A `# rotated 2026-01` note on a managed value must not make every
+        deploy see a difference — that would rewrite the file and restart HA
+        on every pass, the exact churn this issue is about."""
+        import tempfile
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            os.makedirs(cfg, exist_ok=True)
+            cfg_file = self._seed_configuration_yaml(cfg, self.OIDC_ENV)
+            body = open(cfg_file).read().replace(
+                "client_secret: first-install-secret",
+                "client_secret: first-install-secret  # set by hand",
+            )
+            with open(cfg_file, "w") as fh:
+                fh.write(body)
+
+            with run_with_env({"DATA_DIR": tmp, **self.OIDC_ENV}):
+                self.assertFalse(m.ensure_auth_oidc_config_block())
+            self.assertEqual(body, open(cfg_file).read())
+
+            # …and when the value really does change, the note survives.
+            with run_with_env({"DATA_DIR": tmp, **self.OIDC_ENV, "HA_OIDC_SECRET": "rotated"}):
+                self.assertTrue(m.ensure_auth_oidc_config_block())
+            self.assertIn("client_secret: rotated  # set by hand", open(cfg_file).read())
+
+    def test_reconcile_never_re_adds_a_key_the_operator_removed(self):
+        """Re-inventing structure the operator deleted would be the same
+        'the template knows better' overwrite this issue is about. We report
+        it in the log and leave the file alone."""
+        import tempfile
+        m = load_script("home-assistant")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "home-assistant", "homeassistant")
+            os.makedirs(cfg, exist_ok=True)
+            cfg_file = os.path.join(cfg, "configuration.yaml")
+            with open(cfg_file, "w") as fh:
+                fh.write("default_config:\n\n"
+                         "auth_oidc:\n"
+                         "  client_id: homeassistant\n"
+                         "  client_secret: old\n"
+                         "  discovery_url: https://auth.dopp.cloud/.well-known/openid-configuration\n")
+            buf = io.StringIO()
+            with run_with_env({"DATA_DIR": tmp, **self.OIDC_ENV}), \
+                    contextlib.redirect_stdout(buf):
+                changed = m.ensure_auth_oidc_config_block()
+            content = open(cfg_file).read()
+            self.assertTrue(changed)
+            self.assertIn("client_secret: first-install-secret", content)
+            self.assertNotIn("roles:", content)
+            self.assertIn("roles.admin", buf.getvalue())
+            # The secret itself never goes to the deploy log.
+            self.assertNotIn("first-install-secret", buf.getvalue())
 
     def test_orphaned_helpers_detected_and_reported(self):
         """#1686: a restored entity_registry stub on a helper platform whose

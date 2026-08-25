@@ -17,6 +17,7 @@ function makeController(overrides: Partial<UseStackInstallReturn> = {}): UseStac
     variables: [],
     logs: [],
     installingNow: null,
+    deployedNames: [],
     credentialsManifest: [],
     npmCredPrompt: false,
     npmCredFallback: { email: '', password: '' },
@@ -231,6 +232,163 @@ describe('StackInstallProgress — NPM credentials prompt', () => {
     render(<StackInstallProgress controller={controller} />);
     fireEvent.click(screen.getByRole('button', { name: /Skip/ }));
     expect(skip).toHaveBeenCalled();
+  });
+});
+
+// ─── #2601 — a run that deployed nothing must not read as a finished one ───
+describe('StackInstallProgress — terminal state honesty (#2601)', () => {
+  /** The exact shape the reference box produced on 2026-08-24: a single
+   *  `media` upgrade seeded with 16 already-installed dependency satisfiers,
+   *  stopped by the missing v7→v8 migration hop before `deployItem`. */
+  function silentStopController(extra: Partial<UseStackInstallReturn> = {}) {
+    return makeController({
+      phase: 'error',
+      error: 'Migration chain for media is incomplete: no script for v7→v8 (have v1, v3, v4, v5, v6). Aborting deploy.',
+      items: [
+        { name: 'media', checked: true },
+        { name: 'nginx', checked: false, alreadyInstalled: true },
+        { name: 'auth', checked: false, alreadyInstalled: true },
+      ],
+      deployedNames: ['nginx', 'auth'],
+      logs: [
+        "✅ media's dependencies are healthy.",
+        'Installing media...',
+        '❌ Migration chain for media is incomplete: no script for v7→v8 (have v1, v3, v4, v5, v6). Aborting deploy.',
+      ],
+      ...extra,
+    });
+  }
+
+  it('states the failure the runner reported — it used to render nowhere', () => {
+    render(<StackInstallProgress controller={silentStopController()} />);
+    // `controller.error` was populated by the status poll and read by no
+    // component at all before this; the operator saw a green tick and buttons.
+    expect(screen.getByRole('alert').textContent).toMatch(/Migration chain for media is incomplete/);
+  });
+
+  it('says nothing was deployed, and does not count the skipped dependencies as deployed', () => {
+    render(<StackInstallProgress controller={silentStopController()} />);
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toMatch(/Nothing was deployed/i);
+    // deployedNames carries nginx + auth (skipped satisfiers). The denominator
+    // that matters is the REQUESTED set — 0 of 1, not 2 of 3.
+    expect(alert.textContent).toMatch(/0 of 1 requested service/);
+    expect(alert.textContent).toMatch(/Still on the previous version: media/);
+  });
+
+  it('the failure is on screen without expanding the service row', () => {
+    const { container } = render(<StackInstallProgress controller={silentStopController()} />);
+    // The row is collapsed by default; the ❌ line must still be in the tail.
+    expect(screen.queryByText(/No log lines yet for media/)).toBeNull();
+    const tail = container.querySelectorAll('.font-mono');
+    const tailText = Array.from(tail).map(e => e.textContent).join(' ');
+    expect(tailText).toMatch(/Migration chain for media is incomplete/);
+  });
+
+  it('marks the row that failed as Failed, not Pending', () => {
+    render(<StackInstallProgress controller={silentStopController()} />);
+    expect(screen.getByText('Failed')).toBeDefined();
+    expect(screen.queryByText('Pending')).toBeNull();
+  });
+
+  it('a genuinely successful run shows no failure banner', () => {
+    render(<StackInstallProgress controller={makeController({
+      phase: 'done',
+      items: [{ name: 'media', checked: true }, { name: 'nginx', checked: false, alreadyInstalled: true }],
+      deployedNames: ['media', 'nginx'],
+      logs: ['Installing media...', '✅ media deployed.'],
+    })} />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('Deployed')).toBeDefined();
+  });
+
+  it('flags a run that ended `done` having rolled nothing out', () => {
+    // Defence in depth: the runner now ends such a run in `error`, but a job
+    // recorded before that fix (or replayed from disk) must still not read as
+    // a success.
+    render(<StackInstallProgress controller={makeController({
+      phase: 'done',
+      items: [{ name: 'media', checked: true }],
+      deployedNames: [],
+      logs: ['✅ Pulled 1/1 image.'],
+    })} />);
+    expect(screen.getByRole('alert').textContent).toMatch(/Nothing was deployed/i);
+  });
+});
+
+// ─── #2600 — dependency satisfiers are not sixteen rows of pending work ────
+describe('InstallServiceRows — already-installed dependencies (#2600)', () => {
+  const satisfiers = ['nginx', 'auth', 'adguard', 'vaultwarden', 'immich', 'radicale'];
+  const upgradeController = (overrides: Partial<UseStackInstallReturn> = {}) => makeController({
+    phase: 'installing',
+    items: [
+      { name: 'home-assistant', checked: true },
+      ...satisfiers.map(name => ({ name, checked: false, alreadyInstalled: true })),
+    ],
+    installingNow: 'home-assistant',
+    deployedNames: [],
+    logs: ['Installing home-assistant...'],
+    ...overrides,
+  });
+
+  it('renders one row for the service being upgraded, not one per installed service', () => {
+    render(<StackInstallProgress controller={upgradeController()} />);
+    expect(screen.getByText('home-assistant')).toBeDefined();
+    // The satisfiers used to each render their own row, permanently "Pending"
+    // because a skipped item never emits the `Installing X...` marker the
+    // status was inferred from.
+    for (const name of satisfiers) {
+      expect(screen.queryByText(name)).toBeNull();
+    }
+    expect(screen.queryByText('Pending')).toBeNull();
+  });
+
+  it('collapses them behind one labelled, counted row', () => {
+    render(<StackInstallProgress controller={upgradeController()} />);
+    expect(screen.getByText(`${satisfiers.length} already-installed dependencies`)).toBeDefined();
+    expect(screen.getByText('Not touched')).toBeDefined();
+  });
+
+  it('still lists them on expand — the install order keeps its meaning', () => {
+    render(<StackInstallProgress controller={upgradeController()} />);
+    fireEvent.click(screen.getByRole('button', { name: /already-installed dependencies/ }));
+    for (const name of satisfiers) {
+      expect(screen.getByText(name)).toBeDefined();
+    }
+  });
+
+  it('singularises the summary row for a single satisfier', () => {
+    render(<StackInstallProgress controller={makeController({
+      phase: 'installing',
+      items: [
+        { name: 'media', checked: true },
+        { name: 'nginx', checked: false, alreadyInstalled: true },
+      ],
+      installingNow: 'media',
+      deployedNames: [],
+      logs: [],
+    })} />);
+    expect(screen.getByText('1 already-installed dependency')).toBeDefined();
+  });
+
+  it('a real stack install still shows every selected service as its own row', () => {
+    render(<StackInstallProgress controller={makeController({
+      phase: 'installing',
+      items: [
+        { name: 'nginx', checked: true },
+        { name: 'auth', checked: true },
+        { name: 'immich', checked: true },
+      ],
+      installingNow: 'nginx',
+      deployedNames: [],
+      logs: ['Installing nginx...'],
+    })} />);
+    expect(screen.getByText('nginx')).toBeDefined();
+    expect(screen.getByText('auth')).toBeDefined();
+    expect(screen.getByText('immich')).toBeDefined();
+    expect(screen.queryByText(/already-installed/)).toBeNull();
+    // The two not yet started are genuinely pending — that word is still right here.
+    expect(screen.getAllByText('Pending')).toHaveLength(2);
   });
 });
 

@@ -20,7 +20,15 @@ metadata:
     # it is missing and never writes it again (#2590 — before this annotation
     # every convergence pass re-rendered the empty seed over the operator's
     # real automations, silently).
-    servicebay.seed-only-configs: "automations.yaml,scenes.yaml,scripts.yaml"
+    #
+    # configuration.yaml joined them in #2597. Its header always promised
+    # "edit freely, re-deploys don't overwrite" while every deploy re-rendered
+    # it, so an operator `sensor:` / `template:` / `mqtt:` block was silently
+    # discarded. It is seed-only now; the two values ServiceBay still owns
+    # inside it (the auth_oidc client_secret + discovery_url, which a rotated
+    # HA_OIDC_SECRET or a changed PUBLIC_DOMAIN has to reach) are reconciled
+    # key-by-key from post-deploy.py instead of by rewriting the whole file.
+    servicebay.seed-only-configs: "automations.yaml,scenes.yaml,scripts.yaml,configuration.yaml"
     # 8123 = Home Assistant (own login + OIDC, public via home.<domain>).
     # 8091 = Z-Wave JS UI, 3001 = the raw Z-Wave JS control websocket,
     # 5580 = python-matter-server's control websocket. Those three carry no

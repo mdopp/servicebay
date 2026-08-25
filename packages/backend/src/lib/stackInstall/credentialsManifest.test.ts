@@ -9,6 +9,7 @@ import {
   dropDeliveredPasswords,
   isCredentialSecured,
   summarizeCredentialSecurity,
+  toCredentialViews,
   type Credential,
   type CredentialUrlContext,
 } from './credentialsManifest';
@@ -153,6 +154,20 @@ describe('credential hand-over state (#2560)', () => {
     expect(isCredentialSecured(unsecured('lldap'))).toBe(false);
     expect(isCredentialSecured({ password: '' })).toBe(true);
     expect(isCredentialSecured({ password: 'still-here' })).toBe(false);
+  });
+
+  it('reads the state off the view when the secret is gone (#2605)', () => {
+    const views = toCredentialViews([unsecured('immich'), secured('lldap')]);
+    expect(views.map(v => 'password' in v)).toEqual([false, false]);
+    expect(views.map(isCredentialSecured)).toEqual([false, true]);
+    expect(summarizeCredentialSecurity(views)).toEqual({ total: 2, secured: 1, unsecured: 1 });
+  });
+
+  it('keeps every non-secret field on the view', () => {
+    const [view] = toCredentialViews([unsecured('immich', 'immich')]);
+    const { password, ...rest } = unsecured('immich', 'immich');
+    void password;
+    expect(view).toEqual({ ...rest, secured: false });
   });
 
   it('summarises how many entries ServiceBay still holds the secret for', () => {

@@ -19,11 +19,12 @@ const PENDING = {
   service: 'Immich',
   url: 'http://localhost:2283',
   username: 'admin@dopp.cloud',
-  password: 'sup3r-s3cret-value',
+  // The wire shape since #2605: the state, not the secret.
+  secured: false,
   importance: 'critical' as const,
   template: 'immich',
 };
-const HANDED_OVER = { ...PENDING, service: 'LLDAP', template: 'auth', password: '' };
+const HANDED_OVER = { ...PENDING, service: 'LLDAP', template: 'auth', secured: true };
 
 /** The exact CSV the fake server "sends"; the client must hash what it saved. */
 const CSV = 'folder,favorite\n"ServiceBay Home",""\n';

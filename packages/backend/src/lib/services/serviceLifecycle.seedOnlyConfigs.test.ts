@@ -107,23 +107,32 @@ describe('deployKubeService honours servicebay.seed-only-configs (#2590)', () =>
         expect(written).toContain(`${HA_CONFIG_DIR}/scripts.yaml`);
     });
 
-    it('keeps re-rendering the config files the template still owns', async () => {
-        // Only the declared three are protected — configuration.yaml is not in
-        // the annotation, so it keeps the unconditional-write behaviour.
+    it('leaves an existing configuration.yaml alone on a redeploy (#2597)', async () => {
+        // The file's header always promised "edit freely — re-deploys don't
+        // overwrite" while every deploy re-rendered it, so an operator's
+        // `sensor:` / `mqtt:` / `logger:` block was silently discarded.
         stubAgent(new Set(EXTRA_FILES.map(f => f.path)));
+
+        await deployHomeAssistant();
+
+        expect(writtenPaths()).not.toContain(`${HA_CONFIG_DIR}/configuration.yaml`);
+    });
+
+    it('still seeds configuration.yaml on a first install (#2597)', async () => {
+        stubAgent(new Set());
 
         await deployHomeAssistant();
 
         expect(writtenPaths()).toContain(`${HA_CONFIG_DIR}/configuration.yaml`);
     });
 
-    it('protects the three include targets the shipped template declares', () => {
+    it('protects every config file the shipped template declares', () => {
         // Pins template ↔ code: the promise in the mustache headers ("ServiceBay
-        // only seeds it empty on first install") is now carried by an annotation
+        // only seeds it on first install") is now carried by an annotation
         // the deploy path reads, not by prose.
         const yamlText = fs.readFileSync(HA_TEMPLATE, 'utf-8');
         expect(yamlText).toMatch(
-            /servicebay\.seed-only-configs:\s*"automations\.yaml,scenes\.yaml,scripts\.yaml"/,
+            /servicebay\.seed-only-configs:\s*"automations\.yaml,scenes\.yaml,scripts\.yaml,configuration\.yaml"/,
         );
     });
 });

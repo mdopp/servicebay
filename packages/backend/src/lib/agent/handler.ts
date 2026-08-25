@@ -160,26 +160,62 @@ const BOOTSTRAP_WINDOW_MS = 60 * 1000;
 
 const SECRET_KEY_RE = /(TOKEN|SECRET|PASSWORD|API_KEY)/i;
 
+/** Guard against a pathological/self-referential payload while walking it. */
+const REDACT_MAX_DEPTH = 12;
+
 /**
- * Redact secret material from a command payload before it is logged.
+ * Redact secret material from anything before it is logged.
  *
  * The rendered pod YAML shipped to the agent via `write_file` carries
  * plaintext `env` secrets (HERMES_TOKEN, …); logging the payload verbatim
  * leaked live credentials into the journal (#1211). Replace any `content`
- * blob with a size marker and mask the value of any secret-looking key.
+ * blob with a size marker and mask the value of any secret-looking key —
+ * at *any* depth, because the agent's state sync carries the same quadlet
+ * bytes nested as `{files: {<path>: {content: …}}}` and a top-level-only
+ * pass missed all of them (#2603).
  */
-export function redactCommandPayloadForLog(params: Record<string, unknown>): Record<string, unknown> {
+export function redactForLog(value: unknown, depth = 0): unknown {
+  if (depth >= REDACT_MAX_DEPTH) return '<redacted: max depth>';
+  if (Array.isArray(value)) return value.map(item => redactForLog(item, depth + 1));
+  if (value === null || typeof value !== 'object') return value;
   const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(params)) {
-    if (key === 'content' && typeof value === 'string') {
-      out[key] = `<${value.length} chars redacted>`;
-    } else if (SECRET_KEY_RE.test(key) && typeof value === 'string') {
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (key === 'content' && typeof item === 'string') {
+      out[key] = `<${item.length} chars redacted>`;
+    } else if (SECRET_KEY_RE.test(key) && typeof item === 'string') {
       out[key] = '***';
     } else {
-      out[key] = value;
+      out[key] = redactForLog(item, depth + 1);
     }
   }
   return out;
+}
+
+/** Redact a command payload before it is logged (#1211). */
+export function redactCommandPayloadForLog(params: Record<string, unknown>): Record<string, unknown> {
+  return redactForLog(params) as Record<string, unknown>;
+}
+
+/**
+ * Redact one structured (pure-JSON) agent log line, or return `null` when the
+ * line isn't structured JSON at all.
+ *
+ * The agent already masks its own structured payloads, but *this* process is
+ * the one that actually writes the journal, so it masks them again: a box
+ * running a stale agent build — or any future agent-side sink someone forgets
+ * to route through the redactor — still cannot push quadlet `content` into the
+ * journal through here (#2603).
+ */
+export function redactStructuredLogLine(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  return JSON.stringify(redactForLog(parsed));
 }
 
 export class AgentHandler extends EventEmitter {
@@ -438,26 +474,22 @@ export class AgentHandler extends EventEmitter {
       
       // Safety: Prevent unlimited buffer growth if no newline ever comes (unlikely but safe)
       if (this.logBuffer.length > 1024 * 1024) {
-          // Log what we have and clear
-          this.log(`Agent:${this.nodeName}`, 'error', 'Log buffer exceeded 1MB, flushing raw content');
-          this.log(`Agent:${this.nodeName}:STDERR`, 'error', this.logBuffer);
+          // Drop it, don't log it: an unterminated 1MB stderr blob is far more
+          // likely to be a truncated structured payload (quadlet contents with
+          // plaintext env secrets) than a useful message, and dumping it here
+          // would sidestep the redaction on every other path (#2603).
+          this.log(`Agent:${this.nodeName}`, 'error', `Log buffer exceeded 1MB, dropping ${this.logBuffer.length} unterminated chars unlogged`);
           this.logBuffer = '';
       }
   }
 
     private tryHandleStructuredLog(line: string): boolean {
-      const trimmed = line.trim();
-      if (!trimmed) return false;
-      const startsJson = trimmed.startsWith('{') || trimmed.startsWith('[');
-      if (!startsJson) return false;
-
-      try {
-        JSON.parse(trimmed);
-        this.logRaw(`Agent:${this.nodeName}`, 'info', trimmed);
-        return true;
-      } catch {
-        return false;
-      }
+      // Never log `line` itself — the redacted rendering is the only form of a
+      // structured agent line that may reach a log sink (#2603).
+      const redacted = redactStructuredLogLine(line);
+      if (redacted === null) return false;
+      this.logRaw(`Agent:${this.nodeName}`, 'info', redacted);
+      return true;
     }
 
   private handleDisconnect() {

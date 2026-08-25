@@ -7,7 +7,7 @@ import {
   isHttpUrl,
   resolveCredentialUrl,
   summarizeCredentialSecurity,
-  type Credential,
+  type CredentialView,
   type CredentialSecuritySummary,
   type CredentialUrlHost,
 } from '@servicebay/api-client';
@@ -18,7 +18,7 @@ import { Badge, Button, DataTable, type Column } from '@/components/ui';
 
 interface Manifest {
   savedAt: string;
-  credentials: Credential[];
+  credentials: CredentialView[];
 }
 
 /** URL cell (#1626): render an admin-reachable http(s) URL as a clickable
@@ -32,7 +32,7 @@ interface Manifest {
  *  <DataTable>'s cells carry `break-words`, which contains a long URL without
  *  ever breaking it mid-token. */
 function CredentialUrlCell({ cred, hosts, publicDomain }: {
-  cred: Credential;
+  cred: CredentialView;
   hosts: CredentialUrlHost[];
   publicDomain: string | null;
 }) {
@@ -126,7 +126,7 @@ function CredentialActions({ summary, vaultBase, busy, downloading, onDownload, 
   );
 }
 
-function ServiceCell(c: Credential) {
+function ServiceCell(c: CredentialView) {
   return (
     <div>
       {c.service}
@@ -137,7 +137,7 @@ function ServiceCell(c: Credential) {
   );
 }
 
-function StoredInCell(c: Credential) {
+function StoredInCell(c: CredentialView) {
   if (!isCredentialSecured(c)) return <Badge variant="warn">Not handed over</Badge>;
   return <Badge variant="ok">Handed over</Badge>;
 }
@@ -150,7 +150,7 @@ function StoredInCell(c: Credential) {
 function credentialColumns(
   proxyHosts: CredentialUrlHost[],
   publicDomain: string | null,
-): Column<Credential>[] {
+): Column<CredentialView>[] {
   return [
     { key: 'service', header: 'Service', className: 'w-[16%]', align: 'left', cell: ServiceCell },
     {
@@ -306,7 +306,7 @@ export default function CredentialsSection() {
             Nothing saved yet. The install wizard writes here at the end of every successful run.
           </p>
         ) : (
-          <DataTable<Credential>
+          <DataTable<CredentialView>
             columns={credentialColumns(proxyHosts, publicDomain)}
             // Above the primitive's 5x8rem default: these five columns are all
             // dense (a URL, an e-mail username, a status chip, a sentence of

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Power } from 'lucide-react';
+import BulkTemplateUpgrade from '@/components/BulkTemplateUpgrade';
 import ConfirmModal from '@/components/ConfirmModal';
 import ServiceBayUpdateCard from '@/components/ServiceBayUpdateCard';
 import { useToast } from '@/providers/ToastProvider';
@@ -13,6 +14,13 @@ import { useToast } from '@/providers/ToastProvider';
  * #2082) with the OS-reinstall control. The reinstall block stays here (and
  * NOT on Home) because it is destructive/recovery-only — Home only carries
  * the routine update surfaces.
+ *
+ * #2602 adds the third kind of update to the same tab: a **template** upgrade.
+ * The other two renew themselves (container images through the update window,
+ * ServiceBay through its own card); a template upgrade needs a redeploy, and
+ * before this it could only be driven one service at a time through the
+ * install dialog. `<BulkTemplateUpgrade>` is the collective path — preview
+ * first, then one run in dependency order.
  */
 export default function UpdatesSection() {
   const { addToast } = useToast();
@@ -116,6 +124,8 @@ export default function UpdatesSection() {
   return (
     <>
       <ServiceBayUpdateCard />
+
+      <BulkTemplateUpgrade />
 
       {/* Reinstall Operating System Section */}
       <div className="bg-white dark:bg-surface-2 rounded-xl border border-border shadow-sm overflow-hidden w-full mt-6">
