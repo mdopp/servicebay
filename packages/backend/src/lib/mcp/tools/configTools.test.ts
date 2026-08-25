@@ -542,7 +542,7 @@ describe('isSecretKey (#2404)', () => {
     'VAPID_PRIVATE_KEY', 'AUTHELIA_STORAGE_ENCRYPTION_KEY',
     'hash', 'salt', 'bearer', 'client-secret', 'api_key',
   ])('treats %s as secret', async (key) => {
-    const { isSecretKey } = await import('./configTools');
+    const { isSecretKey } = await import('../redact');
     expect(isSecretKey(key)).toBe(true);
   });
 
@@ -558,7 +558,7 @@ describe('isSecretKey (#2404)', () => {
     // only the captured stdout it holds is dangerous.
     'stdoutTail', 'ranAt', 'fromVersion', 'exitCode', 'lastRunAt',
   ])('does not treat %s as secret', async (key) => {
-    const { isSecretKey } = await import('./configTools');
+    const { isSecretKey } = await import('../redact');
     expect(isSecretKey(key)).toBe(false);
   });
 });

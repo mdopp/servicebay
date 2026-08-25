@@ -955,6 +955,116 @@ async function checkCredentialHttpEgress() {
 }
 
 // ---------------------------------------------------------------------------
+// 8d. The MCP audit log masks file BODIES, at any depth, from one shared
+//     redactor.
+//
+// #2624 is the fourth instance of #1211's class (→ #2603 agent sink, → #2616
+// journal history). `mcp/audit.ts` redacted a flat, exact-name denylist over
+// the TOP LEVEL of a tool's args: it listed `kubeContent`/`yamlContent` but not
+// `content`, so `write_file({path, content, node})` persisted every byte an
+// agent wrote under /mnt/data — restored `.env` files, API keys, private keys —
+// in plaintext in `DATA_DIR/mcp-audit.log` and its rotated copy. The nested
+// bodies (`deploy_service`'s `extraFiles[].content`) and the newer alias
+// (`update_service_yaml`'s `podSpecContent`) walked past it too.
+//
+// The recurring fault is never the one key somebody forgot; it is that the
+// denylist is per-sink and shallow. So this is the ratchet on the fixed shape:
+//
+//   1. `recordAudit` still routes `args` through `redactArgs`;
+//   2. `redactArgs` still recurses (a top-level-only pass is what missed the
+//      nested bodies every previous time);
+//   3. the sink still uses the SHARED `isSecretKey` from `mcp/redact.ts` rather
+//      than growing a fifth private copy of the key matcher;
+//   4. every `*Content` argument any MCP tool declares is listed in
+//      `BODY_KEYS`. This is the part that makes a new sink fail MECHANICALLY:
+//      adding `manifestContent: z.string()` to a tool without listing it is a
+//      build failure, not a security review someone has to remember to do.
+//
+// Masking, not dropping: the log keeps the tool, caller, outcome, `path` and
+// `<N chars redacted>`, so the operator still sees WHAT the agent did. Never
+// relax this — tighten it.
+// ---------------------------------------------------------------------------
+const MCP_AUDIT_TS = path.join(BACKEND_SRC, 'lib/mcp/audit.ts');
+const MCP_TOOLS_DIR = path.join(BACKEND_SRC, 'lib/mcp/tools');
+/** Body-shaped args whose names don't end in `Content`. Floor, not ceiling. */
+const EXTRA_BODY_ARGS = ['body', 'advancedConfig'];
+
+/** Every arg name an MCP tool declares that carries a file/config body. */
+async function collectBodyShapedToolArgs(): Promise<Set<string>> {
+    const toolFiles = await walk(
+        MCP_TOOLS_DIR,
+        p => p.endsWith('.ts') && !p.endsWith('.test.ts'),
+    );
+    const declared = new Set<string>(EXTRA_BODY_ARGS);
+    for (const file of toolFiles) {
+        const raw = await readFile(file, 'utf-8');
+        for (const m of raw.matchAll(/^\s*(\w*[Cc]ontent)\s*:\s*z\.string\(/gm)) {
+            declared.add(m[1]);
+        }
+    }
+    return declared;
+}
+
+async function checkMcpAuditRedaction() {
+    const check = 'mcp-audit-redaction';
+    let auditTs: string;
+    try {
+        auditTs = await readFile(MCP_AUDIT_TS, 'utf-8');
+    } catch {
+        violations.push({
+            check,
+            detail: 'packages/backend/src/lib/mcp/audit.ts is missing — the #2624 audit-log redaction guard cannot be verified.',
+        });
+        return;
+    }
+
+    const recordBody = auditTs.split('export async function recordAudit(')[1]?.split('\nexport ')[0] ?? '';
+    if (!recordBody.includes('redactArgs(entry.args)')) {
+        violations.push({
+            check,
+            detail: '`recordAudit()` no longer routes `entry.args` through `redactArgs()`. Every MCP tool argument — including `write_file`\'s full file body — would land in mcp-audit.log verbatim (#2624).',
+        });
+    }
+    // The per-field fall-through must RECURSE. That one line is the whole
+    // difference between this redactor and the top-level-only pass it
+    // replaced, so pin it literally rather than "mentions the walker
+    // somewhere" — a mutation that returns the value verbatim has to fail.
+    if (!/return redactAuditValue\(value, depth \+ 1\);/.test(auditTs)
+        || !/REDACT_MAX_DEPTH/.test(auditTs)) {
+        violations.push({
+            check,
+            detail: 'audit.ts\'s arg redactor no longer walks nested values to a capped depth (`return redactAuditValue(value, depth + 1)` + `REDACT_MAX_DEPTH`). A top-level-only pass is exactly what let `deploy_service`\'s `extraFiles[].content` and `install_template`\'s `variables` through (#2603, #2624).',
+        });
+    }
+    if (!/import \{[^}]*\bisSecretKey\b[^}]*\} from '\.\/redact'/.test(auditTs)) {
+        violations.push({
+            check,
+            detail: 'audit.ts no longer imports `isSecretKey` from `./redact`. The secret-shaped-key matcher is shared on purpose — a private copy per sink is how this leak got reopened four times (#1211/#2603/#2616/#2624).',
+        });
+    }
+
+    // The BODY_KEYS set, as written in the source, lowercased.
+    const bodyKeysBlock = auditTs.split('const BODY_KEYS = new Set([')[1]?.split(']);')[0] ?? '';
+    const bodyKeys = new Set(
+        [...bodyKeysBlock.matchAll(/'([^']+)'/g)].map(m => m[1].toLowerCase()),
+    );
+
+    // Every body-shaped arg any MCP tool declares must be covered.
+    const declared = await collectBodyShapedToolArgs();
+    const uncovered = [...declared].filter(name => !bodyKeys.has(name.toLowerCase())).sort();
+    for (const name of uncovered) {
+        violations.push({
+            check,
+            detail: `MCP tool argument \`${name}\` carries a file/config body but is not in \`BODY_KEYS\` in packages/backend/src/lib/mcp/audit.ts. Its full value would be written to mcp-audit.log in plaintext. Add it there (the log keeps \`<N chars redacted>\` plus the path, so the event stays legible) — #2624.`,
+        });
+    }
+
+    measurements.push(
+        `mcp audit redaction: recordAudit redacts args recursively via shared isSecretKey; ${declared.size} body-shaped tool arg(s), all in BODY_KEYS`,
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 9. docs/ARCHITECTURE_INVARIANTS.md's numbers are generated, not typed.
 //
 // #2427: the doc carried a hand-maintained measurement table ("largest backend
@@ -1054,6 +1164,7 @@ async function main() {
         checkServiceRepoBootstrapStep(),
         checkAgentLogRedaction(),
         checkCredentialHttpEgress(),
+        checkMcpAuditRedaction(),
         syncOrCheckThresholdDoc(),
     ]);
 

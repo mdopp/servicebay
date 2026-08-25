@@ -206,6 +206,68 @@ function redactYamlBlockScalars(text: string, keywordsAlternation: string): stri
   return out.join('\n');
 }
 
+/**
+ * Secret-shaped key names (#2404, shared here by #2624).
+ *
+ * `sanitizeConfig` used to be a three-field denylist while `AppConfig`'s whole
+ * job includes storing dozens of per-service credentials. A path denylist is
+ * the wrong shape: it can only ever cover the fields someone remembered, and
+ * new secret-bearing fields arrive per-service. So the match is on the *key
+ * name*, structurally, at every depth.
+ *
+ * Matching is word-based (`clientSecret` → `client` + `secret`,
+ * `LLDAP_ADMIN_PASSWORD` → `lldap` + `admin` + `password`) rather than raw
+ * substring, because the config is full of maps keyed by *service name* —
+ * `installedTemplates`, `servicePostDeploy`, `serviceMigrations`,
+ * `templateSettings` — and a raw substring match would redact a service called
+ * `keycloak` or `passbolt`. Over-redacting a real field is a bug too, just a
+ * far cheaper one than under-redacting, so the tie-breaks below lean redact.
+ *
+ * It lives in this module rather than next to one of its callers because it
+ * has three now — `get_config`'s sanitiser, the MCP audit log's arg redactor
+ * (#2624), and anything that follows. A per-caller copy is exactly how the
+ * same leak got reopened three times (#1211 → #2603 → #2616 → #2624).
+ */
+const SECRET_WORDS = new Set([
+  'password', 'passwd', 'pass', 'passphrase',
+  'secret', 'token', 'key', 'apikey', 'privatekey',
+  'credential', 'hash', 'salt', 'bearer',
+]);
+
+/**
+ * Run-together lowercase names never split into words (`apikey`,
+ * `clientsecret`, `accesstoken`, `privatekey`), so they get a suffix match on
+ * the de-punctuated key as well. Suffix-only, and deliberately without `pass`:
+ * a prefix match would catch `keycloak`, and a `pass` suffix would catch
+ * `bypass`.
+ */
+const SECRET_SUFFIXES = [
+  'password', 'passphrase', 'secret', 'token', 'key', 'credential', 'hash', 'salt',
+];
+
+/** `LLDAP_ADMIN_PASSWORD` / `clientSecret` / `api-key` → lowercase words. */
+const splitKeyWords = (key: string): string[] =>
+  key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[^A-Za-z0-9]+/)
+    .map(word => word.toLowerCase())
+    .filter(Boolean);
+
+/**
+ * Does this key name look like it holds a secret? Exported for the test
+ * suites, which pin both the positives and the service-name negatives.
+ */
+export function isSecretKey(key: string): boolean {
+  const words = splitKeyWords(key);
+  for (const word of words) {
+    if (SECRET_WORDS.has(word)) return true;
+    // Plurals: `installedSecrets` → `secrets`, `apiKeys` → `keys`.
+    if (word.endsWith('s') && SECRET_WORDS.has(word.slice(0, -1))) return true;
+  }
+  const flat = words.join('');
+  return SECRET_SUFFIXES.some(suffix => flat.endsWith(suffix) || flat.endsWith(`${suffix}s`));
+}
+
 /** Redact a `getServiceFiles` payload — touches yamlContent +
  *  serviceContent (which can echo the env-vars too via systemctl
  *  cat output), plus the rendered kube file. Path fields stay as-is. */
