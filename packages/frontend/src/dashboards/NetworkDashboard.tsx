@@ -355,14 +355,23 @@ export const CustomNode = ({ id, data }: NodeProps<CustomNodeType>) => {
   };
 
   // Helper to build detail items for gateway/router type
+  // Extract helper: get DNS servers from raw or metadata
+  const getDnsItem = (raw: Record<string, unknown>): DetailItem | null => {
+    const dns = (raw.dnsServers as string[] | undefined) || data.metadata?.stats?.dnsServers;
+    if (dns && Array.isArray(dns) && dns.length > 0) {
+      return { label: 'DNS', value: dns.join(', '), full: true };
+    }
+    return null;
+  };
+
   const getGatewayDetails = (raw: Record<string, unknown>): DetailItem[] => {
     const items: DetailItem[] = [
       { label: 'Ext IP', value: String(raw.externalIP || data.metadata?.stats?.externalIP || 'Unknown') },
       { label: 'Int IP', value: String(raw.internalIP || data.metadata?.stats?.internalIP || 'Unknown') },
       { label: 'Uptime', value: raw.uptime ? `${Math.floor((raw.uptime as number) / 3600)}h` : 'N/A', full: true }
     ];
-    const dns = (raw.dnsServers as string[] | undefined) || data.metadata?.stats?.dnsServers;
-    if (dns && Array.isArray(dns) && dns.length > 0) items.push({ label: 'DNS', value: dns.join(', '), full: true });
+    const dnsItem = getDnsItem(raw);
+    if (dnsItem) items.push(dnsItem);
     return items;
   };
 
@@ -939,41 +948,52 @@ export default function NetworkDashboard() {
       }
   };
 
+  // Extract helper: check if query matches basic node fields
+  const checkBasicNodeFields = (data: GraphNodeData, q: string): boolean => {
+    if (data.label && String(data.label).toLowerCase().includes(q)) return true;
+    if (data.subLabel && String(data.subLabel).toLowerCase().includes(q)) return true;
+    if (data.hostname && String(data.hostname).toLowerCase().includes(q)) return true;
+    return false;
+  };
+
+  // Extract helper: check if query matches port mappings
+  const checkNodePorts = (ports: unknown[] | undefined, q: string): boolean => {
+    if (!ports || !Array.isArray(ports)) return false;
+    const portsStr = (ports as unknown[]).map((p) => {
+      if (typeof p === 'object' && p !== null) {
+        const pm = p as LegacyPortMapping;
+        return `${pm.host || pm.hostPort} ${pm.container || pm.containerPort}`;
+      }
+      return String(p);
+    }).join(' ');
+    return portsStr.includes(q);
+  };
+
+  // Extract helper: check if query matches raw data fields
+  const checkRawDataFields = (raw: Record<string, unknown>, q: string): boolean => {
+    if (raw.url && String(raw.url).toLowerCase().includes(q)) return true;
+    if (raw.externalIP && String(raw.externalIP).includes(q)) return true;
+    if (raw.internalIP && String(raw.internalIP).includes(q)) return true;
+    return false;
+  };
+
+  // Extract helper: check if query matches verified domains
+  const checkVerifiedDomains = (verifiedDomains: unknown, q: string): boolean => {
+    if (!Array.isArray(verifiedDomains)) return false;
+    return verifiedDomains.some((d: string) => d.toLowerCase().includes(q));
+  };
+
   const matchesSearch = useCallback((node: Node<GraphNodeData>, query: string) => {
     if (!query) return true;
     const q = query.toLowerCase();
     const data = node.data;
     const raw = data.rawData || {};
-    
-    // Check basic fields
-    if (data.label && String(data.label).toLowerCase().includes(q)) return true;
-    if (data.subLabel && String(data.subLabel).toLowerCase().includes(q)) return true;
-    if (data.hostname && String(data.hostname).toLowerCase().includes(q)) return true;
-    
-    // Check ports (Prefer rawData)
-    const ports = data.rawData?.ports;
-    if (ports && Array.isArray(ports)) {
-        const portsStr = (ports as unknown[]).map((p) => {
-            if (typeof p === 'object' && p !== null) {
-                const pm = p as LegacyPortMapping;
-                return `${pm.host || pm.hostPort} ${pm.container || pm.containerPort}`;
-            }
-            return String(p);
-        }).join(' ');
-        if (portsStr.includes(q)) return true;
-    }
-    
-    // Check raw data fields
-    const r = raw as Record<string, unknown>;
-    if (r.url && String(r.url).toLowerCase().includes(q)) return true;
-    if (r.externalIP && String(r.externalIP).includes(q)) return true;
-    if (r.internalIP && String(r.internalIP).includes(q)) return true;
-    
-    // Check verified domains
-    if (data.metadata?.verifiedDomains && Array.isArray(data.metadata.verifiedDomains)) {
-         if (data.metadata.verifiedDomains.some((d: string) => d.toLowerCase().includes(q))) return true;
-    }
-    
+
+    if (checkBasicNodeFields(data, q)) return true;
+    if (checkNodePorts(data.rawData?.ports, q)) return true;
+    if (checkRawDataFields(raw as Record<string, unknown>, q)) return true;
+    if (checkVerifiedDomains(data.metadata?.verifiedDomains, q)) return true;
+
     return false;
   }, []);
 
