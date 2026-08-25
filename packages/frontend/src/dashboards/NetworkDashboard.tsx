@@ -1974,7 +1974,7 @@ export default function NetworkDashboard() {
 
                         {selectedNodeData.type === 'proxy' && (
                             <Link
-                                href="/proxy"
+                                href="/settings/network-domain#reverse-proxy"
                                 className="w-full flex items-center justify-center gap-2 h-10 px-space-4 bg-surface-2 text-text border border-border hover:bg-surface-muted hover:border-border-strong rounded-card transition-colors text-sm font-medium"
                             >
                                 <Edit size={14} />

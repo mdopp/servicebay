@@ -54,6 +54,15 @@ const nextConfig: NextConfig = {
       // Services left Settings (spec §4.4 / §8) — old bookmarks still resolve.
       { source: '/settings/services', destination: '/services', permanent: false },
       { source: '/settings/services/:name', destination: '/services/:name', permanent: false },
+      // #2625: the two error surfaces that hand the operator a recovery path
+      // (CoreHealthBanner "Self-diagnose", DashboardHydrationGate "Diagnose")
+      // link to `/diagnose`, which never had a page — only the API route
+      // `/api/system/diagnose`. Diagnostics was folded into Status (IA slice 2,
+      // #2030): the daily self-diagnose probes render as `diagnose:<probeId>`
+      // rows on Status' default Checks tab, with the DiagnoseProbeList repair
+      // popup behind them. Redirect rather than rewriting the two hrefs so any
+      // bookmark or doc pointing at /diagnose resolves too.
+      { source: '/diagnose', destination: '/status', permanent: false },
     ];
   },
 };
