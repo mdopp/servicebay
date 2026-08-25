@@ -119,7 +119,12 @@ swaps the unit to a `.container` Quadlet carrying
 `AddDevice=nvidia.com/gpu=all`, which is what actually attaches the
 card; `ServiceManager.reconcileContainerQuadletShadow` retires the
 shadowing `.kube`/`.yml` on every redeploy so the swap survives
-(#2174). Without that swap the limit is dropped and the container runs
+(#2174). The container itself is force-recreated only when the running
+one is *not* the one the `.container` unit currently describes — same
+`podman run` argv and same image id means it is left running, so warm
+in-container state (ollama's VRAM-resident models) survives a redeploy
+that changed nothing; every "can't tell" still recreates (#2618).
+Without that swap the limit is dropped and the container runs
 on CPU with no error — which is why the multi-container shape above is
 refused outright rather than deployed.
 
