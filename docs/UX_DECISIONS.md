@@ -566,6 +566,61 @@ rewrite — restored (as `runId` + `confirmed`) in #2383.
 
 ---
 
+## Update notices collapse to their count; they are never dismissed
+
+**What.** The pending-update notices above the Services list (template
+upgrades, service image updates) render as a **collapsible notice**: a
+one-line summary that always carries the count ("2 template upgrades
+available"), with the per-service rows folded behind it. The default
+follows the viewport — **collapsed below `md`, expanded from `md` up** —
+so the desktop reading is unchanged and a phone reaches the service
+list without scrolling past the stack. The primary action ("Update
+now") stays in the summary row, so it is reachable while collapsed.
+
+Two rules the notices must keep:
+- **No dismiss.** The old `×` on the template-upgrade banner removed the
+  notice outright; an operator who clicked it lost sight of a real
+  pending upgrade until the *next* version bump. It is now a collapse:
+  the summary line — and therefore the count — always stays on screen.
+  The remembered choice is still keyed by `<template>@<version>` in
+  localStorage, so a newly published upgrade re-expands the rows itself.
+- **Don't solve it by leaving things out.** Template-upgrade visibility
+  is the improvement over "you never notice"; the fix relocates and
+  folds the rows, it never drops them.
+
+The notices also moved **inside** the Services scroll region (below the
+page header) — they used to sit above it, pinned and un-scrollable, so
+on a phone they consumed viewport permanently.
+
+**Why.** #2604: on the reference box the stack was a template-upgrade
+header plus one row per upgrade (each with its own button), then an
+image-update header plus two lines of prose, then the page header and
+search — the phone screen was full before the first service appeared,
+and the stack grows linearly with the number of pending upgrades
+(#2602's bulk path makes that worse). Measured in a headless Chromium at
+390×844: the notice stack is 152px collapsed vs 302px expanded, and the
+first service card ends at y=407 — on screen, no scrolling.
+
+The viewport default is read via `matchMedia`, not a CSS `md:` utility,
+so `aria-expanded`, the chevron and what is actually on screen can never
+disagree; it re-resolves on resize.
+
+**Where enforced.**
+- `packages/frontend/src/components/UpdatesNotice.tsx` — the shared
+  collapsible notice (summary always rendered; detail conditional).
+- `packages/frontend/src/components/{TemplateUpgradesPendingBanner,ImageUpdatesPendingBanner}.tsx`
+  — both consume it; the template banner persists the collapse choice.
+- `packages/frontend/src/dashboards/ServicesDashboard.tsx` — notices
+  render inside the scroll region (`data-testid="services-update-notices"`).
+- Tests: `UpdatesNotice.test.tsx` (viewport defaults + toggle),
+  `TemplateUpgradesPendingBanner.test.tsx` ("collapsing never hides a
+  pending upgrade", "re-expands when a newly published upgrade appears"),
+  `ImageUpdatesPendingBanner.test.tsx` (phone-viewport describe block).
+
+Landed for #2604.
+
+---
+
 ## Maintaining this doc
 
 Add an entry when:

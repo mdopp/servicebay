@@ -1063,8 +1063,6 @@ export default function ServicesDashboard() {
                 }}
             />
 
-      <TemplateUpgradesPendingBanner />
-      <ImageUpdatesPendingBanner updates={imageUpdates} onUpdate={handleUpdateAll} />
       <PageHeader
         title="Services"
         showBack={false} 
@@ -1097,6 +1095,15 @@ export default function ServicesDashboard() {
               progress that every web client should see surfaces here. Renders
               nothing unless an install is actually running. */}
           <InstallProgressCard />
+          {/* Update notices (#2604). They used to sit *above* the page header,
+              outside this scroll region — pinned, un-scrollable, and on a phone
+              they filled the screen before the first service appeared. Inside
+              the scroll region they scroll away like anything else, and each
+              one collapses to its summary line below `md`. */}
+          <div className="space-y-3 empty:hidden mb-6" data-testid="services-update-notices">
+            <TemplateUpgradesPendingBanner />
+            <ImageUpdatesPendingBanner updates={imageUpdates} onUpdate={handleUpdateAll} />
+          </div>
           {renderServiceContent()}
       </div>
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import ImageUpdatesPendingBanner from './ImageUpdatesPendingBanner';
 import type { ServiceImageUpdate } from '@/hooks/useImageUpdates';
@@ -11,7 +11,29 @@ const update = (service: string, image: string): ServiceImageUpdate => ({
   updateAvailable: true,
 });
 
+// #2604: the per-service rows collapse below `md`. These specs describe the
+// desktop reading unless they say otherwise, so pin a wide viewport.
+const originalMatchMedia = window.matchMedia;
+
+function setViewport(wide: boolean) {
+  window.matchMedia = ((query: string) => ({
+    matches: wide && query.includes('min-width'),
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
+
 describe('ImageUpdatesPendingBanner', () => {
+  beforeEach(() => setViewport(true));
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia;
+  });
+
   it('renders nothing when no updates are pending', () => {
     const { container } = render(<ImageUpdatesPendingBanner updates={[]} />);
     expect(container.firstChild).toBeNull();
@@ -22,7 +44,7 @@ describe('ImageUpdatesPendingBanner', () => {
       <ImageUpdatesPendingBanner updates={[update('immich', 'ghcr.io/immich/server:latest')]} />,
     );
     const root = container.firstElementChild as HTMLElement;
-    // The migrated banner is a <Card> (bg-surface) with a token accent.
+    // The migrated banner is a token surface with a token accent.
     expect(root.className).toMatch(/bg-surface|border-accent|bg-accent/);
     const html = root.outerHTML;
     expect(html).not.toMatch(/(border|bg|text)-blue-\d/);
@@ -74,5 +96,27 @@ describe('ImageUpdatesPendingBanner', () => {
 
     resolveUpdate();
     await waitFor(() => expect(screen.getByRole('button', { name: /update now/i })).toBeDefined());
+  });
+
+  describe('phone viewport (#2604)', () => {
+    beforeEach(() => setViewport(false));
+
+    it('collapses the per-service rows but keeps the count and the action', () => {
+      render(
+        <ImageUpdatesPendingBanner
+          updates={[update('immich', 'ghcr.io/immich/server:latest')]}
+          onUpdate={vi.fn()}
+        />,
+      );
+      expect(screen.getByText(/1 service image update available/i)).not.toBeNull();
+      expect(screen.getByRole('button', { name: /update now/i })).not.toBeNull();
+      expect(screen.queryByText('ghcr.io/immich/server:latest')).toBeNull();
+    });
+
+    it('shows the rows once expanded', () => {
+      render(<ImageUpdatesPendingBanner updates={[update('immich', 'ghcr.io/immich/server:latest')]} />);
+      fireEvent.click(screen.getByTestId('image-updates-notice-toggle'));
+      expect(screen.getByText('ghcr.io/immich/server:latest')).not.toBeNull();
+    });
   });
 });

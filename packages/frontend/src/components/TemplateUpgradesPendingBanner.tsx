@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Info, Loader2, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, Info, Loader2, RefreshCw } from 'lucide-react';
 import { fetchTemplates, fetchReadme } from '@/app/actions';
 import type { Template } from '@servicebay/api-client';
 import InstallerModal from './InstallerModal';
+import UpdatesNotice from './UpdatesNotice';
 import { useToast } from '@/providers/ToastProvider';
 
 interface UpgradeSummary {
@@ -20,7 +21,7 @@ interface PendingResponse {
   hasBreakingChange: boolean;
 }
 
-const DISMISS_STORAGE_KEY = 'sb_template_upgrades_dismissed';
+const COLLAPSE_STORAGE_KEY = 'sb_template_upgrades_dismissed';
 
 /**
  * Surface a single banner on the Services page when one or more
@@ -37,20 +38,24 @@ const DISMISS_STORAGE_KEY = 'sb_template_upgrades_dismissed';
  * acknowledgement gate, so the safety surface is unchanged.
  *
  * Local state only:
- *  - Dismissal lives in localStorage, keyed by the
- *    `<template>@<version>` pair. A bump beyond the dismissed
- *    version re-surfaces the banner so the operator isn't
- *    permanently silenced after one dismissal.
+ *  - The banner **collapses**, it never dismisses (#2604). The old
+ *    `×` removed the notice outright, so an operator who clicked it
+ *    lost sight of a real pending upgrade until the *next* version
+ *    bump. Now the summary line ("N template upgrades available")
+ *    always stays on screen and only the per-template rows fold
+ *    away; the collapsed choice is remembered in localStorage keyed
+ *    by the `<template>@<version>` pair, so a bump beyond it
+ *    re-expands the rows on its own.
  */
-function loadDismissed(): Set<string> {
+function loadCollapsed(): Set<string> {
   if (typeof window === 'undefined') return new Set();
   try {
-    const raw = localStorage.getItem(DISMISS_STORAGE_KEY);
+    const raw = localStorage.getItem(COLLAPSE_STORAGE_KEY);
     if (!raw) return new Set();
     const parsed = JSON.parse(raw) as string[];
     return Array.isArray(parsed) ? new Set(parsed) : new Set();
   } catch {
-    // localStorage unavailable / corrupted; banner just re-appears.
+    // localStorage unavailable / corrupted; the rows just re-expand.
     return new Set();
   }
 }
@@ -58,7 +63,7 @@ function loadDismissed(): Set<string> {
 export default function TemplateUpgradesPendingBanner() {
   const { addToast } = useToast();
   const [data, setData] = useState<PendingResponse | null>(null);
-  const [dismissed, setDismissed] = useState<Set<string>>(loadDismissed);
+  const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(loadCollapsed);
   const [loadingName, setLoadingName] = useState<string | null>(null);
   const [modalState, setModalState] = useState<{ template: Template; readme: string } | null>(null);
 
@@ -69,17 +74,25 @@ export default function TemplateUpgradesPendingBanner() {
       .catch(() => undefined);
   }, []);
 
-  const visible = (data?.pending ?? []).filter(p => !dismissed.has(`${p.name}@${p.currentVersion}`));
-  if (visible.length === 0 && !modalState) return null;
+  const pending = data?.pending ?? [];
+  if (pending.length === 0 && !modalState) return null;
 
-  const dismissAll = () => {
-    const next = new Set(dismissed);
-    for (const p of visible) next.add(`${p.name}@${p.currentVersion}`);
-    setDismissed(next);
+  const upgradeKey = (p: UpgradeSummary) => `${p.name}@${p.currentVersion}`;
+  // Only a stack the operator has already folded away *in full* starts
+  // collapsed — a newly-published upgrade re-expands the rows by itself.
+  const startCollapsed = pending.length > 0 && pending.every(p => collapsedKeys.has(upgradeKey(p)));
+
+  const rememberCollapsed = (open: boolean) => {
+    const next = new Set(collapsedKeys);
+    for (const p of pending) {
+      if (open) next.delete(upgradeKey(p));
+      else next.add(upgradeKey(p));
+    }
+    setCollapsedKeys(next);
     try {
-      localStorage.setItem(DISMISS_STORAGE_KEY, JSON.stringify([...next]));
+      localStorage.setItem(COLLAPSE_STORAGE_KEY, JSON.stringify([...next]));
     } catch {
-      // ignore — banner just re-appears next session.
+      // ignore — the rows just re-expand next session.
     }
   };
 
@@ -111,79 +124,74 @@ export default function TemplateUpgradesPendingBanner() {
       .catch(() => undefined);
   };
 
-  const breaking = visible.some(p => p.hasBreakingChange);
+  const breaking = pending.some(p => p.hasBreakingChange);
   const Icon = breaking ? AlertTriangle : Info;
 
   return (
     <>
-      {visible.length > 0 && (
-        <div
-          className={`mb-4 rounded-lg border ${
+      {pending.length > 0 && (
+        <UpdatesNotice
+          data-testid="template-upgrades-notice"
+          className={
             breaking
               ? 'border-status-warn bg-status-warn/10'
               : 'border-status-info bg-status-info/10'
-          }`}
-        >
-          <div className="p-4 flex items-start gap-3">
-            <div
-              className={`shrink-0 p-1.5 rounded ${
+          }
+          defaultCollapsed={startCollapsed}
+          onToggle={rememberCollapsed}
+          icon={
+            <span
+              className={`block p-1.5 rounded ${
                 breaking
                   ? 'bg-status-warn/20 text-status-warn'
                   : 'bg-status-info/20 text-status-info'
               }`}
             >
               <Icon size={16} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold text-sm text-text">
-                {visible.length} template upgrade{visible.length === 1 ? '' : 's'} available
-                {breaking ? ' — includes breaking changes' : ''}
-              </div>
-              <ul className="mt-2 space-y-1.5 text-xs text-text-muted">
-                {visible.map(p => (
-                  <li key={p.name} className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono font-medium">{p.name}</span>
-                    <span className="text-text-subtle">
-                      v{p.installedVersion} → v{p.currentVersion}
-                    </span>
-                    {p.sectionHeaders.length > 0 && (
-                      <span className="text-text-subtle">
-                        ({p.sectionHeaders.join(', ')})
-                      </span>
-                    )}
-                    {p.hasBreakingChange && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-status-warn/20 text-status-warn">
-                        breaking
-                      </span>
-                    )}
-                    <button
-                      onClick={() => openInstaller(p.name)}
-                      disabled={loadingName === p.name}
-                      className={`ml-auto inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded text-on-accent disabled:opacity-50 ${
-                        p.hasBreakingChange
-                          ? 'bg-status-warn hover:bg-status-warn/80'
-                          : 'bg-status-info hover:bg-status-info/80'
-                      }`}
-                      type="button"
-                      title={p.hasBreakingChange ? 'Review changelog + acknowledge breaking changes, then re-deploy' : 'Re-deploy this service'}
-                    >
-                      {loadingName === p.name ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                      {p.hasBreakingChange ? 'Review & update' : 'Update & restart'}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <button
-              onClick={dismissAll}
-              className="shrink-0 p-1 rounded hover:bg-surface-2 text-text-subtle hover:text-text-muted"
-              title="Dismiss until the next version bump"
-              type="button"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        </div>
+            </span>
+          }
+          title={
+            <>
+              {pending.length} template upgrade{pending.length === 1 ? '' : 's'} available
+              {breaking ? ' — includes breaking changes' : ''}
+            </>
+          }
+        >
+          <ul className="space-y-1.5 text-xs text-text-muted">
+            {pending.map(p => (
+              <li key={p.name} className="flex items-center gap-2 flex-wrap">
+                <span className="font-mono font-medium">{p.name}</span>
+                <span className="text-text-subtle">
+                  v{p.installedVersion} → v{p.currentVersion}
+                </span>
+                {p.sectionHeaders.length > 0 && (
+                  <span className="text-text-subtle">
+                    ({p.sectionHeaders.join(', ')})
+                  </span>
+                )}
+                {p.hasBreakingChange && (
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-status-warn/20 text-status-warn">
+                    breaking
+                  </span>
+                )}
+                <button
+                  onClick={() => openInstaller(p.name)}
+                  disabled={loadingName === p.name}
+                  className={`ml-auto inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded text-on-accent disabled:opacity-50 ${
+                    p.hasBreakingChange
+                      ? 'bg-status-warn hover:bg-status-warn/80'
+                      : 'bg-status-info hover:bg-status-info/80'
+                  }`}
+                  type="button"
+                  title={p.hasBreakingChange ? 'Review changelog + acknowledge breaking changes, then re-deploy' : 'Re-deploy this service'}
+                >
+                  {loadingName === p.name ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                  {p.hasBreakingChange ? 'Review & update' : 'Update & restart'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </UpdatesNotice>
       )}
 
       {modalState && (
