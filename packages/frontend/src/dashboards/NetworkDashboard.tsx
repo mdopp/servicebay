@@ -66,25 +66,21 @@ import type { ReactFlowInstance } from '@xyflow/react';
 // ./_lib/networkDashboard (buildOrthogonalPath) so the dashboard stays under
 // the file-size invariant and the path math is unit-testable.
 
-// Custom Edge Component
-const CustomEdge = ({
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
-  sourcePosition,
-  targetPosition,
-  style = {},
-  markerEnd,
-  label,
-  data,
-}: EdgeProps) => {
-  // #1782 — prefer ELK's orthogonal routing points (attached as data.points
-  // by getLayoutedElements). Fall back to smoothstep when ELK didn't route
-  // this edge (e.g. an edge added before the next layout pass).
+// Helper: calculate edge path and label position
+// #1782 — prefer ELK's orthogonal routing points (attached as data.points
+// by getLayoutedElements). Fall back to smoothstep when ELK didn't route.
+// #1784 — hop points where horizontal runs cross different edges.
+// #1783 — prefer ELK's CENTER-placed label position (data.lpos).
+function calculateEdgePath(
+  sourceX: number,
+  sourceY: number,
+  targetX: number,
+  targetY: number,
+  sourcePosition: Position,
+  targetPosition: Position,
+  data: Record<string, unknown> | undefined
+) {
   const elkPoints = (data as { points?: { x: number; y: number }[] } | undefined)?.points;
-  // #1784 — hop points where this edge's horizontal runs cross a different
-  // edge; rendered as ∩ overpasses so a crossing is distinct from a junction.
   const hops = (data as { hops?: { x: number; y: number }[] } | undefined)?.hops ?? [];
 
   let edgePath: string;
@@ -107,16 +103,39 @@ const CustomEdge = ({
     });
   }
 
-  if (!label) {
-      return <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />;
-  }
-
-  // #1783 — prefer ELK's CENTER-placed label position (data.lpos), which
-  // reserves overlap-free space during layout. Fall back to the polyline
-  // midpoint when ELK didn't place a label (e.g. edge added before layout).
   const lpos = (data as { lpos?: { x: number; y: number } } | undefined)?.lpos;
   const chipX = lpos?.x ?? labelX;
   const chipY = lpos?.y ?? labelY;
+
+  return { edgePath, chipX, chipY };
+}
+
+// Custom Edge Component
+const CustomEdge = ({
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style = {},
+  markerEnd,
+  label,
+  data,
+}: EdgeProps) => {
+  const { edgePath, chipX, chipY } = calculateEdgePath(
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+    data
+  );
+
+  if (!label) {
+      return <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />;
+  }
 
   return (
     <>
