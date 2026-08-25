@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.16.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.15.1...servicebay-v5.16.0) (2026-08-25)
+
+
+### Features
+
+* **install:** upgrade every lagging service in one previewed run ([e730fce](https://github.com/mdopp/servicebay/commit/e730fce675ccc7bd87c1daea273e94fa3767200a)), closes [#2602](https://github.com/mdopp/servicebay/issues/2602)
+
+
+### Bug Fixes
+
+* **agent:** redact structured log payloads at the sink, not per call site ([c8c1cd0](https://github.com/mdopp/servicebay/commit/c8c1cd0e85acad6a35307383e952c3177e236e7d))
+* **claude-dev:** make git usable in root-owned checkouts and stop safe.directory from growing ([65aa10d](https://github.com/mdopp/servicebay/commit/65aa10dc84cf9979cc98bf2b80a47e0f545ad46d)), closes [#2612](https://github.com/mdopp/servicebay/issues/2612)
+* **credentials:** stop shipping stored passwords to the browser ([55ef998](https://github.com/mdopp/servicebay/commit/55ef9984910806042e3ff7ed302c005a60740789))
+* **home-assistant:** make configuration.yaml seed-only and reconcile the OIDC values ([fdb7dbe](https://github.com/mdopp/servicebay/commit/fdb7dbeadb1b3e1f842cb8bc8ee5ebd5b00c60d6)), closes [#2597](https://github.com/mdopp/servicebay/issues/2597)
+* **install:** stop a service upgrade that rolled out nothing from looking finished ([22aee0f](https://github.com/mdopp/servicebay/commit/22aee0fc7442c819323fdc31a26b2ca75af69052)), closes [#2600](https://github.com/mdopp/servicebay/issues/2600) [#2601](https://github.com/mdopp/servicebay/issues/2601)
+* **services:** collapse the update notices so a phone reaches the service list ([b662704](https://github.com/mdopp/servicebay/commit/b6627042165e3dd6c5635f1210540f0693d07f4f)), closes [#2604](https://github.com/mdopp/servicebay/issues/2604)
+
 ## [5.15.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.15.0...servicebay-v5.15.1) (2026-08-24)
 
 
