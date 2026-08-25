@@ -2355,6 +2355,58 @@ describe('Template migration chain reaches the schema-version', () => {
   });
 });
 
+// ─── 8c. Every schema-version has a CHANGELOG section to explain it (#2633) ─
+//
+// The upgrade banner (`getPendingTemplateUpgrades` → `filterUpgradeSections`)
+// shows the operator the sections strictly between their installed version and
+// the template's current one, and gates acknowledgement on the `(breaking)`
+// ones. A bump with no matching `## v{N}` section still raises the banner — the
+// code falls through to an entry with an EMPTY header list — so the operator is
+// told to re-deploy with no explanation of what changed or why. nginx shipped
+// that way from v3 (#370) until #2633.
+//
+// Unlike the migration-chain rule above, this one is anchored at v2 rather than
+// at the top of the chain: a CHANGELOG section is prose, so a historic gap can
+// always be written from the git history, and every version ≥ 2 is a hop some
+// box can still be upgraded through. v1 needs no section — nothing upgrades
+// *to* the initial release.
+describe('Template CHANGELOG covers every schema-version', () => {
+  for (const t of templates) {
+    const declared = /servicebay\.schema-version:\s*"(\d+)"/.exec(t.yamlContent);
+    const schemaVersion = declared ? Number(declared[1]) : 1;
+    if (schemaVersion < 2) continue;
+
+    it(`${t.name}: every version up to v${schemaVersion} has a CHANGELOG section`, async () => {
+      const { parseChangelog, filterUpgradeSections } = await import('@/lib/templateChangelog');
+      const changelogPath = path.join(TEMPLATES_DIR, t.name, 'CHANGELOG.md');
+      expect(
+        fs.existsSync(changelogPath),
+        `${t.name} declares schema-version ${schemaVersion} but ships no CHANGELOG.md.`,
+      ).toBe(true);
+
+      // Parse with the wizard's own parser, not a local regex — what this
+      // asserts is exactly what the operator gets shown.
+      const sections = parseChangelog(fs.readFileSync(changelogPath, 'utf-8'));
+      const have = new Set(sections.map(s => s.version));
+      const missing: string[] = [];
+      for (let v = 2; v <= schemaVersion; v++) if (!have.has(v)) missing.push(`## v${v}`);
+      expect(
+        missing,
+        `${t.name} declares schema-version ${schemaVersion} but its CHANGELOG.md has no ${missing.join(', ')} `
+        + 'section. The upgrade banner then prompts for a re-deploy with an empty explanation. '
+        + 'Add the section (mark it `(breaking)` if it needs operator action).',
+      ).toEqual([]);
+
+      // And the hop an operator is most likely to be sitting on — one version
+      // behind — really does surface something.
+      expect(
+        filterUpgradeSections(sections, schemaVersion - 1, schemaVersion).map(s => s.version),
+        `${t.name}: upgrading v${schemaVersion - 1} → v${schemaVersion} surfaces no CHANGELOG section.`,
+      ).toEqual([schemaVersion]);
+    });
+  }
+});
+
 // ─── 9. post-deploy.py + migration scripts parse as valid Python ───────────
 describe('Template post-deploy.py syntax', () => {
   // The wizard executes templates/<name>/post-deploy.py on the agent host
