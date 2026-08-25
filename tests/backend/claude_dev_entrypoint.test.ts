@@ -51,6 +51,14 @@ describe('claude-dev docker-entrypoint.sh', () => {
         `--- stderr ---\n${result.stderr}\n`,
       );
     }
+    // A case the runner could not establish a precondition for is skipped by
+    // the shell suite, not silently dropped (#2613). vitest swallows stdout on
+    // a green run, so re-emit those lines — an invisible skip is how a suite
+    // starts reporting success while checking less than it says it does.
+    const skips = result.stdout.split('\n').filter((line) => line.startsWith('SKIP -'));
+    if (skips.length > 0) {
+      console.warn(`claude-dev entrypoint suite skipped ${skips.length} case(s):\n${skips.join('\n')}`);
+    }
     expect(result.stdout).toMatch(/checks passed/);
     expect(result.stdout).not.toMatch(/^FAIL/m);
   }, 30_000);

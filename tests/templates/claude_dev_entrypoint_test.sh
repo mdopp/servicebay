@@ -24,12 +24,22 @@ ENTRYPOINT="$REPO_ROOT/templates/claude-dev/docker-entrypoint.sh"
 
 FAILURES=0
 CASES=0
+SKIPPED=0
 
 pass() { CASES=$((CASES + 1)); echo "ok   - $1"; }
 fail() {
   CASES=$((CASES + 1))
   FAILURES=$((FAILURES + 1))
   echo "FAIL - $1"
+  [ $# -gt 1 ] && printf '       %s\n' "${@:2}"
+  return 0
+}
+# A case whose PRECONDITION this environment cannot establish. It is NOT
+# counted as run — the summary reports skips separately, so a suite that
+# checked nothing can never look like a suite that checked everything.
+skip() { # skip <desc> <reason...>
+  SKIPPED=$((SKIPPED + 1))
+  echo "SKIP - $1"
   [ $# -gt 1 ] && printf '       %s\n' "${@:2}"
   return 0
 }
@@ -317,11 +327,36 @@ check "the entrypoint no longer passes the bind password with -w" \
 #    GIT_TEST_ASSUME_DIFFERENT_OWNER=1, git's own switch for exercising the
 #    "detected dubious ownership" path — so the case reproduces the reported
 #    failure shape without needing root to chown a checkout.
+#
+#    …but only if nothing ELSE has already whitelisted the checkout. git's
+#    ownership verdict is `not owned AND not listed in safe.directory`, and
+#    that lookup reads the SYSTEM config too (read_very_early_config), which
+#    HOME= does not cover. GitHub's hosted runners append
+#
+#        [safe]
+#                directory = *
+#
+#    to /etc/gitconfig (actions/runner-images, images/ubuntu/scripts/build/
+#    install-git.sh — added for actions/checkout#760). With that in scope every
+#    repository is "safe" regardless of owner, GIT_TEST_ASSUME_DIFFERENT_OWNER
+#    stops having any visible effect, and the negative control below asserts
+#    nothing — which is exactly how it went red on CI while passing locally on
+#    a box with no /etc/gitconfig (#2613).
+#
+#    So every git call in this section runs in a HERMETIC config environment:
+#    system config off, global config pinned to the fake $HOME, and the
+#    GIT_CONFIG_* overrides cleared so an inherited one can't re-inject either.
 # =========================================================================
 GITCONFIG="$DEV_HOME_FAKE/.gitconfig"
-gitg() { HOME="$DEV_HOME_FAKE" git config --global "$@"; }
-safe_entries() { HOME="$DEV_HOME_FAKE" git config --global --get-all safe.directory 2>/dev/null; }
+GIT_HERMETIC=(env -u GIT_CONFIG -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM
+              -u GIT_CONFIG_COUNT -u GIT_CONFIG_PARAMETERS
+              GIT_CONFIG_NOSYSTEM=1 HOME="$DEV_HOME_FAKE"
+              XDG_CONFIG_HOME="$DEV_HOME_FAKE/.config")
+gitg() { "${GIT_HERMETIC[@]}" git config --global "$@"; }
+safe_entries() { "${GIT_HERMETIC[@]}" git config --global --get-all safe.directory 2>/dev/null; }
 count_entries() { safe_entries | grep -Fxc -- "$1" || true; }
+# git run against a checkout it is told it does not own.
+git_unowned() { "${GIT_HERMETIC[@]}" GIT_TEST_ASSUME_DIFFERENT_OWNER=1 git "$@"; }
 
 # A REAL repo, additionally to the fake `.git` files above, so the ownership
 # check has something to run against.
@@ -337,9 +372,25 @@ gitg --add safe.directory "$DEV_HOME_FAKE/solbay-gone"
 gitg --add safe.directory '/tmp/dotfiles-edit'
 gitg --add safe.directory '/tmp/dotfiles-edit'
 
-check "reproducer: git refuses to run in a checkout it does not own" \
-  "$(GIT_TEST_ASSUME_DIFFERENT_OWNER=1 HOME="$DEV_HOME_FAKE" \
-       git -C "$DEV_HOME_FAKE/$OWNED_REPO" status --porcelain >/dev/null 2>&1 && echo 1 || echo 0)"
+# Precondition probe: can the "not owned" state be induced AT ALL here? If
+# even the hermetic environment cannot make git refuse (a build without the
+# ownership guard, a future rename of the test switch), the negative control
+# would pass while checking nothing — so it is skipped, loudly and counted.
+if git_unowned -C "$DEV_HOME_FAKE/$OWNED_REPO" status --porcelain >/dev/null 2>&1; then
+  OWNERSHIP_GUARD_INDUCIBLE=0
+else
+  OWNERSHIP_GUARD_INDUCIBLE=1
+fi
+
+if [ "$OWNERSHIP_GUARD_INDUCIBLE" -eq 1 ]; then
+  check "reproducer: git refuses to run in a checkout it does not own" \
+    "$(git_unowned -C "$DEV_HOME_FAKE/$OWNED_REPO" status --porcelain >/dev/null 2>&1 && echo 1 || echo 0)"
+else
+  skip "reproducer: git refuses to run in a checkout it does not own" \
+    "this git ($(git --version)) still runs in a checkout forced not-owned," \
+    "so the dubious-ownership precondition cannot be established here and the" \
+    "negative control would assert nothing. The positive cases below still run."
+fi
 
 repos=()
 discover_repos
@@ -352,8 +403,7 @@ check "register_safe_directories exits 0" \
   "$([ "$reg_rc" -eq 0 ] && echo 0 || echo 1)" "exit=$reg_rc"
 
 check "THE FIX: git now runs in the not-owned checkout" \
-  "$(GIT_TEST_ASSUME_DIFFERENT_OWNER=1 HOME="$DEV_HOME_FAKE" \
-       git -C "$DEV_HOME_FAKE/$OWNED_REPO" status --porcelain >/dev/null 2>&1 && echo 0 || echo 1)" \
+  "$(git_unowned -C "$DEV_HOME_FAKE/$OWNED_REPO" status --porcelain >/dev/null 2>&1 && echo 0 || echo 1)" \
   "entries: $(safe_entries | tr '\n' '|')"
 
 for name in "${REPO_NAMES[@]}" "$OWNED_REPO"; do
@@ -449,5 +499,7 @@ check "start-claude still fails when it started nothing and found nothing" \
 
 # =========================================================================
 echo
-echo "claude-dev entrypoint: $((CASES - FAILURES))/$CASES checks passed"
+# The denominator is always printed, skips included: a case whose precondition
+# could not be established must never disappear into a smaller, greener total.
+echo "claude-dev entrypoint: $((CASES - FAILURES))/$CASES checks passed, $SKIPPED skipped"
 [ "$FAILURES" -eq 0 ] || exit 1
