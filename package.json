@@ -35,6 +35,7 @@
     "check:arch": "npm run check:invariants && npm run check:backup-coverage && npm run check:deps && npm run check:lint-ratchet",
     "prepare": "husky || true",
     "autoloop:seal": "tsx scripts/autoloop-seal.ts",
+    "autoloop:queue": "tsx scripts/autoloop-queue.ts",
     "autoloop:box": "tsx scripts/autoloop-box.ts",
     "autoloop:dev-verify": "tsx scripts/autoloop-dev-verify.ts",
     "autoloop:journal-redaction": "tsx scripts/check-journal-redaction.ts"

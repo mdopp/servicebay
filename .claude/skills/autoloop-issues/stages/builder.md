@@ -1,8 +1,10 @@
 # Stage: Builder
 
-You are the **Builder** sub-agent. You run in fresh context, take **one unit** from the shared queue (or seal the batch), and return one line. You own implement → fast-gate → commit → (at the batch boundary) seal → push → CI → merge.
+You are the **Builder** sub-agent. You run in fresh context, **claim** one unit (or seal the batch), and return one line. You own implement → fast-gate → commit → (at the batch boundary) seal → push → CI → merge.
 
-Read first: the orchestrator's shared rules in `.claude/skills/autoloop-issues/SKILL.md` (batch economy, AI marker, box-is-a-dev-target). Shared queue: `.claude/state/work-queue.json`. The orchestrator's context line tells you **mode** (`build` or `seal`), and for `build` the **unit id** and **gate**.
+Read first: the orchestrator's shared rules in `.claude/skills/autoloop-issues/SKILL.md` (batch economy, AI marker, box-is-a-dev-target, **§ Broker verbs**). The orchestrator's context line tells you **mode** (`build` or `seal`), and for `build` the **unit id** and **gate**.
+
+**You touch state ONLY through the broker:** `npm run autoloop:queue -- <verb>` (= `tsx scripts/autoloop-queue.ts`). Never create, read, or write `.claude/state/work-queue.json` — it is retired (#2639) — and never hand-edit the cache JSON.
 
 ## The gate split — this is the point of the rewrite
 
@@ -19,17 +21,24 @@ Rationale: `check:arch` (global, fast) catches import/structure breakage per iss
 
 ## Mode: `build` — implement one unit onto the batch branch
 
-### 1. Get on the batch branch
-- If `batch` is null in the queue: create it. `git checkout main && git pull --ff-only && git checkout -b batch/$(date +%Y-%m-%d)<letter>`. Set `batch = {branch, units:[], count:0, sealed:false}`.
+### 1. Claim the unit, then get on the batch branch
+
+**Claim FIRST — before you touch a file.** The claim is what stops a second loop instance building the same issue:
+```bash
+npm run autoloop:queue -- claim <unit id>     # exit 0 = yours; exit 3 = someone else's
+```
+**Exit 3 means another instance holds it — do NOT build.** Return `Builder: unit <id> already claimed by another instance, nothing built.` The claim is an atomic `refs/autoloop/claim/<issue>` create (SKILL.md § state), so this is a real lock, not a hint; `autoloop:building` on the issue is its visible projection. If you bounce or abandon the unit, give the claim back with `npm run autoloop:queue -- unclaim <unit id>`.
+
+Then the branch:
+- `npm run autoloop:queue -- summary` — if `batch` is null: `git checkout main && git pull --ff-only && git checkout -b batch/$(date +%Y-%m-%d)<letter>`, then `npm run autoloop:queue -- batch new --branch <that branch>`.
 - Else: `git checkout <batch.branch>` (it persists across firings). **If the branch is behind `main`, `git rebase origin/main` immediately** — otherwise an out-of-date batch (e.g. one created before a skill change) leaves the on-disk `stages/` playbooks stale or missing for the next stage dispatch. The rebase is conflict-free when the batch's filesets are disjoint from what moved on `main`.
 
-Set the unit's `status` to `"in_progress"` and `in_progress` to the unit id.
-
 ### 2. Read the unit
+`npm run autoloop:queue -- next` gives you the unit body (id, issues, scope, acceptance, gate) — that is the whole slice you need; never load a state file to find it.
 - For a **cluster**: read *every* member issue + its `Relevant Files`, then implement all members as one coherent themed change. Organize the diff by theme, not by issue.
 - For a single **issue**: read the body, the `Relevant Files`, and ~50 lines around any line reference.
 - For a **lint-sweep** unit: see §Lint-sweep below.
-- If the body turns out **ambiguous** (the planner missed it): do **not** guess. Post the specific question on the issue (AI marker), move the unit to the queue's `needs_refinement[]` as `{issue, question, comment_url, since}`, add the `autoloop:needs-refinement` label (`gh issue edit <N> --add-label autoloop:needs-refinement` — instant human visibility; the planner reconcile keeps it consistent), revert any partial work, and return. Refinement is the human's job.
+- If the body turns out **ambiguous** (the planner missed it): do **not** guess. Revert any partial work, then `npm run autoloop:queue -- park <N> refinement --comment "<the specific question><AI marker>"` — one call labels it `autoloop:needs-refinement`, posts the question, releases your claim and drops the unit from rotation. Return. Refinement is the human's job.
 
 ### 3. Implement — scope discipline
 - Smallest change that satisfies the unit's `acceptance`. **No** drive-by refactors, **no** new abstractions, **no** "improve while I'm here." CLAUDE.md: *"Three similar lines is better than a premature abstraction."*
@@ -45,7 +54,7 @@ When the unit carries **explicit acceptance criteria** — a spec §N checklist 
   ```
   It apt-extracts the missing shared libs + `fonts-dejavu-core` into `~/.cache/servicebay-browser-sandbox` with **no root and no sudo**, then probes a live page load. `tests/e2e/playwright.config.ts` picks the sysroot up automatically; a script of your own gets it from `applyBrowserSandboxEnv()` in `scripts/provision-browser-sandbox.ts`. **Fonts are not optional**: without them Chromium lays the page out but every text node measures **zero height**, so Playwright reports every element `hidden` — a fake "CSS bug" that eats an hour. Also: `locator.fill('')` does **not** clear a React controlled input (use `press('Control+a')` + `press('Backspace')`), so a spec that clears a field that way silently asserts nothing.
   Deferring the visual criterion to box-verify is now the **exception, not the default** — reserve it for what genuinely needs the real box (live box data, the installed service, the proxy/SSO path). If `npm run browser:sandbox` exits non-zero, say so explicitly in the `built` notes, fall back to inspecting the **served markup / built bundle**, and flag the visual criterion as owed — but do not skip straight to the fallback.
-- **If any criterion is unmet,** the unit is **not** built. Either finish it (preferred — smallest change to satisfy the remaining criteria, staying in scope) or, if a criterion needs a human decision, bounce to `needs_refinement[]` (§2) — never report `built` with an unmet criterion buried.
+- **If any criterion is unmet,** the unit is **not** built. Either finish it (preferred — smallest change to satisfy the remaining criteria, staying in scope) or, if a criterion needs a human decision, bounce it with `park <N> refinement` (§2) — never report `built` with an unmet criterion buried.
 - In your `built` notes and return line, **enumerate the criteria**: which are confirmed-met (and how — test name / DOM assertion), and which are owed to box-verify/operator. A bare "built" on a criteria-bearing unit is a process miss.
 
 ### 4. Fast gate (per unit)
@@ -61,25 +70,25 @@ npx vitest run --changed   # tests transitively affected by this unit's changes
 - Conventional Commits; scope mirrors the path (`fix(portal):`, `refactor(dashboards):`, …).
 - **No parens beyond the conventional `(scope)`** — parens-heavy subjects break release-please (memory `feedback_release_please_commit_parens`).
 - Body ends with `Closes #<N>` — **one line per member issue** for a cluster.
-- **No push, no PR, no CI.** Then update the queue: unit `status:"built"`, append member issues to `batch.units`, bump `batch.count` by the issue count, clear `in_progress`. Return.
+- **No push, no PR, no CI.** Then record it: `npm run autoloop:queue -- built <unit id>` (it appends the unit to the batch and recomputes `count` in **issues**, so a cluster counts as its members). Keep the claim — the unit stays claimed until the batch ships. Return.
 
 ### `security: true` unit — full loop, flagged for post-deploy review
-A security/sensitive unit rides the batch **like any other unit** — implement it onto the batch branch, fast gate, commit with `Closes #<N>`, no draft, no separate branch. The only difference: it is **flagged** so the human reviews it after it deploys. At **seal** (step 4 below), append `{issue, pr, flag:"security", merged_at}` to `review[]` (the post-deploy review list) for each shipped `security:true` unit. `review[]` is informational — it never blocks the merge or the release.
+A security/sensitive unit rides the batch **like any other unit** — implement it onto the batch branch, fast gate, commit with `Closes #<N>`, no draft, no separate branch. The only difference: it is **flagged** so the human reviews it after it deploys. At **seal**, run `npm run autoloop:queue -- park <N> review --comment "shipped in #<pr>, post-deploy eyeball<AI marker>"` for each shipped `security:true` unit. `autoloop:review` is informational — it never blocks the merge or the release.
 
 ### Lint-sweep unit
-Implement the one file/rule named in the unit. Size guard: **≤2 source files** (+ their `*.test.*`), **≤120 LOC net** (subtractive can be larger), one warning class or one file. If even a bite-size extraction won't fit, park it in `blocked[]` with a structured entry (`{file, blocked_by:"decomposition", reason:"lint-sweep size guard exceeded; needs decomposition ticket", since}`) and return. Lint-sweep commits ride the batch branch like any other unit (no `Closes #`). Append `{file, rule}` context to `lint_sweep[]` at seal time.
+Implement the one file/rule named in the unit. Size guard: **≤2 source files** (+ their `*.test.*`), **≤120 LOC net** (subtractive can be larger), one warning class or one file. If even a bite-size extraction won't fit, `npm run autoloop:queue -- note "lint-sweep <file>: size guard exceeded, needs a decomposition ticket"` and return (a lint-sweep unit has no issue to label). Lint-sweep commits ride the batch branch like any other unit (no `Closes #`).
 
 ### Dep-update unit (`kind:"dep-updates"`)
 **Does NOT ride the batch branch** — Dependabot PRs are independent, already-CI'd PRs. Don't touch `batch`; process them directly, then mark the unit done. For each open `gh pr list --author app/dependabot --state open --json number,title,headRefName,mergeStateStatus`:
 - **Merge** (`gh pr merge <N> --merge --delete-branch`) when CI is green (`mergeStateStatus == CLEAN`) **and** it's a **dev-dependency** (`deps-dev`) or a **CI/github-actions** bump — low blast radius; green CI = lint/build/test pass.
-- **HOLD** (don't merge) + add `{issue:<N>, question, comment_url, since}` to `needs_refinement[]` with a one-line comment (AI marker) for: (a) `googleapis/release-please-action` or anything that changes the release pipeline this repo depends on, (b) a **runtime** (non-dev) dependency major bump, (c) red/`UNSTABLE`/`DIRTY` CI.
-- These merges land on `main` and trigger release-please on their own (dev-dep/action bumps aren't path-mandated → no `box_verify`). Set the unit `status:"built"` (nothing to seal), append `{unit:"dep-update-sweep", merged:[…], held:[…]}` to `completed[]`. Return one line: merged #s + held #s. Idempotent — next run handles whatever's still open.
+- **HOLD** (don't merge) + `npm run autoloop:queue -- park <N> refinement --comment "<one line><AI marker>"` for: (a) `googleapis/release-please-action` or anything that changes the release pipeline this repo depends on, (b) a **runtime** (non-dev) dependency major bump, (c) red/`UNSTABLE`/`DIRTY` CI.
+- These merges land on `main` and trigger release-please on their own (dev-dep/action bumps aren't path-mandated → nothing owed). `npm run autoloop:queue -- built dep-update-sweep` (nothing to seal) + a `note` carrying the merged/held numbers. Return one line: merged #s + held #s. Idempotent — next run handles whatever's still open.
 
 ---
 
 ## Mode: `seal` — ship the accumulated batch (once)
 
-Precondition (re-assert): (`batch.count >= 8` **or** no `planned` unit) **and** `box_verify.status` clear (`green`/`null`). Mid-batch → return "not ready to seal". `box_verify` owed/verifying/red → return "blocked on box_verify, not sealing" (seal-ahead forbidden).
+Precondition (re-assert), from `npm run autoloop:queue -- summary`: (`batch.count >= 8` **or** `next` returns `null`) **and** the verify status clear (`green`/`null`). Mid-batch → return "not ready to seal". Verify owed/verifying/red → return "blocked on box-verify, not sealing" (seal-ahead forbidden).
 
 1. **Local safety net.** `git checkout <batch.branch> && git rebase origin/main`, then `npm run lint && npm run typecheck && npm run check:arch && npm test`. A full-suite failure the per-unit `--changed` runs missed → bisect the culprit commit (atomic, `Closes #N`), fix on the branch, re-run.
 
@@ -89,15 +98,17 @@ Precondition (re-assert): (`batch.count >= 8` **or** no `planned` unit) **and** 
    ```
    It emits `AUTOLOOP_SEAL_RESULT {json}`. **Exit 0** → fold the JSON (step 3). **Exit 3** = CI red → *your judgment*: a first fixable gate (e.g. diff-coverage) → fix forward on the branch (real tests, don't ratchet) + re-run; red twice same-SHA no-change → post the failing-job link (AI marker), leave the PR open, return (hard-exit #1). **Exit 2** = setup error (dirty tree / bad branch / conflict) → fix + re-run. (`--body-file` is a normal PR body: `## What` / `Closes #a` per issue / `## Risk·Rollback`.)
 
-3. **Fold the result.** Set `box_verify={sha,status:"owed",detail,since}` when the JSON's `boxVerifyOwed` is true **OR** any sealed unit's `gate` was `verify` (a user-facing unit is `gate:verify` even if its files aren't path-mandated). Move units → `completed[]`, lint-sweeps → `lint_sweep[]`, every `security:true` → `review[]`, and **reset `batch` to `null`**. (The release PR is merged later by orchestrator preflight, after box-verify is green.) The path-mandated list is canonical in the script's `PATH_MANDATED_PATHS` — edit it there.
+3. **Fold the result.** `npm run autoloop:queue -- verify-set <sha> owed --detail "<path-mandated paths>" --pr <release PR>` when the JSON's `boxVerifyOwed` is true **OR** any sealed unit's `gate` was `verify` (a user-facing unit is `gate:verify` even if its files aren't path-mandated). `park <N> review --comment …` for every `security:true` unit, then `npm run autoloop:queue -- batch reset` — that releases the shipped units' claims and clears the batch; the durable record is the merged PR + the closed issues. (The release PR is merged later by orchestrator preflight, after box-verify is green.) The path-mandated list is canonical in the script's `PATH_MANDATED_PATHS` — edit it there.
 
 ## Return
 - build: `Builder: built fe-layout (#1420,#1424) onto batch/2026-06-01a, fast gate green, count 4/8.`
-- seal: `Builder: sealed batch/2026-06-01a → PR #1467 merged (closes #1420 #1424 #1430); box_verify=owed (install path).`
+- seal: `Builder: sealed batch/2026-06-01a → PR #1467 merged (closes #1420 #1424 #1430); verify=owed (install path).`
 
 ## Never
 - Never run the full `npm test` per unit (that's the seal's job) — fast gate only mid-batch.
 - Never push / open a PR / trigger CI / merge while mid-batch (`count<8` and planned units remain).
-- Never guess past an ambiguous issue — bounce to `needs_refinement[]`.
+- Never guess past an ambiguous issue — `park <N> refinement` with a precise question.
+- Never build a unit whose `claim` exited 3 — another loop instance owns it.
+- Never create, read or write `.claude/state/work-queue.json` (retired, #2639), and never hand-edit the broker cache.
 - Never bump versions or edit `CHANGELOG.md`/`package.json`/the release manifest.
 - Never reply to external commenters; never post a comment without the AI marker.

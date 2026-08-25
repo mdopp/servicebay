@@ -1,18 +1,18 @@
 ---
 name: comment-responder
-description: Draft honest, kind replies to real (human, non-AI) comments on GitHub issues/PRs, looking for how the contributor's input can create project value. Verifies technical claims against the live box/code before drafting, and writes in plain "what happens" language rather than jargon. Shows each draft for the user to confirm, then posts it with the AI marker. Use when the user wants to answer external comments, clear the autoloop `awaiting_user[]` list, or asks to "reply to the comment on #N".
+description: Draft honest, kind replies to real (human, non-AI) comments on GitHub issues/PRs, looking for how the contributor's input can create project value. Verifies technical claims against the live box/code before drafting, and writes in plain "what happens" language rather than jargon. Shows each draft for the user to confirm, then posts it with the AI marker. Use when the user wants to answer external comments, clear the autoloop `autoloop:awaiting-user` list, or asks to "reply to the comment on #N".
 ---
 
 # Comment responder
 
-Real people comment on our issues and PRs. This skill answers them **honestly, kindly, and with genuine effort to find how their input creates value for the project** — then lets the user confirm before anything is posted. The autoloop parks tickets with an unaddressed external comment on `state.awaiting_user[]` and never replies itself; this skill is where those replies get written.
+Real people comment on our issues and PRs. This skill answers them **honestly, kindly, and with genuine effort to find how their input creates value for the project** — then lets the user confirm before anything is posted. The autoloop parks tickets with an unaddressed external comment under the `autoloop:awaiting-user` label and never replies itself; this skill is where those replies get written.
 
 The user's recurring rules in `~/.claude/projects/-home-mdopp-servicebay/memory/MEMORY.md` override anything here. Relevant: `feedback_ai_comment_marker` (the marker), `feedback_concise_answers` (writing style), `reference_gh_pr_edit_broken` (commenting is fine; only `gh pr edit` is broken).
 
 ## Invocation
 
 - `/comment-responder <N>` — handle issue or PR `#N`.
-- `/comment-responder sweep` — walk every open issue/PR plus `state.awaiting_user[]` and handle each one with an unaddressed external comment.
+- `/comment-responder sweep` — walk every open issue/PR plus `gh issue list --state open --label autoloop:awaiting-user` and handle each one with an unaddressed external comment.
 
 ## Step 1 — Find the comments that need a reply
 
@@ -77,7 +77,7 @@ gh pr comment <N> --body-file <draft>      # PRs
 
 (`gh ... comment` works; only `gh pr edit` is broken on this repo — `reference_gh_pr_edit_broken`.) Use `--body-file` so the marker's HTML comment and newlines survive intact.
 
-After posting, the last word is ours, so the autoloop's exclusion filter clears the ticket from `awaiting_user[]` on its next run — no manual state edit needed. If the user wants it worked immediately, mention that the loop will now pick it up.
+After posting, the last word is ours, so the autoloop's comment check drops `autoloop:awaiting-user` on its next run — no manual state edit needed. If the user wants it worked immediately, mention that the loop will now pick it up.
 
 ## Worked example — #1311 (`wenghuiming1987`)
 
