@@ -215,11 +215,61 @@ def log_debug(msg: str):
         log_message("DEBUG", msg)
 
 
+_SECRET_KEY_RE = re.compile(r'(TOKEN|SECRET|PASSWORD|API_KEY)', re.IGNORECASE)
+
+# The payloads we log are shallow (a dict of paths -> per-file dicts); the cap
+# only stops a pathological or self-referential structure from blowing the
+# stack while we walk it.
+_REDACT_MAX_DEPTH = 12
+
+
+def _redact_for_log(payload, _depth: int = 0):
+    """Redact secret material from a payload before it hits the logs.
+
+    The rendered pod YAML shipped via `write_file` carries plaintext `env`
+    secrets (HERMES_TOKEN, …); logging the payload verbatim leaked live
+    credentials into the journal (#1211).
+
+    This walks the payload to *any* depth. The first version only looked at
+    the top level, which was enough for the command path (`{'path', 'content'}`)
+    but walked straight past the state sync, where the very same bytes ride one
+    level down as `{'files': {<path>: {'content': …}}}` — so the whole quadlet
+    set, SSO client secrets included, kept reaching the journal (#2603).
+
+    Every `content` string becomes a size marker and the value of any
+    secret-looking key is masked, wherever they sit in the structure.
+    """
+    if _depth >= _REDACT_MAX_DEPTH:
+        return '<redacted: max depth>'
+    if isinstance(payload, dict):
+        out = {}
+        for key, value in payload.items():
+            if key == 'content' and isinstance(value, str):
+                out[key] = f'<{len(value)} chars redacted>'
+            elif isinstance(key, str) and _SECRET_KEY_RE.search(key) and isinstance(value, str):
+                out[key] = '***'
+            else:
+                out[key] = _redact_for_log(value, _depth + 1)
+        return out
+    if isinstance(payload, (list, tuple)):
+        return [_redact_for_log(item, _depth + 1) for item in payload]
+    return payload
+
+
 def log_structured(event: str, payload: Any):
-    """Emit pure JSON (no tags) for structured log consumers."""
+    """Emit pure JSON (no tags) for structured log consumers.
+
+    Redaction happens HERE, in the sink, not at the call sites. #1211 masked
+    the two command-path sinks one by one; the state-sync sink was written
+    later, without one, and reopened the identical leak (#2603). Doing it in
+    the sink means a future caller cannot reopen it a third time.
+
+    Only this stderr/journal copy is masked — `push_state` still sends the real
+    payload to ServiceBay over stdout, so nothing downstream loses data.
+    """
     structured = {
         'event': event,
-        'payload': payload
+        'payload': _redact_for_log(payload)
     }
     if RUN_ID:
         structured['runId'] = RUN_ID
@@ -227,29 +277,6 @@ def log_structured(event: str, payload: Any):
         structured['sessionId'] = SESSION_ID
     sys.stderr.write(json.dumps(structured) + "\n")
     sys.stderr.flush()
-
-_SECRET_KEY_RE = re.compile(r'(TOKEN|SECRET|PASSWORD|API_KEY)', re.IGNORECASE)
-
-
-def _redact_for_log(payload):
-    """Redact secret material from a command payload before it hits the logs.
-
-    The rendered pod YAML shipped via `write_file` carries plaintext `env`
-    secrets (HERMES_TOKEN, …); logging the payload verbatim leaked live
-    credentials into the journal (#1211). Replace any `content` blob with a
-    size marker and mask the value of any secret-looking key.
-    """
-    if not isinstance(payload, dict):
-        return payload
-    out = {}
-    for key, value in payload.items():
-        if key == 'content' and isinstance(value, str):
-            out[key] = f'<{len(value)} chars redacted>'
-        elif isinstance(key, str) and _SECRET_KEY_RE.search(key) and isinstance(value, str):
-            out[key] = '***'
-        else:
-            out[key] = value
-    return out
 
 
 def _extract_session_id(cmdline: str) -> Optional[str]:

@@ -802,6 +802,70 @@ async function checkServiceRepoBootstrapStep() {
 }
 
 // ---------------------------------------------------------------------------
+// 8b. Agent payloads are redacted at the LOG SINK, never per call site.
+//
+// #1211 masked the two command-path logs that carried the rendered quadlet
+// `content` (plaintext env secrets). #2603 then found the state sync emitting
+// the identical bytes through a *second* sink that nobody had routed through
+// the redactor — the same leak, reopened by adding a caller. Both sides are
+// now structural: agent.py redacts inside `log_structured`, and the backend
+// (the process that actually writes the journal) redacts again in
+// `tryHandleStructuredLog`, so a stale agent build can't leak through it.
+//
+// This check is the ratchet: it fails if either sink stops redacting, or if a
+// second raw `logRaw` sink appears in the handler. Never relax it — tighten it.
+// (The agent-side companion — "no new raw `sys.stderr.write` outside the
+// redacting helpers" — is an AST scan in
+// packages/backend/src/lib/agent/v4/tests/test_redact.py.)
+// ---------------------------------------------------------------------------
+const AGENT_PY = path.join(REPO_ROOT, 'packages/backend/src/lib/agent/v4/agent.py');
+const AGENT_HANDLER_TS = path.join(REPO_ROOT, 'packages/backend/src/lib/agent/handler.ts');
+/** Only `tryHandleStructuredLog` may write a raw (unformatted) agent line. */
+const AGENT_LOGRAW_MAX = 1;
+
+async function checkAgentLogRedaction() {
+    const check = 'agent-log-redaction';
+    let py: string;
+    let ts: string;
+    try {
+        py = await readFile(AGENT_PY, 'utf-8');
+        ts = await readFile(AGENT_HANDLER_TS, 'utf-8');
+    } catch {
+        violations.push({
+            check,
+            detail: 'packages/backend/src/lib/agent/{v4/agent.py,handler.ts} — one of the two agent log sinks is missing; the #1211/#2603 redaction guard cannot be verified.',
+        });
+        return;
+    }
+
+    const structuredBody = py.split('def log_structured(')[1]?.split('\ndef ')[0] ?? '';
+    if (!structuredBody.includes('_redact_for_log(payload)')) {
+        violations.push({
+            check,
+            detail: 'agent.py `log_structured()` no longer passes its payload through `_redact_for_log()`. Every structured payload (the state sync ships whole quadlet files) would reach the journal in plaintext again (#1211, #2603).',
+        });
+    }
+
+    const relayBody = ts.split('private tryHandleStructuredLog(')[1]?.split('\n  private ')[0] ?? '';
+    if (!relayBody.includes('redactStructuredLogLine(')) {
+        violations.push({
+            check,
+            detail: 'handler.ts `tryHandleStructuredLog()` no longer routes the agent line through `redactStructuredLogLine()`. This is the process that writes the journal — it must redact even when the agent already did (#2603).',
+        });
+    }
+
+    const logRawCalls = ts.match(/this\.logRaw\(/g)?.length ?? 0;
+    if (logRawCalls > AGENT_LOGRAW_MAX) {
+        violations.push({
+            check,
+            detail: `${logRawCalls} \`this.logRaw(\` call sites in handler.ts (max ${AGENT_LOGRAW_MAX}). A raw log sink bypasses the redaction — log through \`this.log\` with a redacted value instead (#2603).`,
+        });
+    }
+
+    measurements.push(`agent log redaction: log_structured + tryHandleStructuredLog redact; ${logRawCalls} raw handler sink(s) (max ${AGENT_LOGRAW_MAX})`);
+}
+
+// ---------------------------------------------------------------------------
 // 9. docs/ARCHITECTURE_INVARIANTS.md's numbers are generated, not typed.
 //
 // #2427: the doc carried a hand-maintained measurement table ("largest backend
@@ -899,6 +963,7 @@ async function main() {
         checkGatePathsResolve(),
         checkCiRunsEveryCheckScript(),
         checkServiceRepoBootstrapStep(),
+        checkAgentLogRedaction(),
         syncOrCheckThresholdDoc(),
     ]);
 
