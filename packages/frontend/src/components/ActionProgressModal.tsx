@@ -6,6 +6,27 @@ import '@xterm/xterm/css/xterm.css';
 import { useToast } from '@/providers/ToastProvider';
 import { humanizeError } from '@servicebay/api-client';
 import { Button } from '@/components/ui';
+// Secure-context-aware copy with an execCommand fallback: ServiceBay's default
+// deployment is a plain-http LAN origin, where navigator.clipboard silently
+// rejects. Using it raw here would rebuild the very bug this button had.
+import { copyToClipboard } from '@/app/(dashboard)/settings/_lib/clipboard';
+
+/**
+ * Plain text currently on the terminal (scrollback included), trailing and
+ * leading blank rows trimmed. xterm pads its viewport with empty rows, so the
+ * raw buffer length is never the number of lines an operator would call output.
+ */
+function readTerminalOutput(term: Terminal | null): string[] {
+  if (!term) return [];
+  const buffer = term.buffer.active;
+  const lines: string[] = [];
+  for (let i = 0; i < buffer.length; i++) {
+    lines.push(buffer.getLine(i)?.translateToString(true) ?? '');
+  }
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+  while (lines.length > 0 && lines[0].trim() === '') lines.shift();
+  return lines;
+}
 
 // xterm terminal theme colors — dark background with light foreground for
 // contrast and readability. Not mapped to semantic tokens as these define
@@ -132,6 +153,45 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
        setStatus('error');
     }
   }, [action, nodeName, serviceName]);
+
+  // The recovery button that used to claim an AI had been dispatched (#2628):
+  // there was no fetch and no route behind it, so a failing operator was told
+  // Claude was reviewing the logs while nothing at all happened. It now does
+  // the one thing this modal can actually do — put the failure and its output
+  // on the clipboard, ready to paste into the maintenance chat or any
+  // assistant — and each outcome below is derived from what really happened.
+  // "Nothing to copy" is its own named state, not a success with no substance.
+  const copyFailureDetails = useCallback(async () => {
+    const output = readTerminalOutput(xtermRef.current);
+    if (output.length === 0) {
+      addToast(
+        'warning',
+        'No details to copy',
+        `The ${action} of ${serviceName} produced no output, so nothing was copied. Use View Full Logs for the service journal instead.`,
+      );
+      return;
+    }
+    const where = nodeName && nodeName !== 'Local' ? ` on node ${nodeName}` : '';
+    const copied = await copyToClipboard([
+      `ServiceBay: ${action} of service "${serviceName}"${where} failed after ${elapsed}s.`,
+      'Below is the full output of that action. What failed, and how do I fix it?',
+      '',
+      ...output,
+    ].join('\n'));
+    if (copied) {
+      addToast(
+        'success',
+        'Failure details copied',
+        `${output.length} ${output.length === 1 ? 'line' : 'lines'} of ${serviceName} ${action} output are on the clipboard — paste them into the maintenance chat or your AI assistant.`,
+      );
+    } else {
+      addToast(
+        'error',
+        'Nothing was copied',
+        'The browser refused clipboard access, so the failure details are still only in this window. Select the output above and copy it, or use View Full Logs.',
+      );
+    }
+  }, [action, addToast, elapsed, nodeName, serviceName]);
 
   useEffect(() => {
     const terminalElement = terminalRef.current;
@@ -292,11 +352,12 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
                         <Button
                             size="sm"
                             variant="primary"
-                            onClick={() => addToast('info', 'AI Assistant Triggered', `Claude is reviewing the logs for ${serviceName}...`)}
+                            onClick={() => { void copyFailureDetails(); }}
+                            title="Copy the failure and its output so you can paste it into the maintenance chat or an AI assistant"
                             className="bg-status-info hover:bg-status-info/90 font-semibold shadow-sm"
                         >
                             <Bot size={14} />
-                            Ask AI to Fix
+                            Copy Details for AI
                         </Button>
                     </div>
                 ) : (
