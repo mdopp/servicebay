@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.17.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.17.0...servicebay-v5.17.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* **auth:** stop deriving the exec scope from destroy ([91f8305](https://github.com/mdopp/servicebay/commit/91f8305f6d334ee537a7bb88cbba53e49fff4624)), closes [#2623](https://github.com/mdopp/servicebay/issues/2623)
+* **dashboards:** extract edge path calculation to reduce function size ([ff300a1](https://github.com/mdopp/servicebay/commit/ff300a108275d88d0a4704872855f14e04b62a5f))
+* **dashboards:** extract search and gateway detail helpers to reduce complexity ([0606caf](https://github.com/mdopp/servicebay/commit/0606cafa98544f52353e8cd0637e2c06b1942ee4))
+* **mcp:** redact file bodies in the audit log at the sink, at any depth ([7d9d9cb](https://github.com/mdopp/servicebay/commit/7d9d9cb4eb2b3477aa288ce925edc6535747d34b))
+* **scripts:** name the reason when dev-verify aborts before image confirmation ([e0456d5](https://github.com/mdopp/servicebay/commit/e0456d591dbde90c7e33a6395bf948305405dbf9)), closes [#2622](https://github.com/mdopp/servicebay/issues/2622)
+* **scripts:** replace the hand-rolled journal leak grep with a deterministic probe ([1c849bd](https://github.com/mdopp/servicebay/commit/1c849bd7d296a67df2050e7a6dc7e7b98b0ed3f7)), closes [#2616](https://github.com/mdopp/servicebay/issues/2616)
+* **services:** recreate a GPU Quadlet only when it actually changed ([8375bf9](https://github.com/mdopp/servicebay/commit/8375bf9bfe134e990e2849fb66d9da76c93a988b)), closes [#2618](https://github.com/mdopp/servicebay/issues/2618)
+
 ## [5.17.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.16.0...servicebay-v5.17.0) (2026-08-25)
 
 
