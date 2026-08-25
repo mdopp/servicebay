@@ -52,6 +52,81 @@ discover_repos() {
   done
 }
 
+# Make git usable for the `dev` user in every discovered checkout.
+#
+# Why this is needed: a checkout that was created AS ROOT (a clone run from a
+# root shell, a restored backup, a `podman exec` that ran as root) stays
+# root-owned. The chown below is non-recursive on purpose, so it never reaches
+# into it, and setgid+umask don't help either — the problem is the OWNER, not
+# the group. git then refuses EVERY command in that directory with "detected
+# dubious ownership", while the session still starts, is named after the
+# directory and looks perfectly healthy from the outside (#2612).
+#
+# Two properties this is built around:
+#
+#   * IDEMPOTENT. `--replace-all` collapses the entry for a path to exactly one
+#     line instead of appending another one. Registering with `--add` on every
+#     boot is what grew the reference box's list to ~65 entries, ~30 of them the
+#     same repo — while the checkouts that actually needed an entry had none.
+#
+#   * SCOPED to what this entrypoint owns. It only ever writes entries for the
+#     checkouts it just discovered, and only ever removes entries under
+#     $DEV_HOME that name neither a discovered checkout nor any other git
+#     repository (i.e. a path that has gone away). Entries for anything outside
+#     $DEV_HOME — a dotfiles dir, a per-user home, whatever the operator added
+#     by hand — are never touched. This is deliberately NOT a "de-duplicate the
+#     whole config" pass: rewriting a user's global git config beyond this
+#     tool's own entries is not ours to do.
+#
+# `--fixed-value` (git ≥ 2.30) makes the value-pattern an exact string compare
+# instead of a regex, so a shared-workspace directory name full of regex
+# metacharacters can't widen the match. Directory names cross the su boundary
+# as positional parameters, same as everywhere else in this file (#2418).
+register_safe_directories() {
+  su_dev '
+    set -u
+    dev_home="$1"; shift
+    export HOME="$dev_home"
+    rc=0
+
+    for name in "$@"; do
+      path="$dev_home/$name"
+      git config --global --replace-all --fixed-value \
+        safe.directory "$path" "$path" || rc=1
+    done
+
+    entries="$(git config --global --get-all safe.directory 2>/dev/null || true)"
+    printf "%s\n" "$entries" | while IFS= read -r entry; do
+      [ -n "$entry" ] || continue
+      case "$entry" in "$dev_home"/*) ;; *) continue;; esac
+      keep=0
+      for name in "$@"; do
+        if [ "$entry" = "$dev_home/$name" ]; then keep=1; break; fi
+      done
+      [ "$keep" -eq 1 ] && continue
+      [ -e "$entry/.git" ] && continue
+      git config --global --unset-all --fixed-value safe.directory "$entry" || true
+    done
+
+    exit "$rc"
+  ' "$DEV_HOME" "$@"
+}
+
+# One full reconcile pass: discover the checkouts, make git usable in each of
+# them, then start a session for any that has none yet. Every step is
+# idempotent — `--replace-all` rather than `--add`, and `start-claude` skips a
+# repo whose tmux window already exists — so this is safe to run both at boot
+# and on a timer, which is how a checkout that appears AFTER the container
+# started still ends up with a usable session (#2612).
+reconcile_repos() {
+  discover_repos
+  register_safe_directories "${repos[@]}" \
+    || echo "claude-dev: WARNING — could not register every checkout as a git safe.directory; git may refuse to run in a root-owned one." >&2
+  [ "${#repos[@]}" -gt 0 ] || return 0
+  autostart_claude "${repos[@]}" \
+    || echo "claude-dev: WARNING — autostart of Claude sessions reported an error." >&2
+}
+
 # Hand the discovered repo list to `start-claude` as an argv array.
 # $DEV_HOME and every repo name cross the su boundary as positional
 # parameters; the only shell source here is the literal single-quoted script,
@@ -235,14 +310,14 @@ fi
 # daemonizes, so sshd stays PID 1 — do NOT regress that. CLAUDE_START_NO_ATTACH
 # stops start-claude from trying to attach a terminal we don't have here.
 #
-# Repo discovery + the su hand-off live in `discover_repos` / `autostart_claude`
-# at the top of this file — the directory names are shared-workspace-writable,
-# so they must reach `start-claude` as argv, never as shell source (#2418).
-discover_repos
+# Repo discovery, the safe.directory registration that keeps git usable in a
+# root-owned checkout, and the su hand-off live in `reconcile_repos` /
+# `register_safe_directories` / `discover_repos` / `autostart_claude` at the top
+# of this file — the directory names are shared-workspace-writable, so they must
+# reach `start-claude` as argv, never as shell source (#2418).
+reconcile_repos
 
 if [ "${#repos[@]}" -gt 0 ]; then
-  autostart_claude "${repos[@]}" \
-    || echo "claude-dev: WARNING — autostart of Claude sessions reported an error." >&2
   echo "claude-dev: auto-started Claude in ${#repos[@]} git repo(s): ${repos[*]}"
 else
   # Fresh volume with no checkouts yet — still start an empty `claude` tmux
@@ -253,6 +328,21 @@ else
     su_dev 'cd "$1" && HOME="$1" tmux new-session -d -s claude' "$DEV_HOME"
     echo "claude-dev: no git repos under $DEV_HOME yet — started empty tmux session 'claude' for user 'dev'."
   fi
+fi
+
+# Checkouts also appear AFTER boot — cloned inside a running session, restored
+# from a backup, or added by a collaborator. Discovery used to run only here, so
+# such a checkout got neither a session nor a safe.directory entry until the
+# next container restart (#2612). A small background reconcile loop closes that
+# gap. It is a plain subshell backgrounded before the `exec` below, so sshd
+# stays PID 1 (do NOT regress that) and reaps it as its own child. Set
+# CLAUDE_DEV_REPO_RESCAN_SECONDS=0 to switch the loop off.
+rescan_interval="${CLAUDE_DEV_REPO_RESCAN_SECONDS:-300}"
+if [ "$rescan_interval" -gt 0 ] 2>/dev/null; then
+  ( while sleep "$rescan_interval"; do reconcile_repos || true; done ) &
+  echo "claude-dev: rescanning $DEV_HOME for new checkouts every ${rescan_interval}s."
+else
+  echo "claude-dev: repo rescan disabled — a checkout added after boot gets its session on the next restart."
 fi
 
 mkdir -p /run/sshd

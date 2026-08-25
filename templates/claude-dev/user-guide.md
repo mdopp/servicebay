@@ -148,3 +148,12 @@ cd <repo> && claude
 
 Switching back later is just `cd /workspace/<repo> && claude` — nothing to
 re-clone.
+
+A checkout you add this way is picked up on its own: every few minutes the box
+rescans `/workspace`, registers the new checkout with git and opens a session
+window for it — you no longer have to restart the service for a fresh clone to
+appear. The registration step also keeps git working in a checkout that ended
+up owned by `root` (a clone made from a root shell, or one restored from a
+backup), which otherwise gets a session in which every git command fails with
+*"detected dubious ownership"*. Set `CLAUDE_DEV_REPO_RESCAN_SECONDS=0` in the
+service's environment to turn the rescan off.

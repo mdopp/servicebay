@@ -55,6 +55,7 @@ for f in "${flags[@]}"; do
 done
 
 started=()
+already=()
 for d in "${dirs[@]}"; do
   if [ -d "$d" ]; then
     # `cd -- ` so a directory whose name starts with a dash (the boot-time
@@ -74,6 +75,7 @@ for d in "${dirs[@]}"; do
     tmux new-session -d -s "$SESSION" -n "$name" -c "$path" "$cmd"
   elif tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | grep -qx "$name"; then
     echo "start-claude: '$name' already running in tmux session '$SESSION' — skipping." >&2
+    already+=("$name")
     continue
   else
     tmux new-window -t "$SESSION" -n "$name" -c "$path" "$cmd"
@@ -82,6 +84,15 @@ for d in "${dirs[@]}"; do
 done
 
 if [ "${#started[@]}" -eq 0 ]; then
+  # "Everything already had a live window" is SUCCESS, not failure: the
+  # entrypoint re-runs this on a timer to pick up checkouts that appeared after
+  # boot, and a non-zero exit there would log a warning on every quiet pass and
+  # train the reader to ignore it (#2612). Only a run that started nothing AND
+  # found nothing already running is an error.
+  if [ "${#already[@]}" -gt 0 ]; then
+    echo "start-claude: nothing to do — ${#already[@]} session(s) already running: ${already[*]}"
+    exit 0
+  fi
   echo "start-claude: nothing started." >&2
   exit 1
 fi
