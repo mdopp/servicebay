@@ -112,6 +112,27 @@ async function fetchExistingServices(node?: string): Promise<Set<string>> {
   }
 }
 
+/** Where the express path puts every service's data. */
+const DATA_MOUNTPOINT = '/var/mnt/data';
+
+/**
+ * One shape for every reason the express install refuses (#2626): say what
+ * went wrong, then the denominator and what did NOT happen, then the way out.
+ * Kept in one place so the three stop reasons cannot drift apart in wording.
+ */
+function expressStopMessage(stacks: number, why: string, consequence?: string): string {
+  const tail = consequence ? ` ${consequence}` : '';
+  return `${why} NOT installed: 0 of ${stacks} stack(s).${tail}`;
+}
+
+/** What `POST /api/system/storage` reports back about a mount attempt. */
+interface MountAttempt {
+  mounted?: boolean;
+  error?: string;
+  persistent?: boolean;
+  incomplete?: string[];
+}
+
 export default function OnboardingWizard() {
   const persisted = typeof window !== 'undefined' ? loadPersistedWizardState() : null;
   const [isOpen, setIsOpen] = useState(false);
@@ -266,6 +287,20 @@ export default function OnboardingWizard() {
   const [detectedDrives, setDetectedDrives] = useState<DetectedDrive[]>([]);
   const [, setRaidMounting] = useState(false);
   const [raidMounted, setRaidMounted] = useState(false);
+  /**
+   * What we actually know about the target node's storage (#2626).
+   *
+   * 'pending' — we have not (successfully) read the disk layout yet;
+   * 'ready'   — `raidArrays` / `detectedDrives` reflect a real answer;
+   * 'failed'  — the read errored, so an unmounted RAID could be sitting there
+   *             and we would not know.
+   *
+   * Express Install refuses to deploy unless this is 'ready'. An empty
+   * `raidArrays` used to mean both "no array to mount" and "we never managed
+   * to look", and the second one deployed every service onto the boot disk.
+   */
+  const [storageProbe, setStorageProbe] = useState<'pending' | 'ready' | 'failed'>('pending');
+  const [storageProbeError, setStorageProbeError] = useState<string | null>(null);
 
   // Track whether we're in stacks-only mode (post-install first boot)
   const [stacksOnlyMode, setStacksOnlyMode] = useState(false);
@@ -902,52 +937,50 @@ export default function OnboardingWizard() {
       addToast('success', 'Email Configured', 'Notification settings updated.');
   });
 
-  // Device detection
+  // Storage + device detection. One read of /api/system/storage feeds BOTH
+  // the drives panel and the RAID prompt — they used to be two effects firing
+  // the same request, each swallowing its own failure independently, so the
+  // wizard could disagree with itself about what it had seen (#2626). The USB
+  // listing is deliberately kept out of the storage verdict: a missing serial
+  // path says nothing about where data would land.
   useEffect(() => {
     if (!stackSelectedNode) return;
     const fetchDevices = async () => {
       setStackLoadingDevices(true);
+      setStorageProbe('pending');
+      const [storage, usb] = await Promise.allSettled([
+        fetch(`/api/system/storage?node=${stackSelectedNode}`),
+        fetch(`/api/system/devices?node=${stackSelectedNode}&path=/dev/serial/by-id`),
+      ]);
+
       try {
-        const [storageRes, usbRes] = await Promise.all([
-          fetch(`/api/system/storage?node=${stackSelectedNode}`),
-          fetch(`/api/system/devices?node=${stackSelectedNode}&path=/dev/serial/by-id`)
-        ]);
+        if (storage.status === 'rejected') throw storage.reason;
+        if (!storage.value.ok) throw new Error(`the box answered HTTP ${storage.value.status}`);
+        const { drives, raids } = await storage.value.json();
+        setDetectedDrives(drives || []);
+        setRaidArrays((raids || []).filter((r: { mountpoint: string | null }) => !r.mountpoint));
+        setStorageProbeError(null);
+        setStorageProbe('ready');
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setDetectedDrives([]);
+        setRaidArrays([]);
+        setStorageProbeError(message);
+        setStorageProbe('failed');
+        addToast('error', 'Could not read the disk layout', message);
+      }
 
-        if (storageRes.ok) {
-          const { drives } = await storageRes.json();
-          setDetectedDrives(drives || []);
-        }
-
+      try {
         const opts: Record<string, string[]> = {};
-        if (usbRes.ok) {
-          const usbDevices = await usbRes.json();
-          opts['/dev/serial/by-id'] = usbDevices;
+        if (usb.status === 'fulfilled' && usb.value.ok) {
+          opts['/dev/serial/by-id'] = await usb.value.json();
         }
         setStackDeviceOptions(opts);
-      } catch (err) {
-        addToast('error', 'Could not list devices for the selected node', err instanceof Error ? err.message : String(err));
       } finally {
         setStackLoadingDevices(false);
       }
     };
     fetchDevices();
-  }, [stackSelectedNode, addToast]);
-
-  // RAID detection
-  useEffect(() => {
-    if (!stackSelectedNode) return;
-    const fetchRaid = async () => {
-      try {
-        const res = await fetch(`/api/system/storage?node=${stackSelectedNode}`);
-        if (res.ok) {
-          const { raids } = await res.json();
-          setRaidArrays((raids || []).filter((r: { mountpoint: string | null }) => !r.mountpoint));
-        }
-      } catch (err) {
-        addToast('error', 'Could not detect RAID arrays', err instanceof Error ? err.message : String(err));
-      }
-    };
-    fetchRaid();
   }, [stackSelectedNode, addToast]);
 
   const handleGenerateKey = async () => {
@@ -1113,33 +1146,96 @@ export default function OnboardingWizard() {
     });
   };
 
+  /**
+   * #2626 — do we know where the data would land? An empty `raidArrays` used
+   * to mean both "no array to mount" and "we never managed to look"; only the
+   * first one is safe to deploy on.
+   */
+  const storageTargetKnown = (stacks: number): boolean => {
+    if (!stackSelectedNode) {
+      addToast('error', 'Install stopped: no target node', expressStopMessage(
+        stacks,
+        'ServiceBay could not tell which node to install onto, so it could not check where your data would land.',
+        'Use "Pick stacks" to choose the node explicitly.',
+      ));
+      return false;
+    }
+    if (storageProbe !== 'ready') {
+      addToast('error', 'Install stopped: disk layout unknown', expressStopMessage(
+        stacks,
+        storageProbeError ?? 'The disk layout has not been read yet.',
+        'ServiceBay will not deploy without knowing whether your data lands on the data array or on the boot disk.',
+      ));
+      return false;
+    }
+    return true;
+  };
+
+  /**
+   * #2626 — every service the express path deploys writes its data under the
+   * mount at DATA_MOUNTPOINT, so the deploy only goes ahead once the array is
+   * really mounted there. Returns false when the install must stop: a refused
+   * install is recoverable, an install onto the boot disk is not (the data is
+   * on the wrong disk and the storage guarantees the operator chose — the
+   * array's capacity and its redundancy — never applied).
+   */
+  const ensureDataDriveMounted = async (stacks: number): Promise<boolean> => {
+    if (!storageTargetKnown(stacks)) return false;
+    const raid = raidArrays[0];
+    if (!raid || raidMounted) return true;
+
+    setRaidMounting(true);
+    try {
+      const res = await fetch(`/api/system/storage?node=${stackSelectedNode}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device: raid.device,
+          mountpoint: DATA_MOUNTPOINT,
+          label: raid.label,
+          fstype: raid.fstype,
+        }),
+      });
+      const attempt = await res.json().catch(() => null) as MountAttempt | null;
+      // The outcome comes from what the box reported happening, not from the
+      // request having been sent: a 200 that doesn't say `mounted` is not a
+      // mount.
+      if (!res.ok || attempt?.mounted !== true) {
+        addToast('error', 'Install stopped: data drive not mounted', expressStopMessage(
+          stacks,
+          `${raid.device} could not be mounted at ${DATA_MOUNTPOINT} (${attempt?.error ?? `the box answered HTTP ${res.status}`}).`,
+          'Every service would have written its data to the boot disk instead of the array.',
+        ));
+        return false;
+      }
+      setRaidMounted(true);
+      setRaidArrays([]);
+      // Mounted now but not across reboots is its own named state — not a
+      // failure (the data does land on the array) and not "done" either.
+      if (attempt.persistent === false) {
+        addToast('warning', 'Mounted, but not yet across reboots',
+          `${raid.device} is mounted at ${DATA_MOUNTPOINT} now, so the install continues. NOT done: `
+          + `${(attempt.incomplete ?? ['boot-persistence setup']).join(', ')} — after a reboot the array may not be `
+          + 'mounted. Check Settings → System before relying on it.');
+      }
+      return true;
+    } catch (err) {
+      addToast('error', 'Install stopped: data drive not mounted', expressStopMessage(
+        stacks,
+        `${raid.device} could not be mounted at ${DATA_MOUNTPOINT} (${err instanceof Error ? err.message : String(err)}).`,
+      ));
+      return false;
+    } finally {
+      setRaidMounting(false);
+    }
+  };
+
   const handleExpressInstall = async () => {
     if (availableStacks.length === 0) {
       addToast('error', 'No stacks available');
       return;
     }
-
-    const raid = raidArrays[0];
-    if (raid && !raidMounted && stackSelectedNode) {
-      setRaidMounting(true);
-      try {
-        const res = await fetch(`/api/system/storage?node=${stackSelectedNode}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            device: raid.device,
-            mountpoint: '/var/mnt/data',
-            label: raid.label,
-            fstype: raid.fstype,
-          }),
-        });
-        if (res.ok) {
-          setRaidMounted(true);
-          setRaidArrays([]);
-        }
-      } catch { /* ignore */ }
-      setRaidMounting(false);
-    }
+    if (!await ensureDataDriveMounted(availableStacks.length)) return;
 
     const items = await handleSelectStack(availableStacks);
     if (items.length === 0) return;
@@ -1172,6 +1268,13 @@ export default function OnboardingWizard() {
 
   const order: WizardStep[] = ['welcome', 'network', 'email', 'install-confirm', 'stacks', 'finish'];
   const inEditMode = currentStep === 'stacks';
+  // #2627 — every service in the chosen stack(s) is already deployed, so
+  // every checkbox is forced off and disabled and the services sub-step's
+  // Continue can never enable. "Nothing left to install here" is its own
+  // outcome — not a failure, and not something to fold into "done" — so it
+  // gets named on the step and the footer offers a way forward instead of a
+  // permanently dead button.
+  const nothingLeftToInstall = stackItems.length > 0 && stackItems.every(i => i.alreadyInstalled);
   const activeSteps = order.filter(step => {
     if (step === 'welcome' || step === 'finish') return true;
     if (step === 'network') return true;
@@ -1466,6 +1569,7 @@ export default function OnboardingWizard() {
                 installedStacks={installedStacks}
                 uninstalling={uninstalling}
                 onUninstallStack={handleUninstallStack}
+                nothingLeftToInstall={nothingLeftToInstall}
               />
             )}
 
@@ -1518,9 +1622,15 @@ export default function OnboardingWizard() {
                          </Button>
                       )}
                       {stackInstallStep === 'services' && (
-                         <Button onClick={() => handleStackFetchVars()} disabled={stacksLoading || !stackItems.some(i => i.checked)} className="px-10 py-4 text-base">
-                            Continue
-                         </Button>
+                         nothingLeftToInstall ? (
+                            <Button onClick={() => navigateToSubStep('select')} className="px-10 py-4 text-base">
+                               Choose another stack
+                            </Button>
+                         ) : (
+                            <Button onClick={() => handleStackFetchVars()} disabled={stacksLoading || !stackItems.some(i => i.checked)} className="px-10 py-4 text-base">
+                               Continue
+                            </Button>
+                         )
                       )}
                       {stackInstallStep === 'configure' && (
                          <Button onClick={() => handleStackInstall()} disabled={stacksLoading} className="px-10 py-4 text-base">

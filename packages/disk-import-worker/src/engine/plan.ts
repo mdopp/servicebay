@@ -37,6 +37,7 @@ import {
   SHARE_DATA_ROOT,
   type SafeExec,
 } from './hostExec';
+import { areaOfTarget } from './routing';
 import type {
   ImportPlan,
   ImportPlanItem,
@@ -181,7 +182,7 @@ export async function applyPlan(plan: ImportPlan, opts: ApplyOptions): Promise<A
     const planned = await classifyItem(item, ctx);
     if (planned.copy) {
       if (item.category === 'photos' && item.target) {
-        photoOwners.add(ownerOfTarget(item.target));
+        photoOwners.add(areaOfItem(item, item.target));
       }
       pending.push(planned.copy);
       if (pending.length >= COPY_BATCH_SIZE) await flush();
@@ -198,16 +199,19 @@ export async function applyPlan(plan: ImportPlan, opts: ApplyOptions): Promise<A
 }
 
 /**
- * The destination-area owner key encoded in a relative target path (#1904):
- * `<owner>/<category>/…` → that owner; a path starting with the category folder
- * (no owner segment) → `shared`. Mirrors `resolveTargetPath`'s owner-prefix.
+ * The DESTINATION AREA of a planned item — the scope of every catalog read and
+ * write for it (#2631) and, for photos, the owning Immich library (#1904).
+ *
+ * The planner stamps the area it deduped under onto the item (`buildPlan`), so
+ * that value is authoritative and is used verbatim. A plan sidecar written before
+ * #2631 has no `area`; the owner is then recovered from the target's own owner
+ * prefix (`areaOfTarget`), which is what `resolveTargetPath` encoded there.
+ * Scoping to `shared` regardless — the old behaviour — made a private-area import
+ * invisible to the catalog, so a genuinely different file at an occupied target
+ * was never flagged and `rsync -a` overwrote it with no `_superseded/` backup.
  */
-function ownerOfTarget(target: string): string {
-  const segs = target.split('/').filter(s => s !== '');
-  // `photos` is the only category whose first segment can be the category itself
-  // (shared) or an owner id. A shared photo target is `photos/…`; a private one
-  // is `<owner>/photos/…`.
-  return segs[0] === 'photos' ? 'shared' : segs[0] ?? 'shared';
+function areaOfItem(item: ImportPlanItem, target: string): string {
+  return item.area ?? areaOfTarget(target);
 }
 
 interface ItemCtx {
@@ -232,6 +236,8 @@ interface ProgressCursor {
 interface CopyJob {
   item: ImportPlanItem;
   target: string;
+  /** The destination area this file's catalog row is keyed under (#2631). */
+  area: string;
   /**
    * The content sha, if it was already resolved during classification (a catalog
    * collision forced a host compare). `undefined` for a plain copy to a fresh
@@ -271,11 +277,24 @@ async function classifyItem(
   // needs a content compare). A plain copy to a FRESH target is NOT hashed here;
   // its catalog row key is resolved at finalize time, on the host, after the file
   // is confirmed copied. A clean apply therefore hashes nothing up front.
+  //
+  // Every catalog read/write below is scoped to the item's destination AREA — the
+  // same scope the planner deduped under (#2631). An unscoped read defaults to
+  // `shared`, which for a private-area target answers a question nobody asked.
+  const area = areaOfItem(item, target);
   let sha: string | undefined;
-  if (ctx.catalog.getByTarget(target) !== undefined) {
+  // A DIFFERENT file already occupies this area+target per the catalog. The plan
+  // normally says `conflict` for that, but the plan is a snapshot: it may predate
+  // the catalog row (a resumed/legacy/second-disk apply). The apply is the last
+  // line of defence, and its choice is asymmetric — parking the existing file in
+  // `_superseded/` costs disk, overwriting it loses the operator's data — so it
+  // supersedes on its OWN evidence, never on the plan's word alone.
+  let displaced = false;
+  if (ctx.catalog.getByTarget(target, area) !== undefined) {
     sha = await ctx.hashOf(item.record);
     // RESUMABILITY: this exact content already at this exact target → done.
-    if (ctx.catalog.has(sha, target)) return { outcome: 'skipped-cataloged' };
+    if (ctx.catalog.has(sha, target, area)) return { outcome: 'skipped-cataloged' };
+    displaced = true;
   }
 
   if (ctx.dryRun) return { outcome: 'dry-run' };
@@ -288,12 +307,12 @@ async function classifyItem(
   const src = item.record.sourcePath;
 
   let outcome: 'copied' | 'superseded' = 'copied';
-  if (item.action === 'conflict') {
+  if (item.action === 'conflict' || displaced) {
     await supersedeExisting(target, ctx);
     outcome = 'superseded';
   }
 
-  return { copy: { item, target, sha, src, dest, outcome } };
+  return { copy: { item, target, area, sha, src, dest, outcome } };
 }
 
 /**
@@ -366,7 +385,7 @@ async function finalizeCopied(copied: CopyJob[], ctx: ItemCtx): Promise<void> {
     // host (#1983) — after the file is confirmed copied, never via an in-process
     // read of the device.
     const sha = job.sha ?? (await ctx.hashOf(job.item.record));
-    ctx.catalog.upsert(catalogEntry(sha, job.target, job.item.record, ctx.now()));
+    ctx.catalog.upsert(catalogEntry(sha, job.area, job.target, job.item.record, ctx.now()));
   }
 }
 
@@ -418,8 +437,16 @@ async function chownShareDirChain(dirs: string[], ctx: ItemCtx): Promise<void> {
   await runOk(ctx.exec, ['chown', `core:${ctx.shareGid}`, ...chain], 'chown dest dirs', { sudo: true });
 }
 
-function catalogEntry(sha: string, target: string, record: ImportRecord, atMs: number): CatalogEntry {
-  return { sha256: sha, target, sourcePath: record.sourcePath, size: record.size, importedAtMs: atMs };
+function catalogEntry(
+  sha: string,
+  area: string,
+  target: string,
+  record: ImportRecord,
+  atMs: number,
+): CatalogEntry {
+  // `area` is NOT optional here on purpose: omitting it makes the row default to
+  // `shared`, which is exactly the mismatch #2631 fixed.
+  return { sha256: sha, area, target, sourcePath: record.sourcePath, size: record.size, importedAtMs: atMs };
 }
 
 function stripLeadingSlash(p: string): string {

@@ -14,6 +14,8 @@ import { createRequire } from 'node:module';
 
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
 
+import { areaOfTarget } from './routing';
+
 // This package is ESM ("type":"module") and runs as raw TS ESM via tsx, so the
 // CommonJS `require` global does NOT exist here. better-sqlite3 is a native CJS
 // addon; load it through a createRequire() bridge to keep the native binding out
@@ -22,6 +24,17 @@ const require = createRequire(import.meta.url);
 
 /** The default destination area when no owner-derived area is supplied. */
 export const DEFAULT_AREA = 'shared';
+
+/**
+ * Catalog schema version, tracked in SQLite's `user_version`.
+ *  1 — rows written by an apply pass that keyed EVERY row `shared`, even for a
+ *      private-area target (#2631). Those rows are invisible to the planner,
+ *      which reads under the real owner area — so a re-import of a different file
+ *      to an occupied private target was never flagged as a conflict and got
+ *      `rsync -a`'d over the existing file with no `_superseded/` backup. The
+ *      migration re-areas them from their own target prefix.
+ */
+const SCHEMA_VERSION = 1;
 
 /** One persisted catalog row. */
 export interface CatalogEntry {
@@ -90,6 +103,35 @@ export class ImportCatalog {
       CREATE INDEX IF NOT EXISTS idx_catalog_sha         ON import_catalog(sha256);
       CREATE INDEX IF NOT EXISTS idx_catalog_area_target ON import_catalog(area, target);
     `);
+    this.migrate();
+  }
+
+  /**
+   * Re-area rows a pre-#2631 apply mis-filed under `shared` (see SCHEMA_VERSION).
+   * A row is mis-filed iff its target carries an owner prefix — `resolveTargetPath`
+   * only emits `<owner>/<category>/…` for a NON-shared owner, so a genuinely shared
+   * row always starts at a category folder and is left alone. Runs once per catalog
+   * file (gated on `user_version`); a fresh/`:memory:` catalog migrates nothing.
+   */
+  private migrate(): void {
+    const version = Number(this.db.pragma('user_version', { simple: true }) ?? 0);
+    if (version >= SCHEMA_VERSION) return;
+    const rows = this.db
+      .prepare('SELECT sha256, target FROM import_catalog WHERE area = ?')
+      .all(DEFAULT_AREA) as { sha256: string; target: string }[];
+    // OR REPLACE: if a correctly-areaed row for the same key somehow already
+    // exists, the migrated row wins rather than aborting the whole open.
+    const move = this.db.prepare(
+      'UPDATE OR REPLACE import_catalog SET area = ? WHERE sha256 = ? AND area = ? AND target = ?',
+    );
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const area = areaOfTarget(row.target);
+        if (area === DEFAULT_AREA) continue;
+        move.run(area, row.sha256, DEFAULT_AREA, row.target);
+      }
+    })();
+    this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }
 
   /** True if this exact content has already been written to this area+target. */

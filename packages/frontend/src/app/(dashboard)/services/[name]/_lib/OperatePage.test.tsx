@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import type { ServiceViewModel } from '@servicebay/api-client';
+import type { OperateLoadState } from '../../../settings/services/_lib/useOperateServices';
 
 // #2077 regression guard: the per-service Operate page MUST own a scroll region,
 // because the dashboard <main> (app/(dashboard)/layout.tsx) is overflow-hidden.
@@ -18,7 +19,9 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => params.current,
 }));
 
-const operate = { current: { service: null as ServiceViewModel | null, loading: true } };
+const operate = {
+  current: { service: null as ServiceViewModel | null, state: 'loading' as OperateLoadState },
+};
 vi.mock('../../../settings/services/_lib/useOperateServices', () => ({
   useOperateService: () => operate.current,
 }));
@@ -58,7 +61,7 @@ function svc(over: Partial<ServiceViewModel> = {}): ServiceViewModel {
 
 beforeEach(() => {
   params.current = new URLSearchParams();
-  operate.current = { service: null, loading: true };
+  operate.current = { service: null, state: 'loading' };
   containersTabProps.mockClear();
 });
 
@@ -76,9 +79,39 @@ describe('OperatePage scroll container (#2077)', () => {
   });
 });
 
+// #2629: "still loading", "loaded and genuinely absent" and "couldn't load"
+// are three different claims. The page may only render the definite negative
+// ("was not found") in the middle one.
+describe('OperatePage load states (#2629)', () => {
+  it('shows the spinner and NOT "was not found" while the twin snapshot is still on its way', () => {
+    operate.current = { service: null, state: 'loading' };
+    render(<OperatePage name="immich" />);
+
+    expect(screen.getByText(/Loading service/)).toBeDefined();
+    expect(screen.queryByText(/was not found/)).toBeNull();
+  });
+
+  it('claims "not found" only once a synced snapshot really lacks the service', () => {
+    operate.current = { service: null, state: 'ready' };
+    render(<OperatePage name="immich" />);
+
+    expect(screen.getByText(/was not found/)).toBeDefined();
+    expect(screen.queryByText(/Loading service/)).toBeNull();
+  });
+
+  it('reports a failed load as unreachable, not as a missing service', () => {
+    operate.current = { service: null, state: 'unavailable' };
+    render(<OperatePage name="immich" />);
+
+    expect(screen.getByText(/Can.t reach ServiceBay/)).toBeDefined();
+    expect(screen.queryByText(/was not found/)).toBeNull();
+    expect(screen.queryByText(/Loading service/)).toBeNull();
+  });
+});
+
 describe('OperatePage Logs quick action (#2391)', () => {
   it('switches to the Containers tab and asks it for the log drawer, from the default tab', () => {
-    operate.current = { service: svc(), loading: false };
+    operate.current = { service: svc(), state: 'ready' };
     render(<OperatePage name="immich" />);
 
     // starts on Health, no drawer requested
@@ -97,7 +130,7 @@ describe('OperatePage Logs quick action (#2391)', () => {
 
   it('works from a non-default tab too (the old ?tab=health link was a same-page no-op)', () => {
     params.current = new URLSearchParams('tab=actions');
-    operate.current = { service: svc(), loading: false };
+    operate.current = { service: svc(), state: 'ready' };
     render(<OperatePage name="immich" />);
     expect(screen.getByText('actions-tab')).toBeDefined();
 
@@ -107,7 +140,7 @@ describe('OperatePage Logs quick action (#2391)', () => {
   });
 
   it('re-fires with a fresh nonce so a second click re-opens a closed drawer', () => {
-    operate.current = { service: svc(), loading: false };
+    operate.current = { service: svc(), state: 'ready' };
     render(<OperatePage name="immich" />);
 
     fireEvent.click(screen.getByText('quick-logs'));
@@ -117,7 +150,7 @@ describe('OperatePage Logs quick action (#2391)', () => {
 
   it('honours a ?drawer=logs&container= deep link on arrival from another page', () => {
     params.current = new URLSearchParams('tab=containers&drawer=logs&container=abc123');
-    operate.current = { service: svc(), loading: false };
+    operate.current = { service: svc(), state: 'ready' };
     render(<OperatePage name="immich" />);
 
     expect(containersTabProps.mock.calls.at(-1)![0].initialDrawer).toEqual({

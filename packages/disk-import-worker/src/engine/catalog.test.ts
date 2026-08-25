@@ -2,7 +2,37 @@ import { describe, it, expect, afterEach } from 'vitest';
 import os from 'os';
 import path from 'path';
 import fs from 'fs/promises';
+import { createRequire } from 'node:module';
 import { ImportCatalog, type CatalogEntry } from './catalog';
+
+const require = createRequire(import.meta.url);
+
+/**
+ * Write a catalog file exactly as a PRE-#2631 worker left it: the same table, no
+ * `user_version` stamp, and every row keyed `shared` regardless of the target's
+ * owner prefix. The fixture is the real on-disk shape the migration has to fix —
+ * not a file the current class produced.
+ */
+function writeLegacyCatalog(dbPath: string, rows: CatalogEntry[]): void {
+  const Database = require('better-sqlite3');
+  const db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS import_catalog (
+      sha256          TEXT NOT NULL,
+      area            TEXT NOT NULL DEFAULT 'shared',
+      target          TEXT NOT NULL,
+      source_path     TEXT NOT NULL,
+      size            INTEGER NOT NULL,
+      imported_at_ms  INTEGER NOT NULL,
+      PRIMARY KEY (sha256, area, target)
+    );
+  `);
+  const insert = db.prepare(
+    'INSERT INTO import_catalog (sha256, area, target, source_path, size, imported_at_ms) VALUES (?, ?, ?, ?, ?, ?)',
+  );
+  for (const r of rows) insert.run(r.sha256, 'shared', r.target, r.sourcePath, r.size, r.importedAtMs);
+  db.close();
+}
 
 const entry = (over: Partial<CatalogEntry> = {}): CatalogEntry => ({
   sha256: 'a'.repeat(64),
@@ -82,6 +112,35 @@ describe('ImportCatalog — persist + reload from a file path', () => {
   let tmpDir: string;
   afterEach(async () => {
     if (tmpDir) await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('re-areas rows a pre-#2631 apply mis-filed under shared (owner-prefixed targets)', async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'diskimport-cat-'));
+    const dbPath = path.join(tmpDir, 'catalog.db');
+
+    // A catalog file exactly as a pre-#2631 worker left it: the schema of the day
+    // (user_version 0) and every row under 'shared' — including targets that
+    // clearly belong to a user area. The planner reads those under 'mdopp' and
+    // sees nothing → no conflict → silent overwrite.
+    writeLegacyCatalog(dbPath, [
+      { ...entry(), area: 'shared', target: 'mdopp/photos/IMG_0001.jpg' },
+      { ...entry(), area: 'shared', target: 'photos/IMG_0002.jpg' },
+    ]);
+
+    const migrated = new ImportCatalog(dbPath);
+    // The private-area row is now visible where the planner looks …
+    expect(migrated.getByTarget('mdopp/photos/IMG_0001.jpg', 'mdopp')?.sha256).toBe(entry().sha256);
+    expect(migrated.getByTarget('mdopp/photos/IMG_0001.jpg', 'shared')).toBeUndefined();
+    // … and a genuinely shared row (target starts at a category folder) is untouched.
+    expect(migrated.getByTarget('photos/IMG_0002.jpg', 'shared')?.sha256).toBe(entry().sha256);
+    expect(migrated.count()).toBe(2); // nothing dropped or duplicated
+    migrated.close();
+
+    // Idempotent: a second open leaves the migrated rows exactly as they are.
+    const again = new ImportCatalog(dbPath);
+    expect(again.count()).toBe(2);
+    expect(again.getByTarget('mdopp/photos/IMG_0001.jpg', 'mdopp')).toBeDefined();
+    again.close();
   });
 
   it('survives close + reopen at the same path', async () => {

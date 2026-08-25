@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { agentManager } from '@/lib/agent/manager';
 import { apiError } from '@/lib/api/errors';
 import { withApiHandler } from '@/lib/api/handler';
+import { mountVerdict, summarisePersistence } from '@/lib/storage/mountOutcome';
 
 export const dynamic = 'force-dynamic';
 
@@ -242,18 +243,40 @@ export const POST = withApiHandler<z.infer<typeof PostBody>, z.infer<typeof Post
     const mountRes = await agent.sendCommand('exec', {
       command: `sudo mkdir -p ${safeMountpoint} && sudo mount ${safeDevice} ${safeMountpoint}`
     });
-    if (mountRes.code !== 0) {
-      return NextResponse.json({ error: `Mount failed: ${mountRes.stderr}` }, { status: 500 });
+
+    // 2a. Verify — do not take `mount` exiting 0 as proof that the mountpoint
+    // is now backed by this device (#2626). `findmnt --target` reports the
+    // effective filesystem at that path, so a mount that silently did not take
+    // shows up as the boot disk here, which is precisely the case that used to
+    // sail through and put every service's data on the wrong disk.
+    const verifyRes = await agent.sendCommand('exec', {
+      command: `findmnt -n -o SOURCE --target ${safeMountpoint}`
+    });
+    const verdict = mountVerdict({
+      mountCode: mountRes.code,
+      mountStderr: mountRes.stderr,
+      findmntCode: verifyRes.code,
+      findmntSource: verifyRes.stdout ?? '',
+      device: safeDevice,
+      label: safeLabel || undefined,
+    });
+    if (!verdict.ok) {
+      return NextResponse.json({
+        mounted: false,
+        error: `Mount failed: ${verdict.reason}`,
+        mountpoint: safeMountpoint,
+        device: safeDevice,
+      }, { status: 500 });
     }
 
     // 2b. Set SELinux context and ownership so rootless Podman can create volumes
-    await agent.sendCommand('exec', {
+    const ownRes = await agent.sendCommand('exec', {
       command: `sudo chown $(id -u):$(id -g) ${safeMountpoint} && sudo chcon -t container_file_t ${safeMountpoint} 2>/dev/null || true`
     });
 
     // 3. Create systemd unit to set RAID read-write on boot
     const mdName = safeDevice.split('/').pop();
-    await agent.sendCommand('exec', {
+    const readwriteUnitRes = await agent.sendCommand('exec', {
       command: `cat <<'UNIT' | sudo tee /etc/systemd/system/mdadm-readwrite.service
 [Unit]
 Description=Set ${mdName} to read-write mode
@@ -272,7 +295,7 @@ UNIT`
     });
 
     // 4. Create persistent mount unit
-    await agent.sendCommand('exec', {
+    const mountUnitRes = await agent.sendCommand('exec', {
       command: `cat <<'UNIT' | sudo tee /etc/systemd/system/${unitName}.mount
 [Unit]
 Description=Mount RAID array (${safeLabel || mdName})
@@ -291,15 +314,27 @@ UNIT`
     });
 
     // 5. Enable units
-    await agent.sendCommand('exec', {
+    const enableRes = await agent.sendCommand('exec', {
       command: `sudo systemctl daemon-reload && sudo systemctl enable mdadm-readwrite.service ${unitName}.mount`
     });
 
+    // Persistence is derived from what the four steps actually did — it used
+    // to be the literal `persistent: true` regardless of their exit codes.
+    const persistence = summarisePersistence([
+      { name: 'set ownership + SELinux label on the mountpoint', code: ownRes.code, stderr: ownRes.stderr },
+      { name: 'write mdadm-readwrite.service', code: readwriteUnitRes.code, stderr: readwriteUnitRes.stderr },
+      { name: `write ${unitName}.mount`, code: mountUnitRes.code, stderr: mountUnitRes.stderr },
+      { name: 'enable the boot units', code: enableRes.code, stderr: enableRes.stderr },
+    ]);
+
     return NextResponse.json({
       mounted: true,
+      verified: true,
       mountpoint: safeMountpoint,
       device: safeDevice,
-      persistent: true,
+      persistent: persistence.persistent,
+      incomplete: persistence.incomplete,
+      summary: persistence.summary,
     });
   } catch (error) {
     return apiError(error, { tag: 'api:system:storage:post', status: 500 });
