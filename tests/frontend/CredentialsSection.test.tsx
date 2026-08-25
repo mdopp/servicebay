@@ -25,7 +25,8 @@ const PENDING = {
   service: 'Immich',
   url: 'http://localhost:2283',
   username: 'admin@dopp.cloud',
-  password: 'sup3r-s3cret-value',
+  // The wire shape since #2605: the server sends the state, never the secret.
+  secured: false,
   importance: 'critical' as const,
   template: 'immich',
 };
@@ -33,7 +34,7 @@ const HANDED_OVER = {
   service: 'LLDAP',
   url: 'https://ldap.dopp.cloud',
   username: 'admin',
-  password: '',
+  secured: true,
   importance: 'critical' as const,
   template: 'auth',
 };
@@ -99,11 +100,14 @@ afterEach(() => {
 describe('CredentialsSection (#2560)', () => {
   it('renders no password column and never puts a stored secret in the DOM', async () => {
     manifestFetch([PENDING, HANDED_OVER]);
-    const { container } = render(<CredentialsSection />);
+    render(<CredentialsSection />);
     await waitFor(() => expect(screen.getByText('Immich')).toBeTruthy());
 
     expect(screen.queryByRole('columnheader', { name: /password/i })).toBeNull();
-    expect(container.textContent).not.toContain('sup3r-s3cret-value');
+    // Since #2605 the response carries no password at all — the component
+    // could not render one if it wanted to. `credentials_route_redaction`
+    // is the test that holds the server to that.
+    expect(Object.keys(PENDING)).not.toContain('password');
     expect(screen.queryByTitle(/reveal password/i)).toBeNull();
     expect(screen.queryByRole('button', { name: /^copy$/i })).toBeNull();
     // …replaced by a "where does this live" column.
@@ -152,7 +156,7 @@ describe('CredentialsSection (#2560)', () => {
   it('drops the local copy once the download is proven', async () => {
     const { confirmCalls } = manifestFetch([PENDING], [VAULT_HOST], {
       confirmBody: { ok: true, dropped: 1 },
-      after: [{ ...PENDING, password: '' }],
+      after: [{ ...PENDING, secured: true }],
     });
     const { container } = render(<CredentialsSection />);
     await waitFor(() => expect(screen.getByText('Immich')).toBeTruthy());

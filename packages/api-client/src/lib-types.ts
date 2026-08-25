@@ -17,6 +17,7 @@ export type { NetworkGraph } from '@/lib/network/types';
 export type { HistoryEntry } from '@/lib/history';
 export type {
   Credential,
+  CredentialView,
   CredentialUrlHost,
   CredentialUrlContext,
   CredentialSecuritySummary,

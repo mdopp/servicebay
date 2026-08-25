@@ -866,6 +866,95 @@ async function checkAgentLogRedaction() {
 }
 
 // ---------------------------------------------------------------------------
+// 8c. Stored credentials reach a browser only as a projection, never as
+//     the stored objects.
+//
+// #2605 is #1211/#2603 one layer up: the redaction existed and was applied on
+// one egress (MCP `get_config` replaces `installManifest.credentials` with an
+// entry count) but not on the other (`GET /api/system/credentials` returned
+// `config.installManifest` verbatim, and `getConfig()` decrypts). Encryption at
+// rest says nothing about the wire. The recurring fault is not the one route
+// somebody forgot; it is that redaction was decided *per caller*.
+//
+// So the fix is a type: `CredentialView` = `Omit<Credential, 'password'>` plus
+// the one derived bit the UI needs. The field is absent, not blanked, so a
+// route holding a view cannot serialise the secret and a component holding one
+// cannot read it. This check is the ratchet on that:
+//
+//   1. the view type still omits `password` (blanking it instead would put a
+//      mask on the wire that a write-back could persist as the literal
+//      password);
+//   2. the credentials route's GET still projects through `toCredentialViews`;
+//   3. no *other* API route reads `installManifest`. A new route that needs the
+//      list must project too — adding it here is a deliberate act, which is
+//      exactly what was missing all three times.
+//
+// The hand-over (`system/credentials/handover`) is the one path that may ship
+// the plaintext, and it does not go through an API route reading the manifest
+// directly — it builds the CSV in `lib/stackInstall/credentialsHandover.ts`
+// against proof of delivery. Never relax this list — extend it consciously.
+// ---------------------------------------------------------------------------
+const CREDENTIALS_MANIFEST_TS = path.join(
+    BACKEND_SRC, 'lib/stackInstall/credentialsManifest.ts',
+);
+const API_ROUTES_DIR = path.join(SRC, 'app/api');
+/** API routes allowed to touch `config.installManifest` at all. */
+const INSTALL_MANIFEST_ROUTES = new Set(['system/credentials/route.ts']);
+
+async function checkCredentialHttpEgress() {
+    const check = 'credential-http-egress';
+    let manifestTs: string;
+    try {
+        manifestTs = await readFile(CREDENTIALS_MANIFEST_TS, 'utf-8');
+    } catch {
+        violations.push({
+            check,
+            detail: 'packages/backend/src/lib/stackInstall/credentialsManifest.ts is missing — the #2605 credential wire-shape guard cannot be verified.',
+        });
+        return;
+    }
+
+    if (!/interface CredentialView extends Omit<Credential, 'password'>/.test(manifestTs)) {
+        violations.push({
+            check,
+            detail: "`CredentialView` no longer declares `extends Omit<Credential, 'password'>`. The wire shape must OMIT the secret, not blank it — a masked field is still a field a route can fill and a client can write back (#2605).",
+        });
+    }
+
+    const routes = await walk(API_ROUTES_DIR, p => p.endsWith(`${path.sep}route.ts`));
+    const offenders: string[] = [];
+    for (const file of routes) {
+        const rel = path.relative(API_ROUTES_DIR, file).split(path.sep).join('/');
+        const raw = await readFile(file, 'utf-8');
+        // Comments discuss the manifest freely (factory-reset explains what it
+        // clears); only actual code counts as an egress.
+        const body = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+        if (!body.includes('installManifest')) continue;
+        if (!INSTALL_MANIFEST_ROUTES.has(rel)) {
+            offenders.push(rel);
+            continue;
+        }
+        const get = body.split('export const GET')[1]?.split('export const ')[0] ?? '';
+        if (!get.includes('toCredentialViews(')) {
+            violations.push({
+                check,
+                detail: `packages/frontend/src/app/api/${rel} — GET no longer projects the manifest through \`toCredentialViews()\`. It would hand every stored password to the browser in plaintext again (#2605).`,
+            });
+        }
+    }
+    for (const rel of offenders) {
+        violations.push({
+            check,
+            detail: `packages/frontend/src/app/api/${rel} reads \`installManifest\` but is not in INSTALL_MANIFEST_ROUTES. Project through \`toCredentialViews()\` and add it to that list deliberately — the credentials list must never leave the box with its passwords (#2605).`,
+        });
+    }
+
+    measurements.push(
+        `credential http egress: CredentialView omits password; ${INSTALL_MANIFEST_ROUTES.size} API route(s) may read installManifest, all projecting`,
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 9. docs/ARCHITECTURE_INVARIANTS.md's numbers are generated, not typed.
 //
 // #2427: the doc carried a hand-maintained measurement table ("largest backend
@@ -964,6 +1053,7 @@ async function main() {
         checkCiRunsEveryCheckScript(),
         checkServiceRepoBootstrapStep(),
         checkAgentLogRedaction(),
+        checkCredentialHttpEgress(),
         syncOrCheckThresholdDoc(),
     ]);
 
