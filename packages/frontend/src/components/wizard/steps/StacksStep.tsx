@@ -73,6 +73,10 @@ interface StacksStepProps {
     uninstalling: string | null;
     /** Uncheck-to-uninstall handler. Owns the confirm + wipe call. */
     onUninstallStack: (stack: string) => void | Promise<void>;
+    /** #2627 — every service in the chosen stack(s) is already installed, so
+     *  no checkbox can be turned on. The footer swaps Continue for a way
+     *  forward; the step says so instead of showing an inert list. */
+    nothingLeftToInstall: boolean;
 }
 
 type ConfigureTab = 'subdomains' | 'settings' | 'ports';
@@ -102,6 +106,7 @@ export function StacksStep({
     installedStacks,
     uninstalling,
     onUninstallStack,
+    nothingLeftToInstall,
 }: StacksStepProps) {
     const [configureTab, setConfigureTab] = useState<ConfigureTab | null>(null);
 
@@ -172,6 +177,18 @@ export function StacksStep({
                         </div>
                     ) : (
                         <div className="space-y-4">
+                            {nothingLeftToInstall && (
+                                <div role="status" className="p-4 rounded-2xl border border-status-ok/40 bg-status-ok/5 space-y-2">
+                                    <div className="text-sm font-bold text-status-ok">Nothing left to install here</div>
+                                    <p className="text-xs text-text-muted leading-relaxed">
+                                        All {stackItems.length} of {stackItems.length} service{stackItems.length === 1 ? '' : 's'} in this
+                                        selection {stackItems.length === 1 ? 'is' : 'are'} already installed on this box, so there is
+                                        nothing to add and every checkbox below stays locked. Choose another stack, or close the wizard —
+                                        to remove one of these, uncheck its stack on the previous step.
+                                    </p>
+                                </div>
+                            )}
+
                             {stackItems.some(i => i.tier === 'infrastructure') && (
                                 <div className="p-4 rounded-2xl border border-accent/30 bg-accent/5 space-y-3">
                                     <div className="text-[10px] uppercase font-bold text-accent tracking-widest">

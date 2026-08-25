@@ -810,6 +810,193 @@ describe('OnboardingWizard', () => {
         });
     });
 
+    // ---- #2626: Express Install must not deploy onto the wrong disk ----
+    //
+    // The express path mounts the detected data array at /var/mnt/data and
+    // then deploys every service's data underneath it. Pre-fix the mount call
+    // acted only `if (res.ok)`, a throw was caught and ignored, and the code
+    // fell straight through to the deploy — so on a box whose array failed to
+    // mount, every service silently wrote to the boot disk instead. Refusing
+    // to install is recoverable; installing onto the wrong disk is not.
+    describe('express install — storage guard (#2626)', () => {
+        const raid = {
+            device: '/dev/md127', label: 'data', fstype: 'xfs',
+            size: '1.8T', mountpoint: null, degraded: true,
+        };
+        const drives = [{ name: 'md127', path: '/dev/md127', type: 'raid1', size: '1.8T' }];
+
+        /** Wire the storage endpoint: GET answers the layout, POST answers
+         *  the mount attempt. Everything else falls through to beforeEach. */
+        const withStorage = (opts: {
+            get?: { ok: boolean; body?: unknown };
+            post?: { ok: boolean; status?: number; body?: unknown };
+        }) => {
+            const baseFetch = global.fetch;
+            global.fetch = vi.fn().mockImplementation((url: string, init?: { method?: string }) => {
+                if (typeof url === 'string' && url.includes('/api/system/storage')) {
+                    const spec = init?.method === 'POST'
+                        ? (opts.post ?? { ok: true, body: { mounted: true, verified: true, persistent: true, incomplete: [] } })
+                        : (opts.get ?? { ok: true, body: { raids: [raid], drives } });
+                    return Promise.resolve({
+                        ok: spec.ok,
+                        status: spec.ok ? 200 : ((spec as { status?: number }).status ?? 500),
+                        json: () => Promise.resolve(spec.body ?? {}),
+                    });
+                }
+                return (baseFetch as any)(url, init);
+            });
+        };
+
+        /** Land on install-confirm with the storage probe already resolved. */
+        const readyToInstall = async () => {
+            (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
+            render(<OnboardingWizard />);
+            await waitFor(() => screen.getByRole('button', { name: /Install Now/i }));
+            // The disk-layout read has landed (its result is on screen).
+            await waitFor(() => expect(screen.getAllByText(/md127/).length).toBeGreaterThan(0));
+        };
+
+        const installStarted = () =>
+            (global.fetch as any).mock.calls.some(
+                ([url]: [string]) => typeof url === 'string' && url.includes('/api/install/start'),
+            );
+
+        it('stops the install when the mount call fails', async () => {
+            withStorage({ post: { ok: false, status: 500, body: { mounted: false, error: 'Mount failed: mount exited 32' } } });
+            await readyToInstall();
+
+            fireEvent.click(screen.getByRole('button', { name: /Install Now/i }));
+
+            await waitFor(() => {
+                expect(mockAddToast).toHaveBeenCalledWith(
+                    'error',
+                    expect.stringMatching(/not mounted/i),
+                    expect.stringContaining('/dev/md127'),
+                );
+            });
+            // The report names what did NOT happen, denominator first.
+            const [, , message] = mockAddToast.mock.calls.find(c => /not mounted/i.test(c[1]))!;
+            expect(message).toMatch(/NOT installed: 0 of 2 stack\(s\)/);
+            expect(installStarted()).toBe(false);
+        });
+
+        // A 200 that doesn't actually say the array got mounted is not a
+        // mount. Guarding on `res.ok` alone is exactly the pre-fix bug in a
+        // new dress.
+        it('stops the install when the mount responds 200 without mounting', async () => {
+            withStorage({ post: { ok: true, body: { mounted: false, error: 'nothing happened' } } });
+            await readyToInstall();
+
+            fireEvent.click(screen.getByRole('button', { name: /Install Now/i }));
+
+            await waitFor(() => {
+                expect(mockAddToast).toHaveBeenCalledWith('error', expect.stringMatching(/not mounted/i), expect.any(String));
+            });
+            expect(installStarted()).toBe(false);
+        });
+
+        it('stops the install when the disk layout could not be read', async () => {
+            withStorage({ get: { ok: false, body: { error: 'agent unreachable' } } });
+            (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
+            render(<OnboardingWizard />);
+            await waitFor(() => screen.getByRole('button', { name: /Install Now/i }));
+            await waitFor(() => {
+                expect(mockAddToast).toHaveBeenCalledWith('error', expect.stringMatching(/disk layout/i), expect.any(String));
+            });
+
+            fireEvent.click(screen.getByRole('button', { name: /Install Now/i }));
+
+            await waitFor(() => {
+                expect(mockAddToast).toHaveBeenCalledWith(
+                    'error',
+                    expect.stringMatching(/Install stopped: disk layout unknown/i),
+                    expect.stringContaining('NOT installed: 0 of 2 stack(s)'),
+                );
+            });
+            expect(installStarted()).toBe(false);
+        });
+
+        it('proceeds when the array really was mounted', async () => {
+            withStorage({});
+            await readyToInstall();
+
+            fireEvent.click(screen.getByRole('button', { name: /Install Now/i }));
+
+            await waitFor(() => expect(installStarted()).toBe(true), { timeout: 9_000 });
+            expect(mockAddToast).not.toHaveBeenCalledWith('error', expect.stringMatching(/not mounted/i), expect.anything());
+        }, 10_000);
+
+        // Mounted now, but the boot units did not get written: a distinct
+        // named state — the install continues (the data does land on the
+        // array) and the operator is told what is still missing.
+        it('proceeds with a warning when the mount is not persistent', async () => {
+            withStorage({ post: { ok: true, body: { mounted: true, persistent: false, incomplete: ['enable the boot units'] } } });
+            await readyToInstall();
+
+            fireEvent.click(screen.getByRole('button', { name: /Install Now/i }));
+
+            await waitFor(() => {
+                expect(mockAddToast).toHaveBeenCalledWith(
+                    'warning',
+                    expect.stringMatching(/across reboots/i),
+                    expect.stringContaining('enable the boot units'),
+                );
+            });
+            await waitFor(() => expect(installStarted()).toBe(true), { timeout: 9_000 });
+        }, 10_000);
+    });
+
+    // ---- #2627: an all-installed stack must not dead-end Continue ----
+    describe('services sub-step — nothing left to install (#2627)', () => {
+        const allInstalled = () => {
+            const baseFetch = global.fetch;
+            global.fetch = vi.fn().mockImplementation((url: string, init?: { method?: string }) => {
+                if (typeof url === 'string' && url.includes('/api/services') && init?.method !== 'POST') {
+                    return Promise.resolve({ ok: true, json: () => Promise.resolve([
+                        { name: 'nginx-web', active: true, status: 'running' },
+                        { name: 'redis-cache', active: true, status: 'running' },
+                        { name: 'immich', active: true, status: 'running' },
+                    ]) });
+                }
+                return (baseFetch as any)(url, init);
+            });
+        };
+
+        it('explains the state and offers a way forward instead of a dead Continue', async () => {
+            allInstalled();
+            (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
+
+            render(<OnboardingWizard />);
+            await advancePastMachineStep();
+            await commitStackPicker();
+
+            // Named state, with the denominator spelled out.
+            await waitFor(() => expect(screen.getByText(/Nothing left to install here/i)).toBeDefined());
+            expect(screen.getByText(/All 3 of 3 services in this selection are already installed/i)).toBeDefined();
+
+            // No permanently disabled Continue — an enabled way forward.
+            expect(screen.queryByRole('button', { name: /^Continue$/i })).toBeNull();
+            const forward = screen.getByRole('button', { name: /Choose another stack/i }) as HTMLButtonElement;
+            expect(forward.disabled).toBe(false);
+
+            fireEvent.click(forward);
+            await waitFor(() => expect(screen.getByText('web-stack')).toBeDefined());
+        });
+
+        it('still gates Continue normally when something is installable', async () => {
+            (checkOnboardingStatus as any).mockResolvedValue(stacksPendingStatus);
+
+            render(<OnboardingWizard />);
+            await advancePastMachineStep();
+            await commitStackPicker();
+
+            // Only nginx-web is installed here, so the step is a normal one.
+            await waitFor(() => expect(screen.getByText('already installed')).toBeDefined());
+            expect(screen.queryByText(/Nothing left to install here/i)).toBeNull();
+            expect(screen.queryByRole('button', { name: /Choose another stack/i })).toBeNull();
+        });
+    });
+
     // ---- Stacks step in full wizard flow ----
 
     describe('stacks step in full wizard', () => {
