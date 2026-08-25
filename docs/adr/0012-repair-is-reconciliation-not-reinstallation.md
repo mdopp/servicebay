@@ -1,4 +1,4 @@
-# ADR 0009 — moved to the assist catalog
+# ADR 0012 — moved to the assist catalog
 
 This decision has **moved**. There is one copy of it, and it lives in the
 assist catalog so that agents working over MCP can actually find and read it

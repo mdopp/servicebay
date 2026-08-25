@@ -172,7 +172,7 @@ session-cookie check. You are bypassing *routing*, not *authorization*.
 > `/etc/hosts` or `--add-host`. That last one even works. It is still the wrong
 > layer: it re-creates the dependency on the proxy and on the container's LAN
 > route, and it evaporates the next time the container is rebuilt. See
-> [ADR 0007](adr/0007-container-network-isolation-and-carveouts.md), amendment
+> [ADR 0007](../assists/adr-0007-container-network-isolation-and-carveouts.md), amendment
 > 2026-08-17.
 
 ## What can the LLM actually do?
@@ -231,11 +231,14 @@ write-allowlisted in `update_config`.
 
 `get_service_standards` (`read` scope) returns a curated *pointer* index for
 building a new project. `flavor: 'servicebay'` (default) yields four blocks —
-`mustRespectAdrs` (the platform ADRs a new service is bound by, with titles
-scanned live from `docs/adr/*.md` so they never drift), `enforcedInvariants`
+`mustRespectAdrs` (every platform ADR, read live from the assist catalog so the
+titles never drift and each pointer carries the `get_assist` id that returns its
+FULL text — #2607; before that it named a `docs/adr/` path no MCP tool could
+open), `enforcedInvariants`
 (pointer to `docs/ARCHITECTURE_INVARIANTS.md` + the gate commands and 70 %
 diff-coverage floor), `assistsToRead` (ids resolvable via `get_assist`), and
-`templateContract` (pointers to `docs/TEMPLATE_AUTHORING.md` + `templates/CLAUDE.md`).
+`templateContract` (pointers to `docs/TEMPLATE_AUTHORING.md` + `templates/CLAUDE.md`),
+plus `adrCatalog` (how to reach the ADRs without this tool: `list_assists(kind="adr")`).
 `flavor: 'generic'` yields platform-agnostic dev standards (commit convention,
 release discipline, coverage floor, secret hygiene, scripts-over-prose) with no
 ServiceBay ADRs or template details. Backing prose lives single-sourced in the

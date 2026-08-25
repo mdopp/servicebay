@@ -163,8 +163,9 @@ per service. The diagnose page surfaces failures.
 Before designing a new service, read the ADR-style recommendations assist
 **`new-service-architecture`** (via `list_assists` / `get_assist`, or
 `assists/new-service-architecture.md`): recommended language, basic structure,
-libraries, tests, data storage, and secrets — plus the platform ADRs in
-`docs/adr/` a new service must respect (SSO, non-destructive installs,
+libraries, tests, data storage, and secrets — plus the platform ADRs, which are
+catalog entries themselves (`list_assists(kind="adr")`, ids `adr-NNNN-<slug>`),
+that a new service must respect (SSO, non-destructive installs,
 reconciliation, network isolation, backup tiering, service tokens). Orientation
 on the platforms themselves is in the `servicebay-overview` and `solaris-overview`
 assists.

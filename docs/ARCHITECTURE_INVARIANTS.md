@@ -6,6 +6,8 @@ Each invariant below is **mechanically enforced** by one of three tools running 
 
 Decisions that **can't** be mechanically enforced — operator-facing UX choices, incident-driven safety cascades, the user's deliberate config quirks — live in [UX_DECISIONS.md](UX_DECISIONS.md). Read both before changing anything that looks weird.
 
+The durable **architecture decisions (ADRs)** — why SSO is mandatory, why installs are non-destructive, which pods may keep `hostNetwork`, how service tokens are scoped — live in the **assist catalog** as [`assists/adr-*.md`](../assists/) (`get_assist("adr-0007-…")`, `list_assists`), not under `docs/adr/`, which now holds signposts only. Index: [adr/README.md](adr/README.md). This file says what a script enforces; the ADRs say what was decided and why.
+
 This document is the *intent* layer; the configs are the *enforcement* layer:
 
 | Tool | Config | Catches |

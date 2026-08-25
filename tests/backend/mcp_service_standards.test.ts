@@ -3,8 +3,9 @@
  *
  * Covers both flavors of the curated standards index:
  *   - servicebay: the four blocks (mustRespectAdrs / enforcedInvariants /
- *     assistsToRead / templateContract), with ADR titles scanned live from
- *     docs/adr/*.md so they can't drift from the source.
+ *     assistsToRead / templateContract), with the ADRs read live from the
+ *     assist catalog (#2607) so their titles can't drift from the source and
+ *     every pointer is followable with get_assist(id).
  *   - generic: platform-agnostic dev standards with NO ServiceBay ADRs or
  *     template details.
  * Plus the read scope and that the referenced assist ids actually resolve.
@@ -22,17 +23,9 @@ import {
   SERVICE_STANDARDS_FLAVORS,
 } from '@/lib/mcp/serviceStandards';
 import { TOOL_SCOPES } from '@/lib/mcp/server';
-import { getAssist } from '@/lib/assists/catalog';
+import { getAssist, listAssists } from '@/lib/assists/catalog';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const ADR_DIR = path.join(REPO_ROOT, 'docs', 'adr');
-
-/** Pull the descriptive title from an ADR file's `# ADR NNNN — <title>` head. */
-function adrTitleFromFile(file: string): string {
-  const raw = fs.readFileSync(path.join(ADR_DIR, file), 'utf-8');
-  const line = raw.split('\n').find(l => /^#\s+/.test(l)) ?? '';
-  return line.replace(/^#\s+/, '').replace(/^ADR\s+\d{4}\s*[—-]\s*/, '').trim();
-}
 
 describe('get_service_standards scope (#2323)', () => {
   it('is registered as a read-scoped tool', () => {
@@ -54,25 +47,60 @@ describe('get_service_standards — servicebay flavor (#2323)', () => {
     expect(s.templateContract).toBeDefined();
   });
 
-  it('mustRespectAdrs titles match docs/adr/*.md exactly (drift-free)', async () => {
+  it('mustRespectAdrs covers EVERY ADR, not a curated six (#2607)', async () => {
     const s = await buildServiceStandards('servicebay');
-    const adrs = s.mustRespectAdrs as { adr: string; title: string; path: string }[];
-    // The curated selection required by the issue.
-    expect(adrs.map(a => a.adr)).toEqual(['0001', '0003', '0004', '0007', '0009', '0010']);
-
-    for (const a of adrs) {
-      const file = path.basename(a.path);
-      expect(fs.existsSync(path.join(ADR_DIR, file)), `ADR file exists: ${file}`).toBe(true);
-      // Title is scanned from the source, not hard-coded.
-      expect(a.title).toBe(adrTitleFromFile(file));
+    const adrs = s.mustRespectAdrs as { adr: string; assist: string }[];
+    // The denominator is the catalog itself: an ADR that exists but is absent
+    // from this list is exactly the #2607 failure (0011 appeared in no answer).
+    const catalogNumbers = (await listAssists({ kind: 'adr' }))
+      .map(a => /^adr-(\d{4})-/.exec(a.id)?.[1])
+      .filter((n): n is string => Boolean(n))
+      .sort();
+    expect(catalogNumbers.length).toBeGreaterThanOrEqual(12);
+    expect(adrs.map(a => a.adr)).toEqual(catalogNumbers);
+    // The six that used to be the whole answer are still in it.
+    for (const n of ['0001', '0003', '0004', '0007', '0009', '0010']) {
+      expect(adrs.map(a => a.adr), `still covers ADR ${n}`).toContain(n);
     }
+    // …and so are the ones that never used to appear at all.
+    expect(adrs.map(a => a.adr)).toContain('0011');
   });
 
-  it('resolves the 0009 slot to the tokens-and-trust ADR, not repair', async () => {
+  it('every mustRespectAdrs pointer is FOLLOWABLE — full text via get_assist', async () => {
     const s = await buildServiceStandards('servicebay');
-    const adrs = s.mustRespectAdrs as { adr: string; path: string }[];
-    const nine = adrs.find(a => a.adr === '0009');
-    expect(nine?.path).toContain('service-tokens');
+    const adrs = s.mustRespectAdrs as { adr: string; title: string; note: string; assist: string; fetch: string }[];
+    for (const a of adrs) {
+      const body = await getAssist(a.assist);
+      expect(body, `ADR ${a.adr} resolves via get_assist("${a.assist}")`).not.toBeNull();
+      // Full text, not a title + one-liner (the #2607 complaint).
+      expect(body!, `ADR ${a.adr} carries its Decision section`).toContain('## Decision');
+      expect(a.fetch).toBe(`get_assist("${a.assist}")`);
+      expect(a.title.length).toBeGreaterThan(0);
+      // Title comes from the record, not from a hard-coded copy here.
+      expect(body!).toContain(a.title);
+      expect(a.note.trim().length).toBeGreaterThan(0);
+    }
+    // The pointer no longer names a path no MCP tool can open.
+    expect(JSON.stringify(adrs)).not.toContain('docs/adr');
+  });
+
+  it('resolves the 0009 slot to the tokens-and-trust ADR, not repair (#2617)', async () => {
+    const s = await buildServiceStandards('servicebay');
+    const adrs = s.mustRespectAdrs as { adr: string; assist: string }[];
+    expect(adrs.filter(a => a.adr === '0009')).toHaveLength(1);
+    expect(adrs.find(a => a.adr === '0009')?.assist).toContain('service-tokens');
+    // Repair-is-reconciliation kept its content and lost the duplicate number.
+    expect(adrs.find(a => a.adr === '0012')?.assist).toContain('repair-is-reconciliation');
+  });
+
+  it('tells the caller how to reach the ADRs WITHOUT this tool (#2607)', async () => {
+    const s = await buildServiceStandards('servicebay');
+    const block = s.adrCatalog as { note: string; listCall: string; count: number };
+    // get_service_standards' own entry condition is "building a new service";
+    // whoever fixes a probe never calls it, so the catalog route must be named.
+    expect(block.listCall).toContain('list_assists');
+    expect(block.note).toContain('get_assist');
+    expect(block.count).toBe((s.mustRespectAdrs as unknown[]).length);
   });
 
   it('enforcedInvariants points at ARCHITECTURE_INVARIANTS and carries the gate commands', async () => {
@@ -194,10 +222,16 @@ describe('get_service_standards — generic flavor (#2323)', () => {
   });
 });
 
-describe('scanCuratedAdrs (#2323)', () => {
-  it('never returns an empty selection', async () => {
+describe('scanCuratedAdrs (#2323, widened by #2607)', () => {
+  it('returns every ADR in ascending order, each with a title', async () => {
     const adrs = await scanCuratedAdrs();
-    expect(adrs.length).toBe(6);
+    expect(adrs.length).toBeGreaterThanOrEqual(12);
     for (const a of adrs) expect(a.title.length).toBeGreaterThan(0);
+    expect(adrs.map(a => a.adr)).toEqual([...adrs.map(a => a.adr)].sort());
+  });
+
+  it('numbers are unique — no two records claim the same ADR number (#2617)', async () => {
+    const nums = (await scanCuratedAdrs()).map(a => a.adr);
+    expect(new Set(nums).size, `duplicate ADR number in ${nums.join(',')}`).toBe(nums.length);
   });
 });

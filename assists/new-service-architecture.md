@@ -8,7 +8,8 @@ tags: [architecture, adr, new-service, language, libraries, tests, storage, secr
 # Architecture recommendations for a new service
 
 Recommended defaults, not mandates — deviate when you have a reason, and say why.
-These sit on top of the platform ADRs in `docs/adr/` (respect those; see bottom).
+These sit on top of the platform ADRs, which live in the assist catalog as
+`adr-NNNN-<slug>` entries (respect those; see bottom).
 
 ## Step 0 — fetch the standards before you decide anything (#2513)
 
@@ -160,7 +161,9 @@ The app should be: **stateless-restartable** (all state on a mounted volume),
 - **0007** — network isolation with named carve-outs.
 - **0009-service-tokens** — use scoped service tokens for cross-service trust.
 
-Read the actual ADRs in `docs/adr/` before making a decision that touches one.
+Read the actual ADRs before making a decision that touches one: they are catalog
+entries — `list_assists(kind="adr")` to find the right one by situation, then
+`get_assist("adr-NNNN-<slug>")` for the full text.
 
 ## After you build — rollout + reporting gaps back
 - **Rolling a new image onto an already-installed service** isn't automatic: a
