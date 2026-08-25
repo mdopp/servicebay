@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.17.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.17.2...servicebay-v5.17.3) (2026-08-25)
+
+
+### Bug Fixes
+
+* **autoloop:** stop the queue CLI from eating its own verb ([99b700c](https://github.com/mdopp/servicebay/commit/99b700c13ab1936f07668e8dee0c454f6aaf6965)), closes [#2644](https://github.com/mdopp/servicebay/issues/2644)
+* make the queue CLI accept its verb and the propose scope selectable ([09c7ac2](https://github.com/mdopp/servicebay/commit/09c7ac252bb1732877fa522405994775739130b4))
+* **settings:** derive the token-UI scope list from apiScope.ts so propose is reachable ([59b637b](https://github.com/mdopp/servicebay/commit/59b637bbadba926b5c682fd146cf55cf8d6b902e)), closes [#2609](https://github.com/mdopp/servicebay/issues/2609)
+
 ## [5.17.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.17.1...servicebay-v5.17.2) (2026-08-25)
 
 
