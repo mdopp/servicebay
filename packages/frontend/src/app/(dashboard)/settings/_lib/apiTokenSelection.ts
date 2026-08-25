@@ -6,7 +6,12 @@
  * are asserted directly rather than inferred from a rendered list.
  */
 
-export type ApiScope = 'read' | 'lifecycle' | 'mutate' | 'reboot' | 'destroy' | 'exec';
+// The scope vocabulary is defined ONCE, in the backend (#2609). This file used
+// to restate it as a shortened literal union missing `propose`, so the token UI
+// could never offer a scope the server had accepted for months — and because
+// `SCOPE_BADGE` in ApiTokensSection is keyed on the *local* type, widening the
+// backend type would not even have turned the build red. Import, never restate.
+import type { ApiScope } from '@/lib/auth/apiScope';
 
 export interface TokenView {
   id: string;

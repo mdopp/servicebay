@@ -11,14 +11,18 @@ import {
   isExpired,
   isPrivileged,
   summarizeRevokeRun,
-  type ApiScope,
   type SelectionFilterId,
   type TokenSummary,
   type TokenView,
 } from '../apiTokenSelection';
 import { useBulkTokenRevoke, type BulkRevokeReport as BulkRevokeReportData } from '../useBulkTokenRevoke';
-
-const ALL_SCOPES: ApiScope[] = ['read', 'lifecycle', 'mutate', 'reboot', 'destroy', 'exec'];
+// The offered scopes come from the backend's ALL_SCOPES, never from a local
+// copy (#2609). The copy that used to live here silently omitted `propose`, so
+// the checkbox never existed and no token on the box could submit a learning
+// proposal — the feature was built, shipped and unreachable. Anything derived
+// from the scope vocabulary (SCOPE_BADGE, the help text) is covered by the
+// "scope vocabulary" block in ApiTokensSection.test.tsx, which fails on drift.
+import { ALL_SCOPES, type ApiScope } from '@/lib/auth/apiScope';
 
 type BootstrapStatus =
   | { active: false; present?: boolean }
@@ -26,7 +30,9 @@ type BootstrapStatus =
 
 // Scope tiers mapped onto semantic status/accent tokens (#2100): destroy =
 // status-fail (most dangerous), exec = accent, mutate/reboot = status-warn,
-// lifecycle = status-info, read = neutral surface.
+// lifecycle = status-info, read = neutral surface. `propose` gets status-ok —
+// deliberately none of the ladder's colours, because it is not on the ladder
+// (apiScope.ts): nothing implies it and it implies nothing (#2609).
 const SCOPE_BADGE: Record<ApiScope, string> = {
   destroy: 'bg-status-fail/10 text-status-fail border border-status-fail/20',
   exec: 'bg-accent/10 text-accent border border-accent/20',
@@ -34,6 +40,7 @@ const SCOPE_BADGE: Record<ApiScope, string> = {
   reboot: 'bg-status-warn/10 text-status-warn border border-status-warn/20',
   lifecycle: 'bg-status-info/10 text-status-info border border-status-info/20',
   read: 'bg-surface-2 text-text-muted border border-border',
+  propose: 'bg-status-ok/10 text-status-ok border border-status-ok/20',
 };
 
 function BootstrapBanner({ status, revoking, reactivating, onRevoke, onReactivate }: { status: BootstrapStatus; revoking: boolean; reactivating: boolean; onRevoke: () => void; onReactivate: () => void }) {
@@ -385,7 +392,7 @@ function CreateTokenForm(props: CreateTokenFormProps) {
             </label>
           ))}
         </div>
-        <p className="text-[10px] text-text-subtle mt-1">read = list/get only. lifecycle = start/stop/restart + force-update (re-pull an image, snapshot + email each time). mutate = create/update/config-edit. reboot = reboot the node (transient, recoverable). destroy = delete/restore/purge/factory-reset. exec = exec_command/container_exec (a shell on the box). Tokens with destroy also implicitly grant reboot — but never exec: a token has shell only if you tick exec here.</p>
+        <p className="text-[10px] text-text-subtle mt-1">read = list/get only. lifecycle = start/stop/restart + force-update (re-pull an image, snapshot + email each time). mutate = create/update/config-edit. reboot = reboot the node (transient, recoverable). destroy = delete/restore/purge/factory-reset. exec = exec_command/container_exec (a shell on the box). Tokens with destroy also implicitly grant reboot — but never exec: a token has shell only if you tick exec here. propose = submit knowledge proposals for review (propose_learning) and nothing else; it sits off the ladder above, so no other scope grants it and it grants no others — tick it on its own for a submit-only client, or alongside the rest.</p>
       </div>
       <NeverExpiresField readOnly={readOnly} checked={props.neverExpires} onToggle={props.onToggleNeverExpires} />
       {props.error && <p className="text-xs text-status-fail">{props.error}</p>}

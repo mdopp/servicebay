@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import ApiTokensSection from './ApiTokensSection';
+import { ALL_SCOPES } from '@/lib/auth/apiScope';
 
 vi.mock('../clipboard', () => ({ copyToClipboard: vi.fn().mockResolvedValue(true) }));
 
@@ -338,6 +339,105 @@ describe('ApiTokensSection (#2100 settings migration)', () => {
       await waitFor(() => expect(screen.getByText('used-read')).toBeDefined());
       expect(screen.getByText(/removed after the grace period/i)).toBeDefined();
       expect((await screen.findByRole('status')).textContent).toMatch(/1 expired \(auto-removed after 3 days\)/);
+    });
+  });
+
+  // ── #2609: the scope vocabulary exists ONCE ────────────────────────────────
+  // The defect this block guards is drift, not one missing checkbox. The create
+  // form used to carry its own shortened copy of ALL_SCOPES, and the frontend
+  // ApiScope type was a second copy — so `propose` was never offered, no token
+  // on the box could reach `propose_learning`, and the whole learning Rückkanal
+  // (#2326) sat behind a checkbox that had never existed. Nothing could go red:
+  // SCOPE_BADGE was a Record over the *local* type, so widening the backend
+  // vocabulary type-checked cleanly. These assertions read the backend's
+  // ALL_SCOPES and compare it against what the UI actually renders, so the next
+  // scope added to apiScope.ts fails here instead of silently disappearing.
+  describe('scope vocabulary is derived from apiScope.ts, never restated (#2609)', () => {
+    const openCreateForm = async () => {
+      mockFetch([]);
+      render(<ApiTokensSection />);
+      await waitFor(() => expect(screen.getByText(/No tokens yet/)).toBeDefined());
+      fireEvent.click(screen.getByRole('button', { name: /new token/i }));
+    };
+
+    /** The scope checkboxes in the create form, by their rendered label. */
+    const renderedScopeNames = () =>
+      screen
+        .getAllByRole('checkbox')
+        .map(cb => cb.getAttribute('aria-label') ?? cb.closest('label')?.textContent?.trim() ?? '')
+        .filter(name => (ALL_SCOPES as string[]).includes(name));
+
+    it('offers a checkbox for EVERY backend scope — no more, no less', async () => {
+      await openCreateForm();
+      // Exact set equality in both directions: a scope dropped from the UI
+      // fails, and a scope the UI invents that the server would reject fails too.
+      expect([...renderedScopeNames()].sort()).toEqual([...ALL_SCOPES].sort());
+      // Named explicitly so the regression that motivated this can't come back
+      // silently if the derivation above is ever loosened.
+      expect(ALL_SCOPES).toContain('propose');
+      expect(screen.getByRole('checkbox', { name: /^propose$/i })).toBeDefined();
+    });
+
+    it('renders a distinct badge for every scope — no missing SCOPE_BADGE key', async () => {
+      // A scope absent from SCOPE_BADGE renders `className="… undefined"`: no
+      // crash, no type error, just an unstyled chip nobody notices in review.
+      const everyScope = { ...TOKEN, scopes: [...ALL_SCOPES] };
+      mockFetch([everyScope]);
+      render(<ApiTokensSection />);
+      await waitFor(() => expect(screen.getByText('workstation')).toBeDefined());
+      for (const scope of ALL_SCOPES) {
+        const badge = screen.getByText(scope, { selector: 'span' });
+        expect(badge.className, `no SCOPE_BADGE entry for "${scope}"`).not.toMatch(/undefined/);
+        expect(badge.className.trim().length).toBeGreaterThan(0);
+      }
+    });
+
+    it('explains every scope in the help text', async () => {
+      await openCreateForm();
+      const help = screen.getByText(/read = list\/get only/);
+      for (const scope of ALL_SCOPES) {
+        expect(help.textContent, `help text does not mention "${scope}"`).toMatch(
+          new RegExp(`\\b${scope}\\b`),
+        );
+      }
+    });
+
+    // `propose` is deliberately OFF the read<…<exec blast-radius ladder
+    // (apiScope.ts): nothing implies it and it implies nothing. So it has to be
+    // selectable entirely on its own — a propose-only token that can submit
+    // knowledge and do nothing else is the whole point of the separate scope.
+    it('mints a propose-ONLY token — the scope neither needs nor grants any other', async () => {
+      const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+        if (url === '/api/system/mcp-bootstrap') {
+          return Promise.resolve(new Response(JSON.stringify({ active: false }), { status: 200 }));
+        }
+        if (url.startsWith('/api/system/api-tokens')) {
+          if (init?.method === 'POST') {
+            return Promise.resolve(new Response(JSON.stringify({ secret: 'sb_test' }), { status: 200 }));
+          }
+          return Promise.resolve(new Response(JSON.stringify({ tokens: [] }), { status: 200 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      render(<ApiTokensSection />);
+      await waitFor(() => expect(screen.getByText(/No tokens yet/)).toBeDefined());
+      fireEvent.click(screen.getByRole('button', { name: /new token/i }));
+
+      fireEvent.change(screen.getByPlaceholderText(/Claude Code on workstation/i), {
+        target: { value: 'learning-channel' },
+      });
+      fireEvent.click(screen.getByRole('checkbox', { name: /^propose$/i }));
+      // Drop the default `read` so the request carries `propose` and nothing else.
+      fireEvent.click(screen.getByRole('checkbox', { name: /^read$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^create$/i }));
+
+      await waitFor(() => {
+        const post = fetchMock.mock.calls.find(c => (c[1] as RequestInit | undefined)?.method === 'POST');
+        expect(post, 'no POST was issued — propose alone must be a valid scope set').toBeDefined();
+        expect(JSON.parse(String((post![1] as RequestInit).body)).scopes).toEqual(['propose']);
+      });
     });
   });
 
