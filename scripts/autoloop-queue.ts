@@ -45,6 +45,19 @@
  * applied only after the ref is won, never the thing that grants it. Any
  * non-success from the ref create (conflict *or* transport error) counts as
  * "not won": a claim you cannot prove you hold is not yours (fail closed).
+ *
+ * WHAT THE REF POINTS AT (#2646). Creating a ref needs a target object, and the
+ * remote must already HAVE that object — otherwise the create fails 422 "Object
+ * does not exist" and no claim is ever taken. The original target was local
+ * `HEAD`, which is the batch branch: deliberately never pushed while building,
+ * so the remote has never seen it and EVERY claim failed in the normal case —
+ * the double-claim guarantee was absent exactly when it was needed. The ref
+ * carries no information beyond its existence, so the target is free; we use
+ * `origin/main`'s tip, which the remote is guaranteed to know (a remote-tracking
+ * ref only ever points at something origin published). If `origin/main` MOVES
+ * between two racing claims they simply create the same ref NAME at two
+ * different targets — the atomicity is on the name, so the loser still gets 422
+ * "Reference already exists" (both shapes verified live, 2026-08-25).
  */
 
 import { execFileSync } from 'node:child_process';
@@ -106,6 +119,19 @@ export const realGh: GhRunner = args => {
 };
 
 const OFFLINE_GH: GhRunner = () => ({ ok: false, out: 'offline' });
+
+/** Injectable `git` runner (null = the command failed / the ref is absent). */
+export type GitRunner = (args: string[]) => string | null;
+
+export const realGit: GitRunner = args => {
+  try {
+    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return null;
+  }
+};
+
+const isSha = (s: unknown): s is string => typeof s === 'string' && /^[0-9a-f]{40}$/.test(s);
 
 function ghJson<T>(gh: GhRunner, args: string[], fallback: T): T {
   const r = gh(args);
@@ -218,6 +244,25 @@ export interface ClaimOutcome {
 }
 
 /**
+ * A claim-ref target the REMOTE is guaranteed to already have (#2646).
+ *
+ * `origin/main`'s tip: a remote-tracking ref only ever names a commit origin
+ * published, so the create can't 422 "Object does not exist" — unlike local
+ * `HEAD`, which on a mid-build batch branch is by design unpushed. A *stale*
+ * `origin/main` is still fine (an older tip is still an object the remote has),
+ * so this needs no fetch. `git` first because it costs no API call; the `gh`
+ * fallback covers a checkout without the tracking ref (shallow / detached CI).
+ * Returns `''` when neither resolves — the caller must then fail CLOSED.
+ */
+export function resolveClaimSha(gh: GhRunner, opts: { repo?: string; git?: GitRunner } = {}): string {
+  const git = opts.git ?? realGit;
+  const tracked = git(['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/main']);
+  if (isSha(tracked)) return tracked;
+  const r = ghJson<{ object?: { sha?: string } }>(gh, ['api', `repos/${apiRepo(opts.repo)}/git/ref/heads/main`], {});
+  return isSha(r.object?.sha) ? r.object.sha : '';
+}
+
+/**
  * Atomically claim every issue of a unit, or none of them.
  *
  * The ONLY thing that grants a claim is a successful `POST git/refs` — GitHub's
@@ -232,6 +277,11 @@ export function acquireClaim(
   gh: GhRunner,
   opts: { repo?: string; sha: string },
 ): ClaimOutcome {
+  // No usable target => no create is even attempted. A ref we cannot point at
+  // an object the remote has can never be won, so this must NOT grant a claim.
+  if (!isSha(opts.sha)) {
+    return { ok: false, won: [], detail: `no remote-known claim target (got ${JSON.stringify(opts.sha)})` };
+  }
   const ordered = [...issues].map(Number).sort((a, b) => a - b);
   const won: number[] = [];
   for (const issue of ordered) {
@@ -321,6 +371,7 @@ export interface Ctx {
   gh: GhRunner;
   repo?: string;
   offline: boolean;
+  /** The claim ref's target — must be an object the REMOTE has (see #2646). */
   sha: () => string;
   out: (s: string) => void;
   now: () => number;
@@ -421,7 +472,12 @@ export const VERBS: Record<string, (c: Ctx, a: Args) => number> = {
     }
     const outcome = acquireClaim(u.issues ?? [], c.gh, { repo: c.repo, sha: c.sha() });
     if (!outcome.ok) {
-      c.out(`NOT claimed ${u.id}: #${outcome.lostOn} is held by another loop instance (${outcome.detail ?? ''})`);
+      // Exit 3 is "you do NOT hold this unit, do not build" — a rival claim and
+      // an unprovable one are the same instruction to the builder (fail closed).
+      const why = outcome.lostOn
+        ? `#${outcome.lostOn} is held by another loop instance`
+        : 'the claim could not be taken';
+      c.out(`NOT claimed ${u.id}: ${why} (${outcome.detail ?? ''})`);
       return 3;
     }
     u.status = 'building';
@@ -702,13 +758,16 @@ function main(): void {
     console.log(`usage: npm run autoloop:queue -- <verb> [args]\nverbs: ${Object.keys(VERBS).join(' ')}`);
     process.exit(2);
   }
+  const gh = offline ? OFFLINE_GH : realGh;
   process.exit(
     runVerb(verb, rest, {
       cache: new Cache(cachePath),
-      gh: offline ? OFFLINE_GH : realGh,
+      gh,
       repo,
       offline,
-      sha: () => execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+      // NOT local HEAD (#2646): the batch branch is never pushed mid-build, so
+      // the remote does not have that object and the claim create 422s.
+      sha: () => resolveClaimSha(gh, { repo }),
       now: () => Math.floor(Date.now() / 1000),
     }),
   );
