@@ -26,11 +26,16 @@ import { ServiceLifecycle } from './serviceLifecycle';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..', '..', '..');
 const HA_TEMPLATE = path.join(REPO_ROOT, 'templates', 'home-assistant', 'template.yml');
+const ADGUARD_TEMPLATE = path.join(REPO_ROOT, 'templates', 'adguard', 'template.yml');
 
-/** The shipped manifest with `{{VAR}}` placeholders substituted, i.e. what a
+/** A shipped manifest with `{{VAR}}` placeholders substituted, i.e. what a
  *  real deploy hands to `deployKubeService`. */
+function renderedTemplate(templatePath: string): string {
+    return fs.readFileSync(templatePath, 'utf-8').replace(/\{\{[^}]*\}\}/g, 'x');
+}
+
 function renderedHomeAssistantYaml(): string {
-    return fs.readFileSync(HA_TEMPLATE, 'utf-8').replace(/\{\{[^}]*\}\}/g, 'x');
+    return renderedTemplate(HA_TEMPLATE);
 }
 
 const HA_CONFIG_DIR = '/mnt/data/stacks/home-assistant/homeassistant';
@@ -133,6 +138,53 @@ describe('deployKubeService honours servicebay.seed-only-configs (#2590)', () =>
         const yamlText = fs.readFileSync(HA_TEMPLATE, 'utf-8');
         expect(yamlText).toMatch(
             /servicebay\.seed-only-configs:\s*"automations\.yaml,scenes\.yaml,scripts\.yaml,configuration\.yaml"/,
+        );
+    });
+});
+
+/**
+ * #2632 — the same seam for AdGuard. `AdGuardHome.yaml` is the file AdGuard's
+ * own admin UI rewrites on every settings change (filter lists, user rules,
+ * DNS rewrites, DHCP, per-client entries) and whose `schema_version` AdGuard
+ * migrates in place. Without the annotation, any redeploy re-rendered the
+ * shipped seed over all of it.
+ */
+describe('deployKubeService honours seed-only-configs for adguard (#2632)', () => {
+    const CONF = '/mnt/data/stacks/adguard/conf/AdGuardHome.yaml';
+    const ADGUARD_FILES = [{ path: CONF, content: '# rendered seed\nschema_version: 28\n' }];
+
+    const deployAdguard = () => ServiceLifecycle.deployKubeService(
+        'Local',
+        'adguard',
+        '[Kube]\nYaml=adguard.yml\n',
+        renderedTemplate(ADGUARD_TEMPLATE),
+        'adguard.yml',
+        ADGUARD_FILES,
+    );
+
+    beforeEach(() => {
+        mockSendCommand.mockReset();
+    });
+
+    it('leaves an existing AdGuardHome.yaml alone on a redeploy', async () => {
+        stubAgent(new Set([CONF]));
+
+        await deployAdguard();
+
+        expect(writtenPaths()).not.toContain(CONF);
+    });
+
+    it('still seeds AdGuardHome.yaml on a first install', async () => {
+        stubAgent(new Set());
+
+        await deployAdguard();
+
+        expect(writtenPaths()).toContain(CONF);
+    });
+
+    it('declares the config file it ships as seed-only', () => {
+        expect(fs.readFileSync(ADGUARD_TEMPLATE, 'utf-8')).toMatch(
+            /servicebay\.seed-only-configs:\s*"AdGuardHome\.yaml"/,
         );
     });
 });

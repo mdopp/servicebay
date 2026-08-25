@@ -15,6 +15,22 @@ metadata:
     servicebay.dependencies: "nginx,auth"
     servicebay.ports: "{{ADGUARD_ADMIN_PORT}}/tcp,53/udp,53/tcp"
     servicebay.config-mount: /opt/adguardhome/conf
+    # AdGuardHome.yaml belongs to AdGuard from first start onward: the admin
+    # UI rewrites the whole file on every settings change (filters, user
+    # rules, DHCP, per-client settings, DNS rewrites) and AdGuard migrates
+    # its own `schema_version` in place on upgrade. Without this annotation
+    # every deploy re-rendered the shipped seed over it (#2632) — the box's
+    # live file already carries a dozen DNS rewrites and a schema_version
+    # well past the seed's, all of which a port change would have wiped.
+    #
+    # Two values inside it stay ServiceBay's, and a seed-only file no longer
+    # delivers them (the trap #2597 hit): the admin listener's PORT (the NPM
+    # proxy host + the healthcheck both address it via ADGUARD_ADMIN_PORT)
+    # and the admin user's bcrypt PASSWORD HASH (ServiceBay generates it,
+    # shows it in the install log and authenticates with it to provision the
+    # wildcard DNS rewrites). post-deploy.py reconciles those two in place —
+    # see `reconcile_managed_config()` — instead of rewriting the file.
+    servicebay.seed-only-configs: "AdGuardHome.yaml"
     # Continuous health probe (#626). AdGuard's `/control/*` API requires
     # authentication once the admin password is set — and the post-deploy
     # sets it — so `/control/status` returns 401 to the unauthenticated

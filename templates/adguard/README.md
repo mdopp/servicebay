@@ -26,6 +26,28 @@ ServiceBay pre-seeds `AdGuardHome.yaml` with the configured ports and admin user
 
 The auto-generated password is shown once during install — copy it into your password manager.
 
+## Who owns `AdGuardHome.yaml`
+
+ServiceBay seeds `AdGuardHome.yaml` on the **first** install and never rewrites
+it afterwards (it is listed in `servicebay.seed-only-configs`). From AdGuard's
+first start the file is AdGuard's: its admin UI rewrites the whole thing on
+every settings change, so your filter lists, user rules, DNS rewrites, DHCP
+settings and per-client entries survive every redeploy.
+
+Two values in that file stay ServiceBay's, and the post-deploy hook edits just
+those two in place on each deploy — never the rest of the file:
+
+| Value | Why ServiceBay keeps it in step |
+|---|---|
+| the port in `http.address` | the `dns.<domain>` proxy host and the health probe both address the admin UI via `ADGUARD_ADMIN_PORT` |
+| the `password` of the `users:` entry named `ADGUARD_ADMIN_USER` | ServiceBay generates it, stores it in Saved Credentials and logs in with it to provision the wildcard DNS rewrites |
+
+AdGuard is restarted only when one of the two actually changed. If you rename
+or delete that `users:` entry, ServiceBay says so in the deploy log and leaves
+the list alone rather than re-creating it. Changing the admin password from
+AdGuard's own UI is therefore not durable — rotate it through ServiceBay
+(Settings → the AdGuard variables) so both sides stay in agreement.
+
 ## SSO / Authelia
 
 AdGuard Home has no native OIDC or trusted-header support — every visit shows AdGuard's own login form. The Authelia wildcard rule in front of `dns.<your-domain>` adds a layer (admins-group + 2FA), but you'll still type the AdGuard admin password on the AdGuard login page itself. Save it in your password manager.

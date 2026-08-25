@@ -1,3 +1,24 @@
+# AdGuard Home config. ServiceBay writes this ONCE, on first install, and
+# never again: it is listed in `servicebay.seed-only-configs` in template.yml
+# (#2632). From AdGuard's first start the file is AdGuard's — its admin UI
+# rewrites the whole thing whenever you change a filter list, a user rule, a
+# DNS rewrite, DHCP or a per-client setting, and AdGuard migrates
+# `schema_version` here in place when it upgrades. Comments in this header do
+# not survive that first rewrite; that is expected.
+#
+# Two values below stay ServiceBay's and are reconciled in place by this
+# template's post-deploy.py on every deploy, because a file nobody re-renders
+# would otherwise freeze them at their first-install state:
+#   * the PORT in `http.address` — the NPM proxy host and the healthcheck both
+#     address the admin UI via ADGUARD_ADMIN_PORT, so a changed variable has
+#     to reach AdGuard or the admin UI becomes unreachable. Only the port is
+#     managed; the bind host is left exactly as found.
+#   * the `password` of the `users:` entry named ADGUARD_ADMIN_USER —
+#     ServiceBay generates that credential, shows it in the install log and
+#     logs in with it to provision the wildcard DNS rewrites, so a rotated
+#     password has to reach AdGuard too.
+# Nothing else is touched, and a `users:` entry you renamed or deleted is
+# reported in the deploy log rather than re-created.
 http:
   pprof:
     port: 6060

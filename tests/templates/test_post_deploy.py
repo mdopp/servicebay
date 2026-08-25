@@ -120,13 +120,19 @@ def capture_main(module) -> tuple[int, str]:
 
 class AdguardScript(unittest.TestCase):
     def test_emits_credential_when_password_set(self):
+        import tempfile
         m = load_script("adguard")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
         env = {
             "HOST": "192.168.1.10",
             "ADGUARD_ADMIN_USER": "admin",
             "ADGUARD_ADMIN_PASSWORD": "s3cret",
             "ADGUARD_ADMIN_PORT": "8083",
             "SB_API_URL": "http://sb.test",
+            # Empty tree → the #2632 reconcile is a no-op here; it has its own
+            # test class below.
+            "DATA_DIR": tmp.name,
         }
         # Mock the credentials-persist POST so the script doesn't try
         # urllib against a real localhost (would block 10s+ in CI).
@@ -159,11 +165,175 @@ class AdguardScript(unittest.TestCase):
 
     def test_no_password_skips_credential_silently(self):
         m = load_script("adguard")
-        with run_with_env({"HOST": "h", "ADGUARD_ADMIN_PORT": "8083"}):
-            rc, out = capture_main(m)
+        import tempfile
+        with tempfile.TemporaryDirectory() as data_dir:
+            # DATA_DIR points at an empty tree, so the #2632 reconcile finds no
+            # AdGuardHome.yaml and stays a no-op instead of touching the host.
+            with run_with_env({"HOST": "h", "ADGUARD_ADMIN_PORT": "8083", "DATA_DIR": data_dir}):
+                rc, out = capture_main(m)
         self.assertEqual(rc, 0)
         self.assertEqual(parse_credentials(out), [])
         self.assertIn("ADGUARD_ADMIN_PASSWORD missing", out)
+
+
+# The shape AdGuard itself writes: `schema_version` well past the seed's,
+# keys the seed never had, and the operator's own DNS rewrites — i.e. exactly
+# what a re-rendered seed used to destroy (#2632).
+ADGUARD_LIVE_CONFIG = """http:
+  pprof:
+    port: 6060
+    enabled: false
+  doh:
+    routes:
+      - GET /dns-query
+    insecure_enabled: false
+  address: 127.0.0.1:8083
+  session_ttl: 30d
+users:
+  - name: admin
+    password: HASH-ON-DISK
+auth_attempts: 5
+dns:
+  port: 53
+  upstream_dns:
+    - https://dns10.quad9.net/dns-query
+user_rules:
+  - '||ads.example.com^'
+filtering:
+  rewrites:
+    - domain: '*.example.home'
+      answer: 192.168.1.10
+      enabled: true
+  filtering_enabled: true
+clients:
+  persistent:
+    - name: laptop
+      ids:
+        - 192.168.1.55
+schema_version: 34
+"""
+
+
+class AdguardManagedConfigReconcile(unittest.TestCase):
+    """#2632 — AdGuardHome.yaml is seed-only, so post-deploy.py is the only
+    path by which a changed admin port or a rotated admin password reaches an
+    installed AdGuard. It must move those two values and nothing else."""
+
+    def _run(self, config: str | None, env: dict[str, str], restart_ok: bool = True):
+        """Run reconcile_managed_config against a temp DATA_DIR. Returns
+        (stdout, on-disk config or None, podman argv list)."""
+        import tempfile
+        m = load_script("adguard")
+        calls: list[list[str]] = []
+
+        class FakeCompleted:
+            returncode = 0 if restart_ok else 1
+            stdout = ""
+            stderr = "" if restart_ok else "no such container"
+
+        def fake_run(argv, **_kw):
+            calls.append(list(argv))
+            return FakeCompleted()
+
+        with tempfile.TemporaryDirectory() as data_dir:
+            conf_dir = os.path.join(data_dir, "adguard", "conf")
+            os.makedirs(conf_dir)
+            cfg = os.path.join(conf_dir, "AdGuardHome.yaml")
+            if config is not None:
+                with open(cfg, "w", encoding="utf-8") as fh:
+                    fh.write(config)
+            full_env = {"DATA_DIR": data_dir, **env}
+            buf = io.StringIO()
+            with run_with_env(full_env), \
+                    mock.patch.object(m.subprocess, "run", fake_run), \
+                    mock.patch.object(m, "wait_for_admin_ui", lambda *_a, **_k: True), \
+                    contextlib.redirect_stdout(buf):
+                m.reconcile_managed_config(full_env.get("ADGUARD_ADMIN_USER", "admin"),
+                                           full_env.get("ADGUARD_ADMIN_PORT", "8083"))
+            written = None
+            if os.path.exists(cfg):
+                with open(cfg, encoding="utf-8") as fh:
+                    written = fh.read()
+        return buf.getvalue(), written, calls
+
+    def test_changed_port_and_password_are_written_and_adguard_restarted(self):
+        out, written, calls = self._run(ADGUARD_LIVE_CONFIG, {
+            "ADGUARD_ADMIN_PORT": "9090",
+            "ADGUARD_ADMIN_USER": "admin",
+            "ADGUARD_ADMIN_PASSWORD_HASH": "HASH-FROM-THIS-DEPLOY",
+        })
+        self.assertIn("address: 127.0.0.1:9090", written)
+        self.assertIn("password: HASH-FROM-THIS-DEPLOY", written)
+        self.assertEqual(
+            calls, [["podman", "container", "restart", "adguard-adguard-home"]])
+        # The log names the keys it moved, never the hash it moved them to.
+        self.assertIn("http.address port", out)
+        self.assertIn("password of user admin", out)
+        self.assertNotIn("HASH-FROM-THIS-DEPLOY", out)
+
+    def test_operator_owned_content_survives_the_reconcile(self):
+        """The whole point of the issue: a redeploy must not cost the operator
+        their blocklists, user rules, DNS rewrites or per-client entries — and
+        must not roll AdGuard's own schema_version back to the seed's."""
+        _out, written, _calls = self._run(ADGUARD_LIVE_CONFIG, {
+            "ADGUARD_ADMIN_PORT": "9090",
+            "ADGUARD_ADMIN_PASSWORD_HASH": "HASH-FROM-THIS-DEPLOY",
+        })
+        self.assertIn("||ads.example.com^", written)
+        self.assertIn("domain: '*.example.home'", written)
+        self.assertIn("name: laptop", written)
+        self.assertIn("schema_version: 34", written)
+        self.assertIn("insecure_enabled: false", written)
+        # Only the two managed lines differ from what was on disk.
+        diff = [(a, b) for a, b in zip(ADGUARD_LIVE_CONFIG.splitlines(), written.splitlines()) if a != b]
+        self.assertEqual(len(diff), 2, diff)
+
+    def test_unchanged_deploy_leaves_the_file_byte_identical_and_skips_restart(self):
+        out, written, calls = self._run(ADGUARD_LIVE_CONFIG, {
+            "ADGUARD_ADMIN_PORT": "8083",
+            "ADGUARD_ADMIN_PASSWORD_HASH": "HASH-ON-DISK",
+        })
+        self.assertEqual(written, ADGUARD_LIVE_CONFIG)
+        self.assertEqual(calls, [])
+        self.assertIn("already matches this deploy", out)
+
+    def test_removed_users_entry_is_reported_not_recreated(self):
+        """A `users:` entry the operator renamed or deleted stays deleted —
+        re-inventing it would be the same 'the template knows better'
+        overwrite this change exists to stop (the #2597 rule)."""
+        out, written, calls = self._run(ADGUARD_LIVE_CONFIG, {
+            "ADGUARD_ADMIN_PORT": "8083",
+            "ADGUARD_ADMIN_USER": "someone-else",
+            "ADGUARD_ADMIN_PASSWORD_HASH": "HASH-FROM-THIS-DEPLOY",
+        })
+        self.assertEqual(written, ADGUARD_LIVE_CONFIG)
+        self.assertEqual(calls, [])
+        self.assertIn("has no password of user someone-else", out)
+        self.assertNotIn("HASH-FROM-THIS-DEPLOY", written)
+
+    def test_blank_hash_never_touches_the_users_list(self):
+        """No hash in the env (a partial/manual deploy) must not write an empty
+        password — that would lock the operator out of their own DNS console."""
+        _out, written, calls = self._run(ADGUARD_LIVE_CONFIG, {"ADGUARD_ADMIN_PORT": "9090"})
+        self.assertIn("password: HASH-ON-DISK", written)
+        self.assertIn("address: 127.0.0.1:9090", written)
+        self.assertEqual(
+            calls, [["podman", "container", "restart", "adguard-adguard-home"]])
+
+    def test_missing_config_file_is_a_no_op(self):
+        out, written, calls = self._run(None, {"ADGUARD_ADMIN_PORT": "8083"})
+        self.assertIsNone(written)
+        self.assertEqual(calls, [])
+        self.assertIn("not on disk yet", out)
+
+    def test_failed_restart_names_the_manual_recovery_command(self):
+        out, written, _calls = self._run(
+            ADGUARD_LIVE_CONFIG,
+            {"ADGUARD_ADMIN_PORT": "9090", "ADGUARD_ADMIN_PASSWORD_HASH": "HASH-ON-DISK"},
+            restart_ok=False,
+        )
+        self.assertIn("address: 127.0.0.1:9090", written)
+        self.assertIn("podman container restart adguard-adguard-home", out)
 
 
 class NginxScript(unittest.TestCase):
@@ -4200,9 +4370,10 @@ class VerbatimScriptBodies(unittest.TestCase):
     quietly start depending on a render pass that no longer happens.
     """
 
-    # The nine `{{…}}` sites across templates/*/post-deploy.py, and the
+    # The ten `{{…}}` sites across templates/*/post-deploy.py, and the
     # env var that actually carries the value (None = prose only).
     SITES = [
+        ("adguard", "DATA_DIR"),         # _adguard_conf_path() docstring (#2632)
         ("auth", "DATA_DIR"),            # authelia_db_path() docstring
         ("auth", "DATA_DIR"),            # authelia_config_path() docstring (#2424)
         ("auth", None),                  # f-string escape: subject "[Authelia] {title}"
@@ -4232,6 +4403,7 @@ class VerbatimScriptBodies(unittest.TestCase):
         """The DATA_DIR docstring sites: the path helper next to each
         docstring reads DATA_DIR from os.environ, with a sane default."""
         cases = [
+            ("adguard", "_adguard_conf_path", ("adguard", "conf", "AdGuardHome.yaml")),
             ("auth", "authelia_db_path", ("auth", "authelia-data", "db.sqlite3")),
             ("auth", "authelia_config_path", ("auth", "authelia-config", "configuration.yml")),
             ("nginx", "npm_db_path", ("nginx-proxy-manager", "data", "database.sqlite")),
