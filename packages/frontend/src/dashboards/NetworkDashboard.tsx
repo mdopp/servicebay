@@ -1025,7 +1025,10 @@ export default function NetworkDashboard() {
       setNodes((nds) => applyFilter(nds, searchQuery));
   }, [searchQuery, applyFilter, setNodes]);
 
-  const processAndLayout = useCallback(async (nodes: Node<GraphNodeData>[], edges: Edge[], collapsed: Set<string>, search: string, focus: string | null = null) => {
+  // #2630 — `isStale` is the caller's run-generation guard. ELK resolves
+  // asynchronously with no guaranteed ordering, so a superseded run must be
+  // able to abandon its commit; see the check after the await below.
+  const processAndLayout = useCallback(async (nodes: Node<GraphNodeData>[], edges: Edge[], collapsed: Set<string>, search: string, focus: string | null = null, isStale: () => boolean = () => false) => {
     // 1. Prepare Nodes (Aggregation & toggles)
      
     const processedNodes = nodes.map(node => {
@@ -1153,6 +1156,13 @@ export default function NetworkDashboard() {
     // box (width + height) directly, so the #2194 applyChildSlotHeights
     // band-aid is gone; the child card renders `h-full` to fill that slot.
     const layouted = await getLayoutedElements(layoutNodes, layoutEdges);
+    // #2630 — bail out BEFORE committing when a newer run has started. The
+    // layout promise has no guaranteed resolution order, so two topology
+    // changes close together (a collapse toggle landing next to a twin-driven
+    // poll) can resolve out of order; without this the older run's
+    // setNodes/setEdges/laidOutGraphRef write silently overwrote the newer
+    // topology and the map snapped back to a stale arrangement.
+    if (isStale()) return;
     const filteredNodes = applyFilter(layouted.nodes as Node<GraphNodeData>[], search);
     const layoutedEdges = layouted.edges;
     setNodes(filteredNodes);
@@ -1221,9 +1231,13 @@ export default function NetworkDashboard() {
               mergeInPlace(gd.nodes, gd.edges, searchQuery);
               return;
           }
-          await processAndLayout(gd.nodes, gd.edges, currentCollapsed, searchQuery, currentFocus);
-          layoutSignatureRef.current = signature;
+          await processAndLayout(gd.nodes, gd.edges, currentCollapsed, searchQuery, currentFocus, isStale);
+          // #2630 — the signature describes what was COMMITTED. A superseded
+          // run commits nothing, so it must not stamp its signature either;
+          // doing so would make the next identical-topology poll merge in
+          // place onto a graph that was never laid out.
           if (isStale()) return;
+          layoutSignatureRef.current = signature;
           if (focusPlan.appliedParam && focusPlan.nodeId) {
               appliedFocusParamRef.current = focusPlan.appliedParam;
               setFocusNodeId(focusPlan.nodeId);
