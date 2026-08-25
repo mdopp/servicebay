@@ -161,6 +161,7 @@ describe('#2607 — whenToUse makes each decision findable when an agent self-se
     ['0010', 'bumping node in the dockerfile and nvmrc, a native module fails with an abi mismatch'],
     ['0011', 'giving the companion app a second backend, a second token and another realtime connection'],
     ['0012', 'about to fix drifted credentials by redeploying, or add a self-heal reconciler loop'],
+    ['0013', 'an agent asks me to mint it a token by hand, or a shipped tool never appears in any session because no token carries its scope'],
   ];
 
   it('covers every ADR with a probe — no record gets a free pass', async () => {
@@ -270,7 +271,11 @@ describe('#2607 — orientation names the catalog as where decisions live', () =
     expect(read('docs', 'ARCHITECTURE_INVARIANTS.md')).toContain('assists/adr-');
     const index = read('docs', 'adr', 'README.md');
     expect(index).toContain('assist catalog');
-    expect(index, 'names the next free number so the collision cannot recur').toMatch(/0013/);
+    // The NEXT free number, not the highest taken one — 0013 is now spent
+    // (#2609), so the index must advertise 0014. Matching a number that also
+    // appears as an index row would pass vacuously.
+    expect(index, 'names the next free number so the collision cannot recur')
+      .toMatch(/Next free number:\s*\*\*0014\*\*/);
   });
 
   it('the shipped image carries the ADRs via assists/, not a docs/adr copy', () => {
