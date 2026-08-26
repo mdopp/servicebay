@@ -222,6 +222,35 @@ clean up a dangling route (one whose forward target has no backing service)
 over MCP without the admin UI or `exec_command` — confirm it's genuinely dangling
 via `get_proxy_routes` / `diagnose` first, since the live deletion is permanent.
 
+### A health-check id the list tool returns is one the write verbs accept
+
+`get_health_checks` answers from **two** sources merged at read time (#2615):
+the stored `checks.json` registry, plus the synthetic `diagnose:<probeId>` rows
+projected from persisted diagnose-probe results. `delete_health_check` and
+`run_check_now` used to query only the first, so every diagnose id the list had
+just handed back came straight home as `No check with id "…" found` (#2651).
+
+Both write verbs now resolve an id through `lib/health/checkLookup.ts`, against
+the same two readers, so:
+
+| Id class | `run_check_now` | `delete_health_check` |
+|---|---|---|
+| stored check (`domain:<host>`, a UUID, `nginx_config_valid`, …) | runs the probe, persists + returns the result | deletes it, `{deleted: id}` |
+| `diagnose:<probeId>` — any probe, not a named few | re-runs the diagnose suite as a **manual** re-run and returns that probe's **fresh** result | documented no-op: `{deleted: false, kind: "diagnose", …}` — it is a projection, there is nothing stored to delete |
+| listed by neither | same error | the same error, word for word |
+
+The manual re-run matters: it is what makes reader probes over expensive checks
+(`sso_verify`) actually re-verify instead of re-displaying the stored report
+(#1709), so a finding you have just fixed clears immediately instead of standing
+open until the daily tick.
+
+The auto-managed `domain:<host>` checks are reconciled by **route mutations**
+(`add_proxy_route`, `remove_proxy_route`, and the shared
+`POST`/`DELETE /api/system/nginx/proxy-hosts` path), not only by the 60s timer,
+so `get_health_checks` reflects a route change straight away rather than
+listing a dead route's check for up to a minute (#2654). A route removed
+*outside* ServiceBay — directly in NPM — still waits for the next tick.
+
 ### A destroy-tier call parks — and its outcome is pollable
 
 A **token** caller may *propose* a `destroy`-tier tool but never execute it. The

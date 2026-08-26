@@ -126,20 +126,61 @@ function computeWantedChecks(
   routes: ProxyRoute[],
   configByDomain: Map<string, ProxyHostEntry>,
   createdAt: (id: string) => string,
+  removed: Set<string>,
 ): Map<string, CheckConfig> {
   const wanted = new Map<string, CheckConfig>();
   for (const route of routes) {
-    if (!isCheckableDomain(route.host)) continue;
+    if (!isCheckableDomain(route.host) || removed.has(route.host)) continue;
     const id = `${DOMAIN_CHECK_PREFIX}${route.host}`;
     const cfg = configByDomain.get(route.host);
     wanted.set(id, cfg ? buildCheckFromConfig(cfg, createdAt(id)) : buildCheckFromRoute(route, createdAt(id)));
   }
   for (const [domain, entry] of configByDomain) {
-    if (!isCheckableDomain(domain)) continue;
+    if (!isCheckableDomain(domain) || removed.has(domain)) continue;
     const id = `${DOMAIN_CHECK_PREFIX}${domain}`;
     if (!wanted.has(id)) wanted.set(id, buildCheckFromConfig(entry, createdAt(id)));
   }
   return wanted;
+}
+
+/**
+ * Options for a caller-triggered reconcile (#2654).
+ */
+export interface SyncDomainChecksOptions {
+  /**
+   * Domains the CALLER has just deleted from NPM, ahead of the polled route
+   * table catching up.
+   *
+   * `getProxyState().routes` is an agent-poll snapshot, so right after a live
+   * host deletion it still lists the host — a reconcile fired from the delete
+   * path would rebuild the very check it was called to retire and the row would
+   * survive until the next poll + 60s tick. Naming the domain here is
+   * first-hand knowledge from the mutation that just succeeded, so it outranks
+   * the snapshot: the domain is dropped from the wanted set AND its check is
+   * removed regardless of what the stale route list says.
+   */
+  removedDomains?: string[];
+}
+
+/** Add or refresh every wanted check, skipping the ones already identical. */
+function upsertDomainChecks(wanted: Map<string, CheckConfig>, existing: CheckConfig[]): void {
+  for (const next of wanted.values()) {
+    const current = existing.find(c => c.id === next.id);
+    if (!current || !sameDomainCheck(current, next)) HealthStore.saveCheck(next);
+  }
+}
+
+/**
+ * Retire the checks for domains the caller explicitly removed, even when the
+ * route snapshot is empty or stale — the caller watched the deletion succeed,
+ * which the poll has not seen yet. Without this the orphan pass is a no-op on
+ * the one path that most needs it (#2654).
+ */
+function retireRemovedDomainChecks(removed: Set<string>, existing: CheckConfig[]): void {
+  for (const domain of removed) {
+    const id = `${DOMAIN_CHECK_PREFIX}${domain}`;
+    if (existing.some(c => c.id === id)) HealthStore.deleteCheck(id);
+  }
 }
 
 /**
@@ -148,8 +189,9 @@ function computeWantedChecks(
  * error is logged and swallowed — domain checks are observability, not
  * load-bearing.
  */
-export async function syncDomainChecks(): Promise<void> {
+export async function syncDomainChecks(opts: SyncDomainChecksOptions = {}): Promise<void> {
   try {
+    const removed = new Set(opts.removedDomains ?? []);
     const config = await getConfig();
     const configByDomain = new Map<string, ProxyHostEntry>();
     for (const h of config.reverseProxy?.hosts ?? []) configByDomain.set(h.domain, h);
@@ -159,13 +201,9 @@ export async function syncDomainChecks(): Promise<void> {
     const now = new Date().toISOString();
     const createdAt = (id: string) => existing.find(c => c.id === id)?.created_at ?? now;
 
-    const wanted = computeWantedChecks(routes, configByDomain, createdAt);
+    const wanted = computeWantedChecks(routes, configByDomain, createdAt, removed);
 
-    // Add or refresh.
-    for (const next of wanted.values()) {
-      const current = existing.find(c => c.id === next.id);
-      if (!current || !sameDomainCheck(current, next)) HealthStore.saveCheck(next);
-    }
+    upsertDomainChecks(wanted, existing);
 
     // Remove orphans — but ONLY when we actually have a route view. A
     // transient empty snapshot (agent not yet polled) must never wipe the
@@ -175,6 +213,8 @@ export async function syncDomainChecks(): Promise<void> {
         if (isManagedDomainCheck(check) && !wanted.has(check.id)) HealthStore.deleteCheck(check.id);
       }
     }
+
+    retireRemovedDomainChecks(removed, existing);
   } catch (e) {
     logger.warn('domainChecks', `syncDomainChecks failed: ${e instanceof Error ? e.message : String(e)}`);
   }

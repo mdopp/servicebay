@@ -26,6 +26,8 @@
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { auditHealthCheckIdLifecycle } from './invariants/healthCheckIdLifecycle';
+
 const REPO_ROOT = path.resolve(__dirname, '..');
 const SRC = path.join(REPO_ROOT, 'packages', 'frontend', 'src');
 const BACKEND_SRC = path.join(REPO_ROOT, 'packages', 'backend', 'src');
@@ -1131,6 +1133,15 @@ async function checkMcpApprovalPollability() {
     );
 }
 
+// 8d. A health-check id the READ tool lists is one the WRITE tools accept.
+// The rules live in their own module (this file is at its max-lines budget);
+// see scripts/invariants/healthCheckIdLifecycle.ts for the why.
+async function checkHealthCheckIdLifecycle() {
+    const found = await auditHealthCheckIdLifecycle({ frontendSrc: SRC, backendSrc: BACKEND_SRC });
+    violations.push(...found.violations);
+    measurements.push(...found.measurements);
+}
+
 // ---------------------------------------------------------------------------
 // 9. docs/ARCHITECTURE_INVARIANTS.md's numbers are generated, not typed.
 //
@@ -1233,6 +1244,7 @@ async function main() {
         checkCredentialHttpEgress(),
         checkMcpAuditRedaction(),
         checkMcpApprovalPollability(),
+        checkHealthCheckIdLifecycle(),
         syncOrCheckThresholdDoc(),
     ]);
 

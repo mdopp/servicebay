@@ -1448,6 +1448,21 @@ export const DELETE = withApiHandler<undefined, z.infer<typeof DeleteQuery>>(
             logger.warn('ProxyHosts', `Failed to drop ${domain} from config.reverseProxy.hosts: ${e}`);
         }
 
+        // #2654 — mirror POST's reconcile step. This is the one path every
+        // live-host removal takes (MCP `remove_proxy_route(removeNpmHost)`, the
+        // diagnose `delete_route` remediation, uninstall), so the domain check
+        // retires with the route instead of lingering for up to 60s until the
+        // timer catches it — the window in which `get_health_checks` listed a
+        // `domain:` id that `delete_health_check` then rejected.
+        // `removedDomains` is required: the polled route snapshot still carries
+        // this host, so a plain sync would rebuild the check it just removed.
+        try {
+            const { syncDomainChecks } = await import('@/lib/health/domainChecks');
+            await syncDomainChecks({ removedDomains: [domain] });
+        } catch (e) {
+            logger.warn('ProxyHosts', `Domain-check reconcile after removing ${domain} failed: ${e}`);
+        }
+
         logger.info('ProxyHosts', `Removed proxy host: ${domain} (id=${existing.id})`);
         return NextResponse.json({ removed: true, domain, id: existing.id });
     } catch (error) {
