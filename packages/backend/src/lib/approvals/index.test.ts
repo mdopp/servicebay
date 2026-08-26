@@ -39,6 +39,7 @@ import {
   registerMcpDispatcher,
   isSelfApproval,
   onNewApproval,
+  approvalOutcome,
   type ApprovalRequest,
   type NewApprovalEvent,
 } from './index';
@@ -360,6 +361,83 @@ describe('mcp-tool re-dispatch action (#2234)', () => {
     expect((await getApproval(r.id))?.status).toBe('pending');
   });
 
+  // #2653: the raw `status` cannot tell "nobody decided yet" apart from
+  // "approved, and the action threw" — both read `pending`. That is the whole
+  // blind spot #2651 hit, so the failed attempt has to be RECORDED.
+  it('a failed dispatch RECORDS the attempt, so the outcome reads approved-failed not pending', async () => {
+    dispatchMcpTool.mockRejectedValueOnce(new Error('tool blew up'));
+    const r = await submitApproval({
+      service: 'media',
+      title: 'delete_service: media',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
+    });
+    await expect(approveApproval(r.id)).rejects.toThrow(/tool blew up/);
+    // Re-read from DISK — the record itself must carry the attempt, not just
+    // the in-memory object the throwing call happened to touch.
+    const stored = await getApproval(r.id);
+    expect(stored?.execution).toMatchObject({ intent: 'approve', outcome: 'failed' });
+    expect(stored?.execution?.error).toMatch(/tool blew up/);
+    expect(approvalOutcome(stored as ApprovalRequest)).toBe('approved-failed');
+  });
+
+  it('a successful approve records the ok attempt and reads approved-executed', async () => {
+    const r = await submitApproval({
+      service: 'media',
+      title: 'delete_service: media',
+      on_approve: { mcp: { toolName: 'delete_service', args: { name: 'media' } } },
+    });
+    await approveApproval(r.id);
+    const stored = await getApproval(r.id);
+    expect(stored?.execution).toMatchObject({ intent: 'approve', outcome: 'ok' });
+    expect(stored?.resolved_at).toEqual(expect.any(String));
+    expect(approvalOutcome(stored as ApprovalRequest)).toBe('approved-executed');
+  });
+});
+
+// #2653: what a polling caller actually reads. `approved-executed` and
+// `approved-failed` MUST stay distinct — collapsing them into "approved" is
+// precisely the blind spot this derivation exists to close.
+describe('approvalOutcome — the polled outcome (#2653)', () => {
+  const base: ApprovalRequest = {
+    id: 'a1', service: 'media', title: 't', description: null, payload: {},
+    on_approve: {}, on_reject: {}, node: 'box1',
+    created_at: '2026-08-26T00:00:00.000Z', status: 'pending',
+  };
+
+  it('pending with no attempt → pending', () => {
+    expect(approvalOutcome(base)).toBe('pending');
+  });
+
+  it('approved → approved-executed', () => {
+    expect(approvalOutcome({ ...base, status: 'approved' })).toBe('approved-executed');
+  });
+
+  it('rejected → rejected', () => {
+    expect(approvalOutcome({ ...base, status: 'rejected' })).toBe('rejected');
+  });
+
+  it('pending after a failed APPROVE attempt → approved-failed', () => {
+    expect(approvalOutcome({
+      ...base,
+      execution: { intent: 'approve', outcome: 'failed', at: base.created_at, error: 'boom' },
+    })).toBe('approved-failed');
+  });
+
+  it('pending after a failed REJECT attempt → rejected-failed (not a silent pending)', () => {
+    expect(approvalOutcome({
+      ...base,
+      execution: { intent: 'reject', outcome: 'failed', at: base.created_at, error: 'boom' },
+    })).toBe('rejected-failed');
+  });
+
+  it('a pre-#2653 record with no execution field degrades to the plain reading', () => {
+    // Records written before the field existed must not read as failed.
+    expect(approvalOutcome({ ...base, status: 'approved' })).toBe('approved-executed');
+    expect(approvalOutcome(base)).toBe('pending');
+  });
+});
+
+describe('mcp-tool re-dispatch action, continued (#2234)', () => {
   it('rejecting an mcp approval cancels it WITHOUT running the tool', async () => {
     const r = await submitApproval({
       service: 'media',

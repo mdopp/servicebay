@@ -33,6 +33,7 @@ import {
   tokenHasScope,
   isToolVisibleForScopes,
   isDestroyTierTool,
+  APPROVAL_STATUS_TOOL,
 } from './toolPolicy';
 import type { ToolResult, ToolServer } from './tools/context';
 import { registerNodeTools } from './tools/nodeTools';
@@ -254,7 +255,10 @@ function safeHandler(
             approvalId: request.id,
             toolName,
             args,
-            message: `Destructive tool "${toolName}" requires human approval before it runs. A ServiceBay admin must approve request ${request.id} from the dashboard (Settings → Access → Approvals). This token cannot self-approve. The request is durable — it persists until an admin approves or rejects it.`,
+            // Name the poll verb in the payload as well as the prose so a
+            // client can route on it without parsing English (#2653).
+            pollWith: APPROVAL_STATUS_TOOL,
+            message: `Destructive tool "${toolName}" requires human approval before it runs. A ServiceBay admin must approve request ${request.id} from the dashboard (Settings → Access → Approvals). This token cannot self-approve. The request is durable — it persists until an admin approves or rejects it. Poll the outcome with ${APPROVAL_STATUS_TOOL}(approval_id="${request.id}"): it reports pending, approved-executed, approved-failed or rejected. This id is NOT an access-request id — get_access_request_status does not serve it.`,
           }, null, 2),
         }],
       };

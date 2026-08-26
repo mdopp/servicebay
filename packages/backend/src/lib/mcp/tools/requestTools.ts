@@ -2,6 +2,18 @@
  * Request-workflow MCP tools (#2384 extraction): the access/approval list
  * (#1818) and the scoped, admin-approved, self-expiring token request flow
  * (#2139 / #2245) that is built on the same pending→approve→poll pattern.
+ *
+ * THREE DISTINCT ID SPACES live behind this group, and each has exactly one
+ * poll verb (#2653 — conflating them is what left a destroy-tier caller with
+ * no way to learn whether its approved action ever ran):
+ *   - `config.accessRequests`  → `file_access_request` id  → `get_access_request_status`
+ *   - `auth/tokenRequests`     → `request_token` id        → `poll_token_request`
+ *   - `lib/approvals`          → `approvalId`              → `get_approval_status`
+ * The third is the operator-approval queue: every destroy-tier MCP tool parks
+ * there (see `server.ts`'s approval gate) and so does a one-shot
+ * `request_token`. An id from one space is never resolvable in another — the
+ * tool descriptions below say so explicitly rather than inviting the call that
+ * answers `not-found`.
  */
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
@@ -16,7 +28,8 @@ import {
   TokenRequestError,
   type TokenRequestStatus,
 } from '@/lib/auth/tokenRequests';
-import { TOOL_SCOPES } from '../toolPolicy';
+import { getApproval, approvalOutcome } from '@/lib/approvals';
+import { TOOL_SCOPES, APPROVAL_STATUS_TOOL } from '../toolPolicy';
 import { textResult, errorResult, type ToolRegistration } from './context';
 
 // Anti-spam cap mirrors the public POST route's MAX_PENDING (50).
@@ -87,9 +100,9 @@ export function registerRequestTools({ server, caller }: ToolRegistration) {
   // (those poll one id; poll_token_request is non-idempotent) — see #2324. ---
   server.tool(
     'list_requests',
-    'List pending/resolved requests via `type`: "access" (access/approval requests on the admin\'s central list) or "token" (scoped-token request lifecycle, request_token). Defaults to pending; pass status="approved", "denied", or "all". Token requests never return secrets — only metadata, granted scopes, expiry, and minted token id.',
+    `List pending/resolved requests via \`type\`: "access" (access requests on the admin's central list, filed by file_access_request) or "token" (scoped-token request lifecycle, request_token). Defaults to pending; pass status="approved", "denied", or "all". Token requests never return secrets — only metadata, granted scopes, expiry, and minted token id. Neither list contains the operator-approval queue that destroy-tier tools and one-shot request_token park in — poll an \`approvalId\` with ${APPROVAL_STATUS_TOOL}.`,
     {
-      type: z.enum(['access', 'token']).describe('Which request list to read: access (approval requests) or token (scoped-token requests).'),
+      type: z.enum(['access', 'token']).describe('Which request list to read: access (file_access_request items) or token (scoped-token requests). Neither covers destroy-tier approvalIds.'),
       status: z.enum(['pending', 'approved', 'denied', 'all']).optional().default('pending').describe('Filter by status. Default: pending.'),
     },
     async ({ type, status }) => {
@@ -118,9 +131,9 @@ export function registerRequestTools({ server, caller }: ToolRegistration) {
 
   server.tool(
     'get_access_request_status',
-    'Poll the status of one access request by id (as returned by file_access_request). Returns "pending" (awaiting an admin decision), "approved" (admin provisioned the user — proceed), "denied" (admin dismissed it — provision nothing and drop any captured data), or "not-found".',
+    `Poll the status of one access request by id. Returns "pending" (awaiting an admin decision), "approved" (admin provisioned the user — proceed), "denied" (admin dismissed it — provision nothing and drop any captured data), or "not-found". This serves ONLY ids returned by file_access_request. An \`approvalId\` from a destroy-tier tool's pending_approval result or from a one-shot request_token belongs to a different store — poll those with ${APPROVAL_STATUS_TOOL} — and a token-request id with poll_token_request.`,
     {
-      id: z.string().min(1).describe('Request id returned by file_access_request.'),
+      id: z.string().min(1).describe('Request id returned by file_access_request. Not an approvalId and not a token-request id.'),
     },
     async ({ id }) => {
       const config = await getConfig();
@@ -133,6 +146,50 @@ export function registerRequestTools({ server, caller }: ToolRegistration) {
         kind: req.kind,
         requestedAt: req.requestedAt,
         resolvedAt: req.resolvedAt,
+      });
+    },
+  );
+
+  // --- Operator-approval status (#2653) ---
+  // The read side of the destroy-tier approval gate. Every `destroy`-scoped
+  // tool called by a token caller parks in `lib/approvals` and hands back an
+  // `approvalId`; so does a one-shot `request_token`. Until this tool existed
+  // that id resolved NOWHERE — `get_access_request_status` and `list_requests`
+  // both read other stores — so a caller could only infer the outcome from the
+  // observable end state, and could not see the outcome that matters most:
+  // approved, then the action FAILED.
+  //
+  // Deliberately reports `approved-executed` and `approved-failed` as distinct
+  // outcomes. Collapsing them into "approved" would rebuild exactly the blind
+  // spot #2651 reported.
+  server.tool(
+    APPROVAL_STATUS_TOOL,
+    'Poll one operator approval by the `approvalId` a destroy-tier tool\'s pending_approval result returns (delete_service, delete_health_check, remove_proxy_route, restore_backup, purge_trashed_service, set_boot_next_usb, factory_reset) or that a one-shot request_token returns. Outcomes: "pending" (no operator decision yet), "approved-executed" (approved AND the action ran), "approved-failed" (approved but the action threw — see `error`; it stays in the queue and can be retried), "rejected" (declined, nothing ran), "rejected-failed" (declined but the on-reject cleanup threw), or "not-found". This is a SEPARATE id space from file_access_request (use get_access_request_status) and from request_token (use poll_token_request).',
+    {
+      approval_id: z.string().min(1).describe('The `approvalId` from a pending_approval tool result or from a one-shot request_token.'),
+    },
+    async ({ approval_id }) => {
+      const request = await getApproval(approval_id);
+      if (!request) return textResult({ approvalId: approval_id, status: 'not-found' as const });
+      // Report only non-secret metadata. The stored `payload` carries the
+      // proposed tool's raw args, which are never echoed back here — the caller
+      // supplied them and re-serving them is not this tool's job.
+      const proposedTool = request.on_approve?.mcp?.toolName
+        ?? (typeof request.payload?.toolName === 'string' ? request.payload.toolName : undefined);
+      return textResult({
+        approvalId: request.id,
+        status: approvalOutcome(request),
+        title: request.title,
+        service: request.service,
+        createdAt: request.created_at,
+        ...(proposedTool ? { toolName: proposedTool } : {}),
+        ...(request.on_approve?.mintToken
+          ? { tokenRequestId: request.on_approve.mintToken.tokenRequestId, collectWith: 'poll_token_request' }
+          : {}),
+        ...(request.resolved_at ? { resolvedAt: request.resolved_at } : {}),
+        ...(request.execution?.outcome === 'failed'
+          ? { error: request.execution.error, failedAt: request.execution.at, stillPending: true }
+          : {}),
       });
     },
   );
@@ -186,7 +243,7 @@ export function registerRequestTools({ server, caller }: ToolRegistration) {
           status: view.status,
           ...(view.approvalId ? { approvalId: view.approvalId } : {}),
           message: one_shot_op
-            ? `One-shot ${scopes[0]} token request filed as approval ${view.approvalId}. The owner must approve it (Settings → Access → Approvals); it cannot self-approve. Poll with poll_token_request(id="${view.id}") — on approval you collect a single-use token authorizing "${one_shot_op.tool_name}" once.`
+            ? `One-shot ${scopes[0]} token request filed as approval ${view.approvalId}. The owner must approve it (Settings → Access → Approvals); it cannot self-approve. Poll the APPROVAL's outcome with ${APPROVAL_STATUS_TOOL}(approval_id="${view.approvalId}") — pending, approved-executed, approved-failed or rejected — and collect the minted token with poll_token_request(id="${view.id}") once it reads approved-executed. The approvalId is not an access-request id; get_access_request_status does not serve it.`
             : `Token request filed. A ServiceBay admin must approve it (Settings → MCP). Poll with poll_token_request(id="${view.id}").`,
         });
       } catch (e) {

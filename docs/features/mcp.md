@@ -12,7 +12,7 @@ surface is and why it's safe*.
 ## 62 scoped MCP tools
 
 **What it does.** The tool registry in
-`packages/backend/src/lib/mcp/tools/` exposes **62 tools** covering the same
+`packages/backend/src/lib/mcp/tools/` exposes **63 tools** covering the same
 Digital-Twin / `ServiceManager` / `HealthStore` paths the UI uses — no parallel
 mutation surface. Highlights beyond the read/lifecycle basics:
 
@@ -85,6 +85,15 @@ the MCP tools `request_token`, `poll_token_request`, `list_requests(type="token"
 3. Only on approval is a real `sb_` token minted; the caller fetches it **exactly
    once** via `poll_token_request`. The secret is held transiently in memory for
    that single poll — never persisted.
+
+A **one-shot** request (`one_shot_op`) parks as an operator-approval card
+instead, and so does every `destroy`-tier tool a token caller proposes. Both
+hand back an `approvalId`, which `get_approval_status` resolves to `pending`,
+`approved-executed`, `approved-failed`, `rejected` or `rejected-failed` (#2653)
+— so a caller can tell "the operator approved it and it ran" from "the operator
+approved it and it failed" without inferring either from the end state. That id
+belongs to `lib/approvals`, not to the access-request or token-request lists:
+`get_access_request_status` and `list_requests` will not resolve it.
 
 There's also a **bootstrap token** (created during onboarding, ~30-minute expiry,
 LAN-only) that is re-activatable from Settings for the onboarding agent — see

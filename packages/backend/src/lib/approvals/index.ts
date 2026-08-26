@@ -144,6 +144,60 @@ export interface ApprovalAction {
 
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
+/**
+ * Outcome of the most recent attempt to run a request's declared action
+ * (#2653). Without this the store could not tell "nobody has decided yet"
+ * apart from "an operator approved it and the action threw": `resolve` runs
+ * the side effect BEFORE flipping the status, so a failed action left the
+ * record untouched at `pending` and a polling agent waited forever on a
+ * decision that had already been made. Recording the attempt makes an
+ * approval's outcome knowable instead of guessable.
+ */
+export interface ApprovalExecution {
+  /** Which resolution was attempted. */
+  intent: 'approve' | 'reject';
+  /** `ok` — the declared action ran; `failed` — it threw and nothing changed. */
+  outcome: 'ok' | 'failed';
+  /** ISO timestamp of the attempt. */
+  at: string;
+  /** Failure detail, only on `outcome: 'failed'`. Clipped to stay bounded. */
+  error?: string;
+}
+
+/**
+ * The outcome a *caller* polls for (#2653) — derived from
+ * {@link approvalOutcome}, never stored. Distinguishing `approved-executed`
+ * from `approved-failed` is the point: collapsing them into "approved" would
+ * rebuild the blind spot this type exists to close.
+ */
+export type ApprovalOutcome =
+  | 'pending'
+  | 'approved-executed'
+  | 'approved-failed'
+  | 'rejected'
+  | 'rejected-failed';
+
+/** Max chars of a failure message kept on the record (the store is a log-free JSON file). */
+const MAX_EXECUTION_ERROR_CHARS = 500;
+
+/**
+ * Resolve a stored request to the outcome a polling caller cares about.
+ *
+ * A failed attempt leaves `status: 'pending'` on purpose — the request stays in
+ * the operator's queue and can be retried — so the *attempt record* is what
+ * separates "still awaiting a decision" from "decided, and the action failed".
+ * Records written before #2653 carry no `execution`, so they degrade to the
+ * plain pending/approved/rejected reading.
+ */
+export function approvalOutcome(request: ApprovalRequest): ApprovalOutcome {
+  if (request.status === 'approved') return 'approved-executed';
+  if (request.status === 'rejected') return 'rejected';
+  if (request.execution?.outcome === 'failed') {
+    return request.execution.intent === 'approve' ? 'approved-failed' : 'rejected-failed';
+  }
+  return 'pending';
+}
+
 export interface ApprovalRequest {
   id: string;
   /** Name of the service that submitted the request (informational). */
@@ -160,6 +214,10 @@ export interface ApprovalRequest {
   node: string;
   created_at: string;
   status: ApprovalStatus;
+  /** ISO timestamp of the approve/reject that resolved it. Unset while pending. */
+  resolved_at?: string;
+  /** Most recent approve/reject attempt and whether its action ran (#2653). */
+  execution?: ApprovalExecution;
 }
 
 /**
@@ -474,6 +532,44 @@ async function runAction(action: ApprovalAction, node: string, service: string):
   return {};
 }
 
+/**
+ * Stamp a FAILED approve/reject attempt onto `request` and persist the store
+ * (#2653).
+ *
+ * The declared action threw, so the status is NOT flipped and the request stays
+ * in the operator's queue to be retried. Without this stamp the record is
+ * byte-identical to "no decision yet", and a caller polling the approval id
+ * reads `pending` forever even though the operator already acted and the action
+ * failed — the blind spot #2651 reported. Persisting is best-effort: it must
+ * never mask the real error the operator needs to see, so a write failure is
+ * logged and swallowed and the caller still gets the original throw.
+ *
+ * Called with the store lock held and `request` aliased into `all`, so the
+ * mutation lands in the same snapshot the caller read.
+ */
+async function recordFailedAttempt(
+  request: ApprovalRequest,
+  intent: ApprovalExecution['intent'],
+  all: ApprovalRequest[],
+  detail: string,
+): Promise<void> {
+  request.execution = {
+    intent,
+    outcome: 'failed',
+    at: new Date().toISOString(),
+    error: detail.slice(0, MAX_EXECUTION_ERROR_CHARS),
+  };
+  try {
+    await writeStore(all);
+  } catch (persistErr) {
+    logger.error(
+      TAG,
+      `approval ${request.id} action failed AND recording the failed attempt failed: ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
+    );
+  }
+  logger.warn(TAG, `approval ${request.id} ${intent} action failed: ${detail}`);
+}
+
 async function resolve(id: string, status: 'approved' | 'rejected', action: ApprovalAction): Promise<{ request: ApprovalRequest; restarted?: boolean; restartError?: string }> {
   // The whole read → run side effect → persist sequence runs under the store
   // lock so a concurrent approve/reject/submit can't read a stale snapshot and
@@ -489,7 +585,21 @@ async function resolve(id: string, status: 'approved' | 'rejected', action: Appr
     if (request.status !== 'pending') {
       throw new Error(`Approval request ${id} is already ${request.status}`);
     }
-    const result = await runAction(action, request.node, request.service);
+    const intent: ApprovalExecution['intent'] = status === 'approved' ? 'approve' : 'reject';
+    let result: { restarted?: boolean; restartError?: string };
+    try {
+      result = await runAction(action, request.node, request.service);
+    } catch (actionErr) {
+      // Record the decision-that-failed before re-throwing (#2653) — see
+      // recordFailedAttempt for why a bare re-throw is the blind spot.
+      await recordFailedAttempt(
+        request,
+        intent,
+        all,
+        actionErr instanceof Error ? actionErr.message : String(actionErr),
+      );
+      throw actionErr;
+    }
     // The side effect has now run (a destructive MCP tool may already have
     // deleted a service). Flip the status and persist. If persistence itself
     // fails HERE — after the side effect — we must NOT re-throw the raw error:
@@ -498,6 +608,10 @@ async function resolve(id: string, status: 'approved' | 'rejected', action: Appr
     // tells the operator the action ran but its record could not be saved, so
     // the UI leaves the spinner and shows an honest message.
     request.status = status;
+    request.resolved_at = new Date().toISOString();
+    // Stamp the successful attempt in the SAME write as the status flip, so
+    // the record can never say "approved" without saying the action ran.
+    request.execution = { intent, outcome: 'ok', at: request.resolved_at };
     try {
       await writeStore(all);
     } catch (persistErr) {

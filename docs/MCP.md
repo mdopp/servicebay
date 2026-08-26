@@ -187,7 +187,7 @@ Claude Code) to see the live tool registry on your version.
 | Templates | `list_templates`, `get_template_artifact` (`artifact: readme\|yaml\|variables`), `install_template` |
 | Health | `get_health_checks`, `create_health_check`, `delete_health_check`, `run_check_now` |
 | Proxy | `get_proxy_routes`, `add_proxy_route`, `create_proxy_route`, `remove_proxy_route` |
-| Requests | `list_requests` (`type: access\|token`), `file_access_request`, `get_access_request_status`, `request_token`, `poll_token_request` |
+| Requests | `list_requests` (`type: access\|token`), `file_access_request`, `get_access_request_status`, `request_token`, `poll_token_request`, `get_approval_status` |
 | Backups | `list_backups`, `run_backup`, `restore_backup` |
 | System | `list_nodes`, `get_system_info`, `get_network_graph`, `get_config`, `update_config`, `exec_command`, `get_channel`, `set_channel` |
 | Knowledge | `list_assists`, `get_assist`, `get_service_standards` (`flavor: servicebay\|generic`), `propose_learning` (`propose` scope), `list_learning_proposals` / `get_learning_proposal` / `list_assist_drift` (`read`, admin review) |
@@ -221,6 +221,41 @@ entry together, so there's no config↔NPM drift. That's the end-to-end way to
 clean up a dangling route (one whose forward target has no backing service)
 over MCP without the admin UI or `exec_command` — confirm it's genuinely dangling
 via `get_proxy_routes` / `diagnose` first, since the live deletion is permanent.
+
+### A destroy-tier call parks — and its outcome is pollable
+
+A **token** caller may *propose* a `destroy`-tier tool but never execute it. The
+generic gate in `mcp/server.ts` parks the call as a durable request in the
+operator-approval queue (`lib/approvals`, a JSON file under `DATA_DIR`) and
+returns `{status: "pending_approval", approvalId, pollWith}` instead of a
+result. That applies to **every** tool at the tier — the gate reads
+`TOOL_SCOPES` via `isDestroyTierTool`, so a tool promoted to `destroy` is gated
+automatically, with no second list to keep in step. One-shot `request_token`
+parks in the same queue.
+
+Poll that `approvalId` with **`get_approval_status`** (`read` scope). It reports:
+
+| Outcome | Means |
+|---|---|
+| `pending` | No operator decision yet. |
+| `approved-executed` | Approved **and** the action ran. |
+| `approved-failed` | Approved, but the action threw (`error` says why). The request stays in the queue and can be retried. |
+| `rejected` | Declined; nothing ran. |
+| `rejected-failed` | Declined, but the on-reject cleanup threw. |
+| `not-found` | No such approval. |
+
+`approved-executed` and `approved-failed` are deliberately distinct (#2653):
+collapsing them into "approved" is what left a caller unable to tell a completed
+destructive action from one that was authorised and then failed — it had to be
+inferred from the observable end state (#2651).
+
+**Three id spaces, three poll verbs — an id from one never resolves in another:**
+
+| Store | Id from | Poll with |
+|---|---|---|
+| `config.accessRequests` | `file_access_request` | `get_access_request_status` |
+| `auth/tokenRequests` | `request_token` | `poll_token_request` |
+| `lib/approvals` | a destroy-tier `pending_approval`, or one-shot `request_token`'s `approvalId` | `get_approval_status` |
 
 Sensitive config fields are redacted from `get_config` by key name at any depth
 (#2404) — passwords, secrets, tokens, keys, hashes and credentials alike, so
