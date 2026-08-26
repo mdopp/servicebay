@@ -67,12 +67,12 @@ describe('MCP tool registry completeness (#2384)', () => {
     expect(unscoped, 'registered tools with no TOOL_SCOPES entry').toEqual([]);
   });
 
-  it('exposes exactly the 62 tools the pre-split server did', async () => {
+  it('exposes exactly the 63 tools the surface declares', async () => {
     // Hard count, deliberately: the split was a pure mechanical extraction, so
     // the surface must not shrink OR grow by accident. Bump this number in the
     // same commit that adds or removes a tool.
     const names = await registeredToolNames();
-    expect(names).toHaveLength(62);
+    expect(names).toHaveLength(63);
     expect(new Set(names).size, 'duplicate tool registration').toBe(names.length);
   });
 });

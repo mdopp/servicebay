@@ -26,6 +26,8 @@
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { auditHealthCheckIdLifecycle } from './invariants/healthCheckIdLifecycle';
+
 const REPO_ROOT = path.resolve(__dirname, '..');
 const SRC = path.join(REPO_ROOT, 'packages', 'frontend', 'src');
 const BACKEND_SRC = path.join(REPO_ROOT, 'packages', 'backend', 'src');
@@ -1065,6 +1067,82 @@ async function checkMcpAuditRedaction() {
 }
 
 // ---------------------------------------------------------------------------
+// 8c. An approvalId handed to an agent must name a poll verb that exists.
+//
+// #2653/#2651: every `destroy`-tier tool and one-shot `request_token` return an
+// `approvalId` and then said nothing about what happened to it. The fix is one
+// read tool (`APPROVAL_STATUS_TOOL` in `lib/mcp/toolPolicy.ts`) referenced from
+// the TWO places that mint such an id — the destroy-tier gate in `server.ts`
+// and `request_token`'s one-shot branch. Three ways that regresses silently:
+//
+//   1. the constant names a tool nobody registers (rename, or a dropped
+//      TOOL_SCOPES entry) → agents poll a tool that 404s;
+//   2. a message re-spells the verb as a bare literal → the next rename fixes
+//      the constant and leaves the message pointing at the old name;
+//   3. `isDestroyTierTool` stops deriving from `TOOL_SCOPES` and grows its own
+//      list of tool names → a NEW destroy tool skips the gate entirely, the
+//      exact "two lists that can disagree" shape #2623 closed for scopes.
+//
+// All three are structural, so they are pinned here rather than left to prose.
+// ---------------------------------------------------------------------------
+const MCP_TOOL_POLICY_TS = path.join(BACKEND_SRC, 'lib/mcp/toolPolicy.ts');
+const MCP_SERVER_TS = path.join(BACKEND_SRC, 'lib/mcp/server.ts');
+const MCP_REQUEST_TOOLS_TS = path.join(BACKEND_SRC, 'lib/mcp/tools/requestTools.ts');
+
+async function checkMcpApprovalPollability() {
+    const check = 'mcp-approval-pollability';
+    const [policy, server, requestTools] = await Promise.all(
+        [MCP_TOOL_POLICY_TS, MCP_SERVER_TS, MCP_REQUEST_TOOLS_TS]
+            .map(f => readFile(f, 'utf-8').catch(() => '')),
+    );
+    const declared = policy.match(/export const APPROVAL_STATUS_TOOL = '([^']+)'/)?.[1];
+    if (!declared) {
+        violations.push({
+            check,
+            detail: 'lib/mcp/toolPolicy.ts does not export `APPROVAL_STATUS_TOOL = \'<tool>\'` (or the file is unreadable). It is the single source for the verb that resolves an `approvalId`; without it every pending_approval message spells the name itself and drifts (#2653).',
+        });
+        return;
+    }
+    // The `pending_approval` result object, one-shot request_token's message,
+    // and the scope table — the three regions the rules below read.
+    const gate = server.split("status: 'pending_approval'")[1]?.split('};')[0] ?? '';
+    const oneShot = requestTools.split('One-shot ${scopes[0]} token request filed as approval')[1]?.split('\n')[0] ?? '';
+    const scopes = policy.split('export const TOOL_SCOPES')[1]?.split('\n};')[0] ?? '';
+    // Several entries share a line, so count off the block, not per line.
+    const destroyCount = [...scopes.matchAll(/(\w+)\s*:\s*'destroy'/g)].length;
+
+    const rules: [ok: boolean, detail: string][] = [
+        [new RegExp(`^\\s*${declared}\\s*:\\s*'`, 'm').test(policy),
+            `\`APPROVAL_STATUS_TOOL\` names "${declared}", which has no entry in \`TOOL_SCOPES\`. An agent holding an approvalId would be sent to a tool that is never registered (#2653).`],
+        [gate.includes('APPROVAL_STATUS_TOOL'),
+            'The `pending_approval` result in lib/mcp/server.ts no longer interpolates `APPROVAL_STATUS_TOOL`. A destroy-tier caller gets an approvalId with no way to learn whether the approved action ran — the #2651 blind spot (#2653).'],
+        [!new RegExp(`'[^']*\\b${declared}\\b[^']*'`).test(gate),
+            `lib/mcp/server.ts hardcodes the literal "${declared}" in the pending_approval result. Use \`APPROVAL_STATUS_TOOL\` so a rename cannot leave the message naming a tool that no longer exists (#2653).`],
+        [oneShot.includes('APPROVAL_STATUS_TOOL'),
+            'One-shot `request_token`\'s message in lib/mcp/tools/requestTools.ts no longer interpolates `APPROVAL_STATUS_TOOL`. It hands back the same kind of approvalId as the destroy-tier gate and must name the same poll verb (#2653).'],
+        [/TOOL_SCOPES\[toolName\] === 'destroy'/.test(policy),
+            '`isDestroyTierTool` no longer derives the tier from `TOOL_SCOPES[toolName] === \'destroy\'`. A hand-maintained list of destroy-tier tool names is how a new destroy tool silently skips the approval gate (#2623/#2653).'],
+        [destroyCount > 0,
+            '`TOOL_SCOPES` declares no `destroy`-tier tool. Either the tier was dropped (the approval gate now gates nothing) or the table moved and this guard is reading the wrong text (#2653).'],
+    ];
+    for (const [ok, detail] of rules) {
+        if (!ok) violations.push({ check, detail });
+    }
+    measurements.push(
+        `mcp approval pollability: ${destroyCount} destroy-tier tool(s) + one-shot request_token all point at \`${declared}\` via APPROVAL_STATUS_TOOL`,
+    );
+}
+
+// 8d. A health-check id the READ tool lists is one the WRITE tools accept.
+// The rules live in their own module (this file is at its max-lines budget);
+// see scripts/invariants/healthCheckIdLifecycle.ts for the why.
+async function checkHealthCheckIdLifecycle() {
+    const found = await auditHealthCheckIdLifecycle({ frontendSrc: SRC, backendSrc: BACKEND_SRC });
+    violations.push(...found.violations);
+    measurements.push(...found.measurements);
+}
+
+// ---------------------------------------------------------------------------
 // 9. docs/ARCHITECTURE_INVARIANTS.md's numbers are generated, not typed.
 //
 // #2427: the doc carried a hand-maintained measurement table ("largest backend
@@ -1165,6 +1243,8 @@ async function main() {
         checkAgentLogRedaction(),
         checkCredentialHttpEgress(),
         checkMcpAuditRedaction(),
+        checkMcpApprovalPollability(),
+        checkHealthCheckIdLifecycle(),
         syncOrCheckThresholdDoc(),
     ]);
 

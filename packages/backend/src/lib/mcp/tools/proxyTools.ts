@@ -12,6 +12,12 @@ import { getStoreSnapshot } from '@/lib/store/repository';
 import { getConfig, updateConfig, type ProxyHostEntry } from '@/lib/config';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { AUTHELIA_FORWARD_AUTH_SENTINEL } from '@/lib/stackInstall/forwardAuth';
+// #2654 — a route mutation reconciles the auto-managed `domain:<host>` checks
+// immediately instead of leaving them to the 60s timer, so `get_health_checks`
+// reflects the change the caller just made. `create_proxy_route` needs no call
+// here: it goes through POST /api/system/nginx/proxy-hosts, which already
+// reconciles (and DELETE now does too, for the live-removal branch below).
+import { syncDomainChecks } from '@/lib/health/domainChecks';
 import { nodeParam, textResult, errorResult, type ToolRegistration } from './context';
 
 /**
@@ -79,6 +85,9 @@ export function registerProxyTools({ server }: ToolRegistration) {
       if (idx >= 0) hosts[idx] = entry;
       else hosts.push(entry);
       await updateConfig({ reverseProxy: { ...config.reverseProxy, hosts } });
+      // The config host list is one of syncDomainChecks' two inputs, so the
+      // new/updated entry gets its `domain:` check now rather than on the tick.
+      await syncDomainChecks();
       return textResult({
         action: idx >= 0 ? 'updated' : 'added',
         entry,
@@ -197,6 +206,11 @@ export function registerProxyTools({ server }: ToolRegistration) {
           return errorResult(`No proxy route found for domain "${domain}"`);
         }
         await updateConfig({ reverseProxy: { ...config.reverseProxy, hosts: filtered } });
+        // Config-only removal: the LIVE NPM host still exists, so the domain
+        // check legitimately stays — but it must now be rebuilt from the route
+        // instead of the (deleted) config entry, which is a different scheme /
+        // upstream port. No `removedDomains`: nothing was actually removed.
+        await syncDomainChecks();
         return textResult({ action: 'removed', domain, npmHostRemoved: false });
       }
       // Live removal: reuse the shared DELETE endpoint (deletes the NPM host
@@ -215,6 +229,9 @@ export function registerProxyTools({ server }: ToolRegistration) {
           if (filtered.length !== hosts.length) {
             await updateConfig({ reverseProxy: { ...config.reverseProxy, hosts: filtered } });
           }
+          // NPM has no such host and config no longer claims it — the DELETE
+          // handler bailed before its own reconcile, so retire the check here.
+          await syncDomainChecks({ removedDomains: [domain] });
           return textResult({ action: 'removed', domain, npmHostRemoved: false, note: 'No live NPM host found for this domain; config entry cleared if present.' });
         }
         if (!res.ok) {

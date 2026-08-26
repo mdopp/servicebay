@@ -17,7 +17,11 @@ import { randomUUID } from 'crypto';
 // enum below, so this tool can no longer store one.
 import { HealthCheckTarget, NodeName } from '@/lib/api/schemas';
 import { HealthStore } from '@/lib/health/store';
-import { getDiagnoseChecksEnriched } from '@/lib/diagnose/diagnoseChecks';
+import { getDiagnoseChecksEnriched, runDiagnoseChecks } from '@/lib/diagnose/diagnoseChecks';
+// #2654/#2655 — the write verbs resolve an id through the SAME readers
+// `get_health_checks` merges, so a listed id is never rejected and an unlisted
+// one is rejected identically by every verb. See lib/health/checkLookup.ts.
+import { resolveCheckId, checkNotFoundMessage } from '@/lib/health/checkLookup';
 import { CheckRunner } from '@/lib/health/runner';
 import type { CheckConfig, CheckType } from '@/lib/health/types';
 import { textResult, errorResult, type ToolRegistration } from './context';
@@ -91,26 +95,57 @@ export function registerHealthTools({ server }: ToolRegistration) {
 
   server.tool(
     'delete_health_check',
-    'Delete a health check by id (use get_health_checks to find ids).',
+    'Delete a health check by id (use get_health_checks to find ids). A synthetic `diagnose:<probeId>` row is not a stored check, so deleting one is a documented no-op (`deleted: false`) rather than an error — it is a projection of the probe\'s persisted results; use run_check_now to refresh it.',
     { id: z.string().min(1).describe('Check id') },
     async ({ id }) => {
-      const before = HealthStore.getChecks().length;
+      const resolved = resolveCheckId(id);
+      if (resolved.kind === 'unknown') return errorResult(checkNotFoundMessage(id));
+      if (resolved.kind === 'diagnose') {
+        // #2655: get_health_checks lists this row, so answering "no such check"
+        // contradicts the tool the caller just read. It is equally wrong to
+        // answer `{deleted: id}` — nothing was deleted and the row reappears on
+        // the next read (HealthStore.deleteCheck's own docstring warns about
+        // exactly that fake success). So: succeed, and say what happened.
+        return textResult({
+          id,
+          deleted: false,
+          kind: 'diagnose',
+          probeId: resolved.probeId,
+          note: 'Diagnose rows are projected from persisted probe results, not stored in checks.json, '
+            + 'so there is nothing to delete. Re-run the probe with run_check_now to refresh the finding; '
+            + 'the row ages out on its own once results stop being written.',
+        });
+      }
       HealthStore.deleteCheck(id);
-      const after = HealthStore.getChecks().length;
-      if (before === after) return errorResult(`No check with id "${id}" found`);
       return textResult({ deleted: id });
     },
   );
 
   server.tool(
     'run_check_now',
-    'Run a health check immediately and persist the result. Returns the result.',
+    'Run a health check immediately and persist the result. Returns the FRESH result. Accepts any id get_health_checks lists, including the synthetic `diagnose:<probeId>` rows — those re-execute the diagnose suite as a manual re-run (the same path as the dashboard\'s per-row Run button) and return that probe\'s newly persisted result, so a fixed finding clears without waiting for the daily tick.',
     { id: z.string().min(1).describe('Check id') },
     async ({ id }) => {
-      const check = HealthStore.getChecks().find(c => c.id === id);
-      if (!check) return errorResult(`No check with id "${id}" found`);
+      const resolved = resolveCheckId(id);
+      if (resolved.kind === 'unknown') return errorResult(checkNotFoundMessage(id));
       try {
-        const result = await CheckRunner.run(check);
+        if (resolved.kind === 'diagnose') {
+          // #2655/#1709: `manual: true` is what makes reader probes over
+          // expensive checks actually re-verify instead of re-displaying the
+          // stored report — without it this returns a "fresh" result that is
+          // the stale finding again. runDiagnose side-writes each probe result
+          // (#1540), so the row is already persisted when we read it back.
+          const results = await runDiagnoseChecks('Local', { manual: true });
+          const fresh = results.find(r => r.check_id === id);
+          if (!fresh) {
+            return errorResult(
+              `Diagnose probe "${resolved.probeId}" did not report a result on this run — `
+              + 'it may no longer be registered. Call get_health_checks again for the current rows.',
+            );
+          }
+          return textResult(fresh);
+        }
+        const result = await CheckRunner.run(resolved.check);
         HealthStore.saveResult(result);
         return textResult(result);
       } catch (err) {

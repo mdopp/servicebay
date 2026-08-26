@@ -74,6 +74,11 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   get_unmanaged_bundles: 'read',
   get_channel: 'read',
   get_access_request_status: 'read',
+  // Polls the operator-approval queue (lib/approvals) by approvalId — the id a
+  // destroy-tier tool's pending_approval result or a one-shot request_token
+  // hands back (#2653). `read`, like the other status polls: it only reports a
+  // decision, it never makes one.
+  get_approval_status: 'read',
   // #2326 s3: admin reads of the learning-proposal review queue. `read`-scoped
   // (like list_requests / get_access_request_status) — these only SURFACE
   // pending proposals to an admin for review; approving/rejecting is an
@@ -258,3 +263,18 @@ export function destructiveCallLabel(
 export function isDestroyTierTool(toolName: string): boolean {
   return TOOL_SCOPES[toolName] === 'destroy';
 }
+
+/**
+ * The ONE read tool that resolves an `approvalId` from the operator-approval
+ * queue (`lib/approvals`) to an outcome (#2653).
+ *
+ * It lives here as a named constant, next to the tier table, because two
+ * places hand an `approvalId` to an agent — the destroy-tier gate in
+ * `server.ts` and one-shot `request_token` in `tools/requestTools.ts` — and
+ * both must name the SAME verb. Spelling it as a literal in each message is
+ * how a rename leaves an agent polling a tool that no longer exists; the same
+ * "two lists that can disagree" shape #2623 closed for the scope ladder.
+ * `scripts/check-invariants.ts` pins that this constant is a real tool and
+ * that neither message hardcodes the name.
+ */
+export const APPROVAL_STATUS_TOOL = 'get_approval_status';

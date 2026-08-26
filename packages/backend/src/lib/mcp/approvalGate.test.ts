@@ -45,6 +45,7 @@ vi.mock('@/lib/nodes', () => ({
 }));
 
 import { createMcpServer } from './server';
+import { TOOL_SCOPES, APPROVAL_STATUS_TOOL } from './toolPolicy';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -117,6 +118,64 @@ describe('MCP destructive approval gate (#1766, #2234)', () => {
     const res = await client.callTool({ name: 'list_trashed_services', arguments: {} });
     expect((res as { isError?: boolean }).isError).toBeFalsy();
     expect(submitApproval).not.toHaveBeenCalled();
+    await client.close();
+  });
+});
+
+// #2653 (from #2651): the gap was never one tool's. EVERY destroy-tier tool
+// hands back an `approvalId` from the same generic wrapper, and before this all
+// of them said nothing about how to learn the outcome. The tool list is DERIVED
+// from `TOOL_SCOPES` — the same single source `isDestroyTierTool` reads — so a
+// tool promoted to the destroy tier tomorrow is covered without anyone
+// remembering to extend a list here (the #2623 "two lists that can disagree"
+// failure). The only per-tool thing this file states is a minimal ARGS fixture
+// that satisfies each schema; a new destroy tool with no fixture fails loudly
+// rather than being silently skipped.
+const DESTROY_TIER_ARGS: Record<string, Record<string, unknown>> = {
+  delete_service: { name: 'media' },
+  delete_health_check: { id: 'chk-1' },
+  remove_proxy_route: { domain: 'dangling.example.com' },
+  restore_backup: { fileName: 'servicebay-2026-08-26.tar.gz' },
+  purge_trashed_service: { id: 'trash-1' },
+  set_boot_next_usb: { action: 'list' },
+  factory_reset: { node: 'box1', confirm: 'box1' },
+};
+
+describe('every destroy-tier tool tells the caller how to poll the outcome (#2653)', () => {
+  const destroyTier = Object.entries(TOOL_SCOPES)
+    .filter(([, scope]) => scope === 'destroy')
+    .map(([name]) => name)
+    .sort();
+
+  it('the derived destroy tier is non-empty and every member has an args fixture', () => {
+    expect(destroyTier.length).toBeGreaterThan(0);
+    const uncovered = destroyTier.filter(name => !(name in DESTROY_TIER_ARGS));
+    expect(uncovered, 'destroy-tier tools with no args fixture in this test').toEqual([]);
+  });
+
+  it('the poll verb is a registered tool, not a name invented in a message', () => {
+    expect(TOOL_SCOPES[APPROVAL_STATUS_TOOL]).toBeDefined();
+  });
+
+  it.each(destroyTier)('%s parks and names the poll verb + the four outcomes', async (toolName) => {
+    submitApproval.mockClear();
+    const { client } = await connect({ auth: { ...TOKEN_AUTH, scopes: [...TOKEN_AUTH.scopes] } });
+    const res = await client.callTool({ name: toolName, arguments: DESTROY_TIER_ARGS[toolName] });
+    const parsed = JSON.parse((res.content as { text: string }[])[0].text);
+
+    expect(parsed.status).toBe('pending_approval');
+    expect(parsed.approvalId).toBe('appr-1');
+    // Machine-readable: a client routes on this without parsing English.
+    expect(parsed.pollWith).toBe(APPROVAL_STATUS_TOOL);
+    // ...and the prose names it too, with the id filled in.
+    expect(parsed.message).toContain(`${APPROVAL_STATUS_TOOL}(approval_id="appr-1")`);
+    // approved-executed vs approved-failed must stay distinguishable — that is
+    // the outcome #2651 could not see, and collapsing them rebuilds the gap.
+    for (const outcome of ['pending', 'approved-executed', 'approved-failed', 'rejected']) {
+      expect(parsed.message).toContain(outcome);
+    }
+    // The message must not send the caller at the wrong id space.
+    expect(parsed.message).toMatch(/get_access_request_status does not serve it/);
     await client.close();
   });
 });

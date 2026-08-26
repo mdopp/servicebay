@@ -88,6 +88,64 @@ describe('syncDomainChecks (#1416)', () => {
     expect(deleted).toContain('domain:gone.dopp.cloud');
   });
 
+  // #2654 — the route table is an agent-poll snapshot, so a reconcile fired
+  // straight from a live-host deletion still sees the host. Without
+  // `removedDomains` the sync REBUILDS the check it was called to retire, and
+  // the domain row survives for up to 60s — the window in which
+  // `get_health_checks` listed a `domain:` id `delete_health_check` rejected.
+  describe('removedDomains — the caller outranks the stale route snapshot (#2654)', () => {
+    it('retires the check even while the polled route table still lists the host', async () => {
+      mockGetChecks.mockReturnValue([
+        { id: 'domain:gone.dopp.cloud', type: 'domain', target: 'gone.dopp.cloud', interval: 60, enabled: true, created_at: 't', nodeName: 'Local', domainConfig: { expectedScheme: 'https', isPublic: true, upstreamPort: 1 } },
+      ]);
+      mockGetProxyState.mockReturnValue({ routes: [
+        route('gone.dopp.cloud', 1, true),
+        route('admin.dopp.cloud', 5888, true),
+      ]});
+
+      await syncDomainChecks({ removedDomains: ['gone.dopp.cloud'] });
+
+      expect(deleted).toContain('domain:gone.dopp.cloud');
+      // …and it is NOT re-saved from the stale route in the same pass.
+      expect(saved.map(c => c.id)).not.toContain('domain:gone.dopp.cloud');
+    });
+
+    it('retires it even when the route snapshot is empty (orphan pass is skipped there)', async () => {
+      mockGetChecks.mockReturnValue([
+        { id: 'domain:gone.dopp.cloud', type: 'domain', target: 'gone.dopp.cloud', interval: 60, enabled: true, domainConfig: {} },
+      ]);
+      mockGetProxyState.mockReturnValue({ routes: [] });
+
+      await syncDomainChecks({ removedDomains: ['gone.dopp.cloud'] });
+
+      expect(deleted).toEqual(['domain:gone.dopp.cloud']);
+    });
+
+    it('leaves a stale config entry for the removed domain from resurrecting it', async () => {
+      mockGetConfig.mockResolvedValue({ reverseProxy: { hosts: [
+        { domain: 'gone.dopp.cloud', forwardPort: 1, exposure: 'public' },
+      ]}});
+      mockGetChecks.mockReturnValue([]);
+      mockGetProxyState.mockReturnValue({ routes: [route('admin.dopp.cloud', 5888, true)] });
+
+      await syncDomainChecks({ removedDomains: ['gone.dopp.cloud'] });
+
+      expect(saved.map(c => c.id)).not.toContain('domain:gone.dopp.cloud');
+    });
+
+    it('touches nothing extra when no domain was removed (default call is unchanged)', async () => {
+      mockGetChecks.mockReturnValue([
+        { id: 'domain:admin.dopp.cloud', type: 'domain', target: 'admin.dopp.cloud', interval: 60, enabled: true, created_at: 't', nodeName: 'Local', domainConfig: { expectedScheme: 'https', isPublic: true, upstreamPort: 5888 } },
+      ]);
+      mockGetProxyState.mockReturnValue({ routes: [route('admin.dopp.cloud', 5888, true)] });
+
+      await syncDomainChecks();
+
+      expect(deleted).toEqual([]);
+      expect(saved).toEqual([]);
+    });
+  });
+
   it('does not churn an unchanged existing check', async () => {
     mockGetChecks.mockReturnValue([
       { id: 'domain:admin.dopp.cloud', type: 'domain', target: 'admin.dopp.cloud', interval: 60, enabled: true, created_at: 't', nodeName: 'Local', domainConfig: { expectedScheme: 'https', isPublic: true, upstreamPort: 5888 } },
