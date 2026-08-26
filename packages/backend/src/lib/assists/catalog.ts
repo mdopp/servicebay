@@ -130,6 +130,23 @@ function assistFileName(id: string): string | null {
   return `${segment}.md`;
 }
 
+/**
+ * Raised when the catalog holds entries that DECLARE frontmatter and not one of
+ * them parsed — i.e. the frontmatter parser itself is broken, not the files
+ * (#2650). Callers get a hard error instead of a plausible-looking list of
+ * metadata-less stubs.
+ */
+export class AssistCatalogParseError extends Error {
+  constructor(degraded: number) {
+    super(
+      `Assist catalog frontmatter is unreadable: all ${degraded} entries with a frontmatter block failed to parse. ` +
+      'The YAML parser behind gray-matter is broken in this build (see #2650) — every title/whenToUse/kind/tags would be empty. ' +
+      'Refusing to serve a metadata-less catalog.',
+    );
+    this.name = 'AssistCatalogParseError';
+  }
+}
+
 function coerceKind(value: unknown): AssistKind {
   return (ASSIST_KINDS as readonly string[]).includes(value as string)
     ? (value as AssistKind)
@@ -144,20 +161,65 @@ function coerceTags(value: unknown): string[] {
   return [];
 }
 
-/** Parse a raw assist file into its summary. Returns null on unreadable frontmatter. */
-function parseAssistSummary(raw: string, id: string, source: string): AssistSummary | null {
+/**
+ * True when the file opens with a `---` fence, i.e. it CLAIMS to carry
+ * frontmatter. The distinction matters: a file with no fence legitimately has
+ * no metadata, whereas a fenced file that yields nothing is a parse failure
+ * wearing the same clothes (#2650).
+ */
+function declaresFrontmatter(raw: string): boolean {
+  return /^\uFEFF?---\r?\n/.test(raw);
+}
+
+/** Outcome of parsing one assist file. `degraded` = its frontmatter is unreadable. */
+interface ParsedAssist {
+  summary: AssistSummary | null;
+  degraded: boolean;
+}
+
+/**
+ * Parse a raw assist file into its summary.
+ *
+ * Unreadable frontmatter is LOUD and never served (#2650): before this, a
+ * `matter()` that returned an empty `data` — which is what a broken YAML engine
+ * does, silently, without throwing — was indistinguishable from a file that
+ * simply has no frontmatter, so the catalog happily listed every entry with
+ * `title = id`, `whenToUse: ''`, `kind: 'guide'`, `tags: []` and nobody noticed
+ * for weeks. A fenced file that parses to zero keys is now an ERROR and the
+ * entry is dropped rather than published as a stub.
+ */
+function parseAssistSummary(raw: string, id: string, source: string): ParsedAssist {
+  let data: Record<string, unknown>;
   try {
-    const { data } = matter(raw);
-    const d = data as Record<string, unknown>;
-    const title = typeof d.title === 'string' && d.title.trim() ? d.title.trim() : id;
-    // Accept either camelCase or snake_case for the human-facing hint.
-    const whenRaw = d.whenToUse ?? d.when_to_use ?? '';
-    const whenToUse = typeof whenRaw === 'string' ? whenRaw.trim() : '';
-    return { id, title, whenToUse, kind: coerceKind(d.kind), tags: coerceTags(d.tags), source };
+    // Pass an options object on purpose: it makes gray-matter skip `matter.cache`.
+    // The cache stores the file object BEFORE parsing it, so once a parse throws,
+    // every later read of the same content is served the cached, half-built object
+    // with `data: {}` and NO error — the exact mechanism that turned a hard failure
+    // into a silent one on the box (#2650).
+    const parsed = matter(raw, {});
+    data = (parsed.data ?? {}) as Record<string, unknown>;
   } catch (e) {
-    logger.warn('assists', `Skipping unparseable assist "${id}": ${e instanceof Error ? e.message : String(e)}`);
-    return null;
+    logger.error('assists', `Assist "${id}" has unreadable frontmatter: ${e instanceof Error ? e.message : String(e)}`);
+    return { summary: null, degraded: true };
   }
+
+  if (declaresFrontmatter(raw) && Object.keys(data).length === 0) {
+    logger.error(
+      'assists',
+      `Assist "${id}" declares a frontmatter block that parsed to nothing — the frontmatter parser is broken (#2650). ` +
+      'Dropping the entry instead of serving it without title/whenToUse/kind/tags.',
+    );
+    return { summary: null, degraded: true };
+  }
+
+  const title = typeof data.title === 'string' && data.title.trim() ? data.title.trim() : id;
+  // Accept either camelCase or snake_case for the human-facing hint.
+  const whenRaw = data.whenToUse ?? data.when_to_use ?? '';
+  const whenToUse = typeof whenRaw === 'string' ? whenRaw.trim() : '';
+  return {
+    summary: { id, title, whenToUse, kind: coerceKind(data.kind), tags: coerceTags(data.tags), source },
+    degraded: false,
+  };
 }
 
 async function readDirAssists(dir: string): Promise<string[]> {
@@ -199,6 +261,7 @@ export interface ListAssistsOptions {
  */
 export async function listAssists(opts: ListAssistsOptions = {}): Promise<AssistSummary[]> {
   const byId = new Map<string, AssistSummary>();
+  let degraded = 0;
   for (const { dir, source, prefix } of assistSources()) {
     for (const file of await readDirAssists(dir)) {
       const id = `${prefix}${file.slice(0, -'.md'.length)}`;
@@ -208,10 +271,17 @@ export async function listAssists(opts: ListAssistsOptions = {}): Promise<Assist
       } catch {
         continue;
       }
-      const summary = parseAssistSummary(raw, id, source);
-      if (summary) byId.set(id, summary); // later BARE source wins; namespaced ids never collide
+      const parsed = parseAssistSummary(raw, id, source);
+      if (parsed.degraded) degraded++;
+      // later BARE source wins; namespaced ids never collide
+      if (parsed.summary) byId.set(id, parsed.summary);
     }
   }
+
+  // Systemic failure, not a bad file: entries declared frontmatter and NOT ONE
+  // of them parsed. Serving [] here would read as "the catalog is empty" and be
+  // just as quiet as the stub list it replaced, so this is a hard error (#2650).
+  if (degraded > 0 && byId.size === 0) throw new AssistCatalogParseError(degraded);
 
   let entries = [...byId.values()];
   if (opts.kind) entries = entries.filter(e => e.kind === opts.kind);
@@ -288,7 +358,7 @@ export async function listAssistDrift(): Promise<AssistDriftEntry[]> {
     } catch {
       continue;
     }
-    const summary = parseAssistSummary(raw, id, 'Local');
+    const { summary } = parseAssistSummary(raw, id, 'Local');
     if (!summary) continue;
 
     result.push({
