@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.17.4](https://github.com/mdopp/servicebay/compare/servicebay-v5.17.3...servicebay-v5.17.4) (2026-08-26)
+
+
+### Bug Fixes
+
+* **assists:** stop shipping a server bundle that cannot read frontmatter ([95fcac3](https://github.com/mdopp/servicebay/commit/95fcac339f27ac0f3411266a94e1fd5539506537)), closes [#2650](https://github.com/mdopp/servicebay/issues/2650)
+* **assists:** stop the bundled catalog from silently losing every frontmatter ([0e74bc5](https://github.com/mdopp/servicebay/commit/0e74bc54fa59819fdc77eea181c8281727ee570b))
+* **autoloop:** point the claim ref at a commit the remote actually has ([ee1ce06](https://github.com/mdopp/servicebay/commit/ee1ce068b6007521c8c9d6948adc69f626eda01c))
+* **autoloop:** point the claim ref at origin/main so the create cannot 422 ([b5a5884](https://github.com/mdopp/servicebay/commit/b5a5884739934e89511fdd0d3f27d2c3324b5d33)), closes [#2646](https://github.com/mdopp/servicebay/issues/2646)
+
 ## [5.17.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.17.2...servicebay-v5.17.3) (2026-08-25)
 
 
