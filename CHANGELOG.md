@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.18.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.17.4...servicebay-v5.18.0) (2026-08-26)
+
+
+### Features
+
+* **mcp:** make an approval's outcome pollable, not guessable ([bd7a321](https://github.com/mdopp/servicebay/commit/bd7a32123912229341c74e76240ace1a0f2ebf33)), closes [#2653](https://github.com/mdopp/servicebay/issues/2653)
+
+
+### Bug Fixes
+
+* **health:** make the health-check write verbs accept the ids the read verb lists ([30817eb](https://github.com/mdopp/servicebay/commit/30817eb6eb8cb7a9fae26f9ae573c6feb1bbc2e4)), closes [#2654](https://github.com/mdopp/servicebay/issues/2654) [#2655](https://github.com/mdopp/servicebay/issues/2655)
+* **mcp:** make approval outcomes pollable and the health-check verbs agree on ids ([afabcff](https://github.com/mdopp/servicebay/commit/afabcff3f3332c28c707e4e479641617ec2393d6))
+
 ## [5.17.4](https://github.com/mdopp/servicebay/compare/servicebay-v5.17.3...servicebay-v5.17.4) (2026-08-26)
 
 
