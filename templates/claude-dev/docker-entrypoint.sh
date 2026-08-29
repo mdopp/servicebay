@@ -52,6 +52,49 @@ discover_repos() {
   done
 }
 
+# Narrow the discovered checkouts to the ones that are DEVELOPMENT targets.
+#
+# Deliberately a SEPARATE pass rather than a condition inside discover_repos:
+# `safe.directory` must be registered for every git checkout, including the
+# ones we do not auto-start, or git refuses to run in a root-owned content
+# repo the moment someone `cd`s into it by hand. Only the autostart is
+# filtered.
+#
+# `CLAUDE.md` is the marker. A git checkout is not automatically something to
+# point an unattended agent at — content repos live under /workspace too
+# (`servicebay-templates` is a README and a templates/ tree) and an agent
+# started there has nothing to do. A repo meant to be worked on by Claude Code
+# carries a CLAUDE.md anyway, so this needs no extra bookkeeping file and no
+# per-box configuration.
+select_autostart_repos() {
+  local name now
+  autostart_repos=()
+  skipped_repos=()
+  for name in "$@"; do
+    if [ -e "$DEV_HOME/$name/CLAUDE.md" ]; then
+      autostart_repos+=("$name")
+    else
+      skipped_repos+=("$name")
+    fi
+  done
+
+  # Report the skip set — but only when it CHANGES, because reconcile_repos
+  # re-runs on a 300s timer and an unconditional line would be pure noise.
+  #
+  # Reporting at all is the point: a checkout that silently gets no session
+  # looks exactly like one that is running fine, which is the failure this
+  # change exists to end. A repo skipped here never gets a window at all, so
+  # `remain-on-exit` cannot surface it — only this line can.
+  # `skipped_reported` is deliberately not `local`: it must survive calls.
+  now="${skipped_repos[*]}"
+  if [ "$now" != "${skipped_reported:-}" ]; then
+    skipped_reported="$now"
+    if [ -n "$now" ]; then
+      echo "claude-dev: skipping ${#skipped_repos[@]} checkout(s) with no CLAUDE.md (not a development target): $now"
+    fi
+  fi
+}
+
 # Make git usable for the `dev` user in every discovered checkout.
 #
 # Why this is needed: a checkout that was created AS ROOT (a clone run from a
@@ -120,10 +163,12 @@ register_safe_directories() {
 # started still ends up with a usable session (#2612).
 reconcile_repos() {
   discover_repos
+  # Every checkout, development target or not — see select_autostart_repos.
   register_safe_directories "${repos[@]}" \
     || echo "claude-dev: WARNING — could not register every checkout as a git safe.directory; git may refuse to run in a root-owned one." >&2
-  [ "${#repos[@]}" -gt 0 ] || return 0
-  autostart_claude "${repos[@]}" \
+  select_autostart_repos "${repos[@]}"
+  [ "${#autostart_repos[@]}" -gt 0 ] || return 0
+  autostart_claude "${autostart_repos[@]}" \
     || echo "claude-dev: WARNING — autostart of Claude sessions reported an error." >&2
 }
 
@@ -362,16 +407,19 @@ fi
 # reach `start-claude` as argv, never as shell source (#2418).
 reconcile_repos
 
-if [ "${#repos[@]}" -gt 0 ]; then
-  echo "claude-dev: auto-started Claude in ${#repos[@]} git repo(s): ${repos[*]}"
+if [ "${#autostart_repos[@]}" -gt 0 ]; then
+  echo "claude-dev: auto-started Claude in ${#autostart_repos[@]} git repo(s): ${autostart_repos[*]}"
 else
-  # Fresh volume with no checkouts yet — still start an empty `claude` tmux
-  # session so interactive logins have something to attach to.
+  # No DEVELOPMENT checkouts yet — still start an empty `claude` tmux session
+  # so interactive logins have something to attach to. The condition is
+  # `autostart_repos`, not `repos`: a volume holding only content repos (no
+  # CLAUDE.md) starts nothing, and gating on `repos` would leave those boxes
+  # with no session for the login shell to attach to at all.
   if su_dev 'tmux has-session -t claude' 2>/dev/null; then
     echo "claude-dev: tmux session 'claude' already running."
   else
     su_dev 'cd "$1" && HOME="$1" tmux new-session -d -s claude' "$DEV_HOME"
-    echo "claude-dev: no git repos under $DEV_HOME yet — started empty tmux session 'claude' for user 'dev'."
+    echo "claude-dev: no development checkouts under $DEV_HOME yet — started empty tmux session 'claude' for user 'dev'."
   fi
 fi
 

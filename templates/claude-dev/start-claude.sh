@@ -49,9 +49,25 @@ command -v claude >/dev/null || { echo "start-claude: claude CLI not found" >&2;
 
 # Pre-render the pass-through flags once, safely quoted for the shell command
 # tmux runs.
+#
+# Two renderings, because `--continue` needs a fallback. In a checkout with no
+# persisted conversation `claude --continue` does not start a fresh session —
+# it exits 1. The command IS the tmux window's process, so the window closed
+# instantly and the repo silently ended up with nothing running. Every newly
+# cloned checkout hit this: the boot autostart and the 300s rescan both
+# "started" it, and it was dead before anyone looked.
+#
+# `flagstr_fresh` is the same flag list minus `--continue`, used as a `||`
+# fallback so a first run starts a session instead of dying.
 flagstr=""
+flagstr_fresh=""
+has_continue=0
 for f in "${flags[@]}"; do
   flagstr+="$(printf '%q ' "$f")"
+  case "$f" in
+    --continue|-c) has_continue=1 ;;
+    *)             flagstr_fresh+="$(printf '%q ' "$f")" ;;
+  esac
 done
 
 started=()
@@ -70,6 +86,15 @@ for d in "${dirs[@]}"; do
 
   # Claude with Remote Control on, named after the directory.
   cmd="claude ${flagstr}--remote-control $(printf '%q' "$name")"
+  if [ "$has_continue" -eq 1 ]; then
+    # Resume if there is something to resume, otherwise start fresh. The
+    # trade-off is deliberate: a `--continue` session that dies for some OTHER
+    # reason also gets restarted fresh rather than leaving a dead pane behind.
+    # On an unattended box that self-healing is worth more than the corpse,
+    # and `remain-on-exit failed` still catches the case where BOTH attempts
+    # fail — which is the one that actually needs a human.
+    cmd="$cmd || claude ${flagstr_fresh}--remote-control $(printf '%q' "$name")"
+  fi
 
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     tmux new-session -d -s "$SESSION" -n "$name" -c "$path" "$cmd"
