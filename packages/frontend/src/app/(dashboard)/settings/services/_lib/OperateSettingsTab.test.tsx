@@ -75,3 +75,59 @@ describe('OperateSettingsTab Target Node (#2392)', () => {
     expect(serviceFormProps.mock.calls.at(-1)![0].defaultNode).toBe('nas01');
   });
 });
+
+/**
+ * The embedded ServiceForm uses `initialData.name` to ADDRESS the service, not
+ * merely to label it — `/api/services/<name>/reconfigure-preview` is one such
+ * caller. Seeding it with `displayName` sent the human label down that path and
+ * Re-render answered `No template named "Claude Dev (Claude Code CLI +
+ * toolchain)" found in the registry`. Invisible on every service whose label
+ * equals its id, which is most of them.
+ */
+describe('OperateSettingsTab service identity', () => {
+  const labelled = () => svc({
+    type: 'kube',
+    id: 'claude-dev',
+    name: 'claude-dev.service',
+    displayName: 'Claude Dev (Claude Code CLI + toolchain)',
+  });
+
+  beforeEach(() => {
+    serviceFormProps.mockClear();
+    global.fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ kubeContent: 'k', yamlContent: 'y' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    ) as typeof fetch;
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('seeds the form with the service id, never the display label', async () => {
+    render(<OperateSettingsTab service={labelled()} />);
+    await waitFor(() => expect(serviceFormProps).toHaveBeenCalled());
+    const { initialData } = serviceFormProps.mock.calls.at(-1)![0] as {
+      initialData: { name: string; yamlFileName: string };
+    };
+    expect(initialData.name).toBe('claude-dev');
+    // Spelled out so the old behaviour cannot come back quietly.
+    expect(initialData.name).not.toBe('Claude Dev (Claude Code CLI + toolchain)');
+  });
+
+  it('builds the YAML filename from the id when the service has no basename', async () => {
+    render(<OperateSettingsTab service={labelled()} />);
+    await waitFor(() => expect(serviceFormProps).toHaveBeenCalled());
+    const { initialData } = serviceFormProps.mock.calls.at(-1)![0] as {
+      initialData: { yamlFileName: string };
+    };
+    // A label carries spaces and parentheses; a filename must not inherit them.
+    expect(initialData.yamlFileName).toBe('claude-dev.yml');
+  });
+
+  it('loads the service files by id, not by label', async () => {
+    render(<OperateSettingsTab service={labelled()} />);
+    await waitFor(() => expect(serviceFormProps).toHaveBeenCalled());
+    const url = (global.fetch as unknown as { mock: { calls: string[][] } }).mock.calls[0][0];
+    expect(url).toContain('/api/services/claude-dev');
+  });
+});

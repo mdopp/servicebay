@@ -36,10 +36,21 @@ export default function OperateSettingsTab({ service }: { service: ServiceViewMo
       if (!res.ok) throw new Error('Failed to load service configuration');
       const files = await res.json();
       setInitialData({
-        name: service.displayName,
+        // IDENTITY, not display text. `ServiceForm` uses `name` to ADDRESS the
+        // service — `/api/services/<name>/reconfigure-preview` among others —
+        // so seeding it with `displayName` sent the human label down an API
+        // path that resolves a template id, and Re-render failed with
+        // `No template named "Claude Dev (Claude Code CLI + toolchain)" found
+        // in the registry`. It only surfaced on services whose
+        // `servicebay.label` differs from their id; where the two coincide the
+        // bug was invisible. The `/edit/[name]` route was never affected — it
+        // seeds the same field from the URL segment, which is the id.
+        name: serviceName,
         kubeContent: files.kubeContent || '',
         yamlContent: files.yamlContent || '',
-        yamlFileName: service.yamlBasename || `${service.displayName}.yml`,
+        // Same conflation, second instance: a filename must come from the id,
+        // not from a label that may carry spaces and parentheses.
+        yamlFileName: service.yamlBasename || `${serviceName}.yml`,
         serviceContent: files.serviceContent,
         kubePath: files.kubePath,
         yamlPath: files.yamlPath,
@@ -52,7 +63,7 @@ export default function OperateSettingsTab({ service }: { service: ServiceViewMo
     } finally {
       setLoading(false);
     }
-  }, [addToast, editable, serviceName, service.nodeName, service.displayName, service.yamlBasename]);
+  }, [addToast, editable, serviceName, service.nodeName, service.yamlBasename]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async config load on mount/service change

@@ -75,7 +75,22 @@ export default async function EditPage({
     <div className="h-full flex flex-col overflow-y-auto">
       <PageHeader title={`Edit Service: ${name}`} showBack />
       <div className="p-6">
-        <ServiceForm initialData={initialData} isEdit />
+        {/*
+          `defaultNode` is REQUIRED here, not decoration. ServiceForm seeds
+          `selectedNode` from `defaultNode ?? (?node= || '')`, disables the node
+          <select> whenever `isEdit`, and disables Save while `!selectedNode`.
+          Omitting it on a URL without `?node=` therefore produced a form whose
+          node field was empty AND locked, with Save permanently greyed out and
+          no way to recover from the UI. This page already resolved `nodeName`
+          (defaulting to 'Local') to read the service files — it just never
+          handed it on. Same defect #2392 fixed in OperateSettingsTab; this
+          entry point was missed.
+
+          Passing the resolved value rather than letting ServiceForm default to
+          'Local' on its own is deliberate: on a multi-node box a silent
+          fallback would save the service to the wrong node.
+        */}
+        <ServiceForm initialData={initialData} isEdit defaultNode={nodeName} />
       </div>
     </div>
   );

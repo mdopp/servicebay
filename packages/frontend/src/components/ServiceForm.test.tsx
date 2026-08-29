@@ -148,3 +148,52 @@ describe('ServiceForm — re-render reports unresolved values (#2537)', () => {
     expect(message).toContain('LLDAP_ADMIN_PASSWORD');
   });
 });
+
+/**
+ * Edit mode must not render a Save button that can never be clicked.
+ *
+ * ServiceForm seeds `selectedNode` from `defaultNode ?? (?node= || '')`,
+ * disables the node <select> whenever `isEdit`, and disables Save while
+ * `!selectedNode`. A caller that renders the edit form WITHOUT `defaultNode`
+ * on a URL carrying no `?node=` therefore produced a node field that was empty
+ * AND locked, with Save permanently greyed out and no way to recover from the
+ * UI at all. `/edit/[name]` did exactly that — #2392 fixed the same defect in
+ * OperateSettingsTab and missed this second entry point.
+ *
+ * These lock the contract from the component's side: the caller owes it a
+ * node. ServiceForm deliberately does NOT default to 'Local' on its own —
+ * on a multi-node box that would silently save the service to the wrong node.
+ */
+describe('ServiceForm — edit mode is only saveable with a node', () => {
+  const editForm = (defaultNode?: string) =>
+    render(
+      <ServiceForm
+        isEdit
+        defaultNode={defaultNode}
+        initialData={{
+          name: 'claude-dev',
+          yamlFileName: 'claude-dev.yml',
+          kubeContent: '',
+          yamlContent: '',
+        }}
+      />,
+    );
+
+  const saveButton = () =>
+    screen.getByRole('button', { name: /save service/i }) as HTMLButtonElement;
+
+  it('leaves Save disabled when the caller supplies no node and the URL carries none', () => {
+    editForm();
+    expect(saveButton().disabled).toBe(true);
+  });
+
+  it('enables Save once the caller passes the resolved node', () => {
+    editForm('Local');
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  it('enables Save for a non-Local node too, so multi-node boxes are not special-cased', () => {
+    editForm('nas01');
+    expect(saveButton().disabled).toBe(false);
+  });
+});
