@@ -122,14 +122,39 @@ start-claude --allow-dangerously-skip-permissions servicebay solbay
 
 ### Auto-start at boot
 
-On container start the entrypoint auto-launches one Claude per **git checkout**
-under `/workspace` (any top-level dir with a `.git`), each with `--continue
+On container start the entrypoint auto-launches one Claude per **development
+checkout** under `/workspace`, each with `--continue
 --allow-dangerously-skip-permissions` and Remote Control named after the
 directory — so every repo's session comes back up labelled in the mobile app /
 web without logging in. Hidden dirs (`~/.ssh`, `~/.claude`) and per-user homes
-are skipped. A fresh volume with no checkouts yet just gets an empty `claude`
-tmux session to attach to; clone a repo and restart (or run `start-claude`) to
-bring it up.
+are skipped. A volume with no development checkouts just gets an empty
+`claude` tmux session to attach to; clone a repo and restart (or run
+`start-claude`) to bring it up.
+
+**A development checkout is a top-level dir with both a `.git` and a
+`CLAUDE.md`.** Content repos live here too — a repo that is only data, docs or
+templates has nothing for an unattended agent to do — and `CLAUDE.md` is the
+marker because a repo meant to be worked on by Claude Code carries one anyway.
+Checkouts skipped this way are **named in the log** on every boot and whenever
+the set changes:
+
+```
+claude-dev: skipping 1 checkout(s) with no CLAUDE.md (not a development target): servicebay-templates
+```
+
+Add a `CLAUDE.md` to bring a repo into the autostart. `safe.directory` is
+registered for *every* checkout regardless, so git works when you `cd` into a
+skipped one by hand.
+
+Two behaviours exist because a session that dies takes its window with it, and
+a repo with no window is indistinguishable from a healthy one:
+
+- `--continue` is tried first and **falls back to a fresh session** if there is
+  nothing to resume. Without this, every newly cloned checkout died on startup
+  (`claude --continue` exits 1 when no conversation is persisted) and silently
+  never got a session.
+- `remain-on-exit failed` keeps a **dead pane visible** with its exit status
+  instead of closing the window. A clean exit still tidies itself away.
 
 ## Staying logged in
 

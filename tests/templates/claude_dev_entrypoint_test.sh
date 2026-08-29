@@ -436,9 +436,11 @@ check "re-running the registration twice more does not grow safe.directory" \
   "before=$before_total after=$after_total"
 
 # A checkout that appears AFTER boot still gets an entry + a session, because
-# the reconcile pass re-discovers.
+# the reconcile pass re-discovers. It carries a CLAUDE.md so it counts as a
+# development target — see select_autostart_repos.
 mkdir -p "$DEV_HOME_FAKE/late-clone"
 : > "$DEV_HOME_FAKE/late-clone/.git"
+: > "$DEV_HOME_FAKE/late-clone/CLAUDE.md"
 : > "$SC_ARGS_RECORD"
 reconcile_repos
 check "a checkout created after boot gets a safe.directory entry" \
@@ -446,6 +448,51 @@ check "a checkout created after boot gets a safe.directory entry" \
 check "a checkout created after boot is handed to start-claude" \
   "$(read_nul "$SC_ARGS_RECORD" | grep -Fqx -- 'late-clone' && echo 0 || echo 1)" \
   "argv: $(read_nul "$SC_ARGS_RECORD" | tr '\n' '|')"
+
+# A checkout with NO CLAUDE.md is a content repo, not a development target.
+# The two halves must come apart: git still has to work when someone cd's
+# into it (safe.directory), but no unattended agent is pointed at it.
+mkdir -p "$DEV_HOME_FAKE/content-only"
+: > "$DEV_HOME_FAKE/content-only/.git"
+: > "$SC_ARGS_RECORD"
+reconcile_repos
+check "a content repo without CLAUDE.md still gets a safe.directory entry" \
+  "$([ "$(count_entries "$DEV_HOME_FAKE/content-only")" -eq 1 ] && echo 0 || echo 1)" \
+  "count=$(count_entries "$DEV_HOME_FAKE/content-only")"
+check "a content repo without CLAUDE.md is NOT handed to start-claude" \
+  "$(read_nul "$SC_ARGS_RECORD" | grep -Fqx -- 'content-only' && echo 1 || echo 0)" \
+  "argv: $(read_nul "$SC_ARGS_RECORD" | tr '\n' '|')"
+
+# The skip has to be VISIBLE. A silently skipped checkout looks exactly like a
+# healthy one, which is the failure this whole rule risks reintroducing.
+# Redirection, NOT `$(…)`: command substitution runs in a subshell, where the
+# `skipped_reported` memo cannot survive between calls. reconcile_repos calls
+# this function directly in the current shell, so capturing via a file is the
+# faithful harness — with a subshell the de-duplication below is untestable.
+skipped_reported=''
+select_autostart_repos content-only late-clone > "$RECORD/skip1.txt" 2>&1
+skip_log="$(cat "$RECORD/skip1.txt")"
+check "a skipped checkout is reported on stdout" \
+  "$(printf '%s' "$skip_log" | grep -q 'content-only' && echo 0 || echo 1)" \
+  "log: $skip_log"
+check "a development checkout is not reported as skipped" \
+  "$(printf '%s' "$skip_log" | grep -q 'late-clone' && echo 1 || echo 0)" \
+  "log: $skip_log"
+
+# …but it must not repeat on every 300s reconcile pass.
+select_autostart_repos content-only late-clone > "$RECORD/skip2.txt" 2>&1
+repeat_log="$(cat "$RECORD/skip2.txt")"
+check "an unchanged skip set is not re-reported" \
+  "$([ -z "$repeat_log" ] && echo 0 || echo 1)" \
+  "log: $repeat_log"
+
+# A CHANGED skip set must speak up again, or a newly added content repo would
+# never be mentioned at all.
+select_autostart_repos content-only another-content-repo > "$RECORD/skip3.txt" 2>&1
+changed_log="$(cat "$RECORD/skip3.txt")"
+check "a changed skip set is reported again" \
+  "$(printf '%s' "$changed_log" | grep -q 'another-content-repo' && echo 0 || echo 1)" \
+  "log: $changed_log"
 
 # The #2418 guarantee must hold for the new code path too: hostile directory
 # names reach `git config` as literal argv, never as shell source.
@@ -496,6 +543,38 @@ sc_out="$(cd "$DEV_HOME_FAKE" && PATH="$TMUX_BIN:$PATH" TMUX= CLAUDE_START_NO_AT
 sc_rc=$?
 check "start-claude still fails when it started nothing and found nothing" \
   "$([ "$sc_rc" -ne 0 ] && echo 0 || echo 1)" "exit=$sc_rc out=$sc_out"
+
+# =========================================================================
+# 7. The --continue fallback. `claude --continue` does NOT start a fresh
+#    session in a checkout with no persisted conversation — it exits 1. That
+#    command IS the tmux window's process, so the window closed instantly and
+#    the repo silently ended up with nothing running. Every newly cloned
+#    checkout hit this. start-claude must render a `||` fallback that drops
+#    --continue while keeping the other pass-through flags.
+# =========================================================================
+: > "$TMUX_RECORD"
+printf '%s\n' 'some-other-window' > "$TMUX_WINDOWS"
+(cd "$DEV_HOME_FAKE" && PATH="$TMUX_BIN:$PATH" TMUX= CLAUDE_START_NO_ATTACH=1 \
+   bash "$START_CLAUDE" --continue --allow-dangerously-skip-permissions -- late-clone >/dev/null 2>&1) || true
+tmux_cmd="$(read_nul "$TMUX_RECORD" | tr '\n' ' ')"
+check "start-claude renders a --continue fallback for a first run" \
+  "$(printf '%s' "$tmux_cmd" | grep -q '|| claude' && echo 0 || echo 1)" \
+  "cmd: $tmux_cmd"
+check "the fallback half drops --continue" \
+  "$(printf '%s' "$tmux_cmd" | sed 's/.*|| claude//' | grep -q -- '--continue' && echo 1 || echo 0)" \
+  "cmd: $tmux_cmd"
+check "the fallback half keeps the other pass-through flags" \
+  "$(printf '%s' "$tmux_cmd" | sed 's/.*|| claude//' | grep -q -- '--allow-dangerously-skip-permissions' && echo 0 || echo 1)" \
+  "cmd: $tmux_cmd"
+
+# Without --continue there is nothing to fall back from, so no chain at all.
+: > "$TMUX_RECORD"
+(cd "$DEV_HOME_FAKE" && PATH="$TMUX_BIN:$PATH" TMUX= CLAUDE_START_NO_ATTACH=1 \
+   bash "$START_CLAUDE" --allow-dangerously-skip-permissions -- late-clone >/dev/null 2>&1) || true
+tmux_cmd="$(read_nul "$TMUX_RECORD" | tr '\n' ' ')"
+check "no fallback chain when --continue was not requested" \
+  "$(printf '%s' "$tmux_cmd" | grep -q '|| claude' && echo 1 || echo 0)" \
+  "cmd: $tmux_cmd"
 
 # =========================================================================
 echo

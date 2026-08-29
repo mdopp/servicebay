@@ -123,10 +123,21 @@ RUN chmod +x /usr/local/bin/start-claude
 # client just resizes down, whereas born-small-then-grow leaves the 80-column
 # wrapping behind permanently. The value only ever applies with no client
 # attached — a real client's size always wins.
+#
+# `remain-on-exit failed` is the second half. The window's process IS the
+# Claude session, so a session that dies on startup takes its window with it
+# and the repo silently ends up with nothing running — indistinguishable from
+# a repo that is running fine. `failed` (tmux 3.2+) keeps the pane ONLY on a
+# non-zero exit, so a clean exit still tidies itself away and the window list
+# stays readable.
 RUN printf '%s\n' \
       '# claude-dev: sessions are created headless at boot (see Dockerfile).' \
       '# Without this they inherit tmux'"'"'s 80x24 default and Claude renders at 80 cols.' \
       'set -g default-size 250x60' \
+      '' \
+      '# Keep a pane that DIED so a failed session is visible instead of' \
+      '# vanishing; a clean exit still closes its window.' \
+      'set -wg remain-on-exit failed' \
       > /etc/tmux.conf
 
 # Interactive login shells (an SSH session, the web terminal, the mobile
