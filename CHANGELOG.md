@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.18.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.18.0...servicebay-v5.18.1) (2026-08-29)
+
+
+### Bug Fixes
+
+* **claude-dev:** only auto-start real dev checkouts, and stop losing sessions ([316c3ce](https://github.com/mdopp/servicebay/commit/316c3ceb12f0490397d1c747be7fdc6b99f3f7ff))
+* **claude-dev:** only auto-start real dev checkouts, and stop losing sessions ([0b6496f](https://github.com/mdopp/servicebay/commit/0b6496fc9c64a6a575063fa99b63743bc8a842e0))
+* **claude-dev:** size tmux windows for real clients, add long-lived auth token ([e83102a](https://github.com/mdopp/servicebay/commit/e83102a810979745b258303e8aa9a6166e94f4e8))
+* **claude-dev:** size tmux windows for real clients, add long-lived auth token ([739992d](https://github.com/mdopp/servicebay/commit/739992d9709ac7867be9f5918b7c75218417af0f))
+
 ## [5.18.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.17.4...servicebay-v5.18.0) (2026-08-26)
 
 
