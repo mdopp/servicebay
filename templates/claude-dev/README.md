@@ -37,6 +37,7 @@ homes under `/workspace/home/<user>` stay private (mode `700`).
 | `CLAUDE_DEV_SSH_PORT` | Host port sshd listens on (default `2222`). |
 | `CLAUDE_DEV_SSH_PASSWORD` | Auto-generated password for the local `dev` break-glass user; surfaced as a credential after install. |
 | `CLAUDE_DEV_SSH_AUTHORIZED_KEY` | Optional SSH public key for the `dev` user; enables key-based login (recommended when the box is reachable from outside the LAN). |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Optional long-lived Claude subscription token, so sessions never need an interactive `/login`. See [Staying logged in](#staying-logged-in). Blank keeps the interactive login. |
 | `LLDAP_ADMIN_PASSWORD` | LLDAP bind password. **Not asked for** — reused automatically from the value the `auth` stack generated. Empty ⇒ LDAP login off, `dev` only. |
 | `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in (default `admins`). |
 | `LLDAP_LDAP_PORT` / `LLDAP_BASE_DN` | LLDAP coordinates; default to the `auth` stack's (`3890` / the base DN derived from `PUBLIC_DOMAIN`). LDAP login is skipped when the base DN is blank. The LLDAP *host* is not a variable — since template v2 the pod reaches it at `host.containers.internal` (see [CHANGELOG](CHANGELOG.md)). |
@@ -129,6 +130,37 @@ web without logging in. Hidden dirs (`~/.ssh`, `~/.claude`) and per-user homes
 are skipped. A fresh volume with no checkouts yet just gets an empty `claude`
 tmux session to attach to; clone a repo and restart (or run `start-claude`) to
 bring it up.
+
+## Staying logged in
+
+The sessions here start unattended at boot, so authentication cannot be
+interactive. Two modes:
+
+**With `CLAUDE_CODE_OAUTH_TOKEN` set (recommended).** Generate the token once
+on any machine that has a browser — it is account-scoped, not machine-scoped,
+so your laptop's token works on the box:
+
+```sh
+claude setup-token
+```
+
+Paste the result into the variable at install or re-configure time. Every
+session then starts already authenticated: no `/login`, no URL to copy, and
+nothing to redo after a container restart.
+
+**Blank (the default).** Sessions fall back to the interactive `/login`, whose
+OAuth refresh token carries a rolling **~30-day expiry**. When it lapses every
+tmux window has to be re-authenticated by hand — SSH in, `/login`, copy the
+URL into a browser, paste the code back, once per window. That is tedious at a
+desk and effectively impossible from the mobile app, which is the whole reason
+the variable exists. The entrypoint logs which of the two modes it booted in.
+
+The token is written to `/etc/profile.d/claude-dev-auth.sh` at boot as
+`0640 root:dev`, deliberately **not** profile.d's world-readable default: it
+spends your own Claude subscription, and LDAP users (who are in `ldapusers` and
+`devshare`, never in group `dev`) must not be able to read it. Clearing the
+variable and restarting removes the file rather than leaving a revoked token
+behind.
 
 ## Persistent session (tmux)
 

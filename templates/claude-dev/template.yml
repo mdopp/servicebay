@@ -63,6 +63,15 @@ spec:
         value: "{{CLAUDE_DEV_SSH_PASSWORD}}"
       - name: CLAUDE_DEV_SSH_AUTHORIZED_KEY
         value: "{{CLAUDE_DEV_SSH_AUTHORIZED_KEY}}"
+      # Long-lived subscription auth for the unattended sessions. Without it
+      # each Claude here depends on the interactive `/login` OAuth blob in
+      # ~/.claude, whose refresh token expires on a rolling ~30-day window —
+      # so every window has to be re-authenticated by hand, pasting a URL and
+      # a code, which is not doable from the mobile app. Blank is supported
+      # and keeps exactly the old behaviour; the entrypoint says which mode it
+      # booted in.
+      - name: CLAUDE_CODE_OAUTH_TOKEN
+        value: "{{CLAUDE_CODE_OAUTH_TOKEN}}"
       # LLDAP bind for SSH logins as a real LDAP user (e.g. mdopp). These
       # mirror the `auth` template's variable names so LLDAP_ADMIN_PASSWORD is
       # reused from savedSecrets (the value auth generated) rather than asked
