@@ -295,6 +295,51 @@ EOF
   fi
 fi
 
+# Long-lived subscription auth, from `claude setup-token` on a machine that
+# has a browser. Without it every session here runs on the interactive
+# `/login` OAuth blob in ~/.claude, whose refresh token carries a rolling
+# ~30-day expiry — so the operator had to SSH in and re-authenticate EVERY
+# tmux window by hand, pasting a URL and a code back and forth. That is merely
+# tedious at a desk and effectively impossible from the mobile app.
+#
+# The boot-time autostart below already inherits the variable directly:
+# `su_dev` is a NON-login `su`, which preserves the environment. A LOGIN shell
+# does not (`su - dev` drops it), and sshd builds a fresh environment for
+# every session, so the profile.d drop-in below covers the interactive path.
+# It matters for one real case: if the operator kills the tmux server and a
+# fresh one is started from an interactive login, that server would otherwise
+# be born without the token and every window in it would demand a login.
+#
+# The ordering is LOAD-BEARING. profile.d is sourced alphabetically, so
+# `claude-dev-auth.sh` runs BEFORE `claude-dev-tmux.sh` `exec`s tmux — the
+# token is therefore already in the client environment that a newly created
+# tmux server inherits. Renaming either file breaks that silently.
+#
+# Mode 0640 root:dev, NOT profile.d's world-readable default: this token
+# spends the OPERATOR'S OWN Claude subscription, and sshd's `AllowGroups` also
+# admits `ldapusers`, whose members are deliberately provisioned into
+# `ldapusers,devshare` and never into group `dev` (see the useradd above). The
+# `[ -r ]` guard makes the file a silent no-op for them rather than an error
+# on every login.
+auth_profile=/etc/profile.d/claude-dev-auth.sh
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  install -m 0640 -o root -g dev /dev/null "$auth_profile"
+  {
+    printf '%s\n' '# claude-dev: long-lived subscription token, written at boot by the entrypoint.'
+    # `%q` so a token containing shell metacharacters cannot break out of the
+    # assignment when a login shell sources this.
+    printf 'export CLAUDE_CODE_OAUTH_TOKEN=%q\n' "$CLAUDE_CODE_OAUTH_TOKEN"
+  } > "$auth_profile"
+  echo "claude-dev: long-lived Claude token supplied — sessions start authenticated, no interactive /login needed."
+else
+  # Clearing the variable has to actually clear it. The file lives in the
+  # image layer, not on /workspace, but a container that is merely RESTARTED
+  # after the operator blanked the variable would otherwise keep re-exporting
+  # a revoked token, which fails in a far more confusing way than no token.
+  rm -f "$auth_profile"
+  echo "claude-dev: no CLAUDE_CODE_OAUTH_TOKEN set — sessions use the interactive /login, which lapses roughly monthly. Run 'claude setup-token' on a machine with a browser and set the variable to stop that."
+fi
+
 # Auto-start Claude in every git checkout under /workspace BEFORE we exec
 # sshd, so live sessions are already running before anyone connects (incl.
 # after a container restart, when the tmux server is gone with the old

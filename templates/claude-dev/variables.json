@@ -13,6 +13,11 @@
     "description": "Optional SSH public key (one line, e.g. `ssh-ed25519 AAAA... you@phone`). When set, key-based login is enabled for the `dev` user — recommended over the password for a box reachable from outside the LAN. Leave blank to use the password only.",
     "default": ""
   },
+  "CLAUDE_CODE_OAUTH_TOKEN": {
+    "type": "secret",
+    "noAutoGenerate": true,
+    "description": "Optional long-lived Claude subscription token, so the auto-started Claude sessions never need an interactive /login. Generate it once on any machine that has a browser with `claude setup-token` — it is account-scoped, not machine-scoped, so the token from your laptop works here. Leave blank to keep the interactive login, whose refresh token carries a rolling ~30-day expiry and must then be re-entered by hand in every tmux window (impractical from the mobile app). `noAutoGenerate` is load-bearing: this is an operator-supplied external credential, and a random string minted in its place would be rejected on every API call."
+  },
   "LLDAP_LDAP_PORT": {
     "type": "text",
     "description": "LLDAP LDAP-protocol port. Must match the `auth` stack's LLDAP_LDAP_PORT.",

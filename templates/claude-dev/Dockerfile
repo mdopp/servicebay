@@ -106,6 +106,29 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 COPY start-claude.sh /usr/local/bin/start-claude
 RUN chmod +x /usr/local/bin/start-claude
 
+# Every tmux window here is BORN HEADLESS — `start-claude` and the
+# entrypoint's empty-session fallback both run `tmux new-session -d` at boot,
+# long before any SSH client exists. With no config tmux falls back to
+# `default-size 80x24`, so each Claude Code session comes up believing it has
+# an 80-column terminal and renders its whole UI at that width. `window-size`
+# defaults to `latest`, which resizes only the window a client is CURRENTLY
+# looking at — so on login you find the one or two windows you visited at the
+# real client size and the rest still stuck at 80x24, with the pre-attach
+# output wrapped at 80 columns in the scrollback where no resize can fix it.
+#
+# Setting `default-size` large fixes every creation path at once (both
+# `new-session -d` call sites plus any session the operator starts by hand),
+# which is why this is a config file rather than `-x/-y` flags at the call
+# sites. Born-large-then-shrink is the right direction: attaching a smaller
+# client just resizes down, whereas born-small-then-grow leaves the 80-column
+# wrapping behind permanently. The value only ever applies with no client
+# attached — a real client's size always wins.
+RUN printf '%s\n' \
+      '# claude-dev: sessions are created headless at boot (see Dockerfile).' \
+      '# Without this they inherit tmux'"'"'s 80x24 default and Claude renders at 80 cols.' \
+      'set -g default-size 250x60' \
+      > /etc/tmux.conf
+
 # Interactive login shells (an SSH session, the web terminal, the mobile
 # app) attach to the long-lived `claude` tmux session the entrypoint
 # starts on boot, so every connection lands in the SAME live session and
