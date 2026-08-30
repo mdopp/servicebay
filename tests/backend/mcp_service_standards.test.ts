@@ -196,6 +196,41 @@ describe('UI language & state design is a standard (#2514)', () => {
   });
 });
 
+describe('journal retention is a documented standard, not tribal knowledge (#2659)', () => {
+  it('is reachable through get_service_standards and resolves', async () => {
+    const s = await buildServiceStandards('servicebay');
+    const ids = (s.assistsToRead as { ids: { id: string; why: string }[] }).ids;
+    const entry = ids.find(i => i.id === 'footgun-journal-is-a-buffer-not-an-archive');
+    expect(entry, 'assistsToRead surfaces the journal-retention footgun').toBeDefined();
+    expect(entry!.why).toMatch(/durable log/i);
+    expect(await getAssist('footgun-journal-is-a-buffer-not-an-archive')).not.toBeNull();
+  });
+
+  it('states the journal retention behaviour and names the actual knobs (#2659)', async () => {
+    const body = (await getAssist('footgun-journal-is-a-buffer-not-an-archive')) ?? '';
+    // #2659 bullet 1: retention is a set value, not an assumed calendar window,
+    // and the knobs + where to find the real number are named.
+    expect(body).toContain('SystemMaxUse');
+    expect(body).toContain('MaxRetentionSec');
+    expect(body).toMatch(/journald\.conf/);
+    expect(body, 'names the disk-usage check, not just the config keys').toContain('journalctl --disk-usage');
+  });
+
+  it('states the durable-logging rule (#2659)', async () => {
+    const body = (await getAssist('footgun-journal-is-a-buffer-not-an-archive')) ?? '';
+    // #2659 bullet 2: a service whose actions must be reconstructable later
+    // writes its own durable log — the journal is a buffer, not an archive.
+    expect(body).toMatch(/writes its own\s+durable log/i);
+    expect(body).toMatch(/buffer, not an? archive/i);
+  });
+
+  it('cross-references the journal-measurement footgun instead of duplicating it', async () => {
+    const body = (await getAssist('footgun-journal-is-a-buffer-not-an-archive')) ?? '';
+    expect(body).toContain('footgun-journal-conmon-is-not-a-second-emitter.md');
+    expect(await getAssist('footgun-journal-conmon-is-not-a-second-emitter')).not.toBeNull();
+  });
+});
+
 describe('get_service_standards — generic flavor (#2323)', () => {
   it('returns platform-agnostic standards', async () => {
     const s = await buildServiceStandards('generic');
