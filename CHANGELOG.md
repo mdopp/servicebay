@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.20.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.19.1...servicebay-v5.20.0) (2026-08-30)
+
+
+### Features
+
+* **claude-dev:** wire ServiceBay as a read-only MCP server for every session ([9aec757](https://github.com/mdopp/servicebay/commit/9aec757dbf4e496874188e70f5d8054900b53a25))
+
+
+### Bug Fixes
+
+* **agent:** log what a state sync covered, not the whole state ([b97b6ef](https://github.com/mdopp/servicebay/commit/b97b6ef8643825c2a63dd963a3645bad96dede3e)), closes [#2676](https://github.com/mdopp/servicebay/issues/2676)
+* **claude-dev:** make the gh token and Claude state readable only by dev ([0a14e68](https://github.com/mdopp/servicebay/commit/0a14e68675b20305d4c14d00615c0e45991b68df)), closes [#2672](https://github.com/mdopp/servicebay/issues/2672)
+* journal volume, claude-dev token permissions, journal retention standards ([bb498a1](https://github.com/mdopp/servicebay/commit/bb498a18873e6df3cfdf6e56535e848b9e645922))
+
 ## [5.19.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.19.0...servicebay-v5.19.1) (2026-08-30)
 
 
