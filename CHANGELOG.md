@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.22.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.21.0...servicebay-v5.22.0) (2026-08-30)
+
+
+### Features
+
+* **claude-dev:** add and remove a project from the configuration UI ([d2b30a4](https://github.com/mdopp/servicebay/commit/d2b30a4e4513fbc234da1506ca50747a6855b413)), closes [#2680](https://github.com/mdopp/servicebay/issues/2680)
+* **claude-dev:** connect GitHub from the configuration UI with the device flow ([37f358c](https://github.com/mdopp/servicebay/commit/37f358c13c70e162dcead0c492d2d7a7603820d4)), closes [#2681](https://github.com/mdopp/servicebay/issues/2681)
+* **claude-dev:** manage projects, GitHub and sessions from the configuration UI ([0739c1d](https://github.com/mdopp/servicebay/commit/0739c1d8142d59a2199f2ba808ca67fdb32e16f4))
+* **claude-dev:** repair a lapsed sign-in and restart one session from the UI ([ea0b663](https://github.com/mdopp/servicebay/commit/ea0b66314b6c2049e80ddd52d27682aafbef2fbc)), closes [#2682](https://github.com/mdopp/servicebay/issues/2682)
+* **claude-dev:** show the workspace projects, their sessions and MCP entries ([a97a5ae](https://github.com/mdopp/servicebay/commit/a97a5ae93d377b59021a523e38b149e131a60f78)), closes [#2679](https://github.com/mdopp/servicebay/issues/2679)
+
+
+### Bug Fixes
+
+* **claude-dev:** write the control characters in validateGitUrl as escapes ([ff3d9bf](https://github.com/mdopp/servicebay/commit/ff3d9bf7412f046488b9f91162137e39f5433640))
+
 ## [5.21.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.20.0...servicebay-v5.21.0) (2026-08-30)
 
 
