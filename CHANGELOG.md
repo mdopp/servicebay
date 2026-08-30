@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.22.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.22.0...servicebay-v5.22.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **autoloop:** let the post-deploy review list see its own entries ([9221aa3](https://github.com/mdopp/servicebay/commit/9221aa3821aa12192ce273e1230e4bce1d542718))
+* **autoloop:** let the post-deploy review list see its own entries ([297830f](https://github.com/mdopp/servicebay/commit/297830fe240bc6b30185302906f6c5b53d7b5114)), closes [#2690](https://github.com/mdopp/servicebay/issues/2690)
+
 ## [5.22.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.21.0...servicebay-v5.22.0) (2026-08-30)
 
 
