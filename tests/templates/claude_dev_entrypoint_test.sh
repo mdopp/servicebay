@@ -504,6 +504,43 @@ check "a changed skip set is reported again" \
   "$(printf '%s' "$changed_log" | grep -q 'another-content-repo' && echo 0 || echo 1)" \
   "log: $changed_log"
 
+# A checkout REMOVED in the configuration UI (#2680) must stay stopped. Without
+# the marker, reconcile_repos re-starts it within 300s and the Remove button
+# reports a success that quietly evaporates.
+NO_AUTOSTART_DIR="$DEV_HOME_FAKE/.claude-dev/no-autostart"
+mkdir -p "$NO_AUTOSTART_DIR"
+: > "$NO_AUTOSTART_DIR/late-clone"
+: > "$SC_ARGS_RECORD"
+reconcile_repos
+check "a checkout removed in the configuration UI is NOT restarted by the reconcile" \
+  "$(read_nul "$SC_ARGS_RECORD" | grep -Fqx -- 'late-clone' && echo 1 || echo 0)" \
+  "argv: $(read_nul "$SC_ARGS_RECORD" | tr '\n' '|')"
+check "…but it still gets a safe.directory entry, so git keeps working in it" \
+  "$([ "$(count_entries "$DEV_HOME_FAKE/late-clone")" -eq 1 ] && echo 0 || echo 1)" \
+  "count=$(count_entries "$DEV_HOME_FAKE/late-clone")"
+
+skipped_reported=''
+select_autostart_repos late-clone > "$RECORD/removed1.txt" 2>&1
+removed_log="$(cat "$RECORD/removed1.txt")"
+check "the removed checkout is reported as removed, not as missing a CLAUDE.md" \
+  "$(printf '%s' "$removed_log" | grep -q 'removed in the configuration UI' && echo 0 || echo 1)" \
+  "log: $removed_log"
+
+# Adding it again clears the marker, and the session comes back.
+rm -f "$NO_AUTOSTART_DIR/late-clone"
+: > "$SC_ARGS_RECORD"
+reconcile_repos
+check "clearing the marker lets the checkout start again" \
+  "$(read_nul "$SC_ARGS_RECORD" | grep -Fqx -- 'late-clone' && echo 0 || echo 1)" \
+  "argv: $(read_nul "$SC_ARGS_RECORD" | tr '\n' '|')"
+
+# The marker directory is hidden, so it can never be mistaken for a checkout.
+repos=()
+discover_repos
+check "the no-autostart marker directory is not discovered as a checkout" \
+  "$(printf '%s\n' "${repos[@]}" | grep -qx '.claude-dev' && echo 1 || echo 0)" \
+  "repos: $(printf '%s ' "${repos[@]}")"
+
 # The #2418 guarantee must hold for the new code path too: hostile directory
 # names reach `git config` as literal argv, never as shell source.
 leaked="$(find "$WORK" -name 'pwned-*' 2>/dev/null | tr '\n' ' ')"

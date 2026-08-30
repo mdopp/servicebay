@@ -1,10 +1,19 @@
 /**
- * Projects panel (#2679, epic #2674) — READ ONLY.
+ * Projects panel (#2679 list, #2680 add/remove; epic #2674).
  *
  * Shows what is checked out under /workspace, whether each checkout has a live
  * Claude session, and whether an MCP server entry is wired for it. Until this
  * panel existed none of that was visible anywhere: you had to SSH in and run
  * `tmux list-windows` and `claude mcp list` by hand.
+ *
+ * It now also ADDs and REMOVEs. Two rules the mutating half must keep:
+ *
+ *   • Remove appears only on a row this page actually added (`managed === true`).
+ *     `managed === null` is a failed read, so the button is DISABLED and says
+ *     Unknown rather than offering an action nobody verified is safe.
+ *   • The result of an action is reported from what the server MEASURED
+ *     afterwards (it re-asks tmux), and every warning it returns is shown —
+ *     "added" with no session is not allowed to read as a clean success.
  *
  * The three states this panel MUST keep apart, because they look identical if
  * you are careless (and that confusion is exactly the bug this repo keeps
@@ -63,11 +72,45 @@ function mcpCell(project) {
   };
 }
 
-function renderTable(payload) {
+/**
+ * The Remove button for one row — or the reason there isn't one.
+ *
+ * `managed` is a three-state field on purpose: `true` (this page added it),
+ * `false` (someone cloned it by hand — not ours to unwire), `null` (the MCP
+ * read failed, so we do not know). Only `true` yields a live button.
+ */
+function removeCell(project, onRemove) {
+  const td = el('td', 'projects-action');
+  td.dataset.managed = project.managed === null ? 'unknown' : String(project.managed);
+
+  if (project.managed === null) {
+    const button = el('button', 'projects-remove', 'Remove');
+    button.type = 'button';
+    button.disabled = true;
+    td.append(button);
+    td.append(el('span', 'projects-state-detail',
+      'Unknown — the MCP entries could not be read, so it is not known whether this page added it.'));
+    return td;
+  }
+  if (!project.managed) {
+    td.append(el('span', 'projects-state-detail',
+      'Added outside this page — its checkout, session and credentials are left alone here.'));
+    return td;
+  }
+
+  const button = el('button', 'projects-remove', 'Remove');
+  button.type = 'button';
+  button.dataset.projectRemove = project.name;
+  button.addEventListener('click', () => onRemove(project, button));
+  td.append(button);
+  return td;
+}
+
+function renderTable(payload, onRemove) {
   const table = el('table', 'projects-table');
   const head = el('thead');
   const headRow = el('tr');
-  for (const title of ['Project', 'Claude session', 'ServiceBay MCP entry']) {
+  for (const title of ['Project', 'Claude session', 'ServiceBay MCP entry', '']) {
     const th = el('th', null, title);
     th.scope = 'col';
     headRow.append(th);
@@ -92,6 +135,7 @@ function renderTable(payload) {
       if (cell.detail) td.append(el('span', 'projects-state-detail', cell.detail));
       row.append(td);
     }
+    row.append(removeCell(project, onRemove));
     body.append(row);
   }
 
@@ -99,12 +143,54 @@ function renderTable(payload) {
   return table;
 }
 
+/** The add form. Deliberately two fields: a URL, and an optional name for the
+ *  case where the directory should not be called after the remote. */
+function renderAddForm(onAdd) {
+  const form = el('form', 'projects-add');
+  form.noValidate = true;
+  form.append(el('h3', null, 'Add a project'));
+  form.append(el('p', 'projects-add-lede',
+    'Clones the repository into the shared workspace, gives it its own read-only '
+    + 'ServiceBay token, wires that token as its MCP server and starts a Claude session. '
+    + 'A checkout that is already there is adopted instead of cloned.'));
+
+  const urlLabel = el('label', 'projects-field');
+  urlLabel.append(el('span', null, 'Git URL'));
+  const url = document.createElement('input');
+  url.type = 'text';
+  url.name = 'url';
+  url.className = 'projects-url';
+  url.placeholder = 'https://github.com/owner/repo.git';
+  url.autocomplete = 'off';
+  urlLabel.append(url);
+
+  const nameLabel = el('label', 'projects-field');
+  nameLabel.append(el('span', null, 'Directory name (optional)'));
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.name = 'name';
+  name.className = 'projects-name-input';
+  name.placeholder = 'defaults to the repository name';
+  name.autocomplete = 'off';
+  nameLabel.append(name);
+
+  const submit = el('button', 'projects-add-submit', 'Add project');
+  submit.type = 'submit';
+
+  form.append(urlLabel, nameLabel, submit);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    onAdd({ url: url.value.trim(), name: name.value.trim() }, { form, submit, url, name });
+  });
+  return form;
+}
+
 function renderEmpty(payload) {
   const box = el('div', 'projects-empty');
   box.append(el('h3', null, 'No checkouts yet'));
   box.append(el('p', null,
     `Nothing under ${payload.workspace} is a git checkout, so there is no project to run a `
-    + 'Claude session against. Clone one into the shared workspace and it appears here.'));
+    + 'Claude session against. Add one below and it appears here.'));
   return box;
 }
 
@@ -133,6 +219,121 @@ function renderSourceWarnings(payload) {
   return warnings;
 }
 
+/**
+ * What an add/remove actually did. The warnings the server returns are shown
+ * as prominently as the headline: "added, but no session is running" must not
+ * be readable as "added".
+ */
+function renderActionResult(headline, warnings) {
+  const box = el('div', warnings.length ? 'projects-result projects-result-partial' : 'projects-result');
+  box.setAttribute('role', 'status');
+  box.append(el('p', 'projects-result-headline', headline));
+  if (warnings.length) {
+    const list = el('ul', 'projects-result-warnings');
+    for (const warning of warnings) list.append(el('li', 'projects-warning', warning));
+    box.append(list);
+  }
+  return box;
+}
+
+function renderActionError(message, detail) {
+  const box = el('div', 'projects-action-error');
+  box.setAttribute('role', 'alert');
+  box.append(el('p', null, message));
+  if (detail) box.append(el('p', 'projects-error-note', detail));
+  return box;
+}
+
+/** `fetch` + "tell me what actually happened", shared by add and remove. */
+async function callApi(pathname, init) {
+  const res = await fetch(pathname, { ...init, headers: { Accept: 'application/json', ...(init?.headers ?? {}) } });
+  const parsed = await res.json().catch(() => null);
+  if (!res.ok) {
+    const err = new Error(parsed?.error || `HTTP ${res.status}`);
+    err.detail = parsed?.detail || '';
+    throw err;
+  }
+  return parsed ?? {};
+}
+
+/**
+ * The two mutating actions, kept out of `mount` so the panel body stays a
+ * layout function. `isDisposed` is checked after every await: a late response
+ * must never repaint a panel the shell already swapped out.
+ */
+function createActions({ report, reload, isDisposed }) {
+  return {
+    async onAdd(input, controls) {
+      controls.submit.disabled = true;
+      report(el('p', 'projects-working', `Adding ${input.name || input.url || 'the project'}\u2026`));
+      try {
+        const result = await callApi('/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        });
+        if (isDisposed()) return;
+        const p = result.project;
+        const session = p.session === null ? 'its session state is Unknown'
+          : p.session.running ? 'its Claude session is running'
+            : 'it has NO Claude session running';
+        report(renderActionResult(
+          `${p.cloned ? 'Cloned' : 'Adopted'} ${p.path}, delegated token ${p.token.id}, and ${session}.`,
+          result.warnings ?? [],
+        ));
+        controls.url.value = '';
+        controls.name.value = '';
+      } catch (err) {
+        report(renderActionError(`Could not add that project: ${err.message}`, err.detail));
+      } finally {
+        if (!isDisposed()) controls.submit.disabled = false;
+        void reload();
+      }
+    },
+
+    async onRemove(project, button) {
+      button.disabled = true;
+      report(el('p', 'projects-working', `Removing ${project.name}\u2026`));
+      try {
+        const result = await callApi(`/api/projects?name=${encodeURIComponent(project.name)}`, { method: 'DELETE' });
+        if (isDisposed()) return;
+        report(renderActionResult(
+          `Revoked token ${result.removed.tokenId}, dropped the MCP entry and stopped the session for `
+          + `${result.removed.name}. The checkout itself is still at ${result.removed.path}.`,
+          result.warnings ?? [],
+        ));
+      } catch (err) {
+        report(renderActionError(`Could not remove ${project.name}: ${err.message}`, err.detail));
+      } finally {
+        void reload();
+      }
+    },
+  };
+}
+
+/** The panel's static furniture: heading, Refresh, and the two live regions. */
+function renderFrame() {
+  const section = el('section', 'panel panel-projects');
+  section.append(el('h2', null, 'Projects'));
+  section.append(el('p', 'panel-lede',
+    'Every git checkout in the shared workspace, the Claude session running against it, '
+    + 'and whether it can reach ServiceBay through an MCP server entry.'));
+
+  const refresh = el('button', 'projects-refresh', 'Refresh');
+  refresh.type = 'button';
+  section.append(refresh);
+
+  const actionOutput = el('div', 'projects-action-output');
+  actionOutput.setAttribute('aria-live', 'polite');
+  section.append(actionOutput);
+
+  const output = el('div', 'projects-output');
+  output.setAttribute('aria-live', 'polite');
+  section.append(output);
+
+  return { section, refresh, actionOutput, output };
+}
+
 const panel = {
   id: 'projects',
   title: 'Projects',
@@ -140,20 +341,15 @@ const panel = {
   mount(root, _ctx) {
     let disposed = false;
 
-    const section = el('section', 'panel panel-projects');
-    section.append(el('h2', null, 'Projects'));
-    section.append(el('p', 'panel-lede',
-      'Every git checkout in the shared workspace, the Claude session running against it, '
-      + 'and whether it can reach ServiceBay through an MCP server entry.'));
-
-    const refresh = el('button', 'projects-refresh', 'Refresh');
-    refresh.type = 'button';
-    section.append(refresh);
-
-    const output = el('div', 'projects-output');
-    output.setAttribute('aria-live', 'polite');
-    section.append(output);
+    const { section, refresh, actionOutput, output } = renderFrame();
+    section.append(renderAddForm((input, controls) => actions.onAdd(input, controls)));
     root.append(section);
+
+    const actions = createActions({ report, reload: () => load(), isDisposed: () => disposed });
+
+    function report(node) {
+      if (!disposed) actionOutput.replaceChildren(node);
+    }
 
     async function load() {
       output.replaceChildren(el('p', 'projects-loading', 'Reading the workspace…'));
@@ -175,7 +371,9 @@ const panel = {
       refresh.disabled = false;
       output.replaceChildren(
         ...renderSourceWarnings(payload),
-        payload.projects.length === 0 ? renderEmpty(payload) : renderTable(payload),
+        payload.projects.length === 0
+          ? renderEmpty(payload)
+          : renderTable(payload, (project, button) => actions.onRemove(project, button)),
       );
     }
 

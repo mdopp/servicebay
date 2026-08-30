@@ -29,8 +29,9 @@
  *     account would reach the dev box's configuration.
  *
  *   SEAM 3 — HOW IT TALKS TO THE CONTAINER / TO SERVICEBAY.  `API_ROUTES` is
- *     the route table; `'GET /api/projects'` (#2679) sits next to
- *     `'GET /api/session'` and got the auth gate for free. Anything that needs
+ *     the route table; `'GET /api/projects'` (#2679) and its `POST`/`DELETE`
+ *     siblings (#2680) sit next to `'GET /api/session'` and got the auth gate
+ *     for free — a handler may be async. Anything that needs
  *     ServiceBay's own API uses `ctx.servicebay` — the READ-ONLY `sb_…` token
  *     minted for this container at install time (`SERVICEBAY_MCP_TOKEN`,
  *     #2673), the SAME credential the entrypoint wires as Claude Code's MCP
@@ -201,7 +202,29 @@ export function readTmuxWindows(tmuxSession, runTmux = defaultRunTmux) {
 }
 
 /**
- * MCP servers Claude Code knows about: `{ user: [names], byPath: { path: [names] } }`.
+ * The MCP server name this UI writes per project (#2680), and the one the
+ * entrypoint writes once at USER scope for every session
+ * (`configure_mcp_server`). Deliberately the SAME name: Claude Code resolves
+ * local scope ahead of user scope, so a project that was added here overrides
+ * the shared container-wide credential with its own delegated child token
+ * instead of exposing two ServiceBay servers with duplicate tools.
+ */
+export const PROJECT_MCP_SERVER = 'servicebay';
+
+/** `sb_<id>_<secret>` — only the 8-hex id is ever pulled out of it. */
+const SB_TOKEN_ID = /^sb_([0-9a-f]{8})_/;
+
+/**
+ * MCP servers Claude Code knows about:
+ * `{ user: [names], byPath: { path: [names] }, delegatedByPath: { path: id } }`.
+ *
+ * `delegatedByPath` is the ownership record this UI runs on (#2680): the
+ * LOCAL-scope `servicebay` entry's `Authorization: Bearer sb_<id>_…` header.
+ * There is no second bookkeeping file on purpose — the MCP entry *is* the
+ * record, so an entry can never point at a token that was never minted and a
+ * minted token can never lack an entry. Only the id is extracted; the secret
+ * stays in the file and never leaves this process.
+ *
  * A missing `~/.claude.json` means "nothing configured yet" and is a legitimate
  * empty answer; an unreadable or malformed one is a failed read and throws.
  */
@@ -211,7 +234,7 @@ export function readMcpEntries(homeDir, readFile = (p) => fs.readFileSync(p, 'ut
   try {
     raw = readFile(file);
   } catch (err) {
-    if (err?.code === 'ENOENT') return { user: [], byPath: {} };
+    if (err?.code === 'ENOENT') return { user: [], byPath: {}, delegatedByPath: {} };
     throw new Error(`could not read ${file}: ${err?.message || err}`);
   }
   let parsed;
@@ -222,8 +245,14 @@ export function readMcpEntries(homeDir, readFile = (p) => fs.readFileSync(p, 'ut
   }
   const names = (v) => (v && typeof v === 'object' ? Object.keys(v) : []);
   const byPath = {};
-  for (const [p, entry] of Object.entries(parsed?.projects ?? {})) byPath[p] = names(entry?.mcpServers);
-  return { user: names(parsed?.mcpServers), byPath };
+  const delegatedByPath = {};
+  for (const [p, entry] of Object.entries(parsed?.projects ?? {})) {
+    byPath[p] = names(entry?.mcpServers);
+    const authz = entry?.mcpServers?.[PROJECT_MCP_SERVER]?.headers?.Authorization;
+    const id = typeof authz === 'string' ? SB_TOKEN_ID.exec(authz.replace(/^Bearer\s+/i, '')) : null;
+    if (id) delegatedByPath[p] = id[1];
+  }
+  return { user: names(parsed?.mcpServers), byPath, delegatedByPath };
 }
 
 /** PROJECT-scope servers: the checkout's own tracked `.mcp.json`. */
@@ -273,11 +302,17 @@ export function collectProjects({
   }
 
   let mcpByName = null;
+  let managedByName = null;
   let mcpError = '';
   try {
     const entries = readMcpEntries(homeDir, readFile);
     mcpByName = {};
+    managedByName = {};
     for (const name of names) {
+      // Was this project ADDED through this UI (#2680)? True iff it carries a
+      // local-scope entry whose header names a delegated `sb_` token — that is
+      // the only thing Remove is allowed to act on.
+      managedByName[name] = Boolean(entries.delegatedByPath[path.join(devHome, name)]);
       const scopes = [];
       const servers = new Set();
       const add = (scope, list) => {
@@ -292,6 +327,7 @@ export function collectProjects({
     }
   } catch (err) {
     mcpByName = null;
+    managedByName = null;
     mcpError = String(err?.message || err);
   }
 
@@ -304,6 +340,10 @@ export function collectProjects({
     developmentTarget: fsImpl.existsSync(path.join(devHome, name, 'CLAUDE.md')),
     session: windows ? { running: windows.includes(name) } : null,
     mcp: mcpByName ? mcpByName[name] : null,
+    // `null` when the MCP read failed: we do not know whether this UI owns
+    // this checkout, and offering Remove on a guess is exactly the assertion
+    // nobody verified. Unknown is not "no".
+    managed: managedByName ? managedByName[name] : null,
   }));
 
   return {
@@ -320,6 +360,407 @@ export function collectProjects({
         : { ok: false, error: mcpError },
     },
   };
+}
+
+/* ─────────────────── add / remove a project (#2680) ─────────────────────────
+ *
+ * #2674's gap, stated plainly: "today a checkout only gets a session if a human
+ * clones it by hand." Add closes it end to end — clone, `safe.directory`, a
+ * DELEGATED child of this container's ServiceBay token, the project's own MCP
+ * entry, the tmux session — and Remove takes exactly those back.
+ *
+ * Three design choices carry the acceptance criteria, so they are written down
+ * rather than left to be inferred:
+ *
+ *   OWNERSHIP IS THE MCP ENTRY. A project is "ours" iff `~/.claude.json` holds
+ *     a LOCAL-scope `servicebay` entry for it whose header names an `sb_`
+ *     token. That single record is both the ownership flag and the token id,
+ *     so token and entry cannot drift apart: no orphan is possible because
+ *     there is nothing to orphan *from*. Remove refuses anything else — the
+ *     hand-cloned checkouts other people are working in are untouchable.
+ *
+ *   REMOVE DELETES NO FILES. It revokes the token, drops the MCP entry and
+ *     stops the session; the checkout stays on disk. The issue asks for
+ *     exactly those three, and a one-click rm -rf of a working tree with
+ *     uncommitted work in it is not a thing to add on inference. The bound is
+ *     therefore structural: this module calls no filesystem-removal primitive
+ *     on a checkout at all.
+ *
+ *   REMOVE IS DURABLE. The entrypoint re-reconciles every 300s and would
+ *     restart the session it just stopped, so Remove drops a marker under
+ *     `<devHome>/.claude-dev/no-autostart/<name>` that `select_autostart_repos`
+ *     honours. Without it the button would report success and quietly undo
+ *     itself minutes later.
+ *
+ * Ordering is chosen so a failure at any step leaves NOTHING orphaned:
+ *   add    → revoke any previous child, mint, write the entry (revoke again if
+ *            that write fails), then start the session;
+ *   remove → revoke first, drop the entry second, so a failed revoke leaves a
+ *            live token that is still recorded and can be retried.
+ */
+
+/** Run a container-side CLI. Injectable so tests never need a real /workspace. */
+function defaultRunCommand(file, args, opts = {}) {
+  return execFileSync(file, args, {
+    encoding: 'utf-8',
+    timeout: opts.timeout ?? 120_000,
+    cwd: opts.cwd,
+    env: opts.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+/** One error shape for every CRUD step: an HTTP status plus a sayable reason. */
+class ProjectError extends Error {
+  constructor(status, message, detail = '') {
+    super(message);
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+/**
+ * A project name is ONE path segment that is also a usable tmux window name.
+ * Rejecting rather than sanitising is deliberate: a silently rewritten name
+ * would not match the directory the operator then goes looking for.
+ */
+export function validateProjectName(name) {
+  if (!name) return 'a project name is required';
+  if (name.length > 64) return 'a project name may be at most 64 characters';
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    return `"${name}" is not a usable project name — use letters, digits, ".", "_" and "-", starting with a letter or a digit`;
+  }
+  if (name === '.' || name === '..') return 'a project name may not be "." or ".."';
+  return '';
+}
+
+/**
+ * Only remotes git can fetch WITHOUT running a command we chose for it.
+ * `ext::` (and `file://` pointing at a crafted repo) turn a URL into code
+ * execution inside this container, so the scheme is allow-listed rather than
+ * denied case by case. argv is already safe — every exec here is `execFile`
+ * with an array — this guards the *remote helper*, not the shell.
+ */
+export function validateGitUrl(url) {
+  if (!url) return 'a git URL is required to clone a new checkout';
+  if (url.length > 512) return 'that git URL is implausibly long';
+  if (/[\s -]/.test(url)) return 'a git URL may not contain whitespace or control characters';
+  if (!/^(https:\/\/|http:\/\/|ssh:\/\/|git@[A-Za-z0-9.-]+:)/.test(url)) {
+    return 'only https://, http://, ssh:// and git@host:path remotes are accepted';
+  }
+  return '';
+}
+
+/** Turn `https://github.com/mdopp/servicebay.git` into `servicebay`. */
+export function projectNameFromUrl(url) {
+  const withoutQuery = String(url || '').split(/[?#]/)[0].replace(/\/+$/, '');
+  const last = withoutQuery.split(/[/:]/).pop() || '';
+  return last.replace(/\.git$/i, '');
+}
+
+/** Where Remove records "do not auto-start this again" for the entrypoint. */
+function noAutostartMarker(devHome, name) {
+  return path.join(devHome, '.claude-dev', 'no-autostart', name);
+}
+
+/** ServiceBay's own API, reached with the container's read-only parent token. */
+async function servicebayFetch(servicebay, pathname, init, doFetch) {
+  if (!servicebay?.token) {
+    throw new ProjectError(503, 'this container holds no ServiceBay API token, so it cannot delegate one to a project');
+  }
+  const base = String(servicebay.url || '').replace(/\/+$/, '');
+  let res;
+  try {
+    res = await doFetch(`${base}${pathname}`, {
+      ...init,
+      headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${servicebay.token}` },
+    });
+  } catch (err) {
+    throw new ProjectError(502, `could not reach ServiceBay at ${base}: ${err?.message || err}`);
+  }
+  const text = await res.text().catch(() => '');
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+  return { status: res.status, ok: res.ok, body, text };
+}
+
+/** Mint a read-only child of this container's token, bound to one project. */
+async function delegateProjectToken(servicebay, name, doFetch) {
+  const res = await servicebayFetch(servicebay, '/api/system/api-tokens/delegate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    // Read-only, like the parent: a project session that genuinely needs more
+    // goes through `request_token`, which itself needs only `read`.
+    body: JSON.stringify({ name: `claude-dev project ${name}`, scopes: ['read'] }),
+  }, doFetch);
+  if (!res.ok || typeof res.body?.secret !== 'string') {
+    throw new ProjectError(502,
+      `ServiceBay refused to delegate a token for "${name}"`,
+      res.body?.error || res.text.slice(0, 200) || `HTTP ${res.status}`);
+  }
+  return { secret: res.body.secret, id: res.body.token?.id ?? '', scopes: res.body.token?.scopes ?? [] };
+}
+
+/**
+ * Revoke one delegated child. `404` comes back as `alreadyGone` rather than an
+ * error so a remove that failed halfway can be retried to completion — every
+ * other refusal is surfaced, because "revoked nothing" must never read as
+ * "revoked it".
+ */
+async function revokeProjectToken(servicebay, tokenId, doFetch) {
+  const res = await servicebayFetch(servicebay,
+    `/api/system/api-tokens/delegate?id=${encodeURIComponent(tokenId)}`, { method: 'DELETE' }, doFetch);
+  if (res.status === 404) return { revoked: false, alreadyGone: true };
+  if (!res.ok) {
+    throw new ProjectError(502,
+      `ServiceBay refused to revoke this project's token (${tokenId})`,
+      res.body?.error || res.text.slice(0, 200) || `HTTP ${res.status}`);
+  }
+  return { revoked: true, alreadyGone: false };
+}
+
+/** The delegated token id recorded for one checkout, or `''`. Throws if the
+ *  file could not be read — "we could not look" is not "not managed". */
+function recordedTokenId(homeDir, checkoutPath, readFile) {
+  return readMcpEntries(homeDir, readFile).delegatedByPath[checkoutPath] ?? '';
+}
+
+/**
+ * Add a project. Returns the payload for `POST /api/projects`.
+ *
+ * An EXISTING checkout is adopted rather than refused: /workspace is full of
+ * repos someone cloned by hand, and wiring one up is the same job as cloning a
+ * new one. It is also what makes re-adding after a removal possible at all —
+ * and re-add is where orphans would show up, so the first thing an adopt does
+ * is revoke whatever child token the previous round recorded.
+ */
+export async function addProject(options, servicebay, input) {
+  const {
+    devHome = '/workspace',
+    homeDir = devHome,
+    tmuxSession = 'claude',
+    fsImpl = fs,
+    runTmux = defaultRunTmux,
+    runCommand = defaultRunCommand,
+    readFile = (p) => fs.readFileSync(p, 'utf-8'),
+    doFetch = fetch,
+  } = options ?? {};
+
+  const url = String(input?.url ?? '').trim();
+  const name = String(input?.name ?? '').trim() || projectNameFromUrl(url);
+  const nameError = validateProjectName(name);
+  if (nameError) throw new ProjectError(400, nameError);
+
+  const checkoutPath = path.join(devHome, name);
+  const exists = fsImpl.existsSync(checkoutPath);
+  const isCheckout = exists && fsImpl.existsSync(path.join(checkoutPath, '.git'));
+  if (exists && !isCheckout) {
+    throw new ProjectError(409,
+      `${checkoutPath} already exists and is not a git checkout — pick another name or clear it from a shell`);
+  }
+
+  const warnings = [];
+  let cloned = false;
+  if (!exists) {
+    const urlError = validateGitUrl(url);
+    if (urlError) throw new ProjectError(400, urlError);
+    try {
+      runCommand('git', ['clone', '--', url, checkoutPath], { cwd: devHome, env: { ...process.env, HOME: homeDir } });
+    } catch (err) {
+      throw new ProjectError(502, `git could not clone ${url}`, String(err?.stderr || err?.message || err).slice(0, 500));
+    }
+    cloned = true;
+  }
+
+  // Same registration the entrypoint does, same idempotent `--replace-all`
+  // form — a root-owned checkout is unusable to `dev` without it.
+  try {
+    runCommand('git', ['config', '--global', '--replace-all', '--fixed-value',
+      'safe.directory', checkoutPath, checkoutPath], { cwd: devHome, env: { ...process.env, HOME: homeDir } });
+  } catch (err) {
+    warnings.push(`git safe.directory could not be registered for ${checkoutPath}: ${String(err?.message || err).slice(0, 200)}`);
+  }
+
+  // Re-add must not leave the previous round's token behind (acceptance 3).
+  const previousId = recordedTokenId(homeDir, checkoutPath, readFile);
+  if (previousId) {
+    const previous = await revokeProjectToken(servicebay, previousId, doFetch);
+    if (previous.alreadyGone) warnings.push(`the previously recorded token ${previousId} was already gone`);
+  }
+
+  const token = await delegateProjectToken(servicebay, name, doFetch);
+  const mcpUrl = `${String(servicebay.url || '').replace(/\/+$/, '')}/mcp`;
+  try {
+    // remove-then-add, like the entrypoint: idempotent across re-adds.
+    try {
+      runCommand('claude', ['mcp', 'remove', PROJECT_MCP_SERVER, '--scope', 'local'],
+        { cwd: checkoutPath, env: { ...process.env, HOME: homeDir } });
+    } catch { /* nothing to remove is the normal case */ }
+    runCommand('claude', ['mcp', 'add', '--transport', 'http', '--scope', 'local',
+      PROJECT_MCP_SERVER, mcpUrl, '--header', `Authorization: Bearer ${token.secret}`],
+    { cwd: checkoutPath, env: { ...process.env, HOME: homeDir } });
+  } catch (err) {
+    // The token exists but nothing records it — take it back rather than
+    // leave a credential nobody can find again.
+    await revokeProjectToken(servicebay, token.id, doFetch).catch(() => {});
+    throw new ProjectError(500,
+      `the ServiceBay MCP entry for "${name}" could not be written, so its token was revoked again`,
+      String(err?.stderr || err?.message || err).slice(0, 500));
+  }
+
+  // Adding un-does a previous Remove: the checkout is a managed project again.
+  try { fsImpl.rmSync(noAutostartMarker(devHome, name), { force: true }); } catch { /* nothing to clear */ }
+
+  try {
+    runCommand('start-claude', ['--continue', '--allow-dangerously-skip-permissions', '--', name], {
+      cwd: devHome,
+      env: { ...process.env, HOME: homeDir, CLAUDE_START_NO_ATTACH: '1', CLAUDE_TMUX_SESSION: tmuxSession },
+    });
+  } catch (err) {
+    warnings.push(`start-claude reported an error: ${String(err?.stderr || err?.message || err).slice(0, 200)}`);
+  }
+
+  // Do not take start-claude's word for it — ASK tmux. `null` if tmux itself
+  // could not be read: an unverified "running: true" is the whole bug class
+  // this panel exists to end.
+  let session = null;
+  try {
+    session = { running: readTmuxWindows(tmuxSession, runTmux).includes(name) };
+  } catch (err) {
+    warnings.push(`the session could not be confirmed — tmux could not be read: ${String(err?.message || err).slice(0, 200)}`);
+  }
+  if (session && !session.running) {
+    warnings.push(`no tmux window named "${name}" is running, so this project has no Claude session yet`);
+  }
+
+  return {
+    ok: true,
+    project: {
+      name,
+      path: checkoutPath,
+      cloned,
+      token: { id: token.id, scopes: token.scopes },
+      mcp: { server: PROJECT_MCP_SERVER, scope: 'local', url: mcpUrl },
+      session,
+    },
+    warnings,
+  };
+}
+
+/**
+ * Remove a project: revoke ITS token, drop ITS MCP entry, stop ITS session.
+ * Nothing on disk is deleted, and a checkout this UI did not add is refused
+ * outright — `managed` is not advisory, it is the permission.
+ */
+export async function removeProject(options, servicebay, input) {
+  const {
+    devHome = '/workspace',
+    homeDir = devHome,
+    tmuxSession = 'claude',
+    fsImpl = fs,
+    runTmux = defaultRunTmux,
+    runCommand = defaultRunCommand,
+    readFile = (p) => fs.readFileSync(p, 'utf-8'),
+    doFetch = fetch,
+  } = options ?? {};
+
+  const name = String(input?.name ?? '').trim();
+  const nameError = validateProjectName(name);
+  if (nameError) throw new ProjectError(400, nameError);
+
+  const checkoutPath = path.join(devHome, name);
+  // Removing something that is not there FAILS. It does not quietly succeed.
+  if (!fsImpl.existsSync(path.join(checkoutPath, '.git'))) {
+    throw new ProjectError(404, `there is no checkout named "${name}" under ${devHome}`);
+  }
+
+  let tokenId;
+  try {
+    tokenId = recordedTokenId(homeDir, checkoutPath, readFile);
+  } catch (err) {
+    // Unknown, not "unmanaged" — refusing on a failed read would be a guess.
+    throw new ProjectError(500,
+      `could not tell whether "${name}" was added here: ${String(err?.message || err).slice(0, 200)}`);
+  }
+  if (!tokenId) {
+    throw new ProjectError(409,
+      `"${name}" was not added through this page — it has no delegated ServiceBay token, so there is nothing here to take back. Leaving it exactly as it is.`);
+  }
+
+  const warnings = [];
+  // Revoke FIRST: while the entry still names the token, a failure here is
+  // retryable. The other order would strand a live credential unrecorded.
+  const revoked = await revokeProjectToken(servicebay, tokenId, doFetch);
+  if (revoked.alreadyGone) warnings.push(`token ${tokenId} was already revoked on the ServiceBay side`);
+
+  try {
+    runCommand('claude', ['mcp', 'remove', PROJECT_MCP_SERVER, '--scope', 'local'],
+      { cwd: checkoutPath, env: { ...process.env, HOME: homeDir } });
+  } catch (err) {
+    throw new ProjectError(500,
+      `the token was revoked but the MCP entry for "${name}" could not be removed — the entry now names a dead token`,
+      String(err?.stderr || err?.message || err).slice(0, 500));
+  }
+
+  // Durable stop: the entrypoint's 300s reconcile honours this marker, so the
+  // session does not come back on its own a few minutes from now.
+  try {
+    fsImpl.mkdirSync(path.dirname(noAutostartMarker(devHome, name)), { recursive: true });
+    fsImpl.writeFileSync(noAutostartMarker(devHome, name), `removed from the configuration UI\n`);
+  } catch (err) {
+    warnings.push(`the container may auto-start this project again — its no-autostart marker could not be written: ${String(err?.message || err).slice(0, 200)}`);
+  }
+
+  try {
+    runTmux(['kill-window', '-t', `${tmuxSession}:${name}`]);
+  } catch (err) {
+    // No window / no server is the answer "it was not running", not a failure.
+    const stderr = String(err?.stderr || err?.message || '');
+    if (!/no server running|can't find window|window not found|no such window|can't find session|session not found/i.test(stderr)) {
+      warnings.push(`tmux could not stop the session: ${stderr.slice(0, 200)}`);
+    }
+  }
+
+  let session = null;
+  try {
+    session = { running: readTmuxWindows(tmuxSession, runTmux).includes(name) };
+  } catch (err) {
+    warnings.push(`the session could not be confirmed stopped — tmux could not be read: ${String(err?.message || err).slice(0, 200)}`);
+  }
+  if (session?.running) warnings.push(`a tmux window named "${name}" is still running`);
+
+  return {
+    ok: true,
+    removed: {
+      name,
+      path: checkoutPath,
+      tokenId,
+      session,
+      // Said out loud so nobody reads Remove as a delete.
+      checkoutDeleted: false,
+    },
+    warnings,
+  };
+}
+
+/** Read a small JSON request body. Anything bigger than 8 KiB is refused. */
+function readJsonRequest(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.setEncoding('utf-8');
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 8192) {
+        reject(new ProjectError(413, 'request body too large'));
+        req.destroy();
+      }
+    });
+    req.on('error', (err) => reject(new ProjectError(400, `could not read the request body: ${err.message}`)));
+    req.on('end', () => {
+      if (!body.trim()) return resolve({});
+      try { resolve(JSON.parse(body)); } catch { reject(new ProjectError(400, 'the request body is not valid JSON')); }
+    });
+  });
 }
 
 /**
@@ -352,6 +793,24 @@ export const API_ROUTES = {
       projects: result.projects,
       sources: result.sources,
     });
+  },
+
+  /** Add a project (#2680) — clone or adopt, delegate, wire MCP, start it. */
+  'POST /api/projects': async (req, res, ctx) => {
+    const body = await readJsonRequest(req);
+    const result = await addProject(ctx.projectOptions, ctx.servicebay, body);
+    ctx.log(`claude-dev config-ui: ${ctx.identity.user} added project "${result.project.name}"`
+      + ` (${result.project.cloned ? 'cloned' : 'adopted'}, token ${result.project.token.id})`
+      + `${result.warnings.length ? ` with ${result.warnings.length} warning(s)` : ''}`);
+    sendJson(res, 201, result);
+  },
+
+  /** Remove a project (#2680) — revoke its token, unwire it, stop it. */
+  'DELETE /api/projects': async (req, res, ctx) => {
+    const result = await removeProject(ctx.projectOptions, ctx.servicebay, { name: ctx.query.get('name') ?? '' });
+    ctx.log(`claude-dev config-ui: ${ctx.identity.user} removed project "${result.removed.name}"`
+      + ` (token ${result.removed.tokenId} revoked, checkout left on disk)`);
+    sendJson(res, 200, result);
   },
 };
 
@@ -408,10 +867,31 @@ export function createConfigUiServer({
 
     // Read lazily, per request: the panel's whole job is to show what is true
     // NOW, not what was true when the server booted.
-    const ctx = { identity: auth.identity, servicebay, projects: () => collectProjects(projects) };
+    const ctx = {
+      identity: auth.identity,
+      servicebay,
+      projects: () => collectProjects(projects),
+      // The SAME injection point the read path uses (devHome / homeDir /
+      // tmuxSession / runTmux / runCommand), so the write path is testable
+      // without a real /workspace and there is no second seam to keep in sync.
+      projectOptions: projects,
+      query: url.searchParams,
+      log,
+    };
 
     const route = API_ROUTES[`${req.method} ${pathname}`];
-    if (route) return route(req, res, ctx);
+    if (route) {
+      // Handlers may be async; an unhandled rejection would otherwise leave the
+      // request hanging with no answer at all.
+      return Promise.resolve()
+        .then(() => route(req, res, ctx))
+        .catch((err) => {
+          const status = Number.isInteger(err?.status) ? err.status : 500;
+          log(`claude-dev config-ui: ${req.method} ${pathname} failed — ${err?.message || err}`);
+          if (res.headersSent) return res.end();
+          sendJson(res, status, { error: String(err?.message || err), ...(err?.detail ? { detail: err.detail } : {}) });
+        });
+    }
     if (pathname.startsWith('/api/')) return sendJson(res, 404, { error: 'no such route' });
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {

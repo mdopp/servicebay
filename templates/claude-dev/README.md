@@ -226,15 +226,15 @@ If you ever configure this by hand, note two things:
 
 The container serves its own small web UI at
 `https://<CLAUDE_DEV_CONFIG_SUBDOMAIN>.<your domain>` — nothing to install, no
-SSH step, it is there after a deploy. The remaining pages (adding/removing a
-project, GitHub sign-in, restart and repair actions) go in one at a time and
-show up in the sidebar as they land.
+SSH step, it is there after a deploy. The remaining pages (GitHub sign-in,
+restart and repair actions) go in one at a time and show up in the sidebar as
+they land.
 
 **Projects** is the first page. It lists every git checkout in the shared
 workspace and, for each one, whether a Claude session is running against it and
 whether it can reach ServiceBay through an MCP server entry — the state you
 previously had to SSH in and run `tmux list-windows` and `claude mcp list` to
-see. It reads and shows; it changes nothing yet.
+see.
 
 It is deliberately careful about the difference between *no* and *don't know*.
 An empty workspace says so in as many words; a checkout with no session says
@@ -242,6 +242,46 @@ An empty workspace says so in as many words; a checkout with no session says
 auto-started); and a state the container could not read says **Unknown** with a
 banner naming what failed. A read that breaks is never allowed to look like an
 empty list.
+
+### Adding and removing a project
+
+**Add a project** takes a git URL and does the whole job that previously
+required a shell: it clones into `/workspace/<name>`, registers the checkout as
+a git `safe.directory`, asks ServiceBay to **delegate a child of this
+container's own read-only token** for that project alone, wires that child as
+the project's `servicebay` MCP server at Claude Code's *local* scope (so it
+overrides the shared container-wide entry), and starts the tmux session. A
+checkout that is already in the workspace is **adopted** rather than cloned —
+same wiring, no second copy.
+
+The result line reports what was measured, not what was attempted: the session
+state comes from asking `tmux` again afterwards, and anything that did not work
+(no session came up, `safe.directory` failed) is listed as a warning next to
+the headline instead of being folded into a clean "added".
+
+**Remove** is the exact inverse and nothing more: it revokes that project's
+child token, drops its MCP entry, and stops its tmux window. Three things it
+deliberately does **not** do:
+
+- it never deletes the checkout — the files, including uncommitted work, stay
+  exactly where they are (the result line says so);
+- it never touches a checkout this page did not add. The Remove button only
+  appears on a row whose local-scope MCP entry names a delegated token; a
+  hand-cloned repo shows "Added outside this page", and a row whose MCP state
+  could not be read shows a **disabled** button and "Unknown" rather than
+  guessing;
+- it never takes a sibling's credential with it. The revoke names one token id
+  and ServiceBay refuses any id that is not a child of the presenting parent.
+
+Because the container re-reconciles the workspace every 300 s, Remove also
+writes `/workspace/.claude-dev/no-autostart/<name>`, which the entrypoint's
+`select_autostart_repos` honours — otherwise the session would quietly come
+back a few minutes later. Adding the project again clears the marker.
+
+Adding a project that is already wired replaces its token rather than adding a
+second one: the previously recorded child is revoked first, so neither a
+re-add nor an add/remove/add cycle leaves an orphaned token or a stale MCP
+entry behind.
 
 **Two gates, and both have to pass.** The reverse proxy sends every visitor to
 the box's normal Authelia sign-in first (`__authelia_forward_auth__`, the same
@@ -266,7 +306,14 @@ route in — a LAN host cannot hit `<lan-ip>:8790` and skip the sign-in.
 - Anything that needs ServiceBay itself uses the **existing** read-only
   `SERVICEBAY_MCP_TOKEN` (the same credential the MCP server uses), handed to
   the server through a mode-`0400` file. It stays server-side; the browser is
-  told only *whether* it is configured, never its value.
+  told only *whether* it is configured, never its value. A per-project
+  credential is a **delegated child** of it
+  (`POST`/`DELETE /api/system/api-tokens/delegate`), never a second mint.
+- `createConfigUiServer`'s `projects` option is the one injection point for
+  everything the server reads from and writes to the container (`devHome`,
+  `homeDir`, `tmuxSession`, `runTmux`, `runCommand`). Use it rather than adding
+  a second seam — it is what lets the whole add/remove path be tested without a
+  real `/workspace`.
 
 ## Persistent session (tmux)
 

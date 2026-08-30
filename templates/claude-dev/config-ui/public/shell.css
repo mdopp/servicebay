@@ -191,3 +191,73 @@ body {
   border-radius: 8px;
   font-size: 0.9rem;
 }
+
+/* ── add / remove a project (#2680) ─────────────────────────────────────── */
+
+.projects-action { white-space: normal; }
+.projects-remove {
+  font: inherit;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid #c0392b;
+  border-radius: 8px;
+  background: transparent;
+  color: #c0392b;
+  cursor: pointer;
+}
+.projects-remove:hover:not(:disabled) { background: #c0392b; color: #fff; }
+.projects-remove:disabled { opacity: 0.45; cursor: not-allowed; }
+@media (prefers-color-scheme: dark) {
+  .projects-remove { border-color: #e2705f; color: #e2705f; }
+  .projects-remove:hover:not(:disabled) { background: #e2705f; color: #14171a; }
+}
+
+.projects-add {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+.projects-add h3 { flex: 1 0 100%; margin: 0; font-size: 0.98rem; }
+.projects-add-lede { flex: 1 0 100%; margin: 0; color: var(--ink-muted); font-size: 0.88rem; }
+.projects-field { display: flex; flex-direction: column; gap: 0.25rem; flex: 1 1 18rem; }
+.projects-field span { font-size: 0.82rem; color: var(--ink-muted); }
+.projects-field input {
+  font: inherit;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface, transparent);
+  color: inherit;
+}
+.projects-add-submit {
+  font: inherit;
+  padding: 0.45rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.projects-add-submit:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.projects-action-output:empty { display: none; }
+.projects-result,
+.projects-action-error {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+.projects-result-headline { margin: 0; }
+.projects-result-partial { border-color: #9a6b00; }
+.projects-result-warnings { margin: 0.4rem 0 0; padding-left: 1.1rem; }
+.projects-warning { color: #9a6b00; }
+@media (prefers-color-scheme: dark) { .projects-warning { color: #e0b155; } }
+.projects-action-error { border-color: #c0392b; }
+.projects-action-error p { margin: 0; }
+.projects-working { margin: 0.75rem 0; color: var(--ink-muted); font-size: 0.9rem; }

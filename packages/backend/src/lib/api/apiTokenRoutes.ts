@@ -4,6 +4,7 @@ import {
   listTokens,
   createToken,
   createDelegatedToken,
+  revokeDelegatedToken,
   DelegateError,
   revokeToken,
   revokeTokens,
@@ -148,6 +149,46 @@ export async function delegateTokenHandler({ request }: { request: Request }) {
       return NextResponse.json({ error: e.message }, { status: e.status });
     }
     return apiError(e, { tag: 'api:system:api-tokens:delegate', status: 400 });
+  }
+}
+
+export const RevokeDelegatedQuery = z.object({ id: z.string().optional() });
+
+/**
+ * Delegated child-REVOKE (#2680) — the counterpart of `delegateTokenHandler`,
+ * on the same route and the same credential model (`Authorization: Bearer
+ * sb_…` naming the parent; `skipAuth: true` because that token *is* the
+ * authentication, verified inside `revokeDelegatedToken`).
+ *
+ * It exists because there was no way for a token holder to take back what it
+ * delegated: `DELETE /api/system/api-tokens` carries no `tokenScope`, so it
+ * accepts a session cookie only, and the claude-dev configuration UI has no
+ * session — it holds one read-only `sb_` token and nothing else. Without this
+ * the "remove a project" action could stop the session and leave the project's
+ * credential live forever.
+ *
+ * The authority is deliberately narrow: a parent may revoke *its own children*
+ * and nothing else. Anything else — an unknown id, a sibling of a different
+ * parent, the parent itself — is refused (404/403) with the store untouched.
+ */
+export async function revokeDelegatedTokenHandler(
+  { request, query }: { request: Request; query: z.infer<typeof RevokeDelegatedQuery> },
+) {
+  const authz = request.headers.get('authorization') ?? '';
+  const parentRaw = authz.startsWith('Bearer ') ? authz.slice(7).trim() : '';
+  if (!parentRaw) {
+    return NextResponse.json({ error: 'Bearer parent token required' }, { status: 401 });
+  }
+  try {
+    const revoked = await revokeDelegatedToken({ parentRaw, childId: query.id ?? '' });
+    // `revoked: 1` so a caller that reads only the body still sees a
+    // denominator rather than inferring success from a bare `ok`.
+    return NextResponse.json({ ok: true, revoked: 1, id: revoked.id, name: revoked.name });
+  } catch (e) {
+    if (e instanceof DelegateError) {
+      return NextResponse.json({ error: e.message }, { status: e.status });
+    }
+    return apiError(e, { tag: 'api:system:api-tokens:delegate:delete', status: 400 });
   }
 }
 
