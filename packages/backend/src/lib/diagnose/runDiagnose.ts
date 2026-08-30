@@ -46,7 +46,14 @@ import { checkDomainResolvesToBox } from '@/lib/diagnose/probes/domainResolvesTo
 import { checkOidcProviderReachable } from '@/lib/diagnose/probes/oidcProviderReachable';
 import { checkNasBackupReachable } from '@/lib/diagnose/probes/nasBackupReachable';
 import { checkClaudeDevAuth } from '@/lib/diagnose/probes/claudeDevAuth';
-import { checkContentBackup, checkConfigBackup } from '@/lib/diagnose/probes/backupCoverage';
+import {
+  checkContentBackup,
+  checkConfigBackup,
+  CONTENT_BACKUP_PROBE_ID,
+  CONTENT_BACKUP_PROBE_LABEL,
+  CONFIG_BACKUP_PROBE_ID,
+  CONFIG_BACKUP_PROBE_LABEL,
+} from '@/lib/diagnose/probes/backupCoverage';
 import { checkHaAutomationIntegrity } from '@/lib/diagnose/probes/haAutomationIntegrity';
 import { checkSsoVerify } from '@/lib/diagnose/probes/ssoVerify';
 import { checkHermesChat } from '@/lib/diagnose/probes/hermesChat';
@@ -138,8 +145,8 @@ const PROBE_GROUP: Record<string, ProbeGroup> = {
   // usable; `config_backup` says the nightly push actually ran; `content_backup`
   // says whether the household data under /mnt/data is covered at all. Three
   // green-looking things that mean three different things.
-  config_backup: 'storage-backups',
-  content_backup: 'storage-backups',
+  [CONFIG_BACKUP_PROBE_ID]: 'storage-backups',
+  [CONTENT_BACKUP_PROBE_ID]: 'storage-backups',
   // Host/OS state (#2585). Deliberately NOT `system-info`: that card is
   // collapsed because it holds things that are never a problem, and a
   // permanently-failing update loop is exactly the problem an operator is
@@ -1269,16 +1276,16 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
   try {
     const cb = await checkContentBackup();
     probes.push({
-      id: 'content_backup',
-      label: 'Content backup (Backup Sync)',
+      id: CONTENT_BACKUP_PROBE_ID,
+      label: CONTENT_BACKUP_PROBE_LABEL,
       status: cb.status,
       detail: cb.detail,
       hint: cb.hint,
     });
   } catch (e) {
     probes.push({
-      id: 'content_backup',
-      label: 'Content backup (Backup Sync)',
+      id: CONTENT_BACKUP_PROBE_ID,
+      label: CONTENT_BACKUP_PROBE_LABEL,
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
@@ -1287,16 +1294,16 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
   try {
     const cfb = await checkConfigBackup();
     probes.push({
-      id: 'config_backup',
-      label: 'Config backup (last nightly run)',
+      id: CONFIG_BACKUP_PROBE_ID,
+      label: CONFIG_BACKUP_PROBE_LABEL,
       status: cfb.status,
       detail: cfb.detail,
       hint: cfb.hint,
     });
   } catch (e) {
     probes.push({
-      id: 'config_backup',
-      label: 'Config backup (last nightly run)',
+      id: CONFIG_BACKUP_PROBE_ID,
+      label: CONFIG_BACKUP_PROBE_LABEL,
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

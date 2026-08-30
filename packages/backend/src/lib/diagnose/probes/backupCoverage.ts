@@ -36,6 +36,17 @@ import { getConfig } from '@/lib/config';
 import { getBackupHistory } from '@/lib/backup/service';
 import { resolveBackupSources, type BackupConfig, type BackupSchedule } from '@/lib/backup/types';
 
+/**
+ * Probe id + row label for each mechanism. Exported so `runDiagnose` and the
+ * end-to-end health-check test name the same rows: the probe reaches the
+ * operator as `diagnose:<id>` in `get_health_checks` and on the Checks page, so
+ * the id is the contract, not an internal detail (#2591).
+ */
+export const CONTENT_BACKUP_PROBE_ID = 'content_backup';
+export const CONTENT_BACKUP_PROBE_LABEL = 'Content backup (Backup Sync)';
+export const CONFIG_BACKUP_PROBE_ID = 'config_backup';
+export const CONFIG_BACKUP_PROBE_LABEL = 'Config backup (last nightly run)';
+
 /** How long each schedule is *supposed* to leave between runs. */
 const SCHEDULE_INTERVAL_MS: Record<BackupSchedule, number> = {
   hourly: 60 * 60_000,
