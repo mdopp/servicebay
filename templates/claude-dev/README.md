@@ -43,6 +43,7 @@ homes under `/workspace/home/<user>` stay private (mode `700`).
 | `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in **and** open the configuration UI (default `admins`). |
 | `CLAUDE_DEV_CONFIG_PORT` | Port the configuration UI listens on (default `8790`), published on the host loopback only. |
 | `CLAUDE_DEV_CONFIG_SUBDOMAIN` | Subdomain the configuration UI is served on (default `claude`), behind nginx + Authelia. See [The configuration UI](#the-configuration-ui). |
+| `SERVICEBAY_APP_URL` | Set by the pod to `https://admin.<your domain>` — where a *browser* reaches ServiceBay, so the UI can link at the Claude sign-in repair terminal. Not `SERVICEBAY_API_URL`, which is the container-side address. |
 | `LLDAP_LDAP_PORT` / `LLDAP_BASE_DN` | LLDAP coordinates; default to the `auth` stack's (`3890` / the base DN derived from `PUBLIC_DOMAIN`). LDAP login is skipped when the base DN is blank. The LLDAP *host* is not a variable — since template v2 the pod reaches it at `host.containers.internal` (see [CHANGELOG](CHANGELOG.md)). |
 
 ## Logging in as your own LDAP user
@@ -226,8 +227,7 @@ If you ever configure this by hand, note two things:
 
 The container serves its own small web UI at
 `https://<CLAUDE_DEV_CONFIG_SUBDOMAIN>.<your domain>` — nothing to install, no
-SSH step, it is there after a deploy. The remaining pages (restart and repair
-actions) go in one at a time and show up in the sidebar as they land.
+SSH step, it is there after a deploy.
 
 **Projects** is the first page. It lists every git checkout in the shared
 workspace and, for each one, whether a Claude session is running against it and
@@ -281,6 +281,36 @@ Adding a project that is already wired replaces its token rather than adding a
 second one: the previously recorded child is revoked first, so neither a
 re-add nor an add/remove/add cycle leaves an orphaned token or a stale MCP
 entry behind.
+
+### Repairing the sign-in, and restarting one session
+
+Two buttons on the Projects page cover the two ways the sessions go quiet.
+
+**Repair the Claude sign-in** is a link, not an action of this page's. It opens
+ServiceBay's own terminal inside this container with `claude auth login` already
+running — the whitelisted `?run=claude-login` deep-link, whose target is a
+*preset key* ServiceBay looks up in its own allow-list, never a command carried
+in the URL. The sign-in it repairs is the one whose lapse makes every row read
+"Not running" at once, and you can now do it from the phone you found out on
+instead of over SSH. The link needs to know the address a browser reaches
+ServiceBay at (`SERVICEBAY_APP_URL` on the pod, `https://admin.<your domain>`);
+on a box with no public domain the page says so and gives you the command to run
+by hand rather than offering a link that leads nowhere.
+
+**Restart session** restarts exactly one project's Claude — its own `tmux`
+window, stopped and started again with the same `start-claude` the container
+boots with. Two things make that safe to press:
+
+- It targets the window by an **anchored** name (`claude:=<project>`). Without
+  the anchor `tmux` falls back to a *prefix* match, so restarting `solaris`
+  would silently destroy `solarisbay`'s session instead. Every other session's
+  name is reported back to you afterwards, so "it only touched mine" is
+  something you read rather than something the page claims.
+- It **re-asks tmux** afterwards instead of trusting the exit code.
+  `start-claude` can exit 0 with nothing running, so a restart that did not come
+  back is an error in red, never a green line. A restart of a checkout that is
+  not there, or of one you removed from this page, fails outright rather than
+  quietly resurrecting a session you took down.
 
 ### Connecting GitHub
 

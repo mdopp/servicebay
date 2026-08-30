@@ -30,9 +30,11 @@
  *
  *   SEAM 3 — HOW IT TALKS TO THE CONTAINER / TO SERVICEBAY.  `API_ROUTES` is
  *     the route table; `'GET /api/projects'` (#2679), its `POST`/`DELETE`
- *     siblings (#2680) and the `/api/github` trio (#2681) sit next to
+ *     siblings (#2680), the `/api/github` trio (#2681) and
+ *     `'POST /api/projects/restart'` (#2682) sit next to
  *     `'GET /api/session'` and got the auth gate for free — a handler may be
- *     async. Anything that needs
+ *     async. The Claude sign-in repair deliberately has NO route: it is a plain
+ *     link at ServiceBay's own whitelisted terminal deep-link. Anything that needs
  *     ServiceBay's own API uses `ctx.servicebay` — the READ-ONLY `sb_…` token
  *     minted for this container at install time (`SERVICEBAY_MCP_TOKEN`,
  *     #2673), the SAME credential the entrypoint wires as Claude Code's MCP
@@ -473,6 +475,75 @@ function noAutostartMarker(devHome, name) {
   return path.join(devHome, '.claude-dev', 'no-autostart', name);
 }
 
+/**
+ * The tmux target for ONE project's window.
+ *
+ * The `=` is load-bearing, not decoration. Without it tmux resolves a window
+ * name by exact match FIRST and then by PREFIX, so on the real box
+ * `claude:solaris` resolves to `solarisbay` and `claude:servicebay` would
+ * happily match `servicebay-templates` if the exact window were gone. A stop
+ * aimed at one project would then take out a different one — the single worst
+ * thing the stop/restart path could do. `=` makes tmux answer "can't find
+ * window: <name>" instead, which is a refusal we can report.
+ */
+function windowTarget(tmuxSession, name) {
+  return `${tmuxSession}:=${name}`;
+}
+
+/** tmux's way of saying "that window is not there" — an ANSWER, not a failure. */
+const TMUX_NO_SUCH_WINDOW =
+  /no server running|can't find window|window not found|no such window|can't find session|session not found/i;
+
+/**
+ * Stop EXACTLY one project's session. Returns `''` when the window is gone
+ * (killed now, or never running), otherwise the reason it could not be stopped.
+ *
+ * Shared by Remove (#2680) and Restart (#2682) so there is ONE spelling of the
+ * kill target — a second copy is how one of them would end up without the `=`.
+ */
+function stopSessionWindow(tmuxSession, name, runTmux) {
+  try {
+    runTmux(['kill-window', '-t', windowTarget(tmuxSession, name)]);
+    return '';
+  } catch (err) {
+    const stderr = String(err?.stderr || err?.message || '');
+    if (TMUX_NO_SUCH_WINDOW.test(stderr)) return '';
+    return stderr.slice(0, 200);
+  }
+}
+
+/**
+ * Start ONE project's session, with the same `start-claude` invocation Add
+ * (#2680) uses. Returns `''` or the reason the CLI refused.
+ *
+ * `CLAUDE_START_NO_ATTACH` matters here: this process has no terminal, and
+ * without it start-claude would `exec tmux attach` and never return.
+ */
+function startSessionWindow({ devHome, homeDir, tmuxSession, name, runCommand }) {
+  try {
+    runCommand('start-claude', ['--continue', '--allow-dangerously-skip-permissions', '--', name], {
+      cwd: devHome,
+      env: { ...process.env, HOME: homeDir, CLAUDE_START_NO_ATTACH: '1', CLAUDE_TMUX_SESSION: tmuxSession },
+    });
+    return '';
+  } catch (err) {
+    return String(err?.stderr || err?.message || err).slice(0, 200);
+  }
+}
+
+/**
+ * Ask TMUX whether one project's window is up — never the CLI that was just
+ * run. `session` is `null` when tmux itself could not be read, because an
+ * unverified `running: true` is the whole bug class this UI exists to end.
+ */
+function readSessionState(tmuxSession, name, runTmux) {
+  try {
+    return { session: { running: readTmuxWindows(tmuxSession, runTmux).includes(name) }, error: '' };
+  } catch (err) {
+    return { session: null, error: String(err?.message || err).slice(0, 200) };
+  }
+}
+
 /** ServiceBay's own API, reached with the container's read-only parent token. */
 async function servicebayFetch(servicebay, pathname, init, doFetch) {
   if (!servicebay?.token) {
@@ -621,23 +692,16 @@ export async function addProject(options, servicebay, input) {
   // Adding un-does a previous Remove: the checkout is a managed project again.
   try { fsImpl.rmSync(noAutostartMarker(devHome, name), { force: true }); } catch { /* nothing to clear */ }
 
-  try {
-    runCommand('start-claude', ['--continue', '--allow-dangerously-skip-permissions', '--', name], {
-      cwd: devHome,
-      env: { ...process.env, HOME: homeDir, CLAUDE_START_NO_ATTACH: '1', CLAUDE_TMUX_SESSION: tmuxSession },
-    });
-  } catch (err) {
-    warnings.push(`start-claude reported an error: ${String(err?.stderr || err?.message || err).slice(0, 200)}`);
-  }
+  const startError = startSessionWindow({ devHome, homeDir, tmuxSession, name, runCommand });
+  if (startError) warnings.push(`start-claude reported an error: ${startError}`);
 
   // Do not take start-claude's word for it — ASK tmux. `null` if tmux itself
   // could not be read: an unverified "running: true" is the whole bug class
   // this panel exists to end.
-  let session = null;
-  try {
-    session = { running: readTmuxWindows(tmuxSession, runTmux).includes(name) };
-  } catch (err) {
-    warnings.push(`the session could not be confirmed — tmux could not be read: ${String(err?.message || err).slice(0, 200)}`);
+  const started = readSessionState(tmuxSession, name, runTmux);
+  const session = started.session;
+  if (started.error) {
+    warnings.push(`the session could not be confirmed — tmux could not be read: ${started.error}`);
   }
   if (session && !session.running) {
     warnings.push(`no tmux window named "${name}" is running, so this project has no Claude session yet`);
@@ -721,21 +785,15 @@ export async function removeProject(options, servicebay, input) {
     warnings.push(`the container may auto-start this project again — its no-autostart marker could not be written: ${String(err?.message || err).slice(0, 200)}`);
   }
 
-  try {
-    runTmux(['kill-window', '-t', `${tmuxSession}:${name}`]);
-  } catch (err) {
-    // No window / no server is the answer "it was not running", not a failure.
-    const stderr = String(err?.stderr || err?.message || '');
-    if (!/no server running|can't find window|window not found|no such window|can't find session|session not found/i.test(stderr)) {
-      warnings.push(`tmux could not stop the session: ${stderr.slice(0, 200)}`);
-    }
-  }
+  // Exactly this project's window — see `windowTarget`. No window / no server
+  // is the answer "it was not running", not a failure.
+  const stopError = stopSessionWindow(tmuxSession, name, runTmux);
+  if (stopError) warnings.push(`tmux could not stop the session: ${stopError}`);
 
-  let session = null;
-  try {
-    session = { running: readTmuxWindows(tmuxSession, runTmux).includes(name) };
-  } catch (err) {
-    warnings.push(`the session could not be confirmed stopped — tmux could not be read: ${String(err?.message || err).slice(0, 200)}`);
+  const stopped = readSessionState(tmuxSession, name, runTmux);
+  const session = stopped.session;
+  if (stopped.error) {
+    warnings.push(`the session could not be confirmed stopped — tmux could not be read: ${stopped.error}`);
   }
   if (session?.running) warnings.push(`a tmux window named "${name}" is still running`);
 
@@ -748,6 +806,120 @@ export async function removeProject(options, servicebay, input) {
       session,
       // Said out loud so nobody reads Remove as a delete.
       checkoutDeleted: false,
+    },
+    warnings,
+  };
+}
+
+/* ───────────────── restart ONE project's session (#2682) ────────────────────
+ *
+ * A Claude session goes quiet for reasons a restart fixes — a lapsed sign-in
+ * that has since been repaired, a wedged MCP connection, an OOM'd process left
+ * behind by `remain-on-exit`. Doing it by hand means SSH, tmux, and knowing
+ * which window; this is the button.
+ *
+ * Two failure modes are designed against, because both are silent:
+ *
+ *   IT MUST NOT TAKE OUT A SIBLING. tmux prefix-matches window names, so the
+ *     naive `-t claude:<name>` resolves `solaris` to `solarisbay` on the real
+ *     box. Every kill here goes through `windowTarget`, which anchors it with
+ *     `=`. The response also reports the sibling windows that are still up, so
+ *     "it only restarted mine" is an observation, not a promise.
+ *
+ *   IT MUST NOT REPORT A SUCCESS THE SESSION DID NOT HAVE. `start-claude` exits
+ *     0 in cases where no window ends up running (and its `--continue` fallback
+ *     means a window can die milliseconds after it is made), so its exit code
+ *     proves nothing. tmux is re-asked afterwards and a missing window is a
+ *     hard failure, not a warning. If tmux cannot be read at all the answer is
+ *     "unknown" with a 502 — never an optimistic 200.
+ *
+ * A restart of something that is not there fails loudly: no checkout is a 404,
+ * and a checkout the operator REMOVED (its `no-autostart` marker is present) is
+ * a 409 rather than a resurrection of a session they deliberately took down.
+ */
+export function restartProjectSession(options, input) {
+  const {
+    devHome = '/workspace',
+    homeDir = devHome,
+    tmuxSession = 'claude',
+    fsImpl = fs,
+    runTmux = defaultRunTmux,
+    runCommand = defaultRunCommand,
+  } = options ?? {};
+
+  const name = String(input?.name ?? '').trim();
+  const nameError = validateProjectName(name);
+  if (nameError) throw new ProjectError(400, nameError);
+
+  const checkoutPath = path.join(devHome, name);
+  if (!fsImpl.existsSync(path.join(checkoutPath, '.git'))) {
+    throw new ProjectError(404, `there is no checkout named "${name}" under ${devHome}, so there is no session to restart`);
+  }
+  if (fsImpl.existsSync(noAutostartMarker(devHome, name))) {
+    throw new ProjectError(409,
+      `"${name}" was removed from this page, so it is marked do-not-auto-start and has no session to restart. `
+      + 'Add it again to give it a Claude session.');
+  }
+
+  // The window list BEFORE, so the siblings that must survive are recorded
+  // rather than assumed. A tmux we cannot read is a stop, not a guess.
+  let before;
+  try {
+    before = readTmuxWindows(tmuxSession, runTmux);
+  } catch (err) {
+    throw new ProjectError(502,
+      `tmux could not be read, so nothing was restarted — the session state for "${name}" is unknown`,
+      String(err?.message || err).slice(0, 200));
+  }
+  const wasRunning = before.includes(name);
+
+  const stopError = stopSessionWindow(tmuxSession, name, runTmux);
+  if (stopError) {
+    throw new ProjectError(500, `the Claude session for "${name}" could not be stopped, so it was not restarted`, stopError);
+  }
+
+  // start-claude skips a checkout that already has a live window, which is
+  // exactly why the stop above has to have happened first.
+  const startError = startSessionWindow({ devHome, homeDir, tmuxSession, name, runCommand });
+
+  let after;
+  try {
+    after = readTmuxWindows(tmuxSession, runTmux);
+  } catch (err) {
+    throw new ProjectError(502,
+      `"${name}" was stopped and started again, but tmux could not be read afterwards — `
+      + 'whether the session came back is UNKNOWN',
+      String(err?.message || err).slice(0, 200));
+  }
+  if (!after.includes(name)) {
+    throw new ProjectError(500,
+      `"${name}" has no tmux window after the restart — the session did NOT come back`,
+      startError || 'start-claude reported no error, which is why tmux was asked instead');
+  }
+
+  const warnings = [];
+  if (startError) {
+    warnings.push(`start-claude reported an error even though the session is running: ${startError}`);
+  }
+  if (!wasRunning) {
+    warnings.push(`"${name}" had no session before this, so it was STARTED rather than restarted`);
+  }
+  // The sibling check, reported rather than assumed (acceptance 2).
+  const lost = before.filter(w => w !== name && !after.includes(w));
+  if (lost.length) {
+    warnings.push(`other sessions disappeared during this restart, which should not happen: ${lost.join(', ')}`);
+  }
+
+  return {
+    ok: true,
+    restarted: {
+      name,
+      path: checkoutPath,
+      wasRunning,
+      // Measured from `after`, not inferred from the exit code above.
+      session: { running: true },
+      // The siblings still up, so the panel can say what was left alone.
+      others: after.filter(w => w !== name),
     },
     warnings,
   };
@@ -1151,6 +1323,51 @@ export async function pollGithubDeviceFlow(options, flows, flowId) {
   return { state: 'connected', ...storeGithubToken(options, res.body.access_token) };
 }
 
+/* ───────────────── the Claude sign-in repair link (#2682) ───────────────────
+ *
+ * When the container's Claude sign-in lapses, every session on the box goes
+ * quiet at once and the fix is an interactive `claude auth login` inside the
+ * container — which used to mean SSH, `podman exec`, and knowing to run it as
+ * `dev` with `HOME=/workspace` rather than as root.
+ *
+ * ServiceBay already ships that repair as a one-tap deep link (e3c261ac): the
+ * terminal accepts `?run=<preset key>` and looks the key up in its own
+ * `TERMINAL_RUN_PRESETS` whitelist. `run` is a KEY, never a command — that
+ * whitelist is the security boundary, and this page neither widens it nor adds
+ * a route of its own. All it does is render an `<a href>` at it, because the
+ * operator discovering the quiet sessions on this page is one click away from
+ * the fix and does not otherwise know the URL exists.
+ */
+
+/** The whitelisted preset, and the pod's single container (`<service>-<service>`). */
+export const CLAUDE_LOGIN_DEEP_LINK = '/terminal?container=claude-dev-claude-dev&run=claude-login';
+
+/**
+ * The BROWSER-facing origin of the ServiceBay app — `https://admin.<domain>`,
+ * per `getAdminBaseUrl` in the backend. It is NOT `servicebay.url`: that one is
+ * `host.containers.internal:5888`, reachable from inside this container and
+ * from nowhere a browser runs.
+ *
+ * Returns `null` for anything unusable, and the empty-label check is the case
+ * that actually happens: a LAN-only box has no public domain, so the template
+ * renders `https://admin.` and a link built from it would 404 in the operator's
+ * face. `null` travels to the panel as "unknown", which it renders as a reason
+ * rather than a broken button.
+ */
+export function normalizeAppUrl(raw) {
+  const text = String(raw ?? '').trim();
+  if (!text) return null;
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  if (!url.hostname || url.hostname.split('.').some(label => label === '')) return null;
+  return url.origin;
+}
+
 /** Read a small JSON request body. Anything bigger than 8 KiB is refused. */
 function readJsonRequest(req) {
   return new Promise((resolve, reject) => {
@@ -1186,7 +1403,18 @@ export const API_ROUTES = {
       groups: ctx.identity.groups,
       // Whether the shell can call ServiceBay on the operator's behalf. The
       // token itself never leaves the server (SEAM 3).
-      servicebay: { configured: Boolean(ctx.servicebay.token), url: ctx.servicebay.url },
+      servicebay: {
+        configured: Boolean(ctx.servicebay.token),
+        url: ctx.servicebay.url,
+        // Where a BROWSER reaches ServiceBay — `null` when this box has no
+        // public domain configured. See `normalizeAppUrl`.
+        appUrl: ctx.servicebay.appUrl ?? null,
+      },
+      // The whitelisted one-tap Claude sign-in repair (#2682), already
+      // composed so the panel is a plain `<a href>` and nothing else. `null`
+      // when the app origin is unknown — a link we cannot build is not a link
+      // we offer.
+      claudeSignInUrl: ctx.servicebay.appUrl ? `${ctx.servicebay.appUrl}${CLAUDE_LOGIN_DEEP_LINK}` : null,
     });
   },
 
@@ -1218,6 +1446,20 @@ export const API_ROUTES = {
     const result = await removeProject(ctx.projectOptions, ctx.servicebay, { name: ctx.query.get('name') ?? '' });
     ctx.log(`claude-dev config-ui: ${ctx.identity.user} removed project "${result.removed.name}"`
       + ` (token ${result.removed.tokenId} revoked, checkout left on disk)`);
+    sendJson(res, 200, result);
+  },
+
+  /**
+   * Restart ONE project's Claude session (#2682) — stop exactly its window,
+   * start it again, then ask tmux whether it really came back.
+   */
+  'POST /api/projects/restart': async (req, res, ctx) => {
+    const body = await readJsonRequest(req);
+    const result = restartProjectSession(ctx.projectOptions, body);
+    ctx.log(`claude-dev config-ui: ${ctx.identity.user} restarted the session for "${result.restarted.name}"`
+      + ` (${result.restarted.wasRunning ? 'was running' : 'was NOT running'};`
+      + ` ${result.restarted.others.length} other session(s) left alone)`
+      + `${result.warnings.length ? ` with ${result.warnings.length} warning(s)` : ''}`);
     sendJson(res, 200, result);
   },
 
@@ -1276,7 +1518,9 @@ function sendText(res, status, body) {
 export function createConfigUiServer({
   requiredGroup = '',
   publicDir = path.join(HERE, 'public'),
-  servicebay = { url: '', token: '' },
+  // `appUrl` is the browser-facing ServiceBay origin the sign-in repair link
+  // is built on (#2682); `url` stays the container-side API address.
+  servicebay = { url: '', token: '', appUrl: null },
   // Options for `collectProjects` (devHome, homeDir, tmuxSession, and the
   // injectable fs/tmux readers the tests drive it with).
   projects = {},
@@ -1383,6 +1627,10 @@ export function configFromEnv(env = process.env) {
     servicebay: {
       url: env.SERVICEBAY_API_URL || 'http://host.containers.internal:5888',
       token: readServicebayToken(env),
+      // Set by the pod manifest to `https://admin.{{PUBLIC_DOMAIN}}`, which
+      // renders to `https://admin.` on a box with no public domain — hence
+      // the validation rather than a bare passthrough (#2682).
+      appUrl: normalizeAppUrl(env.SERVICEBAY_APP_URL),
     },
     // The `dev` user's HOME *is* the shared workspace (docker-entrypoint.sh
     // exports HOME=$DEV_HOME), which is why both default to the same path —
@@ -1418,7 +1666,10 @@ export function startFromEnv(env = process.env, log = console.log) {
   server.listen(cfg.port, cfg.host, () => {
     log(`claude-dev config-ui: listening on ${cfg.host}:${cfg.port}, `
       + `requiring Authelia identity in group "${cfg.requiredGroup || '(any)'}"; `
-      + `ServiceBay API token ${cfg.servicebay.token ? 'present' : 'ABSENT'}.`);
+      + `ServiceBay API token ${cfg.servicebay.token ? 'present' : 'ABSENT'}; `
+      // Said at boot because "the sign-in repair link is missing" is otherwise
+      // a mystery with no log line behind it (#2682).
+      + `browser-facing ServiceBay origin ${cfg.servicebay.appUrl || 'UNKNOWN (no sign-in repair link)'}.`);
   });
   return server;
 }

@@ -216,9 +216,16 @@ async function setup() {
       return state.windows.join('\n') + '\n';
     }
     if (args[0] === 'kill-window') {
-      const name = String(args[2]).split(':')[1];
-      const at = state.windows.indexOf(name);
-      if (at < 0) throw failure(`can't find window: ${name}`);
+      // Real tmux: a `=`-anchored window name matches EXACTLY, an unanchored
+      // one also matches by prefix. Modelled, so a stop that dropped the anchor
+      // would show up here as the sibling it took out (see
+      // claude_dev_signin_restart.test.ts, which asserts the anchor directly).
+      const target = String(args[2]).split(':')[1] ?? '';
+      const name = target.startsWith('=')
+        ? (state.windows.includes(target.slice(1)) ? target.slice(1) : '')
+        : (state.windows.find(w => w === target) ?? state.windows.find(w => w.startsWith(target)) ?? '');
+      const at = name ? state.windows.indexOf(name) : -1;
+      if (at < 0) throw failure(`can't find window: ${target.replace(/^=/, '')}`);
       state.windows.splice(at, 1);
       return '';
     }
@@ -613,7 +620,10 @@ describe('the panel offers add/remove only where it is honest to (DOM)', () => {
     const { root } = await mountPanel(payload([project({ managed: null })]));
     const cell = root.querySelector('tr[data-project="alpha"] .projects-action')!;
     expect(cell.getAttribute('data-managed')).toBe('unknown');
-    expect((cell.querySelector('button') as HTMLButtonElement).disabled).toBe(true);
+    // The REMOVE button specifically — the cell also carries Restart (#2682),
+    // which stays live because restarting is safe regardless of ownership.
+    expect((cell.querySelector('.projects-remove') as HTMLButtonElement).disabled).toBe(true);
+    expect((cell.querySelector('.projects-restart') as HTMLButtonElement).disabled).toBe(false);
     expect(cell.textContent).toContain('Unknown');
   });
 

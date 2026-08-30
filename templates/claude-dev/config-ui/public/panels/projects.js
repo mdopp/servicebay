@@ -1,12 +1,16 @@
 /**
- * Projects panel (#2679 list, #2680 add/remove; epic #2674).
+ * Projects panel (#2679 list, #2680 add/remove, #2682 repair/restart; epic #2674).
  *
  * Shows what is checked out under /workspace, whether each checkout has a live
  * Claude session, and whether an MCP server entry is wired for it. Until this
  * panel existed none of that was visible anywhere: you had to SSH in and run
  * `tmux list-windows` and `claude mcp list` by hand.
  *
- * It now also ADDs and REMOVEs. Two rules the mutating half must keep:
+ * It now also ADDs, REMOVEs and RESTARTs, and offers the one-tap repair for a
+ * lapsed Claude sign-in — the failure that makes every row above read "Not
+ * running" at once, and the one nobody could fix without an SSH session.
+ *
+ * Three rules the mutating half must keep:
  *
  *   • Remove appears only on a row this page actually added (`managed === true`).
  *     `managed === null` is a failed read, so the button is DISABLED and says
@@ -14,6 +18,9 @@
  *   • The result of an action is reported from what the server MEASURED
  *     afterwards (it re-asks tmux), and every warning it returns is shown —
  *     "added" with no session is not allowed to read as a clean success.
+ *   • Restart names the OTHER sessions that stayed up. "It restarted only
+ *     mine" is then something the operator can read off the screen instead of
+ *     something this page asserts about itself.
  *
  * The three states this panel MUST keep apart, because they look identical if
  * you are careless (and that confusion is exactly the bug this repo keeps
@@ -79,9 +86,18 @@ function mcpCell(project) {
  * `false` (someone cloned it by hand — not ours to unwire), `null` (the MCP
  * read failed, so we do not know). Only `true` yields a live button.
  */
-function removeCell(project, onRemove) {
+function actionCell(project, actions) {
   const td = el('td', 'projects-action');
   td.dataset.managed = project.managed === null ? 'unknown' : String(project.managed);
+
+  // Restart is offered on EVERY row, including the hand-cloned ones and the
+  // ones reading "Not running" — a dead session is precisely the one you want
+  // to restart, and restarting touches only that project's own tmux window.
+  const restart = el('button', 'projects-restart', 'Restart session');
+  restart.type = 'button';
+  restart.dataset.projectRestart = project.name;
+  restart.addEventListener('click', () => actions.onRestart(project, restart));
+  td.append(restart);
 
   if (project.managed === null) {
     const button = el('button', 'projects-remove', 'Remove');
@@ -101,12 +117,12 @@ function removeCell(project, onRemove) {
   const button = el('button', 'projects-remove', 'Remove');
   button.type = 'button';
   button.dataset.projectRemove = project.name;
-  button.addEventListener('click', () => onRemove(project, button));
+  button.addEventListener('click', () => actions.onRemove(project, button));
   td.append(button);
   return td;
 }
 
-function renderTable(payload, onRemove) {
+function renderTable(payload, actions) {
   const table = el('table', 'projects-table');
   const head = el('thead');
   const headRow = el('tr');
@@ -135,7 +151,7 @@ function renderTable(payload, onRemove) {
       if (cell.detail) td.append(el('span', 'projects-state-detail', cell.detail));
       row.append(td);
     }
-    row.append(removeCell(project, onRemove));
+    row.append(actionCell(project, actions));
     body.append(row);
   }
 
@@ -183,6 +199,45 @@ function renderAddForm(onAdd) {
     onAdd({ url: url.value.trim(), name: name.value.trim() }, { form, submit, url, name });
   });
   return form;
+}
+
+/**
+ * The one-tap Claude sign-in repair (#2682).
+ *
+ * A plain `<a href>` at ServiceBay's own whitelisted terminal deep-link
+ * (`?run=claude-login`, shipped in e3c261ac). No route of this server's is
+ * involved and no command travels in the URL — `run` names a preset key that
+ * ServiceBay looks up in its own whitelist.
+ *
+ * The link's origin comes from `GET /api/session`, and it is `null` on a box
+ * with no public domain. That is rendered as the REASON it cannot be offered,
+ * plus the command to run by hand — never as a dead button.
+ */
+function renderSignIn(session) {
+  const url = session?.claudeSignInUrl ?? null;
+  const box = el('div', 'projects-signin');
+  box.dataset.signin = url ? 'available' : 'unavailable';
+  box.append(el('h3', null, 'Claude sign-in'));
+
+  if (!url) {
+    box.append(el('p', 'projects-signin-detail',
+      'The repair link cannot be built: this page does not know the address a browser reaches '
+      + 'ServiceBay on, so it will not offer a link that leads nowhere. Sign in from a shell on '
+      + 'the box instead, as the dev user: '
+      + 'podman exec claude-dev-claude-dev runuser -u dev -- env HOME=/workspace claude auth login'));
+    return box;
+  }
+
+  box.append(el('p', 'projects-signin-lede',
+    'When this container’s Claude sign-in lapses, every session above goes quiet at once. '
+    + 'This opens a ServiceBay terminal inside the container with the sign-in already running, '
+    + 'so it can be repaired from a phone rather than over SSH.'));
+  const link = el('a', 'projects-signin-link', 'Repair the Claude sign-in');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  box.append(link);
+  return box;
 }
 
 function renderEmpty(payload) {
@@ -257,7 +312,42 @@ async function callApi(pathname, init) {
 }
 
 /**
- * The two mutating actions, kept out of `mount` so the panel body stays a
+ * Restart ONE project's session (#2682). The headline is built from what the
+ * server MEASURED afterwards — it re-asks tmux — and it names the sibling
+ * sessions that stayed up, because taking one of those with it is the whole
+ * risk of this button.
+ *
+ * A plain function over the panel context rather than a method, the way the
+ * GitHub panel does it, so the action reads on its own.
+ */
+async function restartSession({ report, reload, isDisposed }, project, button) {
+  button.disabled = true;
+  report(el('p', 'projects-working', `Restarting the Claude session for ${project.name}…`));
+  try {
+    const result = await callApi('/api/projects/restart', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: project.name }),
+    });
+    if (isDisposed()) return;
+    const r = result.restarted;
+    report(renderActionResult(
+      `${r.wasRunning ? 'Restarted' : 'Started'} the Claude session for ${r.name}, confirmed running in tmux. `
+      + (r.others.length
+        ? `The other ${r.others.length} session(s) were left alone: ${r.others.join(', ')}.`
+        : 'No other session was running at the time.'),
+      result.warnings ?? [],
+    ));
+  } catch (err) {
+    report(renderActionError(`Could not restart ${project.name}: ${err.message}`, err.detail));
+  } finally {
+    if (!isDisposed()) button.disabled = false;
+    void reload();
+  }
+}
+
+/**
+ * The three mutating actions, kept out of `mount` so the panel body stays a
  * layout function. `isDisposed` is checked after every await: a late response
  * must never repaint a panel the shell already swapped out.
  */
@@ -291,6 +381,8 @@ function createActions({ report, reload, isDisposed }) {
       }
     },
 
+    onRestart: (project, button) => restartSession({ report, reload, isDisposed }, project, button),
+
     async onRemove(project, button) {
       button.disabled = true;
       report(el('p', 'projects-working', `Removing ${project.name}\u2026`));
@@ -312,12 +404,13 @@ function createActions({ report, reload, isDisposed }) {
 }
 
 /** The panel's static furniture: heading, Refresh, and the two live regions. */
-function renderFrame() {
+function renderFrame(session) {
   const section = el('section', 'panel panel-projects');
   section.append(el('h2', null, 'Projects'));
   section.append(el('p', 'panel-lede',
     'Every git checkout in the shared workspace, the Claude session running against it, '
     + 'and whether it can reach ServiceBay through an MCP server entry.'));
+  section.append(renderSignIn(session));
 
   const refresh = el('button', 'projects-refresh', 'Refresh');
   refresh.type = 'button';
@@ -338,10 +431,10 @@ const panel = {
   id: 'projects',
   title: 'Projects',
 
-  mount(root, _ctx) {
+  mount(root, ctx) {
     let disposed = false;
 
-    const { section, refresh, actionOutput, output } = renderFrame();
+    const { section, refresh, actionOutput, output } = renderFrame(ctx?.session);
     section.append(renderAddForm((input, controls) => actions.onAdd(input, controls)));
     root.append(section);
 
@@ -373,7 +466,7 @@ const panel = {
         ...renderSourceWarnings(payload),
         payload.projects.length === 0
           ? renderEmpty(payload)
-          : renderTable(payload, (project, button) => actions.onRemove(project, button)),
+          : renderTable(payload, actions),
       );
     }
 

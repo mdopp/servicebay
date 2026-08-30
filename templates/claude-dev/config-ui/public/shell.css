@@ -211,6 +211,46 @@ body {
   .projects-remove:hover:not(:disabled) { background: #e2705f; color: #14171a; }
 }
 
+/* ── sign-in repair + restart a session (#2682) ─────────────────────────── */
+
+.projects-signin {
+  margin: 0.9rem 0 1.1rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+.projects-signin h3 { margin: 0 0 0.35rem; font-size: 0.98rem; }
+.projects-signin-lede,
+.projects-signin-detail { margin: 0 0 0.5rem; color: var(--ink-muted); font-size: 0.85rem; }
+.projects-signin[data-signin="unavailable"] { border-color: #9a6b00; }
+.projects-signin[data-signin="unavailable"] .projects-signin-detail { margin-bottom: 0; }
+.projects-signin-link {
+  display: inline-block;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.projects-signin-link:hover { background: var(--accent); color: #fff; }
+
+.projects-restart {
+  font: inherit;
+  display: block;
+  margin-bottom: 0.35rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.projects-restart:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.projects-restart:disabled { opacity: 0.45; cursor: progress; }
+
 .projects-add {
   margin-top: 1.5rem;
   padding: 1rem;
