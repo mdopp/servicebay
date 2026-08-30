@@ -3,8 +3,8 @@
  * renders on a token Card surface (no raw colour literals) and that the
  * mutations safety toggle still POSTs to /api/settings.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import McpSection from './McpSection';
 
 vi.mock('../clipboard', () => ({ copyToClipboard: vi.fn().mockResolvedValue(true) }));
@@ -21,6 +21,32 @@ function mockFetch(allowMutations: boolean) {
     return Promise.resolve(new Response('{}', { status: 200 }));
   }));
 }
+
+/**
+ * Settings fetch + an approvals poll that fails with `status`. Everything else
+ * answers normally, so only the approvals surface is under test.
+ */
+function mockFetchWithBrokenApprovals(status = 401) {
+  const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+    if (url === '/api/settings' && (!opts || opts.method === undefined)) {
+      return Promise.resolve(new Response(JSON.stringify({ mcp: { allowMutations: true, allowDangerousExec: false } }), { status: 200 }));
+    }
+    if (url.startsWith('/api/system/mcp/approve')) {
+      return Promise.resolve(new Response(JSON.stringify({ error: 'nope' }), { status }));
+    }
+    return Promise.resolve(new Response('{}', { status: 200 }));
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+const APPROVAL = {
+  pendingId: 'abc-123',
+  toolName: 'remove_proxy_route',
+  args: { domain: 'example.test' },
+  caller: 'token:Repair',
+  expiresAt: null,
+};
 
 describe('McpSection (#2100 settings migration)', () => {
   beforeEach(() => vi.unstubAllGlobals());
@@ -71,6 +97,70 @@ describe('McpSection (#2100 settings migration)', () => {
     await waitFor(() =>
       expect(copyToClipboard).toHaveBeenCalledWith('http://host.containers.internal:5888/mcp'),
     );
+  });
+
+  // #2691. The Settings approvals list rendered nothing both when the queue was
+  // empty and when the poll failed, so a broken check read as "all clear".
+  describe('a failed approvals poll is not an empty queue (#2691)', () => {
+    const POLL_MS = 15_000;
+    afterEach(() => vi.useRealTimers());
+
+    it('reports the broken check on a repeat failure instead of rendering as empty', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      mockFetchWithBrokenApprovals(401);
+      render(<McpSection />);
+      await waitFor(() => expect(screen.getByText('MCP endpoint')).toBeDefined());
+
+      // A single miss is absorbed — no banner on every 15s blip.
+      expect(screen.queryByText(/Couldn't check for pending approvals/i)).toBeNull();
+      expect(screen.queryByText(/Pending destructive approvals/i)).toBeNull();
+
+      await act(async () => { vi.advanceTimersByTime(POLL_MS); });
+
+      expect(await screen.findByText(/Couldn't check for pending approvals/i)).toBeTruthy();
+      // The negative: the approvals area must no longer be absent, which is
+      // exactly how a confirmed-empty queue renders.
+      expect(screen.getByText(/Pending destructive approvals/i)).toBeTruthy();
+      expect(screen.getByText(/not the same as an empty queue/i)).toBeTruthy();
+    });
+
+    it('reports a failed manual Refresh on the first click, and keeps the known entry', async () => {
+      let approveCalls = 0;
+      vi.stubGlobal('fetch', vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/settings' && (!opts || opts.method === undefined)) {
+          return Promise.resolve(new Response(JSON.stringify({ mcp: { allowMutations: true, allowDangerousExec: false } }), { status: 200 }));
+        }
+        if (url.startsWith('/api/system/mcp/approve')) {
+          approveCalls += 1;
+          return approveCalls === 1
+            ? Promise.resolve(new Response(JSON.stringify({ pending: [APPROVAL] }), { status: 200 }))
+            : Promise.resolve(new Response(JSON.stringify({ error: 'nope' }), { status: 500 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      }));
+
+      render(<McpSection />);
+      expect(await screen.findByText('remove_proxy_route')).toBeTruthy();
+
+      // An explicit user action gets no grace period — a Refresh that silently
+      // does nothing is the same "reported success, did nothing" defect.
+      fireEvent.click(screen.getByText(/Refresh/i));
+
+      expect(await screen.findByText(/may be out of date/i)).toBeTruthy();
+      // …and the request we already know about must survive the failed refresh.
+      expect(screen.getByText('remove_proxy_route')).toBeTruthy();
+    });
+
+    it('stays silent for a genuinely empty queue', async () => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      mockFetch(true);
+      render(<McpSection />);
+      await waitFor(() => expect(screen.getByText('MCP endpoint')).toBeDefined());
+      await act(async () => { vi.advanceTimersByTime(POLL_MS); });
+      await act(async () => { vi.advanceTimersByTime(POLL_MS); });
+      expect(screen.queryByText(/Pending destructive approvals/i)).toBeNull();
+      expect(screen.queryByText(/Couldn't check for pending approvals/i)).toBeNull();
+    });
   });
 
   it('toggling mutations still POSTs to /api/settings (behaviour preserved)', async () => {
