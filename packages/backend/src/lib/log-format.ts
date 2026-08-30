@@ -24,7 +24,11 @@
  *  - This sink is not where the journal volume is. Same window, before vs.
  *    after: 923,741 -> 927,991 bytes, 530 -> 549 entries. The volume is the
  *    *payloads* (a full container-inspect JSON with all OCI labels, logged on
- *    every sync), not their decoration.
+ *    every sync), not their decoration. #2676 cut those at their emitter: the
+ *    state sync now logs what a sync covered, not the state itself
+ *    (`agent/v4/agent.py::_summarize_state_for_log` and its backend twin
+ *    `agent/handler.ts::summarizeStateForLog`). It belongs there, not here,
+ *    for the reason spelled out on `renderLogArg` below.
  *
  * Next.js SSR runs inside that same process, so the client logger's output
  * reaches the same journal and needs the same treatment.

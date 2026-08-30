@@ -197,6 +197,104 @@ export function redactCommandPayloadForLog(params: Record<string, unknown>): Rec
 }
 
 /**
+ * Top-level SYNC_PARTIAL keys logged verbatim instead of summarised.
+ *
+ * `files` is the payload `scripts/check-journal-redaction.ts` reads to prove
+ * the #2603 leak stays closed: it walks `payload.files.<path>.content` and
+ * fails when a unit body sits where a `<N chars redacted>` marker belongs.
+ * Summarise it away and the probe has nothing left to assert on. It costs
+ * nothing to keep — `redactForLog` has already reduced every content blob to
+ * its size marker by the time we get here.
+ */
+const LOG_VERBATIM_KEYS = new Set(['files']);
+
+/** How many record identities a summarised list keeps. */
+const LOG_SUMMARY_MAX_ITEMS = 25;
+
+/**
+ * Keys that name a record, in the order they are tried. Covers what the state
+ * sync actually ships: containers (`names`), services (`name`), volumes
+ * (`Name`), proxy routes (`host`), network interfaces (`address`).
+ */
+const LOG_IDENTITY_KEYS = ['name', 'Name', 'names', 'host', 'id', 'Id', 'path', 'address'];
+
+/** The shortest string that still says which record this is. */
+function logIdentity(item: unknown): unknown {
+  if (item === null || typeof item !== 'object') return item;
+  if (Array.isArray(item)) return '<array>';
+  const rec = item as Record<string, unknown>;
+  for (const key of LOG_IDENTITY_KEYS) {
+    let value = rec[key];
+    if (Array.isArray(value) && value.length > 0) value = value[0];
+    if (typeof value === 'string' && value !== '') return value;
+  }
+  return '<unnamed>';
+}
+
+/**
+ * Is this already the output of `summarizeStateForLog`?
+ *
+ * Both sinks summarise — the agent's own `_summarize_state_for_log` and this
+ * one, the same deliberate redundancy the redactors have (#2603) — so on a box
+ * running a current agent the second pass runs over the first's output.
+ * Without this guard it would re-summarise the `items` list and nest a summary
+ * inside a summary on every line the box actually writes.
+ */
+function isLogSummary(value: Record<string, unknown>): boolean {
+  return (
+    Object.keys(value).every(k => k === 'count' || k === 'items' || k === 'omitted') &&
+    typeof value.count === 'number' &&
+    Array.isArray(value.items)
+  );
+}
+
+/**
+ * Log what a state sync *covered*, not the whole state (#2676).
+ *
+ * The agent pushes its entire view of the box on every sync, and the journal
+ * copy carried all of it: one `containers` message is a full podman-inspect
+ * record per container, every OCI label, port and mount included. Measured on
+ * the box over 30 minutes: 3,436,606 bytes across 75 `containers` messages
+ * (~46 KB each), against 228 KB for every other ServiceBay line put together.
+ * The journal is a buffer, not an archive, so those state dumps evict the
+ * lines an operator came looking for.
+ *
+ * Every list becomes `{count, items:[<identity>…]}`, which keeps what the line
+ * is worth reading for — a sync happened, it covered these records — at a few
+ * hundred bytes instead of tens of kilobytes.
+ *
+ * The cut is made at the *emitter*, deliberately not as a size cap on the
+ * rendered journal line: a truncated line is half a JSON object, which
+ * `scripts/check-journal-redaction.ts` can no longer parse — silently blinding
+ * the #2603 leak probe. A summary is still valid JSON, and `files` stays
+ * structurally intact, so the probe keeps working.
+ *
+ * This is the backend copy of the agent's own summariser, kept for the same
+ * reason `redactForLog` duplicates `_redact_for_log`: this process is the one
+ * that writes the journal, so a box still running a stale agent build gets the
+ * reduction anyway.
+ */
+export function summarizeStateForLog(value: unknown, depth = 0): unknown {
+  if (depth >= REDACT_MAX_DEPTH) return '<summarised: max depth>';
+  if (Array.isArray(value)) {
+    const summary: Record<string, unknown> = {
+      count: value.length,
+      items: value.slice(0, LOG_SUMMARY_MAX_ITEMS).map(logIdentity),
+    };
+    if (value.length > LOG_SUMMARY_MAX_ITEMS) summary.omitted = value.length - LOG_SUMMARY_MAX_ITEMS;
+    return summary;
+  }
+  if (value === null || typeof value !== 'object') return value;
+  const rec = value as Record<string, unknown>;
+  if (isLogSummary(rec)) return rec;
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(rec)) {
+    out[key] = depth === 0 && LOG_VERBATIM_KEYS.has(key) ? item : summarizeStateForLog(item, depth + 1);
+  }
+  return out;
+}
+
+/**
  * Redact one structured (pure-JSON) agent log line, or return `null` when the
  * line isn't structured JSON at all.
  *
@@ -205,6 +303,10 @@ export function redactCommandPayloadForLog(params: Record<string, unknown>): Rec
  * running a stale agent build — or any future agent-side sink someone forgets
  * to route through the redactor — still cannot push quadlet `content` into the
  * journal through here (#2603).
+ *
+ * A `SYNC_PARTIAL` payload is also summarised (#2676) — the state dump, not
+ * its decoration, is what fills the journal, and the reduction has to happen
+ * before the line is rendered so the leak probe still gets parseable JSON.
  */
 export function redactStructuredLogLine(line: string): string | null {
   const trimmed = line.trim();
@@ -215,7 +317,14 @@ export function redactStructuredLogLine(line: string): string | null {
   } catch {
     return null;
   }
-  return JSON.stringify(redactForLog(parsed));
+  const redacted = redactForLog(parsed);
+  if (redacted !== null && typeof redacted === 'object' && !Array.isArray(redacted)) {
+    const rec = redacted as Record<string, unknown>;
+    if (rec.event === 'SYNC_PARTIAL' && rec.payload !== null && typeof rec.payload === 'object') {
+      rec.payload = summarizeStateForLog(rec.payload);
+    }
+  }
+  return JSON.stringify(redacted);
 }
 
 export class AgentHandler extends EventEmitter {
