@@ -384,11 +384,120 @@ const countLabel = (c: Ctx, label: string): number =>
     [],
   ).length;
 
+// ------------------------------------------------------------------- worklist
+
+/**
+ * How long a shipped, security-flagged issue stays on the post-deploy eyeball
+ * list (#2690).
+ *
+ * `autoloop:review` is earned at the seal — and the merged PR's `Closes #…`
+ * closes the issue in the same breath. **The state an entry must be in to
+ * belong on that list is CLOSED**, so an open-only query (what `summary` and
+ * SKILL.md both used to ask) can structurally never see one: four real entries,
+ * `"review": 0`.
+ *
+ * Asking `--state all` instead is only half a fix. `autoloop:needs-refinement`
+ * shows what an unbounded state-agnostic list decays into: ten hits, eight of
+ * them closed leftovers from months ago that nobody will clear — a list ignored
+ * exactly like the empty one. So each list gets the bound its own semantics
+ * imply:
+ *   - `review`: closed is the CORRECT state, so the query is state-agnostic and
+ *     the bound is RECENCY, which is what "post-deploy" means. Older entries are
+ *     never silently dropped — they are reported as one aged count and retired
+ *     deliberately with `reviewed <issue>`.
+ *   - `needs-refinement`: closed is a WRONG state (a closed issue needs no
+ *     refinement), so those are stale labels, reported apart from the worklist
+ *     and cleared by `worklist --prune` instead of padding it.
+ */
+export const REVIEW_WINDOW_DAYS = 14;
+const DAY_S = 86_400;
+
+export interface WorklistItem {
+  number: number;
+  title: string;
+  state: string;
+  /** When the entry became relevant: `closedAt` when closed, else `updatedAt`. */
+  at: number;
+}
+export interface Worklist {
+  /** Shipped security work: `due` = eyeball now, `aged` = past the window, still labelled. */
+  review: { due: WorklistItem[]; aged: WorklistItem[] };
+  /** The human's worklist: `open` = real entries, `stale` = closed leftovers to clear. */
+  refinement: { open: WorklistItem[]; stale: WorklistItem[] };
+}
+
+interface IssueRow {
+  number: number;
+  title?: string;
+  state?: string;
+  closedAt?: string | null;
+  updatedAt?: string | null;
+}
+
+/** Every issue carrying `label`, OPEN **or** CLOSED, newest first. */
+function labelled(c: Ctx, label: string): WorklistItem[] {
+  return ghJson<IssueRow[]>(
+    c.gh,
+    [
+      ...repoArgs(c.repo),
+      'issue',
+      'list',
+      '--state',
+      'all',
+      '--label',
+      label,
+      '--json',
+      'number,title,state,closedAt,updatedAt',
+      '--limit',
+      '200',
+    ],
+    [],
+  )
+    .map(r => ({
+      number: r.number,
+      title: r.title ?? '',
+      state: (r.state ?? '').toUpperCase(),
+      at: Math.floor(Date.parse(r.closedAt || r.updatedAt || '') / 1000) || 0,
+    }))
+    .sort((a, b) => b.at - a.at);
+}
+
+/** Split the review list into what is due for an eyeball and what has aged out. */
+export function splitReview(
+  items: WorklistItem[],
+  now: number,
+  windowDays = REVIEW_WINDOW_DAYS,
+): Worklist['review'] {
+  const cutoff = now - windowDays * DAY_S;
+  // An OPEN review entry is shipped-but-not-closed: always due, whatever its age.
+  const isDue = (i: WorklistItem) => i.state === 'OPEN' || i.at >= cutoff;
+  return { due: items.filter(isDue), aged: items.filter(i => !isDue(i)) };
+}
+
+/** The one source both the `summary` counts and the `worklist` listing read. */
+export function collectWorklist(c: Ctx): Worklist {
+  const refine = labelled(c, L_REFINE);
+  return {
+    review: splitReview(labelled(c, L_REVIEW), c.now()),
+    refinement: {
+      open: refine.filter(i => i.state === 'OPEN'),
+      stale: refine.filter(i => i.state !== 'OPEN'),
+    },
+  };
+}
+
+const nums = (ns: number[]): string => ns.map(n => `#${n}`).join(' ');
+const short = (s: string): string => (s.length > 72 ? `${s.slice(0, 71)}…` : s);
+const day = (t: number): string => (t ? new Date(t * 1000).toISOString().slice(0, 10) : '?');
+
 export const VERBS: Record<string, (c: Ctx, a: Args) => number> = {
   /** Compact status for the orchestrator's preflight — never the whole state. */
   summary(c) {
     const d = c.cache.load();
     const planned = Object.values(d.units).filter(u => u.status === 'planned');
+    // The counts come from the SAME worklist the `worklist` verb prints, so a
+    // count and its listing cannot disagree (#2690).
+    const w = c.offline ? null : collectWorklist(c);
     c.out(
       JSON.stringify(
         {
@@ -397,21 +506,82 @@ export const VERBS: Record<string, (c: Ctx, a: Args) => number> = {
           planned_units: planned.length,
           next_unit: planned[0]?.id ?? null,
           last_codebase_eval: d.last_codebase_eval,
-          gh: c.offline
-            ? {}
-            : {
+          gh: w
+            ? {
                 queued: countLabel(c, L_QUEUED),
                 building: countLabel(c, L_BUILDING),
                 blocked: countLabel(c, L_BLOCKED),
-                needs_refinement: countLabel(c, L_REFINE),
-                review: countLabel(c, L_REVIEW),
+                needs_refinement: w.refinement.open.length,
+                needs_refinement_stale: w.refinement.stale.length,
+                review: w.review.due.length,
+                review_aged: w.review.aged.length,
                 awaiting_user: countLabel(c, L_AWAITING),
-              },
+              }
+            : {},
         },
         null,
         2,
       ),
     );
+    return 0;
+  },
+
+  /**
+   * The human-facing lists behind the end-of-firing summary (#2690) — printed
+   * from the same `collectWorklist` the `summary` counts use, so the count and
+   * the listing can never disagree. `--prune` clears the stale closed
+   * `needs-refinement` labels it reports (the planner's label hygiene).
+   */
+  worklist(c, a) {
+    const w = collectWorklist(c);
+    for (const i of w.review.due) {
+      c.out(`Review post-deploy: #${i.number} ${short(i.title)} (shipped ${day(i.at)})`);
+    }
+    if (w.review.aged.length) {
+      c.out(
+        `Review post-deploy: +${w.review.aged.length} older than ${REVIEW_WINDOW_DAYS}d, still labelled ` +
+          `(${nums(w.review.aged.map(i => i.number))}) — retire with \`queue -- reviewed <issue>\``,
+      );
+    }
+    for (const i of w.refinement.open) c.out(`Needs refinement:   #${i.number} ${short(i.title)}`);
+    if (w.refinement.stale.length && a.prune) {
+      // Report what `gh` ACTUALLY did, never the intent: a sweep that announces
+      // success it did not achieve is the same defect one level down (#2690).
+      const cleared: number[] = [];
+      const failed: number[] = [];
+      for (const i of w.refinement.stale) {
+        const r = c.gh([...repoArgs(c.repo), 'issue', 'edit', String(i.number), '--remove-label', L_REFINE]);
+        (r.ok ? cleared : failed).push(i.number);
+      }
+      if (cleared.length) c.out(`Needs refinement:   cleared ${cleared.length} closed leftovers (${nums(cleared)})`);
+      if (failed.length) {
+        c.out(`Needs refinement:   FAILED to clear ${failed.length} (${nums(failed)}) — retry, or clear by hand`);
+      }
+    } else if (w.refinement.stale.length) {
+      c.out(
+        `Needs refinement:   ${w.refinement.stale.length} closed leftovers still labelled ` +
+          `(${nums(w.refinement.stale.map(i => i.number))}) — clear with \`queue -- worklist --prune\``,
+      );
+    }
+    if (!w.review.due.length && !w.review.aged.length && !w.refinement.open.length && !w.refinement.stale.length) {
+      c.out('worklist empty');
+    }
+    return 0;
+  },
+
+  /** Retire a post-deploy review entry once a human has actually eyeballed it. */
+  reviewed(c, a) {
+    const issue = Number(a._[0]);
+    if (!Number.isInteger(issue) || issue <= 0) {
+      c.out('usage: reviewed <issue>');
+      return 2;
+    }
+    const r = c.gh([...repoArgs(c.repo), 'issue', 'edit', String(issue), '--remove-label', L_REVIEW]);
+    if (!r.ok) {
+      c.out(`#${issue}: could not clear ${L_REVIEW} (${clip(r.out)})`);
+      return 1;
+    }
+    c.out(`#${issue} eyeballed -> ${L_REVIEW} cleared`);
     return 0;
   },
 
@@ -692,6 +862,7 @@ export function runVerb(verb: string, argv: string[], ctx: Omit<Ctx, 'out'> & { 
       comment: { type: 'string' },
       exclude: { type: 'string' },
       order: { type: 'string' },
+      prune: { type: 'boolean' },
       pr: { type: 'string' },
       'release-pr': { type: 'string' },
     },

@@ -34,7 +34,7 @@ The user's recurring rules (in `~/.claude/projects/-home-mdopp-servicebay/memory
 
 State lives in **two tiers, split by durability**, and **no stage ever reads a big JSON blob into context** — every stage calls a broker verb and gets back only the slice it needs. The old fat `.claude/state/work-queue.json` (re-read in full every tick, ~82 KB, unbounded, and — the real defect — *unsafe under two loop instances, because the claim lived in a local file*) is **retired** (#2639): do not create it, read it, or write it. There is no `work-queue-template.json` any more.
 
-**DURABLE / core state → GitHub.** Issue open/closed, work status as `autoloop:*` labels, human questions and park reasons as **issue comments**, completion as closed-issue + merged-PR. This survives crashes, machines, and **concurrent loop instances**. Labels: `autoloop:queued` (planned) · `autoloop:building` (claimed) · `autoloop:blocked` · `autoloop:needs-refinement` (**the human's worklist**) · `autoloop:review` (shipped `security:true`, post-deploy eyeball — informational, never a merge gate) · `autoloop:device-test` · `autoloop:upstream-wait` · `autoloop:awaiting-user` (external human comment; `/comment-responder`'s job, never the pipeline's) · `autoloop:box-verify-pending` / `autoloop:box-verify-failed` on the open release PR. (The pre-existing `autoloop-open` is unrelated — a human-set *planner-skip* exclusion.)
+**DURABLE / core state → GitHub.** Issue open/closed, work status as `autoloop:*` labels, human questions and park reasons as **issue comments**, completion as closed-issue + merged-PR. This survives crashes, machines, and **concurrent loop instances**. Labels: `autoloop:queued` (planned) · `autoloop:building` (claimed) · `autoloop:blocked` · `autoloop:needs-refinement` (**the human's worklist**) · `autoloop:review` (shipped `security:true`, post-deploy eyeball — informational, never a merge gate; **its issues are closed by definition, so every query for it must be state-agnostic** — use `worklist`, #2690) · `autoloop:device-test` · `autoloop:upstream-wait` · `autoloop:awaiting-user` (external human comment; `/comment-responder`'s job, never the pipeline's) · `autoloop:box-verify-pending` / `autoloop:box-verify-failed` on the open release PR. (The pre-existing `autoloop-open` is unrelated — a human-set *planner-skip* exclusion.)
 
 **The `autoloop:building` claim is atomic and cross-instance.** Two loops must never grab the same issue. `gh issue edit --add-label` cannot guarantee that (re-adding a present label succeeds, so both instances "win"), so `claim` takes the lock with GitHub's one true atomic create-if-not-exists: it creates the ref `refs/autoloop/claim/<issue>`, which returns **HTTP 422 "Reference already exists"** to the loser. The ref is created at **`origin/main`'s tip** — never at local `HEAD`, which on a mid-build batch branch is unpushed, so the remote lacks the object and the create 422s *"Object does not exist"*, taking no claim at all (#2646). The target carries no information; the atomicity is on the ref **name**, so `origin/main` moving between two claims changes nothing. The `autoloop:building` label is the human-visible **projection** of that ref, applied only after the ref is won. `claim` **exits 3** when another instance holds it — a builder that sees exit 3 must not build. Any non-success (conflict *or* transport error) fails **closed**. A cluster is claimed all-or-nothing (a partial win is rolled back). `npm run autoloop:queue -- claims` lists what is currently held; `unclaim` releases one.
 
@@ -51,6 +51,8 @@ State lives in **two tiers, split by durability**, and **no stage ever reads a b
 | Verb | Who | Does |
 |---|---|---|
 | `summary` | orchestrator | compact status (batch, verify, planned count, gh label counts) — the preflight peek |
+| `worklist [--prune]` | orchestrator | the human-facing review + refinement lists (same code path as `summary`'s counts); `--prune` clears stale closed refinement labels |
+| `reviewed <issue>` | human/orch | retire a post-deploy review entry (clears `autoloop:review`) once it has been eyeballed |
 | `candidates [--order L,…] [--exclude L,…]` | planner | open, unclaimed issues in priority order |
 | `plan '<unit-json>'` | planner | record a planned unit + label its issues `autoloop:queued` |
 | `next` | builder | the next planned unit to build (or `null`) |
@@ -181,7 +183,15 @@ Autoloop firing complete.
 Next: <building #x | sealing batch | verifying | planner refill | idle heartbeat>.
 ```
 
-The **Needs refinement** line is the point of the whole pipeline — it's what you, the human, act on. Every line above comes from a cheap query, not a big file: the first two from `summary` + `git log`, the rest from `gh issue list --label autoloop:<review|needs-refinement|awaiting-user>`.
+The **Needs refinement** line is the point of the whole pipeline — it's what you, the human, act on. Every line above comes from a cheap query, not a big file: the first two from `summary` + `git log`, the **Review post-deploy** and **Needs refinement** lines verbatim from
+
+```bash
+npm run autoloop:queue -- worklist        # add --prune to also clear the stale closed refinement labels
+```
+
+and **Awaiting user** from `gh issue list --label autoloop:awaiting-user` (open-only is correct there — an external commenter is waiting on an open ticket).
+
+**Never hand-roll `gh issue list --label autoloop:review` here (#2690).** It defaults to open issues, and a review entry is *always* closed — the seal labels it and the merged PR's `Closes #…` closes it in the same breath, so the open-only query showed `review: 0` while four entries stood on the list. `worklist` is state-agnostic for `review` and bounds it by recency instead (`REVIEW_WINDOW_DAYS`, 14): entries shipped inside the window are listed, older ones are reported as one aged count and retired deliberately with `npm run autoloop:queue -- reviewed <issue>` once you have eyeballed them. `needs-refinement` gets the opposite bound — closed there is a *stale label*, not an entry, so those are counted apart and cleared by `--prune` rather than padding the list. `summary`'s `review` / `needs_refinement` counts (plus `review_aged` / `needs_refinement_stale`) are computed from that same code path, so the count and the listing cannot disagree.
 
 ## State hygiene (enforced in code, not by hand)
 
