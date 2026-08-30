@@ -73,6 +73,28 @@ It cuts both ways: against a measurement whose fields *are* filled, a dissenting
 judgement must name **which field it disputes**. "That feels wrong" is a reason
 to measure more precisely, not a reason to bypass the measurement.
 
+## The other half: register the binding beforehand
+
+The five fields make the limits structural **after** the fact. They say nothing
+about which quantity should have been chosen. The companion mechanism, from
+another house, closes that end:
+
+> Before measuring, write down **which decision depends on which outcome**, what
+> applies at each outcome, **and compared to what**. Whoever writes that down only
+> after the measurement is interpreting the number instead of following it.
+
+Their fallback triggered cleanly — on a measurement that answered the wrong
+question, because only the outcome had been fixed in advance and not the
+comparison quantity.
+
+Both mechanisms are needed, at opposite ends: one registers the binding before,
+the other makes the limits structural after. Neither is an exhortation.
+
+**Evidence against one's own position, worth keeping in mind:** in the same
+comparison, a house's architectural instinct was also wrong, and the numbers that
+exposed its two real defects came from a **neighbouring service** evaluating its
+journals. About itself it had none.
+
 ## Two things this does not replace
 
 - **Recording a binding beforehand.** These fields make the limits structural
