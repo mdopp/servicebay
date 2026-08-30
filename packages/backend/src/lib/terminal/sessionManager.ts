@@ -205,7 +205,50 @@ const BARE_SHELL_CMD = 'if [ -x /bin/bash ]; then exec /bin/bash; else exec /bin
  * erroring — the deep-link still gives a usable terminal. The session name is
  * pre-validated by the caller, so it's safe to interpolate.
  */
-export function buildContainerInnerCmd(attachSession?: string): string {
+/**
+ * Fixed, named commands a terminal deep-link may launch inside a container.
+ *
+ * A WHITELIST, deliberately — never a free-form `?cmd=`. This target string is
+ * reachable from a URL, so an arbitrary command in it would be remote code
+ * execution by link: anyone who can open the terminal page, or who gets a
+ * crafted URL in front of an operator, would run whatever they liked as the
+ * container's root. Presets hold that surface to exactly the repairs we offer.
+ *
+ * `claude-login` runs as `dev` with `HOME=/workspace` ON PURPOSE. `podman exec`
+ * enters the container as root, and a login performed there writes credentials
+ * to `/root/.claude` — where nothing looks for them. The unattended Claude
+ * sessions run as `dev` and read `/workspace/.claude`, so the sign-in has to
+ * land there or the repair silently fixes nothing while appearing to succeed.
+ *
+ * Preset commands must not contain a single quote: they are interpolated into
+ * `sh -c '<cmd>'` by buildContainerExecCmd.
+ */
+export const TERMINAL_RUN_PRESETS: Readonly<Record<string, string>> = {
+  'claude-login': 'runuser -u dev -- env HOME=/workspace claude auth login',
+};
+
+/**
+ * The command run inside `podman exec ... sh -c '<cmd>'`.
+ *
+ * Three shapes, in precedence order:
+ *   - `runPreset` → the whitelisted command, then a shell. The trailing shell
+ *     is not decoration: an interactive repair prints something worth reading
+ *     (an auth URL, an error), and without it the PTY would close the instant
+ *     the command returned and take that output with it.
+ *   - `attachSession` → `tmux new -A -s <session>`, dropping the deep-link onto
+ *     a persistent session. Falls back to a bare shell where tmux is absent,
+ *     rather than erroring — the link still yields a usable terminal.
+ *   - neither → a plain login shell (bash-or-sh dance).
+ *
+ * The session name is pre-validated by the caller and the preset key is looked
+ * up in the whitelist here, so both are safe to interpolate.
+ */
+export function buildContainerInnerCmd(attachSession?: string, runPreset?: string): string {
+  if (runPreset) {
+    const cmd = TERMINAL_RUN_PRESETS[runPreset];
+    if (!cmd) throw new Error(`Unknown terminal run preset: ${runPreset}`);
+    return `${cmd}; echo; echo "[${runPreset} finished - you are now at a shell in this container]"; ${BARE_SHELL_CMD}`;
+  }
   if (!attachSession) return BARE_SHELL_CMD;
   return `if command -v tmux >/dev/null 2>&1; then exec tmux new -A -s ${attachSession}; else ${BARE_SHELL_CMD}; fi`;
 }
@@ -238,6 +281,7 @@ export async function resolvePtySpec(id: string): Promise<PtySpec> {
     // Session-target grammar:
     //   container:<node>:<id>                  → bare shell in the container
     //   container:<node>:<id>:attach=<session> → attach to a named tmux session
+    //   container:<node>:<id>:run=<preset>     → run a whitelisted repair, then a shell
     //   container:<id>                         → legacy 2-part form, node = local
     // The optional trailing `attach=<session>` segment lets a deep-link drop
     // the operator straight onto a persistent session (e.g. claude-dev's
@@ -245,8 +289,18 @@ export async function resolvePtySpec(id: string): Promise<PtySpec> {
     // the session name is supplied by the caller, never hard-coded.
     const parts = id.split(':');
     let attachSession: string | undefined;
-    if (parts[parts.length - 1]?.startsWith('attach=')) {
-      attachSession = parts.pop()!.slice('attach='.length) || undefined;
+    let runPreset: string | undefined;
+    // Both trailing modifiers are optional and order-independent, so peel in a
+    // loop rather than testing only the last segment for one of them.
+    for (;;) {
+      const last = parts[parts.length - 1];
+      if (last?.startsWith('attach=')) {
+        attachSession = parts.pop()!.slice('attach='.length) || undefined;
+      } else if (last?.startsWith('run=')) {
+        runPreset = parts.pop()!.slice('run='.length) || undefined;
+      } else {
+        break;
+      }
     }
     const nodeName = parts.length === 3 ? parts[1] : 'local';
     const containerId = parts.length === 3 ? parts[2] : parts[1];
@@ -259,7 +313,13 @@ export async function resolvePtySpec(id: string): Promise<PtySpec> {
     if (attachSession && !/^[A-Za-z0-9._-]+$/.test(attachSession)) {
       throw new Error('Invalid attach session name');
     }
-    const innerCmd = buildContainerInnerCmd(attachSession);
+    // The whitelist lookup IS the validation for `run=`: an unknown key is
+    // rejected here rather than reaching a shell. Nothing from the URL is ever
+    // interpolated into the command — only the preset's own fixed text is.
+    if (runPreset && !(runPreset in TERMINAL_RUN_PRESETS)) {
+      throw new Error(`Unknown terminal run preset: ${runPreset}`);
+    }
+    const innerCmd = buildContainerInnerCmd(attachSession, runPreset);
 
     // Always try to resolve the node (incl. `local` → `Local`) and route via
     // SSH when the node has an ssh:// URI. In container-mode installs every
