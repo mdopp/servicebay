@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.22.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.22.1...servicebay-v5.22.2) (2026-08-30)
+
+
+### Bug Fixes
+
+* **frontend:** tell a failed approvals poll apart from an empty queue ([8b15dc8](https://github.com/mdopp/servicebay/commit/8b15dc8d5e8f545666d974fe9b8828ff0f8d608c))
+* **frontend:** tell a failed approvals poll apart from an empty queue ([b6fb522](https://github.com/mdopp/servicebay/commit/b6fb522f332b910a87568978bf00793eaeda73cd)), closes [#2691](https://github.com/mdopp/servicebay/issues/2691)
+
 ## [5.22.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.22.0...servicebay-v5.22.1) (2026-08-30)
 
 
