@@ -1,6 +1,6 @@
 ---
 title: "`_COMM=conmon` in ServiceBay's journal is ServiceBay's own stdout, not a second emitter"
-whenToUse: You are reading `journalctl --user -u servicebay` — hunting a secret leak, chasing a truncated log line, or splitting entries by `_COMM` — and are about to conclude that podman/conmon, not ServiceBay, wrote something. Read this before filing "not our code" or before counting journal entries.
+whenToUse: You are reading or MEASURING `journalctl --user -u servicebay` — hunting a secret leak, chasing a truncated line, counting entries, or about to report that a logging fix works. Read this before splitting on `_COMM`, before filing "not our code", and before trusting a probe that found zero of something.
 kind: footgun
 tags: [journal, journalctl, conmon, podman, quadlet, logging, secrets, redaction, box-verify, troubleshooting]
 ---
@@ -39,6 +39,53 @@ prefix. Consequences, all of which have produced wrong numbers:
 - **`JSON.parse` fails on any single entry.** You must rejoin the chunks first:
   a message starts at the next line whose body matches ServiceBay's log prefix;
   every line without one continues the current message.
+
+## Trap 3: `-o json` cannot show you a control character
+
+journald stores a field whose value is not clean UTF-8 — anything carrying an
+ANSI escape, for instance — as an **array of byte values**, not as a string. So
+a text pattern searching `-o json` output for `\u001b` or a literal ESC finds
+**zero** on a journal that is full of them. That false zero has already been
+reported as "the fix works" for a fix that had not shipped yet.
+
+Count escapes on `-o cat`, where the bytes are the bytes:
+
+```bash
+journalctl --user -u servicebay --since "<t>" --no-pager -o cat \
+  | awk '{ if (index($0, sprintf("%c",27))>0) a++ } END{ print a+0 }'
+```
+
+## Trap 4: the blank line after every entry is podman's, and is not a defect
+
+Podman's journald log driver keeps the line terminator **inside** `MESSAGE`:
+
+```
+"MESSAGE":"1788097613: New connection from 10.89.0.36:57340 on port 1883.\n"
+```
+
+`journalctl -o cat` appends its own newline on top, so every entry is followed
+by a blank line — for `radicale`, `mosquitto` and every other service on the
+box, not just ServiceBay. Counting those blanks once produced "96,409 of
+202,055 lines (47.7%) are blank", read as a ServiceBay bug, fixed, released,
+and then found to be nobody's bug at all.
+
+If you are measuring the *application*, count entries (`-o json | wc -l`) or
+bytes; `-o cat` line counts are for finding escapes and reading context.
+
+## Before you trust an absence, prove the probe can find the thing
+
+Every one of the traps above produced a **green** reading on a broken box. So a
+journal probe is only evidence once it has failed on purpose:
+
+1. Run it against the **known-broken** version first (on `:latest`, before the
+   flip). It must come out RED. A probe that cannot fail cannot pass.
+2. Give it a **minimum denominator**. Zero hits over zero lines is not an
+   absence — after a `:dev` flip the journal starts empty, so wait for traffic
+   (bounded) and treat "too few lines" as RED, not as green.
+3. Derive the time cut **locally**. `podman inspect` prints
+   `2026-08-30 14:05:25.720478223 +0000 UTC`, which `date -d` refuses; the empty
+   string that fell out of it made `journalctl --since ""` match nothing and
+   "prove" a fix three times over.
 
 ## Do this instead
 
