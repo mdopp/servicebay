@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.19.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.19.0...servicebay-v5.19.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **install:** stop the NVIDIA CDI timer once its work is done ([02a08b2](https://github.com/mdopp/servicebay/commit/02a08b2ef0e583e21ab5d596091259959ae5dd7e)), closes [#2668](https://github.com/mdopp/servicebay/issues/2668)
+* **knip:** declare the spawned test emitter as a process entry ([e2a5681](https://github.com/mdopp/servicebay/commit/e2a568155db8d11aa2f32b6d992219e673e7adea))
+* **logger:** write for the journal, not for a terminal ([f24712f](https://github.com/mdopp/servicebay/commit/f24712fb75b4307a9e0dec1fe66f51b4ad2ba060)), closes [#2667](https://github.com/mdopp/servicebay/issues/2667)
+* stop ServiceBay and the NVIDIA timer from flooding the journal ([3fe7552](https://github.com/mdopp/servicebay/commit/3fe7552b8a8e890a1e57333e33a518e990af2f29))
+
 ## [5.19.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.18.1...servicebay-v5.19.0) (2026-08-30)
 
 
