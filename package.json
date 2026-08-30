@@ -117,7 +117,8 @@
       ".": {
         "entry": [
           "scripts/**/*.{ts,mjs}",
-          "tests/e2e/**/*.e2e.ts"
+          "tests/e2e/**/*.e2e.ts",
+          "tests/backend/fixtures/*-emitter.ts"
         ],
         "ignoreDependencies": [
           "@tailwindcss/typography",

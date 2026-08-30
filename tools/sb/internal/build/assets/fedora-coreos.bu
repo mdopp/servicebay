@@ -1504,9 +1504,10 @@ ${SERVICEBAY_SSH_PRIV}
     #
     # The service below runs once per timer fire. Each fire does a
     # short internal poll (60 s) for the kmod; if it's not loaded,
-    # exit 1 and let the timer retry in 60 s. Once CDI is generated,
-    # the unit's ConditionPathExists short-circuits and future timer
-    # fires are free no-ops.
+    # exit 1 and let the timer retry in 60 s. The retries are bounded
+    # (60 fires) and the script disables the timer once CDI is
+    # generated or once it gives up. A "free no-op" fire is not free:
+    # it is a journal line a minute, for ever (#2668).
     - path: /usr/local/bin/install-nvidia-cdi.sh
       mode: 0755
       contents:
@@ -1516,8 +1517,77 @@ ${SERVICEBAY_SSH_PRIV}
 
           LOG_FILE=/var/home/${HOST_USER}/.config/containers/splash/log.txt
 
+          # This script owns the lifetime of install-nvidia-cdi.timer.
+          #
+          # Nothing in systemd ever stops an OnUnitInactiveSec= timer.
+          # Putting the done-marker guard on the *service* (as a
+          # ConditionPathExists) only makes each fire a no-op for the
+          # service; the timer keeps ticking every 60 s, and a
+          # condition-skipped fire still writes "skipped, unmet
+          # condition" to the journal. On the reference box that was
+          # 1432 lines a day and ~125k lines after the work had actually
+          # finished, crowding out the lines an operator later needs
+          # (#2668).
+          #
+          # So the guards live HERE, where they can also stop the timer:
+          # every branch that ends the work -- done, or given up --
+          # calls stop_timer. The timer additionally carries the same
+          # marker conditions so a reboot never restarts it.
+          stop_timer() {
+              /usr/bin/systemctl disable --now install-nvidia-cdi.timer >/dev/null 2>&1 || true
+          }
+
           if [ -f /var/lib/install-nvidia-cdi-done ]; then
-              echo "install-nvidia-cdi: already done, skipping"
+              echo "install-nvidia-cdi: already done, stopping the timer"
+              stop_timer
+              exit 0
+          fi
+
+          # Already gave up (see the attempt budget below). "Say it
+          # once" has to survive a fire that reaches us anyway -- a
+          # manual `systemctl start`, or a boot that raced the marker --
+          # so this branch is silent and just makes sure the timer is
+          # off.
+          if [ -f /var/lib/install-nvidia-cdi-gave-up ]; then
+              stop_timer
+              exit 0
+          fi
+
+          # Bounded retries. If the driver was never layered the kmod
+          # will NEVER appear, and an endless minute-tick waiting for
+          # something that cannot happen is pure noise. 60 fires is well
+          # past the worst observed kmod build (#982: the kmod appeared
+          # ~60 min in on cold-cache RTX 2000 Ada; a fire that waits for
+          # the kmod costs ~2 min, so the budget is ~2 h of real
+          # waiting). After that, say so ONCE and stop -- silence and an
+          # infinite retry are both wrong answers.
+          ATTEMPTS_FILE=/var/lib/install-nvidia-cdi-attempts
+          MAX_ATTEMPTS=60
+          ATTEMPTS=$(/usr/bin/cat "$ATTEMPTS_FILE" 2>/dev/null || echo 0)
+          case "$ATTEMPTS" in ''|*[!0-9]*) ATTEMPTS=0 ;; esac
+          ATTEMPTS=$((ATTEMPTS + 1))
+          echo "$ATTEMPTS" > "$ATTEMPTS_FILE"
+
+          if [ "$ATTEMPTS" -gt "$MAX_ATTEMPTS" ]; then
+              echo "install-nvidia-cdi: giving up after $MAX_ATTEMPTS attempts, the nvidia kernel module never appeared. Run 'sudo bash enable-nvidia.sh' to retry by hand." | /usr/bin/tee -a "$LOG_FILE" >&2
+              /usr/local/bin/append-install-log.sh "install-nvidia-cdi" "gave up after $MAX_ATTEMPTS attempts; the nvidia kernel module never appeared" 2>/dev/null || true
+              /usr/bin/touch /var/lib/install-nvidia-cdi-gave-up
+              stop_timer
+              # Never strand the install behind a GPU that is not coming:
+              # unlock servicebay.service so the box finishes booting
+              # without passthrough instead of waiting for ever.
+              /usr/local/bin/update-install-status.sh "Starting ServiceBay…" "The NVIDIA kernel module never appeared. Continuing without GPU passthrough." "install-nvidia-cdi" || true
+              /usr/bin/touch /var/lib/installation-ready
+              exit 0
+          fi
+
+          # The driver stage has to have run before there is any kmod to
+          # wait for. This used to be a ConditionPathExists on the
+          # service, which turned every fire into a journal-only no-op
+          # and left the timer running for ever; as a script branch it
+          # counts against the budget above, so it terminates.
+          if [ ! -f /var/lib/install-nvidia-driver-done ]; then
+              echo "install-nvidia-cdi: driver not layered yet, attempt $ATTEMPTS/$MAX_ATTEMPTS"
               exit 0
           fi
 
@@ -1598,6 +1668,11 @@ ${SERVICEBAY_SSH_PRIV}
 
           # done-marker LAST so a crash mid-script triggers a retry.
           touch /var/lib/install-nvidia-cdi-done
+          /usr/bin/rm -f "$ATTEMPTS_FILE"
+
+          # The work is finished, so stop the 60 s timer now, in this
+          # boot. Leaving it running is precisely what produced #2668.
+          stop_timer
 
           # Unlock servicebay.service. The path unit
           # servicebay-trigger.path observes this file and triggers
@@ -1613,10 +1688,16 @@ ${SERVICEBAY_SSH_PRIV}
         inline: |
           [Unit]
           Description=Generate NVIDIA CDI config once the kmod is loaded
-          # Only meaningful once the driver has been layered.
-          ConditionPathExists=/var/lib/install-nvidia-driver-done
-          # Skip forever once CDI is generated.
-          ConditionPathExists=!/var/lib/install-nvidia-cdi-done
+          # Deliberately NO ConditionPathExists here (#2668). The obvious
+          # guards -- "driver not layered yet" and "CDI already
+          # generated" -- used to sit on this unit, and that is exactly
+          # what made the timer immortal: a condition-skipped fire never
+          # runs the script, so the script never got the chance to stop
+          # the timer, and systemd logged "skipped, unmet condition"
+          # every 60 s for ever (1432 lines/day on the reference box).
+          # Both guards now live in install-nvidia-cdi.sh, which exits
+          # just as cheaply AND disables the timer once there is nothing
+          # left to do.
 
           [Service]
           Type=oneshot
@@ -1632,14 +1713,24 @@ ${SERVICEBAY_SSH_PRIV}
         inline: |
           [Unit]
           Description=Retry NVIDIA CDI generation until the kmod is available
+          # Belt to install-nvidia-cdi.sh's braces (#2668). A unit
+          # condition is evaluated when the unit STARTS, not on every
+          # fire, so this alone would not stop a timer that is already
+          # running -- the script does that. What it buys: a box that
+          # has finished (or given up on) CDI generation never even
+          # starts the timer on any later boot, so it is quiet from t=0.
+          ConditionPathExists=!/var/lib/install-nvidia-cdi-done
+          ConditionPathExists=!/var/lib/install-nvidia-cdi-gave-up
 
           [Timer]
           # First attempt 30 s into the boot — gives udev a moment to
           # autoload the module if the build had already finished.
           OnBootSec=30s
-          # Retry 60 s after the service goes inactive (success or
-          # failure both qualify as "inactive"; on success the
-          # ConditionPathExists makes the next fire a no-op).
+          # Retry 60 s after the service goes inactive (success and
+          # failure both qualify as "inactive"). The loop is bounded by
+          # install-nvidia-cdi.sh, which disables this timer once CDI is
+          # generated or once it has given up -- systemd itself will
+          # never stop an OnUnitInactiveSec= timer (#2668).
           OnUnitInactiveSec=60s
           Unit=install-nvidia-cdi.service
 

@@ -10,7 +10,16 @@
  *
  * The server continues to import the full `logger` from `@/lib/logger` (which
  * adds SQLite persistence, file-system access, and trace-provider support).
+ *
+ * It carries no ANSI at all, so #2667's colour half never applied here. The
+ * blank-line half does: Next.js SSR runs inside the backend process, so a
+ * server-rendered `logger.info('x', 'msg', someObject)` lands in the same
+ * journald pipe, where the multi-line object inspection becomes a run of empty
+ * entries. Hence the shared `log-format` sink helpers — pure, no Node built-ins,
+ * so importing them keeps this module client-safe.
  */
+
+import { renderLogArg, toSingleJournalLine } from './log-format';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -23,6 +32,16 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
 
 class ClientLogger {
   private currentLogLevel: LogLevel = 'info';
+
+  /**
+   * Render tag + message + args as ONE line (#2667) — see `log-format.ts`.
+   * Args are stringified here rather than handed to `console.*`, so an object
+   * or an Error stack can no longer be split into a prefixed entry plus a run
+   * of blank ones by journald on the SSR path.
+   */
+  private line(tag: string, message: string, args: unknown[]): string {
+    return toSingleJournalLine([`[${tag}]`, message, ...args.map(a => renderLogArg(a))].join(' '));
+  }
 
   setLogLevel(level: LogLevel): void {
     this.currentLogLevel = level;
@@ -38,22 +57,22 @@ class ClientLogger {
 
   debug(tag: string, message: string, ...args: unknown[]) {
     if (!this.shouldLog('debug')) return;
-    console.debug(`[${tag}]`, message, ...args);
+    console.debug(this.line(tag, message, args));
   }
 
   info(tag: string, message: string, ...args: unknown[]) {
     if (!this.shouldLog('info')) return;
-    console.info(`[${tag}]`, message, ...args);
+    console.info(this.line(tag, message, args));
   }
 
   warn(tag: string, message: string, ...args: unknown[]) {
     if (!this.shouldLog('warn')) return;
-    console.warn(`[${tag}]`, message, ...args);
+    console.warn(this.line(tag, message, args));
   }
 
   error(tag: string, message: string, ...args: unknown[]) {
     // Always log errors
-    console.error(`[${tag}]`, message, ...args);
+    console.error(this.line(tag, message, args));
   }
 }
 
