@@ -1,9 +1,20 @@
 import type * as fs from 'fs';
 import type * as path from 'path';
 import type { Database } from 'better-sqlite3';
+import { renderLogArg, shouldColorize, toSingleJournalLine } from './log-format';
 
 const isServer = typeof window === 'undefined';
 
+/**
+ * ANSI colour is a *terminal* feature, and ServiceBay does not run in one.
+ *
+ * On the box it runs as a systemd unit, so stdout is a journald pipe: every
+ * escape is dead weight (~30 bytes/line, ~48% of lines) and — the worse cost —
+ * it moves the start of the line, so `grep '^2026-'`, column-based tooling and
+ * `scripts/check-journal-redaction.ts`'s own line prefix regex all see
+ * something other than what the eye sees (#2667). Colour is therefore chosen
+ * per emission by `shouldColorize()`, never applied unconditionally.
+ */
 const COLORS = {
   reset: "\x1b[0m",
   dim: "\x1b[2m",
@@ -16,6 +27,11 @@ const COLORS = {
   cyan: "\x1b[36m",
   gray: "\x1b[90m",
 };
+
+type Palette = typeof COLORS;
+
+/** The same palette with every escape emptied — the journal/pipe rendering. */
+const PLAIN: Palette = Object.fromEntries(Object.keys(COLORS).map(k => [k, ''])) as Palette;
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -322,22 +338,38 @@ class Logger {
     return { timestamp: this.getTimestamp(), level, tag, message, args, traceId };
   }
 
-  private formatConsole(level: LogLevel, entry: LogEntry): unknown[] {
-    const timestamp = `${COLORS.dim}${entry.timestamp}${COLORS.reset}`;
-    let levelColor = COLORS.reset;
+  /**
+   * Render one entry for the console sink as a SINGLE string (#2667).
+   *
+   * Two deliberate departures from the old shape, both about the fact that this
+   * sink writes to a journal, not to a terminal:
+   *  - the palette is `PLAIN` unless `shouldColorize()` says otherwise, so a
+   *    journald/CI pipe gets no escapes and the line starts with its timestamp;
+   *  - the extra args are rendered here instead of being handed to `console.*`,
+   *    and the whole body is flattened by `toSingleJournalLine`, so one log call
+   *    is one journal entry with no blank ones trailing it.
+   *
+   * Only the console rendering changes: `insertLog` still persists the raw
+   * message and args, so the log viewer and `queryLogs` keep full fidelity.
+   */
+  private formatConsole(level: LogLevel, entry: LogEntry): [string] {
+    const c: Palette = shouldColorize() ? COLORS : PLAIN;
+    const timestamp = `${c.dim}${entry.timestamp}${c.reset}`;
+    let levelColor = c.reset;
     const levelLabel = level.toUpperCase().padEnd(5);
 
     switch(level) {
-        case 'debug': levelColor = COLORS.blue; break;
-        case 'info': levelColor = COLORS.green; break;
-        case 'warn': levelColor = COLORS.yellow; break;
-        case 'error': levelColor = COLORS.red; break;
+        case 'debug': levelColor = c.blue; break;
+        case 'info': levelColor = c.green; break;
+        case 'warn': levelColor = c.yellow; break;
+        case 'error': levelColor = c.red; break;
     }
 
-    const coloredLevel = `${levelColor}${levelLabel}${COLORS.reset}`;
-    const coloredTag = `${COLORS.magenta}[${entry.tag}]${COLORS.reset}`;
-    
-    return [`${timestamp} ${coloredLevel} ${coloredTag} ${entry.message}`, ...(entry.args || [])];
+    const coloredLevel = `${levelColor}${levelLabel}${c.reset}`;
+    const coloredTag = `${c.magenta}[${entry.tag}]${c.reset}`;
+    const body = [entry.message, ...(entry.args || []).map(a => renderLogArg(a))].join(' ');
+
+    return [toSingleJournalLine(`${timestamp} ${coloredLevel} ${coloredTag} ${body}`)];
   }
 
   debug(tag: string, message: string, ...args: unknown[]) {
