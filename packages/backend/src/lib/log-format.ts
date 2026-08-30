@@ -8,10 +8,24 @@
  * both loggers can share one implementation, and one test suite pins it.
  *
  * Why it exists: ServiceBay runs as a systemd unit, so its stdout is a journald
- * pipe, not a terminal. Writing for a terminal cost 105 MB of journal a day —
- * a third of the whole box's volume — of which ~48% of lines carried ANSI
- * escapes nobody ever renders and 96,409 of 202,055 lines (47.7%) were *blank*,
- * each one the tail of a multi-line payload journald had split apart (#2667).
+ * pipe, not a terminal. It wrote ~48% of its lines with ANSI escapes nobody
+ * ever renders, and — worse for tooling — the escapes came BEFORE the
+ * timestamp, which is what blinded the #2603 leak probe. Removing them is
+ * verified on the box: 440 escape-carrying lines -> 0 over the same 82-second
+ * window after start (#2667).
+ *
+ * Two claims from #2667 did NOT survive that measurement, and are recorded
+ * here so nobody re-derives them:
+ *  - The ~48% *blank* lines are not ours and are not a defect. Podman's
+ *    journald log driver stores the line terminator inside MESSAGE, so every
+ *    entry ends with a newline and `journalctl -o cat` — which adds its own —
+ *    prints a blank line after each one. radicale and mosquitto on the same box
+ *    show the identical shape. Count entries, not `-o cat` lines.
+ *  - This sink is not where the journal volume is. Same window, before vs.
+ *    after: 923,741 -> 927,991 bytes, 530 -> 549 entries. The volume is the
+ *    *payloads* (a full container-inspect JSON with all OCI labels, logged on
+ *    every sync), not their decoration.
+ *
  * Next.js SSR runs inside that same process, so the client logger's output
  * reaches the same journal and needs the same treatment.
  */
@@ -20,9 +34,11 @@
  * Render one `console.*` extra argument to a string, ourselves.
  *
  * We must not hand objects to `console.*` any more: Node inspects them across
- * many lines, and journald turns every one of those newlines into a separate,
- * empty entry (#2667). Errors keep their stack — it is the whole value of the
- * argument; `toSingleJournalLine` flattens it, nothing is dropped.
+ * many lines, and journald starts a new entry at every newline — so one log
+ * call became a run of entries that no longer carried the tag or level, and a
+ * `grep` for either lost the rest of the payload (#2667). Errors keep their
+ * stack — it is the whole value of the argument; `toSingleJournalLine`
+ * flattens it, nothing is dropped.
  *
  * Deliberately NOT truncated. The size cap for the one payload class that is
  * actually huge — quadlet/unit bodies — belongs at the redactor, where
@@ -60,10 +76,14 @@ export function renderLogArg(value: unknown, seen: WeakSet<object> = new WeakSet
  *
  * journald splits on newlines, so a multi-line payload (container-inspect JSON
  * with OCI labels, a `SYNC_PARTIAL` state sync, an Error stack) arrived as one
- * prefixed entry followed by a run of unprefixed and *empty* ones. Trailing and
- * embedded blank lines are dropped, and a real line break is kept visible as
- * the literal two characters `\n` — the ASCII, greppable representation
- * `JSON.stringify` already uses, so nothing is lost and nothing is blank.
+ * prefixed entry followed by a run of unprefixed ones — searchable by neither
+ * tag nor level. Trailing and embedded blank lines are dropped, and a real line
+ * break is kept visible as the literal two characters `\n` — the ASCII,
+ * greppable representation `JSON.stringify` already uses, so nothing is lost.
+ *
+ * This does NOT remove the blank line `journalctl -o cat` shows after every
+ * entry: that terminator lives in MESSAGE, put there by podman's log driver,
+ * and every service on the box has it. See the module header.
  */
 export function toSingleJournalLine(text: string): string {
   return text
