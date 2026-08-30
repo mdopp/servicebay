@@ -72,6 +72,13 @@ spec:
       # booted in.
       - name: CLAUDE_CODE_OAUTH_TOKEN
         value: "{{CLAUDE_CODE_OAUTH_TOKEN}}"
+      # Read-only ServiceBay API token. The entrypoint wires it as an MCP server
+      # at Claude Code's `user` scope, so every session — including one in a
+      # checkout cloned later — can look up an ADR, an assist or a service's
+      # logs. Read-only is what makes one shared token reasonable and what lets
+      # it never expire; see variables.json.
+      - name: SERVICEBAY_MCP_TOKEN
+        value: "{{SERVICEBAY_MCP_TOKEN}}"
       # LLDAP bind for SSH logins as a real LDAP user (e.g. mdopp). These
       # mirror the `auth` template's variable names so LLDAP_ADMIN_PASSWORD is
       # reused from savedSecrets (the value auth generated) rather than asked

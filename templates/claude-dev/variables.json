@@ -18,6 +18,12 @@
     "noAutoGenerate": true,
     "description": "Optional long-lived Claude subscription token, so the auto-started Claude sessions never need an interactive /login. Generate it once on any machine that has a browser with `claude setup-token` — it is account-scoped, not machine-scoped, so the token from your laptop works here. Leave blank to keep the interactive login, whose refresh token carries a rolling ~30-day expiry and must then be re-entered by hand in every tmux window (impractical from the mobile app). `noAutoGenerate` is load-bearing: this is an operator-supplied external credential, and a random string minted in its place would be rejected on every API call."
   },
+  "SERVICEBAY_MCP_TOKEN": {
+    "type": "secret",
+    "noAutoGenerate": true,
+    "description": "Optional ServiceBay API token, so every Claude session on this box can read ADRs, assists, logs and rendered service definitions without one being pasted in by hand. Mint it under Settings → Tokens with the READ scope ONLY and tick \"Never Expires\" — ServiceBay offers that exclusively for read-only scope sets, so a read token is configure-once, while anything from `lifecycle` upward expires within 30 days. A session that needs to restart or deploy something calls `request_token` (which itself needs only `read`) and you approve that one job; a shell goes through the one-shot flow bound to a single operation. One shared token is deliberate: the scope ladder has no per-service granularity, so per-repo tokens would buy attribution and nothing else. `noAutoGenerate` is load-bearing — this is an operator-minted credential, and a random string in its place would be rejected on every call.",
+    "default": ""
+  },
   "LLDAP_LDAP_PORT": {
     "type": "text",
     "description": "LLDAP LDAP-protocol port. Must match the `auth` stack's LLDAP_LDAP_PORT.",
