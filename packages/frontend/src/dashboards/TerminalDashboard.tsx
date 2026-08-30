@@ -25,6 +25,7 @@ export default function TerminalDashboard() {
     const nodeParam = searchParams?.get('node') ?? null;
     const containerParam = searchParams?.get('container') ?? null;
     const attachParam = searchParams?.get('attach') ?? null;
+    const runParam = searchParams?.get('run') ?? null;
     const queryString = searchParams?.toString() ?? '';
     const storageHydrated = useRef(false);
 
@@ -124,13 +125,23 @@ export default function TerminalDashboard() {
     // container (e.g. claude-dev's persistent `claude` session) instead of a
     // fresh shell — generalised, not hard-coded to claude-dev. Without
     // `container`, the dashboard behaves as before (host / node shell).
+    //
+    // `?run=<preset>` launches one of the backend's WHITELISTED repair
+    // commands and then leaves a shell open. This exists so a diagnostic can
+    // hand the operator a working fix as a link — one tap from the phone,
+    // nothing to remember, no SSH and no typing. The value is a preset KEY,
+    // never a command: `resolvePtySpec` rejects anything not in
+    // `TERMINAL_RUN_PRESETS`, so a hand-crafted URL cannot smuggle in a
+    // command. It wins over `attach` because a repair should land on a clean
+    // prompt rather than inside a live working session.
     const terminalTarget = useMemo(() => {
         if (containerParam) {
             const base = `container:${selectedNode}:${containerParam}`;
+            if (runParam) return `${base}:run=${runParam}`;
             return attachParam ? `${base}:attach=${attachParam}` : base;
         }
         return selectedNode === 'Local' ? 'host' : `node:${selectedNode}`;
-    }, [containerParam, attachParam, selectedNode]);
+    }, [containerParam, attachParam, runParam, selectedNode]);
 
   return (
     <div className="h-full flex flex-col">

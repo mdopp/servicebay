@@ -45,6 +45,7 @@ import { checkDomainUnreachable } from '@/lib/diagnose/probes/domainUnreachable'
 import { checkDomainResolvesToBox } from '@/lib/diagnose/probes/domainResolvesToBox';
 import { checkOidcProviderReachable } from '@/lib/diagnose/probes/oidcProviderReachable';
 import { checkNasBackupReachable } from '@/lib/diagnose/probes/nasBackupReachable';
+import { checkClaudeDevAuth } from '@/lib/diagnose/probes/claudeDevAuth';
 import { checkContentBackup, checkConfigBackup } from '@/lib/diagnose/probes/backupCoverage';
 import { checkHaAutomationIntegrity } from '@/lib/diagnose/probes/haAutomationIntegrity';
 import { checkSsoVerify } from '@/lib/diagnose/probes/ssoVerify';
@@ -126,6 +127,9 @@ const PROBE_GROUP: Record<string, ProbeGroup> = {
   sso_verify: 'sso',
   // Maintenance-chat assistant (Hermes)
   hermes_chat: 'services',
+  // Per-service, like hermes_chat: the claude-dev box's sign-in decides whether
+  // its unattended sessions answer at all and whether they reach the mobile app.
+  claude_dev_auth: 'services',
   // Storage & backups
   disk: 'storage-backups',
   raid: 'storage-backups',
@@ -1293,6 +1297,33 @@ export async function runDiagnose(nodeName: string = 'Local', opts: RunDiagnoseO
     probes.push({
       id: 'config_backup',
       label: 'Config backup (last nightly run)',
+      status: 'info',
+      detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
+  // 18c) claude-dev sign-in. The unattended Claude sessions on that box are
+  //      driven from the mobile app over Remote Control, and both the sessions
+  //      and the app link die when the claude.ai sign-in lapses — silently, in
+  //      the sense that the tmux windows keep showing a healthy-looking prompt.
+  //      Deliberately NOT keyed on the credential file's expiry date: measured
+  //      on the reference box, that date read 26 days out while the sign-in was
+  //      already dead (the access token had been zeroed), so a date-based probe
+  //      would have shown green for most of a month. The probe asks
+  //      `claude doctor` instead and reports the date only as context.
+  try {
+    const cda = await checkClaudeDevAuth(nodeName);
+    probes.push({
+      id: 'claude_dev_auth',
+      label: 'Claude dev box sign-in',
+      status: cda.status,
+      detail: cda.detail,
+      hint: cda.hint,
+    });
+  } catch (e) {
+    probes.push({
+      id: 'claude_dev_auth',
+      label: 'Claude dev box sign-in',
       status: 'info',
       detail: `Skipped: ${e instanceof Error ? e.message : String(e)}`,
     });

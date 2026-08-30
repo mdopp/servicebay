@@ -19,7 +19,7 @@ vi.mock('node-pty', () => ({
   spawn: vi.fn(),
 }));
 
-import { resolvePtySpec, buildContainerInnerCmd, buildContainerExecCmd } from './sessionManager';
+import { resolvePtySpec, buildContainerInnerCmd, buildContainerExecCmd, TERMINAL_RUN_PRESETS } from './sessionManager';
 
 beforeEach(() => {
   state.nodes = [];
@@ -188,5 +188,88 @@ describe('buildContainerInnerCmd', () => {
     expect(cmd).toContain('command -v tmux');
     expect(cmd).toContain('exec tmux new -A -s claude');
     expect(cmd).toContain('/bin/bash'); // fallback branch
+  });
+});
+
+/**
+ * `run=<preset>` deep-links (one-tap repairs).
+ *
+ * A diagnostic can hand the operator a link that opens a terminal in the
+ * container with the fix already running — the operator is usually holding a
+ * phone when they find out something broke, and SSH plus a typed command is not
+ * something you do from there.
+ *
+ * The security property is the whole design: the URL carries a preset KEY, and
+ * only text from `TERMINAL_RUN_PRESETS` ever reaches a shell. A free-form
+ * `?cmd=` would be remote code execution by link — anyone who could put a URL
+ * in front of an operator would run whatever they liked as the container's
+ * root. These tests pin that shut.
+ */
+describe('sessionManager — run= presets', () => {
+  it('runs the whitelisted command and leaves a shell open afterwards', () => {
+    const cmd = buildContainerInnerCmd(undefined, 'claude-login');
+    expect(cmd).toContain(TERMINAL_RUN_PRESETS['claude-login']);
+    // Without the trailing shell the PTY closes the moment the command
+    // returns, taking the auth URL it just printed with it.
+    expect(cmd).toContain('/bin/bash');
+  });
+
+  it('signs in as dev with the workspace HOME, not as the container root', () => {
+    // `podman exec` enters as root; a login performed there writes to
+    // /root/.claude, where nothing looks for it, and the repair would appear to
+    // succeed while fixing nothing.
+    const cmd = TERMINAL_RUN_PRESETS['claude-login'];
+    expect(cmd).toContain('runuser -u dev');
+    expect(cmd).toContain('HOME=/workspace');
+  });
+
+  it('rejects a preset that is not on the whitelist', () => {
+    expect(() => buildContainerInnerCmd(undefined, 'nope')).toThrow(/Unknown terminal run preset/);
+  });
+
+  it('refuses an injected command instead of running it', () => {
+    for (const attempt of ['; rm -rf /', 'claude-login; id', '$(id)', '`id`', '../../bin/sh']) {
+      expect(() => buildContainerInnerCmd(undefined, attempt)).toThrow(/Unknown terminal run preset/);
+    }
+  });
+
+  it('never interpolates the caller-supplied key into the command', () => {
+    // Even the rejected path must not build a string containing the attempt.
+    let built: string | undefined;
+    try {
+      built = buildContainerInnerCmd(undefined, 'claude-login; id');
+    } catch {
+      built = undefined;
+    }
+    expect(built).toBeUndefined();
+  });
+
+  it('carries no single quote, which would break out of `sh -c \'…\'`', () => {
+    for (const cmd of Object.values(TERMINAL_RUN_PRESETS)) {
+      expect(cmd).not.toContain("'");
+    }
+  });
+
+  it('takes precedence over attach, so a repair lands on a clean prompt', () => {
+    const cmd = buildContainerInnerCmd('claude', 'claude-login');
+    expect(cmd).toContain(TERMINAL_RUN_PRESETS['claude-login']);
+    expect(cmd).not.toContain('tmux new -A -s claude');
+  });
+});
+
+describe('sessionManager — run= in the session-target grammar', () => {
+  beforeEach(() => {
+    state.nodes = [{ name: 'Local', uri: '' }];
+  });
+
+  it('parses container:<node>:<id>:run=<preset>', async () => {
+    const spec = await resolvePtySpec('container:Local:claude-dev-claude-dev:run=claude-login');
+    expect(JSON.stringify(spec)).toContain('runuser -u dev');
+  });
+
+  it('rejects an unknown preset from the target string', async () => {
+    await expect(
+      resolvePtySpec('container:Local:claude-dev-claude-dev:run=evil'),
+    ).rejects.toThrow(/Unknown terminal run preset/);
   });
 });
