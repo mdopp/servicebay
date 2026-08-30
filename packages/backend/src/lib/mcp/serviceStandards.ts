@@ -137,6 +137,27 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
         scriptsOverProse:
           'Deterministic, repeatable steps belong in a checked-in script (fixed flags, hard-capped polls, guaranteed cleanup), not prose an agent re-interprets.',
       },
+      // #2697: the working agreements four agent sessions arrived at, compared,
+      // and had adopted across all of the operator's repos. They are
+      // platform-agnostic, so they belong on THIS flavor rather than on
+      // 'servicebay' — a project bootstrapped generically is exactly the one
+      // that would otherwise re-derive them from its own damage. Almost every
+      // rule carries the incident it came from; that is not decoration. A rule
+      // without its incident gets misread at the next edge case.
+      workingAgreements: {
+        note: 'Fetch full text via get_assist(id). Read the first one BEFORE adopting any threshold or autonomy level from the others.',
+        ids: [
+          { id: 'footgun-importing-a-working-agreement-from-another-repo', why: 'Read first. Portable are the questions and the mechanisms — NOT the thresholds and not the autonomy levels. Release autonomy, how wide repair may go, and how much finding belongs in a ticket are calibrated per project; copying the answer builds the wrong barrier.' },
+          { id: 'guide-how-work-enters-and-gets-batched', why: 'Issue before code, cross-repo work becomes a ticket there, batches of up to eight, and the finding-vs-proposal distinction: the acceptance is binding, the route to it is not.' },
+          { id: 'checklist-does-this-gate-separate-by-place-or-by-effect', why: 'Ask it of every gate. A gate keyed on a file, directory or repo decides differently for identical work; three projects had the right axis elsewhere in their own rules and had not transferred it. Review gates ask about disclosure, human gates about irreversibility.' },
+          { id: 'guide-when-to-ask-and-how-to-put-a-decision-to-the-operator', why: 'Never end a turn with work left over; a report is not a result (done / running / your decision); one question, spelled-out options, costs, recommendation first.' },
+          { id: 'recipe-walk-a-human-through-a-manual-acceptance', why: 'Lead the walk-through instead of asking for an assessment. Ask what they SEE, never whether it is right; testability belongs in the planning; one release, one list.' },
+          { id: 'checklist-a-measurement-carries-its-own-limits', why: 'Register the binding before measuring; afterwards the limits are FIELDS, not prose. A measurement may reopen a settled decision only when the target state is the named quantity and not in the not-established field.' },
+          { id: 'checklist-a-probe-that-cannot-fail-is-not-a-check', why: 'A service asked about itself reliably reports that it is fine. Mutation-proof every check, mind the denominator, and never render a broken read as an empty result.' },
+          { id: 'guide-contracts-between-agent-sessions', why: 'The channel carries the message, the ticket carries the content. Whoever changes a promise says so immediately — the costs are asymmetric. Second-hand operator decisions are hearsay.' },
+          { id: 'footgun-repair-or-report-infrastructure-you-did-not-build', why: 'The boundary runs along ownership, not the kind of fault. Diagnose before touching — a repair can erase the trail. Self-healing is wrong for configuration faults.' },
+        ],
+      },
     };
   }
 
