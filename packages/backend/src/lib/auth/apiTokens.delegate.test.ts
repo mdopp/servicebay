@@ -161,6 +161,84 @@ describe('createDelegatedToken (#2048)', () => {
   });
 });
 
+describe('revokeDelegatedToken (#2680)', () => {
+  /** Parent + two children delegated from it — the shape every claim below
+   *  needs, because a single-child store cannot show a sibling surviving. */
+  async function family() {
+    const { createToken, createDelegatedToken } = await load();
+    const { secret: parentRaw, token: parent } = await createToken({
+      name: 'claude-dev', scopes: ['read'], createdBy: 'admin',
+    });
+    const a = await createDelegatedToken({ parentRaw, name: 'project a', scopes: ['read'] });
+    const b = await createDelegatedToken({ parentRaw, name: 'project b', scopes: ['read'] });
+    return { parentRaw, parent, a, b };
+  }
+
+  it('revokes EXACTLY the named child and leaves its siblings usable', async () => {
+    const { revokeDelegatedToken, listTokens, verifyToken } = await load();
+    const { parentRaw, parent, a, b } = await family();
+    expect(await listTokens()).toHaveLength(3);
+
+    const revoked = await revokeDelegatedToken({ parentRaw, childId: a.token.id });
+    expect(revoked.id).toBe(a.token.id);
+
+    // Counted, not asserted: exactly one row left the store.
+    const left = await listTokens();
+    expect(left.map(t => t.id).sort()).toEqual([parent.id, b.token.id].sort());
+    // The sibling is not merely listed — it still authenticates.
+    expect((await verifyToken(b.secret))?.id).toBe(b.token.id);
+    expect(await verifyToken(a.secret)).toBeNull();
+  });
+
+  it('refuses a token that is not this parent\'s child, and revokes nothing (403)', async () => {
+    const { createToken, createDelegatedToken, revokeDelegatedToken, listTokens } = await load();
+    const { parentRaw, a } = await family();
+    // A second family: same shape, different parent.
+    const { secret: otherRaw } = await createToken({ name: 'other', scopes: ['read'], createdBy: 'admin' });
+    const stranger = await createDelegatedToken({ parentRaw: otherRaw, name: 'not yours', scopes: ['read'] });
+
+    await expect(revokeDelegatedToken({ parentRaw, childId: stranger.token.id }))
+      .rejects.toMatchObject({ status: 403 });
+    // The refusal is total: nothing at all was removed.
+    expect(await listTokens()).toHaveLength(5);
+    expect(await revokeDelegatedToken({ parentRaw, childId: a.token.id })).toMatchObject({ id: a.token.id });
+  });
+
+  it('refuses the parent itself — a token cannot revoke its own credential here (403)', async () => {
+    const { revokeDelegatedToken, listTokens } = await load();
+    const { parentRaw, parent } = await family();
+    await expect(revokeDelegatedToken({ parentRaw, childId: parent.id }))
+      .rejects.toMatchObject({ status: 403 });
+    expect(await listTokens()).toHaveLength(3);
+  });
+
+  it('an id that is not in the store is 404, never a silent success', async () => {
+    const { revokeDelegatedToken, listTokens } = await load();
+    const { parentRaw } = await family();
+    await expect(revokeDelegatedToken({ parentRaw, childId: 'deadbeef' }))
+      .rejects.toMatchObject({ status: 404 });
+    // Nothing was removed on the way to that refusal.
+    expect(await listTokens()).toHaveLength(3);
+  });
+
+  it('rejects a malformed id (400) and a bad parent credential (403)', async () => {
+    const { revokeDelegatedToken } = await load();
+    const { parentRaw, a } = await family();
+    await expect(revokeDelegatedToken({ parentRaw, childId: 'not-an-id' }))
+      .rejects.toMatchObject({ status: 400 });
+    await expect(revokeDelegatedToken({ parentRaw: 'sb_00000000_NOPE', childId: a.token.id }))
+      .rejects.toMatchObject({ status: 403 });
+  });
+
+  it('a second revoke of the same child is 404 — remove is not silently idempotent', async () => {
+    const { revokeDelegatedToken } = await load();
+    const { parentRaw, a } = await family();
+    await revokeDelegatedToken({ parentRaw, childId: a.token.id });
+    await expect(revokeDelegatedToken({ parentRaw, childId: a.token.id }))
+      .rejects.toMatchObject({ status: 404 });
+  });
+});
+
 describe('apiScope subset helpers (#2048)', () => {
   it('scopesAreSubset honors destroy→reboot, but never destroy→exec (#2623)', async () => {
     const { scopesAreSubset } = await import('@/lib/auth/apiScope');

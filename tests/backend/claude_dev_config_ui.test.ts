@@ -243,18 +243,24 @@ describe('claude-dev config UI: proxy + SSO wiring (acceptance 2 and 3)', () => 
 });
 
 describe('claude-dev config UI: the shell renders (acceptance 1, DOM)', () => {
-  it('builds the nav and the empty state from the panel manifest, and names the signed-in user', async () => {
+  it('builds the nav from the panel manifest and names the signed-in user', async () => {
     const html = read(path.join(CONFIG_UI_DIR, 'public', 'index.html'));
     // Take the real markup the server serves, not a hand-written fixture.
     document.documentElement.innerHTML = html.slice(html.indexOf('<head>'));
 
-    const fetchMock = vi.fn().mockResolvedValue({
+    // Route by URL: the shell asks for the session, and whichever panel the
+    // manifest mounts first asks for its own data.
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => ({
       ok: true,
-      json: async () => ({ user: 'mdopp', name: 'Michael', groups: ['admins'], servicebay: { configured: true } }),
-    });
+      status: 200,
+      json: async () => (url === '/api/session'
+        ? { user: 'mdopp', name: 'Michael', groups: ['admins'], servicebay: { configured: true } }
+        : { workspace: '/workspace', projects: [], sources: { checkouts: { ok: true }, sessions: { ok: true }, mcp: { ok: true } } }),
+    }));
     vi.stubGlobal('fetch', fetchMock);
 
     vi.resetModules();
+    const { PANELS } = await import(/* @vite-ignore */ path.join(CONFIG_UI_DIR, 'public', 'panels', 'index.js'));
     await import(/* @vite-ignore */ path.join(CONFIG_UI_DIR, 'public', 'shell.js'));
     // boot() awaits one microtask chain before rendering the nav.
     await new Promise(r => setTimeout(r, 0));
@@ -262,12 +268,15 @@ describe('claude-dev config UI: the shell renders (acceptance 1, DOM)', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/session', expect.anything());
     expect(document.getElementById('shell-identity')!.textContent)
       .toContain('Signed in as Michael');
-    // The manifest is empty in this unit, so the shell must say so rather
-    // than render a blank box that looks broken.
-    expect(document.getElementById('shell-nav')!.textContent).toContain('No sections yet');
-    const panelRoot = document.getElementById('panel-root')!;
-    expect(panelRoot.querySelector('.shell-empty')).not.toBeNull();
-    expect(panelRoot.textContent).toContain('Nothing to configure here yet');
+
+    const nav = document.getElementById('shell-nav')!;
+    // Nothing here knows a panel by name — the nav IS the manifest (#2678's
+    // SEAM 1), which is what lets #2679-#2682 add pages with no shell change.
+    expect([...nav.querySelectorAll('button')].map(b => b.textContent))
+      .toEqual(PANELS.map((p: { title: string }) => p.title));
+    expect(nav.textContent).not.toContain('No sections yet');
+    // …and the first panel is actually mounted, not just listed.
+    expect(document.getElementById('panel-root')!.childElementCount).toBeGreaterThan(0);
 
     vi.unstubAllGlobals();
   });

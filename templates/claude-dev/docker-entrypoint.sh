@@ -66,12 +66,26 @@ discover_repos() {
 # started there has nothing to do. A repo meant to be worked on by Claude Code
 # carries a CLAUDE.md anyway, so this needs no extra bookkeeping file and no
 # per-box configuration.
+#
+# A checkout the operator REMOVED in the configuration UI (#2680) is skipped
+# too, whatever its CLAUDE.md says. Without this the removal would undo itself:
+# reconcile_repos re-runs every 300s, so the session Remove just stopped would
+# be back within minutes and the button would have reported a success that
+# quietly evaporated. Adding the project again clears the marker.
 select_autostart_repos() {
   local name now
   autostart_repos=()
   skipped_repos=()
+  removed_repos=()
   for name in "$@"; do
-    if [ -e "$DEV_HOME/$name/CLAUDE.md" ]; then
+    # Marker written by the configuration UI's Remove (server.mjs,
+    # `noAutostartMarker`): one empty file per project name, under a HIDDEN
+    # directory so `discover_repos`' `*/` glob and the UI's own checkout scan
+    # both skip it. Read off $DEV_HOME on every call, never cached at source
+    # time, so it follows the workspace the caller is actually reconciling.
+    if [ -e "$DEV_HOME/.claude-dev/no-autostart/$name" ]; then
+      removed_repos+=("$name")
+    elif [ -e "$DEV_HOME/$name/CLAUDE.md" ]; then
       autostart_repos+=("$name")
     else
       skipped_repos+=("$name")
@@ -86,11 +100,14 @@ select_autostart_repos() {
   # change exists to end. A repo skipped here never gets a window at all, so
   # `remain-on-exit` cannot surface it — only this line can.
   # `skipped_reported` is deliberately not `local`: it must survive calls.
-  now="${skipped_repos[*]}"
+  now="${skipped_repos[*]}|${removed_repos[*]}"
   if [ "$now" != "${skipped_reported:-}" ]; then
     skipped_reported="$now"
-    if [ -n "$now" ]; then
-      echo "claude-dev: skipping ${#skipped_repos[@]} checkout(s) with no CLAUDE.md (not a development target): $now"
+    if [ "${#skipped_repos[@]}" -gt 0 ]; then
+      echo "claude-dev: skipping ${#skipped_repos[@]} checkout(s) with no CLAUDE.md (not a development target): ${skipped_repos[*]}"
+    fi
+    if [ "${#removed_repos[@]}" -gt 0 ]; then
+      echo "claude-dev: not starting ${#removed_repos[@]} checkout(s) removed in the configuration UI: ${removed_repos[*]}"
     fi
   fi
 }

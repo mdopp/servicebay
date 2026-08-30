@@ -21,8 +21,11 @@
  * (SEAM 3 in ../../server.mjs) — never directly to ServiceBay from the browser,
  * because the ServiceBay token deliberately stays server-side.
  *
- * Empty on purpose: #2678 ships the shell, #2679-#2682 fill it.
+ * #2678 shipped the shell; #2679 filled the first slot; #2680-#2682 follow.
  */
-export const PANELS = [];
+import projects from './projects.js';
+import github from './github.js';
+
+export const PANELS = [projects, github];
 
 export default PANELS;

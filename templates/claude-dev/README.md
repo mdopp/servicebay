@@ -43,6 +43,7 @@ homes under `/workspace/home/<user>` stay private (mode `700`).
 | `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in **and** open the configuration UI (default `admins`). |
 | `CLAUDE_DEV_CONFIG_PORT` | Port the configuration UI listens on (default `8790`), published on the host loopback only. |
 | `CLAUDE_DEV_CONFIG_SUBDOMAIN` | Subdomain the configuration UI is served on (default `claude`), behind nginx + Authelia. See [The configuration UI](#the-configuration-ui). |
+| `SERVICEBAY_APP_URL` | Set by the pod to `https://admin.<your domain>` — where a *browser* reaches ServiceBay, so the UI can link at the Claude sign-in repair terminal. Not `SERVICEBAY_API_URL`, which is the container-side address. |
 | `LLDAP_LDAP_PORT` / `LLDAP_BASE_DN` | LLDAP coordinates; default to the `auth` stack's (`3890` / the base DN derived from `PUBLIC_DOMAIN`). LDAP login is skipped when the base DN is blank. The LLDAP *host* is not a variable — since template v2 the pod reaches it at `host.containers.internal` (see [CHANGELOG](CHANGELOG.md)). |
 
 ## Logging in as your own LDAP user
@@ -226,10 +227,133 @@ If you ever configure this by hand, note two things:
 
 The container serves its own small web UI at
 `https://<CLAUDE_DEV_CONFIG_SUBDOMAIN>.<your domain>` — nothing to install, no
-SSH step, it is there after a deploy. Today it is the **shell only**: a header,
-a sidebar and an empty content area. The pages go in one at a time (projects,
-adding/removing a project, GitHub sign-in, restart and repair actions) and show
-up in the sidebar as they land.
+SSH step, it is there after a deploy.
+
+**Projects** is the first page. It lists every git checkout in the shared
+workspace and, for each one, whether a Claude session is running against it and
+whether it can reach ServiceBay through an MCP server entry — the state you
+previously had to SSH in and run `tmux list-windows` and `claude mcp list` to
+see.
+
+It is deliberately careful about the difference between *no* and *don't know*.
+An empty workspace says so in as many words; a checkout with no session says
+"Not running" (and, when it has no `CLAUDE.md`, that this is why it was never
+auto-started); and a state the container could not read says **Unknown** with a
+banner naming what failed. A read that breaks is never allowed to look like an
+empty list.
+
+### Adding and removing a project
+
+**Add a project** takes a git URL and does the whole job that previously
+required a shell: it clones into `/workspace/<name>`, registers the checkout as
+a git `safe.directory`, asks ServiceBay to **delegate a child of this
+container's own read-only token** for that project alone, wires that child as
+the project's `servicebay` MCP server at Claude Code's *local* scope (so it
+overrides the shared container-wide entry), and starts the tmux session. A
+checkout that is already in the workspace is **adopted** rather than cloned —
+same wiring, no second copy.
+
+The result line reports what was measured, not what was attempted: the session
+state comes from asking `tmux` again afterwards, and anything that did not work
+(no session came up, `safe.directory` failed) is listed as a warning next to
+the headline instead of being folded into a clean "added".
+
+**Remove** is the exact inverse and nothing more: it revokes that project's
+child token, drops its MCP entry, and stops its tmux window. Three things it
+deliberately does **not** do:
+
+- it never deletes the checkout — the files, including uncommitted work, stay
+  exactly where they are (the result line says so);
+- it never touches a checkout this page did not add. The Remove button only
+  appears on a row whose local-scope MCP entry names a delegated token; a
+  hand-cloned repo shows "Added outside this page", and a row whose MCP state
+  could not be read shows a **disabled** button and "Unknown" rather than
+  guessing;
+- it never takes a sibling's credential with it. The revoke names one token id
+  and ServiceBay refuses any id that is not a child of the presenting parent.
+
+Because the container re-reconciles the workspace every 300 s, Remove also
+writes `/workspace/.claude-dev/no-autostart/<name>`, which the entrypoint's
+`select_autostart_repos` honours — otherwise the session would quietly come
+back a few minutes later. Adding the project again clears the marker.
+
+Adding a project that is already wired replaces its token rather than adding a
+second one: the previously recorded child is revoked first, so neither a
+re-add nor an add/remove/add cycle leaves an orphaned token or a stale MCP
+entry behind.
+
+### Repairing the sign-in, and restarting one session
+
+Two buttons on the Projects page cover the two ways the sessions go quiet.
+
+**Repair the Claude sign-in** is a link, not an action of this page's. It opens
+ServiceBay's own terminal inside this container with `claude auth login` already
+running — the whitelisted `?run=claude-login` deep-link, whose target is a
+*preset key* ServiceBay looks up in its own allow-list, never a command carried
+in the URL. The sign-in it repairs is the one whose lapse makes every row read
+"Not running" at once, and you can now do it from the phone you found out on
+instead of over SSH. The link needs to know the address a browser reaches
+ServiceBay at (`SERVICEBAY_APP_URL` on the pod, `https://admin.<your domain>`);
+on a box with no public domain the page says so and gives you the command to run
+by hand rather than offering a link that leads nowhere.
+
+**Restart session** restarts exactly one project's Claude — its own `tmux`
+window, stopped and started again with the same `start-claude` the container
+boots with. Two things make that safe to press:
+
+- It targets the window by an **anchored** name (`claude:=<project>`). Without
+  the anchor `tmux` falls back to a *prefix* match, so restarting `solaris`
+  would silently destroy `solarisbay`'s session instead. Every other session's
+  name is reported back to you afterwards, so "it only touched mine" is
+  something you read rather than something the page claims.
+- It **re-asks tmux** afterwards instead of trusting the exit code.
+  `start-claude` can exit 0 with nothing running, so a restart that did not come
+  back is an error in red, never a green line. A restart of a checkout that is
+  not there, or of one you removed from this page, fails outright rather than
+  quietly resurrecting a session you took down.
+
+### Connecting GitHub
+
+**GitHub** is the second page, and it replaces the way this container used to
+get its GitHub credential: someone opened a *root* shell with `podman exec`, ran
+`gh auth login`, and left behind a `~/.config/gh/hosts.yml` that nothing had
+declared and nothing could describe.
+
+**Connect GitHub** runs the OAuth **device flow** instead. The page shows a
+one-time code and a link to `github.com/login/device`; you type the code there
+on whatever device you are holding — a phone is fine — approve it, and the page
+stores the resulting credential itself. No shell, no pasted token, and the token
+never reaches the browser: it goes from GitHub to `gh auth login --with-token`
+on **standard input**, because `/proc/<pid>/cmdline` is world-readable and this
+container has real LDAP user logins on it. `gh auth setup-git` runs straight
+after, so `git push` works and not just `gh`.
+
+The stored file lands where the boot-time hardening expects it
+(`secure_dev_private_state`, #2672): owned by `dev`, mode `0600`. The page
+reports the owner and mode it actually measured afterwards — if it could not
+tighten the file (an old root-owned `hosts.yml` from the hand-made era, which
+`dev` may write but may not `chmod`), it says the token is still readable by
+other logins rather than claiming a mode nobody verified.
+
+**The status line is three-valued, and that is the point.** It is measured by an
+authenticated call to GitHub (`gh api user`), not by the presence of a file:
+
+- **Connected** — GitHub answered and named the account.
+- **Not connected** — the check ran and came back negative, and it says which
+  negative: nothing is stored, or something is stored and GitHub rejected it.
+- **Unknown** — the check did not complete (no `gh`, a timeout, no route to
+  github.com). This is *not* rendered as "not connected", because those are
+  different facts: showing the second as the first gets you to redo a
+  connection that already works, or to trust one that does not.
+
+The flow speaks to GitHub's two device endpoints directly rather than driving
+`gh auth login --web`, whose "press Enter to open your browser" prompt a server
+can only fake with a pty. It uses the GitHub CLI's own public OAuth application,
+so the credential is exactly the one `gh auth login` would have created; set
+`CLAUDE_DEV_GITHUB_CLIENT_ID` on the pod to use your own OAuth app instead, and
+`CLAUDE_DEV_GITHUB_SCOPES` to change the requested scopes (the default asks for
+`repo read:org gist workflow` — without `workflow`, a push that touches
+`.github/workflows` is rejected outright).
 
 **Two gates, and both have to pass.** The reverse proxy sends every visitor to
 the box's normal Authelia sign-in first (`__authelia_forward_auth__`, the same
@@ -254,7 +378,14 @@ route in — a LAN host cannot hit `<lan-ip>:8790` and skip the sign-in.
 - Anything that needs ServiceBay itself uses the **existing** read-only
   `SERVICEBAY_MCP_TOKEN` (the same credential the MCP server uses), handed to
   the server through a mode-`0400` file. It stays server-side; the browser is
-  told only *whether* it is configured, never its value.
+  told only *whether* it is configured, never its value. A per-project
+  credential is a **delegated child** of it
+  (`POST`/`DELETE /api/system/api-tokens/delegate`), never a second mint.
+- `createConfigUiServer`'s `projects` option is the one injection point for
+  everything the server reads from and writes to the container (`devHome`,
+  `homeDir`, `tmuxSession`, `runTmux`, `runCommand`). Use it rather than adding
+  a second seam — it is what lets the whole add/remove path be tested without a
+  real `/workspace`.
 
 ## Persistent session (tmux)
 

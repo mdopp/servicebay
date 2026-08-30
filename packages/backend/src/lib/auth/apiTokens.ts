@@ -81,9 +81,11 @@ export interface ApiToken {
 }
 
 /** Raised by createDelegatedToken when the parent credential or the requested
- *  narrowing is invalid. The route maps `status` to the HTTP response. */
+ *  narrowing is invalid, and by revokeDelegatedToken when the child it was
+ *  asked to revoke is absent (404) or is not the presented parent's own (403).
+ *  The route maps `status` to the HTTP response. */
 export class DelegateError extends Error {
-  constructor(message: string, readonly status: 400 | 403) {
+  constructor(message: string, readonly status: 400 | 403 | 404) {
     super(message);
     this.name = 'DelegateError';
   }
@@ -307,6 +309,55 @@ export async function createDelegatedToken(input: {
     createdBy: `token:${parent.id}`,
     parentId: parent.id,
   });
+}
+
+/**
+ * The other half of the delegated mint (#2680): a *holder* of a raw parent
+ * token revokes ONE child it minted. Same credential model as
+ * `createDelegatedToken` — the parent is presented as `Authorization: Bearer
+ * sb_…`, not a session cookie — because the consumers of delegation are
+ * non-interactive (the claude-dev configuration UI mints a child per project
+ * and must be able to take it back when the project is removed, with no
+ * operator session anywhere in the loop).
+ *
+ * Three refusals, all of them loud, because this is a destructive primitive:
+ *
+ *  - an unknown/expired/bad parent is 403 — the caller holds no authority;
+ *  - a child id that is not in the store is **404**, never a silent success.
+ *    "Revoked nothing" and "revoked it" must not be the same answer (#2461);
+ *  - a token that is not *this* parent's own child is **403** and is left
+ *    exactly where it is. That is what bounds the blast radius to one row:
+ *    a sibling delegated from the same parent has a different id, and passing
+ *    it here revokes it — passing anything else, including the parent itself
+ *    or another parent's child, revokes nothing at all.
+ *
+ * One read-modify-write (like `revokeTokens`), settling the in-flight
+ * lastUsedAt stamp first so a stale snapshot cannot resurrect the row.
+ */
+export async function revokeDelegatedToken(input: {
+  parentRaw: string;
+  childId: string;
+}): Promise<{ id: string; name: string }> {
+  if (!/^[0-9a-f]{8}$/.test(input.childId ?? '')) {
+    throw new DelegateError('Invalid token id', 400);
+  }
+  const parent = await verifyToken(input.parentRaw);
+  if (!parent) throw new DelegateError('Invalid, expired, or revoked parent token', 403);
+
+  await pendingStamp; // settle any in-flight stamp so it can't resurrect the row
+  const data = await loadFile();
+  const child = data.tokens.find(t => t.id === input.childId);
+  if (!child) {
+    throw new DelegateError('No such token — it was already revoked, or it expired and was swept', 404);
+  }
+  if (child.parentId !== parent.id) {
+    throw new DelegateError('That token was not delegated by the presented parent token', 403);
+  }
+
+  data.tokens = data.tokens.filter(t => t.id !== child.id);
+  await saveFile(data);
+  logger.info('auth:apiTokens', `Revoked delegated API token ${child.id} ("${child.name}") on behalf of its parent ${parent.id}`);
+  return { id: child.id, name: child.name };
 }
 
 /**

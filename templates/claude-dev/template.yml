@@ -94,6 +94,17 @@ spec:
       # SERVICEBAY_MCP_TOKEN above rather than minting a second credential.
       - name: CLAUDE_DEV_CONFIG_PORT
         value: "{{CLAUDE_DEV_CONFIG_PORT}}"
+      # Where a BROWSER reaches ServiceBay itself, so the configuration UI can
+      # link an operator straight at the whitelisted `claude auth login` repair
+      # terminal (#2682). Deliberately NOT SERVICEBAY_API_URL: that one is
+      # `host.containers.internal:5888` — correct from inside this container,
+      # unreachable from the phone the operator is holding. `admin.<domain>` is
+      # ServiceBay's own subdomain (see `getAdminBaseUrl` in the backend). On a
+      # box with no public domain this renders to `https://admin.`, which
+      # server.mjs rejects as unusable and reports as "unknown" rather than
+      # offering a link that 404s.
+      - name: SERVICEBAY_APP_URL
+        value: "https://admin.{{PUBLIC_DOMAIN}}"
       # LLDAP bind for SSH logins as a real LDAP user (e.g. mdopp). These
       # mirror the `auth` template's variable names so LLDAP_ADMIN_PASSWORD is
       # reused from savedSecrets (the value auth generated) rather than asked

@@ -111,3 +111,273 @@ body {
   color: var(--ink-muted);
   font-size: 0.85rem;
 }
+
+/* ── Projects panel (#2679) ────────────────────────────────────────────────
+   The three outcomes are styled apart on purpose: an empty workspace, a
+   failed read and a partially failed read must not look like each other. */
+
+.panel h2 { margin: 0 0 0.35rem; font-size: 1.05rem; }
+.panel-lede { margin: 0 0 1rem; color: var(--ink-muted); }
+
+.projects-refresh {
+  appearance: none;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.3rem 0.7rem;
+  cursor: pointer;
+}
+.projects-refresh[disabled] { opacity: 0.55; cursor: progress; }
+
+.projects-output { margin-top: 1rem; }
+.projects-loading { color: var(--ink-muted); margin: 0; }
+
+.projects-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.projects-table th,
+.projects-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+.projects-table thead th {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+}
+.projects-name { font-weight: 600; }
+.projects-name-text,
+.projects-state-label { display: block; }
+.projects-path,
+.projects-state-detail {
+  display: block;
+  font-weight: 400;
+  font-size: 0.82rem;
+  color: var(--ink-muted);
+}
+
+.projects-state-running .projects-state-label { color: #1a7f4b; }
+.projects-state-configured .projects-state-label { color: #1a7f4b; }
+.projects-state-unknown .projects-state-label { color: #9a6b00; }
+@media (prefers-color-scheme: dark) {
+  .projects-state-running .projects-state-label,
+  .projects-state-configured .projects-state-label { color: #58c98d; }
+  .projects-state-unknown .projects-state-label { color: #e0b155; }
+}
+
+.projects-empty,
+.projects-error {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+}
+.projects-empty h3,
+.projects-error h3 { margin: 0 0 0.35rem; font-size: 0.98rem; }
+.projects-empty p { margin: 0; color: var(--ink-muted); }
+.projects-error { border-color: #c0392b; }
+.projects-error p { margin: 0 0 0.4rem; }
+.projects-error-note { color: var(--ink-muted); font-size: 0.85rem; }
+
+.projects-source-warning {
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #9a6b00;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+/* ── add / remove a project (#2680) ─────────────────────────────────────── */
+
+.projects-action { white-space: normal; }
+.projects-remove {
+  font: inherit;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid #c0392b;
+  border-radius: 8px;
+  background: transparent;
+  color: #c0392b;
+  cursor: pointer;
+}
+.projects-remove:hover:not(:disabled) { background: #c0392b; color: #fff; }
+.projects-remove:disabled { opacity: 0.45; cursor: not-allowed; }
+@media (prefers-color-scheme: dark) {
+  .projects-remove { border-color: #e2705f; color: #e2705f; }
+  .projects-remove:hover:not(:disabled) { background: #e2705f; color: #14171a; }
+}
+
+/* ── sign-in repair + restart a session (#2682) ─────────────────────────── */
+
+.projects-signin {
+  margin: 0.9rem 0 1.1rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+.projects-signin h3 { margin: 0 0 0.35rem; font-size: 0.98rem; }
+.projects-signin-lede,
+.projects-signin-detail { margin: 0 0 0.5rem; color: var(--ink-muted); font-size: 0.85rem; }
+.projects-signin[data-signin="unavailable"] { border-color: #9a6b00; }
+.projects-signin[data-signin="unavailable"] .projects-signin-detail { margin-bottom: 0; }
+.projects-signin-link {
+  display: inline-block;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.projects-signin-link:hover { background: var(--accent); color: #fff; }
+
+.projects-restart {
+  font: inherit;
+  display: block;
+  margin-bottom: 0.35rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.projects-restart:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.projects-restart:disabled { opacity: 0.45; cursor: progress; }
+
+.projects-add {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+}
+.projects-add h3 { flex: 1 0 100%; margin: 0; font-size: 0.98rem; }
+.projects-add-lede { flex: 1 0 100%; margin: 0; color: var(--ink-muted); font-size: 0.88rem; }
+.projects-field { display: flex; flex-direction: column; gap: 0.25rem; flex: 1 1 18rem; }
+.projects-field span { font-size: 0.82rem; color: var(--ink-muted); }
+.projects-field input {
+  font: inherit;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface, transparent);
+  color: inherit;
+}
+.projects-add-submit {
+  font: inherit;
+  padding: 0.45rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.projects-add-submit:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.projects-action-output:empty { display: none; }
+.projects-result,
+.projects-action-error {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+.projects-result-headline { margin: 0; }
+.projects-result-partial { border-color: #9a6b00; }
+.projects-result-warnings { margin: 0.4rem 0 0; padding-left: 1.1rem; }
+.projects-warning { color: #9a6b00; }
+@media (prefers-color-scheme: dark) { .projects-warning { color: #e0b155; } }
+.projects-action-error { border-color: #c0392b; }
+.projects-action-error p { margin: 0; }
+.projects-working { margin: 0.75rem 0; color: var(--ink-muted); font-size: 0.9rem; }
+
+/* ── the GitHub panel (#2681) ─────────────────────────────────────────────
+   The three status colours are the three ANSWERS, not decoration: green =
+   checked and connected, red = checked and negative, amber = the check did
+   not complete. Amber is deliberately not red — "unknown" must not read as
+   "not connected". */
+.github-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.github-connect,
+.github-refresh {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.github-connect { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.github-connect:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.github-connect:disabled,
+.github-refresh:disabled { opacity: 0.5; cursor: progress; }
+
+.github-status {
+  margin: 1rem 0 0;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.github-status-headline { margin: 0; }
+.github-status-label { font-weight: 600; }
+.github-status-connected .github-status-label { color: #1a7f4b; }
+.github-status-disconnected .github-status-label { color: #c0392b; }
+.github-status-unknown { border-color: #9a6b00; }
+.github-status-unknown .github-status-label { color: #9a6b00; }
+@media (prefers-color-scheme: dark) {
+  .github-status-connected .github-status-label { color: #4cc38a; }
+  .github-status-unknown .github-status-label { color: #e0b155; }
+}
+.github-account { font-weight: 600; }
+.github-status-detail,
+.github-credential {
+  margin: 0.35rem 0 0;
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+.github-credential[data-credential="open"] { color: #c0392b; }
+.github-loading { margin: 1rem 0 0; color: var(--ink-muted); font-size: 0.9rem; }
+
+.github-flow-output:empty { display: none; }
+.github-flow,
+.github-result,
+.github-error {
+  margin: 0.9rem 0 0;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+.github-flow h3 { margin: 0 0 0.4rem; font-size: 0.98rem; }
+.github-flow-step { margin: 0; }
+.github-flow-code {
+  margin: 0.5rem 0;
+  font: 700 1.6rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.12em;
+  user-select: all;
+}
+.github-flow-note,
+.github-flow-progress { margin: 0.3rem 0 0; color: var(--ink-muted); font-size: 0.85rem; }
+.github-result-headline { margin: 0; }
+.github-result-partial { border-color: #9a6b00; }
+.github-result-warnings { margin: 0.4rem 0 0; padding-left: 1.1rem; }
+.github-warning { color: #9a6b00; }
+@media (prefers-color-scheme: dark) { .github-warning { color: #e0b155; } }
+.github-error { border-color: #c0392b; }
+.github-error p { margin: 0; }
+.github-error-detail { margin-top: 0.35rem; color: var(--ink-muted); font-size: 0.85rem; }
+.github-working { margin: 0.9rem 0 0; color: var(--ink-muted); font-size: 0.9rem; }
