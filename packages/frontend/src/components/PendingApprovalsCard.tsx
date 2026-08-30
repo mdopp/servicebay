@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ShieldAlert, ShieldCheck } from 'lucide-react';
 import { Button, Card } from '@/components/ui';
 
@@ -14,9 +14,11 @@ import { Button, Card } from '@/components/ui';
  * deletion was proposed and the Settings-only approval list stayed empty.
  *
  * This card puts the same list on Home so a pending approval is visible where
- * the operator already looks ("is my box OK?"). It renders nothing when there's
- * nothing to approve, polls on a short interval to stay fresh against the TTL,
- * and drives the same `/api/system/mcp/approve` endpoints as the Settings list.
+ * the operator already looks ("is my box OK?"). It renders nothing when the
+ * queue is *confirmed* empty — but a failed poll is a third state, not an empty
+ * one, so it says so instead (#2691). It polls on a short interval to stay
+ * fresh, and drives the same `/api/system/mcp/approve` endpoints as the
+ * Settings list.
  */
 
 export interface PendingApproval {
@@ -32,16 +34,46 @@ export interface PendingApproval {
 /** Poll cadence — keeps the list fresh against approve/reject from other tabs. */
 const POLL_MS = 15_000;
 
+/**
+ * Consecutive failed polls before the card says so (#2691).
+ *
+ * A failed poll and an empty queue used to render identically — both as
+ * nothing — so an expired session cookie looked exactly like "all clear" while
+ * a destructive action sat unapproved. But the opposite failure is just as
+ * real: a banner on every 15s network blip is a banner operators learn to
+ * ignore. So one miss is absorbed silently and the *second* consecutive one
+ * speaks up — roughly 30s of genuinely not being able to see the queue, which
+ * is a real outage rather than a hiccup. Any success resets the count.
+ */
+const FAILURES_BEFORE_ALERT = 2;
+
 export function usePendingApprovals() {
   const [pending, setPending] = useState<PendingApproval[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
+  const failures = useRef(0);
 
   const load = useCallback(() => {
     fetch('/api/system/mcp/approve')
-      .then(r => (r.ok ? r.json() : { pending: [] }))
-      .then((data: { pending?: PendingApproval[] }) => setPending(data.pending ?? []))
-      .catch(() => setPending([]));
+      .then(async r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return (await r.json()) as { pending?: PendingApproval[] };
+      })
+      .then(data => {
+        failures.current = 0;
+        setPollError(null);
+        setPending(data.pending ?? []);
+      })
+      .catch((e: unknown) => {
+        // Deliberately do NOT touch `pending`: a failed poll must never
+        // overwrite a known-pending queue with an empty one, and must never
+        // turn "we never got a look" into a confirmed-empty [].
+        failures.current += 1;
+        if (failures.current >= FAILURES_BEFORE_ALERT) {
+          setPollError(e instanceof Error ? e.message : String(e));
+        }
+      });
   }, []);
 
   const resolve = useCallback(async (id: string, method: 'POST' | 'DELETE') => {
@@ -70,7 +102,7 @@ export function usePendingApprovals() {
     return () => clearInterval(t);
   }, [load]);
 
-  return { pending, busyId, error, approve, reject };
+  return { pending, busyId, error, pollError, approve, reject };
 }
 
 function ApprovalRow({ entry, busy, onApprove, onReject }: { entry: PendingApproval; busy: boolean; onApprove: (id: string) => void; onReject: (id: string) => void }) {
@@ -97,30 +129,45 @@ function ApprovalRow({ entry, busy, onApprove, onReject }: { entry: PendingAppro
 }
 
 /**
- * Renders nothing when there are no pending approvals, so it's safe to drop at
- * the top of Home unconditionally.
+ * Renders nothing when the queue is *confirmed* empty, so it's safe to drop at
+ * the top of Home unconditionally — but renders a warning when the check itself
+ * is failing, because silence there would claim "nothing to approve" on the
+ * strength of an answer we never got (#2691).
  */
 export default function PendingApprovalsCard() {
-  const { pending, busyId, error, approve, reject } = usePendingApprovals();
-  if (!pending || pending.length === 0) return null;
+  const { pending, busyId, error, pollError, approve, reject } = usePendingApprovals();
+  const entries = pending ?? [];
+  const hasPending = entries.length > 0;
+  if (!hasPending && !pollError) return null;
 
   return (
     <Card padding="lg" className="border-status-warn/50 bg-status-warn/5">
       <div className="flex items-center gap-1.5 mb-2">
         <ShieldAlert size={16} className="text-status-warn shrink-0" />
         <h2 className="text-sm font-semibold text-text">Pending approvals</h2>
-        <span className="text-xs font-normal text-text-subtle">({pending.length})</span>
+        {hasPending && <span className="text-xs font-normal text-text-subtle">({entries.length})</span>}
       </div>
-      <p className="text-xs text-text-muted mb-2">
-        An MCP agent proposed these destructive actions. They run only after you approve —
-        the agent cannot approve its own request. Requests persist until you approve or reject them.
-      </p>
-      {error && <p className="text-xs text-status-fail mb-2">{error}</p>}
-      <ul className="space-y-2">
-        {pending.map(p => (
-          <ApprovalRow key={p.pendingId} entry={p} busy={busyId === p.pendingId} onApprove={approve} onReject={reject} />
-        ))}
-      </ul>
+      {pollError && (
+        <p className="text-xs text-status-fail mb-2">
+          {hasPending
+            ? `Couldn't refresh the approval list (${pollError}) — the requests below are the last ones seen and may be out of date.`
+            : `Couldn't check for pending approvals (${pollError}). This is not the same as an empty queue — a destructive request may be waiting unseen. Retrying.`}
+        </p>
+      )}
+      {hasPending && (
+        <>
+          <p className="text-xs text-text-muted mb-2">
+            An MCP agent proposed these destructive actions. They run only after you approve —
+            the agent cannot approve its own request. Requests persist until you approve or reject them.
+          </p>
+          {error && <p className="text-xs text-status-fail mb-2">{error}</p>}
+          <ul className="space-y-2">
+            {entries.map(p => (
+              <ApprovalRow key={p.pendingId} entry={p} busy={busyId === p.pendingId} onApprove={approve} onReject={reject} />
+            ))}
+          </ul>
+        </>
+      )}
     </Card>
   );
 }
