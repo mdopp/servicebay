@@ -101,6 +101,16 @@ RUN set -eux; \
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# The container's own configuration UI (#2678). A dependency-free Node HTTP
+# server plus its static shell — no npm install, no build step, so the image
+# layer is a copy and the code is readable on the box exactly as it is in the
+# repo. The entrypoint starts it as the unprivileged `dev` user; every request
+# it serves must carry the Authelia identity nginx forwards (see server.mjs).
+# It lives in the IMAGE, not on the /workspace volume, so a wiped or restored
+# workspace can never leave the box serving a stale or edited shell.
+COPY config-ui /usr/local/lib/claude-dev-config-ui
+RUN chmod -R a+rX /usr/local/lib/claude-dev-config-ui
+
 # `start-claude` — manual launcher for one Claude per directory, each with
 # Remote Control on and its own tmux window (survives SSH disconnects).
 COPY start-claude.sh /usr/local/bin/start-claude
@@ -156,7 +166,8 @@ RUN printf '%s\n' \
       'fi' \
       > /etc/profile.d/claude-dev-tmux.sh
 
-# Informational — the real port is set at runtime via CLAUDE_DEV_SSH_PORT.
-EXPOSE 2222
+# Informational — the real ports are set at runtime via CLAUDE_DEV_SSH_PORT
+# and CLAUDE_DEV_CONFIG_PORT.
+EXPOSE 2222 8790
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

@@ -1,0 +1,113 @@
+/* claude-dev configuration shell — layout only. Panels (#2679-#2682) style
+   their own contents; everything here is the frame around them. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --ink: #16181d;
+  --ink-muted: #5b6270;
+  --line: #d9dde4;
+  --accent: #2f6fed;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --surface: #1c1f25;
+    --ink: #e9ecf1;
+    --ink-muted: #a0a7b4;
+    --line: #2c313a;
+    --accent: #6d9bff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 1.25rem 3rem;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+}
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+  background: var(--surface);
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+}
+
+.shell-header {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 2rem 0 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.shell-title { margin: 0; font-size: 1.5rem; letter-spacing: -0.01em; }
+.shell-subtitle { margin: 0.35rem 0 0; color: var(--ink-muted); }
+.shell-identity { margin: 0.75rem 0 0; color: var(--ink-muted); font-size: 0.9rem; }
+
+.shell-body {
+  max-width: 60rem;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 13rem 1fr;
+  gap: 1.5rem;
+  padding-top: 1.5rem;
+}
+
+@media (max-width: 40rem) {
+  .shell-body { grid-template-columns: 1fr; }
+}
+
+.shell-nav { display: flex; flex-direction: column; gap: 0.25rem; }
+
+.shell-nav button {
+  appearance: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+}
+.shell-nav button:hover { background: var(--surface); }
+.shell-nav button[aria-current="page"] {
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.shell-nav .shell-nav-empty {
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+  padding: 0.5rem 0.7rem;
+}
+
+.shell-main {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1.25rem;
+  min-height: 12rem;
+}
+
+.shell-empty h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+.shell-empty p { margin: 0 0 0.5rem; color: var(--ink-muted); }
+
+.shell-footer {
+  max-width: 60rem;
+  margin: 2rem auto 0;
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}

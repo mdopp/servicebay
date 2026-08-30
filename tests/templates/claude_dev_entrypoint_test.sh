@@ -746,6 +746,92 @@ check "the gh token path is in the list the entrypoint secures" \
 DEV_HOME="$DEV_HOME_FAKE"
 
 # =========================================================================
+# 7. start_config_ui — the configuration UI actually gets launched (#2678),
+#    and the ServiceBay token reaches it without ever touching argv.
+#
+# The credential hygiene is the point: /proc/<pid>/cmdline is world-readable
+# and this container has real LDAP accounts on it, so the token goes through a
+# mode-0400 file. A test that only checked "the server started" would pass on
+# the argv-leaking version too.
+# =========================================================================
+export CONFIG_UI_NODE_RECORD="$RECORD/config-ui-node.txt"
+cat > "$STUB_BIN/node" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\0' "ARGV=$*" \
+  "PORT=${CLAUDE_DEV_CONFIG_PORT:-}" \
+  "GROUP=${CLAUDE_DEV_LDAP_GROUP:-}" \
+  "TOKENFILE=${SERVICEBAY_MCP_TOKEN_FILE:-}" \
+  "TOKENENV=${SERVICEBAY_MCP_TOKEN:-}" \
+  "API=${SERVICEBAY_API_URL:-}" >> "$CONFIG_UI_NODE_RECORD"
+STUB
+# `install -o dev -g dev` needs root; stub it so the case runs unprivileged,
+# but RECORD the ownership/mode it asked for so the hygiene stays asserted.
+export INSTALL_RECORD="$RECORD/install.txt"
+cat > "$STUB_BIN/install" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\0' "ARGV=$*" >> "$INSTALL_RECORD"
+: > "${!#}"
+chmod 0600 "${!#}"
+STUB
+chmod +x "$STUB_BIN/node" "$STUB_BIN/install"
+
+CONFIG_UI_DIR="$WORK/config-ui"
+CONFIG_UI_TOKEN_FILE="$WORK/run/servicebay-token"
+mkdir -p "$CONFIG_UI_DIR"
+: > "$CONFIG_UI_DIR/server.mjs"
+export SERVICEBAY_MCP_TOKEN='sb_entrypoint_case_token'
+CLAUDE_DEV_CONFIG_PORT=8790
+CLAUDE_DEV_LDAP_GROUP=devs
+
+start_config_ui >/dev/null 2>&1
+ui_loop_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+  [ -s "$CONFIG_UI_NODE_RECORD" ] && break
+  sleep 0.1
+done
+kill "$ui_loop_pid" 2>/dev/null
+node_rec="$(read_nul "$CONFIG_UI_NODE_RECORD" | tr '\n' '|')"
+
+check "start_config_ui actually launches the shell server" \
+  "$(printf '%s' "$node_rec" | grep -Fq "ARGV=$CONFIG_UI_DIR/server.mjs" && echo 0 || echo 1)" \
+  "node calls: $node_rec"
+check "it passes the port and the group the template configured" \
+  "$(printf '%s' "$node_rec" | grep -Fq 'PORT=8790' \
+     && printf '%s' "$node_rec" | grep -Fq 'GROUP=devs' && echo 0 || echo 1)" \
+  "node calls: $node_rec"
+check "the token reaches it as a FILE path, never as an argument or an env value" \
+  "$(printf '%s' "$node_rec" | grep -Fq "TOKENFILE=$CONFIG_UI_TOKEN_FILE" \
+     && ! printf '%s' "$node_rec" | grep -Fq 'sb_entrypoint_case_token' && echo 0 || echo 1)" \
+  "node calls: $node_rec"
+check "the token file is created dev-owned and mode 0400" \
+  "$(read_nul "$INSTALL_RECORD" | grep -Fq -- "-o dev -g dev -m 0400" && echo 0 || echo 1)" \
+  "install calls: $(read_nul "$INSTALL_RECORD" | tr '\n' '|')"
+check "the token file holds the SAME credential the MCP server uses" \
+  "$([ "$(cat "$CONFIG_UI_TOKEN_FILE" 2>/dev/null)" = 'sb_entrypoint_case_token' ] && echo 0 || echo 1)" \
+  "contents: $(cat "$CONFIG_UI_TOKEN_FILE" 2>/dev/null)"
+
+# A junk port must refuse rather than start something on a default the operator
+# did not choose — and must not abort the boot either (SSH has to come up).
+: > "$CONFIG_UI_NODE_RECORD"
+CLAUDE_DEV_CONFIG_PORT='80 90; touch pwned-port'
+bad_log="$(start_config_ui 2>&1)"
+bad_rc=$?
+kill $! 2>/dev/null
+check "a non-numeric CLAUDE_DEV_CONFIG_PORT starts nothing" \
+  "$([ ! -s "$CONFIG_UI_NODE_RECORD" ] && echo 0 || echo 1)" \
+  "node calls: $(read_nul "$CONFIG_UI_NODE_RECORD" | tr '\n' '|')"
+check "…says so, and still lets the boot continue to sshd" \
+  "$([ "$bad_rc" -eq 0 ] && printf '%s' "$bad_log" | grep -q 'not a number' && echo 0 || echo 1)" \
+  "rc=$bad_rc log=$bad_log"
+
+# Structural: defined is not called. The definition line ends in `(`.
+check "the boot sequence calls start_config_ui" \
+  "$(grep -qE '^start_config_ui[^(]*$' "$ENTRYPOINT" && echo 0 || echo 1)"
+
+unset SERVICEBAY_MCP_TOKEN
+rm -f "$STUB_BIN/node" "$STUB_BIN/install"
+
+# =========================================================================
 echo
 # The denominator is always printed, skips included: a case whose precondition
 # could not be established must never disappear into a smaller, greener total.

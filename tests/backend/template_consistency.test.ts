@@ -1456,10 +1456,13 @@ describe('Claude Dev template: isolated netns, SSH reachability preserved (#2522
     // `hostIP: 127.0.0.1` pin like radicale's #2357 would make the box
     // reachable only from the box itself — i.e. lock the owner out).
     const c = pod().spec.containers.find((x: { name: string }) => x.name === 'claude-dev');
-    expect(c.ports).toHaveLength(1);
-    expect(c.ports[0].containerPort).toBe(2222);
-    expect(c.ports[0].hostPort).toBe(2222);
-    expect(c.ports[0].hostIP).toBeUndefined();
+    // The pod publishes more than sshd since v3 (the config UI, #2678) — find
+    // the SSH entry rather than assuming it is the only one, but keep asserting
+    // that the OTHER ports never take sshd's number.
+    const ssh = c.ports.filter((p: { containerPort: number }) => p.containerPort === 2222);
+    expect(ssh).toHaveLength(1);
+    expect(ssh[0].hostPort).toBe(2222);
+    expect(ssh[0].hostIP).toBeUndefined();
   });
 
   it('reaches LLDAP via host.containers.internal — never localhost or LAN_IP', () => {
@@ -1504,8 +1507,12 @@ describe('Claude Dev template: isolated netns, SSH reachability preserved (#2522
     expect(decision2).not.toMatch(/claude-dev/);
   });
 
-  it('schema-version is bumped to 2 with a CHANGELOG section and a v1-to-v2 migration', () => {
-    expect(claudeDev.yamlContent).toMatch(/servicebay\.schema-version:\s*"2"/);
+  it('the v2 hop keeps its CHANGELOG section and its v1-to-v2 migration', () => {
+    // The declared version moves on (v3 added the config UI, #2678); what must
+    // not regress is the v2 hop's own artefacts — a box still on v1 upgrades
+    // through them.
+    const declared = claudeDev.yamlContent.match(/servicebay\.schema-version:\s*"(\d+)"/)?.[1];
+    expect(Number(declared)).toBeGreaterThanOrEqual(2);
     const changelog = fs.readFileSync(
       path.join(TEMPLATES_DIR, 'claude-dev', 'CHANGELOG.md'), 'utf-8',
     );

@@ -40,7 +40,9 @@ homes under `/workspace/home/<user>` stay private (mode `700`).
 | `CLAUDE_CODE_OAUTH_TOKEN` | Optional long-lived Claude subscription token, so sessions never need an interactive `/login`. See [Staying logged in](#staying-logged-in). Blank keeps the interactive login. |
 | `SERVICEBAY_MCP_TOKEN` | Optional read-only ServiceBay API token, wired as an MCP server for every session. See [Reading ServiceBay from a session](#reading-servicebay-from-a-session). |
 | `LLDAP_ADMIN_PASSWORD` | LLDAP bind password. **Not asked for** — reused automatically from the value the `auth` stack generated. Empty ⇒ LDAP login off, `dev` only. |
-| `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in (default `admins`). |
+| `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in **and** open the configuration UI (default `admins`). |
+| `CLAUDE_DEV_CONFIG_PORT` | Port the configuration UI listens on (default `8790`), published on the host loopback only. |
+| `CLAUDE_DEV_CONFIG_SUBDOMAIN` | Subdomain the configuration UI is served on (default `claude`), behind nginx + Authelia. See [The configuration UI](#the-configuration-ui). |
 | `LLDAP_LDAP_PORT` / `LLDAP_BASE_DN` | LLDAP coordinates; default to the `auth` stack's (`3890` / the base DN derived from `PUBLIC_DOMAIN`). LDAP login is skipped when the base DN is blank. The LLDAP *host* is not a variable — since template v2 the pod reaches it at `host.containers.internal` (see [CHANGELOG](CHANGELOG.md)). |
 
 ## Logging in as your own LDAP user
@@ -219,6 +221,40 @@ If you ever configure this by hand, note two things:
   hostname; on-box siblings are reached through `host.containers.internal`.
 - A session reads its MCP configuration once, at launch. Adding a server to a
   running session does nothing until it restarts.
+
+## The configuration UI
+
+The container serves its own small web UI at
+`https://<CLAUDE_DEV_CONFIG_SUBDOMAIN>.<your domain>` — nothing to install, no
+SSH step, it is there after a deploy. Today it is the **shell only**: a header,
+a sidebar and an empty content area. The pages go in one at a time (projects,
+adding/removing a project, GitHub sign-in, restart and repair actions) and show
+up in the sidebar as they land.
+
+**Two gates, and both have to pass.** The reverse proxy sends every visitor to
+the box's normal Authelia sign-in first (`__authelia_forward_auth__`, the same
+snippet the other gated services use), and the shell then accepts only users in
+`CLAUDE_DEV_LDAP_GROUP` — the group that already decides who may SSH in.
+Authelia's catch-all rule is `one_factor` for *any* household user, so without
+that second check every family account could open the dev box's configuration.
+A request with no Authelia identity gets `401` and a request from the wrong
+group gets `403`; neither ever receives the page.
+
+The port is published on the host's `127.0.0.1` only, so the proxy is the sole
+route in — a LAN host cannot hit `<lan-ip>:8790` and skip the sign-in.
+
+**Extending it** (the shell is the foundation for the pages that follow):
+
+- `config-ui/public/panels/index.js` is the panel manifest — a panel is an ES
+  module exporting `{ id, title, mount(root, ctx) }`, listed in `PANELS`. The
+  sidebar and the routing come from that array; no server change is needed.
+- `config-ui/server.mjs`'s `API_ROUTES` is the route table. A route added there
+  inherits the auth gate automatically — there is no way to publish an
+  ungated one.
+- Anything that needs ServiceBay itself uses the **existing** read-only
+  `SERVICEBAY_MCP_TOKEN` (the same credential the MCP server uses), handed to
+  the server through a mode-`0400` file. It stays server-side; the browser is
+  told only *whether* it is configured, never its value.
 
 ## Persistent session (tmux)
 
