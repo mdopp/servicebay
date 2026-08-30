@@ -35,7 +35,9 @@ import {
 import { parseTemplateDependencies } from '@/lib/stackInstall/dependencies';
 import { readManifestAnnotations } from '@/lib/template/contract';
 import { DEVICE_SAFE_SECRET_LENGTH, generateRandomSecret } from '@/lib/stackInstall/randomSecret';
+import { createToken } from '@/lib/auth/apiTokens';
 import { getConfig } from '@/lib/config';
+import { logger } from '@/lib/logger';
 import { loadSavedSecrets, persistSingleSecret } from './savedSecrets';
 import { loadSavedVariables } from './savedVariables';
 import type { JobInput, JobInputItem, JobInputVariable } from './jobStore';
@@ -174,6 +176,40 @@ function generateRsaPrivateKeyPem(): string {
     .split('\n')
     .map(line => '          ' + line)
     .join('\n');
+}
+
+/**
+ * #2673 — mint the ServiceBay API token a `mintApiToken` secret asks for.
+ *
+ * The scope pair is fixed here rather than taken from the template: `read`
+ * only, never expiring. That is the same combination
+ * `neverExpiresScopesAreReadOnly` (`api/apiTokenRoutes.ts`) is the fail-closed
+ * guard for on the operator-facing route — a non-expiring credential that
+ * could mutate or destroy is a standing liability, so a template must not be
+ * able to widen it by declaring a flag.
+ *
+ * Returns `''` when the mint fails. The caller then leaves the variable empty
+ * (an unusable random string in a credential slot is the #1002 failure mode),
+ * and the install continues — consumers of this flag already handle a blank.
+ */
+async function mintServicebayApiToken(varName: string, templateName?: string): Promise<string> {
+  try {
+    const { secret } = await createToken({
+      // Named for what would break if it were revoked, so the row in
+      // Settings → Tokens is self-explanatory.
+      name: `${templateName ?? 'servicebay'} (${varName})`,
+      scopes: ['read'],
+      neverExpires: true,
+      createdBy: 'servicebay-install',
+    });
+    return secret;
+  } catch (e) {
+    logger.warn(
+      'install:manifestAssembler',
+      `Could not mint the API token for ${varName}: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    return '';
+  }
 }
 
 /**
@@ -554,6 +590,15 @@ export async function assembleManifest(
         // every reconnect attempt. Leave empty; the consumer
         // post-deploy must handle absent values gracefully.
         value = '';
+      } else if (meta.mintApiToken) {
+        // #2673 — the variable wants a ServiceBay API token, not a random
+        // string. Mint a real one so the consumer works with no operator
+        // step. A mint failure leaves the value EMPTY rather than falling
+        // back to a random string: an unusable credential is exactly the
+        // #1002 failure mode, and every consumer of this flag already has
+        // to handle the blank case (an operator can decline to supply one).
+        value = await mintServicebayApiToken(name, meta.templateName);
+        if (value) newlyGenerated.push({ name, value });
       } else {
         // #2577 — a `deviceSafe` secret is one the operator retypes into a
         // device's own credential field, which commonly caps its length and

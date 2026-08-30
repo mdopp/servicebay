@@ -124,4 +124,22 @@ describe('StackVariableField — device-safe regenerate (#2577)', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchBody(fetchMock)).toEqual({});
   });
+
+  it('hides Regenerate on a mintApiToken variable, but keeps the field typeable (#2673)', () => {
+    // `/api/install/generate-secret` returns a RANDOM string. On a variable
+    // that holds a real ServiceBay API token, one click would swap a working
+    // credential for one that authenticates as nothing — silently. The field
+    // itself stays editable so an operator can still paste their own token.
+    const onChange = vi.fn();
+    render(
+      <StackVariableField
+        variable={{ name: 'SERVICEBAY_MCP_TOKEN', value: 'sb_a_b', meta: { type: 'secret', mintApiToken: true } }}
+        onChange={onChange}
+      />,
+    );
+
+    expect(screen.queryByTitle('Regenerate')).toBeNull();
+    fireEvent.change(screen.getByDisplayValue('sb_a_b'), { target: { value: 'sb_c_d' } });
+    expect(onChange).toHaveBeenCalledWith('sb_c_d');
+  });
 });

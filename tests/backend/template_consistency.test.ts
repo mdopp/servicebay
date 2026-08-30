@@ -1521,6 +1521,21 @@ describe('Claude Dev template: isolated netns, SSH reachability preserved (#2522
     // path does not lock anyone out (the local `dev` account still works).
     expect(mig).not.toMatch(/return\s+[1-9]|sys\.exit\([1-9]/);
   });
+
+  it('SERVICEBAY_MCP_TOKEN is minted at install, not asked of the operator (#2673)', () => {
+    // This is ServiceBay's OWN credential, unlike CLAUDE_CODE_OAUTH_TOKEN
+    // next to it — so it is generated like CLAUDE_DEV_SSH_PASSWORD rather
+    // than left blank for a manual Settings → Tokens round trip. Flipping it
+    // back to `noAutoGenerate` would silently reintroduce that operator step.
+    const mcp = claudeDev.variables.SERVICEBAY_MCP_TOKEN;
+    expect(mcp?.type).toBe('secret');
+    expect(mcp?.mintApiToken).toBe(true);
+    expect(mcp?.noAutoGenerate).toBeFalsy();
+    // The Anthropic credential beside it stays operator-supplied: ServiceBay
+    // is not its issuer, so a minted value there would be rejected on every call.
+    expect(claudeDev.variables.CLAUDE_CODE_OAUTH_TOKEN?.noAutoGenerate).toBe(true);
+    expect(claudeDev.variables.CLAUDE_CODE_OAUTH_TOKEN?.mintApiToken).toBeFalsy();
+  });
 });
 
 // ─── 3h. Mosquitto: the acceptance criteria of #2569, encoded ───────────────

@@ -39,6 +39,19 @@ vi.mock('./savedVariables', () => ({
   loadSavedVariables: () => loadSavedVariables(),
 }));
 
+// #2673 — a `mintApiToken` secret asks the assembler for a REAL ServiceBay
+// token instead of a random string. Mocked so the test can count mints and
+// inspect the scope/expiry the assembler asked for.
+const createToken = vi.fn<(i: {
+  name: string;
+  scopes: string[];
+  neverExpires?: boolean;
+  createdBy: string;
+}) => Promise<{ token: unknown; secret: string }>>();
+vi.mock('@/lib/auth/apiTokens', () => ({
+  createToken: (i: Parameters<typeof createToken>[0]) => createToken(i),
+}));
+
 import { assembleManifest, deriveLdapBaseDn } from './manifestAssembler';
 import {
   DEFAULT_SECRET_LENGTH,
@@ -80,6 +93,12 @@ beforeEach(() => {
   persistSingleSecret.mockResolvedValue(true);
   loadSavedVariables.mockReset();
   loadSavedVariables.mockReturnValue({});
+  createToken.mockReset();
+  let minted = 0;
+  createToken.mockImplementation(async () => ({
+    token: {},
+    secret: `sb_abcdef0${++minted}_MINTEDSECRET${minted}`,
+  }));
 });
 
 describe('assembleManifest — operator-set variable reuse (#2531)', () => {
@@ -508,5 +527,131 @@ describe('assembleManifest', () => {
     // The item is still listed, just without a resolved yaml.
     expect(r.items).toHaveLength(1);
     expect(r.items[0].yaml).toBeUndefined();
+  });
+});
+
+// ─── mintApiToken: ServiceBay's own credential, generated like any other ────
+describe('assembleManifest — mintApiToken (#2673)', () => {
+  const tokenVars: Record<string, VariableMeta> = {
+    SERVICEBAY_MCP_TOKEN: { type: 'secret', mintApiToken: true },
+  };
+
+  it('mints a real token for a blank mintApiToken secret — no operator step', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('claude-dev', [], '    # {{SERVICEBAY_MCP_TOKEN}}'));
+    getTemplateVariables.mockResolvedValue(tokenVars);
+
+    const r = await assembleManifest({
+      items: [{ name: 'claude-dev', checked: true }],
+      templateSource: 'Built-in',
+    });
+
+    const v = r.variables.find(x => x.name === 'SERVICEBAY_MCP_TOKEN');
+    expect(v?.value).toMatch(/^sb_/);
+    expect(createToken).toHaveBeenCalledTimes(1);
+  });
+
+  it('the minted token carries the read scope only and never expires', async () => {
+    // Acceptance 2. The route's `neverExpiresScopesAreReadOnly` guard only
+    // covers the HTTP path; the assembler calls the model directly, so the
+    // same fail-closed pair has to be asserted here.
+    getTemplateYaml.mockResolvedValue(tmplYaml('claude-dev', [], '    # {{SERVICEBAY_MCP_TOKEN}}'));
+    getTemplateVariables.mockResolvedValue(tokenVars);
+
+    await assembleManifest({
+      items: [{ name: 'claude-dev', checked: true }],
+      templateSource: 'Built-in',
+    });
+
+    const arg = createToken.mock.calls[0][0];
+    expect(arg.scopes).toEqual(['read']);
+    expect(arg.neverExpires).toBe(true);
+    expect(arg.name).toContain('claude-dev');
+  });
+
+  it('persists the minted plaintext like any other generated secret', async () => {
+    // This is what makes the re-install idempotent (see the counting test).
+    getTemplateYaml.mockResolvedValue(tmplYaml('claude-dev', [], '    # {{SERVICEBAY_MCP_TOKEN}}'));
+    getTemplateVariables.mockResolvedValue(tokenVars);
+
+    const r = await assembleManifest({
+      items: [{ name: 'claude-dev', checked: true }],
+      templateSource: 'Built-in',
+    });
+
+    expect(persistSingleSecret).toHaveBeenCalledWith(
+      'SERVICEBAY_MCP_TOKEN',
+      r.variables.find(x => x.name === 'SERVICEBAY_MCP_TOKEN')!.value,
+    );
+  });
+
+  it('a second install run mints NO second token — counted, not asserted', async () => {
+    // Acceptance 4. `loadSavedSecrets`/`persistSingleSecret` are wired to a
+    // real in-memory store here so run 2 sees what run 1 wrote; a mint that
+    // bypassed the store would show up as a second createToken call.
+    const store: Record<string, string> = {};
+    loadSavedSecrets.mockImplementation(() => ({ ...store }));
+    persistSingleSecret.mockImplementation(async (n: string, v: string) => {
+      store[n] = v;
+      return true;
+    });
+    getTemplateYaml.mockResolvedValue(tmplYaml('claude-dev', [], '    # {{SERVICEBAY_MCP_TOKEN}}'));
+    getTemplateVariables.mockResolvedValue(tokenVars);
+
+    const run = () =>
+      assembleManifest({ items: [{ name: 'claude-dev', checked: true }], templateSource: 'Built-in' });
+
+    const first = await run();
+    const mintsAfterFirst = createToken.mock.calls.length;
+    const second = await run();
+
+    expect(mintsAfterFirst).toBe(1);
+    expect(createToken.mock.calls.length).toBe(1); // unchanged by run 2
+    expect(second.variables.find(x => x.name === 'SERVICEBAY_MCP_TOKEN')?.value)
+      .toBe(first.variables.find(x => x.name === 'SERVICEBAY_MCP_TOKEN')?.value);
+  });
+
+  it('an operator-supplied value wins and nothing is minted', async () => {
+    // Acceptance 3 — someone deliberately pasting a shared/narrower token.
+    getTemplateYaml.mockResolvedValue(tmplYaml('claude-dev', [], '    # {{SERVICEBAY_MCP_TOKEN}}'));
+    getTemplateVariables.mockResolvedValue(tokenVars);
+
+    const r = await assembleManifest({
+      items: [{ name: 'claude-dev', checked: true }],
+      prefilled: { SERVICEBAY_MCP_TOKEN: 'sb_operator_own' },
+      templateSource: 'Built-in',
+    });
+
+    expect(r.variables.find(x => x.name === 'SERVICEBAY_MCP_TOKEN')?.value).toBe('sb_operator_own');
+    expect(createToken).not.toHaveBeenCalled();
+  });
+
+  it('never mints in a preview resolve (#2537)', async () => {
+    getTemplateYaml.mockResolvedValue(tmplYaml('claude-dev', [], '    # {{SERVICEBAY_MCP_TOKEN}}'));
+    getTemplateVariables.mockResolvedValue(tokenVars);
+
+    const r = await assembleManifest({
+      items: [{ name: 'claude-dev', checked: true }],
+      templateSource: 'Built-in',
+      preview: true,
+    });
+
+    expect(r.variables.find(x => x.name === 'SERVICEBAY_MCP_TOKEN')?.value).toBe('');
+    expect(createToken).not.toHaveBeenCalled();
+  });
+
+  it('a failed mint leaves the value EMPTY, never a random string', async () => {
+    // A random string in an API-token slot is the #1002 failure mode: it
+    // authenticates as nothing and fails on every single call.
+    getTemplateYaml.mockResolvedValue(tmplYaml('claude-dev', [], '    # {{SERVICEBAY_MCP_TOKEN}}'));
+    getTemplateVariables.mockResolvedValue(tokenVars);
+    createToken.mockRejectedValue(new Error('token store unwritable'));
+
+    const r = await assembleManifest({
+      items: [{ name: 'claude-dev', checked: true }],
+      templateSource: 'Built-in',
+    });
+
+    expect(r.variables.find(x => x.name === 'SERVICEBAY_MCP_TOKEN')?.value).toBe('');
+    expect(persistSingleSecret).not.toHaveBeenCalledWith('SERVICEBAY_MCP_TOKEN', expect.anything());
   });
 });
