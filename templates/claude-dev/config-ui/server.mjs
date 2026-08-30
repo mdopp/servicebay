@@ -456,7 +456,7 @@ export function validateProjectName(name) {
 export function validateGitUrl(url) {
   if (!url) return 'a git URL is required to clone a new checkout';
   if (url.length > 512) return 'that git URL is implausibly long';
-  if (/[\s -]/.test(url)) return 'a git URL may not contain whitespace or control characters';
+  if (/[\s\x00-\x1f]/.test(url)) return 'a git URL may not contain whitespace or control characters';
   if (!/^(https:\/\/|http:\/\/|ssh:\/\/|git@[A-Za-z0-9.-]+:)/.test(url)) {
     return 'only https://, http://, ssh:// and git@host:path remotes are accepted';
   }
