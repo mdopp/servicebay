@@ -144,8 +144,11 @@ gh issue list --state open --label autoloop:awaiting-user --json number --jq '.[
 npm run autoloop:queue -- claims          # issue numbers currently claimed
 #   a claimed issue with no planned/building unit and no commit on the batch branch → give it back:
 npm run autoloop:queue -- unclaim <issue>
+
+# 4. refinement labels left on issues that have since been CLOSED — closing does not clear a label
+npm run autoloop:queue -- worklist --prune
 ```
-A closed issue needs nothing — it simply never appears in `candidates` again. Never set `autoloop:blocked`/`needs-refinement` on a closed issue. Leave the human-reserved `autoloop-open` alone — different meaning (planner-skip).
+Closing an issue does **not** take its labels off: a `needs-refinement` label survives the close and then sits on the human's worklist forever (six such leftovers, the oldest from June, when #2690 was filed). `candidates` never trips over them — it lists open issues only — but the *human's* list does, and a list that shows too much is ignored exactly like one that shows nothing. That is what step 4 clears; it is the only sanctioned way to remove those, and it touches nothing else. Never set `autoloop:blocked`/`needs-refinement` on a closed issue. `autoloop:review` is the deliberate exception — it belongs on a closed issue (that is what "shipped" means) and is retired by `npm run autoloop:queue -- reviewed <issue>` after a human eyeballs it, never by this sweep. Leave the human-reserved `autoloop-open` alone — different meaning (planner-skip).
 
 ## Return
 One line, e.g.: `Planner: planned 3 units (fe-layout #1420+#1424, install-creds #1430, lint-sweep×12); refinement-bounced #1399 ("LAN or public default?"); parked #1311 awaiting-user.`

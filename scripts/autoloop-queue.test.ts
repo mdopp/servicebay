@@ -35,10 +35,13 @@ import {
   CACHE_VERSION,
   L_BUILDING,
   L_QUEUED,
+  L_REFINE,
+  L_REVIEW,
   L_VERIFY_FAILED,
   L_VERIFY_PENDING,
   NOTES_CAP,
   PARK_LABELS,
+  REVIEW_WINDOW_DAYS,
   TEXT_MAX,
   acquireClaim,
   batchIssueCount,
@@ -49,6 +52,7 @@ import {
   pruneState,
   resolveClaimSha,
   runVerb,
+  splitReview,
   splitGlobalArgs,
   verifyLabels,
   type CacheState,
@@ -675,5 +679,133 @@ describe('the retired work-queue.json stays retired', () => {
   it('the cache path is gitignored (losing it must be safe, committing it must be impossible)', () => {
     const r = spawnSync('git', ['check-ignore', '-q', '.claude/state/autoloop-cache.json'], { cwd: REPO_ROOT });
     expect(r.status).toBe(0);
+  });
+});
+
+/**
+ * The worklist (#2690) — the list that could not see its own entries.
+ *
+ * An issue earns `autoloop:review` at the seal that SHIPS it, and the merged
+ * PR's `Closes #…` closes it in the same breath, so every entry on that list is
+ * closed. Both `summary` and the SKILL.md-suggested `gh issue list --label
+ * autoloop:review` asked for OPEN issues only — live proof on this repo the day
+ * it was filed: four entries (#2672 #2673 #2680 #2681), all closed, all
+ * labelled, `"review": 0`. The counter-fix is not `--state all` everywhere:
+ * `needs-refinement` shows what that decays into (eight closed leftovers of ten
+ * hits). So the two lists are bounded differently, and both bounds are asserted
+ * here.
+ */
+describe('worklist — the post-deploy review list must see closed issues (#2690)', () => {
+  const NOW = 1_800_000_000;
+  const iso = (daysAgo: number) => new Date((NOW - daysAgo * 86_400) * 1000).toISOString();
+
+  /** The four real entries from the issue, plus a stale refinement tail. */
+  const REVIEW_ROWS = [
+    { number: 2681, title: 'claude-dev: device flow', state: 'CLOSED', closedAt: iso(0), updatedAt: iso(0) },
+    { number: 2680, title: 'claude-dev: add/remove a project', state: 'CLOSED', closedAt: iso(0), updatedAt: iso(0) },
+    { number: 2673, title: 'claude-dev: mint the MCP token', state: 'CLOSED', closedAt: iso(1), updatedAt: iso(1) },
+    { number: 2672, title: 'claude-dev: world-readable gh token', state: 'CLOSED', closedAt: iso(2), updatedAt: iso(2) },
+  ];
+  const REFINE_ROWS = [
+    { number: 2656, title: 'health: loopback', state: 'OPEN', closedAt: null, updatedAt: iso(4) },
+    { number: 2591, title: 'backups have not run', state: 'OPEN', closedAt: null, updatedAt: iso(1) },
+    { number: 1559, title: 'long closed', state: 'CLOSED', closedAt: iso(90), updatedAt: iso(90) },
+    { number: 1233, title: 'long closed too', state: 'CLOSED', closedAt: iso(95), updatedAt: iso(95) },
+  ];
+
+  /** A `gh` that answers issue-list queries per label, and records every call. */
+  const worklistGh = (rows: Record<string, unknown[]> = { [L_REVIEW]: REVIEW_ROWS, [L_REFINE]: REFINE_ROWS }) =>
+    fakeGh(a => {
+      if (a[0] !== 'issue' || a[1] !== 'list') return { ok: true, out: '' };
+      const label = a[a.indexOf('--label') + 1]!;
+      const state = a[a.indexOf('--state') + 1];
+      const all = rows[label] ?? [];
+      // Reproduce gh's own default faithfully: --state open hides the closed ones.
+      const visible = state === 'all' ? all : all.filter(r => (r as { state: string }).state === 'OPEN');
+      return { ok: true, out: JSON.stringify(visible) };
+    });
+
+  const mkCtx = (gh: GhRunner, out: string[]) => ({
+    cache: new Cache(path.join(mkdtempSync(path.join(tmpdir(), 'autoloop-worklist-')), 'cache.json')),
+    gh,
+    offline: false,
+    sha: () => REMOTE_SHA,
+    now: () => NOW,
+    out: (s: string) => out.push(s),
+  });
+
+  it('lists the four shipped-and-closed review entries the open-only query could not see', () => {
+    const out: string[] = [];
+    const { gh, calls } = worklistGh();
+    expect(runVerb('worklist', [], mkCtx(gh, out))).toBe(0);
+    const review = out.filter(l => l.startsWith('Review post-deploy:'));
+    expect(review).toHaveLength(4);
+    for (const n of [2672, 2673, 2680, 2681]) expect(review.join('\n')).toContain(`#${n}`);
+    // Structural: the review query must ask GitHub for closed issues too.
+    const q = calls.find(a => a.includes('--label') && a.includes(L_REVIEW))!;
+    expect(q.slice(q.indexOf('--state'), q.indexOf('--state') + 2)).toEqual(['--state', 'all']);
+  });
+
+  it('summary counts what worklist lists — the count cannot become a second thing that lies', () => {
+    const out: string[] = [];
+    const ctx = mkCtx(worklistGh().gh, out);
+    runVerb('summary', [], ctx);
+    const gh = JSON.parse(out.at(-1)!).gh;
+    expect(gh).toMatchObject({ review: 4, review_aged: 0, needs_refinement: 2, needs_refinement_stale: 2 });
+    out.length = 0;
+    runVerb('worklist', [], ctx);
+    expect(out.filter(l => l.startsWith('Review post-deploy: #'))).toHaveLength(gh.review);
+    expect(out.filter(l => l.startsWith('Needs refinement:   #'))).toHaveLength(gh.needs_refinement);
+  });
+
+  it('bounds the review list by recency — aged entries are reported as a count, never dropped', () => {
+    const items = [
+      { number: 1, title: 'shipped today', state: 'CLOSED', at: NOW },
+      { number: 2, title: 'just inside the window', state: 'CLOSED', at: NOW - (REVIEW_WINDOW_DAYS - 1) * 86_400 },
+      { number: 3, title: 'aged out', state: 'CLOSED', at: NOW - (REVIEW_WINDOW_DAYS + 1) * 86_400 },
+      { number: 4, title: 'ancient but still open', state: 'OPEN', at: NOW - 400 * 86_400 },
+    ];
+    const s = splitReview(items, NOW);
+    expect(s.due.map(i => i.number)).toEqual([1, 2, 4]);
+    expect(s.aged.map(i => i.number)).toEqual([3]);
+
+    const out: string[] = [];
+    const aged = [{ number: 9, title: 'shipped in June', state: 'CLOSED', closedAt: iso(90), updatedAt: iso(90) }];
+    runVerb('worklist', [], mkCtx(worklistGh({ [L_REVIEW]: aged, [L_REFINE]: [] }).gh, out));
+    expect(out.join('\n')).toContain('+1 older than');
+    expect(out.join('\n')).toContain('#9'); // named, not silently swallowed
+  });
+
+  it('--prune clears the refinement label off closed leftovers only', () => {
+    const out: string[] = [];
+    const { gh, calls } = worklistGh();
+    runVerb('worklist', ['--prune'], mkCtx(gh, out));
+    const cleared = calls
+      .filter(a => a.includes('--remove-label') && a.includes(L_REFINE))
+      .map(a => Number(a[a.indexOf('edit') + 1]));
+    expect(cleared.sort()).toEqual([1233, 1559]); // the closed ones, and nothing else
+    expect(calls.some(a => a.includes('--remove-label') && a.includes(L_REVIEW))).toBe(false);
+  });
+
+  it('reports what gh actually did — a refused label removal is never announced as cleared', () => {
+    const out: string[] = [];
+    // The house failure form: success reported, nothing done. Half the removals fail.
+    const base = worklistGh().gh;
+    const gh: GhRunner = a =>
+      a.includes('--remove-label') && a.includes('1233') ? { ok: false, out: 'HTTP 403' } : base(a);
+    runVerb('worklist', ['--prune'], mkCtx(gh, out));
+    const text = out.join('\n');
+    expect(text).toContain('cleared 1 closed leftovers (#1559)');
+    expect(text).toContain('FAILED to clear 1 (#1233)');
+  });
+
+  it('reviewed <issue> retires an eyeballed entry; a missing argument is a setup error', () => {
+    const out: string[] = [];
+    const { gh, calls } = worklistGh();
+    expect(runVerb('reviewed', ['2672'], mkCtx(gh, out))).toBe(0);
+    expect(calls.some(a => a.includes('2672') && a.includes('--remove-label') && a.includes(L_REVIEW))).toBe(true);
+    expect(runVerb('reviewed', [], mkCtx(gh, out))).toBe(2);
+    const refusing: GhRunner = () => ({ ok: false, out: 'HTTP 403' });
+    expect(runVerb('reviewed', ['2672'], mkCtx(refusing, out))).toBe(1); // never a silent success
   });
 });
