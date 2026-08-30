@@ -110,7 +110,8 @@
       "gofmt"
     ],
     "ignore": [
-      "packages/frontend/public/mockServiceWorker.js"
+      "packages/frontend/public/mockServiceWorker.js",
+      "templates/*/config-ui/public/**"
     ],
     "ignoreExportsUsedInFile": true,
     "workspaces": {
@@ -118,7 +119,8 @@
         "entry": [
           "scripts/**/*.{ts,mjs}",
           "tests/e2e/**/*.e2e.ts",
-          "tests/backend/fixtures/*-emitter.ts"
+          "tests/backend/fixtures/*-emitter.ts",
+          "templates/*/config-ui/server.mjs"
         ],
         "ignoreDependencies": [
           "@tailwindcss/typography",
