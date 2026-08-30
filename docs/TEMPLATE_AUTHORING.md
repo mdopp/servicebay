@@ -171,6 +171,7 @@ Map of variable name to metadata. Recognized fields:
       "clientSecretVar": "MY_SSO_SECRET"  // optional — env-wired SSO
     },
     "deviceSafe": true,      // type=secret only — value gets typed INTO a device
+    "mintApiToken": true,    // type=secret only — mint a ServiceBay read token, not a random string
     "bcryptSource": "ADMIN_PASSWORD",  // for type=bcrypt — name of the var to hash
     "blockLanAccess": true   // port vars only — refuse LAN access at the host firewall
   }
@@ -192,6 +193,14 @@ What each `type` does generically (no per-template code needed):
   hardware: consumer firmware caps that field and silently keeps the
   prefix, and the device reports the truncated value as "wrong
   password" (#2577).
+- **`mintApiToken` on a `secret` var** — the value is a **ServiceBay
+  API token**, so a random string would authenticate as nothing. The
+  install path mints a real token instead (`createToken`), always
+  `read`-scoped and never-expiring — the one combination ServiceBay
+  allows unattended, and the reason this can be generated at all. The
+  plaintext is stored like any other generated secret, so a re-install
+  reuses it rather than orphaning one, and an operator-pasted value
+  still wins (#2673). Anything wider than `read` stays `noAutoGenerate`.
 - **`rsa-private`** — auto-generated PEM, hidden from the UI.
 - **`bcrypt`** — hash of `bcryptSource`'s value, hidden from the UI.
   Use this when you need both the plaintext (in env) and the hash

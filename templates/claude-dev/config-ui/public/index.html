@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" data-shell="claude-dev-config">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Dev — configuration</title>
+  <link rel="stylesheet" href="/shell.css">
+  <!-- No inline script or style: the server sends `default-src 'self'`. -->
+  <script type="module" src="/shell.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#panel-root">Skip to content</a>
+
+  <header class="shell-header">
+    <h1 class="shell-title">Claude Dev</h1>
+    <p class="shell-subtitle">Configuration for the development container on this box.</p>
+    <!-- Filled by shell.js from /api/session — the signed-in Authelia user. -->
+    <p class="shell-identity" id="shell-identity" aria-live="polite">Loading your session…</p>
+  </header>
+
+  <div class="shell-body">
+    <!-- SEAM 1 — nav is generated from the panel manifest, never hand-written. -->
+    <nav class="shell-nav" id="shell-nav" aria-label="Configuration sections"></nav>
+
+    <!-- SEAM 1 — every panel mounts here, one at a time. -->
+    <main class="shell-main" id="panel-root" tabindex="-1"></main>
+  </div>
+
+  <footer class="shell-footer">
+    <p>Served by the claude-dev container itself, behind the box's reverse proxy and single sign-on.</p>
+  </footer>
+</body>
+</html>

@@ -227,6 +227,7 @@ export default function StackVariableField({
         onChange={onChange}
         cls={cls}
         deviceSafe={v.meta.deviceSafe}
+        mintApiToken={v.meta.mintApiToken}
       />
     );
   }
@@ -263,17 +264,19 @@ const fetchGeneratedSecret = (deviceSafe?: boolean) =>
  * `deviceSafe` (#2577) forwards the variable's declaration so a regenerate
  * mints the same device-safe shape the install path generates; the length
  * policy itself stays server-side.
+ *
+ * `mintApiToken` (#2673) hides the regenerate button entirely: that variable
+ * holds a real ServiceBay API token, and `/api/install/generate-secret` returns
+ * a random string, so regenerating would silently swap a working credential for
+ * one that authenticates as nothing. Left blank, the install path mints the
+ * token; the field stays typeable so an operator can still paste their own.
  */
-function SecretField({
-  value,
-  onChange,
-  cls,
-  deviceSafe,
-}: {
+function SecretField({ value, onChange, cls, deviceSafe, mintApiToken }: {
   value: string;
   onChange: (value: string) => void;
   cls: string;
   deviceSafe?: boolean;
+  mintApiToken?: boolean;
 }) {
   const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState(false);
@@ -301,14 +304,14 @@ function SecretField({
           type="text" value={value} onChange={(e) => onChange(e.target.value)}
           className={`${cls} font-mono text-xs flex-1`} spellCheck={false} autoComplete="off"
         />
-        <Button
-          type="button" onClick={regenerate} disabled={regenerating} aria-busy={regenerating}
-          title="Regenerate"
-          variant="secondary"
-          size="sm"
-        >
-          <RefreshCw size={16} className={regenerating ? 'animate-spin' : ''} />
-        </Button>
+        {!mintApiToken && (
+          <Button
+            type="button" onClick={regenerate} disabled={regenerating} aria-busy={regenerating}
+            title="Regenerate" variant="secondary" size="sm"
+          >
+            <RefreshCw size={16} className={regenerating ? 'animate-spin' : ''} />
+          </Button>
+        )}
       </div>
       {error && (
         <p role="alert" className="mt-1 text-xs text-status-fail">

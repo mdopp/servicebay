@@ -11,13 +11,20 @@ metadata:
     # explicit `hostPort` on the SAME port number, and the LLDAP bind target
     # became `host.containers.internal` instead of the `LLDAP_HOST` variable.
     # No data move; /workspace and the persisted SSH host keys are untouched.
-    servicebay.schema-version: "2"
-    servicebay.ports: "{{CLAUDE_DEV_SSH_PORT}}/tcp"
+    # v3 (#2678): the container now also serves its own configuration UI on
+    # {{CLAUDE_DEV_CONFIG_PORT}}, published on the host LOOPBACK only and
+    # fronted by nginx + Authelia through CLAUDE_DEV_CONFIG_SUBDOMAIN. Additive
+    # — no data move, nothing on the volume changes, SSH is untouched.
+    servicebay.schema-version: "3"
+    servicebay.ports: "{{CLAUDE_DEV_SSH_PORT}}/tcp,{{CLAUDE_DEV_CONFIG_PORT}}/tcp"
     # LLDAP (the `auth` stack) provides the directory the SSH login binds
     # against, and installing auth first means claude-dev inherits the
     # already-saved LLDAP_ADMIN_PASSWORD (savedSecrets is keyed by var name).
     # The dependency also topo-orders the deploy so LLDAP is healthy first.
-    servicebay.dependencies: "auth"
+    # `nginx` joined `auth` in v3: the configuration UI is only reachable
+    # through the reverse proxy, so the proxy host has to exist before this
+    # service claims its subdomain.
+    servicebay.dependencies: "nginx,auth"
     # Continuous health probe (#628). A raw TCP connect to the SSH port
     # proves sshd accepted the listener — a dev box has no
     # unauthenticated HTTP surface to probe. The poller runs in the HOST
@@ -79,6 +86,14 @@ spec:
       # it never expire; see variables.json.
       - name: SERVICEBAY_MCP_TOKEN
         value: "{{SERVICEBAY_MCP_TOKEN}}"
+      # Configuration UI (#2678). The entrypoint starts the shell server on
+      # this port as the unprivileged `dev` user; it authenticates every
+      # request against the `Remote-User` identity Authelia hands nginx and
+      # authorizes it against CLAUDE_DEV_LDAP_GROUP below — the same group that
+      # already decides who may SSH in. It reuses the read-only
+      # SERVICEBAY_MCP_TOKEN above rather than minting a second credential.
+      - name: CLAUDE_DEV_CONFIG_PORT
+        value: "{{CLAUDE_DEV_CONFIG_PORT}}"
       # LLDAP bind for SSH logins as a real LDAP user (e.g. mdopp). These
       # mirror the `auth` template's variable names so LLDAP_ADMIN_PASSWORD is
       # reused from savedSecrets (the value auth generated) rather than asked
@@ -126,6 +141,15 @@ spec:
       # box.
       - containerPort: {{CLAUDE_DEV_SSH_PORT}}
         hostPort: {{CLAUDE_DEV_SSH_PORT}}
+      # The configuration UI is the exact opposite case, so it gets radicale's
+      # treatment (#2357) rather than sshd's: `hostIP: 127.0.0.1` publishes it
+      # on the host LOOPBACK only. nginx runs `hostNetwork: true`, so it still
+      # reaches this port, while a LAN host cannot hit <lan-ip>:PORT and skip
+      # the Authelia gate. The app-level `Remote-User` check in server.mjs is
+      # the second layer, not the only one.
+      - containerPort: {{CLAUDE_DEV_CONFIG_PORT}}
+        hostPort: {{CLAUDE_DEV_CONFIG_PORT}}
+        hostIP: 127.0.0.1
     volumeMounts:
       # Persistent home for the `dev` user: git checkouts, Claude Code
       # session history (~/.claude), gh auth and SSH host keys all live

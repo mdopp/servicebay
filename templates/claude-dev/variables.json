@@ -20,9 +20,26 @@
   },
   "SERVICEBAY_MCP_TOKEN": {
     "type": "secret",
-    "noAutoGenerate": true,
-    "description": "Optional ServiceBay API token, so every Claude session on this box can read ADRs, assists, logs and rendered service definitions without one being pasted in by hand. Mint it under Settings → Tokens with the READ scope ONLY and tick \"Never Expires\" — ServiceBay offers that exclusively for read-only scope sets, so a read token is configure-once, while anything from `lifecycle` upward expires within 30 days. A session that needs to restart or deploy something calls `request_token` (which itself needs only `read`) and you approve that one job; a shell goes through the one-shot flow bound to a single operation. One shared token is deliberate: the scope ladder has no per-service granularity, so per-repo tokens would buy attribution and nothing else. `noAutoGenerate` is load-bearing — this is an operator-minted credential, and a random string in its place would be rejected on every call.",
-    "default": ""
+    "mintApiToken": true,
+    "description": "ServiceBay API token, so every Claude session on this box can read ADRs, assists, logs and rendered service definitions without one being pasted in by hand. Leave blank and ServiceBay mints one for you at install: READ scope only, never expiring — the combination it offers exclusively for read-only scope sets, which is why this one is safe to generate and needs no rotation. A session that needs to restart or deploy something calls `request_token` (which itself needs only `read`) and you approve that one job; a shell goes through the one-shot flow bound to a single operation. Paste your own token here to use it instead — an operator-supplied value always wins over the generated one. One shared token is deliberate: the scope ladder has no per-service granularity, so per-repo tokens would buy attribution and nothing else."
+  },
+  "CLAUDE_DEV_CONFIG_PORT": {
+    "type": "text",
+    "description": "Port the container's own configuration UI listens on. Published on the host's 127.0.0.1 only, so the reverse proxy is the single way in — nothing on the LAN can reach it directly and skip the sign-in. Change it only if 8790 is already taken on this box.",
+    "default": "8790"
+  },
+  "CLAUDE_DEV_CONFIG_SUBDOMAIN": {
+    "type": "subdomain",
+    "description": "Subdomain for the claude-dev configuration UI, e.g. `claude.<your domain>`. Gated by Authelia forward-auth like every other service — an unauthenticated request is redirected to the login page and never reaches the container. The UI additionally refuses anyone outside CLAUDE_DEV_LDAP_GROUP, because Authelia's catch-all rule lets any household user through and this is the dev box's own configuration.",
+    "default": "claude",
+    "exposure": "public",
+    "proxyPort": "CLAUDE_DEV_CONFIG_PORT",
+    "loopbackOnly": true,
+    "proxyConfig": {
+      "block_exploits": true,
+      "ssl_forced": true,
+      "advanced_config": "__authelia_forward_auth__"
+    }
   },
   "LLDAP_LDAP_PORT": {
     "type": "text",
@@ -40,7 +57,7 @@
   },
   "CLAUDE_DEV_LDAP_GROUP": {
     "type": "text",
-    "description": "Only LLDAP users in this group may SSH in. Defaults to `admins`, the group your operator account belongs to. The entrypoint provisions a local login account for each member of this group; point it at a dedicated group to grant dev-box access without making someone a full admin.",
+    "description": "Only LLDAP users in this group may SSH in, and only they may open the configuration UI at CLAUDE_DEV_CONFIG_SUBDOMAIN. Defaults to `admins`, the group your operator account belongs to. The entrypoint provisions a local login account for each member of this group; point it at a dedicated group to grant dev-box access without making someone a full admin.",
     "default": "admins"
   }
 }

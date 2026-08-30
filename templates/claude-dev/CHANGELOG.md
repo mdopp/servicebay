@@ -10,6 +10,33 @@ installed schema-version and the current one and surfaces them in the re-deploy
 dialog. Each `(breaking)` section needs an explicit acknowledgement before the
 deploy can proceed.
 
+## v3
+
+**The container now serves its own configuration UI (#2678).**
+
+`claude.<your domain>` (the new `CLAUDE_DEV_CONFIG_SUBDOMAIN`) opens a small web
+page served by the claude-dev container itself. This first release is the shell
+only — the header, the sidebar and an empty content area. The pages that go into
+it (your projects, adding and removing one, signing in to GitHub, restart and
+repair buttons) arrive in the following updates and appear in the sidebar as
+they land.
+
+**Nothing about your SSH access, your workspace or your Claude sessions
+changes.** No data is moved and there is no migration to run — re-deploy and the
+new subdomain is there.
+
+**Who can open it.** The same people who can already SSH in: the reverse proxy
+sends every visitor to the box's normal sign-in page first, and the UI then
+accepts only members of `CLAUDE_DEV_LDAP_GROUP` (`admins` by default). Anyone
+else gets a refusal, not a page. The UI's port is published on the box's own
+loopback address only, so it cannot be reached from the LAN without going
+through the proxy and the sign-in.
+
+**What it may do on your behalf.** It reuses the read-only ServiceBay token this
+container was already given at install time (`SERVICEBAY_MCP_TOKEN`, v2.x) — no
+new credential is created, and the token stays inside the container: it is never
+sent to your browser.
+
 ## v2 (breaking)
 
 **Moved off `hostNetwork` into an isolated network namespace (#2522).**

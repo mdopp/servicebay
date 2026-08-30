@@ -181,6 +181,13 @@ register_safe_directories() {
 # hostname; on-box siblings are reached through `host.containers.internal`, the
 # same way the LLDAP bind is.
 MCP_URL="http://host.containers.internal:5888/mcp"
+SERVICEBAY_API_URL="${SERVICEBAY_API_URL:-http://host.containers.internal:5888}"
+
+# The container's own configuration UI (#2678) and the mode-0400 file the
+# ServiceBay token reaches it through. The UI is baked into the image, not the
+# /workspace volume, so a restored backup can never swap the served code.
+CONFIG_UI_DIR=/usr/local/lib/claude-dev-config-ui
+CONFIG_UI_TOKEN_FILE=/run/claude-dev/servicebay-token
 
 configure_mcp_server() {
   local token="${SERVICEBAY_MCP_TOKEN:-}"
@@ -205,6 +212,61 @@ configure_mcp_server() {
   else
     echo "claude-dev: WARNING — could not configure the ServiceBay MCP server." >&2
   fi
+}
+
+# Start the configuration UI (#2678) as the unprivileged `dev` user.
+#
+# It binds inside the pod's own netns; the pod manifest publishes the port on
+# the HOST's 127.0.0.1 only, so nginx — the one process on this box that shares
+# the host netns — is the sole path in, and every request it forwards carries
+# the `Remote-User` identity Authelia returned. The server refuses anything
+# else (server.mjs, `authorizeRequest`); this function does NOT get to weaken
+# that, it only chooses the port and the group.
+#
+# The ServiceBay token is the SAME read-only credential the MCP server above
+# uses (SERVICEBAY_MCP_TOKEN, #2673) — one credential for this container, not
+# two. It reaches the server through a mode-0400 file rather than argv or the
+# process environment: /proc/<pid>/cmdline is world-readable and this container
+# has real LDAP user accounts logging into it. The pod hands the value in on
+# PID 1's environment, so `env -u` drops it again before exec — the file is
+# then the server's ONE source for it, which is also what keeps its behaviour
+# on a missing/unreadable token deterministic.
+start_config_ui() {
+  local port="${CLAUDE_DEV_CONFIG_PORT:-8790}"
+  case "$port" in ''|*[!0-9]*)
+    echo "claude-dev: WARNING — CLAUDE_DEV_CONFIG_PORT is not a number; configuration UI not started." >&2
+    return 0;;
+  esac
+  if [ ! -f "$CONFIG_UI_DIR/server.mjs" ]; then
+    echo "claude-dev: WARNING — $CONFIG_UI_DIR/server.mjs is missing; configuration UI not started." >&2
+    return 0
+  fi
+
+  mkdir -p "$(dirname "$CONFIG_UI_TOKEN_FILE")"
+  install -o dev -g dev -m 0400 /dev/null "$CONFIG_UI_TOKEN_FILE"
+  printf '%s' "${SERVICEBAY_MCP_TOKEN:-}" > "$CONFIG_UI_TOKEN_FILE"
+
+  # Supervised, like the repo rescan below: a config UI that died once must not
+  # leave the subdomain dark until the next container restart. `sleep 5` caps
+  # the restart rate if it is crash-looping.
+  (
+    while true; do
+      su_dev '
+        export HOME="$1"
+        cd "$HOME" || exit 1
+        exec env -u SERVICEBAY_MCP_TOKEN \
+                 CLAUDE_DEV_CONFIG_PORT="$2" \
+                 CLAUDE_DEV_LDAP_GROUP="$3" \
+                 SERVICEBAY_MCP_TOKEN_FILE="$4" \
+                 SERVICEBAY_API_URL="$5" \
+                 node "$6"
+      ' "$DEV_HOME" "$port" "${CLAUDE_DEV_LDAP_GROUP:-admins}" \
+        "$CONFIG_UI_TOKEN_FILE" "$SERVICEBAY_API_URL" "$CONFIG_UI_DIR/server.mjs" \
+        || echo "claude-dev: WARNING — configuration UI exited; restarting in 5s." >&2
+      sleep 5
+    done
+  ) &
+  echo "claude-dev: configuration UI on port ${port}, restricted to Authelia users in group '${CLAUDE_DEV_LDAP_GROUP:-admins}'."
 }
 
 # One full reconcile pass: discover the checkouts, make git usable in each of
@@ -532,6 +594,10 @@ fi
 # once, at launch. Configuring the server afterwards would leave every session
 # started this boot without it until the next restart.
 configure_mcp_server
+
+# Before the repo work: the configuration UI is what an operator reaches when
+# something in the repo work went wrong, so it must not be gated behind it.
+start_config_ui
 
 reconcile_repos
 

@@ -945,6 +945,24 @@ export interface VariableMeta {
    */
   noAutoGenerate?: boolean;
   /**
+   * #2673 — For `type: secret`: this variable holds a **ServiceBay API
+   * token**, so a random string is the wrong material for it. Instead of
+   * `generateRandomSecret()`, the install path mints a real token through
+   * `createToken` and stores the `sb_…` plaintext like any other generated
+   * secret (so a re-install reuses it rather than orphaning one).
+   *
+   * The minted token is always `read`-scoped and never-expiring — the same
+   * pair `neverExpiresScopesAreReadOnly` (`api/apiTokenRoutes.ts`) enforces
+   * on the operator-facing mint route. That combination is what makes this
+   * safe to automate: a read-only credential grants no mutation, and a
+   * non-expiring one needs no rotation, so the variable is configure-never.
+   * Anything wider stays `noAutoGenerate` and an operator decision.
+   *
+   * Unlike `noAutoGenerate`, an operator-pasted value still wins: the
+   * generation branch is only reached when nothing is prefilled or stored.
+   */
+  mintApiToken?: boolean;
+  /**
    * #2577 — For `type: secret`: this value ends up **inside a device**
    * (an IoT firmware credential field, a device app's setup form), not
    * only in a container's env. Generate it at

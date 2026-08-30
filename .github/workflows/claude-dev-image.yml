@@ -11,6 +11,10 @@ on:
       - 'templates/claude-dev/Dockerfile'
       - 'templates/claude-dev/docker-entrypoint.sh'
       - 'templates/claude-dev/start-claude.sh'
+      # The configuration UI ships inside the image (#2678) — without this the
+      # shell would change in the repo and the box would keep serving the old
+      # one, because `:latest` is only rebuilt by this workflow.
+      - 'templates/claude-dev/config-ui/**'
       - '.github/workflows/claude-dev-image.yml'
   workflow_dispatch:
 
