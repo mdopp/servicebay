@@ -12,8 +12,8 @@
  *     manifest: a panel is an ES module exporting `{ id, title, mount(root) }`
  *     and is listed in that file's `PANELS` array. `public/shell.js` builds the
  *     nav from the array and calls `mount()` into `<main id="panel-root">`.
- *     An empty manifest renders the empty state — which is exactly this unit.
- *     No server change is needed to add a panel.
+ *     An empty manifest renders the shell's own empty state. No server change
+ *     is needed to add a panel.
  *
  *   SEAM 2 — HOW IT AUTHENTICATES.  There is no login form and no second
  *     credential. The UI is reached only through nginx + Authelia forward-auth
@@ -29,8 +29,8 @@
  *     account would reach the dev box's configuration.
  *
  *   SEAM 3 — HOW IT TALKS TO THE CONTAINER / TO SERVICEBAY.  `API_ROUTES` is
- *     the route table; a follow-up adds `'GET /api/projects'` next to
- *     `'GET /api/session'` and gets the auth gate for free. Anything that needs
+ *     the route table; `'GET /api/projects'` (#2679) sits next to
+ *     `'GET /api/session'` and got the auth gate for free. Anything that needs
  *     ServiceBay's own API uses `ctx.servicebay` — the READ-ONLY `sb_…` token
  *     minted for this container at install time (`SERVICEBAY_MCP_TOKEN`,
  *     #2673), the SAME credential the entrypoint wires as Claude Code's MCP
@@ -43,6 +43,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -132,6 +133,195 @@ export function resolveStaticFile(pathname, publicDir) {
   return resolved;
 }
 
+/* ───────────────────────── the project list (#2679) ──────────────────────────
+ *
+ * Three independent facts, read from three independent places — all of them
+ * server-side, because a browser can see none of them:
+ *
+ *   CHECKOUTS — a top-level directory of $DEV_HOME (/workspace) holding a
+ *     `.git` entry. That is exactly `discover_repos`' rule in
+ *     docker-entrypoint.sh; diverging from it would make the panel describe a
+ *     different set of projects than the one the container reconciles.
+ *
+ *   SESSIONS — a tmux window named after the checkout, in the shared `claude`
+ *     session (start-claude.sh). tmux is the only authority: a claude process
+ *     without a window is not a session anyone can attach to.
+ *
+ *   MCP ENTRIES — Claude Code's `~/.claude.json`. `mcpServers` at the top level
+ *     is USER scope (inherited by every checkout — today's entrypoint writes
+ *     exactly one there); `projects["<abs path>"].mcpServers` is LOCAL scope;
+ *     a `.mcp.json` inside the checkout is PROJECT scope.
+ *
+ * Each source reports its own ok/error, and that split is the whole point. A
+ * checkout with no session and a checkout whose session state could not be READ
+ * must not render identically. So when a source fails, every project's field
+ * for it is `null` — "unknown" — never `false`, and the failure itself travels
+ * in `sources` so the panel can say so out loud. A failure to list the
+ * checkouts has no list left to render at all, so it is the one failure that
+ * fails the whole response (HTTP 500) instead of returning an empty list.
+ */
+
+/** Sessions live in tmux; this is the only place the CLI is invoked. */
+function defaultRunTmux(args) {
+  return execFileSync('tmux', args, { encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+/** tmux's way of saying "nothing is running" — an ANSWER, not a broken read. */
+const TMUX_NOTHING_RUNNING = /no server running|no such session|session not found|can't find session/i;
+
+/** Top-level git checkouts of `devHome`, sorted. Throws if the dir is unreadable. */
+export function listCheckouts(devHome, fsImpl = fs) {
+  return fsImpl.readdirSync(devHome, { withFileTypes: true })
+    .filter(e => (e.isDirectory() || e.isSymbolicLink()) && !e.name.startsWith('.'))
+    // `.git` is a directory in a normal clone and a file in a worktree; the
+    // entrypoint's `[ -e "${d}.git" ]` accepts both, so this must too.
+    .filter(e => fsImpl.existsSync(path.join(devHome, e.name, '.git')))
+    .map(e => e.name)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Window names in the shared tmux session.
+ *
+ * An idle box has no tmux server at all, and `list-windows` then exits 1. That
+ * is the honest answer "no sessions are running" and yields `[]`. Anything else
+ * — tmux missing, a timeout, a permission problem — is a read that FAILED and
+ * throws, so the caller can say "unknown" instead of "nothing".
+ */
+export function readTmuxWindows(tmuxSession, runTmux = defaultRunTmux) {
+  let out;
+  try {
+    out = runTmux(['list-windows', '-t', tmuxSession, '-F', '#W']);
+  } catch (err) {
+    const stderr = String(err?.stderr ?? '');
+    if (TMUX_NOTHING_RUNNING.test(stderr) || TMUX_NOTHING_RUNNING.test(String(err?.message ?? ''))) return [];
+    throw new Error(stderr.trim() || err?.message || 'tmux could not be queried');
+  }
+  return String(out).split('\n').map(l => l.trim()).filter(Boolean);
+}
+
+/**
+ * MCP servers Claude Code knows about: `{ user: [names], byPath: { path: [names] } }`.
+ * A missing `~/.claude.json` means "nothing configured yet" and is a legitimate
+ * empty answer; an unreadable or malformed one is a failed read and throws.
+ */
+export function readMcpEntries(homeDir, readFile = (p) => fs.readFileSync(p, 'utf-8')) {
+  const file = path.join(homeDir, '.claude.json');
+  let raw;
+  try {
+    raw = readFile(file);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return { user: [], byPath: {} };
+    throw new Error(`could not read ${file}: ${err?.message || err}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`${file} is not valid JSON: ${err?.message || err}`);
+  }
+  const names = (v) => (v && typeof v === 'object' ? Object.keys(v) : []);
+  const byPath = {};
+  for (const [p, entry] of Object.entries(parsed?.projects ?? {})) byPath[p] = names(entry?.mcpServers);
+  return { user: names(parsed?.mcpServers), byPath };
+}
+
+/** PROJECT-scope servers: the checkout's own tracked `.mcp.json`. */
+function readProjectScopeServers(checkoutPath, readFile) {
+  const file = path.join(checkoutPath, '.mcp.json');
+  let raw;
+  try {
+    raw = readFile(file);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return [];
+    throw new Error(`could not read ${file}: ${err?.message || err}`);
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed?.mcpServers && typeof parsed.mcpServers === 'object' ? Object.keys(parsed.mcpServers) : [];
+  } catch (err) {
+    throw new Error(`${file} is not valid JSON: ${err?.message || err}`);
+  }
+}
+
+/**
+ * The whole payload behind `GET /api/projects`.
+ * `{ ok: false, error }` when the checkout scan itself failed; otherwise
+ * `{ ok: true, workspace, projects, sources }`.
+ */
+export function collectProjects({
+  devHome = '/workspace',
+  homeDir = devHome,
+  tmuxSession = 'claude',
+  fsImpl = fs,
+  runTmux = defaultRunTmux,
+  readFile = (p) => fs.readFileSync(p, 'utf-8'),
+} = {}) {
+  let names;
+  try {
+    names = listCheckouts(devHome, fsImpl);
+  } catch (err) {
+    return { ok: false, error: `could not list the checkouts in ${devHome}: ${err?.message || err}` };
+  }
+
+  let windows = null;
+  let sessionsError = '';
+  try {
+    windows = readTmuxWindows(tmuxSession, runTmux);
+  } catch (err) {
+    sessionsError = String(err?.message || err);
+  }
+
+  let mcpByName = null;
+  let mcpError = '';
+  try {
+    const entries = readMcpEntries(homeDir, readFile);
+    mcpByName = {};
+    for (const name of names) {
+      const scopes = [];
+      const servers = new Set();
+      const add = (scope, list) => {
+        if (!list.length) return;
+        scopes.push(scope);
+        for (const s of list) servers.add(s);
+      };
+      add('user', entries.user);
+      add('local', entries.byPath[path.join(devHome, name)] ?? []);
+      add('project', readProjectScopeServers(path.join(devHome, name), readFile));
+      mcpByName[name] = { configured: servers.size > 0, scopes, servers: [...servers].sort() };
+    }
+  } catch (err) {
+    mcpByName = null;
+    mcpError = String(err?.message || err);
+  }
+
+  const projects = names.map(name => ({
+    name,
+    path: path.join(devHome, name),
+    // The entrypoint only auto-starts a checkout carrying a CLAUDE.md
+    // (`select_autostart_repos`), so this is what tells "no session because
+    // it is not a development target" apart from "no session, something broke".
+    developmentTarget: fsImpl.existsSync(path.join(devHome, name, 'CLAUDE.md')),
+    session: windows ? { running: windows.includes(name) } : null,
+    mcp: mcpByName ? mcpByName[name] : null,
+  }));
+
+  return {
+    ok: true,
+    workspace: devHome,
+    projects,
+    sources: {
+      checkouts: { ok: true, detail: devHome },
+      sessions: windows
+        ? { ok: true, detail: `tmux session "${tmuxSession}"` }
+        : { ok: false, error: sessionsError },
+      mcp: mcpByName
+        ? { ok: true, detail: path.join(homeDir, '.claude.json') }
+        : { ok: false, error: mcpError },
+    },
+  };
+}
+
 /**
  * SEAM 3 — the API route table. Key is `"<METHOD> <pathname>"`; the handler
  * gets `(req, res, ctx)` and runs only AFTER the auth gate passed, with
@@ -148,6 +338,19 @@ export const API_ROUTES = {
       // Whether the shell can call ServiceBay on the operator's behalf. The
       // token itself never leaves the server (SEAM 3).
       servicebay: { configured: Boolean(ctx.servicebay.token), url: ctx.servicebay.url },
+    });
+  },
+
+  /** The project list (#2679) — checkouts, their sessions, their MCP entries. */
+  'GET /api/projects': (req, res, ctx) => {
+    const result = ctx.projects();
+    // A read that FAILED is an error, never an empty list — the two must not
+    // be indistinguishable to the panel.
+    if (!result.ok) return sendJson(res, 500, { error: result.error });
+    sendJson(res, 200, {
+      workspace: result.workspace,
+      projects: result.projects,
+      sources: result.sources,
     });
   },
 };
@@ -183,6 +386,9 @@ export function createConfigUiServer({
   requiredGroup = '',
   publicDir = path.join(HERE, 'public'),
   servicebay = { url: '', token: '' },
+  // Options for `collectProjects` (devHome, homeDir, tmuxSession, and the
+  // injectable fs/tmux readers the tests drive it with).
+  projects = {},
   log = console.log,
 } = {}) {
   return http.createServer((req, res) => {
@@ -200,7 +406,9 @@ export function createConfigUiServer({
       return sendText(res, auth.status, `${auth.status === 401 ? 'Unauthorized' : 'Forbidden'} — ${auth.reason}\n`);
     }
 
-    const ctx = { identity: auth.identity, servicebay };
+    // Read lazily, per request: the panel's whole job is to show what is true
+    // NOW, not what was true when the server booted.
+    const ctx = { identity: auth.identity, servicebay, projects: () => collectProjects(projects) };
 
     const route = API_ROUTES[`${req.method} ${pathname}`];
     if (route) return route(req, res, ctx);
@@ -248,6 +456,15 @@ export function configFromEnv(env = process.env) {
       url: env.SERVICEBAY_API_URL || 'http://host.containers.internal:5888',
       token: readServicebayToken(env),
     },
+    // The `dev` user's HOME *is* the shared workspace (docker-entrypoint.sh
+    // exports HOME=$DEV_HOME), which is why both default to the same path —
+    // but they are separate settings because `~/.claude.json` and the checkouts
+    // are separate concerns.
+    projects: {
+      devHome: env.CLAUDE_DEV_WORKSPACE || '/workspace',
+      homeDir: env.HOME || env.CLAUDE_DEV_WORKSPACE || '/workspace',
+      tmuxSession: env.CLAUDE_TMUX_SESSION || 'claude',
+    },
   };
 }
 
@@ -256,6 +473,7 @@ export function startFromEnv(env = process.env, log = console.log) {
   const server = createConfigUiServer({
     requiredGroup: cfg.requiredGroup,
     servicebay: cfg.servicebay,
+    projects: cfg.projects,
     log,
   });
   server.listen(cfg.port, cfg.host, () => {

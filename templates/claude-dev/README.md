@@ -226,10 +226,22 @@ If you ever configure this by hand, note two things:
 
 The container serves its own small web UI at
 `https://<CLAUDE_DEV_CONFIG_SUBDOMAIN>.<your domain>` — nothing to install, no
-SSH step, it is there after a deploy. Today it is the **shell only**: a header,
-a sidebar and an empty content area. The pages go in one at a time (projects,
-adding/removing a project, GitHub sign-in, restart and repair actions) and show
-up in the sidebar as they land.
+SSH step, it is there after a deploy. The remaining pages (adding/removing a
+project, GitHub sign-in, restart and repair actions) go in one at a time and
+show up in the sidebar as they land.
+
+**Projects** is the first page. It lists every git checkout in the shared
+workspace and, for each one, whether a Claude session is running against it and
+whether it can reach ServiceBay through an MCP server entry — the state you
+previously had to SSH in and run `tmux list-windows` and `claude mcp list` to
+see. It reads and shows; it changes nothing yet.
+
+It is deliberately careful about the difference between *no* and *don't know*.
+An empty workspace says so in as many words; a checkout with no session says
+"Not running" (and, when it has no `CLAUDE.md`, that this is why it was never
+auto-started); and a state the container could not read says **Unknown** with a
+banner naming what failed. A read that breaks is never allowed to look like an
+empty list.
 
 **Two gates, and both have to pass.** The reverse proxy sends every visitor to
 the box's normal Authelia sign-in first (`__authelia_forward_auth__`, the same
