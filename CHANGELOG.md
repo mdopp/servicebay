@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.19.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.18.1...servicebay-v5.19.0) (2026-08-30)
+
+
+### Features
+
+* **diagnose:** report whether the claude-dev box is signed in, and until when ([bfa81be](https://github.com/mdopp/servicebay/commit/bfa81be5ce536b412df71599807f34fee1ec691d))
+* report the claude-dev sign-in state, with a one-tap repair ([f054304](https://github.com/mdopp/servicebay/commit/f054304ce0fca6fc7a2563dd890cfcbdd21cac0a))
+* **stacks:** adopt beets and mosquitto into the stacks that own them ([ef3e796](https://github.com/mdopp/servicebay/commit/ef3e7969bcde0471d834d526ba55be6f6ed94172))
+* **stacks:** adopt beets and mosquitto into the stacks that own them ([164c988](https://github.com/mdopp/servicebay/commit/164c9888ae27cda0f45727df57cc6497728b0092))
+* **terminal:** allow a deep-link to launch a whitelisted repair command ([e3c261a](https://github.com/mdopp/servicebay/commit/e3c261ac106e08b035f7c04338dfce00b9d91a0b))
+
+
+### Bug Fixes
+
+* **edit:** pass the resolved node to ServiceForm so Save is clickable ([69bfa02](https://github.com/mdopp/servicebay/commit/69bfa023b8ef5c46cef45879c01522d527c7ec08))
+* **services:** address a service by its id, and make Save reachable on /edit ([b6b8d2f](https://github.com/mdopp/servicebay/commit/b6b8d2f8f379b5363d82ac6fceca6b8dff84ac3b))
+* **services:** address a service by its id, not its display label ([5ad9761](https://github.com/mdopp/servicebay/commit/5ad9761b7a7ac56c1f494ef8df6aa8e4e80763f2))
+
 ## [5.18.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.18.0...servicebay-v5.18.1) (2026-08-29)
 
 
