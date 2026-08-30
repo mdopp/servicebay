@@ -93,6 +93,12 @@ if [[ ! -f "$CDI_MARKER" ]]; then
     /usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
     /usr/bin/nvidia-ctk cdi list || true
     touch "$CDI_MARKER"
+    # A box built from fedora-coreos.bu also drives CDI generation from
+    # install-nvidia-cdi.timer, which fires every 60 s and which nothing
+    # in systemd ever stops. Retrofitting CDI by hand finishes that
+    # timer's job, so stop it here too -- otherwise it keeps writing a
+    # journal line a minute for work that is already done (#2668).
+    /usr/bin/systemctl disable --now install-nvidia-cdi.timer >/dev/null 2>&1 || true
     echo
     echo "enable-nvidia: CDI config at /etc/cdi/nvidia.yaml — podman GPU passthrough is ready."
     echo "Set OLLAMA_GPU_PASSTHROUGH=yes (or any non-empty value) when installing the AI stack."
