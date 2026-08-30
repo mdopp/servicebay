@@ -256,6 +256,105 @@ def _redact_for_log(payload, _depth: int = 0):
     return payload
 
 
+# Top-level SYNC_PARTIAL keys logged verbatim instead of summarised.
+#
+# `files` is the payload `scripts/check-journal-redaction.ts` reads to prove
+# the #2603 leak stays closed: it walks `payload.files.<path>.content` and
+# fails when a unit body sits where a `<N chars redacted>` marker belongs.
+# Summarise it away and the probe has nothing left to assert on — a green it
+# did not earn. It costs nothing to keep: `_redact_for_log` has already
+# replaced every content blob with its size marker by the time we get here.
+_LOG_VERBATIM_KEYS = ('files',)
+
+# How many record identities a summarised list keeps before it just reports
+# how many more there were.
+_LOG_SUMMARY_MAX_ITEMS = 25
+
+# Keys that name a record, in the order they are tried. Covers what the state
+# sync actually ships: containers (`names`), services (`name`), volumes
+# (`Name`), proxy routes (`host`), network interfaces (`address`).
+_LOG_IDENTITY_KEYS = ('name', 'Name', 'names', 'host', 'id', 'Id', 'path', 'address')
+
+
+def _log_identity(item):
+    """The shortest string that still says which record this is."""
+    if item is None or isinstance(item, (str, int, float, bool)):
+        return item
+    if isinstance(item, dict):
+        for key in _LOG_IDENTITY_KEYS:
+            value = item.get(key)
+            if isinstance(value, (list, tuple)) and value:
+                value = value[0]
+            if isinstance(value, str) and value:
+                return value
+        return '<unnamed>'
+    return '<%s>' % type(item).__name__
+
+
+def _is_log_summary(value) -> bool:
+    """Is this already the output of `_summarize_state_for_log`?
+
+    Both sinks summarise — this one and `handler.ts::summarizeStateForLog`,
+    the same deliberate redundancy the redactors have (#2603) — so the second
+    pass runs over the first one's output. Without this guard it would
+    re-summarise the `items` list and nest a summary inside a summary on every
+    line the box actually writes.
+    """
+    return (
+        isinstance(value, dict)
+        and set(value.keys()) <= {'count', 'items', 'omitted'}
+        and isinstance(value.get('count'), int)
+        and isinstance(value.get('items'), list)
+    )
+
+
+def _summarize_state_for_log(payload, _depth: int = 0):
+    """Log what a state sync *covered*, not the whole state (#2676).
+
+    The agent pushes its entire view of the box on every sync, and the journal
+    copy carried all of it: one `containers` message is a full podman-inspect
+    record per container, every OCI label, port and mount included. Measured
+    on the box over 30 minutes: 3,436,606 bytes across 75 `containers`
+    messages (~46 KB each), against 228 KB for every other ServiceBay line put
+    together. The journal is a buffer, not an archive, so those state dumps
+    evict the lines an operator actually came looking for.
+
+    Every list becomes `{'count': n, 'items': [<identity>, ...]}`. That keeps
+    what the line is worth reading for — a sync happened, it covered these
+    records — at a few hundred bytes instead of tens of kilobytes.
+
+    The cut is made HERE, at the emitter, and deliberately not as a size cap on
+    the rendered journal line: a truncated line is half a JSON object, which
+    `scripts/check-journal-redaction.ts` can no longer parse, silently blinding
+    the #2603 leak probe. A summary is still valid JSON, so the probe keeps
+    working (see `_LOG_VERBATIM_KEYS`).
+
+    `push_state` still ships the real payload to ServiceBay over stdout — only
+    the stderr/journal copy is summarised, so nothing downstream loses data.
+    """
+    if _depth >= _REDACT_MAX_DEPTH:
+        return '<summarised: max depth>'
+    if _is_log_summary(payload):
+        return payload
+    if isinstance(payload, dict):
+        out = {}
+        for key, value in payload.items():
+            if _depth == 0 and key in _LOG_VERBATIM_KEYS:
+                out[key] = value
+            else:
+                out[key] = _summarize_state_for_log(value, _depth + 1)
+        return out
+    if isinstance(payload, (list, tuple)):
+        summary = {
+            'count': len(payload),
+            'items': [_log_identity(item) for item in payload[:_LOG_SUMMARY_MAX_ITEMS]],
+        }
+        if len(payload) > _LOG_SUMMARY_MAX_ITEMS:
+            summary['omitted'] = len(payload) - _LOG_SUMMARY_MAX_ITEMS
+        return summary
+    return payload
+
+
 def log_structured(event: str, payload: Any):
     """Emit pure JSON (no tags) for structured log consumers.
 
@@ -264,12 +363,18 @@ def log_structured(event: str, payload: Any):
     later, without one, and reopened the identical leak (#2603). Doing it in
     the sink means a future caller cannot reopen it a third time.
 
-    Only this stderr/journal copy is masked — `push_state` still sends the real
-    payload to ServiceBay over stdout, so nothing downstream loses data.
+    Summarising happens here too, for the same reason: the state sync's own
+    volume — not its decoration — is what fills the journal (#2676), and a cap
+    applied further downstream would break the leak probe that reads these
+    lines. See `_summarize_state_for_log`.
+
+    Only this stderr/journal copy is masked and summarised — `push_state` still
+    sends the real payload to ServiceBay over stdout, so nothing downstream
+    loses data.
     """
     structured = {
         'event': event,
-        'payload': _redact_for_log(payload)
+        'payload': _summarize_state_for_log(_redact_for_log(payload))
     }
     if RUN_ID:
         structured['runId'] = RUN_ID

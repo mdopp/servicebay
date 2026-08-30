@@ -180,7 +180,8 @@ source "$ENTRYPOINT"
 set +e   # the entrypoint sets -euo pipefail; assertions need to keep going
 
 check "sourcing guard leaves the helpers defined without running the boot sequence" \
-  "$( { declare -F discover_repos autostart_claude su_dev ldap_group_members >/dev/null; } && echo 0 || echo 1)"
+  "$( { declare -F discover_repos autostart_claude su_dev ldap_group_members \
+          secure_dev_private_state >/dev/null; } && echo 0 || echo 1)"
 
 DEV_HOME="$DEV_HOME_FAKE"
 PATH="$STUB_BIN:$PATH"
@@ -615,6 +616,134 @@ check "runs as dev with the shared workspace HOME"   "$(printf '%s' "$mcp_rec" |
 SERVICEBAY_MCP_TOKEN='sb_x"; id #' configure_mcp_server 2>/dev/null
 check "refuses a token carrying shell metacharacters instead of running it"   "$([ ! -s "$CLAUDE_ARGS_RECORD" ] && echo 0 || echo 1)"   "rec: $(read_nul "$CLAUDE_ARGS_RECORD" | tr '
 ' '|')"
+
+# =========================================================================
+# 8. Credential hygiene: the gh OAuth token and the persisted Claude state
+#    must end up dev-owned mode 0600, re-asserted on EVERY boot (#2672).
+#
+#    They are created root:root 0777 by a `gh auth login` run from a root
+#    shell (or by a restore), and sshd admits `AllowGroups dev ldapusers` —
+#    so every provisioned LLDAP collaborator could read the token AND
+#    overwrite it, silently breaking git for every session at once.
+#
+#    `chown` is stubbed because the suite does not run as root; `chmod` is
+#    NOT — the mode assertions below read the real on-disk mode, so deleting
+#    the chmod from the entrypoint turns this section red.
+# =========================================================================
+CHOWN_RECORD="$RECORD/chown.txt"
+export CHOWN_RECORD
+# Records `<spec> <path>` PLUS the path's mode at the moment of the call, which
+# is what lets the suite prove the chown ran BEFORE the chmod — tightening a
+# file still owned by root is exactly the change that would break git auth.
+# Fails on demand (CHOWN_FAIL_GLOB) to model a path we cannot take over.
+cat > "$STUB_BIN/chown" <<'STUB'
+#!/usr/bin/env bash
+spec="$1"; path="$2"
+printf '%s\0' "SPEC=$spec PATH=$path MODE=$(stat -c '%a' "$path" 2>/dev/null)" >> "$CHOWN_RECORD"
+case "$path" in
+  ${CHOWN_FAIL_GLOB:-__never_matches__}) exit 1;;
+esac
+exit 0
+STUB
+chmod +x "$STUB_BIN/chown"
+
+mode_of() { stat -c '%a' "$1" 2>/dev/null; }
+
+SEC_HOME="$WORK/sec-home"
+mkdir -p "$SEC_HOME/.config/gh" "$SEC_HOME/.claude"
+printf 'github.com:\n    user: someone\n    oauth_token: PLACEHOLDER_NOT_A_TOKEN\n' \
+  > "$SEC_HOME/.config/gh/hosts.yml"
+: > "$SEC_HOME/.claude/settings.json"
+: > "$SEC_HOME/.claude/history.jsonl"
+# The exact permissions the issue reported on the reference box.
+chmod 0777 "$SEC_HOME/.config" "$SEC_HOME/.config/gh" "$SEC_HOME/.claude" \
+           "$SEC_HOME/.config/gh/hosts.yml" "$SEC_HOME/.claude/settings.json" \
+           "$SEC_HOME/.claude/history.jsonl"
+# `.claude/.credentials.json` is deliberately absent: the same pass must handle
+# a partially-populated home without failing.
+
+DEV_HOME="$SEC_HOME"
+: > "$CHOWN_RECORD"
+sec_log="$(secure_dev_private_state 2>&1)"
+sec_rc=$?
+chown_calls="$(read_nul "$CHOWN_RECORD" | tr '\n' '|')"
+
+check "the gh OAuth token ends up mode 600" \
+  "$([ "$(mode_of "$SEC_HOME/.config/gh/hosts.yml")" = 600 ] && echo 0 || echo 1)" \
+  "mode=$(mode_of "$SEC_HOME/.config/gh/hosts.yml")"
+check "the persisted Claude settings end up mode 600" \
+  "$([ "$(mode_of "$SEC_HOME/.claude/settings.json")" = 600 ] && echo 0 || echo 1)" \
+  "mode=$(mode_of "$SEC_HOME/.claude/settings.json")"
+check "the Claude history ends up mode 600" \
+  "$([ "$(mode_of "$SEC_HOME/.claude/history.jsonl")" = 600 ] && echo 0 || echo 1)" \
+  "mode=$(mode_of "$SEC_HOME/.claude/history.jsonl")"
+check "the directories holding them end up mode 700" \
+  "$([ "$(mode_of "$SEC_HOME/.config/gh")" = 700 ] && [ "$(mode_of "$SEC_HOME/.claude")" = 700 ] \
+     && echo 0 || echo 1)" \
+  "gh=$(mode_of "$SEC_HOME/.config/gh") claude=$(mode_of "$SEC_HOME/.claude")"
+
+# Ownership: the mode is only half the fix. A 0600 file still owned by root is
+# a REGRESSION, not a fix — `dev` reads it today solely because it is 0777.
+check "the token is chowned to dev" \
+  "$(read_nul "$CHOWN_RECORD" \
+     | grep -Fq "SPEC=dev:dev PATH=$SEC_HOME/.config/gh/hosts.yml" && echo 0 || echo 1)" \
+  "chown calls: $chown_calls"
+check "the chown runs BEFORE the chmod, never the other way round" \
+  "$(read_nul "$CHOWN_RECORD" \
+     | grep -Fq "PATH=$SEC_HOME/.config/gh/hosts.yml MODE=777" && echo 0 || echo 1)" \
+  "chown calls: $chown_calls"
+
+check "securing an existing set of credential files reports success" \
+  "$([ "$sec_rc" -eq 0 ] && echo 0 || echo 1)" "rc=$sec_rc log=$sec_log"
+# The denominator again: a pass that secured nothing must not read like a pass
+# that secured everything.
+check "the log names how many paths were actually secured" \
+  "$(printf '%s' "$sec_log" | grep -q 'secured 6 ' && echo 0 || echo 1)" \
+  "log: $sec_log"
+
+# --- the file-absent case ------------------------------------------------
+# A box that never ran `gh auth login`, or a freshly reset volume, has none of
+# these paths. That is normal, not an error, and must chown nothing.
+EMPTY_HOME="$WORK/sec-home-empty"
+mkdir -p "$EMPTY_HOME"
+DEV_HOME="$EMPTY_HOME"
+: > "$CHOWN_RECORD"
+empty_log="$(secure_dev_private_state 2>&1)"
+empty_rc=$?
+check "a workspace with no credential files is not an error" \
+  "$([ "$empty_rc" -eq 0 ] && echo 0 || echo 1)" "rc=$empty_rc log=$empty_log"
+check "nothing is chowned when no credential file exists" \
+  "$([ ! -s "$CHOWN_RECORD" ] && echo 0 || echo 1)" \
+  "chown calls: $(read_nul "$CHOWN_RECORD" | tr '\n' '|')"
+check "the absent case says it secured 0 paths rather than claiming success" \
+  "$(printf '%s' "$empty_log" | grep -q 'secured 0 ' && echo 0 || echo 1)" \
+  "log: $empty_log"
+
+# --- the chown-failed case -----------------------------------------------
+# If ownership cannot be taken, tightening the mode is WORSE than leaving it:
+# it would lock `dev` out of a root-owned token and break git for every
+# session. The pass must leave the file alone and tell the caller.
+DEV_HOME="$SEC_HOME"
+chmod 0777 "$SEC_HOME/.config/gh/hosts.yml"
+CHOWN_FAIL_GLOB='*/hosts.yml'
+export CHOWN_FAIL_GLOB
+failed_log="$(secure_dev_private_state 2>&1)"
+failed_rc=$?
+unset CHOWN_FAIL_GLOB
+check "a file whose chown fails is NOT tightened" \
+  "$([ "$(mode_of "$SEC_HOME/.config/gh/hosts.yml")" = 777 ] && echo 0 || echo 1)" \
+  "mode=$(mode_of "$SEC_HOME/.config/gh/hosts.yml")"
+check "a chown failure is reported to the caller" \
+  "$([ "$failed_rc" -ne 0 ] && echo 0 || echo 1)" "rc=$failed_rc log=$failed_log"
+
+# Structural: the helper has to be CALLED from the boot sequence, not merely
+# defined. The definition line ends in `(`, so `[^(]` picks out the call.
+check "the boot sequence calls secure_dev_private_state" \
+  "$(grep -qE '^secure_dev_private_state[^(]' "$ENTRYPOINT" && echo 0 || echo 1)"
+check "the gh token path is in the list the entrypoint secures" \
+  "$(grep -Fq "'.config/gh/hosts.yml'" "$ENTRYPOINT" && echo 0 || echo 1)"
+
+DEV_HOME="$DEV_HOME_FAKE"
 
 # =========================================================================
 echo

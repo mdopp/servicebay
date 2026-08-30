@@ -193,6 +193,7 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
         { id: 'data-authority', why: 'Consume the canonical index (Jellyfin/Immich/Radicale) instead of re-scanning; one writer per store or an explicit coordination model.' },
         { id: 'recipe-roll-new-image-to-running-service', why: 'How to actually run a freshly-pushed image on an installed service (pull + restart), and the pinned-tag-vs-:latest versioning expectation.' },
         { id: 'report-standards-gaps', why: 'Convention: report missing/ambiguous/wrong standards back so the catalog improves from real friction.' },
+        { id: 'footgun-journal-is-a-buffer-not-an-archive', why: 'Footgun: the systemd journal rotates by size/age with no per-service guarantee — a service whose actions must be reconstructable later writes its own durable log rather than relying on journalctl retention.' },
         { id: 'footgun-cross-service-uid-writes', why: 'Footgun: container->host uid mapping, foreign ownership, and locks when writing another service’s store.' },
         { id: 'footgun-local-template-write-uid', why: 'Footgun: Local templates must be placed as uid 1000 or write_file EACCES leaves a root-owned stray dir.' },
         { id: 'footgun-forward-auth-acme-collision', why: 'Footgun: forward-auth vs ACME cert collision.' },

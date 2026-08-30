@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { reassembleMessages, summarizeJournal, parseArgs } from './check-journal-redaction';
+import { redactStructuredLogLine } from '../packages/backend/src/lib/agent/handler';
 
 // Every fixture below is synthetic. `PLACEHOLDER-NOT-A-REAL-SECRET` is the only
 // "secret" that ever appears here — no value from any live box belongs in a
@@ -140,6 +141,61 @@ describe('summarizeJournal', () => {
     const journal = entry(app('Agent:Local', '{"event":"SYNC_PARTIAL","payload":{"files":{"/a":{"cont'));
     expect(() => summarizeJournal(journal)).not.toThrow();
     expect(summarizeJournal(journal).structuredMessages).toBe(0);
+  });
+});
+
+describe('the emitter\'s own output, end to end (#2676)', () => {
+  // #2676 cut the state-sync journal payload down to a summary. The probe
+  // reads those very lines, so the two have to be checked together: a cut
+  // made at the *sink* (a size cap on the rendered line) would leave half a
+  // JSON object here, `classify` would bail on the parse, and the probe would
+  // report a clean journal it never actually inspected.
+
+  /** What `handler.ts` now writes for a files+containers state sync. */
+  function emittedSyncLine(): string {
+    return redactStructuredLogLine(
+      JSON.stringify({
+        event: 'SYNC_PARTIAL',
+        payload: {
+          files: { [QUADLET_PATH]: { path: QUADLET_PATH, content: QUADLET_BODY } },
+          containers: Array.from({ length: 24 }, (_, i) => ({
+            id: `${i}`,
+            names: [`svc${i}-app`],
+            labels: { 'org.opencontainers.image.title': `App ${i}`, 'org.opencontainers.image.url': 'https://example.invalid' },
+            mounts: [{ Source: '/var/mnt/data', Destination: '/data' }],
+          })),
+        },
+      }),
+    ) as string;
+  }
+
+  it('still parses as a structured message the probe can judge', () => {
+    const s = summarizeJournal(entry(app('Agent:Local', emittedSyncLine())));
+    expect(s.structuredMessages).toBe(1);
+    expect(s.contentFieldsRedacted).toBe(1);
+    expect(s.contentFieldsVerbatim).toBe(0);
+    expect(s.unitBodiesVerbatim).toBe(0);
+  });
+
+  it('fits in one journal entry, so conmon no longer chunks a state sync', () => {
+    // 8192 bytes is where conmon splits a line; a summarised sync is a couple
+    // of hundred, so the reassembly path is no longer exercised by every sync.
+    expect(emittedSyncLine().length).toBeLessThan(8192);
+    expect(reassembleMessages(entry(app('Agent:Local', emittedSyncLine())))[0].chunks).toBe(1);
+  });
+
+  it('would still turn red if the redaction regressed under the summary', () => {
+    // The probe must be able to fail on the new shape, not merely pass on it.
+    const leaking = JSON.stringify({
+      event: 'SYNC_PARTIAL',
+      payload: {
+        files: { [QUADLET_PATH]: { content: QUADLET_BODY } },
+        containers: { count: 24, items: ['svc0-app'] },
+      },
+    });
+    const s = summarizeJournal(entry(app('Agent:Local', leaking)));
+    expect(s.unitBodiesVerbatim).toBe(1);
+    expect(s.findings[0].keyPath).toBe(`payload.files.${QUADLET_PATH}.content`);
   });
 });
 
