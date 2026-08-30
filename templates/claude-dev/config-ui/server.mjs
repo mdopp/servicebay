@@ -29,9 +29,10 @@
  *     account would reach the dev box's configuration.
  *
  *   SEAM 3 — HOW IT TALKS TO THE CONTAINER / TO SERVICEBAY.  `API_ROUTES` is
- *     the route table; `'GET /api/projects'` (#2679) and its `POST`/`DELETE`
- *     siblings (#2680) sit next to `'GET /api/session'` and got the auth gate
- *     for free — a handler may be async. Anything that needs
+ *     the route table; `'GET /api/projects'` (#2679), its `POST`/`DELETE`
+ *     siblings (#2680) and the `/api/github` trio (#2681) sit next to
+ *     `'GET /api/session'` and got the auth gate for free — a handler may be
+ *     async. Anything that needs
  *     ServiceBay's own API uses `ctx.servicebay` — the READ-ONLY `sb_…` token
  *     minted for this container at install time (`SERVICEBAY_MCP_TOKEN`,
  *     #2673), the SAME credential the entrypoint wires as Claude Code's MCP
@@ -45,6 +46,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -399,14 +401,22 @@ export function collectProjects({
  *            live token that is still recorded and can be retried.
  */
 
-/** Run a container-side CLI. Injectable so tests never need a real /workspace. */
+/**
+ * Run a container-side CLI. Injectable so tests never need a real /workspace.
+ *
+ * `opts.input` is written to the child's stdin and is how a SECRET reaches a
+ * CLI (`gh auth login --with-token`, #2681): argv is world-readable through
+ * /proc and this container has real user logins on it, so a token must never
+ * travel as an argument.
+ */
 function defaultRunCommand(file, args, opts = {}) {
   return execFileSync(file, args, {
     encoding: 'utf-8',
     timeout: opts.timeout ?? 120_000,
     cwd: opts.cwd,
     env: opts.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    input: opts.input,
+    stdio: [opts.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
   });
 }
 
@@ -743,6 +753,404 @@ export async function removeProject(options, servicebay, input) {
   };
 }
 
+/* ──────────────────── the GitHub connection (#2681) ─────────────────────────
+ *
+ * Until now this container's GitHub credential was a hand-made artifact:
+ * someone opened a ROOT shell over `podman exec`, ran `gh auth login`, and left
+ * behind a `~/.config/gh/hosts.yml` that nothing had declared and nothing could
+ * describe. This replaces the CREATION path with the OAuth device flow driven
+ * from this page, so connecting needs a browser and no shell at all.
+ *
+ * The flow is the one `gh auth login --web` performs, spoken directly rather
+ * than by driving the CLI: gh's web login is an interactive prompt ("press
+ * Enter to open github.com in your browser") that a server can only fake with a
+ * pty. Two plain HTTPS calls have no such moving parts —
+ *
+ *   1. POST /login/device/code → a one-time user code and a verification URL.
+ *      The page shows the code; the operator types it into github.com on
+ *      whatever device they are holding.
+ *   2. POST /login/oauth/access_token, repeatedly → `authorization_pending`
+ *      until they finish, then the access token.
+ *
+ * Four properties this is built around:
+ *
+ *   THE TOKEN NEVER TOUCHES ARGV, A LOG, OR THE BROWSER. It reaches `gh auth
+ *     login --with-token` on STDIN, because /proc/<pid>/cmdline is world-
+ *     readable and this container has real LDAP user logins on it. It is never
+ *     sent to the page — the page learns the resulting ACCOUNT NAME, nothing
+ *     else — and every string that reaches a log or a response first goes
+ *     through `redactCredentials`.
+ *
+ *   THE DEVICE CODE STAYS SERVER-SIDE. The browser gets an opaque flow id; the
+ *     `device_code` — the thing that actually redeems the token — lives only in
+ *     the map below and is dropped the moment the flow ends or expires.
+ *
+ *   "CONNECTED" IS EXERCISED, NEVER INFERRED FROM A FILE. Status runs
+ *     `gh api user`, an authenticated call to GitHub. A hosts.yml holding an
+ *     expired token is NOT connected, and being able to say so is the point:
+ *     the presence of a file was exactly what the old hand-made artifact could
+ *     prove, and it proved nothing.
+ *
+ *   THE THREE ANSWERS STAY THREE. `connected` is `true` / `false` / `null`,
+ *     never a two-valued flag. gh's exit code 4 is a real NO ("no credential");
+ *     a 401 is a real NO with a different reason ("stored, and rejected"); a
+ *     missing binary, a timeout, or a DNS failure is `null` — UNKNOWN. Showing
+ *     unknown as "not connected" is what gets someone to redo a connection that
+ *     already works, or to trust one that does not.
+ */
+
+export const GITHUB_DEVICE_CODE_URL = 'https://github.com/login/device/code';
+export const GITHUB_ACCESS_TOKEN_URL = 'https://github.com/login/oauth/access_token';
+
+/**
+ * The GitHub CLI's own OAuth application. Public by construction — it is
+ * compiled into every `gh` binary on every machine — so this is a constant, not
+ * a credential, and the token it mints is exactly the one `gh auth login --web`
+ * would have made. `CLAUDE_DEV_GITHUB_CLIENT_ID` overrides it for a box that
+ * would rather register its own OAuth app.
+ */
+export const GH_CLI_OAUTH_CLIENT_ID = '178c6fc778ccc68e1d6a';
+
+/**
+ * What the sessions on this box actually do: clone and push (`repo`), resolve
+ * org membership the way gh does (`read:org`), gists — and `workflow`, without
+ * which a push that touches `.github/workflows` is rejected outright, which is
+ * most of what the autoloop pushes.
+ */
+export const GITHUB_SCOPES = 'repo read:org gist workflow';
+
+/** Credential shapes that must never survive into a log line or a response. */
+const CREDENTIAL_SHAPES = [
+  /gh[pousr]_[A-Za-z0-9]{16,}/g,
+  /github_pat_[A-Za-z0-9_]{20,}/g,
+  /\bsb_[a-z0-9]{6,}_[A-Za-z0-9]{16,}/g,
+];
+
+/** Mask anything token-shaped. Applied to EVERY gh/GitHub message we relay —
+ *  those messages are written by someone else and may quote what we sent. */
+export function redactCredentials(text) {
+  let out = String(text ?? '');
+  for (const shape of CREDENTIAL_SHAPES) out = out.replace(shape, '<redacted>');
+  return out;
+}
+
+const firstLine = (text) => String(text ?? '').split('\n').map(l => l.trim()).filter(Boolean)[0] ?? '';
+
+/**
+ * The environment `gh` runs in.
+ *
+ * `GH_TOKEN` / `GITHUB_TOKEN` are STRIPPED, and that is load-bearing rather
+ * than tidy. gh prefers them over hosts.yml, so one left in the process
+ * environment would make this page report a connection that has nothing to do
+ * with the credential it stores — "connected" while hosts.yml is empty. It also
+ * breaks the write half: `gh auth login` REFUSES outright while one is set
+ * ("first clear the environment variable"), so Connect would fail on a box that
+ * happens to export one for something else.
+ */
+export function githubEnv({ homeDir, configDir, env = process.env }) {
+  const clean = { ...env, HOME: homeDir, GH_CONFIG_DIR: configDir, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1' };
+  for (const name of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) delete clean[name];
+  return clean;
+}
+
+/** Defaults + injection points, resolved once per call. Mirrors `projects`. */
+function githubOptions(options = {}) {
+  const homeDir = options.homeDir || '/workspace';
+  const configDir = options.configDir || path.join(homeDir, '.config', 'gh');
+  return {
+    homeDir,
+    configDir,
+    hostsFile: path.join(configDir, 'hosts.yml'),
+    hostname: options.hostname || 'github.com',
+    clientId: options.clientId || GH_CLI_OAUTH_CLIENT_ID,
+    scopes: options.scopes || GITHUB_SCOPES,
+    fsImpl: options.fsImpl || fs,
+    runCommand: options.runCommand || defaultRunCommand,
+    doFetch: options.doFetch || fetch,
+    env: options.env || process.env,
+    now: options.now || (() => Date.now()),
+    // `null` when the platform has no uid to compare against — see
+    // `inspectCredential`: no uid means "unknown owner", not "wrong owner".
+    uid: options.uid ?? (typeof process.getuid === 'function' ? process.getuid() : null),
+  };
+}
+
+/**
+ * Run one `gh` command and normalise BOTH outcomes into a single shape, so the
+ * classifier below is a pure function of `{ exitCode, stdout, stderr,
+ * spawnError }` and can be tested without a `gh` binary anywhere.
+ *
+ * `execFileSync` reports an EXIT code as `err.status` and a spawn/timeout errno
+ * as `err.code`; conflating them is how "gh is not installed" ends up rendered
+ * as "you are not signed in".
+ */
+function runGh(runCommand, args, env, timeout, input) {
+  try {
+    return { exitCode: 0, stdout: String(runCommand('gh', args, { env, timeout, input }) ?? ''), stderr: '', spawnError: '' };
+  } catch (err) {
+    const exitCode = Number.isInteger(err?.status) ? err.status : null;
+    return {
+      exitCode,
+      stdout: String(err?.stdout ?? ''),
+      stderr: String(err?.stderr ?? ''),
+      spawnError: exitCode === null ? String(err?.code || err?.message || err) : '',
+    };
+  }
+}
+
+/** gh's ways of saying "there is no credential here" — a real NO. */
+const GH_NO_CREDENTIAL = /to get started with github cli|not logged into any github|no accounts|authentication token not found/i;
+/** GitHub's way of saying "there is one, and I reject it" — also a real NO. */
+const GH_REJECTED = /bad credentials|http 401|requires authentication/i;
+
+/**
+ * `{ connected, account, detail }` from one `gh api user` run.
+ *
+ * `connected: null` is not a fallback for "something odd" — it is the answer
+ * whenever the check itself did not complete, which is a different fact from a
+ * completed check that came back negative.
+ */
+export function classifyGithubStatus(result) {
+  if (result.spawnError) {
+    return { connected: null, account: '', detail: `the GitHub CLI could not be run: ${redactCredentials(result.spawnError)}` };
+  }
+  if (result.exitCode === 0) {
+    const account = firstLine(result.stdout);
+    if (!account) return { connected: null, account: '', detail: 'the GitHub CLI answered without naming an account' };
+    return { connected: true, account, detail: '' };
+  }
+  const said = `${result.stderr}\n${result.stdout}`;
+  // 4 is gh's documented "authentication required" exit code; the text match
+  // is the belt to its braces, for a version that changes one of the two.
+  if (result.exitCode === 4 || GH_NO_CREDENTIAL.test(said)) {
+    return { connected: false, account: '', detail: 'no GitHub credential is stored for this container' };
+  }
+  if (GH_REJECTED.test(said)) {
+    return {
+      connected: false,
+      account: '',
+      detail: 'a credential is stored but GitHub rejected it — connect again to replace it',
+    };
+  }
+  return {
+    connected: null,
+    account: '',
+    detail: redactCredentials(firstLine(said)) || `the GitHub CLI exited ${result.exitCode}`,
+  };
+}
+
+/**
+ * What is ACTUALLY on disk at `hosts.yml` — acceptance 3 is about the stored
+ * file, so it is measured rather than assumed. Every field is three-valued for
+ * the same reason as the rest of this module: a stat that threw EACCES tells us
+ * nothing about the mode, and `null` says so.
+ */
+export function inspectCredential(hostsFile, fsImpl = fs, uid = null) {
+  let stat;
+  try {
+    stat = fsImpl.statSync(hostsFile);
+  } catch (err) {
+    if (err?.code === 'ENOENT') return { path: hostsFile, exists: false, mode: null, ownedByServer: null, private: null };
+    return {
+      path: hostsFile,
+      exists: null,
+      mode: null,
+      ownedByServer: null,
+      private: null,
+      error: redactCredentials(String(err?.message || err)),
+    };
+  }
+  const mode = stat.mode & 0o777;
+  return {
+    path: hostsFile,
+    exists: true,
+    mode: `0${mode.toString(8).padStart(3, '0')}`,
+    ownedByServer: uid === null ? null : stat.uid === uid,
+    private: (mode & 0o077) === 0,
+  };
+}
+
+/** `GET /api/github`: exercise the credential, and describe the file it is in. */
+export function readGithubStatus(options = {}) {
+  const o = githubOptions(options);
+  const status = classifyGithubStatus(runGh(o.runCommand, ['api', 'user', '--jq', '.login'], githubEnv(o), 20_000));
+  return { ...status, hostname: o.hostname, credential: inspectCredential(o.hostsFile, o.fsImpl, o.uid) };
+}
+
+/**
+ * Re-assert `dev`-only ownership on what gh just wrote, then REPORT what is
+ * really there.
+ *
+ * #2672 hardens these paths on every boot (`secure_dev_private_state` in
+ * docker-entrypoint.sh, which chowns before it chmods so a failed chown never
+ * strands an unreadable token). A credential created BETWEEN two boots must
+ * land inside that guarantee rather than sit world-readable until the next
+ * restart — but this process is `dev`, not root, so it can only chmod a file it
+ * already owns. On a box still carrying the old root-owned artifact that
+ * legitimately fails, and then it must SAY so instead of reporting a mode
+ * nobody verified.
+ */
+function hardenCredential(o) {
+  const warnings = [];
+  for (const [target, mode] of [[o.configDir, 0o700], [o.hostsFile, 0o600]]) {
+    try {
+      o.fsImpl.chmodSync(target, mode);
+    } catch (err) {
+      warnings.push(`could not set mode 0${mode.toString(8)} on ${target}: ${redactCredentials(String(err?.message || err))}`);
+    }
+  }
+  const credential = inspectCredential(o.hostsFile, o.fsImpl, o.uid);
+  if (credential.ownedByServer === false) {
+    warnings.push(`${credential.path} belongs to another account, so this page could not tighten it.`);
+  }
+  if (credential.private === false) {
+    warnings.push(`${credential.path} is mode ${credential.mode} — other logins on this container can read the token. `
+      + 'Restart claude-dev so the boot-time hardening takes ownership of it.');
+  }
+  if (credential.exists !== true) {
+    warnings.push(`${credential.path} could not be inspected after the sign-in, so its owner and mode are unknown.`);
+  }
+  return { credential, warnings };
+}
+
+/**
+ * Hand the access token to `gh` on STDIN, wire git to it, tighten the file, and
+ * then EXERCISE it. The returned status comes from a fresh `gh api user`, not
+ * from the fact that a file was written (acceptance 1).
+ *
+ * `gh auth setup-git` is not optional: `--with-token` stores the credential but
+ * does not register the `credential.https://github.com.helper` entry, so
+ * without it `gh` would work and `git push` would still prompt.
+ */
+export function storeGithubToken(options, token) {
+  const o = githubOptions(options);
+  try {
+    o.fsImpl.mkdirSync(o.configDir, { recursive: true, mode: 0o700 });
+  } catch { /* gh creates it itself; a pre-existing dir is the normal case */ }
+
+  const stored = runGh(o.runCommand, ['auth', 'login', '--hostname', o.hostname, '--with-token'],
+    githubEnv(o), 30_000, `${token}\n`);
+  if (stored.exitCode !== 0) {
+    throw new ProjectError(502, 'the GitHub CLI refused to store the credential',
+      redactCredentials(firstLine(`${stored.stderr}\n${stored.stdout}`) || stored.spawnError || `gh exited ${stored.exitCode}`));
+  }
+
+  const warnings = [];
+  const git = runGh(o.runCommand, ['auth', 'setup-git', '--hostname', o.hostname], githubEnv(o), 20_000);
+  if (git.exitCode !== 0) {
+    warnings.push('the credential is stored for `gh`, but git was not wired to it '
+      + `(gh auth setup-git: ${redactCredentials(firstLine(`${git.stderr}\n${git.stdout}`) || git.spawnError || `exited ${git.exitCode}`)}) `
+      + '— `git push` may still ask for a password.');
+  }
+
+  const hardened = hardenCredential(o);
+  warnings.push(...hardened.warnings);
+
+  const status = classifyGithubStatus(runGh(o.runCommand, ['api', 'user', '--jq', '.login'], githubEnv(o), 20_000));
+  if (status.connected !== true) {
+    warnings.push('the credential was stored but the check against GitHub did not confirm it: '
+      + (status.detail || 'no reason was given'));
+  }
+  return { status: { ...status, hostname: o.hostname, credential: hardened.credential }, warnings };
+}
+
+/** Drop flows whose one-time code can no longer be redeemed. */
+function pruneDeviceFlows(flows, now) {
+  for (const [id, flow] of flows) if (now >= flow.expiresAt) flows.delete(id);
+}
+
+async function githubForm(o, url, params, what) {
+  let res;
+  try {
+    res = await o.doFetch(url, {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(params).toString(),
+    });
+  } catch (err) {
+    throw new ProjectError(502, `GitHub could not be reached to ${what}: ${redactCredentials(String(err?.message || err))}`);
+  }
+  const text = await res.text().catch(() => '');
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = null; }
+  return { status: res.status, ok: res.ok, body, text };
+}
+
+/**
+ * `POST /api/github/device` — ask GitHub for a one-time code.
+ *
+ * The browser is handed `flowId`, the USER code and the verification URL. It is
+ * never handed `device_code`: that is the half that redeems the token, and it
+ * stays in `flows` here.
+ */
+export async function startGithubDeviceFlow(options, flows) {
+  const o = githubOptions(options);
+  const res = await githubForm(o, GITHUB_DEVICE_CODE_URL,
+    { client_id: o.clientId, scope: o.scopes }, 'start the sign-in');
+  if (!res.ok || !res.body?.device_code || !res.body?.user_code) {
+    throw new ProjectError(502, 'GitHub refused to start the device sign-in',
+      redactCredentials(res.body?.error_description || res.body?.error || res.text.slice(0, 200) || `HTTP ${res.status}`));
+  }
+  pruneDeviceFlows(flows, o.now());
+  const flowId = randomUUID();
+  const interval = Math.max(1, Number(res.body.interval) || 5);
+  const expiresAt = o.now() + (Number(res.body.expires_in) || 900) * 1000;
+  flows.set(flowId, { deviceCode: res.body.device_code, interval, expiresAt });
+  return {
+    flowId,
+    userCode: res.body.user_code,
+    verificationUri: res.body.verification_uri || 'https://github.com/login/device',
+    interval,
+    expiresAt,
+    scopes: o.scopes,
+  };
+}
+
+/**
+ * `POST /api/github/device/poll` — one redemption attempt.
+ *
+ * Every outcome is named: `pending` (nobody has entered the code yet),
+ * `expired`, `denied`, `connected`. The device code is spent on the first
+ * non-pending answer and dropped from the map either way.
+ */
+export async function pollGithubDeviceFlow(options, flows, flowId) {
+  const o = githubOptions(options);
+  const id = String(flowId || '');
+  const flow = flows.get(id);
+  if (!flow) throw new ProjectError(404, 'that sign-in is not in progress any more — start it again');
+  if (o.now() >= flow.expiresAt) {
+    flows.delete(id);
+    return { state: 'expired', detail: 'the one-time code expired before it was entered on github.com' };
+  }
+
+  const res = await githubForm(o, GITHUB_ACCESS_TOKEN_URL, {
+    client_id: o.clientId,
+    device_code: flow.deviceCode,
+    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+  }, 'finish the sign-in');
+
+  const error = res.body?.error;
+  if (error === 'authorization_pending') return { state: 'pending', interval: flow.interval };
+  if (error === 'slow_down') {
+    // GitHub's own back-off, honoured rather than ignored: keep polling at the
+    // old rate and it starts refusing outright.
+    flow.interval = Math.max(Number(res.body.interval) || 0, flow.interval + 5);
+    return { state: 'pending', interval: flow.interval };
+  }
+  flows.delete(id);
+  if (error === 'expired_token') {
+    return { state: 'expired', detail: 'the one-time code expired before it was entered on github.com' };
+  }
+  if (error === 'access_denied') {
+    return { state: 'denied', detail: 'the sign-in was cancelled on github.com' };
+  }
+  if (error || !res.body?.access_token) {
+    throw new ProjectError(502, 'GitHub refused to finish the device sign-in',
+      redactCredentials(res.body?.error_description || error || res.text.slice(0, 200) || `HTTP ${res.status}`));
+  }
+  return { state: 'connected', ...storeGithubToken(options, res.body.access_token) };
+}
+
 /** Read a small JSON request body. Anything bigger than 8 KiB is refused. */
 function readJsonRequest(req) {
   return new Promise((resolve, reject) => {
@@ -812,6 +1220,30 @@ export const API_ROUTES = {
       + ` (token ${result.removed.tokenId} revoked, checkout left on disk)`);
     sendJson(res, 200, result);
   },
+
+  /** GitHub connection status (#2681) — measured by an authenticated call. */
+  'GET /api/github': (req, res, ctx) => sendJson(res, 200, ctx.github.status()),
+
+  /** Start the device flow (#2681) — returns the code the operator types. */
+  'POST /api/github/device': async (req, res, ctx) => {
+    const flow = await ctx.github.start();
+    // The user code is an authorization artifact with a 15-minute life; it is
+    // not logged, and neither is anything else this flow produces.
+    ctx.log(`claude-dev config-ui: ${ctx.identity.user} started a GitHub device sign-in (flow ${flow.flowId})`);
+    sendJson(res, 201, flow);
+  },
+
+  /** One redemption attempt (#2681). The token never comes back out of here. */
+  'POST /api/github/device/poll': async (req, res, ctx) => {
+    const body = await readJsonRequest(req);
+    const result = await ctx.github.poll(body?.flowId ?? '');
+    if (result.state === 'connected') {
+      ctx.log(`claude-dev config-ui: ${ctx.identity.user} connected GitHub as "${result.status.account}"`
+        + ` (${result.status.credential.path} mode ${result.status.credential.mode ?? 'unknown'})`
+        + `${result.warnings.length ? ` with ${result.warnings.length} warning(s)` : ''}`);
+    }
+    sendJson(res, 200, result);
+  },
 };
 
 function securityHeaders(res) {
@@ -848,8 +1280,17 @@ export function createConfigUiServer({
   // Options for `collectProjects` (devHome, homeDir, tmuxSession, and the
   // injectable fs/tmux readers the tests drive it with).
   projects = {},
+  // Options for the GitHub connection (#2681): homeDir/configDir, the OAuth
+  // client id and scopes, and the injectable `runCommand` / `doFetch` / `fsImpl`
+  // that let the whole device flow be exercised without a `gh` binary.
+  github = {},
   log = console.log,
 } = {}) {
+  // In-progress device flows, keyed by the opaque id the browser polls with.
+  // Per server instance, in memory only: a restart cancels a half-finished
+  // sign-in, which is the right outcome for a 15-minute one-time code.
+  const githubFlows = new Map();
+
   return http.createServer((req, res) => {
     securityHeaders(res);
 
@@ -875,6 +1316,13 @@ export function createConfigUiServer({
       // tmuxSession / runTmux / runCommand), so the write path is testable
       // without a real /workspace and there is no second seam to keep in sync.
       projectOptions: projects,
+      // Same shape, same reason: one injection point the routes and the tests
+      // share, so the device flow has no second seam to keep in sync.
+      github: {
+        status: () => readGithubStatus(github),
+        start: () => startGithubDeviceFlow(github, githubFlows),
+        poll: (flowId) => pollGithubDeviceFlow(github, githubFlows, flowId),
+      },
       query: url.searchParams,
       log,
     };
@@ -945,6 +1393,16 @@ export function configFromEnv(env = process.env) {
       homeDir: env.HOME || env.CLAUDE_DEV_WORKSPACE || '/workspace',
       tmuxSession: env.CLAUDE_TMUX_SESSION || 'claude',
     },
+    // The GitHub connection (#2681). `gh` is told WHICH config dir to use
+    // explicitly rather than left to infer one from HOME/XDG, so the file whose
+    // owner and mode this page reports is provably the file gh wrote.
+    github: {
+      homeDir: env.HOME || env.CLAUDE_DEV_WORKSPACE || '/workspace',
+      configDir: env.GH_CONFIG_DIR
+        || path.join(env.HOME || env.CLAUDE_DEV_WORKSPACE || '/workspace', '.config', 'gh'),
+      clientId: (env.CLAUDE_DEV_GITHUB_CLIENT_ID || '').trim() || GH_CLI_OAUTH_CLIENT_ID,
+      scopes: (env.CLAUDE_DEV_GITHUB_SCOPES || '').trim() || GITHUB_SCOPES,
+    },
   };
 }
 
@@ -954,6 +1412,7 @@ export function startFromEnv(env = process.env, log = console.log) {
     requiredGroup: cfg.requiredGroup,
     servicebay: cfg.servicebay,
     projects: cfg.projects,
+    github: cfg.github,
     log,
   });
   server.listen(cfg.port, cfg.host, () => {

@@ -226,9 +226,8 @@ If you ever configure this by hand, note two things:
 
 The container serves its own small web UI at
 `https://<CLAUDE_DEV_CONFIG_SUBDOMAIN>.<your domain>` — nothing to install, no
-SSH step, it is there after a deploy. The remaining pages (GitHub sign-in,
-restart and repair actions) go in one at a time and show up in the sidebar as
-they land.
+SSH step, it is there after a deploy. The remaining pages (restart and repair
+actions) go in one at a time and show up in the sidebar as they land.
 
 **Projects** is the first page. It lists every git checkout in the shared
 workspace and, for each one, whether a Claude session is running against it and
@@ -282,6 +281,49 @@ Adding a project that is already wired replaces its token rather than adding a
 second one: the previously recorded child is revoked first, so neither a
 re-add nor an add/remove/add cycle leaves an orphaned token or a stale MCP
 entry behind.
+
+### Connecting GitHub
+
+**GitHub** is the second page, and it replaces the way this container used to
+get its GitHub credential: someone opened a *root* shell with `podman exec`, ran
+`gh auth login`, and left behind a `~/.config/gh/hosts.yml` that nothing had
+declared and nothing could describe.
+
+**Connect GitHub** runs the OAuth **device flow** instead. The page shows a
+one-time code and a link to `github.com/login/device`; you type the code there
+on whatever device you are holding — a phone is fine — approve it, and the page
+stores the resulting credential itself. No shell, no pasted token, and the token
+never reaches the browser: it goes from GitHub to `gh auth login --with-token`
+on **standard input**, because `/proc/<pid>/cmdline` is world-readable and this
+container has real LDAP user logins on it. `gh auth setup-git` runs straight
+after, so `git push` works and not just `gh`.
+
+The stored file lands where the boot-time hardening expects it
+(`secure_dev_private_state`, #2672): owned by `dev`, mode `0600`. The page
+reports the owner and mode it actually measured afterwards — if it could not
+tighten the file (an old root-owned `hosts.yml` from the hand-made era, which
+`dev` may write but may not `chmod`), it says the token is still readable by
+other logins rather than claiming a mode nobody verified.
+
+**The status line is three-valued, and that is the point.** It is measured by an
+authenticated call to GitHub (`gh api user`), not by the presence of a file:
+
+- **Connected** — GitHub answered and named the account.
+- **Not connected** — the check ran and came back negative, and it says which
+  negative: nothing is stored, or something is stored and GitHub rejected it.
+- **Unknown** — the check did not complete (no `gh`, a timeout, no route to
+  github.com). This is *not* rendered as "not connected", because those are
+  different facts: showing the second as the first gets you to redo a
+  connection that already works, or to trust one that does not.
+
+The flow speaks to GitHub's two device endpoints directly rather than driving
+`gh auth login --web`, whose "press Enter to open your browser" prompt a server
+can only fake with a pty. It uses the GitHub CLI's own public OAuth application,
+so the credential is exactly the one `gh auth login` would have created; set
+`CLAUDE_DEV_GITHUB_CLIENT_ID` on the pod to use your own OAuth app instead, and
+`CLAUDE_DEV_GITHUB_SCOPES` to change the requested scopes (the default asks for
+`repo read:org gist workflow` — without `workflow`, a push that touches
+`.github/workflows` is rejected outright).
 
 **Two gates, and both have to pass.** The reverse proxy sends every visitor to
 the box's normal Authelia sign-in first (`__authelia_forward_auth__`, the same

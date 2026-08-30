@@ -261,3 +261,83 @@ body {
 .projects-action-error { border-color: #c0392b; }
 .projects-action-error p { margin: 0; }
 .projects-working { margin: 0.75rem 0; color: var(--ink-muted); font-size: 0.9rem; }
+
+/* ── the GitHub panel (#2681) ─────────────────────────────────────────────
+   The three status colours are the three ANSWERS, not decoration: green =
+   checked and connected, red = checked and negative, amber = the check did
+   not complete. Amber is deliberately not red — "unknown" must not read as
+   "not connected". */
+.github-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.github-connect,
+.github-refresh {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.github-connect { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.github-connect:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.github-connect:disabled,
+.github-refresh:disabled { opacity: 0.5; cursor: progress; }
+
+.github-status {
+  margin: 1rem 0 0;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.github-status-headline { margin: 0; }
+.github-status-label { font-weight: 600; }
+.github-status-connected .github-status-label { color: #1a7f4b; }
+.github-status-disconnected .github-status-label { color: #c0392b; }
+.github-status-unknown { border-color: #9a6b00; }
+.github-status-unknown .github-status-label { color: #9a6b00; }
+@media (prefers-color-scheme: dark) {
+  .github-status-connected .github-status-label { color: #4cc38a; }
+  .github-status-unknown .github-status-label { color: #e0b155; }
+}
+.github-account { font-weight: 600; }
+.github-status-detail,
+.github-credential {
+  margin: 0.35rem 0 0;
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+.github-credential[data-credential="open"] { color: #c0392b; }
+.github-loading { margin: 1rem 0 0; color: var(--ink-muted); font-size: 0.9rem; }
+
+.github-flow-output:empty { display: none; }
+.github-flow,
+.github-result,
+.github-error {
+  margin: 0.9rem 0 0;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 0.9rem;
+}
+.github-flow h3 { margin: 0 0 0.4rem; font-size: 0.98rem; }
+.github-flow-step { margin: 0; }
+.github-flow-code {
+  margin: 0.5rem 0;
+  font: 700 1.6rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.12em;
+  user-select: all;
+}
+.github-flow-note,
+.github-flow-progress { margin: 0.3rem 0 0; color: var(--ink-muted); font-size: 0.85rem; }
+.github-result-headline { margin: 0; }
+.github-result-partial { border-color: #9a6b00; }
+.github-result-warnings { margin: 0.4rem 0 0; padding-left: 1.1rem; }
+.github-warning { color: #9a6b00; }
+@media (prefers-color-scheme: dark) { .github-warning { color: #e0b155; } }
+.github-error { border-color: #c0392b; }
+.github-error p { margin: 0; }
+.github-error-detail { margin-top: 0.35rem; color: var(--ink-muted); font-size: 0.85rem; }
+.github-working { margin: 0.9rem 0 0; color: var(--ink-muted); font-size: 0.9rem; }

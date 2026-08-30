@@ -24,7 +24,8 @@
  * #2678 shipped the shell; #2679 filled the first slot; #2680-#2682 follow.
  */
 import projects from './projects.js';
+import github from './github.js';
 
-export const PANELS = [projects];
+export const PANELS = [projects, github];
 
 export default PANELS;
