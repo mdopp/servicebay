@@ -259,6 +259,70 @@ ldap_group_members() {
   rm -f "$pwfile"
 }
 
+# Credential + private-state files under $DEV_HOME that must belong to `dev`
+# alone. Relative to $DEV_HOME so the fake workspace in the regression test
+# exercises the same list the boot sequence uses.
+#
+# `.config/gh/hosts.yml` is the GitHub OAuth token every session pushes with;
+# `.claude/.credentials.json` is the Claude OAuth blob; `settings.json` and
+# `history.jsonl` are the session's own private state. They are created by
+# tools run in a root shell (`gh auth login` over `podman exec`, a restore),
+# which leaves them root-owned mode 0777 — readable AND overwritable by every
+# provisioned LLDAP user, since sshd admits `AllowGroups dev ldapusers`
+# (#2672).
+DEV_PRIVATE_DIRS=(
+  '.config'
+  '.config/gh'
+  '.claude'
+)
+DEV_PRIVATE_FILES=(
+  '.config/gh/hosts.yml'
+  '.claude/.credentials.json'
+  '.claude/settings.json'
+  '.claude/history.jsonl'
+)
+
+# Re-assert `dev`-only ownership and mode on those paths. Runs on every boot,
+# so a file recreated by hand as root is retightened on the next restart and a
+# volume restore cannot quietly reopen the token.
+#
+# Two properties this is built around:
+#
+#   * ORDER. chown BEFORE chmod, and chmod ONLY if the chown succeeded. Today
+#     `dev` can read a root-owned hosts.yml solely because it is 0777; mode
+#     0600 on a file still owned by root would break `git push` for every
+#     session at once. Tightening a file we could not take ownership of is
+#     therefore worse than leaving it alone — so we don't.
+#
+#   * ABSENCE IS NOT AN ERROR. A box that never ran `gh auth login` has no
+#     hosts.yml, and a fresh volume has no ~/.claude. Each path is guarded on
+#     existence; the function still returns non-zero if a path that IS there
+#     could not be secured, so the caller can say so.
+secure_dev_private_state() {
+  local rel path rc=0 mode secured=0
+  for rel in "${DEV_PRIVATE_DIRS[@]}" "${DEV_PRIVATE_FILES[@]}"; do
+    path="$DEV_HOME/$rel"
+    if [ -d "$path" ]; then
+      mode=0700
+    elif [ -f "$path" ]; then
+      mode=0600
+    else
+      continue
+    fi
+    if chown dev:dev "$path" 2>/dev/null; then
+      if chmod "$mode" "$path" 2>/dev/null; then
+        secured=$((secured + 1))
+      else
+        rc=1
+      fi
+    else
+      rc=1
+    fi
+  done
+  echo "claude-dev: secured $secured credential/state path(s) under $DEV_HOME as dev-only."
+  return "$rc"
+}
+
 # Sourcing guard: `CLAUDE_DEV_ENTRYPOINT_LIB=1 source docker-entrypoint.sh`
 # stops here with the helpers defined, so the regression test can exercise
 # them without the root-only boot sequence below.
@@ -391,6 +455,13 @@ EOF
     echo "claude-dev: WARNING — nslcd failed to start; LDAP login disabled, local 'dev' account still works." >&2
   fi
 fi
+
+# The GitHub OAuth token and the persisted Claude state are only as private as
+# their file modes. Re-assert them here, AFTER the LDAP block has provisioned
+# the collaborator accounts that would otherwise be able to read (and
+# overwrite) them (#2672).
+secure_dev_private_state \
+  || echo "claude-dev: WARNING — could not secure every credential file under $DEV_HOME; a token there may still be readable by other logins." >&2
 
 # Long-lived subscription auth, from `claude setup-token` on a machine that
 # has a browser. Without it every session here runs on the interactive
