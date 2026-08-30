@@ -38,6 +38,7 @@ homes under `/workspace/home/<user>` stay private (mode `700`).
 | `CLAUDE_DEV_SSH_PASSWORD` | Auto-generated password for the local `dev` break-glass user; surfaced as a credential after install. |
 | `CLAUDE_DEV_SSH_AUTHORIZED_KEY` | Optional SSH public key for the `dev` user; enables key-based login (recommended when the box is reachable from outside the LAN). |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Optional long-lived Claude subscription token, so sessions never need an interactive `/login`. See [Staying logged in](#staying-logged-in). Blank keeps the interactive login. |
+| `SERVICEBAY_MCP_TOKEN` | Optional read-only ServiceBay API token, wired as an MCP server for every session. See [Reading ServiceBay from a session](#reading-servicebay-from-a-session). |
 | `LLDAP_ADMIN_PASSWORD` | LLDAP bind password. **Not asked for** — reused automatically from the value the `auth` stack generated. Empty ⇒ LDAP login off, `dev` only. |
 | `CLAUDE_DEV_LDAP_GROUP` | LLDAP group whose members may SSH in (default `admins`). |
 | `LLDAP_LDAP_PORT` / `LLDAP_BASE_DN` | LLDAP coordinates; default to the `auth` stack's (`3890` / the base DN derived from `PUBLIC_DOMAIN`). LDAP login is skipped when the base DN is blank. The LLDAP *host* is not a variable — since template v2 the pod reaches it at `host.containers.internal` (see [CHANGELOG](CHANGELOG.md)). |
@@ -186,6 +187,38 @@ spends your own Claude subscription, and LDAP users (who are in `ldapusers` and
 `devshare`, never in group `dev`) must not be able to read it. Clearing the
 variable and restarting removes the file rather than leaving a revoked token
 behind.
+
+## Reading ServiceBay from a session
+
+A session regularly needs to look something up about the box it runs on — an
+ADR, an assist, a service's logs, its rendered definition. Set
+`SERVICEBAY_MCP_TOKEN` and the entrypoint registers ServiceBay as an MCP server
+for every session at boot, so nothing has to be pasted in by hand.
+
+**Mint it with the `read` scope only, and tick "Never Expires".** ServiceBay
+offers that option exclusively for read-only scope sets, which makes the token
+configure-once. Anything from `lifecycle` upward expires within 30 days.
+
+When a session genuinely needs to change something it asks: `request_token`
+needs only `read`, so the session can request a short-lived `lifecycle` token
+and you approve that one job from the UI. A shell goes through the one-shot
+flow, bound to a single operation, minted on approval and burned after use.
+
+One shared token is deliberate. ServiceBay's scope ladder has no per-service
+granularity, so a read-only token is equally harmless in every checkout and
+per-repo tokens would buy attribution and nothing else. User scope also covers
+checkouts cloned later, with no reconcile pass to run.
+
+If you ever configure this by hand, note two things:
+
+- Use `--scope user` (or `local` for a single project) — **never
+  `--scope project`**, which writes `.mcp.json` into the checkout. That file
+  is tracked, so the token would be committed.
+- The endpoint is `http://host.containers.internal:5888/mcp`. Since the pod
+  moved into its own network namespace it cannot resolve the public `admin.`
+  hostname; on-box siblings are reached through `host.containers.internal`.
+- A session reads its MCP configuration once, at launch. Adding a server to a
+  running session does nothing until it restarts.
 
 ## Persistent session (tmux)
 

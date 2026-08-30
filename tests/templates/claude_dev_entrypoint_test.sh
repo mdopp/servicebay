@@ -148,7 +148,15 @@ member: uid=bob,ou=people,dc=example,dc=test
 LDIF
 STUB
 
-chmod +x "$STUB_BIN/su" "$STUB_BIN/start-claude" "$STUB_BIN/ldapsearch"
+
+# `claude` stub — records each `claude mcp …` call with the directory and HOME
+# it ran in. Where the config lands and which scope is used is the whole point
+# of this code, so both have to be observable.
+cat > "$STUB_BIN/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\0' "PWD=$PWD" "HOME=$HOME" "$@" "--end--" >> "$CLAUDE_ARGS_RECORD"
+STUB
+chmod +x "$STUB_BIN/su" "$STUB_BIN/start-claude" "$STUB_BIN/ldapsearch" "$STUB_BIN/claude"
 
 export SU_RECORD="$RECORD/su.txt"
 export SU_ARGS_RECORD="$RECORD/su-args.txt"
@@ -156,6 +164,7 @@ export SC_ARGS_RECORD="$RECORD/start-claude-args.txt"
 export SC_ENV_RECORD="$RECORD/start-claude-env.txt"
 export LS_ARGS_RECORD="$RECORD/ldapsearch-args.txt"
 export LS_PWFILE_RECORD="$RECORD/ldapsearch-pwfile.txt"
+export CLAUDE_ARGS_RECORD="$RECORD/claude-args.txt"
 
 read_nul() { # read_nul <file> -> lines on stdout, one record per line
   [ -f "$1" ] || return 0
@@ -575,6 +584,37 @@ tmux_cmd="$(read_nul "$TMUX_RECORD" | tr '\n' ' ')"
 check "no fallback chain when --continue was not requested" \
   "$(printf '%s' "$tmux_cmd" | grep -q '|| claude' && echo 1 || echo 0)" \
   "cmd: $tmux_cmd"
+
+
+# =========================================================================
+# 8. The ServiceBay MCP server every session gets.
+#
+#    Two properties carry the design and neither is visible from the outside:
+#    WHICH SCOPE the entry is written at, and that a malformed token is refused
+#    rather than interpolated into a command. `--scope project` would write
+#    `.mcp.json` INTO a checkout — a tracked file — and commit the credential
+#    on the next `git add`.
+# =========================================================================
+: > "$CLAUDE_ARGS_RECORD"
+configure_mcp_server
+check "does nothing when no token is configured"   "$([ ! -s "$CLAUDE_ARGS_RECORD" ] && echo 0 || echo 1)"   "rec: $(read_nul "$CLAUDE_ARGS_RECORD" | tr '
+' '|')"
+
+: > "$CLAUDE_ARGS_RECORD"
+SERVICEBAY_MCP_TOKEN="sb_readonlytoken" configure_mcp_server >/dev/null
+mcp_rec="$(read_nul "$CLAUDE_ARGS_RECORD" | tr '
+' '|')"
+check "registers the server at user scope, so later checkouts are covered too"   "$(printf '%s' "$mcp_rec" | grep -Fq -- '--scope|user' && echo 0 || echo 1)"   "rec: $mcp_rec"
+check "NEVER uses project scope, which would commit the token to a repo"   "$(printf '%s' "$mcp_rec" | grep -Fq -- '|project|' && echo 1 || echo 0)"   "rec: $mcp_rec"
+check "sends the token as a bearer header"   "$(printf '%s' "$mcp_rec" | grep -Fq 'Authorization: Bearer sb_readonlytoken' && echo 0 || echo 1)"   "rec: $mcp_rec"
+check "points at the internal endpoint, not the public hostname"   "$(printf '%s' "$mcp_rec" | grep -Fq 'host.containers.internal:5888/mcp' && echo 0 || echo 1)"   "rec: $mcp_rec"
+check "removes any stale entry first, so a rotated token replaces the old one"   "$(printf '%s' "$mcp_rec" | grep -Fq 'remove|servicebay' && echo 0 || echo 1)"   "rec: $mcp_rec"
+check "runs as dev with the shared workspace HOME"   "$(printf '%s' "$mcp_rec" | grep -Fq "HOME=$DEV_HOME_FAKE" && echo 0 || echo 1)"   "rec: $mcp_rec"
+
+: > "$CLAUDE_ARGS_RECORD"
+SERVICEBAY_MCP_TOKEN='sb_x"; id #' configure_mcp_server 2>/dev/null
+check "refuses a token carrying shell metacharacters instead of running it"   "$([ ! -s "$CLAUDE_ARGS_RECORD" ] && echo 0 || echo 1)"   "rec: $(read_nul "$CLAUDE_ARGS_RECORD" | tr '
+' '|')"
 
 # =========================================================================
 echo

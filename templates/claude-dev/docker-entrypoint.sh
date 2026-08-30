@@ -155,6 +155,58 @@ register_safe_directories() {
   ' "$DEV_HOME" "$@"
 }
 
+# Give every Claude session read access to ServiceBay's own API, so it can look
+# up an ADR, an assist, a service's logs or a rendered service definition
+# without anyone pasting a token into a session by hand.
+#
+# ONE token at Claude Code's `user` scope, not one per checkout. Per-repo tokens
+# would buy attribution and nothing else: ServiceBay's scope ladder has no
+# per-service granularity, and a READ-ONLY token cannot change anything no
+# matter which project holds it. User scope also covers checkouts cloned later,
+# so this needs no reconcile pass and no repo discovery.
+#
+# Mint it READ-ONLY. ServiceBay offers "Never Expires" only for read-only scope
+# sets — anything from `lifecycle` upward expires within 30 days and puts the
+# operator on a rotation treadmill. A session that genuinely needs to restart or
+# deploy something calls `request_token`, which itself needs only `read`, and the
+# operator approves that one job; a shell goes through the one-shot flow bound to
+# a single operation.
+#
+# `--scope user`, and if you ever narrow this to a single project use `local` —
+# never `project`. Project scope writes `.mcp.json` INTO the checkout, which is a
+# tracked file, so the token would be committed on the next `git add`.
+#
+# The endpoint is the INTERNAL one. Since claude-dev moved into its own network
+# namespace (ADR 0007 Decision 1) the pod cannot resolve the public `admin.`
+# hostname; on-box siblings are reached through `host.containers.internal`, the
+# same way the LLDAP bind is.
+MCP_URL="http://host.containers.internal:5888/mcp"
+
+configure_mcp_server() {
+  local token="${SERVICEBAY_MCP_TOKEN:-}"
+  [ -n "$token" ] || return 0
+  # The token is interpolated into a command, so it may hold only the characters
+  # an `sb_` token actually contains. Refusing loudly beats configuring a server
+  # that then fails on every call.
+  case "$token" in *[!A-Za-z0-9_-]*)
+    echo "claude-dev: WARNING — SERVICEBAY_MCP_TOKEN contains unexpected characters; MCP server not configured." >&2
+    return 0;;
+  esac
+  # remove-then-add keeps this idempotent across restarts: a rotated token or a
+  # changed URL replaces the old entry instead of colliding with it.
+  if su_dev '
+      export HOME="$1"
+      cd "$HOME" || exit 1
+      claude mcp remove servicebay --scope user >/dev/null 2>&1
+      claude mcp add --transport http --scope user servicebay "$2" \
+        --header "Authorization: Bearer $3" >/dev/null 2>&1
+    ' "$DEV_HOME" "$MCP_URL" "$token"; then
+    echo "claude-dev: ServiceBay MCP server configured for every session."
+  else
+    echo "claude-dev: WARNING — could not configure the ServiceBay MCP server." >&2
+  fi
+}
+
 # One full reconcile pass: discover the checkouts, make git usable in each of
 # them, then start a session for any that has none yet. Every step is
 # idempotent — `--replace-all` rather than `--add`, and `start-claude` skips a
@@ -405,6 +457,11 @@ fi
 # `register_safe_directories` / `discover_repos` / `autostart_claude` at the top
 # of this file — the directory names are shared-workspace-writable, so they must
 # reach `start-claude` as argv, never as shell source (#2418).
+# Before the autostart, not after: a Claude session reads its MCP configuration
+# once, at launch. Configuring the server afterwards would leave every session
+# started this boot without it until the next restart.
+configure_mcp_server
+
 reconcile_repos
 
 if [ "${#autostart_repos[@]}" -gt 0 ]; then
