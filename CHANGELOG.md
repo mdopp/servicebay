@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.21.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.20.0...servicebay-v5.21.0) (2026-08-30)
+
+
+### Features
+
+* **claude-dev:** mint the MCP token at install and serve an authenticated config shell ([086b024](https://github.com/mdopp/servicebay/commit/086b024257768af44c74b7a0790d800e5e13c584))
+* **claude-dev:** serve an authenticated configuration shell from the container ([b1ed699](https://github.com/mdopp/servicebay/commit/b1ed6997f1be0a37924c4e5ad0c42384b88aa4b0)), closes [#2678](https://github.com/mdopp/servicebay/issues/2678)
+* **install:** mint the ServiceBay API token a template asks for ([94285f2](https://github.com/mdopp/servicebay/commit/94285f2f2b0defa0766791af52a9ced32a5cb936)), closes [#2673](https://github.com/mdopp/servicebay/issues/2673)
+
 ## [5.20.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.19.1...servicebay-v5.20.0) (2026-08-30)
 
 
