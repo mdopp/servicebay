@@ -1,25 +1,26 @@
 /* claude-dev configuration shell — layout only. Panels (#2679-#2682) style
-   their own contents; everything here is the frame around them. */
+   their own contents; everything here is the frame around them.
+
+   COLOUR LIVES IN tokens.css, NOT HERE (#2712). That file is generated from
+   ServiceBay's own `packages/frontend/src/app/globals.css`, so this page wears
+   the admin UI's palette rather than a look-alike of its own — a theme change
+   in the source lands here instead of having to be chased. There is no hex in
+   this file and there must never be one again; the suite scans for it
+   (`tests/backend/claude_dev_config_ui_tokens.test.ts`).
+
+   Light/dark is likewise the token sheet's job: `:root` IS dark, as it is in
+   ServiceBay, and a `prefers-color-scheme: light` override sits in tokens.css.
+   Nothing below needs to know which mode it is in.
+
+   Violet (`--svc-violet-*`) is claude-dev's per-service IDENTITY colour (#2126)
+   and appears on exactly one thing: the header identity chip — a soft tinted
+   fill with a saturated glyph. It is not a substitute for `--accent`; the
+   primary action, the active nav marker and the focus ring stay the system's
+   blue, because that is what those mean everywhere else on the box. */
 
 :root {
-  color-scheme: light dark;
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --ink: #16181d;
-  --ink-muted: #5b6270;
-  --line: #d9dde4;
-  --accent: #2f6fed;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14161a;
-    --surface: #1c1f25;
-    --ink: #e9ecf1;
-    --ink-muted: #a0a7b4;
-    --line: #2c313a;
-    --accent: #6d9bff;
-  }
+  /* Both ramps are supported; dark is the default, matching the admin UI. */
+  color-scheme: dark light;
 }
 
 * { box-sizing: border-box; }
@@ -27,9 +28,16 @@
 body {
   margin: 0;
   padding: 0 1.25rem 3rem;
-  background: var(--bg);
-  color: var(--ink);
+  background: var(--background);
+  color: var(--text);
   font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* One visible focus ring for everything, in the accent — the standard's §4.
+   Never `outline: none` without a replacement. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .skip-link {
@@ -41,19 +49,40 @@ body {
   top: 1rem;
   background: var(--surface);
   padding: 0.5rem 0.75rem;
-  border-radius: 6px;
+  border-radius: var(--r-chip);
 }
 
 .shell-header {
   max-width: 60rem;
   margin: 0 auto;
   padding: 2rem 0 1.25rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border);
 }
 
+.shell-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+/* The per-service identity chip (#2126): a soft violet fill + a saturated
+   glyph, icon-chip scale. Deliberately the ONLY violet on the page. */
+.shell-identity-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--r-card);
+  background: var(--svc-violet-bg);
+  color: var(--svc-violet-fg);
+}
+.shell-identity-chip svg { width: 1.35rem; height: 1.35rem; }
+
 .shell-title { margin: 0; font-size: 1.5rem; letter-spacing: -0.01em; }
-.shell-subtitle { margin: 0.35rem 0 0; color: var(--ink-muted); }
-.shell-identity { margin: 0.75rem 0 0; color: var(--ink-muted); font-size: 0.9rem; }
+.shell-subtitle { margin: 0.35rem 0 0; color: var(--text-muted); }
+.shell-identity { margin: 0.75rem 0 0; color: var(--text-muted); font-size: 0.9rem; }
 
 .shell-body {
   max-width: 60rem;
@@ -77,38 +106,38 @@ body {
   color: inherit;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--r-card);
   padding: 0.5rem 0.7rem;
   cursor: pointer;
 }
 .shell-nav button:hover { background: var(--surface); }
 .shell-nav button[aria-current="page"] {
   background: var(--surface);
-  border-color: var(--line);
+  border-color: var(--border);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .shell-nav .shell-nav-empty {
-  color: var(--ink-muted);
+  color: var(--text-muted);
   font-size: 0.9rem;
   padding: 0.5rem 0.7rem;
 }
 
 .shell-main {
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
   padding: 1.25rem;
   min-height: 12rem;
 }
 
 .shell-empty h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
-.shell-empty p { margin: 0 0 0.5rem; color: var(--ink-muted); }
+.shell-empty p { margin: 0 0 0.5rem; color: var(--text-muted); }
 
 .shell-footer {
   max-width: 60rem;
   margin: 2rem auto 0;
-  color: var(--ink-muted);
+  color: var(--text-muted);
   font-size: 0.85rem;
 }
 
@@ -117,22 +146,22 @@ body {
    failed read and a partially failed read must not look like each other. */
 
 .panel h2 { margin: 0 0 0.35rem; font-size: 1.05rem; }
-.panel-lede { margin: 0 0 1rem; color: var(--ink-muted); }
+.panel-lede { margin: 0 0 1rem; color: var(--text-muted); }
 
 .projects-refresh {
   appearance: none;
   font: inherit;
   color: inherit;
   background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
   padding: 0.3rem 0.7rem;
   cursor: pointer;
 }
 .projects-refresh[disabled] { opacity: 0.55; cursor: progress; }
 
 .projects-output { margin-top: 1rem; }
-.projects-loading { color: var(--ink-muted); margin: 0; }
+.projects-loading { color: var(--text-muted); margin: 0; }
 
 .projects-table {
   width: 100%;
@@ -143,13 +172,13 @@ body {
   text-align: left;
   vertical-align: top;
   padding: 0.55rem 0.6rem;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--border);
 }
 .projects-table thead th {
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--ink-muted);
+  color: var(--text-muted);
 }
 .projects-name { font-weight: 600; }
 .projects-name-text,
@@ -159,36 +188,31 @@ body {
   display: block;
   font-weight: 400;
   font-size: 0.82rem;
-  color: var(--ink-muted);
+  color: var(--text-muted);
 }
 
-.projects-state-running .projects-state-label { color: #1a7f4b; }
-.projects-state-configured .projects-state-label { color: #1a7f4b; }
-.projects-state-unknown .projects-state-label { color: #9a6b00; }
-@media (prefers-color-scheme: dark) {
-  .projects-state-running .projects-state-label,
-  .projects-state-configured .projects-state-label { color: #58c98d; }
-  .projects-state-unknown .projects-state-label { color: #e0b155; }
-}
+.projects-state-running .projects-state-label { color: var(--status-ok); }
+.projects-state-configured .projects-state-label { color: var(--status-ok); }
+.projects-state-unknown .projects-state-label { color: var(--status-warn); }
 
 .projects-empty,
 .projects-error {
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
   padding: 0.9rem 1rem;
 }
 .projects-empty h3,
 .projects-error h3 { margin: 0 0 0.35rem; font-size: 0.98rem; }
-.projects-empty p { margin: 0; color: var(--ink-muted); }
-.projects-error { border-color: #c0392b; }
+.projects-empty p { margin: 0; color: var(--text-muted); }
+.projects-error { border-color: var(--status-fail); }
 .projects-error p { margin: 0 0 0.4rem; }
-.projects-error-note { color: var(--ink-muted); font-size: 0.85rem; }
+.projects-error-note { color: var(--text-muted); font-size: 0.85rem; }
 
 .projects-source-warning {
   margin: 0 0 0.75rem;
   padding: 0.55rem 0.7rem;
-  border: 1px solid #9a6b00;
-  border-radius: 8px;
+  border: 1px solid var(--status-warn);
+  border-radius: var(--r-card);
   font-size: 0.9rem;
 }
 
@@ -198,52 +222,51 @@ body {
 .projects-remove {
   font: inherit;
   padding: 0.3rem 0.7rem;
-  border: 1px solid #c0392b;
-  border-radius: 8px;
+  border: 1px solid var(--status-fail);
+  border-radius: var(--r-card);
   background: transparent;
-  color: #c0392b;
+  color: var(--status-fail);
   cursor: pointer;
 }
-.projects-remove:hover:not(:disabled) { background: #c0392b; color: #fff; }
+/* Text on a filled status colour is the PAGE colour, not a fixed white: the
+   status ramp flips between modes (red-400 on dark, red-600 on light) and
+   --background flips with it, so the fill stays legible either way. */
+.projects-remove:hover:not(:disabled) { background: var(--status-fail); color: var(--background); }
 .projects-remove:disabled { opacity: 0.45; cursor: not-allowed; }
-@media (prefers-color-scheme: dark) {
-  .projects-remove { border-color: #e2705f; color: #e2705f; }
-  .projects-remove:hover:not(:disabled) { background: #e2705f; color: #14171a; }
-}
 
 /* ── sign-in repair + restart a session (#2682) ─────────────────────────── */
 
 .projects-signin {
   margin: 0.9rem 0 1.1rem;
   padding: 0.7rem 0.9rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
   background: var(--surface);
   font-size: 0.9rem;
 }
 .projects-signin h3 { margin: 0 0 0.35rem; font-size: 0.98rem; }
 .projects-signin-lede,
-.projects-signin-detail { margin: 0 0 0.5rem; color: var(--ink-muted); font-size: 0.85rem; }
-.projects-signin[data-signin="unavailable"] { border-color: #9a6b00; }
+.projects-signin-detail { margin: 0 0 0.5rem; color: var(--text-muted); font-size: 0.85rem; }
+.projects-signin[data-signin="unavailable"] { border-color: var(--status-warn); }
 .projects-signin[data-signin="unavailable"] .projects-signin-detail { margin-bottom: 0; }
 .projects-signin-link {
   display: inline-block;
   padding: 0.3rem 0.7rem;
   border: 1px solid var(--accent);
-  border-radius: 8px;
+  border-radius: var(--r-card);
   color: var(--accent);
   font-weight: 600;
   text-decoration: none;
 }
-.projects-signin-link:hover { background: var(--accent); color: #fff; }
+.projects-signin-link:hover { background: var(--accent); color: var(--on-accent); }
 
 .projects-restart {
   font: inherit;
   display: block;
   margin-bottom: 0.35rem;
   padding: 0.3rem 0.7rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -254,30 +277,30 @@ body {
 .projects-add {
   margin-top: 1.5rem;
   padding: 1rem;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
   align-items: flex-end;
 }
 .projects-add h3 { flex: 1 0 100%; margin: 0; font-size: 0.98rem; }
-.projects-add-lede { flex: 1 0 100%; margin: 0; color: var(--ink-muted); font-size: 0.88rem; }
+.projects-add-lede { flex: 1 0 100%; margin: 0; color: var(--text-muted); font-size: 0.88rem; }
 .projects-field { display: flex; flex-direction: column; gap: 0.25rem; flex: 1 1 18rem; }
-.projects-field span { font-size: 0.82rem; color: var(--ink-muted); }
+.projects-field span { font-size: 0.82rem; color: var(--text-muted); }
 .projects-field input {
   font: inherit;
   padding: 0.4rem 0.55rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface-2);
   color: inherit;
 }
 .projects-add-submit {
   font: inherit;
   padding: 0.45rem 1rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -289,67 +312,63 @@ body {
 .projects-action-error {
   margin: 0.75rem 0;
   padding: 0.6rem 0.8rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
   font-size: 0.9rem;
 }
 .projects-result-headline { margin: 0; }
-.projects-result-partial { border-color: #9a6b00; }
+.projects-result-partial { border-color: var(--status-warn); }
 .projects-result-warnings { margin: 0.4rem 0 0; padding-left: 1.1rem; }
-.projects-warning { color: #9a6b00; }
-@media (prefers-color-scheme: dark) { .projects-warning { color: #e0b155; } }
-.projects-action-error { border-color: #c0392b; }
+.projects-warning { color: var(--status-warn); }
+.projects-action-error { border-color: var(--status-fail); }
 .projects-action-error p { margin: 0; }
-.projects-working { margin: 0.75rem 0; color: var(--ink-muted); font-size: 0.9rem; }
+.projects-working { margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem; }
 
 /* ── the GitHub panel (#2681) ─────────────────────────────────────────────
    The three status colours are the three ANSWERS, not decoration: green =
    checked and connected, red = checked and negative, amber = the check did
    not complete. Amber is deliberately not red — "unknown" must not read as
-   "not connected". */
+   "not connected". They are the shared --status-* ramp, so they mean the same
+   thing here as anywhere else on the box. */
 .github-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .github-connect,
 .github-refresh {
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   background: var(--surface);
-  color: var(--ink);
-  border-radius: 8px;
+  color: var(--text);
+  border-radius: var(--r-card);
   padding: 0.4rem 0.75rem;
   font: inherit;
   font-size: 0.9rem;
   cursor: pointer;
 }
 .github-connect { border-color: var(--accent); color: var(--accent); font-weight: 600; }
-.github-connect:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.github-connect:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
 .github-connect:disabled,
 .github-refresh:disabled { opacity: 0.5; cursor: progress; }
 
 .github-status {
   margin: 1rem 0 0;
   padding: 0.7rem 0.9rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
   background: var(--surface);
 }
 .github-status-headline { margin: 0; }
 .github-status-label { font-weight: 600; }
-.github-status-connected .github-status-label { color: #1a7f4b; }
-.github-status-disconnected .github-status-label { color: #c0392b; }
-.github-status-unknown { border-color: #9a6b00; }
-.github-status-unknown .github-status-label { color: #9a6b00; }
-@media (prefers-color-scheme: dark) {
-  .github-status-connected .github-status-label { color: #4cc38a; }
-  .github-status-unknown .github-status-label { color: #e0b155; }
-}
+.github-status-connected .github-status-label { color: var(--status-ok); }
+.github-status-disconnected .github-status-label { color: var(--status-fail); }
+.github-status-unknown { border-color: var(--status-warn); }
+.github-status-unknown .github-status-label { color: var(--status-warn); }
 .github-account { font-weight: 600; }
 .github-status-detail,
 .github-credential {
   margin: 0.35rem 0 0;
-  color: var(--ink-muted);
+  color: var(--text-muted);
   font-size: 0.85rem;
 }
-.github-credential[data-credential="open"] { color: #c0392b; }
-.github-loading { margin: 1rem 0 0; color: var(--ink-muted); font-size: 0.9rem; }
+.github-credential[data-credential="open"] { color: var(--status-fail); }
+.github-loading { margin: 1rem 0 0; color: var(--text-muted); font-size: 0.9rem; }
 
 .github-flow-output:empty { display: none; }
 .github-flow,
@@ -357,8 +376,8 @@ body {
 .github-error {
   margin: 0.9rem 0 0;
   padding: 0.7rem 0.9rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
   background: var(--surface);
   font-size: 0.9rem;
 }
@@ -371,13 +390,12 @@ body {
   user-select: all;
 }
 .github-flow-note,
-.github-flow-progress { margin: 0.3rem 0 0; color: var(--ink-muted); font-size: 0.85rem; }
+.github-flow-progress { margin: 0.3rem 0 0; color: var(--text-muted); font-size: 0.85rem; }
 .github-result-headline { margin: 0; }
-.github-result-partial { border-color: #9a6b00; }
+.github-result-partial { border-color: var(--status-warn); }
 .github-result-warnings { margin: 0.4rem 0 0; padding-left: 1.1rem; }
-.github-warning { color: #9a6b00; }
-@media (prefers-color-scheme: dark) { .github-warning { color: #e0b155; } }
-.github-error { border-color: #c0392b; }
+.github-warning { color: var(--status-warn); }
+.github-error { border-color: var(--status-fail); }
 .github-error p { margin: 0; }
-.github-error-detail { margin-top: 0.35rem; color: var(--ink-muted); font-size: 0.85rem; }
-.github-working { margin: 0.9rem 0 0; color: var(--ink-muted); font-size: 0.9rem; }
+.github-error-detail { margin-top: 0.35rem; color: var(--text-muted); font-size: 0.85rem; }
+.github-working { margin: 0.9rem 0 0; color: var(--text-muted); font-size: 0.9rem; }
