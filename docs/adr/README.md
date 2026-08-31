@@ -41,6 +41,7 @@ situation* it applies, so it turns up when an agent self-selects.
 | 0012 | [`adr-0012-repair-is-reconciliation-not-reinstallation`](../../assists/adr-0012-repair-is-reconciliation-not-reinstallation.md) | Repair is reconciliation, not reinstallation — with hard guardrails against a reconciler hell (**renumbered from a second 0009**, #2617) |
 | 0013 | [`adr-0013-clients-request-their-own-access`](../../assists/adr-0013-clients-request-their-own-access.md) | Clients request their own access and a human only confirms; a three-class table decides which scopes may be self-requested at all, and the scope vocabulary exists exactly once |
 | 0014 | [`adr-0014-assist-catalog-delivered-at-runtime`](../../assists/adr-0014-assist-catalog-delivered-at-runtime.md) | The assist catalog is delivered at runtime, not baked into the image — exactly one source, and a failed delivery is empty and loud rather than stale and quiet |
+| 0015 | [`adr-0015-template-deletions-need-a-delivered-files-manifest`](../../assists/adr-0015-template-deletions-need-a-delivered-files-manifest.md) | A template deletes only what it demonstrably delivered — a delivered-files manifest, never a mirroring sync, because runtime files live in the same directories |
 
 ## The 0009 collision (#2617)
 

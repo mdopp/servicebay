@@ -49,6 +49,15 @@ export const CreateServiceRequest = z.object({
     .array(z.object({ path: HostFilePath, content: z.string().max(20_000_000) }).strict())
     .max(500)
     .optional(),
+  /**
+   * #2703 — `extraFiles` is the template's COMPLETE resolved artifact set,
+   * so a path this mechanism delivered earlier and no longer delivers may
+   * be deleted from the node. Only the install runner sets it, because only
+   * it resolves the whole template; a caller that sends a subset must leave
+   * it off (the default) or the rest would be read as removed. Never
+   * licenses deleting anything but a previously recorded delivered path.
+   */
+  completeDelivery: z.boolean().optional(),
   /** Values for the template's own post-deploy/migration scripts. */
   postDeployEnv: z.record(EnvVarName, z.string()).optional(),
   /** Registry the template came from (`Built-in`, `Local`, a registry name). */

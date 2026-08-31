@@ -726,6 +726,32 @@ trigger placeholder substitution. See #1156. First consumer is the
 OSCAR `oscar-household` template's skill pack at
 `templates/oscar-household/skills/` in `mdopp/solbay`.
 
+**Removing a file is a supported edit (#2703).** Delete it from the
+template's source tree and the next install/redeploy of that template
+removes it from the node, so a retired skill stops declaring its
+command. Two things follow from *how* that works, and template authors
+need both:
+
+- **The deploy deletes only paths it recorded delivering itself.** After
+  each complete delivery ServiceBay writes a delivered-files manifest
+  (`DATA_DIR/delivered-files/<node>__<service>.json`); the next deploy
+  deletes exactly the paths that are in the previous manifest and no
+  longer in the template. It never lists the target directory, so a file
+  the running application created there — a database, a token, a user's
+  notes — is not a delete candidate at all. Do not rely on a "keep this"
+  exclusion list; there is none, and none is needed.
+- **Nothing is deleted until a file has been delivered once with the
+  manifest in place.** On the first deploy after this shipped, an
+  existing install has no manifest, so that deploy only *records* — files
+  orphaned by older deploys stay until an operator removes them by hand
+  (the install log says so). Only files delivered from that deploy onward
+  can be pruned later.
+
+Seed-only companion files (`servicebay.seed-only-configs`) are never
+recorded and therefore never pruned: their content belongs to the
+application or the operator, so dropping the declaration leaves the file
+on the node.
+
 ### Custom layouts via `servicebay.json`
 
 For registries whose top-level layout reflects their own subsystem

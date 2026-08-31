@@ -33,6 +33,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ListResourcesResult, ReadResourceResult, GetPromptResult } from '@modelcontextprotocol/sdk/types.js';
 import { listAssists, getAssist, type AssistKind, type AssistSummary } from '@/lib/assists/catalog';
+import { logger } from '@/lib/logger';
 
 /** The `assist://` URI scheme every assist resource is served under. */
 export const ASSIST_URI_SCHEME = 'assist';
@@ -179,9 +180,30 @@ export function registerAssistResources(server: McpServer): void {
  * request path, so a landed actionable assist becomes a prompt on the next
  * server construction; the resource surface is the always-live view, prompts
  * are the curated convenience layer over the actionable subset.
+ *
+ * **It never throws (#2706).** Because it runs on EVERY /mcp request *before*
+ * the transport is connected, a catalog read that escapes here comes out of
+ * `server.ts` as a bare HTTP 500 on `initialize` — i.e. before a tool is even
+ * named — so a corrupt `delivery.json` took down `list_containers`, `get_logs`,
+ * `deploy_service` and, most expensively, `set_channel`: with the box on `:dev`
+ * and /mcp dead, the flip back to `:latest` was no longer reachable. A fault in
+ * the catalog must not take the road you repair it from. So a failed catalog
+ * read degrades this optional surface to *no assist prompts*; #2701's "loud"
+ * half is unchanged and stays where it belongs — on `list_assists`,
+ * `get_assist` and `list_assist_drift`, which still report the outage.
  */
 export async function registerAssistPrompts(server: McpServer): Promise<void> {
-  const promptAssists = await listPromptAssists();
+  let promptAssists: AssistSummary[];
+  try {
+    promptAssists = await listPromptAssists();
+  } catch (e) {
+    logger.warn(
+      'assists',
+      `Assist prompts not registered — the catalog could not be read (${e instanceof Error ? e.message : String(e)}). ` +
+      'The rest of the MCP surface is unaffected; list_assists/get_assist report the outage (#2706).',
+    );
+    return;
+  }
   for (const a of promptAssists) {
     server.registerPrompt(
       assistPromptName(a.id),

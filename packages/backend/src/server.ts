@@ -245,7 +245,15 @@ app.prepare().then(() => {
           console.error('MCP auth error:', err);
         }
         if (!auth) {
-          const session = await getSessionFromCookieHeader(req.headers.cookie);
+          // Never let the session store's failure escape here (#2706): every
+          // throw on this path — ahead of `transport.handleRequest` — becomes a
+          // bare HTTP 500 on `initialize`, i.e. the WHOLE MCP surface, tools a
+          // caller never asked for included. A session lookup that fails is an
+          // unauthenticated request, and says so as a 401 below.
+          const session = await getSessionFromCookieHeader(req.headers.cookie).catch((e) => {
+            logger.error('Server', 'MCP cookie-session lookup failed', e);
+            return null;
+          });
           if (session) {
             // Cookie auth retains the broad operator scopes for back-compat.
             // Fresh installs that want stricter behaviour use named tokens.
