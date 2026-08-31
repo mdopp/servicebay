@@ -16,6 +16,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
 import type { JobInputVariable } from './jobStore';
 
 // Set before the module graph is imported — DATA_DIR is read at load time in
@@ -34,6 +35,7 @@ function storedTokens(): StoredToken[] {
 
 let assembleManifest: typeof import('./manifestAssembler').assembleManifest;
 let verifyToken: typeof import('@/lib/auth/apiTokens').verifyToken;
+let persistSingleSecret: typeof import('./savedSecrets').persistSingleSecret;
 
 const install = (prefilled?: Record<string, string>) =>
   assembleManifest({
@@ -52,6 +54,7 @@ beforeAll(async () => {
   );
   ({ assembleManifest } = await import('./manifestAssembler'));
   ({ verifyToken } = await import('@/lib/auth/apiTokens'));
+  ({ persistSingleSecret } = await import('./savedSecrets'));
 });
 
 describe('claude-dev SERVICEBAY_MCP_TOKEN — real mint, real store (#2673)', () => {
@@ -84,5 +87,45 @@ describe('claude-dev SERVICEBAY_MCP_TOKEN — real mint, real store (#2673)', ()
     const third = await install({ SERVICEBAY_MCP_TOKEN: 'sb_operator_supplied' });
     expect(mcpToken(third.variables)).toBe('sb_operator_supplied');
     expect(storedTokens()).toHaveLength(1);
+  });
+
+  /**
+   * #2711 — the reuse rule (#615) is checked before the mint rule (#2673) and
+   * matches ANY stored string, so a service installed before `mintApiToken`
+   * existed carries the random secret that install generated and hands the same
+   * non-token back on every later deploy. The mint never runs; the consumer 401s
+   * forever. Measured on a real box: the token file held a 32-character value and
+   * no minted token row existed for the service at all.
+   *
+   * Runs after the case above, so the store already holds a WELL-FORMED token —
+   * which is what makes "one token before, two after" mean "it re-minted", not
+   * "it minted for the first time".
+   */
+  it('re-mints when the stored value is not a token, and still reuses one that is', async () => {
+    const before = storedTokens().length;
+    expect(before).toBe(1);
+
+    // Exactly what the install path leaves behind: `generateRandomSecret()`'s
+    // default 32 characters. Never printed — only its length is ever asserted.
+    const notAToken = generateRandomSecret();
+    expect(notAToken).toHaveLength(32);
+    await persistSingleSecret('SERVICEBAY_MCP_TOKEN', notAToken);
+
+    // Every assertion below is on a BOOLEAN, not on the value: a failing
+    // `expect(x).toBe(y)` prints both sides, and a credential — even a
+    // throwaway one from a temp DATA_DIR — is not something a test report
+    // gets to carry.
+    const reminted = mcpToken((await install()).variables);
+    // The red proof: before the fix this is `notAToken`, verbatim.
+    expect(reminted === notAToken).toBe(false);
+    expect(/^sb_[0-9a-f]{8}_[A-Z2-9]{32}$/.test(reminted)).toBe(true);
+    expect(await verifyToken(reminted)).not.toBeNull();
+    expect(storedTokens()).toHaveLength(before + 1);
+
+    // …and #2673's idempotency still holds on the replacement: a well-formed
+    // stored token is reused, so re-installing accumulates no orphans.
+    const again = mcpToken((await install()).variables);
+    expect(again === reminted).toBe(true);
+    expect(storedTokens()).toHaveLength(before + 1);
   });
 });

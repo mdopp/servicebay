@@ -209,13 +209,30 @@ CONFIG_UI_TOKEN_FILE=/run/claude-dev/servicebay-token
 configure_mcp_server() {
   local token="${SERVICEBAY_MCP_TOKEN:-}"
   [ -n "$token" ] || return 0
-  # The token is interpolated into a command, so it may hold only the characters
-  # an `sb_` token actually contains. Refusing loudly beats configuring a server
-  # that then fails on every call.
-  case "$token" in *[!A-Za-z0-9_-]*)
-    echo "claude-dev: WARNING — SERVICEBAY_MCP_TOKEN contains unexpected characters; MCP server not configured." >&2
-    return 0;;
+  # The value must have the FORM of a ServiceBay API token — `sb_<8 hex>_<secret>`,
+  # the secret drawn from [A-Z2-9] (`verifyToken`, packages/backend/src/lib/auth/
+  # apiTokens.ts). Two things ride on that, and only the second one used to be
+  # checked: the token is interpolated into a command, so it may carry no shell
+  # metacharacter; and it has to be a token at all.
+  #
+  # #2711 — a bare charset check answers only the first. Any alphanumeric string
+  # passed it, so the 32-character random secret that reached this slot from the
+  # install path configured an MCP server that then answered 401 on every single
+  # call — precisely the outcome this guard exists to prevent. Refusing loudly
+  # beats configuring a server that then fails on every call.
+  #
+  # The message reports the LENGTH and nothing else: this is a credential slot,
+  # and a log line is never the place to echo one, not even a broken one.
+  local sb_hex8='[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
+  local well_formed=0
+  case "$token" in
+    sb_${sb_hex8}_*[!A-Z2-9]*) well_formed=0;;
+    sb_${sb_hex8}_?*)          well_formed=1;;
   esac
+  if [ "$well_formed" -ne 1 ]; then
+    echo "claude-dev: WARNING — SERVICEBAY_MCP_TOKEN is not a ServiceBay API token (expected sb_<id>_<secret>, got a ${#token}-character value); MCP server not configured." >&2
+    return 0
+  fi
   # remove-then-add keeps this idempotent across restarts: a rotated token or a
   # changed URL replaces the old entry instead of colliding with it.
   if su_dev '

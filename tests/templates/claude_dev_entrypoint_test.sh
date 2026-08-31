@@ -633,18 +633,22 @@ check "no fallback chain when --continue was not requested" \
 #    `.mcp.json` INTO a checkout — a tracked file — and commit the credential
 #    on the next `git add`.
 # =========================================================================
+# The suite may itself be running INSIDE a claude-dev container, which carries
+# SERVICEBAY_MCP_TOKEN on its environment — without this the "no token" case
+# reads the ambient value and echoes it into the failure detail.
+unset SERVICEBAY_MCP_TOKEN
 : > "$CLAUDE_ARGS_RECORD"
 configure_mcp_server
 check "does nothing when no token is configured"   "$([ ! -s "$CLAUDE_ARGS_RECORD" ] && echo 0 || echo 1)"   "rec: $(read_nul "$CLAUDE_ARGS_RECORD" | tr '
 ' '|')"
 
 : > "$CLAUDE_ARGS_RECORD"
-SERVICEBAY_MCP_TOKEN="sb_readonlytoken" configure_mcp_server >/dev/null
+SERVICEBAY_MCP_TOKEN="sb_0a1b2c3d_ABCDEFGHJKLMNPQRSTUVWXYZ23456789" configure_mcp_server >/dev/null
 mcp_rec="$(read_nul "$CLAUDE_ARGS_RECORD" | tr '
 ' '|')"
 check "registers the server at user scope, so later checkouts are covered too"   "$(printf '%s' "$mcp_rec" | grep -Fq -- '--scope|user' && echo 0 || echo 1)"   "rec: $mcp_rec"
 check "NEVER uses project scope, which would commit the token to a repo"   "$(printf '%s' "$mcp_rec" | grep -Fq -- '|project|' && echo 1 || echo 0)"   "rec: $mcp_rec"
-check "sends the token as a bearer header"   "$(printf '%s' "$mcp_rec" | grep -Fq 'Authorization: Bearer sb_readonlytoken' && echo 0 || echo 1)"   "rec: $mcp_rec"
+check "sends the token as a bearer header"   "$(printf '%s' "$mcp_rec" | grep -Fq 'Authorization: Bearer sb_0a1b2c3d_ABCDEFGHJKLMNPQRSTUVWXYZ23456789' && echo 0 || echo 1)"   "rec: $mcp_rec"
 check "points at the internal endpoint, not the public hostname"   "$(printf '%s' "$mcp_rec" | grep -Fq 'host.containers.internal:5888/mcp' && echo 0 || echo 1)"   "rec: $mcp_rec"
 check "removes any stale entry first, so a rotated token replaces the old one"   "$(printf '%s' "$mcp_rec" | grep -Fq 'remove|servicebay' && echo 0 || echo 1)"   "rec: $mcp_rec"
 check "runs as dev with the shared workspace HOME"   "$(printf '%s' "$mcp_rec" | grep -Fq "HOME=$DEV_HOME_FAKE" && echo 0 || echo 1)"   "rec: $mcp_rec"
@@ -653,6 +657,35 @@ check "runs as dev with the shared workspace HOME"   "$(printf '%s' "$mcp_rec" |
 SERVICEBAY_MCP_TOKEN='sb_x"; id #' configure_mcp_server 2>/dev/null
 check "refuses a token carrying shell metacharacters instead of running it"   "$([ ! -s "$CLAUDE_ARGS_RECORD" ] && echo 0 || echo 1)"   "rec: $(read_nul "$CLAUDE_ARGS_RECORD" | tr '
 ' '|')"
+
+# #2711 — the guard has to check the shape of a TOKEN, not the shape of the
+# characters. A generated random secret is alphanumeric, so it sailed through the
+# old charset check and configured an MCP server that answered 401 on every call.
+# This is the red-proof. The literal is synthetic but has the SHAPE of what the
+# install path leaves in that slot: 32 alphanumeric characters,
+# `generateRandomSecret`'s default length.
+NOT_A_TOKEN='NotATokenJustARandomSecret32Char'
+: > "$CLAUDE_ARGS_RECORD"
+not_a_token_log="$(SERVICEBAY_MCP_TOKEN="$NOT_A_TOKEN" configure_mcp_server 2>&1)"
+check "configures NOTHING for a 32-character random value that is not an sb_ token" \
+  "$([ ! -s "$CLAUDE_ARGS_RECORD" ] && echo 0 || echo 1)" \
+  "rec: $(read_nul "$CLAUDE_ARGS_RECORD" | tr '\n' '|')"
+check "…and says so loudly instead of failing on every later call" \
+  "$(printf '%s' "$not_a_token_log" | grep -q 'not a ServiceBay API token' && echo 0 || echo 1)" \
+  "log: $not_a_token_log"
+check "…reporting the LENGTH, never the value — this is a credential slot" \
+  "$(printf '%s' "$not_a_token_log" | grep -q '32-character' \
+     && ! printf '%s' "$not_a_token_log" | grep -Fq "$NOT_A_TOKEN" && echo 0 || echo 1)" \
+  "log: $not_a_token_log"
+
+# The near-misses: right prefix, wrong form. Each one would 401 just as silently.
+for bad_token in 'sb_' 'sb_notahex_ABCDEFGH23456789' 'sb_0a1b2c3d_' 'sb_0a1b2c3d_lowercase'; do
+  : > "$CLAUDE_ARGS_RECORD"
+  SERVICEBAY_MCP_TOKEN="$bad_token" configure_mcp_server >/dev/null 2>&1
+  check "refuses a value shaped like a token but not one: ${bad_token}" \
+    "$([ ! -s "$CLAUDE_ARGS_RECORD" ] && echo 0 || echo 1)" \
+    "rec: $(read_nul "$CLAUDE_ARGS_RECORD" | tr '\n' '|')"
+done
 
 # =========================================================================
 # 8. Credential hygiene: the gh OAuth token and the persisted Claude state
