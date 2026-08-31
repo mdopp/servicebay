@@ -879,6 +879,14 @@ export class ServiceLifecycle {
          * aborts the deploy. See #352 phase 3.
          */
         migrations?: { filename: string; fromVersion: number; toVersion: number; content: string }[],
+        /**
+         * #2703 — does `extraFiles` carry the template's COMPLETE resolved
+         * artifact set? Only the install runner can say yes (it POSTs the
+         * whole of `resolveTemplateArtifacts`'s output). It licenses the
+         * delivered-files prune pass; every other entry point delivers a
+         * subset and must not be read as "everything that still exists".
+         */
+        completeDelivery = false,
     ) {
         // Migrate any pre-rename predecessor units first so their host-port
         // ownership is released before the port-collision pre-flight runs.
@@ -953,10 +961,15 @@ export class ServiceLifecycle {
         // `parseTemplateManifest` on purpose: a manifest missing some
         // UNRELATED required annotation must not silently drop this
         // protection.
-        if (extraFiles?.length) {
+        //
+        // #2703 — a complete delivery runs even when it carries zero files,
+        // because "the template no longer ships this file" is exactly the
+        // case the prune pass exists for; the empty-delivery circuit breaker
+        // lives in the prune itself.
+        if (extraFiles?.length || completeDelivery) {
             const agent = await agentManager.ensureAgent(nodeName);
             const seedOnly = new Set(readManifestAnnotations(yamlContent).seedOnlyConfigs ?? []);
-            await writeExtraConfigFiles(agent, name, extraFiles, seedOnly);
+            await writeExtraConfigFiles(agent, name, extraFiles ?? [], seedOnly, { nodeName, completeDelivery });
         }
 
         // Ensure unprivileged port binding if any port < 1024 is used

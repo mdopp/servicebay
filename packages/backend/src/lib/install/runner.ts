@@ -941,6 +941,12 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
           yamlContent,
           yamlFileName: `${item.name}.yml`,
           extraFiles,
+          // #2703 — this POST carries the template's COMPLETE resolved
+          // artifact set (`refreshTemplateArtifacts` → `item.configFiles`),
+          // which is what licenses the deploy to delete a path an earlier
+          // deploy delivered and this one no longer does. No other caller
+          // can say that, so no other caller sends this.
+          completeDelivery: true,
           // #2503 — the route resolves post-deploy.py and each migration
           // body from the registry itself; we send the source it should
           // look in plus a by-reference migration chain, never a script.

@@ -329,7 +329,7 @@ export const POST = withApiHandler<undefined, z.infer<typeof CreateQuery>>(
       { status: 400 },
     );
   }
-  const { name, kubeContent, yamlContent, yamlFileName, extraFiles, postDeployEnv, templateSource, migrations } = parsed.data;
+  const { name, kubeContent, yamlContent, yamlFileName, extraFiles, postDeployEnv, templateSource, migrations, completeDelivery } = parsed.data;
 
   // Validate the Pod manifest before the agent write. Catches typoed
   // apiVersion / missing spec.containers / cross-volume mismatches before
@@ -443,6 +443,7 @@ export const POST = withApiHandler<undefined, z.infer<typeof CreateQuery>>(
           postDeployScript,
           postDeployEnv,
           resolvedMigrations,
+          completeDelivery === true,
         );
         await safeWrite({ type: 'complete', success: true });
       } catch (e) {
@@ -474,6 +475,7 @@ export const POST = withApiHandler<undefined, z.infer<typeof CreateQuery>>(
     postDeployScript,
     postDeployEnv,
     resolvedMigrations,
+    completeDelivery === true,
   );
   return NextResponse.json({ success: true });
 });

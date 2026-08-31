@@ -16,8 +16,34 @@ templates/<name>/
 ├── post-deploy.py           # optional — runs on the host after the unit starts
 ├── migrations/              # required once schema-version ≥ 2 AND data moves
 │   └── v{N-1}-to-v{N}.py    # one file per single-step hop, idempotent
+├── skills/                  # optional — asset files shipped verbatim to the node
 └── *.mustache               # optional — companion config files
 ```
+
+## Asset dirs (`skills/`) — adding, changing and REMOVING a file
+
+Everything under `templates/<name>/skills/` is shipped verbatim (no
+Mustache rendering) to `{{DATA_DIR}}/<name>/skills/<relpath>` on the node.
+
+**Deleting the file from the source tree really deletes it from the node**
+(#2703) — before that fix a retired skill kept declaring its command on
+every box forever, because the transport had no deletion concept at all.
+How it deletes is the part you need to know:
+
+- ServiceBay deletes **only paths it recorded delivering itself**, from a
+  per-service delivered-files manifest. It never mirrors the directory, so
+  a file the running app created next to your assets (a database, a token,
+  a resident's notes) is not a delete candidate. There is no "keep this"
+  exclusion list, and you must not need one.
+- **The first deploy after this shipped only records.** Files an older
+  deploy orphaned on a box stay there until an operator removes them by
+  hand; only files delivered from that deploy onward can be pruned.
+- Seed-only configs (`servicebay.seed-only-configs`) are never recorded and
+  never pruned — that content belongs to the app or the operator.
+
+So: retire a skill by deleting it, not by shipping an empty "tombstone"
+file. A tombstone is still a delivered file, and anything that lists the
+asset dir would go on offering something that does nothing.
 
 ## Mandatory annotations on `template.yml`
 
