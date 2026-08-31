@@ -103,8 +103,8 @@ describe('the token sheet is generated, and cannot drift from globals.css', () =
     const { dark, light } = parsePalette(read(path.join(REPO_ROOT, SOURCE_REL)));
     expect(dark.get('--surface')).toBe('#111114');
     expect(light.get('--surface')).toBe('#ffffff');
-    expect(dark.get('--svc-violet-fg')).toBe('#a78bfa');
-    expect(light.get('--svc-violet-fg')).toBe('#7c3aed');
+    expect(dark.get('--svc-indigo-fg')).toBe('#818cf8');
+    expect(light.get('--svc-indigo-fg')).toBe('#4f46e5');
   });
 
   it('ships both ramps for every semantic colour it ships at all', () => {
@@ -127,7 +127,7 @@ describe('the token sheet is generated, and cannot drift from globals.css', () =
   });
 });
 
-describe('violet is the identity colour, not a replacement for the accent', () => {
+describe('indigo is the identity colour, not a replacement for the accent', () => {
   it('uses the accent for the semantic layer: focus, primary action, active nav', () => {
     const shell = stripComments(read(SHELL_CSS));
     expect(shell).toMatch(/var\(--accent\)/);
@@ -136,18 +136,18 @@ describe('violet is the identity colour, not a replacement for the accent', () =
     expect(shell).toMatch(/aria-current="page"\][\s\S]{0,220}var\(--accent\)/);
   });
 
-  it('carries violet only on the identity chip — never a full-card colour (#2126)', () => {
+  it('carries indigo only on the identity chip — never a full-card colour (#2126)', () => {
     const shell = stripComments(read(SHELL_CSS));
-    const violetRules = [...shell.matchAll(/([^{}]+)\{([^}]*--svc-violet[^}]*)\}/g)];
-    expect(violetRules.length).toBeGreaterThan(0);
-    for (const [, selector] of violetRules) {
+    const indigoRules = [...shell.matchAll(/([^{}]+)\{([^}]*--svc-indigo[^}]*)\}/g)];
+    expect(indigoRules.length).toBeGreaterThan(0);
+    for (const [, selector] of indigoRules) {
       expect(selector.trim()).toMatch(/shell-identity-chip/);
     }
     // The chip is exactly the sanctioned shape: a soft tinted fill plus a
     // saturated glyph, nothing else.
-    const chipRule = violetRules[0][2];
-    expect(chipRule).toMatch(/background:\s*var\(--svc-violet-bg\)/);
-    expect(chipRule).toMatch(/color:\s*var\(--svc-violet-fg\)/);
+    const chipRule = indigoRules[0][2];
+    expect(chipRule).toMatch(/background:\s*var\(--svc-indigo-bg\)/);
+    expect(chipRule).toMatch(/color:\s*var\(--svc-indigo-fg\)/);
   });
 
   it('renders the identity chip in the page, decorative and not announced twice', () => {

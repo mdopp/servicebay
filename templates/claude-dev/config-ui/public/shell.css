@@ -12,7 +12,7 @@
    ServiceBay, and a `prefers-color-scheme: light` override sits in tokens.css.
    Nothing below needs to know which mode it is in.
 
-   Violet (`--svc-violet-*`) is claude-dev's per-service IDENTITY colour (#2126)
+   Indigo (`--svc-indigo-*`) is claude-dev's per-service IDENTITY colour (#2126)
    and appears on exactly one thing: the header identity chip — a soft tinted
    fill with a saturated glyph. It is not a substitute for `--accent`; the
    primary action, the active nav marker and the focus ring stay the system's
@@ -75,8 +75,8 @@ body {
   width: 2.5rem;
   height: 2.5rem;
   border-radius: var(--r-card);
-  background: var(--svc-violet-bg);
-  color: var(--svc-violet-fg);
+  background: var(--svc-indigo-bg);
+  color: var(--svc-indigo-fg);
 }
 .shell-identity-chip svg { width: 1.35rem; height: 1.35rem; }
 

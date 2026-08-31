@@ -24,7 +24,7 @@
  * so importing the names would degrade the page to a generic sans instead of
  * the system UI font it renders in today).
  *
- * The per-service identity pair (`--svc-violet-*`) travels too: it is the
+ * The per-service identity pair (`--svc-indigo-*`) travels too: it is the
  * *identity* colour of this service (#2126), a soft tinted fill plus a
  * saturated icon on an icon chip — never a full-card colour, and never a
  * replacement for `--accent`.
@@ -45,7 +45,7 @@ export const TARGETS = [
   {
     outRel: 'templates/claude-dev/config-ui/public/tokens.css',
     service: 'claude-dev',
-    identity: 'violet',
+    identity: 'indigo',
   },
 ] as const;
 

@@ -38,8 +38,8 @@
   --r-panel:       0.875rem;
 
   /* Per-service identity (#2126): icon-chip fill + icon colour only. */
-  --svc-violet-bg: rgba(139, 92, 246, 0.16);
-  --svc-violet-fg: #a78bfa;
+  --svc-indigo-bg: rgba(99, 102, 241, 0.16);
+  --svc-indigo-fg: #818cf8;
 }
 
 @media (prefers-color-scheme: light) {
@@ -59,7 +59,7 @@
     --status-info:   #2563eb;
 
     /* Per-service identity (#2126): icon-chip fill + icon colour only. */
-    --svc-violet-bg: rgba(139, 92, 246, 0.12);
-    --svc-violet-fg: #7c3aed;
+    --svc-indigo-bg: rgba(99, 102, 241, 0.12);
+    --svc-indigo-fg: #4f46e5;
   }
 }
