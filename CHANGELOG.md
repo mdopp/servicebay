@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.23.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.22.2...servicebay-v5.23.0) (2026-08-31)
+
+
+### Features
+
+* **assists:** deliver the catalog at runtime, from exactly one source ([2e59c3a](https://github.com/mdopp/servicebay/commit/2e59c3af094d1c1a7c466136af75f77941a0d078)), closes [#2701](https://github.com/mdopp/servicebay/issues/2701) [#2702](https://github.com/mdopp/servicebay/issues/2702)
+* **assists:** deliver the catalog at runtime; gate the release on effect ([d01054f](https://github.com/mdopp/servicebay/commit/d01054f574f3191661ab26c9e4d8b0e0fac4fe02))
+
+
+### Bug Fixes
+
+* **install:** delete template files only from a delivered-files manifest ([d1f5f37](https://github.com/mdopp/servicebay/commit/d1f5f37ea0d591e53a06872b9eb3badd67799add)), closes [#2703](https://github.com/mdopp/servicebay/issues/2703)
+* **mcp:** keep a corrupt assist catalog out of the initialize path ([4330743](https://github.com/mdopp/servicebay/commit/433074376944f8fbf68e85e4d342b59e8bd11b8f)), closes [#2706](https://github.com/mdopp/servicebay/issues/2706)
+* **mcp:** keep a corrupt catalog off the initialize path; delete only what was delivered ([17e173e](https://github.com/mdopp/servicebay/commit/17e173eb1201ec6635ca5ed6c4875459b31bcb01))
+* **scripts:** gate the release on what a change does, not where it sits ([6367b77](https://github.com/mdopp/servicebay/commit/6367b7720f1aba7ac695acb5b21b3f8c386da3fc)), closes [#2700](https://github.com/mdopp/servicebay/issues/2700)
+
 ## [5.22.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.22.1...servicebay-v5.22.2) (2026-08-30)
 
 
