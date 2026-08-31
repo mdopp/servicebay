@@ -36,6 +36,19 @@ human holding a phone.
   and had never counted anything — the service required a field that was not being
   sent, every POST returned 400, and the fail-open path swallowed it. Otherwise the
   test checks your own assumption against itself.
+- **An answer produced before the target is not the target's answer.** Redirects,
+  interstitials and auth gates answer **for** a service, not **as** it. To check the
+  service, read something only it can produce.
+  - Incident: a new SSO-gated route was declared working because `https://…` returned
+    `302` to the login page. That redirect is emitted *before* the upstream is
+    contacted — it proved the route and the gate, and said nothing about the service.
+    The issue was closed; the operator opened the page and got a `502`. The upstream
+    port was not published by the running pod at all.
+  - What makes this one worth keeping: **there was nothing to notice.** The proxy
+    behaved correctly, the status code was real, nothing anywhere misbehaved. The
+    answered question was simply not the asked one. Every other entry here is about
+    something broken; this one is about everything working.
+
 - **A test can end up guarding the bug instead of the behaviour.** Incident: a test
   pinned a private volume label verbatim — the very thing that had caused the
   outage. It would have blocked the fix.
