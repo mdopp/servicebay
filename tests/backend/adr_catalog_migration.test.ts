@@ -163,6 +163,7 @@ describe('#2607 — whenToUse makes each decision findable when an agent self-se
     ['0012', 'about to fix drifted credentials by redeploying, or add a self-heal reconciler loop'],
     ['0013', 'an agent asks me to mint it a token by hand, or a shipped tool never appears in any session because no token carries its scope'],
     ['0014', 'i merged an assist and get_assist on the box still says no such id, or i am about to add a second place assists are read from'],
+    ['0015', 'a file i deleted from a template source tree is still on the node, and i am about to make the deploy clean up whatever the template no longer ships'],
   ];
 
   it('covers every ADR with a probe — no record gets a free pass', async () => {
