@@ -34,6 +34,28 @@ attempts within minutes and burned a token. Another house holds the other half o
 this in the unit file itself — the service exits with 0 so that nothing restarts
 it.
 
+## The third case: noticing, not touching
+
+All of the above is about **touching**. The case that keeps getting missed is
+**noticing** — and there the structural answer is not a repair at all, it is
+visibility.
+
+> "Structural instead of disciplinary" does not replace the action — it only
+> makes sure nobody overlooks it.
+
+Incident: a RAID1 whose second disk had not failed but was **never there**. What
+can be caught structurally is only that nobody notices it: a probe that
+recognises `[U_]`. It does not buy the disk. Report it and build the probe; do
+not confuse having built the probe with having fixed the array.
+
+The harder half of the same case is **normal operation under a missing
+capability**, not an outage. A neighbouring project produces its chronicle even
+when no language model is reachable — but then **explicitly ordered rather than
+narrated, and that sentence stands in the record.** It becomes visibly thinner
+instead of invisibly worse. This is the more common shape by far: *the outage is
+seen, the degraded normal operation is not.* A record that does not show what is
+missing gets read weeks later as complete.
+
 ## In practice here
 
 - Read tools before exec tools (`footgun-exec-last-resort`).

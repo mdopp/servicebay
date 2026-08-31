@@ -191,16 +191,18 @@ describe('apply / reject / history mechanics', () => {
 
 describe('catalog precedence — an approved proposal overrides the built-in', () => {
   it('listAssists + getAssist serve the Local entry after apply', async () => {
-    // Seed a built-in assist under a temp cwd so catalog reads it as Built-in.
-    const builtinRoot = path.join(TMP, 'app');
-    const builtinAssists = path.join(builtinRoot, 'assists');
+    // Seed the DELIVERED repo catalog in a temp dir (#2701 — there is no
+    // `process.cwd()/assists` fallback any more; ASSIST_CATALOG_DIR names the
+    // one source).
+    const builtinAssists = path.join(TMP, 'app', 'assists');
     await fs.mkdir(builtinAssists, { recursive: true });
     await fs.writeFile(
       path.join(builtinAssists, 'demo.md'),
       mkProposal({ title: 'Built-in title', body: 'builtin body' }),
       'utf-8',
     );
-    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(builtinRoot);
+    const previousCatalogDir = process.env.ASSIST_CATALOG_DIR;
+    process.env.ASSIST_CATALOG_DIR = builtinAssists;
 
     // Import catalog AFTER the DATA_DIR mock is in place (top-of-file mock).
     const { listAssists, getAssist } = await import('./catalog');
@@ -216,13 +218,20 @@ describe('catalog precedence — an approved proposal overrides the built-in', (
     await writeProposal('demo', 'r1', localContent);
     await applyApproved({ kind: 'assist-edit', assistId: 'demo', message: 'override' }, 'r1', 'admin');
 
-    // Now the Local entry overrides the built-in in list_assists.
+    // Now the Local entry overrides the built-in in list_assists — and says so,
+    // so an approved override cannot be read as the repo's current text (#2701).
     list = await listAssists();
     const afterDemo = list.find(a => a.id === 'demo');
-    expect(afterDemo?.source).toBe('Local');
+    expect(afterDemo?.source).toBe('Local (overrides repo)');
     expect(afterDemo?.title).toBe('Local override title');
     expect(await getAssist('demo')).toBe(localContent);
 
-    cwdSpy.mockRestore();
+    // …and it shows up on the drift list rather than ageing unseen.
+    const { listAssistDrift } = await import('./catalog');
+    const drift = await listAssistDrift();
+    expect(drift.find(d => d.id === 'demo')).toMatchObject({ relation: 'override' });
+
+    if (previousCatalogDir === undefined) delete process.env.ASSIST_CATALOG_DIR;
+    else process.env.ASSIST_CATALOG_DIR = previousCatalogDir;
   });
 });

@@ -118,9 +118,19 @@ COPY --from=builder /app/packages/frontend/.next ./packages/frontend/.next
 # Copy templates and stacks
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/stacks ./stacks
-# Task-assist catalog (#2146) — served by the list_assists / get_assist MCP
-# tools; resolves at /app/assists via process.cwd(), like templates/ + stacks/.
-COPY --from=builder /app/assists ./assists
+# The task-assist catalog (#2146) is deliberately NOT copied here (#2701).
+#
+# Baking it in made a catalog entry an image artifact: a `docs(assists):` commit
+# cuts no release, so merged entries sat on `main` and never reached a running
+# box. The catalog is now DELIVERED AT RUNTIME — a shallow sparse checkout of
+# this repo's `assists/` tree under DATA_DIR, refreshed at boot and hourly by
+# packages/backend/src/lib/assists/delivery.ts.
+#
+# Do not re-add a COPY of assists/ here. Two sources is the failure the decision
+# exists to prevent: the image copy would age and answer alongside the disk one,
+# and an assist that answers WRONGLY is worse than one that is missing. If
+# delivery fails, every read reports the failure (empty and loud) instead of
+# falling back to a baked-in tree.
 
 # (The ADRs used to be copied in from docs/adr/ for get_service_standards.
 # #2607 MOVED them into assists/ above — one copy, in the only place an MCP

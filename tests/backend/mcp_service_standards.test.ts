@@ -259,14 +259,14 @@ describe('get_service_standards — generic flavor (#2323)', () => {
 
 describe('scanCuratedAdrs (#2323, widened by #2607)', () => {
   it('returns every ADR in ascending order, each with a title', async () => {
-    const adrs = await scanCuratedAdrs();
+    const { adrs } = await scanCuratedAdrs();
     expect(adrs.length).toBeGreaterThanOrEqual(12);
     for (const a of adrs) expect(a.title.length).toBeGreaterThan(0);
     expect(adrs.map(a => a.adr)).toEqual([...adrs.map(a => a.adr)].sort());
   });
 
   it('numbers are unique — no two records claim the same ADR number (#2617)', async () => {
-    const nums = (await scanCuratedAdrs()).map(a => a.adr);
+    const nums = (await scanCuratedAdrs()).adrs.map(a => a.adr);
     expect(new Set(nums).size, `duplicate ADR number in ${nums.join(',')}`).toBe(nums.length);
   });
 });

@@ -27,6 +27,7 @@ import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { auditHealthCheckIdLifecycle } from './invariants/healthCheckIdLifecycle';
+import { auditAssistCatalogSingleSource } from './invariants/assistCatalogSingleSource';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const SRC = path.join(REPO_ROOT, 'packages', 'frontend', 'src');
@@ -741,7 +742,7 @@ const CREATE_SERVICE_ASSIST = path.join(REPO_ROOT, 'assists', 'create-service.md
 const BOOTSTRAP_BEGIN_RE = /<!-- BEGIN SERVICEBAY STANDARDS POINTER/;
 const BOOTSTRAP_END_RE = /<!-- END SERVICEBAY STANDARDS POINTER -->/;
 /** Every pointer block is worthless without these — same list as the module. */
-const BOOTSTRAP_POINTER_REFS = ['get_service_standards', 'get_assist', 'standards-gap'];
+const BOOTSTRAP_POINTER_REFS = ['get_service_standards', 'get_assist', 'standards-gap', 'workingAgreements'];
 
 /**
  * Pure audit of the `create-service` recipe text. Returns one detail string per
@@ -824,6 +825,16 @@ const AGENT_PY = path.join(REPO_ROOT, 'packages/backend/src/lib/agent/v4/agent.p
 const AGENT_HANDLER_TS = path.join(REPO_ROOT, 'packages/backend/src/lib/agent/handler.ts');
 /** Only `tryHandleStructuredLog` may write a raw (unformatted) agent line. */
 const AGENT_LOGRAW_MAX = 1;
+
+// ---------------------------------------------------------------------------
+// 8c. The assist catalog has exactly ONE source (#2701) — see
+// scripts/invariants/assistCatalogSingleSource.ts for the why.
+// ---------------------------------------------------------------------------
+async function checkAssistCatalogSingleSource() {
+    const { check, problems, measurement } = await auditAssistCatalogSingleSource(REPO_ROOT);
+    for (const detail of problems) violations.push({ check, detail });
+    if (problems.length === 0 && measurement) measurements.push(measurement);
+}
 
 async function checkAgentLogRedaction() {
     const check = 'agent-log-redaction';
@@ -1240,6 +1251,7 @@ async function main() {
         checkGatePathsResolve(),
         checkCiRunsEveryCheckScript(),
         checkServiceRepoBootstrapStep(),
+        checkAssistCatalogSingleSource(),
         checkAgentLogRedaction(),
         checkCredentialHttpEgress(),
         checkMcpAuditRedaction(),

@@ -162,6 +162,7 @@ describe('#2607 — whenToUse makes each decision findable when an agent self-se
     ['0011', 'giving the companion app a second backend, a second token and another realtime connection'],
     ['0012', 'about to fix drifted credentials by redeploying, or add a self-heal reconciler loop'],
     ['0013', 'an agent asks me to mint it a token by hand, or a shipped tool never appears in any session because no token carries its scope'],
+    ['0014', 'i merged an assist and get_assist on the box still says no such id, or i am about to add a second place assists are read from'],
   ];
 
   it('covers every ADR with a probe — no record gets a free pass', async () => {
@@ -271,16 +272,23 @@ describe('#2607 — orientation names the catalog as where decisions live', () =
     expect(read('docs', 'ARCHITECTURE_INVARIANTS.md')).toContain('assists/adr-');
     const index = read('docs', 'adr', 'README.md');
     expect(index).toContain('assist catalog');
-    // The NEXT free number, not the highest taken one — 0013 is now spent
-    // (#2609), so the index must advertise 0014. Matching a number that also
+    // The NEXT free number, not the highest taken one — 0014 is now spent
+    // (#2701), so the index must advertise 0015. Matching a number that also
     // appears as an index row would pass vacuously.
     expect(index, 'names the next free number so the collision cannot recur')
-      .toMatch(/Next free number:\s*\*\*0014\*\*/);
+      .toMatch(/Next free number:\s*\*\*0015\*\*/);
   });
 
-  it('the shipped image carries the ADRs via assists/, not a docs/adr copy', () => {
+  // #2701 / ADR 0014 INVERTED this: the image used to be how the ADRs (and the
+  // rest of the catalog) reached a box, and that was the defect — an entry
+  // merged with `docs(assists):` cuts no release, so it never arrived. The
+  // catalog is delivered at runtime now, and a re-added COPY would be a SECOND
+  // source that ages beside it.
+  it('the image ships NO copy of the catalog — it is delivered at runtime', () => {
     const dockerfile = read('Dockerfile');
-    expect(dockerfile).toContain('COPY --from=builder /app/assists ./assists');
+    expect(dockerfile, 'no baked-in catalog').not.toMatch(/^\s*COPY .*\bassists\/?\s*$/m);
     expect(dockerfile, 'no second copy is shipped').not.toMatch(/^COPY .*docs\/adr/m);
+    expect(dockerfile, 'and the Dockerfile says why, so the COPY does not come back')
+      .toMatch(/delivered at runtime|DELIVERED AT RUNTIME/i);
   });
 });

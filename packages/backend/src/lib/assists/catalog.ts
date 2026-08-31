@@ -6,13 +6,20 @@
  * on top of it — `list_assists` (discover) and `get_assist` (fetch) — keeping
  * the MCP tool surface tiny while the catalog grows over time.
  *
- * Sources, mirroring the template registry's multi-source + local-drop shape:
- *   - Built-in: the repo-root `assists/` dir, shipped into the container image
- *     (`process.cwd()` is `/app` at runtime, so this resolves to `/app/assists`).
- *     Served with the bare id `<stem>`.
- *   - Local:    `DATA_DIR/local-assists/` — a persisted drop dir so an operator
- *     (or the assist editor, #2221) can add/override an assist WITHOUT a
- *     release. A Local entry with the same id overrides the built-in one.
+ * Sources — exactly ONE of them delivers the repo catalog (#2701):
+ *   - Repo:     the runtime-delivered catalog, `delivery.ts:resolveCatalogDir()`.
+ *     The repo's `assists/` tree is pulled onto the disk at runtime; it is NOT
+ *     baked into the image any more, so a `docs(assists):` commit reaches a
+ *     running box without waiting for an unrelated release. Served with the bare
+ *     id `<stem>`, `source: 'Built-in'`. A delivery that has failed or aged out
+ *     makes every read below throw `AssistCatalogUnavailableError` — empty and
+ *     loud, never stale and quiet.
+ *   - Local:    `DATA_DIR/local-assists/` — NOT a delivery path. It holds only
+ *     what a ServiceBay admin approved through the assist editor (#2221). Such
+ *     an entry still overrides the repo entry with the same id — that is what an
+ *     override is for — but it can no longer do so quietly: it is served as
+ *     `source: 'Local (overrides repo)'` and it is listed by `listAssistDrift()`
+ *     as an override awaiting promotion or removal (#2701).
  *   - Landed:   `DATA_DIR/local-assists/landed/` — an ADDITIVE, NAMESPACED
  *     source (#2326 s4): an approved `propose_learning` proposal is written
  *     here and served under id `local/<stem>` with `source: Local`. It can
@@ -39,6 +46,7 @@ import path from 'path';
 import matter from 'gray-matter';
 import { DATA_DIR } from '@/lib/dirs';
 import { logger } from '@/lib/logger';
+import { resolveCatalogDir } from '@/lib/assists/delivery';
 
 export const ASSIST_KINDS = [
   'guide',
@@ -59,15 +67,18 @@ export interface AssistSummary {
   whenToUse: string;
   kind: AssistKind;
   tags: string[];
-  /** 'Built-in' or 'Local'. */
+  /** 'Built-in' (delivered repo catalog), 'Local', or `LOCAL_OVERRIDE_SOURCE`. */
   source: string;
 }
 
-// Repo-root `assists/` (shipped to /app/assists in the container), then the
-// persisted drop dir. Order matters: later sources override earlier ones by id.
-// The namespaced landed dir (#2326 s4) is additive — its `local/` id prefix
-// means it never collides with the two bare-id sources above.
-const BUILTIN_ASSISTS_DIR = () => path.join(process.cwd(), 'assists');
+// The runtime-delivered repo catalog (#2701), then the admin-approved override
+// dir. Order matters: later sources override earlier ones by id. The namespaced
+// landed dir (#2326 s4) is additive — its `local/` id prefix means it never
+// collides with the two bare-id sources above.
+//
+// There is deliberately NO `process.cwd()/assists` fallback: the image does not
+// carry the catalog, and a fallback would be the second source the #2701
+// decision exists to prevent.
 const LOCAL_ASSISTS_DIR = () => path.join(DATA_DIR, 'local-assists');
 /** Additive, namespaced landing dir for approved proposals (#2326 s4). */
 export const LANDED_ASSISTS_DIR = () => path.join(DATA_DIR, 'local-assists', 'landed');
@@ -81,9 +92,20 @@ interface AssistSource {
   prefix: string;
 }
 
-function assistSources(): AssistSource[] {
+/**
+ * Label a Local bare-id entry carries once it shadows a delivered repo entry.
+ * The override stays effective; it just stops being invisible (#2701).
+ */
+export const LOCAL_OVERRIDE_SOURCE = 'Local (overrides repo)';
+
+/**
+ * Throws `AssistCatalogUnavailableError` when delivery has failed or aged out —
+ * every read below goes through it, so a broken delivery can never present as
+ * an empty catalog.
+ */
+async function assistSources(): Promise<AssistSource[]> {
   return [
-    { dir: BUILTIN_ASSISTS_DIR(), source: 'Built-in', prefix: '' },
+    { dir: await resolveCatalogDir(), source: 'Built-in', prefix: '' },
     { dir: LOCAL_ASSISTS_DIR(), source: 'Local', prefix: '' },
     { dir: LANDED_ASSISTS_DIR(), source: 'Local', prefix: LOCAL_ID_PREFIX },
   ];
@@ -97,7 +119,7 @@ function assistSources(): AssistSource[] {
  * The `<stem>` is basename-guarded so a read can never escape a source root
  * (path-injection barrier; CodeQL js/path-injection).
  */
-function resolveAssistFile(id: string): { file: string; dirs: string[] } | null {
+async function resolveAssistFile(id: string): Promise<{ file: string; dirs: string[] } | null> {
   if (id.startsWith(LOCAL_ID_PREFIX)) {
     const stem = id.slice(LOCAL_ID_PREFIX.length);
     const file = assistFileName(stem);
@@ -106,8 +128,9 @@ function resolveAssistFile(id: string): { file: string; dirs: string[] } | null 
   if (id.includes('/')) return null; // a bare id may not contain a path separator
   const file = assistFileName(id);
   if (!file) return null;
-  // Bare-id sources: Local drop dir wins over Built-in, mirroring precedence.
-  return { file, dirs: [LOCAL_ASSISTS_DIR(), BUILTIN_ASSISTS_DIR()] };
+  // Bare-id sources: the admin-approved override wins over the delivered repo
+  // entry, mirroring the list precedence.
+  return { file, dirs: [LOCAL_ASSISTS_DIR(), await resolveCatalogDir()] };
 }
 
 /**
@@ -262,7 +285,7 @@ export interface ListAssistsOptions {
 export async function listAssists(opts: ListAssistsOptions = {}): Promise<AssistSummary[]> {
   const byId = new Map<string, AssistSummary>();
   let degraded = 0;
-  for (const { dir, source, prefix } of assistSources()) {
+  for (const { dir, source, prefix } of await assistSources()) {
     for (const file of await readDirAssists(dir)) {
       const id = `${prefix}${file.slice(0, -'.md'.length)}`;
       let raw: string;
@@ -271,7 +294,11 @@ export async function listAssists(opts: ListAssistsOptions = {}): Promise<Assist
       } catch {
         continue;
       }
-      const parsed = parseAssistSummary(raw, id, source);
+      // A Local bare-id entry that lands on an id the delivered catalog already
+      // holds is an OVERRIDE — say so in the source, so nobody reads a
+      // hand-approved copy as the repo's current text (#2701).
+      const overriding = source === 'Local' && prefix === '' && byId.has(id);
+      const parsed = parseAssistSummary(raw, id, overriding ? LOCAL_OVERRIDE_SOURCE : source);
       if (parsed.degraded) degraded++;
       // later BARE source wins; namespaced ids never collide
       if (parsed.summary) byId.set(id, parsed.summary);
@@ -302,7 +329,7 @@ export async function listAssists(opts: ListAssistsOptions = {}): Promise<Assist
  * silent runtime override by id.
  */
 export async function listBuiltinAssistIds(): Promise<string[]> {
-  const files = await readDirAssists(BUILTIN_ASSISTS_DIR());
+  const files = await readDirAssists(await resolveCatalogDir());
   return files.map(f => f.slice(0, -'.md'.length));
 }
 
@@ -319,6 +346,13 @@ export interface AssistDriftEntry {
   whenToUse: string;
   tags: string[];
   /**
+   * `landed` — an approved proposal that has no repo entry yet (the original
+   * #2326 s5 promotion backlog). `override` — an admin-approved Local entry
+   * that SHADOWS a delivered repo entry of the same id (#2701). The second kind
+   * is the one that can answer wrongly, so it belongs on the same list.
+   */
+  relation: 'landed' | 'override';
+  /**
    * Hint for the admin: opening a repo PR to add `assists/<slug>.md` promotes
    * this entry from runtime-only to built-in.
    */
@@ -326,52 +360,79 @@ export interface AssistDriftEntry {
 }
 
 /**
- * Compare landed local-assists (`DATA_DIR/local-assists/landed/`) against the
- * built-in repo assists (`assists/`). Returns every landed entry whose bare
- * slug has NO corresponding `assists/<slug>.md` — i.e. the promotion backlog.
+ * The runtime-vs-repo divergence report. Two kinds of entry, both read-only and
+ * side-effect-free:
  *
- * Mapping:  landed id `local/<slug>` ↔ built-in id `<slug>`.
- * An entry whose slug IS already in the built-in dir is omitted (nothing to
- * promote — a built-in already covers that topic by id).
- *
- * Read-only and side-effect-free (#2326 s5).
+ *  - `relation: 'landed'` (#2326 s5) — an approved proposal under
+ *    `DATA_DIR/local-assists/landed/` whose bare slug has NO corresponding repo
+ *    entry: the promotion backlog. Mapping: landed id `local/<slug>` ↔ repo id
+ *    `<slug>`; a slug the repo already covers is omitted.
+ *  - `relation: 'override'` (#2701) — an admin-approved bare-id entry under
+ *    `DATA_DIR/local-assists/` that SHADOWS a delivered repo entry. Now that the
+ *    repo catalog is delivered at runtime, an override is the only way two
+ *    texts can answer to one id, so it is reported rather than left to age
+ *    unnoticed.
  */
-export async function listAssistDrift(): Promise<AssistDriftEntry[]> {
-  const [landedFiles, builtinIds] = await Promise.all([
-    readDirAssists(LANDED_ASSISTS_DIR()),
-    listBuiltinAssistIds(),
-  ]);
-  const builtinSet = new Set(builtinIds);
-
-  const result: AssistDriftEntry[] = [];
-  const dir = LANDED_ASSISTS_DIR();
-
-  for (const file of landedFiles) {
-    const slug = file.slice(0, -'.md'.length);
-    // Only surface entries with no built-in counterpart.
-    if (builtinSet.has(slug)) continue;
-
-    const id = `${LOCAL_ID_PREFIX}${slug}`;
-    let raw: string;
-    try {
-      raw = await fs.readFile(path.join(dir, file), 'utf-8');
-    } catch {
-      continue;
-    }
-    const { summary } = parseAssistSummary(raw, id, 'Local');
-    if (!summary) continue;
-
-    result.push({
-      id: summary.id,
-      title: summary.title,
-      kind: summary.kind,
-      whenToUse: summary.whenToUse,
-      tags: summary.tags,
-      promotionHint: `Open a repo PR adding assists/${slug}.md to promote this entry from runtime-only to built-in.`,
-    });
+/** Parse one Local file into a summary, or null when it is unreadable/degraded. */
+async function summariseLocal(dir: string, file: string, id: string): Promise<AssistSummary | null> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(path.join(dir, file), 'utf-8');
+  } catch {
+    return null;
   }
+  return parseAssistSummary(raw, id, 'Local').summary;
+}
 
-  return result;
+/**
+ * Walk one Local dir and emit a drift entry per file that satisfies `include`.
+ * `hint` gets the slug and the filename so each relation can say what to do.
+ */
+async function collectDrift(
+  dir: string,
+  relation: AssistDriftEntry['relation'],
+  idFor: (slug: string) => string,
+  include: (slug: string) => boolean,
+  hint: (slug: string, file: string) => string,
+): Promise<AssistDriftEntry[]> {
+  const out: AssistDriftEntry[] = [];
+  for (const file of await readDirAssists(dir)) {
+    const slug = file.slice(0, -'.md'.length);
+    if (!include(slug)) continue;
+    const summary = await summariseLocal(dir, file, idFor(slug));
+    if (!summary) continue;
+    const { id, title, kind, whenToUse, tags } = summary;
+    out.push({ id, title, kind, whenToUse, tags, relation, promotionHint: hint(slug, file) });
+  }
+  return out;
+}
+
+export async function listAssistDrift(): Promise<AssistDriftEntry[]> {
+  const builtinSet = new Set(await listBuiltinAssistIds());
+
+  const landed = await collectDrift(
+    LANDED_ASSISTS_DIR(),
+    'landed',
+    slug => `${LOCAL_ID_PREFIX}${slug}`,
+    // Only surface entries with no repo counterpart.
+    slug => !builtinSet.has(slug),
+    slug => `Open a repo PR adding assists/${slug}.md to promote this entry from runtime-only to built-in.`,
+  );
+
+  // #2701: a Local bare-id entry that shadows a delivered repo entry is the
+  // second-source failure one level down — it answers instead of the repo text
+  // and ages on its own. It cannot be silent, so it rides this same list.
+  const overrides = await collectDrift(
+    LOCAL_ASSISTS_DIR(),
+    'override',
+    slug => slug,
+    slug => builtinSet.has(slug),
+    (slug, file) =>
+      `This Local entry SHADOWS the delivered repo assist "${slug}" — get_assist("${slug}") answers with this copy, not the repo's. ` +
+      `Fold the change into assists/${slug}.md in a repo PR and delete DATA_DIR/local-assists/${file}, or keep it deliberately.`,
+  );
+
+  return [...landed, ...overrides];
 }
 
 /**
@@ -380,7 +441,7 @@ export async function listAssistDrift(): Promise<AssistDriftEntry[]> {
  * reads the additive landed dir (#2326 s4). Returns null for an unknown/unsafe id.
  */
 export async function getAssist(id: string): Promise<string | null> {
-  const resolved = resolveAssistFile(id);
+  const resolved = await resolveAssistFile(id);
   if (!resolved) return null;
   for (const dir of resolved.dirs) {
     try {

@@ -212,6 +212,26 @@ These are enforced as depcruise rules:
 - **One renderer** — all Mustache rendering goes through `packages/backend/src/lib/template/render.ts` (post-#599). No exemptions remain: the `one-renderer` depcruise rule's `pathNot` list is `render.ts` alone, and the only other file in the repo importing `mustache` is `tests/backend/template_consistency.test.ts`. (This page claimed `install/runner.ts` and `stackInstall/*` were still exempt until #2427 — they had not been for some time.)
 - **One Digital Twin store** — singleton via `DigitalTwinStore.getInstance()`. Fan-in cap enforced by `check-invariants.ts`.
 
+### One assist-catalog source (#2701, ADR 0014)
+
+The assist catalog is **delivered at runtime** — pulled from the repo onto the
+box's disk by `packages/backend/src/lib/assists/delivery.ts` — and is
+deliberately **not** copied into the container image. Two copies would age apart,
+and an assist that reads differently in the image than on disk is worse than a
+missing one: it answers, and answers wrongly.
+
+`check-invariants.ts:checkAssistCatalogSingleSource` fails the gate on either way
+back to two sources:
+
+- a `COPY … assists` line in the `Dockerfile`, or
+- a `process.cwd()/assists` fallback in `packages/backend/src/lib/assists/catalog.ts`.
+
+The other half of the contract is behavioural and lives in `delivery.ts`: a
+delivery that has never succeeded, or whose last success is older than
+`ASSIST_CATALOG_MAX_AGE_HOURS`, makes every catalog read throw
+`AssistCatalogUnavailableError`. The failure mode is **empty and loud**, never
+stale and quiet.
+
 ### Frontend ↔ Backend boundary (#753)
 
 Enforced **structurally** via the workspace layout as of Phase 3.3 (#764). The three numeric ratchets (`fe-template-lib-imports`, `fe-backend-imports`, `fe-install-helpers`) that watched specific FE→BE leakage points have retired — the workspace boundary makes a forbidden import physically unresolvable, so a count check is redundant.

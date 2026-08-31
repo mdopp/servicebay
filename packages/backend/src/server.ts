@@ -36,6 +36,7 @@ import { startFlowSampler } from './lib/network/flowSampler';
 import { logger } from './lib/logger';
 import { migrateConfig, getConfig, updateConfig } from './lib/config';
 import { syncRegistries } from './lib/registry';
+import { syncAssistCatalog, deliverAssistCatalogAtBoot, catalogSyncIntervalMs } from './lib/assists/delivery';
 import { reconcileLanIp } from './lib/lanIp';
 import { lazyInitializeExpiry as initBootstrapTokenExpiry } from './lib/mcp/bootstrapToken';
 import { createMcpServer } from './lib/mcp/server';
@@ -649,6 +650,20 @@ app.prepare().then(() => {
 
     // Sync template registries in background (non-blocking)
     syncRegistries().catch(err => logger.warn('Server', `Registry sync failed: ${err}`));
+
+    // Deliver the assist catalog (#2701). It is NOT in the image any more, so
+    // this is the only way it reaches a running box — and it is what makes a
+    // `docs(assists):` commit take effect without a release. A failure is
+    // recorded by the sync and surfaces on every read as a refusal, never as a
+    // short list; nothing here falls back to a baked-in copy.
+    void deliverAssistCatalogAtBoot().catch(err =>
+      logger.error('Server', `Assist catalog delivery failed: ${err instanceof Error ? err.message : String(err)}`),
+    );
+    setInterval(() => {
+      void syncAssistCatalog().catch(err =>
+        logger.error('Server', `Assist catalog delivery failed: ${err instanceof Error ? err.message : String(err)}`),
+      );
+    }, catalogSyncIntervalMs()).unref();
 
     // Safety lock: until the operator picks an update window, hold
     // Zincati and podman-auto-update.timer off. Closes the foot-gun

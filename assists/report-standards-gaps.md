@@ -21,9 +21,12 @@ ambiguous, or wrong**, close the loop:
    or updated assist, a docs line, or an addition to `get_service_standards`. A
    Local assist drop on the box (`DATA_DIR/local-assists/`) is a good first home
    for a proposal; it's discoverable via `list_assists` immediately and can be
-   **promoted** into a built-in `assists/*.md` (shipped in the image) once
-   accepted — this drift-report -> promotion flow is the intended path (see
-   servicebay#2345 for a worked promotion).
+   **promoted** into a repo `assists/*.md` once accepted — this drift-report ->
+   promotion flow is the intended path (see servicebay#2345 for a worked
+   promotion). Since #2701 the repo catalog is **delivered to the box at
+   runtime**, so a promotion PR takes effect without a release; it is also the
+   only way to change an entry everyone sees, since a Local drop is per-box and
+   shows up as an override on the drift report.
 3. **Abstract, don't transcribe** (CLAUDE.md). Turn "how I fixed X on my box
    today" into "the general pattern + the footgun to avoid," scrubbing tokens,
    hostnames-with-auth, and any live-box value.

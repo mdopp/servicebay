@@ -16,9 +16,9 @@ vi.mock('@/lib/dirs', () => ({
   },
 }));
 
-// The drift report's built-in check uses listBuiltinAssistIds (reads the real
-// process.cwd()/assists dir). We keep it unmocked so we can control
-// what the "built-in" dir contains by manipulating process.cwd() in each test.
+// The drift report's repo check uses listBuiltinAssistIds, which reads the ONE
+// delivered catalog dir (#2701). We keep it unmocked and point
+// ASSIST_CATALOG_DIR at a tmp tree per test so we control its contents.
 
 import { listAssistDrift } from '@/lib/assists/catalog';
 import { DATA_DIR } from '@/lib/dirs';
@@ -43,19 +43,20 @@ Some body text.
   await fs.writeFile(path.join(dir, `${slug}.md`), content, 'utf-8');
 }
 
-let origCwd: string;
+let origCatalogDir: string | undefined;
 
 beforeEach(async () => {
   dirState.dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sb-drift-'));
-  origCwd = process.cwd();
-  // Built-in dir = process.cwd()/assists; chdir into an empty tmp so no real
-  // built-in exists by default, and tests can seed it as needed.
-  process.chdir(dirState.dir);
+  origCatalogDir = process.env.ASSIST_CATALOG_DIR;
+  // Point the one delivered-catalog dir at an empty tmp tree, so no real repo
+  // entry exists by default and each test seeds what it needs.
+  process.env.ASSIST_CATALOG_DIR = path.join(dirState.dir, 'assists');
   vi.clearAllMocks();
 });
 
 afterEach(async () => {
-  process.chdir(origCwd);
+  if (origCatalogDir === undefined) delete process.env.ASSIST_CATALOG_DIR;
+  else process.env.ASSIST_CATALOG_DIR = origCatalogDir;
   await fs.rm(dirState.dir, { recursive: true, force: true });
 });
 

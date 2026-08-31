@@ -29,14 +29,25 @@ function run(args: string[]): { code: number; out: string } {
 }
 
 describe('standards:bootstrap argument parsing', () => {
-  it('defaults to printing the block', () => {
-    expect(parseArgs([])).toEqual({ mode: 'print', target: '.' });
+  it('defaults to printing the servicebay block', () => {
+    expect(parseArgs([])).toEqual({ mode: 'print', target: '.', flavor: 'servicebay' });
   });
 
   it('takes the target after --write/--check, and bare', () => {
-    expect(parseArgs(['--write', '/tmp/repo'])).toEqual({ mode: 'write', target: '/tmp/repo' });
-    expect(parseArgs(['--check', '/tmp/repo'])).toEqual({ mode: 'check', target: '/tmp/repo' });
-    expect(parseArgs(['--check'])).toEqual({ mode: 'check', target: '.' });
+    expect(parseArgs(['--write', '/tmp/repo'])).toEqual({ mode: 'write', target: '/tmp/repo', flavor: 'servicebay' });
+    expect(parseArgs(['--check', '/tmp/repo'])).toEqual({ mode: 'check', target: '/tmp/repo', flavor: 'servicebay' });
+    expect(parseArgs(['--check'])).toEqual({ mode: 'check', target: '.', flavor: 'servicebay' });
+  });
+
+  // #2701: a project that does not run on a ServiceBay box needs the generic
+  // block — the flavor that carries the cross-repo working agreements.
+  it('selects the generic flavor and keeps the target', () => {
+    expect(parseArgs(['--flavor', 'generic', '--write', '/tmp/repo'])).toEqual({
+      mode: 'write',
+      target: '/tmp/repo',
+      flavor: 'generic',
+    });
+    expect(() => parseArgs(['--flavor', 'nonsense'])).toThrow(/--flavor expects/);
   });
 
   it('accepts a repo dir or the CLAUDE.md path itself', () => {

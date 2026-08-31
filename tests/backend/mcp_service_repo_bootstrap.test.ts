@@ -60,7 +60,7 @@ describe('standards pointer block (#2513)', () => {
   });
 
   it('checkStandardsPointer rejects an edited (drifted) block', () => {
-    const drifted = applyStandardsPointer('# repo\n').replace('flavor `servicebay`', 'whatever you like');
+    const drifted = applyStandardsPointer('# repo\n').replace('Read first, design second', 'whatever you like');
     const res = checkStandardsPointer(drifted);
     expect(res.ok).toBe(false);
     expect(res.problems.join(' ')).toMatch(/drifted/);
@@ -82,6 +82,47 @@ describe('standards pointer block (#2513)', () => {
   it('bootstraps an empty/absent CLAUDE.md', () => {
     expect(checkStandardsPointer(applyStandardsPointer('')).ok).toBe(true);
   });
+
+  // #2701 — hole 1: the block used to name only the servicebay flavor's
+  // `assistsToRead`, while the cross-repo working agreements hang off the
+  // GENERIC flavor's `workingAgreements`. A repo that installed the block and
+  // followed it exactly never learned they existed.
+  it('sends the reader to BOTH flavors, so the working agreements are reachable', async () => {
+    const block = renderStandardsPointerBlock('servicebay');
+    expect(block).toContain('get_service_standards(flavor="servicebay")');
+    expect(block).toContain('get_service_standards(flavor="generic")');
+    expect(block).toContain('workingAgreements');
+
+    // …and the ids it promises are actually served by that flavor.
+    const generic = await buildServiceStandards('generic');
+    const wa = generic.workingAgreements as { ids: { id: string }[] };
+    expect(wa.ids.length).toBeGreaterThan(0);
+    expect(block).toContain(wa.ids[0].id);
+  });
+
+  // #2701 — hole 2: the generic flavor had step/ifServiceBayTarget/
+  // ifMcpNotConnected and NO pasteable block at all.
+  it('renders a generic flavor block that points at the working agreements', () => {
+    const block = renderStandardsPointerBlock('generic');
+    expect(block.startsWith(BOOTSTRAP_MARKER_BEGIN)).toBe(true);
+    expect(block.endsWith(BOOTSTRAP_MARKER_END)).toBe(true);
+    for (const ref of BOOTSTRAP_REQUIRED_REFERENCES) {
+      expect(block, `generic pointer block mentions ${ref}`).toContain(ref);
+    }
+    expect(block).toContain('get_service_standards(flavor="generic")');
+    expect(block).not.toBe(renderStandardsPointerBlock('servicebay'));
+  });
+
+  it('accepts either flavor when none is named, and pins one when it is', () => {
+    const generic = applyStandardsPointer('# repo\n', 'generic');
+    expect(checkStandardsPointer(generic).ok).toBe(true);
+    expect(checkStandardsPointer(generic, 'generic').ok).toBe(true);
+    // A servicebay-targeting repo carrying the generic block is drift, and the
+    // check says so once the flavor is named.
+    const res = checkStandardsPointer(generic, 'servicebay');
+    expect(res.ok).toBe(false);
+    expect(res.problems.join(' ')).toMatch(/drifted/);
+  });
 });
 
 describe('get_service_standards serves the bootstrap step (#2513)', () => {
@@ -100,10 +141,12 @@ describe('get_service_standards serves the bootstrap step (#2513)', () => {
     // standards — a generic flavor with no route to the platform flavor is a
     // dead end for exactly the case that failed.
     const s = await buildServiceStandards('generic');
-    const rb = s.repoBootstrap as { ifServiceBayTarget: string };
+    const rb = s.repoBootstrap as { ifServiceBayTarget: string; claudeMdBlock: string };
     expect(rb).toBeDefined();
     expect(rb.ifServiceBayTarget).toContain('get_service_standards');
     expect(rb.ifServiceBayTarget).toContain('servicebay');
+    // #2701: and it now hands over the finished text, like the servicebay flavor.
+    expect(rb.claudeMdBlock).toBe(renderStandardsPointerBlock('generic'));
     // …without smuggling the platform ADR list into the generic flavor (#2323).
     expect(s.mustRespectAdrs).toBeUndefined();
     expect(JSON.stringify(s)).not.toContain('docs/adr');

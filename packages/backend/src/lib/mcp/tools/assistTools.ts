@@ -5,6 +5,7 @@
  */
 import { z } from 'zod';
 import { listAssists, getAssist, ASSIST_KINDS, listAssistDrift } from '@/lib/assists/catalog';
+import { AssistCatalogUnavailableError, assistDeliveryStatus } from '@/lib/assists/delivery';
 import {
   submitProposal,
   ProposalError,
@@ -14,6 +15,40 @@ import {
 } from '@/lib/assists/proposals';
 import { buildServiceStandards, SERVICE_STANDARDS_FLAVORS } from '../serviceStandards';
 import { textResult, errorResult, type ToolRegistration } from './context';
+
+/**
+ * "No assist found with id X" is the exact message #2701 was first reported as —
+ * and it was WRONG: the entry existed, it just had not been delivered. So when
+ * the most recent delivery attempt failed, a miss says so instead of reading as
+ * a settled fact about the catalog.
+ */
+async function notFoundMessage(id: string): Promise<string> {
+  const base = `No assist found with id "${id}". Use list_assists to see available entries.`;
+  const status = await assistDeliveryStatus();
+  if (status.external || !status.lastError) return base;
+  return (
+    `${base}\n\nCAUTION: the catalog's last delivery attempt FAILED (${status.lastAttemptAt}: ${status.lastError}). ` +
+    `The tree being served is from ${status.lastSuccessAt ?? 'never'} (commit ${status.sha ?? 'unknown'}), so this id may exist ` +
+    'upstream and simply not have arrived. Treat this as "not delivered", not as "does not exist" (#2701).'
+  );
+}
+
+/**
+ * Turn a catalog read failure into a LOUD answer (#2701). The catalog is
+ * delivered at runtime, not baked into the image, so "delivery is broken" is a
+ * state a caller must be able to tell apart from "there is no such assist" and
+ * from "the catalog is empty" — otherwise a failed delivery reads as a clean,
+ * quiet answer, which is exactly the shape of failure this catalog warns about.
+ */
+async function catalogFailure(e: unknown) {
+  if (e instanceof AssistCatalogUnavailableError) {
+    const status = await assistDeliveryStatus();
+    return errorResult(
+      `${e.message}\n\nDelivery status: ${JSON.stringify(status)}`,
+    );
+  }
+  throw e;
+}
 
 // A register function is a flat LIST of tool declarations, not a unit of logic:
 // its length just counts how many tools the group holds. The rule stays ON for the
@@ -33,8 +68,12 @@ export function registerAssistTools({ server, caller }: ToolRegistration) {
       kind: z.enum(ASSIST_KINDS).optional().describe('Restrict to one kind: guide | recipe | adr | template | checklist | footgun | snippet.'),
     },
     async ({ query, kind }) => {
-      const assists = await listAssists({ query, kind });
-      return textResult(assists);
+      try {
+        const assists = await listAssists({ query, kind });
+        return textResult(assists);
+      } catch (e) {
+        return catalogFailure(e);
+      }
     },
   );
 
@@ -46,8 +85,13 @@ export function registerAssistTools({ server, caller }: ToolRegistration) {
       id: z.string().describe('Assist id (the entry id returned by list_assists).'),
     },
     async ({ id }) => {
-      const body = await getAssist(id);
-      if (!body) return errorResult(`No assist found with id "${id}". Use list_assists to see available entries.`);
+      let body: string | null;
+      try {
+        body = await getAssist(id);
+      } catch (e) {
+        return catalogFailure(e);
+      }
+      if (!body) return errorResult(await notFoundMessage(id));
       return textResult(body);
     },
   );
@@ -170,11 +214,15 @@ export function registerAssistTools({ server, caller }: ToolRegistration) {
   // Side-effect-free; `read`-scoped so any read token can call it.
   server.tool(
     'list_assist_drift',
-    'List landed local-assists (submitted via propose_learning and approved) that do not yet have a corresponding built-in entry in the repo\'s assists/ directory. These are the promotion backlog — each entry is a runtime-only assist that a repo PR adding assists/<slug>.md would make permanent and ship in the image. Returns each entry\'s id (local/<slug>), title, kind, whenToUse, tags, and a promotionHint. Read-only and side-effect-free.',
+    'List the runtime assists that diverge from the repo catalog. relation="landed": an approved propose_learning entry (id local/<slug>) with no corresponding assists/<slug>.md yet — the promotion backlog, which a repo PR makes permanent. relation="override": an admin-approved Local entry that SHADOWS a delivered repo assist of the same id, so get_assist answers with the local copy instead of the repo text — fold it into a repo PR or drop it. Returns each entry\'s id, title, kind, whenToUse, tags, relation, and a promotionHint. Read-only and side-effect-free.',
     {},
     async () => {
-      const entries = await listAssistDrift();
-      return textResult({ drift: entries, count: entries.length });
+      try {
+        const entries = await listAssistDrift();
+        return textResult({ drift: entries, count: entries.length });
+      } catch (e) {
+        return catalogFailure(e);
+      }
     },
   );
 
