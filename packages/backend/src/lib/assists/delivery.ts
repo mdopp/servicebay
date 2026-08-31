@@ -144,10 +144,19 @@ export class AssistCatalogUnavailableError extends Error {
   }
 }
 
+/**
+ * Read the delivery state, tolerating every shape a half-written file takes:
+ * missing, empty, truncated mid-write, or well-formed JSON that is not an
+ * object at all. Any of those collapses to `EMPTY_STATE` — which the read gate
+ * below reads as "never delivered", i.e. the LOUD refusal — rather than to a
+ * spread of stray keys over the defaults (#2706).
+ */
 export async function readDeliveryState(): Promise<AssistDeliveryState> {
   try {
     const raw = await fs.readFile(STATE_FILE(), 'utf-8');
-    return { ...EMPTY_STATE, ...(JSON.parse(raw) as Partial<AssistDeliveryState>) };
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...EMPTY_STATE };
+    return { ...EMPTY_STATE, ...(parsed as Partial<AssistDeliveryState>) };
   } catch {
     return { ...EMPTY_STATE };
   }
@@ -320,8 +329,23 @@ export async function resolveCatalogDir(): Promise<string> {
     );
   }
 
-  const age = Date.now() - Date.parse(state.lastSuccessAt);
-  if (Number.isFinite(age) && age > catalogMaxAgeMs()) {
+  // A `lastSuccessAt` that is present but not a timestamp is a CORRUPT state
+  // file, not a fresh delivery. Before #2706 the freshness check below was
+  // guarded on `Number.isFinite(age)`, so an unparseable value sailed past both
+  // gates and the catalog answered from whatever tree happened to be on disk —
+  // exactly the quiet, unvouched-for answer #2701 exists to prevent.
+  const lastSuccessMs = Date.parse(state.lastSuccessAt);
+  if (!Number.isFinite(lastSuccessMs)) {
+    throw new AssistCatalogUnavailableError(
+      `The assist catalog's delivery state on this box is unreadable: it records a last successful delivery of ` +
+      `"${state.lastSuccessAt}", which is not a timestamp. Delivery pulls ${catalogRepoUrl()}#${catalogRepoRef()} into ${dir} (#2701); ` +
+      `the state file is ${STATE_FILE()} and is rewritten by the next successful sync. ` +
+      'Refusing to serve a tree no recorded delivery vouches for — this is an outage, not an empty catalog.',
+    );
+  }
+
+  const age = Date.now() - lastSuccessMs;
+  if (age > catalogMaxAgeMs()) {
     throw new AssistCatalogUnavailableError(
       `The assist catalog on this box is ${ageText(state.lastSuccessAt)} old (last successful delivery ${state.lastSuccessAt}, ` +
       `commit ${state.sha ?? 'unknown'}) and is no longer served. Delivery pulls ${catalogRepoUrl()}#${catalogRepoRef()} into ${dir} (#2701); ` +
