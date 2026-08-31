@@ -48,7 +48,8 @@ const createToken = vi.fn<(i: {
   neverExpires?: boolean;
   createdBy: string;
 }) => Promise<{ token: unknown; secret: string }>>();
-vi.mock('@/lib/auth/apiTokens', () => ({
+vi.mock('@/lib/auth/apiTokens', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/apiTokens')>()),
   createToken: (i: Parameters<typeof createToken>[0]) => createToken(i),
 }));
 
@@ -95,10 +96,19 @@ beforeEach(() => {
   loadSavedVariables.mockReturnValue({});
   createToken.mockReset();
   let minted = 0;
-  createToken.mockImplementation(async () => ({
-    token: {},
-    secret: `sb_abcdef0${++minted}_MINTEDSECRET${minted}`,
-  }));
+  // #2711 — the mocked secret must carry the REAL wire form,
+  // `sb_<8 hex>_<[A-Z2-9]+>`: the assembler now re-mints a stored value that
+  // lacks it, so a per-mint marker containing a `0` or a `1` (outside that
+  // alphabet) would make the idempotency case mint twice and read as a
+  // regression that isn't one. MINT_MARKS is inside the alphabet.
+  const MINT_MARKS = 'ABCDEFGHJK';
+  createToken.mockImplementation(async () => {
+    minted += 1;
+    return {
+      token: {},
+      secret: `sb_abcdef0${minted}_MINTEDSECRET${MINT_MARKS[minted % MINT_MARKS.length]}`,
+    };
+  });
 });
 
 describe('assembleManifest — operator-set variable reuse (#2531)', () => {

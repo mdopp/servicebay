@@ -723,8 +723,32 @@ export async function addProject(options, servicebay, input) {
 
 /**
  * Remove a project: revoke ITS token, drop ITS MCP entry, stop ITS session.
- * Nothing on disk is deleted, and a checkout this UI did not add is refused
- * outright — `managed` is not advisory, it is the permission.
+ * Nothing on disk is deleted.
+ *
+ * ── #2713: a checkout this page did NOT add ─────────────────────────────────
+ *
+ * Removal used to be refused outright there, and on the real box every single
+ * checkout was hand-cloned — so the operator who asked for a delete never saw
+ * one. The guard's CONCERN was right: tearing down a checkout and credentials
+ * this page never created and knows nothing about. Its ANSWER was wrong,
+ * because "not at all" is not an answer.
+ *
+ * So the ownership check is now a two-step rather than a wall:
+ *
+ *   • `managed === true`  (a delegated token is recorded) → the full take-back:
+ *     revoke that token, drop that MCP entry, stop the session, mark it.
+ *   • `managed === false` (the read SUCCEEDED and found none) → possible, but
+ *     only with `acknowledgeUnmanaged`. What is possible is the part this page
+ *     actually owns — stop the session, write the no-autostart marker. It
+ *     revokes nothing (there is nothing of its issuing to revoke) and it runs
+ *     no `claude mcp remove` on an entry it did not write.
+ *   • `managed === null`  (the read FAILED) → still refused, acknowledgement or
+ *     not. "We could not look" is not "not managed"; the acknowledgement is
+ *     about ownership that is KNOWN to be elsewhere, never about a guess.
+ *
+ * The acknowledgement is a parameter of these mechanics, not a browser confirm
+ * dialog, precisely so the second caller (#2714's MCP tool) meets the same
+ * guard instead of walking around it.
  */
 export async function removeProject(options, servicebay, input) {
   const {
@@ -756,24 +780,43 @@ export async function removeProject(options, servicebay, input) {
     throw new ProjectError(500,
       `could not tell whether "${name}" was added here: ${String(err?.message || err).slice(0, 200)}`);
   }
-  if (!tokenId) {
+  const managed = Boolean(tokenId);
+  const acknowledged = input?.acknowledgeUnmanaged === true
+    || String(input?.acknowledgeUnmanaged ?? '') === '1'
+    || String(input?.acknowledgeUnmanaged ?? '').toLowerCase() === 'true';
+  if (!managed && !acknowledged) {
     throw new ProjectError(409,
-      `"${name}" was not added through this page — it has no delegated ServiceBay token, so there is nothing here to take back. Leaving it exactly as it is.`);
+      `"${name}" was not added through this page — it has no delegated ServiceBay token and no MCP entry recorded here, so there is nothing of this page's to take back.`,
+      'Removing it anyway stops its Claude session and marks it not to auto-start again; it revokes no token, '
+      + 'drops no MCP entry and deletes no file. Repeat the request with acknowledgeUnmanaged to say you know that.');
   }
 
   const warnings = [];
-  // Revoke FIRST: while the entry still names the token, a failure here is
-  // retryable. The other order would strand a live credential unrecorded.
-  const revoked = await revokeProjectToken(servicebay, tokenId, doFetch);
-  if (revoked.alreadyGone) warnings.push(`token ${tokenId} was already revoked on the ServiceBay side`);
+  let tokenRevoked = false;
+  let mcpEntryRemoved = false;
 
-  try {
-    runCommand('claude', ['mcp', 'remove', PROJECT_MCP_SERVER, '--scope', 'local'],
-      { cwd: checkoutPath, env: { ...process.env, HOME: homeDir } });
-  } catch (err) {
-    throw new ProjectError(500,
-      `the token was revoked but the MCP entry for "${name}" could not be removed — the entry now names a dead token`,
-      String(err?.stderr || err?.message || err).slice(0, 500));
+  if (managed) {
+    // Revoke FIRST: while the entry still names the token, a failure here is
+    // retryable. The other order would strand a live credential unrecorded.
+    const revoked = await revokeProjectToken(servicebay, tokenId, doFetch);
+    tokenRevoked = revoked.revoked;
+    if (revoked.alreadyGone) warnings.push(`token ${tokenId} was already revoked on the ServiceBay side`);
+
+    try {
+      runCommand('claude', ['mcp', 'remove', PROJECT_MCP_SERVER, '--scope', 'local'],
+        { cwd: checkoutPath, env: { ...process.env, HOME: homeDir } });
+      mcpEntryRemoved = true;
+    } catch (err) {
+      throw new ProjectError(500,
+        `the token was revoked but the MCP entry for "${name}" could not be removed — the entry now names a dead token`,
+        String(err?.stderr || err?.message || err).slice(0, 500));
+    }
+  } else {
+    // Nothing of ours to take back — and the operator was told that before
+    // this ran. Say it in the result too, so the outcome is not read as a
+    // revoke that quietly did nothing.
+    warnings.push(`"${name}" was not added through this page: no token was revoked and no MCP entry was dropped. `
+      + 'Any credential this checkout uses was issued elsewhere and is still live.');
   }
 
   // Durable stop: the entrypoint's 300s reconcile honours this marker, so the
@@ -802,7 +845,12 @@ export async function removeProject(options, servicebay, input) {
     removed: {
       name,
       path: checkoutPath,
-      tokenId,
+      // Whether this page had added it, and therefore which of the two shapes
+      // above actually ran — reported rather than inferred by the caller.
+      managed,
+      tokenId: managed ? tokenId : null,
+      tokenRevoked,
+      mcpEntryRemoved,
       session,
       // Said out loud so nobody reads Remove as a delete.
       checkoutDeleted: false,
@@ -1441,11 +1489,23 @@ export const API_ROUTES = {
     sendJson(res, 201, result);
   },
 
-  /** Remove a project (#2680) — revoke its token, unwire it, stop it. */
+  /**
+   * Remove a project (#2680) — revoke its token, unwire it, stop it.
+   *
+   * `acknowledgeUnmanaged` (#2713) is how a caller says it knows this page did
+   * not add the checkout: without it an unmanaged removal is still refused,
+   * with it the session is stopped and marked and nothing else is touched.
+   */
   'DELETE /api/projects': async (req, res, ctx) => {
-    const result = await removeProject(ctx.projectOptions, ctx.servicebay, { name: ctx.query.get('name') ?? '' });
+    const result = await removeProject(ctx.projectOptions, ctx.servicebay, {
+      name: ctx.query.get('name') ?? '',
+      acknowledgeUnmanaged: ctx.query.get('acknowledgeUnmanaged') ?? false,
+    });
     ctx.log(`claude-dev config-ui: ${ctx.identity.user} removed project "${result.removed.name}"`
-      + ` (token ${result.removed.tokenId} revoked, checkout left on disk)`);
+      + (result.removed.managed
+        ? ` (token ${result.removed.tokenId} revoked, checkout left on disk)`
+        : ' (not added through this page: session stopped and marked, no token revoked,'
+          + ' no MCP entry dropped, checkout left on disk)'));
     sendJson(res, 200, result);
   },
 

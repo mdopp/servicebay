@@ -191,6 +191,7 @@ Claude Code) to see the live tool registry on your version.
 | Backups | `list_backups`, `run_backup`, `restore_backup` |
 | System | `list_nodes`, `get_system_info`, `get_network_graph`, `get_config`, `update_config`, `exec_command`, `get_channel`, `set_channel` |
 | Knowledge | `list_assists`, `get_assist`, `get_service_standards` (`flavor: servicebay\|generic`), `propose_learning` (`propose` scope), `list_learning_proposals` / `get_learning_proposal` / `list_assist_drift` (`read`, admin review) |
+| Dev box | `manage_claude_dev_project` (`action: create\|restart\|delete`) — one tool for the claude-dev container's Claude projects |
 
 The three merged tools above (`manage_service`, `get_logs`,
 `get_template_artifact`) plus `list_requests` replaced nine (+2) narrower tools
@@ -209,6 +210,20 @@ pre-mutation snapshot and sends the same operator email as `deploy_service` —
 while a plain start/stop/restart still does neither. The action also logs the
 pre-update image digest (`Rollback anchor — pre-update image digests: …`, also
 in the returned `logs`), which is what you pin to undo a bad image.
+
+`manage_claude_dev_project` (#2714) is the second place an action carries a
+different tier than its tool — and there the difference is the *scope*, not just
+the safeguards. Its floor is `lifecycle` (`create` and `restart`), and
+`TOOL_ACTION_SCOPES` raises `delete` to `destroy`, because a removal revokes the
+project's delegated token and ends its Claude session. So a lifecycle-only token
+can create and restart projects, and a removal takes the destroy tier's human
+approval like `delete_service` does. It is deliberately ONE tool with an
+`action` rather than three: the catalogue is context every session loads on
+every connect. The tool does not implement any of the work — it calls the same
+routes the container's own configuration UI calls
+(`templates/claude-dev/config-ui/server.mjs`), so the anchored tmux target and
+the confirm-the-restart-at-the-source rule (#2682) have exactly one
+implementation.
 
 The proxy tools split by how far they push. `add_proxy_route` only records a
 config entry (a later manual sync pushes it). `create_proxy_route` pushes a

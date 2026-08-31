@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Claude Dev — configuration</title>
+  <!-- tokens.css FIRST: it is generated from ServiceBay's globals.css and
+       owns every colour + the light/dark ramp; shell.css is layout only. -->
+  <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/shell.css">
   <!-- No inline script or style: the server sends `default-src 'self'`. -->
   <script type="module" src="/shell.js"></script>
@@ -12,8 +15,22 @@
   <a class="skip-link" href="#panel-root">Skip to content</a>
 
   <header class="shell-header">
-    <h1 class="shell-title">Claude Dev</h1>
-    <p class="shell-subtitle">Configuration for the development container on this box.</p>
+    <div class="shell-heading">
+      <!-- claude-dev's per-service identity chip (#2126): violet is the service's
+           own colour, carried on this chip alone — never a full-card colour and
+           never in place of the accent. Decorative, so it is not announced. -->
+      <span class="shell-identity-chip" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 17 10 11 4 5"></polyline>
+          <line x1="12" y1="19" x2="20" y2="19"></line>
+        </svg>
+      </span>
+      <div>
+        <h1 class="shell-title">Claude Dev</h1>
+        <p class="shell-subtitle">Configuration for the development container on this box.</p>
+      </div>
+    </div>
     <!-- Filled by shell.js from /api/session — the signed-in Authelia user. -->
     <p class="shell-identity" id="shell-identity" aria-live="polite">Loading your session…</p>
   </header>

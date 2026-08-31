@@ -110,6 +110,63 @@ async function getRunningImageDigest(): Promise<string | null> {
   }
 }
 
+/**
+ * Channels whose images are, by construction, NOT a published release:
+ * `release.yml` pushes `:dev` from the latest non-release commit on `main` and
+ * `:test` from the `test` branch (see `lib/servicebayChannel.ts`). A box on one
+ * of these is running code that no release tag names — which is exactly why its
+ * `package.json` version cannot be used to answer "am I up to date?".
+ */
+const UNRELEASED_CHANNELS = new Set(['dev', 'test']);
+
+/** What the box is ACTUALLY running, read off the running container. */
+export interface RunningBuild {
+  /** Release channel from the running image's tag (`latest` | `dev` | `test` | …). */
+  channel: string | null;
+  /** Git commit the running image was built from (OCI `image.revision` label). */
+  revision: string | null;
+}
+
+/**
+ * Identify the running build from the **running container**, never from
+ * configuration.
+ *
+ * The configured channel and the running one have demonstrably diverged on a
+ * live box (#2493, #2387): the quadlet can already carry a pending switch that
+ * no restart has landed yet, so anything derived from config can describe an
+ * image that is not executing. `podman inspect servicebay` describes the
+ * process that is actually serving this request — the channel comes from the
+ * image tag it was created from, the commit from the image's OCI
+ * `org.opencontainers.image.revision` label.
+ *
+ * Returns nulls on any failure; callers must treat null as "unknown" and must
+ * NOT downgrade unknown into "this is a release" (that assumption is #2708).
+ */
+async function getRunningBuild(): Promise<RunningBuild> {
+  try {
+    const executor = getExecutor('Local');
+    const { stdout } = await executor.execArgv(
+      [
+        'podman', 'inspect', 'servicebay', '--format',
+        '{{.ImageName}}|{{index .Config.Labels "org.opencontainers.image.revision"}}',
+      ],
+      { timeoutMs: 30 * 1000 },
+    );
+    const [imageName = '', rawRevision = ''] = stdout.trim().split('|');
+    const tag = imageName.trim().match(/:([A-Za-z0-9._-]+)$/);
+    // `{{index}}` on a missing label prints Go's `<no value>`, not an empty
+    // string — treat that as "unknown", not as a commit called "<no value>".
+    const revision = rawRevision.trim();
+    return {
+      channel: tag ? tag[1] : null,
+      revision: revision && revision !== '<no value>' ? revision : null,
+    };
+  } catch (e) {
+    logger.warn('Updater', `getRunningBuild failed: ${e instanceof Error ? e.message : String(e)}`);
+    return { channel: null, revision: null };
+  }
+}
+
 async function getCurrentVersion(): Promise<string> {
   try {
     const pkgPath = path.join(process.cwd(), 'package.json');
@@ -156,9 +213,39 @@ export interface UpdateCheckResult {
     date: string;
     notes: string;
   } | null;
+  /** The image actually running (channel + commit), read off the container. */
+  running?: RunningBuild;
+  /**
+   * True when the running image comes from a non-release channel (`:dev` /
+   * `:test`). Then `current` is the LAST release's number — release-please only
+   * bumps on the release commit — so "current === latest" says nothing about
+   * whether this build is published. A legitimate operating state; the UI names
+   * it rather than claiming "up to date". (#2708)
+   */
+  unreleasedBuild?: boolean;
 }
 
+/**
+ * Update status for the UI: the release comparison PLUS which build is
+ * actually running.
+ *
+ * The two halves are separate on purpose. The release comparison alone was the
+ * #2708 defect: on `:dev` every value it produced was true ("current 5.22.2",
+ * "latest 5.22.2", "no update") and the conclusion it invited — "you are on the
+ * latest version" — was false, because the running commit was never released.
+ */
 export async function checkForUpdates(): Promise<UpdateCheckResult> {
+  const release = await checkReleaseStatus();
+  const running = await getRunningBuild();
+  return {
+    ...release,
+    running,
+    unreleasedBuild: running.channel !== null && UNRELEASED_CHANNELS.has(running.channel),
+  };
+}
+
+/** The release-tag/image-digest comparison — see `checkForUpdates`. */
+async function checkReleaseStatus(): Promise<UpdateCheckResult> {
   const current = await getCurrentVersion();
   const latest = await getLatestRelease();
 

@@ -22,6 +22,11 @@ vi.mock('@/lib/config', () => ({
 // registry manifest still gets a sane "running digest" answer; tests that care
 // about the running digest set `mockRunningDigest`.
 const mockRunningDigest = vi.hoisted(() => ({ value: null as string | null }));
+/** `{{.ImageName}}|{{index .Config.Labels "…image.revision"}}` for the running
+ *  container — the ground truth for channel + commit (#2708). */
+const mockRunningBuild = vi.hoisted(() => ({
+  value: 'ghcr.io/mdopp/servicebay:latest|1d3fa8d6c7d60ddc24f8b75ee7b49f5a58796d10',
+}));
 const mockExec = vi.hoisted(() => ({
   exec: vi.fn(async (_cmd: string, _opts?: unknown) => ({ stdout: '', stderr: '' })),
   execArgv: vi.fn(async (_argv: string[], _opts?: unknown) => ({ stdout: '', stderr: '' })),
@@ -68,6 +73,11 @@ function routeExecArgv(manifestStdout: string) {
   mockExec.execArgv.mockImplementation(async (argv: string[]) => {
     if (argv.includes('manifest')) return { stdout: manifestStdout, stderr: '' };
     if (argv.includes('inspect')) {
+      // Two distinct `podman inspect servicebay` calls now: the digest lookup
+      // and the running-build lookup (#2708). They differ only by --format.
+      if (argv.some((a) => a.includes('ImageName'))) {
+        return { stdout: mockRunningBuild.value, stderr: '' };
+      }
       return { stdout: mockRunningDigest.value ?? '', stderr: '' };
     }
     return { stdout: '', stderr: '' };
@@ -78,6 +88,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockConfig.current = { autoUpdate: { enabled: false, schedule: '0 0 * * *' } };
   mockRunningDigest.value = null;
+  mockRunningBuild.value = 'ghcr.io/mdopp/servicebay:latest|1d3fa8d6c7d60ddc24f8b75ee7b49f5a58796d10';
   mockExec.exec.mockResolvedValue({ stdout: '', stderr: '' });
   mockExec.execArgv.mockResolvedValue({ stdout: '', stderr: '' });
   global.fetch = ORIG_FETCH;
@@ -171,6 +182,74 @@ describe('checkForUpdates — tag/image reconciliation', () => {
     expect(res.hasUpdate).toBe(false);
     expect(res.imageBuilding).toBeFalsy();
     expect(mockConfig.current.autoUpdate.appliedImageDigest).toBe('sha256:SEED');
+  });
+});
+
+describe('checkForUpdates — running build vs. release (#2708)', () => {
+  // The defect: on `:dev` an unreleased commit still carries the LAST release's
+  // version (release-please bumps only on the release commit), so the release
+  // comparison alone reported "no update" and the UI concluded "you are on the
+  // latest version" — every value true, the statement false.
+
+  it('reports the channel + commit of the RUNNING image, not the configured one', async () => {
+    mockReleaseTag('0.0.0');
+    mockRunningBuild.value = 'ghcr.io/mdopp/servicebay:dev|d01054f5aaaaaaaabbbbbbbbcccccccc22222222';
+    routeExecArgv(manifestList('sha256:SEED'));
+
+    const res = await checkForUpdates();
+    expect(res.running?.channel).toBe('dev');
+    expect(res.running?.revision).toBe('d01054f5aaaaaaaabbbbbbbbcccccccc22222222');
+  });
+
+  it('flags a :dev build as unreleased even when the version equals the release', async () => {
+    mockReleaseTag('0.0.0'); // equal to the 0.0.0 fallback current → "up to date"
+    mockRunningBuild.value = 'ghcr.io/mdopp/servicebay:dev|d01054f5aaaaaaaabbbbbbbbcccccccc22222222';
+    routeExecArgv(manifestList('sha256:SEED'));
+
+    const res = await checkForUpdates();
+    expect(res.hasUpdate).toBe(false); // the release comparison is unchanged…
+    expect(res.unreleasedBuild).toBe(true); // …and no longer the whole story
+  });
+
+  it('flags :test the same way', async () => {
+    mockReleaseTag('0.0.0');
+    mockRunningBuild.value = 'ghcr.io/mdopp/servicebay:test|abc1234abc1234abc1234abc1234abc1234abcd';
+    routeExecArgv(manifestList('sha256:SEED'));
+
+    expect((await checkForUpdates()).unreleasedBuild).toBe(true);
+  });
+
+  it('leaves a :latest box alone — not an unreleased build', async () => {
+    mockReleaseTag('0.0.0');
+    routeExecArgv(manifestList('sha256:SEED'));
+
+    const res = await checkForUpdates();
+    expect(res.unreleasedBuild).toBe(false);
+    expect(res.running?.channel).toBe('latest');
+  });
+
+  it('does not invent a commit when the image carries no revision label', async () => {
+    mockReleaseTag('0.0.0');
+    // Go templates print `<no value>` for a missing map key — not an empty string.
+    mockRunningBuild.value = 'ghcr.io/mdopp/servicebay:dev|<no value>';
+    routeExecArgv(manifestList('sha256:SEED'));
+
+    const res = await checkForUpdates();
+    expect(res.running?.revision).toBeNull();
+    expect(res.running?.channel).toBe('dev');
+    expect(res.unreleasedBuild).toBe(true);
+  });
+
+  it('unknown running build (inspect fails) is not silently treated as a release', async () => {
+    mockReleaseTag('0.0.0');
+    mockExec.execArgv.mockRejectedValue(new Error('no podman'));
+
+    const res = await checkForUpdates();
+    expect(res.running?.channel).toBeNull();
+    expect(res.running?.revision).toBeNull();
+    // Unknown is unknown: we don't claim "unreleased", and we don't claim the
+    // opposite either — the card just falls back to the release comparison.
+    expect(res.unreleasedBuild).toBe(false);
   });
 });
 

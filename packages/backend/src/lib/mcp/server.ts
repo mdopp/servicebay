@@ -32,7 +32,8 @@ import {
   MCP_KERNEL_TOOLS,
   tokenHasScope,
   isToolVisibleForScopes,
-  isDestroyTierTool,
+  requiredScopeForCall,
+  isDestroyTierCall,
   APPROVAL_STATUS_TOOL,
 } from './toolPolicy';
 import type { ToolResult, ToolServer } from './tools/context';
@@ -49,6 +50,7 @@ import { registerAssistTools } from './tools/assistTools';
 import { registerFileTools } from './tools/fileTools';
 import { registerRequestTools } from './tools/requestTools';
 import { registerBootTools } from './tools/bootTools';
+import { registerClaudeDevTools } from './tools/claudeDevTools';
 
 // The tool-policy tables are re-exported from their original home so external
 // importers (tests, tokenRequests, the drift report) keep working unchanged.
@@ -197,7 +199,11 @@ function safeHandler(
       }
     }
     // Scope check (token auth only — cookie has all scopes by design).
-    const required = TOOL_SCOPES[toolName] ?? 'read';
+    // Resolved per CALL, not per tool (#2714): a tool whose floor is
+    // `lifecycle` can carry one `destroy`-tier action among reversible ones
+    // (`manage_claude_dev_project` delete), and the message names the scope
+    // THAT action needs rather than the tool's floor.
+    const required = requiredScopeForCall(toolName, args);
     if (auth && !tokenHasScope(auth.scopes, required)) {
       const msg = `Token scope '${required}' required for ${toolName}; this token has [${auth.scopes.join(',')}]`;
       void recordAudit({ ts: new Date().toISOString(), tool: toolName, caller: auth.user, outcome: 'blocked', durationMs: 0, args, errorMessage: msg });
@@ -234,7 +240,7 @@ function safeHandler(
     // A one-shot token (#2245) already went through owner approval when it was
     // minted, so it must NOT park again — it runs its one bound op inline (then
     // burns below). Only a NON-one-shot token proposing a destroy-tier op parks.
-    if (auth && !auth.oneShotOp && isDestroyTierTool(toolName)) {
+    if (auth && !auth.oneShotOp && isDestroyTierCall(toolName, args)) {
       // Derive a service anchor from the tool args when it names one, else a
       // neutral "mcp" bucket. `submitApproval` re-validates it as a safe path
       // segment; fall back to "mcp" if the arg is not a usable service name.
@@ -356,6 +362,7 @@ export function createMcpServer(opts?: { auth?: McpAuthContext }) {
   registerFileTools(registration);
   registerRequestTools(registration);
   registerBootTools(registration);
+  registerClaudeDevTools(registration);
 
   // Scope-filtered + deterministically-ordered tools/list (#2325).
   //

@@ -169,6 +169,30 @@ export function genSecret(): string {
   }
   return out;
 }
+/**
+ * The wire form of a raw API token: `sb_<8 hex id>_<secret>`, the secret drawn
+ * from `SECRET_ALPHABET`. The single definition of that shape — `verifyToken`
+ * reads its two capture groups, and `looksLikeApiToken` is the same test for
+ * callers that cannot reach the token store.
+ */
+const RAW_TOKEN_RE = /^sb_([0-9a-f]{8})_([A-Z2-9]+)$/;
+
+/**
+ * True when `raw` has the FORM of a ServiceBay API token.
+ *
+ * It says nothing about whether that token exists, is live, or authenticates —
+ * only {@link verifyToken} can answer that, and it needs the store. What this
+ * answers is the cheaper question that was being skipped: *is this a token at
+ * all?* (#2711). A generated random secret is alphanumeric and therefore passes
+ * every charset check, so a value that landed in a token slot by accident used
+ * to travel all the way to a consumer, which then got 401 on every call with
+ * nothing anywhere saying why. Callers that hand a token to a consumer check
+ * this first and refuse loudly instead.
+ */
+export function looksLikeApiToken(raw: string): boolean {
+  return RAW_TOKEN_RE.test(raw);
+}
+
 function sha256(s: string): string {
   return crypto.createHash('sha256').update(s).digest('hex');
 }
@@ -619,7 +643,7 @@ function ancestorChainIsLive(token: ApiToken, tokens: ApiToken[]): boolean {
  * descendant on their next verify.
  */
 export async function verifyToken(raw: string): Promise<Omit<ApiToken, 'hash'> | null> {
-  const m = raw.match(/^sb_([0-9a-f]{8})_([A-Z2-9]+)$/);
+  const m = raw.match(RAW_TOKEN_RE);
   if (!m) return null;
   const [, id, secret] = m;
   const data = await loadFile();

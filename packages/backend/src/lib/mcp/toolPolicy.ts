@@ -32,6 +32,7 @@ export const MUTATING_TOOLS = new Set([
   'set_boot_next_usb', 'reboot_node', 'factory_reset',
   'set_channel',
   'propose_learning',
+  'manage_claude_dev_project',
 ]);
 
 /**
@@ -102,6 +103,12 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   get_install_progress: 'read',
   // lifecycle
   manage_service: 'lifecycle',
+  // #2714 — the FLOOR for the claude-dev project tool, not its whole story:
+  // `create` and `restart` are lifecycle verbs, and `delete` escalates to
+  // `destroy` per call via TOOL_ACTION_SCOPES below. The floor is also what
+  // decides VISIBILITY, so a lifecycle token sees the tool and can use the two
+  // verbs it holds, and learns the third needs `destroy` when it tries it.
+  manage_claude_dev_project: 'lifecycle',
   run_check_now: 'lifecycle', refresh_agent: 'lifecycle',
   run_backup: 'lifecycle',
   set_channel: 'lifecycle',
@@ -139,6 +146,42 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   // else; a read/mutate/destroy token does NOT implicitly see or call it.
   propose_learning: 'propose',
 };
+
+/**
+ * Per-ACTION required scope (#2714) — the escalation half of `TOOL_SCOPES`.
+ *
+ * `TOOL_SCOPES` is keyed on the tool name, which is right until one tool's
+ * actions differ in REVERSIBILITY. `manage_claude_dev_project` is that case:
+ * `create` and `restart` are lifecycle verbs, while `delete` revokes a
+ * delegated token and ends a running Claude session. Splitting it into three
+ * tools to get three scopes was explicitly refused (the catalogue is context
+ * every session loads); giving the whole tool the `destroy` tier would put a
+ * routine restart behind the human-approval gate; leaving the whole tool at
+ * `lifecycle` would hand a removal to a lifecycle-only token.
+ *
+ * So the tool's TOOL_SCOPES entry is the FLOOR (what the cheapest action needs,
+ * and therefore what decides visibility), and this map raises the requirement
+ * for the actions that deserve more. `docs/SCOPE_AUDIT.md` splits on exactly
+ * this axis; the same shape `DESTRUCTIVE_TOOL_ACTIONS` already uses for the
+ * snapshot/notify safeguards.
+ */
+export const TOOL_ACTION_SCOPES: Record<string, Record<string, ApiScope>> = {
+  manage_claude_dev_project: { delete: 'destroy' },
+};
+
+/**
+ * The scope THIS call needs: the per-action entry when the tool declares one
+ * for `args.action`, else the tool's floor, else `read`.
+ *
+ * Resolved per call rather than per tool so the scope gate, the gate's error
+ * message and the destroy-tier approval gate all read the same number — three
+ * places that would otherwise each have to remember the escalation.
+ */
+export function requiredScopeForCall(toolName: string, args?: Record<string, unknown>): ApiScope {
+  const action = args?.action;
+  const perAction = typeof action === 'string' ? TOOL_ACTION_SCOPES[toolName]?.[action] : undefined;
+  return perAction ?? TOOL_SCOPES[toolName] ?? 'read';
+}
 
 /**
  * Decide whether a token with `tokenScopes` may call a tool that
@@ -262,6 +305,17 @@ export function destructiveCallLabel(
  */
 export function isDestroyTierTool(toolName: string): boolean {
   return TOOL_SCOPES[toolName] === 'destroy';
+}
+
+/**
+ * The same question for ONE call (#2714): a tool whose floor is `lifecycle` can
+ * still carry a `destroy`-tier action, and that action must reach the human
+ * approval gate exactly like a whole destroy-tier tool does. Derived from
+ * `requiredScopeForCall`, so the gate cannot fall out of step with the scope
+ * check that just ran.
+ */
+export function isDestroyTierCall(toolName: string, args?: Record<string, unknown>): boolean {
+  return isDestroyTierTool(toolName) || requiredScopeForCall(toolName, args) === 'destroy';
 }
 
 /**

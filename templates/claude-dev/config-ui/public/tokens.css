@@ -1,0 +1,65 @@
+/* GENERATED FILE — do not edit by hand.
+ *
+ * Source:      packages/frontend/src/app/globals.css
+ * Generator:   scripts/gen-service-ui-tokens.ts
+ * Regenerate:  npm run gen:service-ui-tokens
+ * Drift check: npm run gen:service-ui-tokens -- --check   (also asserted by the
+ *              test suite, so a token change in the source that is not
+ *              regenerated here fails CI instead of ageing apart in silence.)
+ *
+ * claude-dev is a standalone page served from inside its own container —
+ * it cannot import ServiceBay's frontend build, so the token values travel
+ * here. The NAMES are the source's own, so a stylesheet that says
+ * `var(--surface)` means exactly what it means in the admin UI.
+ *
+ * `:root` IS dark (ServiceBay has no class toggle); the light ramp is an
+ * override below.
+ */
+
+:root {
+  --background:    #050505;
+  --surface:       #111114;
+  --surface-2:     #1c1c20;
+  --surface-muted: #0a0a0c;
+  --border:        #2a2a30;
+  --border-strong: #3a3a42;
+  --text:          #f0f0f0;
+  --text-muted:    #a1a1aa;
+  --text-subtle:   #6b7280;
+  --status-ok:     #34d399;
+  --status-warn:   #fbbf24;
+  --status-fail:   #f87171;
+  --status-info:   #60a5fa;
+  --accent:        #3b82f6;
+  --accent-strong: #2563eb;
+  --on-accent:     #ffffff;
+  --r-chip:        0.375rem;
+  --r-card:        0.625rem;
+  --r-panel:       0.875rem;
+
+  /* Per-service identity (#2126): icon-chip fill + icon colour only. */
+  --svc-indigo-bg: rgba(99, 102, 241, 0.16);
+  --svc-indigo-fg: #818cf8;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --background:    #f8fafc;
+    --surface:       #ffffff;
+    --surface-2:     #f1f5f9;
+    --surface-muted: #f8fafc;
+    --border:        #e2e8f0;
+    --border-strong: #cbd5e1;
+    --text:          #0f172a;
+    --text-muted:    #475569;
+    --text-subtle:   #94a3b8;
+    --status-ok:     #059669;
+    --status-warn:   #d97706;
+    --status-fail:   #dc2626;
+    --status-info:   #2563eb;
+
+    /* Per-service identity (#2126): icon-chip fill + icon colour only. */
+    --svc-indigo-bg: rgba(99, 102, 241, 0.12);
+    --svc-indigo-fg: #4f46e5;
+  }
+}

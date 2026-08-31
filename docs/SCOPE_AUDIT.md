@@ -85,12 +85,28 @@ Source of truth is `TOOL_SCOPES`. Summary by tier (see `server.ts` for the full 
 | Scope | Tools |
 |---|---|
 | `read` | `list_*`, `get_*`, `diagnose`, `read_file`, `list_dir`, `disk_usage`, `verify_node_connection`, `verify_usb_boot`, … |
-| `lifecycle` | `manage_service`, `run_check_now`, `refresh_agent`, `run_backup`, `set_channel` |
+| `lifecycle` | `manage_service`, `run_check_now`, `refresh_agent`, `run_backup`, `set_channel`, `manage_claude_dev_project` (`create` / `restart` — see the per-action note below) |
 | `mutate` | `deploy_service`, `update_service_yaml`, `rename_service`, `add_proxy_route`, `create_health_check`, `restore_trashed_service`, `file_access_request`, `update_config` |
 | `reboot` | `reboot_node` |
-| `destroy` | `delete_service`, `delete_health_check`, `remove_proxy_route`, `restore_backup`, `purge_trashed_service`, `set_boot_next_usb`, `factory_reset` |
+| `destroy` | `delete_service`, `delete_health_check`, `remove_proxy_route`, `restore_backup`, `purge_trashed_service`, `set_boot_next_usb`, `factory_reset`, **`manage_claude_dev_project` `action: delete`** |
 | `exec` | `exec_command`, `container_exec` |
 | `propose` | `propose_learning` |
+
+**Per-ACTION scope (#2714).** One tool may hold actions that differ in
+*reversibility*, and the ladder splits on reversibility — so the requirement is
+resolved per CALL, not per tool name. `TOOL_SCOPES` holds the tool's **floor**
+(the cheapest action, and therefore what decides visibility) and
+`TOOL_ACTION_SCOPES` raises the actions that deserve more;
+`requiredScopeForCall(tool, args)` is the one function the scope gate, its error
+message and the destroy-tier approval gate all read. Today that is
+`manage_claude_dev_project`: `create` and `restart` are `lifecycle` verbs, while
+`delete` revokes the project's delegated token and ends its Claude session, so
+it requires `destroy` and takes the destroy tier's human approval. Splitting the
+tool in three to get three scopes was rejected deliberately — the tool
+catalogue is context every session loads on every connect. (Contrast
+`DESTRUCTIVE_TOOL_ACTIONS`, which is the same *shape* for a different question:
+it raises an action's *safeguards* — snapshot + operator email — without moving
+its scope, as `manage_service:force-update` does.)
 
 **Scope-filtered visibility (#2325).** Surface (1) also *hides* what a token
 can't call: `tools/list` advertises only tools whose `TOOL_SCOPES` scope is

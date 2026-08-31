@@ -258,6 +258,10 @@ async function setup() {
     add: (body: unknown, headers = ADMIN) => request(port, 'POST', '/api/projects', headers, body),
     remove: (name: string, headers = ADMIN) =>
       request(port, 'DELETE', `/api/projects?name=${encodeURIComponent(name)}`, headers),
+    /** Remove with the explicit "I know this page did not add it" acknowledgement (#2713). */
+    removeAnyway: (name: string, headers = ADMIN) =>
+      request(port, 'DELETE',
+        `/api/projects?name=${encodeURIComponent(name)}&acknowledgeUnmanaged=1`, headers),
     list: () => request(port, 'GET', '/api/projects', ADMIN),
     close: async () => {
       await new Promise<void>(r => ui.close(() => r()));
@@ -608,11 +612,22 @@ describe('the panel offers add/remove only where it is honest to (DOM)', () => {
     expect(remove.disabled).toBe(false);
   });
 
-  it('offers NO Remove for a checkout this page did not add', async () => {
+  /**
+   * #2713 overturns the old rule here. Remove used to render ONLY on a row this
+   * page had added, and every checkout on the real box was hand-cloned — so the
+   * feature shipped in #2680 was unreachable for the operator who asked for it.
+   * The guard's CONCERN survives (see the confirmation block below); its answer
+   * no longer is "not at all".
+   */
+  it('offers an ENABLED Remove on a checkout this page did NOT add (#2713)', async () => {
     const { root } = await mountPanel(payload([project({ name: 'handmade', managed: false })]));
-    expect(root.querySelector('button[data-project-remove="handmade"]')).toBeNull();
+    const remove = root.querySelector('button[data-project-remove="handmade"]') as HTMLButtonElement;
+    expect(remove).not.toBeNull();
+    expect(remove.disabled).toBe(false);
     const cell = root.querySelector('tr[data-project="handmade"] .projects-action')!;
     expect(cell.getAttribute('data-managed')).toBe('false');
+    // The row still SAYS this page did not add it — the fact is kept, the
+    // dead end is not.
     expect(cell.textContent).toContain('Added outside this page');
   });
 
@@ -670,5 +685,203 @@ describe('the panel offers add/remove only where it is honest to (DOM)', () => {
     await new Promise(r => setTimeout(r, 0));
     const del = calls.find(c => c.init?.method === 'DELETE')!;
     expect(del.url).toBe('/api/projects?name=alpha');
+  });
+});
+
+// ───────── #2713: removing a project this page did not add ──────────────────
+//
+// The operator asked for a delete and never saw one: Remove rendered only on a
+// `managed === true` row, and every checkout on the box was hand-cloned. The
+// guard was protecting something real — tearing down a checkout and its
+// credentials that this page never created and knows nothing about — so the
+// answer changes from "not at all" to "yes, once you have been told exactly
+// what this page does not know". That acknowledgement is a parameter of the
+// MECHANICS, not a UI-only confirm dialog: #2714's MCP tool calls
+// `removeProject` directly, and a guard that lives in the browser would not
+// exist for it.
+
+describe('removing a project this page did not add (#2713)', () => {
+  it('still refuses without the acknowledgement, and touches nothing', async () => {
+    const res = await h.remove('handmade');
+    expect(res.status).toBe(409);
+    expect(ok(res).error).toContain('was not added through this page');
+    // …and it names the next step, rather than being a dead end: what removing
+    // it anyway would do, and the flag that says you know.
+    expect(ok(res).detail).toContain('acknowledgeUnmanaged');
+    expect(ok(res).detail).toContain('revokes no token');
+    expect(h.state.windows).toContain('handmade');
+    expect(fs.existsSync(path.join(h.workspace, '.claude-dev', 'no-autostart', 'handmade'))).toBe(false);
+  });
+
+  it('removes it WITH the acknowledgement: stops the session, marks it, revokes nothing', async () => {
+    // Two projects, because the guarantee that matters is about the OTHER one:
+    // a revoke that took every sibling with it would pass a one-project test.
+    await h.add({ url: 'https://github.com/mdopp/alpha.git' });
+    const alphaSecret = h.recordedSecret('alpha');
+    const before = await h.stored();
+
+    const res = await h.removeAnyway('handmade');
+    expect(res.status).toBe(200);
+    const body = ok(res);
+    expect(body.removed.name).toBe('handmade');
+    // No token of its own to take back, and the payload SAYS so rather than
+    // reporting a revoke that did not happen.
+    expect(body.removed.tokenId).toBeNull();
+    expect(body.removed.managed).toBe(false);
+    expect(body.removed.tokenRevoked).toBe(false);
+    expect(body.removed.mcpEntryRemoved).toBe(false);
+    expect(body.removed.checkoutDeleted).toBe(false);
+
+    // Its session is down and stays down across the 300s reconcile.
+    expect(h.state.windows).not.toContain('handmade');
+    expect(fs.existsSync(path.join(h.workspace, '.claude-dev', 'no-autostart', 'handmade'))).toBe(true);
+
+    // NOTHING was revoked — not the sibling's token, not the container's own.
+    expect(await h.stored()).toHaveLength(before.length);
+    expect((await h.tokens.verifyToken(alphaSecret))?.scopes).toEqual(['read']);
+    expect((await h.tokens.verifyToken(h.parent.secret))?.id).toBe(h.parent.token.id);
+    // The sibling's session and MCP entry are untouched.
+    expect(h.state.windows).toContain('alpha');
+    expect(h.localEntries().map(([p]) => path.basename(p))).toEqual(['alpha']);
+  });
+
+  it('deletes no files — the hand-cloned checkout and its work survive', async () => {
+    fs.writeFileSync(path.join(h.workspace, 'handmade', 'uncommitted.txt'), 'work in progress');
+    expect((await h.removeAnyway('handmade')).status).toBe(200);
+    expect(fs.existsSync(path.join(h.workspace, 'handmade', '.git'))).toBe(true);
+    expect(fs.readFileSync(path.join(h.workspace, 'handmade', 'uncommitted.txt'), 'utf-8')).toBe('work in progress');
+  });
+
+  it('never runs `claude mcp remove` on a checkout whose entry it did not write', async () => {
+    await h.removeAnyway('handmade');
+    const mcpCalls = h.state.calls.filter(c => c.file === 'claude' && c.args[1] === 'remove');
+    expect(mcpCalls).toEqual([]);
+  });
+
+  it('the acknowledgement does NOT bypass the other refusals', async () => {
+    // Not there at all is still a 404, and a traversing name is still a 400 —
+    // "I acknowledge" is about ownership, not about anything else.
+    expect((await h.removeAnyway('never-existed')).status).toBe(404);
+    expect((await request(h.port, 'DELETE',
+      '/api/projects?name=..%2F..%2Fetc&acknowledgeUnmanaged=1', ADMIN)).status).toBe(400);
+  });
+
+  it('a FAILED ownership read is still Unknown, not "unmanaged" — even with the acknowledgement', async () => {
+    // The three-state rule: `null` is "we could not look", and removing on the
+    // strength of a failed read would be exactly the guess this UI refuses.
+    fs.writeFileSync(h.claudeJson, '{ not json');
+    const res = await h.removeAnyway('handmade');
+    expect(res.status).toBe(500);
+    expect(ok(res).error).toContain('could not tell whether');
+    expect(h.state.windows).toContain('handmade');
+    expect(fs.existsSync(path.join(h.workspace, '.claude-dev', 'no-autostart', 'handmade'))).toBe(false);
+  });
+
+  it('an anonymous acknowledged DELETE still stops nothing', async () => {
+    const res = await h.removeAnyway('handmade', {});
+    expect(res.status).toBe(401);
+    expect(h.state.windows).toContain('handmade');
+  });
+});
+
+describe('the panel confirms an unmanaged removal by naming what it does not know (#2713, DOM)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const handmade = () => project({ name: 'handmade', path: '/workspace/handmade', managed: false });
+
+  it('does not send the DELETE on the first click — it asks first', async () => {
+    const { root, calls } = await mountPanel(payload([handmade()]));
+    (root.querySelector('button[data-project-remove="handmade"]') as HTMLButtonElement).click();
+    await new Promise(r => setTimeout(r, 0));
+    expect(calls.find(c => c.init?.method === 'DELETE')).toBeUndefined();
+    expect(root.querySelector('.projects-confirm')).not.toBeNull();
+  });
+
+  it('names each thing this page does not know, and what it will and will not touch', async () => {
+    const { root } = await mountPanel(payload([handmade()]));
+    (root.querySelector('button[data-project-remove="handmade"]') as HTMLButtonElement).click();
+    await new Promise(r => setTimeout(r, 0));
+
+    const confirm = root.querySelector('.projects-confirm')!;
+    expect(confirm.getAttribute('role')).toBe('alertdialog');
+    const unknowns = [...confirm.querySelectorAll('.projects-confirm-unknown')].map(n => n.textContent ?? '');
+    expect(unknowns).toHaveLength(3);
+    // The three specific unknowns the issue asks to be spelled out.
+    expect(unknowns.join(' ')).toContain('no child token');
+    expect(unknowns.join(' ')).toContain('no ServiceBay MCP entry');
+    expect(unknowns.join(' ')).toContain('uncommitted');
+
+    // What HAPPENS, and what is LEFT ALONE — both said out loud.
+    const will = confirm.querySelector('.projects-confirm-will')!.textContent ?? '';
+    expect(will).toContain('stop its Claude session');
+    expect(will).toContain('auto-start');
+    const wont = confirm.querySelector('.projects-confirm-wont')!.textContent ?? '';
+    expect(wont).toContain('/workspace/handmade');
+    expect(wont).toContain('revoke');
+    expect(wont).toContain('other project');
+  });
+
+  it('sends the acknowledged DELETE only after the second, explicit click', async () => {
+    const { root, calls } = await mountPanel(payload([handmade()]), {
+      status: 200,
+      body: {
+        removed: {
+          name: 'handmade', path: '/workspace/handmade', managed: false, tokenId: null,
+          tokenRevoked: false, mcpEntryRemoved: false, session: { running: false }, checkoutDeleted: false,
+        },
+        warnings: [],
+      },
+    });
+    (root.querySelector('button[data-project-remove="handmade"]') as HTMLButtonElement).click();
+    await new Promise(r => setTimeout(r, 0));
+    (root.querySelector('button[data-project-remove-confirm="handmade"]') as HTMLButtonElement).click();
+    await new Promise(r => setTimeout(r, 0));
+
+    const del = calls.find(c => c.init?.method === 'DELETE')!;
+    expect(del.url).toBe('/api/projects?name=handmade&acknowledgeUnmanaged=1');
+    // The headline does not claim a revoke that never happened.
+    const result = root.querySelector('.projects-result')!.textContent ?? '';
+    expect(result).not.toContain('Revoked token');
+    expect(result).toContain('no token of its own to revoke');
+    expect(result).toContain('/workspace/handmade');
+  });
+
+  it('cancelling sends nothing at all', async () => {
+    const { root, calls } = await mountPanel(payload([handmade()]));
+    (root.querySelector('button[data-project-remove="handmade"]') as HTMLButtonElement).click();
+    await new Promise(r => setTimeout(r, 0));
+    (root.querySelector('.projects-confirm-cancel') as HTMLButtonElement).click();
+    await new Promise(r => setTimeout(r, 0));
+    expect(calls.find(c => c.init?.method === 'DELETE')).toBeUndefined();
+    expect(root.querySelector('.projects-confirm')).toBeNull();
+    // The button is usable again, not left disabled by the cancelled attempt.
+    expect((root.querySelector('button[data-project-remove="handmade"]') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('a MANAGED row still removes on the first click — no extra step where nothing is unknown', async () => {
+    const { root, calls } = await mountPanel(payload([project()]), {
+      status: 200,
+      body: {
+        removed: {
+          name: 'alpha', path: '/workspace/alpha', managed: true, tokenId: 'abcd1234',
+          tokenRevoked: true, mcpEntryRemoved: true, session: { running: false }, checkoutDeleted: false,
+        },
+        warnings: [],
+      },
+    });
+    (root.querySelector('button[data-project-remove="alpha"]') as HTMLButtonElement).click();
+    await new Promise(r => setTimeout(r, 0));
+    expect(root.querySelector('.projects-confirm')).toBeNull();
+    expect(calls.find(c => c.init?.method === 'DELETE')!.url).toBe('/api/projects?name=alpha');
+  });
+
+  it('an UNKNOWN row offers no confirmation to reach at all — the button stays disabled', async () => {
+    const { root, calls } = await mountPanel(payload([project({ managed: null })]));
+    const remove = root.querySelector('button[data-project-remove="alpha"], .projects-action .projects-remove') as HTMLButtonElement;
+    expect(remove.disabled).toBe(true);
+    remove.click();
+    await new Promise(r => setTimeout(r, 0));
+    expect(root.querySelector('.projects-confirm')).toBeNull();
+    expect(calls.find(c => c.init?.method === 'DELETE')).toBeUndefined();
   });
 });

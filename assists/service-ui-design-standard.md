@@ -35,6 +35,40 @@ hard-coded hex, so a theme change is one place.
 > `docs/ARCHITECTURE_INVARIANTS.md` § *UI-primitive and design-token reuse*
 > (#2353). Adopt the same discipline in your own service and drift stays out.
 
+## Don't hand-copy the palette — generate it
+
+The tables below are the *reference*. Typing their values into your stylesheet
+by hand is right on the day you do it and silently apart a release later: that
+is the same defect as a raw hex, one layer along, and it is what put a
+look-alike design on the operator's screen in #2712.
+
+For a page that can't import ServiceBay's frontend build (a standalone static UI
+served from inside its own container, say), make the values **travel**
+mechanically:
+
+- `scripts/gen-service-ui-tokens.ts` reads `packages/frontend/src/app/globals.css`
+  and writes a `tokens.css` next to the service's own stylesheet, keeping the
+  source's **names** (`--surface`, `--accent`, `--status-*`), so the service
+  stylesheet says exactly what the admin UI says. Add your target to its
+  `TARGETS` list.
+- `npm run gen:service-ui-tokens -- --check` is the drift gate, asserted by the
+  suite (`tests/backend/claude_dev_config_ui_tokens.test.ts`). A token change in
+  globals.css that isn't regenerated fails CI instead of ageing apart quietly.
+- The service stylesheet then holds layout only, and a scan for hex/`rgb()`
+  literals in it is a cheap, honest test — write that scan too.
+
+Worked example: `templates/claude-dev/config-ui/public/{tokens.css,shell.css}`.
+
+## Per-service identity colour ≠ accent
+
+A service may carry one of the named `--svc-<hue>-*` pairs (#2126) as its own
+identity colour. Read the rule literally: **a soft tinted fill + a saturated
+icon, never a full-card colour**, and never a replacement for `--accent`. The
+semantic layer — surfaces, lines, text, status, focus ring, primary action —
+stays the system's, or a theme change in the admin UI stops arriving. If you
+carry the identity hue beyond icon-chip scale (a header rule, a nav marker),
+that is a decision to argue out loud in the PR, not to slip in.
+
 ## Palette (dark default)
 
 Surfaces, borders, and text — the chrome:

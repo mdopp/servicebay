@@ -35,7 +35,7 @@ import {
 import { parseTemplateDependencies } from '@/lib/stackInstall/dependencies';
 import { readManifestAnnotations } from '@/lib/template/contract';
 import { DEVICE_SAFE_SECRET_LENGTH, generateRandomSecret } from '@/lib/stackInstall/randomSecret';
-import { createToken } from '@/lib/auth/apiTokens';
+import { createToken, looksLikeApiToken } from '@/lib/auth/apiTokens';
 import { getConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { loadSavedSecrets, persistSingleSecret } from './savedSecrets';
@@ -577,8 +577,32 @@ export async function assembleManifest(
     if (!value && meta?.default) value = meta.default;
 
     if (!value && meta?.type === 'secret') {
-      if (storedValues[name]) {
-        value = storedValues[name];
+      // #2711 — a stored value is reused as-is EXCEPT when the variable asks
+      // for a real ServiceBay API token and what is stored is not one.
+      //
+      // The reuse rule and the mint rule (#2673) collided silently: reuse is
+      // checked first and matches *any* stored string, so a service that was
+      // installed before `mintApiToken` existed carries the 32-character random
+      // secret that install generated, and every later deploy hands that same
+      // non-token back. The mint branch is never entered, so minting only ever
+      // helped FRESH installs — the existing service keeps a value that 401s on
+      // every call, forever, with nothing saying why (measured on a real box:
+      // no minted token row existed for a service whose template declares the
+      // flag). Re-minting when the stored value has no token shape closes that
+      // without touching #2673's idempotency: a well-formed stored token is
+      // still reused, so a re-install still accumulates no orphaned tokens.
+      const stored = storedValues[name];
+      const storedIsUsable = !!stored && (!meta.mintApiToken || looksLikeApiToken(stored));
+      if (stored && !storedIsUsable) {
+        // Length only. A credential slot's contents never reach a log line,
+        // and "it is 32 characters, not an sb_ token" is the whole diagnosis.
+        logger.warn(
+          'install:manifestAssembler',
+          `Stored value for ${name} is not a ServiceBay API token (${stored.length} characters); minting a replacement.`,
+        );
+      }
+      if (storedIsUsable) {
+        value = stored;
       } else if (preview || meta.noAutoGenerate) {
         // `preview` (#2537): the store had nothing, so this value is genuinely
         // unresolvable. Leave it empty and let the caller SAY SO rather than
