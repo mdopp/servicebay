@@ -12,9 +12,11 @@
  *
  * Three rules the mutating half must keep:
  *
- *   • Remove appears only on a row this page actually added (`managed === true`).
- *     `managed === null` is a failed read, so the button is DISABLED and says
- *     Unknown rather than offering an action nobody verified is safe.
+ *   • Remove is offered on a row this page added (`managed === true`) and, since
+ *     #2713, on one it did not (`managed === false`) — the latter behind a
+ *     confirmation that names what this page does not know about it. But
+ *     `managed === null` is a failed READ, so that button stays DISABLED and
+ *     says Unknown rather than offering an action nobody verified is safe.
  *   • The result of an action is reported from what the server MEASURED
  *     afterwards (it re-asks tmux), and every warning it returns is shown —
  *     "added" with no session is not allowed to read as a clean success.
@@ -80,11 +82,18 @@ function mcpCell(project) {
 }
 
 /**
- * The Remove button for one row — or the reason there isn't one.
+ * The Remove button for one row — or the reason it is not usable.
  *
  * `managed` is a three-state field on purpose: `true` (this page added it),
- * `false` (someone cloned it by hand — not ours to unwire), `null` (the MCP
- * read failed, so we do not know). Only `true` yields a live button.
+ * `false` (someone cloned it by hand), `null` (the MCP read failed, so we do
+ * not know). #2713 changed what `false` earns: a live button behind an
+ * explicit confirmation, instead of no button at all. Every checkout on the
+ * real box is hand-cloned, so the old rule made a shipped feature invisible to
+ * the one person who asked for it.
+ *
+ * `null` is unchanged and stays DISABLED. A failed read is not "unmanaged" —
+ * offering an action on a guess is the one thing the three-state rule exists
+ * to stop.
  */
 function actionCell(project, actions) {
   const td = el('td', 'projects-action');
@@ -99,26 +108,26 @@ function actionCell(project, actions) {
   restart.addEventListener('click', () => actions.onRestart(project, restart));
   td.append(restart);
 
+  const button = el('button', 'projects-remove', 'Remove');
+  button.type = 'button';
+
   if (project.managed === null) {
-    const button = el('button', 'projects-remove', 'Remove');
-    button.type = 'button';
     button.disabled = true;
     td.append(button);
     td.append(el('span', 'projects-state-detail',
       'Unknown — the MCP entries could not be read, so it is not known whether this page added it.'));
     return td;
   }
-  if (!project.managed) {
-    td.append(el('span', 'projects-state-detail',
-      'Added outside this page — its checkout, session and credentials are left alone here.'));
-    return td;
-  }
 
-  const button = el('button', 'projects-remove', 'Remove');
-  button.type = 'button';
   button.dataset.projectRemove = project.name;
   button.addEventListener('click', () => actions.onRemove(project, button));
   td.append(button);
+
+  if (!project.managed) {
+    // The fact the old rule was built on is kept; only the dead end is gone.
+    td.append(el('span', 'projects-state-detail',
+      'Added outside this page — removing it here asks first, and says what it does and does not touch.'));
+  }
   return td;
 }
 
@@ -291,6 +300,61 @@ function renderActionResult(headline, warnings) {
   return box;
 }
 
+/**
+ * The confirmation for removing a checkout this page did NOT add (#2713).
+ *
+ * The old guard refused outright, and its worry was legitimate: this page never
+ * created that checkout and knows nothing about what is in it. So the answer is
+ * not "trust me" and not "not at all" — it is to say, in the operator's own
+ * terms, exactly WHAT IS UNKNOWN, what the removal will do, and what it will
+ * leave alone. Every one of the three unknowns is spelled out rather than
+ * summarised as "this may be risky", because a vague warning is one you learn
+ * to click through.
+ */
+function renderUnmanagedConfirm(project, { onConfirm, onCancel }) {
+  const box = el('div', 'projects-confirm');
+  box.setAttribute('role', 'alertdialog');
+  box.dataset.projectConfirm = project.name;
+  box.append(el('h3', null, `Remove ${project.name}, which this page did not add?`));
+
+  box.append(el('p', 'projects-confirm-lede',
+    `This page has no record of ${project.name} — it was cloned outside it. Three things it therefore `
+    + 'does not know:'));
+
+  const unknowns = el('ul', 'projects-confirm-unknowns');
+  for (const line of [
+    'It has no child token of its own for this checkout. Whatever credential the checkout uses was '
+    + 'issued somewhere else, and this page cannot revoke it — it stays live.',
+    'It has no ServiceBay MCP entry recorded for it. Whatever MCP wiring the checkout has came from '
+    + 'elsewhere and is left exactly as it is.',
+    'It cannot see inside the checkout. There may be uncommitted work in it, and a session is stopped '
+    + 'without asking the process what it was in the middle of.',
+  ]) unknowns.append(el('li', 'projects-confirm-unknown', line));
+  box.append(unknowns);
+
+  box.append(el('p', 'projects-confirm-will',
+    `What this WILL do: stop its Claude session, and mark it so the container does not auto-start `
+    + `${project.name} again a few minutes from now.`));
+  box.append(el('p', 'projects-confirm-wont',
+    `What it will NOT do: delete or change a single file — the checkout stays at ${project.path} with `
+    + 'everything in it; revoke any token, because it issued none for this; touch any other project’s '
+    + 'session, token or MCP entry.'));
+
+  const confirm = el('button', 'projects-confirm-remove', `Remove ${project.name} anyway`);
+  confirm.type = 'button';
+  confirm.dataset.projectRemoveConfirm = project.name;
+  confirm.addEventListener('click', () => onConfirm(confirm));
+
+  const cancel = el('button', 'projects-confirm-cancel', 'Cancel');
+  cancel.type = 'button';
+  cancel.addEventListener('click', () => onCancel());
+
+  const buttons = el('div', 'projects-confirm-buttons');
+  buttons.append(confirm, cancel);
+  box.append(buttons);
+  return box;
+}
+
 function renderActionError(message, detail) {
   const box = el('div', 'projects-action-error');
   box.setAttribute('role', 'alert');
@@ -347,12 +411,74 @@ async function restartSession({ report, reload, isDisposed }, project, button) {
 }
 
 /**
+ * Send the removal and report what the server says it did.
+ *
+ * `acknowledgeUnmanaged` travels in the query rather than being assumed on the
+ * far side: the server refuses an unmanaged removal without it (#2713), so the
+ * flag IS the operator's answer to the confirmation, carried through intact.
+ *
+ * The headline branches on what came BACK, never on what was asked for. An
+ * unmanaged removal revoked nothing, and printing "Revoked token null" there
+ * would be this repo's favourite bug — a screen reporting work nobody did.
+ */
+async function sendRemoval({ report, reload, isDisposed }, project, acknowledgeUnmanaged) {
+  report(el('p', 'projects-working', `Removing ${project.name}\u2026`));
+  try {
+    const query = `name=${encodeURIComponent(project.name)}`
+      + (acknowledgeUnmanaged ? '&acknowledgeUnmanaged=1' : '');
+    const result = await callApi(`/api/projects?${query}`, { method: 'DELETE' });
+    if (isDisposed()) return;
+    const r = result.removed;
+    report(renderActionResult(
+      (r.tokenId
+        ? `Revoked token ${r.tokenId}, dropped the MCP entry and stopped the session for ${r.name}.`
+        : `Stopped the session for ${r.name} and marked it not to auto-start again. This page had no `
+          + 'token of its own to revoke and no MCP entry of its own to drop, so it took neither.')
+      + ` The checkout itself is still at ${r.path}.`,
+      result.warnings ?? [],
+    ));
+  } catch (err) {
+    report(renderActionError(`Could not remove ${project.name}: ${err.message}`, err.detail));
+  } finally {
+    void reload();
+  }
+}
+
+/**
+ * Remove ONE project (#2680), in one step or two (#2713).
+ *
+ * `managed === true`: straight through — this page added it and knows exactly
+ * what it is taking back. `managed === false`: the confirmation first, because
+ * everything about that checkout came from somewhere this page cannot see.
+ * `managed === null` never arrives here at all — `actionCell` leaves that
+ * button disabled, because a failed read is not a permission.
+ */
+function removeProjectAction(ctx, project, button) {
+  button.disabled = true;
+  if (project.managed !== false) return sendRemoval(ctx, project, false);
+
+  ctx.report(renderUnmanagedConfirm(project, {
+    onConfirm: (confirmButton) => {
+      confirmButton.disabled = true;
+      void sendRemoval(ctx, project, true);
+    },
+    onCancel: () => {
+      button.disabled = false;
+      // Nothing was sent, so there is nothing to re-read — and saying so beats
+      // a dialog that just vanishes.
+      ctx.report(el('p', 'projects-working', `Left ${project.name} alone — nothing was sent.`));
+    },
+  }));
+  return Promise.resolve();
+}
+
+/**
  * The three mutating actions, kept out of `mount` so the panel body stays a
  * layout function. `isDisposed` is checked after every await: a late response
  * must never repaint a panel the shell already swapped out.
  */
 function createActions({ report, reload, isDisposed }) {
-  return {
+  const actions = {
     async onAdd(input, controls) {
       controls.submit.disabled = true;
       report(el('p', 'projects-working', `Adding ${input.name || input.url || 'the project'}\u2026`));
@@ -383,24 +509,9 @@ function createActions({ report, reload, isDisposed }) {
 
     onRestart: (project, button) => restartSession({ report, reload, isDisposed }, project, button),
 
-    async onRemove(project, button) {
-      button.disabled = true;
-      report(el('p', 'projects-working', `Removing ${project.name}\u2026`));
-      try {
-        const result = await callApi(`/api/projects?name=${encodeURIComponent(project.name)}`, { method: 'DELETE' });
-        if (isDisposed()) return;
-        report(renderActionResult(
-          `Revoked token ${result.removed.tokenId}, dropped the MCP entry and stopped the session for `
-          + `${result.removed.name}. The checkout itself is still at ${result.removed.path}.`,
-          result.warnings ?? [],
-        ));
-      } catch (err) {
-        report(renderActionError(`Could not remove ${project.name}: ${err.message}`, err.detail));
-      } finally {
-        void reload();
-      }
-    },
+    onRemove: (project, button) => removeProjectAction({ report, reload, isDisposed }, project, button),
   };
+  return actions;
 }
 
 /** The panel's static furniture: heading, Refresh, and the two live regions. */

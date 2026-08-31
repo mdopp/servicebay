@@ -324,6 +324,45 @@ body {
 .projects-action-error p { margin: 0; }
 .projects-working { margin: 0.75rem 0; color: var(--text-muted); font-size: 0.9rem; }
 
+/* The "you did not add this one" confirmation (#2713). Warn, not fail: this
+   is a question being asked, not a refusal being reported. The unknowns are
+   a real list so each one has to be read as its own item. */
+.projects-confirm {
+  margin: 0.75rem 0;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--status-warn);
+  border-radius: var(--r-card);
+  font-size: 0.9rem;
+}
+.projects-confirm h3 { margin: 0 0 0.35rem; font-size: 0.98rem; }
+.projects-confirm-lede { margin: 0 0 0.4rem; }
+.projects-confirm-unknowns { margin: 0 0 0.5rem; padding-left: 1.1rem; }
+.projects-confirm-unknown { margin-bottom: 0.25rem; color: var(--status-warn); }
+.projects-confirm-will,
+.projects-confirm-wont { margin: 0 0 0.4rem; color: var(--text-muted); }
+.projects-confirm-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.55rem; }
+.projects-confirm-remove {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--status-fail);
+  border-radius: var(--r-chip);
+  background: transparent;
+  color: var(--status-fail);
+  font: inherit;
+  cursor: pointer;
+}
+.projects-confirm-remove:hover:not(:disabled) { background: var(--status-fail); color: var(--background); }
+.projects-confirm-remove:disabled { opacity: 0.45; cursor: progress; }
+.projects-confirm-cancel {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.projects-confirm-cancel:hover { border-color: var(--accent); color: var(--accent); }
+
 /* ── the GitHub panel (#2681) ─────────────────────────────────────────────
    The three status colours are the three ANSWERS, not decoration: green =
    checked and connected, red = checked and negative, amber = the check did
