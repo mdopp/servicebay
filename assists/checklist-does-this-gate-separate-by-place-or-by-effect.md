@@ -50,13 +50,29 @@ The operator's own framing, which rejected a repository-wide justification:
 > *„wenn etwas nicht zurück rollbar ist, weil daten migriert werden"* — the gate
 > is the irreversibility of **the individual change**, not the category of the house.
 
-## Applying it here
+## Applying it here — what the transfer looked like in practice (#2700)
 
-Our open transfer: the release gate should acquire an explicit irreversibility
-trigger — anything writing or migrating persisted state (template schema bumps
-with an upgrade script, the saved-secrets store, installed manifests) — instead
-of relying on a directory list to catch it. That is nameable rather than a matter
-of judgement, and therefore scriptable.
+The release gate now decides on **both** axes. `scripts/autoloop-seal.ts` keeps
+`PATH_MANDATED_PATHS` (place) for the cases it genuinely covers, and adds
+`durableStateEffects` (effect) beside it; `gateDecision` owes a box-verify if
+*either* fires. The effect trigger is a **closed, named list**, because a gate
+that needs judgement cannot be a script:
+
+| Effect | Signature in the diff | Why it is irreversible |
+|---|---|---|
+| `template-schema-migration` | a file at `templates/*/migrations/v<n>-to-v<m>.*`, or an added line touching `servicebay.schema-version` | runs against installed services' own data |
+| `secret-store-write` | added lines naming the saved-secrets key material or the on-disk `enc:` envelope | rotate or re-shape it and stored secrets stop decrypting |
+| `installed-manifest-write` | an added *assignment* into `config.installedTemplates` (a read does not count) | the record of what is installed at which schema version |
+
+Two things worth copying to another house:
+
+- **Reproduce the blindness first.** The proof is a test asserting the *place*
+  gate returns nothing for the real change set, next to one asserting the effect
+  gate trips on it. A test that is green before the fix proves nothing — take the
+  new rule back out and watch it go red.
+- **Degrade toward the old gate, never away from it.** The content-keyed rules
+  need the diff body; when that read fails, fall back to the path rules rather
+  than to "nothing owed".
 
 Autonomy levels themselves are **not** portable between houses — see
 `footgun-importing-a-working-agreement-from-another-repo`.
