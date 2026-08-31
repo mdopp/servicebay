@@ -21,6 +21,25 @@ PR number.
   entries while four sat on it — the label is applied when an item *ships*, and by
   then its PR has closed the issue, while the query listed only open ones.
 
+## The test that finds what only exists in the conversation
+
+Saying a thing is not recording it, and the difference is invisible from inside the
+conversation — you remember having dealt with it either way.
+
+> **Ask: if this session ended right now, what would be lost?**
+
+It is a real check, not a slogan. When a session was warned that its container was
+about to be redeployed, a neighbouring one went looking and found **three** items it
+would have called done — a walkthrough written out for the operator, a status another
+project was waiting on, and a verify finding that lived only in a volatile pipeline
+cache. Its own words:
+
+> until your warning I would have considered all three finished, because they had been
+> **said**.
+
+Run the check at any natural boundary — before a long-running step, before handing
+over, before ending a turn. What survives is what got an anchor.
+
 ## The rules
 
 - **Work is done where it belongs.** No building around another repository, not
