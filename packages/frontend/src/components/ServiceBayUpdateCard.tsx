@@ -1,11 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Clock, Download, Loader2, RefreshCw, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock, Download, GitBranch, Loader2, RefreshCw, XCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
-import { Button, Card, StatusDot } from '@/components/ui';
+import { Badge, Button, Card, StatusDot } from '@/components/ui';
+
+/** Short commit for display — the running build's only distinguishing mark
+ *  when the version number is shared with the release it sits after. */
+function shortRevision(revision: string | null | undefined): string | null {
+  const r = (revision ?? '').trim();
+  return /^[0-9a-f]{7,}$/i.test(r) ? r.slice(0, 7) : null;
+}
 
 /**
  * ServiceBay self-update status.
@@ -30,6 +37,21 @@ export interface AppUpdateStatus {
     date: string;
     notes: string;
   } | null;
+  /**
+   * The image the box is ACTUALLY running, read off the running container by
+   * the backend — not the configured channel, which can describe an image that
+   * never started (#2493, #2387).
+   */
+  running?: {
+    channel: string | null;
+    revision: string | null;
+  };
+  /**
+   * The running image comes from a non-release channel (`:dev` / `:test`), so
+   * `current` is the last release's number and cannot answer "am I up to
+   * date?" (#2708).
+   */
+  unreleasedBuild?: boolean;
   config: {
     autoUpdate: {
       enabled: boolean;
@@ -87,11 +109,21 @@ export default function ServiceBayUpdateCard() {
     try {
       const res = await fetch('/api/system/update');
       if (res.ok) {
-        const data = await res.json();
+        const data: AppUpdateStatus = await res.json();
         setAppUpdate(data);
         const latestVer = data.latest?.version || 'Unknown';
         if (data.hasUpdate) {
           addToast('success', 'Update available', `Version ${latestVer} is available.`);
+        } else if (data.unreleasedBuild) {
+          // Same lie as the card used to tell, in toast form: on `:dev` the
+          // version matches the release only because release-please has not
+          // bumped it yet (#2708). Name the channel instead.
+          const rev = shortRevision(data.running?.revision);
+          addToast(
+            'info',
+            `Running the ${data.running?.channel ?? 'non-release'} channel`,
+            `This is an unreleased build${rev ? ` (${rev})` : ''}, not release ${latestVer}.`,
+          );
         } else if (data.imageBuilding) {
           addToast('info', 'New version building', `Version ${latestVer} was released but its image is still building. Try again shortly.`);
         } else {
@@ -198,6 +230,13 @@ export default function ServiceBayUpdateCard() {
   }
 
   const updateAvailable = appUpdate.hasUpdate && appUpdate.latest;
+  // A `:dev`/`:test` box is a legitimate operating state — the verify pipeline
+  // flips there routinely — so it gets named, not alarmed. What it must never
+  // do is look like the ordinary case: the running commit is unreleased, and
+  // the version number it carries belongs to the release it sits after (#2708).
+  const unreleased = appUpdate.unreleasedBuild === true;
+  const channel = appUpdate.running?.channel ?? null;
+  const revision = shortRevision(appUpdate.running?.revision);
 
   return (
     <>
@@ -237,8 +276,22 @@ export default function ServiceBayUpdateCard() {
               <div className="flex items-center gap-space-2">
                 <span className="text-sm text-text-muted">Current Version:</span>
                 <span className="font-mono font-medium text-text">{appUpdate.current}</span>
+                {unreleased && channel && (
+                  <Badge variant="info" title="Release channel of the running image">
+                    {channel} channel
+                  </Badge>
+                )}
               </div>
-              {updateAvailable ? (
+              {unreleased ? (
+                <div className="flex items-center gap-space-2 text-text-muted">
+                  <StatusDot state="unknown" label={`${channel ?? 'Non-release'} channel`} />
+                  <GitBranch size={16} />
+                  <span className="text-sm">
+                    Unreleased build{revision ? ` (${revision})` : ''} — this commit is not a published
+                    release, so the version above is the release it follows
+                  </span>
+                </div>
+              ) : updateAvailable ? (
                 <div className="flex items-center gap-space-2 text-status-ok">
                   <StatusDot state="ok" label="Update available" />
                   <Download size={16} />
