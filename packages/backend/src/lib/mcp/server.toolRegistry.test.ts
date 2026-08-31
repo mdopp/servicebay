@@ -67,12 +67,25 @@ describe('MCP tool registry completeness (#2384)', () => {
     expect(unscoped, 'registered tools with no TOOL_SCOPES entry').toEqual([]);
   });
 
-  it('exposes exactly the 63 tools the surface declares', async () => {
+  it('exposes exactly the 64 tools the surface declares', async () => {
     // Hard count, deliberately: the split was a pure mechanical extraction, so
     // the surface must not shrink OR grow by accident. Bump this number in the
     // same commit that adds or removes a tool.
+    //
+    // 63 → 64 in #2714, which added `manage_claude_dev_project`. That the count
+    // rose by exactly ONE is the pin the operator asked for: "one tool, not 3".
     const names = await registeredToolNames();
-    expect(names).toHaveLength(63);
+    expect(names).toHaveLength(64);
     expect(new Set(names).size, 'duplicate tool registration').toBe(names.length);
+  });
+
+  it('spends exactly ONE tool on claude-dev projects — the catalogue is per-session context (#2714)', async () => {
+    // The operator's requirement was the parenthesis: "ein Werkzeug, nicht 3!".
+    // Three tools for one subject are three descriptions every session loads,
+    // three selection decisions, and three places the same permission logic can
+    // drift apart. A second project tool must fail here, not in review.
+    const names = await registeredToolNames();
+    const projectTools = names.filter(name => /project/i.test(name));
+    expect(projectTools).toEqual(['manage_claude_dev_project']);
   });
 });
