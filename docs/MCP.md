@@ -335,9 +335,12 @@ alongside built-ins by `list_assists` / `get_assist` with no release needed.
 
 **Promotion backlog.** `list_assist_drift` (read scope) reports landed
 local-assists that don't yet have a matching `assists/<slug>.md` in the repo —
-the promotion backlog. Each entry carries a `promotionHint`; making a runtime
-assist permanent (shipped in the image) is a later manual repo PR that adds the
-file.
+the promotion backlog — and, since #2701, also the Local entries that
+**override** a repo assist of the same id (`relation: "override"`), which is the
+one way two texts can still answer to one id. Each entry carries a
+`promotionHint`; making a runtime assist permanent is a later repo PR that adds
+the file. The repo catalog is delivered to the box at runtime (ADR 0014), so that
+PR needs no release.
 
 ### Native distribution: assists as MCP resources + prompts (#2326 s6)
 

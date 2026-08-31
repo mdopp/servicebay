@@ -10,6 +10,12 @@ export default defineConfig({
     setupFiles: ['./tests/setup.ts'],
     env: {
       DATA_DIR: '/tmp/servicebay-test',
+      // #2701: the catalog is delivered at runtime and has no
+      // `process.cwd()/assists` fallback. For the suite the checkout IS the
+      // delivery — one source, named explicitly — so every test that reads the
+      // real catalog keeps reading the repo's own entries. Cases that exercise
+      // the delivery path itself override or delete this in `vi.hoisted`.
+      ASSIST_CATALOG_DIR: path.resolve(__dirname, './assists'),
     },
     alias: [
       // Phase 3.2 (#763) — the moved FE dirs win over the bare `@/`

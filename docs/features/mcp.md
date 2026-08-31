@@ -121,8 +121,12 @@ never shadows a built-in assist.
   is **blocked, never written**. Once landed it is served by `list_assists` /
   `get_assist` with no release.
 - **Promotion backlog.** `list_assist_drift` reports landed local-assists that
-  aren't yet in the repo's `assists/` — the queue for a later manual PR that
-  ships them in the image.
+  aren't yet in the repo's `assists/` — the queue for a later manual PR — plus
+  Local entries that override a repo assist of the same id (#2701).
+- **The repo catalog is delivered at runtime, not baked into the image**
+  (ADR 0014, #2701). A `docs(assists):` PR reaches a running box without a
+  release; if delivery fails, `list_assists` / `get_assist` report the failure
+  rather than answering from an older copy.
 
 ## Related
 

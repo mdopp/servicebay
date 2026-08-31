@@ -16,7 +16,7 @@ situation* it applies, so it turns up when an agent self-selects.
 - **New architecture decision** → `assists/adr-NNNN-title.md`, `kind: adr`,
   with a `whenToUse` line written for the *situation* an agent will be in when
   it needs the decision — not a restatement of the title. Next free number:
-  **0014**.
+  **0015**.
 - Format is unchanged: **Status · Context · Decision · Consequences**.
 - **UX-surface** decisions still live in [../UX_DECISIONS.md](../UX_DECISIONS.md)
   and [../UX_PHILOSOPHY.md](../UX_PHILOSOPHY.md); the credential self-heal
@@ -40,6 +40,7 @@ situation* it applies, so it turns up when an agent self-selects.
 | 0011 | [`adr-0011-app-integrations-aggregate-server-side`](../../assists/adr-0011-app-integrations-aggregate-server-side.md) | App integrations aggregate server-side: Solaris is the BFF/Hub; the Companion App has one pairing, one token, one SSE; ServiceBay's `/napi` is consumed server-to-server |
 | 0012 | [`adr-0012-repair-is-reconciliation-not-reinstallation`](../../assists/adr-0012-repair-is-reconciliation-not-reinstallation.md) | Repair is reconciliation, not reinstallation — with hard guardrails against a reconciler hell (**renumbered from a second 0009**, #2617) |
 | 0013 | [`adr-0013-clients-request-their-own-access`](../../assists/adr-0013-clients-request-their-own-access.md) | Clients request their own access and a human only confirms; a three-class table decides which scopes may be self-requested at all, and the scope vocabulary exists exactly once |
+| 0014 | [`adr-0014-assist-catalog-delivered-at-runtime`](../../assists/adr-0014-assist-catalog-delivered-at-runtime.md) | The assist catalog is delivered at runtime, not baked into the image — exactly one source, and a failed delivery is empty and loud rather than stale and quiet |
 
 ## The 0009 collision (#2617)
 

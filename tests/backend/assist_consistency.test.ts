@@ -21,6 +21,7 @@ import yaml from 'js-yaml';
 import { describe, it, expect } from 'vitest';
 import { ASSIST_KINDS } from '@/lib/assists/catalog';
 import { SECRET_PATTERNS } from '@/lib/assists/secretScan';
+import { auditAssistCatalogSource } from '../../scripts/invariants/assistCatalogSingleSource';
 
 /** Extract + parse the YAML frontmatter block from a markdown file. */
 function frontmatter(raw: string): Record<string, unknown> {
@@ -199,6 +200,33 @@ describe('ESLint sb/* rule-name drift in docs', () => {
       `Stale ESLint rule name(s) in docs:\n${[...new Set(hits)].join('\n')}\n`
       + `Registered: ${[...registered].map(r => `sb/${r}`).sort().join(', ')}`,
     ).toEqual([]);
+  });
+});
+
+// #2701 / ADR 0014: the one-source condition the runtime-delivery decision hangs
+// on, and the RED path of the gate that holds it — a gate whose failure branch is
+// never exercised is a gate nobody knows still works.
+describe('the assist catalog has exactly one source (#2701)', () => {
+  it('passes on the real Dockerfile + loader', () => {
+    const dockerfile = fs.readFileSync(path.join(REPO_ROOT, 'Dockerfile'), 'utf-8');
+    const loader = fs.readFileSync(path.join(REPO_ROOT, 'packages/backend/src/lib/assists/catalog.ts'), 'utf-8');
+    expect(auditAssistCatalogSource(dockerfile, loader)).toEqual([]);
+  });
+
+  it('fails when the image COPY comes back', () => {
+    const problems = auditAssistCatalogSource(
+      'FROM node\nCOPY --from=builder /app/assists ./assists\n',
+      'const x = 1;',
+    );
+    expect(problems.join(' ')).toMatch(/copies the assist catalog into the image/);
+  });
+
+  it('fails when the loader grows a process.cwd() fallback again', () => {
+    const problems = auditAssistCatalogSource(
+      'FROM node\n',
+      "const BUILTIN = () => path.join(process.cwd(), 'assists');",
+    );
+    expect(problems.join(' ')).toMatch(/process\.cwd\(\)/);
   });
 });
 

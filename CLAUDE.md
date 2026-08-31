@@ -43,9 +43,21 @@ again?** If yes, don't leave it buried in a session or a single PR. Abstract it
 one level (strip the one-off specifics) and add it to the **assist catalog** so
 the next agent/operator finds it via the `list_assists` / `get_assist` MCP tools.
 
-- Assists live in `assists/<id>.md` (shipped in the image) or dropped at runtime
-  under `DATA_DIR/local-assists/` (no release needed). Loader:
-  `packages/backend/src/lib/assists/catalog.ts`.
+- Assists live in `assists/<id>.md`. **The catalog is delivered at runtime, not
+  baked into the image** (ADR 0014, #2701): the box pulls this repo's `assists/`
+  tree onto disk at boot and hourly, so `docs(assists):` is the right commit type
+  and a contribution takes effect **without a release**. There is exactly one
+  source — do not re-add a `COPY assists/` to the Dockerfile, and do not add a
+  second read path. If delivery fails, `get_assist`/`list_assists` report the
+  failure; they never fall back to an older copy. Loader:
+  `packages/backend/src/lib/assists/catalog.ts`; delivery:
+  `packages/backend/src/lib/assists/delivery.ts`.
+- `DATA_DIR/local-assists/` is **not** a delivery path — it carries only
+  admin-approved editor overrides and landed proposals, and an override that
+  shadows a repo entry is flagged in `list_assists` and `list_assist_drift`.
+- **Proof of a catalog change is on the box, never in-process.** `get_assist(<the
+  new id>)` answering on a running box is the claim; a local loader test proves
+  the loader only — that substitution is what #2701 was.
 - Each is markdown with frontmatter: `title`, `whenToUse` (one line — this drives
   self-selection), `kind` (`guide | recipe | adr | template | checklist | footgun
   | snippet`), `tags`.

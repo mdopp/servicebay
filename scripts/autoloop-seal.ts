@@ -27,7 +27,11 @@
  * Emits a single machine-readable last line for the orchestrator to fold into
  * work-queue.json (this script never writes the queue — single-writer is the
  * orchestrator):
- *   AUTOLOOP_SEAL_RESULT {"ok":true,"pr":123,"sha":"abc1234","pathMandated":[...],"boxVerifyOwed":true,"detail":"..."}
+ *   AUTOLOOP_SEAL_RESULT {"ok":true,"pr":123,"sha":"abc1234","pathMandated":[...],"effects":[...],"boxVerifyOwed":true,"detail":"..."}
+ *
+ * `boxVerifyOwed` is decided on TWO axes (#2700): the *place* the change lives
+ * (`PATH_MANDATED_PATHS`) and the *effect* it has (`durableStateEffects` —
+ * anything that writes or migrates persisted state). See `gateDecision`.
  *
  * Exit codes: 0 merged; 3 CI red (result carries the failing checks — LLM
  * decides fix-forward); 2 setup error (dirty tree, bad branch, merge conflict).
@@ -75,10 +79,177 @@ export function isPathMandated(file: string): boolean {
   return PATH_MANDATED_PATHS.some(p => (p.endsWith('/') ? file.startsWith(p) : file === p));
 }
 
+// ---------------------------------------------------------------------------
+// The EFFECT axis (#2700) — what the change does, not where the file sits.
+// ---------------------------------------------------------------------------
+//
+// `PATH_MANDATED_PATHS` above gates by *place*. That reaches different verdicts
+// for identical work: the claude-dev schema 2->3 bump shipped
+// `templates/claude-dev/migrations/v2-to-v3.py` — a data migration that runs
+// against every installed copy of the service — and not one of its files sits
+// in the list above, so the path gate said "nothing owed".
+//
+// The right axis was already first-class in this repo one layer over: the
+// permission ladder (`packages/backend/src/lib/auth/apiScope.ts`,
+// `docs/SCOPE_AUDIT.md`) separates `reboot` (transient, recoverable) from
+// `destroy` (irreversible state edits). This is that same reversibility test,
+// transferred from the runtime layer to the release layer:
+//
+//   **Does this change write or migrate state that outlives the release?**
+//   If yes, a real box-verify is owed — whatever directory it lives in.
+//
+// It must be NAMEABLE, not a matter of judgement, or it is not scriptable. So
+// the trigger is a closed list of three signatures, each with a concrete
+// irreversible consequence on the box:
+//
+//   template-schema-migration  an upgrade script under `templates/*/migrations/`,
+//                              or a `servicebay.schema-version` bump — rewrites
+//                              installed services' data/pod layout on upgrade.
+//   secret-store-write         the saved-secrets store's key file or on-disk
+//                              envelope — rotate or re-shape it and previously
+//                              stored secrets stop decrypting.
+//   installed-manifest-write   an assignment into `config.installedTemplates` —
+//                              the record of what is installed at what schema
+//                              version; a wrong write strands services.
+//
+// Keep both gates: the directory list still covers non-migration cases (the
+// proxy/forward-auth render, the /napi surface, the user-facing dashboards).
+// What changed is that a migration no longer *depends* on it.
+
+/** One changed file, with the lines the change ADDED. */
+export interface ChangedFile {
+  /** repo-relative path */
+  path: string;
+  /** Unified-diff `+` lines with the prefix stripped. Omit (or leave empty)
+   *  and only the path-keyed rules apply to this file — so a diff we could not
+   *  read degrades to the old, place-only gate instead of failing open loudly. */
+  addedLines?: readonly string[];
+}
+
+export type DurableEffectKind =
+  | 'template-schema-migration'
+  | 'secret-store-write'
+  | 'installed-manifest-write';
+
+export interface DurableStateEffect {
+  kind: DurableEffectKind;
+  path: string;
+  detail: string;
+}
+
+/** A template upgrade script: `templates/<name>/migrations/v2-to-v3.py`. It runs
+ *  against the installed service's own data — the migration itself. */
+export const TEMPLATE_UPGRADE_SCRIPT = /^templates\/[^/]+\/migrations\/v\d+-to-v\d+\.[a-z]+$/;
+
+/** Added lines that mean "persisted state moves". Each entry is a signature we
+ *  can name, so the gate stays scriptable rather than a judgement call. */
+const EFFECT_MARKERS: ReadonlyArray<{ kind: DurableEffectKind; re: RegExp; detail: string }> = [
+  {
+    kind: 'template-schema-migration',
+    re: /servicebay\.schema-version/,
+    detail: 'template schema-version annotation moved — installed services get migrated on upgrade',
+  },
+  {
+    kind: 'secret-store-write',
+    re: /\bregenerateSecretKey\s*\(|\bSECRET_KEY_PATH\b|['"`]secret\.key['"`]/,
+    detail: 'saved-secrets key material — rotating it makes every stored secret undecryptable',
+  },
+  {
+    kind: 'secret-store-write',
+    re: /['"`]enc:['"`]/,
+    detail: 'saved-secrets on-disk envelope prefix — re-shaping it rewrites the stored form',
+  },
+  {
+    kind: 'installed-manifest-write',
+    re: /\binstalledTemplates\s*(\[[^\]]*\])?(\.[A-Za-z_$][\w$]*)*\s*=[^=]|\bdelete\s+[\w.]*installedTemplates\s*\[/,
+    detail: 'writes config.installedTemplates — the record of what is installed at which schema version',
+  },
+];
+
+/** Files that *describe* an effect rather than *have* one on the box: tests and
+ *  fixtures, prose (a `.md` cannot migrate anything), and this file — the gate's
+ *  own definition necessarily spells out every marker it looks for, and must not
+ *  match itself. Everything else is fair game, wherever it lives. */
+function isNonShipping(file: string): boolean {
+  return (
+    /\.(test|spec)\.[cm]?[jt]sx?$/.test(file) ||
+    /(^|\/)tests?\//.test(file) ||
+    /(^|\/)__(tests|mocks|pycache)__\//.test(file) ||
+    /\.md$/.test(file) ||
+    file === 'scripts/autoloop-seal.ts'
+  );
+}
+
+/** Pure: which durable-state effects does this change set carry? Exported so the
+ *  classification is unit-tested without git. */
+export function durableStateEffects(changed: readonly ChangedFile[]): DurableStateEffect[] {
+  const out: DurableStateEffect[] = [];
+  for (const { path: file, addedLines } of changed) {
+    if (isNonShipping(file)) continue;
+    if (TEMPLATE_UPGRADE_SCRIPT.test(file)) {
+      out.push({
+        kind: 'template-schema-migration',
+        path: file,
+        detail: 'template upgrade script — runs against installed services\' data',
+      });
+    }
+    for (const line of addedLines ?? []) {
+      for (const m of EFFECT_MARKERS) {
+        if (m.re.test(line) && !out.some(e => e.path === file && e.kind === m.kind)) {
+          out.push({ kind: m.kind, path: file, detail: m.detail });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+export interface GateDecision {
+  pathMandated: string[];
+  effects: DurableStateEffect[];
+  boxVerifyOwed: boolean;
+  detail: string;
+}
+
+/** THE gate. Place OR effect — either one owes a real on-box verify. */
+export function gateDecision(changed: readonly ChangedFile[]): GateDecision {
+  const pathMandated = changed.map(c => c.path).filter(isPathMandated);
+  const effects = durableStateEffects(changed);
+  const parts: string[] = [];
+  if (pathMandated.length) parts.push(`path-mandated: ${pathMandated.join(', ')}`);
+  if (effects.length) parts.push(`durable-state effect: ${effects.map(e => `${e.kind} @ ${e.path}`).join(', ')}`);
+  return {
+    pathMandated,
+    effects,
+    boxVerifyOwed: pathMandated.length > 0 || effects.length > 0,
+    detail: parts.join('; '),
+  };
+}
+
+/** Parse `git diff --unified=0` into per-file ADDED lines. Renames/binaries just
+ *  yield no added lines — the path rules still cover them. Exported for tests. */
+export function parseAddedLines(diffText: string): Map<string, string[]> {
+  const byFile = new Map<string, string[]>();
+  let current: string | null = null;
+  for (const line of diffText.split('\n')) {
+    if (line.startsWith('+++ ')) {
+      const target = line.slice(4).trim();
+      current = target === '/dev/null' ? null : target.replace(/^b\//, '');
+      if (current && !byFile.has(current)) byFile.set(current, []);
+      continue;
+    }
+    if (line.startsWith('--- ') || line.startsWith('diff --git ') || line.startsWith('@@')) continue;
+    if (current && line.startsWith('+')) byFile.get(current)!.push(line.slice(1));
+  }
+  return byFile;
+}
+
 // ---- everything below runs only when invoked as a script ----
 
 function sh(cmd: string, args: string[]): string {
-  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  // maxBuffer well above the default 1 MiB: the merged-diff read below can be
+  // large, and a truncation throw there would silently lose the effect axis.
+  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }).trim();
 }
 function shSafe(cmd: string, args: string[]): { ok: boolean; out: string } {
   try {
@@ -116,6 +287,18 @@ function watchCi(pr: number, maxPolls = 20, intervalSec = 30): { verdict: 'green
     if (!pending.length) return { verdict: 'green', failing: [] };
   }
   return { verdict: 'timeout', failing: [] };
+}
+
+/** Decide box-verify for a merged range, on BOTH axes: place (the directory
+ *  list) and effect (does it write/migrate persisted state — #2700). */
+function gateForRange(from: string, to: string): GateDecision {
+  const changedPaths = sh('git', ['diff', '--name-only', `${from}..${to}`]).split('\n').filter(Boolean);
+  // `--unified=0` keeps this to the added lines themselves. If the read fails
+  // (huge diff, binary-only), we degrade to the path-keyed rules rather than
+  // aborting a completed merge.
+  const diffRead = shSafe('git', ['diff', '--unified=0', '--no-color', `${from}..${to}`]);
+  const added = diffRead.ok ? parseAddedLines(diffRead.out) : new Map<string, string[]>();
+  return gateDecision(changedPaths.map(path => ({ path, addedLines: added.get(path) ?? [] })));
 }
 
 function main(): void {
@@ -164,19 +347,18 @@ function main(): void {
   sh('git', ['pull', '--ff-only', '--quiet']);
   const newSha = sh('git', ['rev-parse', '--short', 'HEAD']);
 
-  // Compute path-mandated files from the merged diff.
-  const changed = sh('git', ['diff', '--name-only', `${oldMain}..HEAD`]).split('\n').filter(Boolean);
-  const pathMandated = changed.filter(isPathMandated);
+  const gate = gateForRange(oldMain, 'HEAD');
 
   emit({
     ok: true,
     pr,
     sha: newSha,
-    pathMandated,
-    boxVerifyOwed: pathMandated.length > 0,
-    detail: pathMandated.length
-      ? `Merged PR #${pr} → ${newSha}; box_verify=owed (path-mandated: ${pathMandated.join(', ')})`
-      : `Merged PR #${pr} → ${newSha}; nothing path-mandated (box_verify stays clear unless a unit's gate=verify)`,
+    pathMandated: gate.pathMandated,
+    effects: gate.effects,
+    boxVerifyOwed: gate.boxVerifyOwed,
+    detail: gate.boxVerifyOwed
+      ? `Merged PR #${pr} → ${newSha}; box_verify=owed (${gate.detail})`
+      : `Merged PR #${pr} → ${newSha}; neither path-mandated nor a durable-state effect (box_verify stays clear unless a unit's gate=verify)`,
   });
 }
 

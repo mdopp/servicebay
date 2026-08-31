@@ -65,19 +65,21 @@ Body of ${slug}.
   await fs.writeFile(path.join(dir, `${slug}.md`), content, 'utf-8');
 }
 
-let origCwd: string;
+let origCatalogDir: string | undefined;
 
 beforeEach(async () => {
   dirState.dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sb-native-'));
-  origCwd = process.cwd();
-  // Built-in dir = process.cwd()/assists; chdir into the tmp dir so we control
-  // the built-in catalog contents.
-  process.chdir(dirState.dir);
+  origCatalogDir = process.env.ASSIST_CATALOG_DIR;
+  // #2701: the repo catalog is delivered at runtime and named by
+  // ASSIST_CATALOG_DIR — there is no `process.cwd()/assists` fallback to chdir
+  // into any more. Point the one source at our tmp tree.
+  process.env.ASSIST_CATALOG_DIR = builtinDir();
   vi.clearAllMocks();
 });
 
 afterEach(async () => {
-  process.chdir(origCwd);
+  if (origCatalogDir === undefined) delete process.env.ASSIST_CATALOG_DIR;
+  else process.env.ASSIST_CATALOG_DIR = origCatalogDir;
   await fs.rm(dirState.dir, { recursive: true, force: true });
 });
 

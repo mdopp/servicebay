@@ -52,6 +52,21 @@ got this right on the same day: one declined to change its house rules on a
 relayed quote; the other built a new delivery path alongside the old one rather
 than swapping it.
 
+## The reservation that applies to the whole collection
+
+**A rule derived only from violations has never been tested in the direction
+that matters.** You then know that breaking it hurts — not that following it
+holds.
+
+That is true of practically every entry in this set: they all come from damage.
+The first counter-evidence exists — a neighbouring project applied the
+finding-versus-assumption split to a ticket of its own and separated the two
+cleanly (finding: the instruction names no flavor, read off the file; assumption:
+it probably predates the split, unverified). **One sample, not a statistic** —
+but the first one in the load-bearing direction. Until there are more, treat a
+threshold from this collection as evidence about its failure mode, not as proof
+that the rule earns its cost.
+
 ## Where the rest lives
 
 The mechanisms themselves are in the companion entries: intake and batching,

@@ -55,6 +55,18 @@ export interface AdrPointer {
   fetch: string;
 }
 
+export interface CuratedAdrScan {
+  adrs: AdrPointer[];
+  /**
+   * Why the scan produced nothing, when it produced nothing for a reason other
+   * than "the catalog holds no ADRs". Since the catalog is delivered at runtime
+   * (#2701), a failed delivery would otherwise render as an empty
+   * `mustRespectAdrs` — an answer that looks clean and is wrong. The reason
+   * travels with the result so the caller sees the outage, not a short list.
+   */
+  error: string | null;
+}
+
 /**
  * Return every numbered ADR in the assist catalog, ascending, as a *followable*
  * pointer. Drift-free by construction: nothing about an ADR is restated here —
@@ -64,13 +76,14 @@ export interface AdrPointer {
  * faked: a fabricated pointer is worse than a visibly missing one, because the
  * caller cannot tell it apart from a real answer.
  */
-export async function scanCuratedAdrs(): Promise<AdrPointer[]> {
+export async function scanCuratedAdrs(): Promise<CuratedAdrScan> {
   let entries: AssistSummary[] = [];
   try {
     entries = await listAssists({ kind: 'adr' });
   } catch (e) {
-    logger.warn('mcp', `get_service_standards: assist catalog unreadable: ${e instanceof Error ? e.message : String(e)}`);
-    return [];
+    const error = e instanceof Error ? e.message : String(e);
+    logger.warn('mcp', `get_service_standards: assist catalog unreadable: ${error}`);
+    return { adrs: [], error };
   }
 
   const adrs = entries
@@ -82,13 +95,16 @@ export async function scanCuratedAdrs(): Promise<AdrPointer[]> {
     logger.warn('mcp', 'get_service_standards: no adr-NNNN-* assists found — mustRespectAdrs is empty.');
   }
 
-  return adrs.map(({ e, m }) => ({
-    adr: m[1],
-    title: extractAdrTitle(e.title),
-    note: NEW_SERVICE_NOTES[m[1]] ?? e.whenToUse,
-    assist: e.id,
-    fetch: `get_assist("${e.id}")`,
-  }));
+  return {
+    adrs: adrs.map(({ e, m }) => ({
+      adr: m[1],
+      title: extractAdrTitle(e.title),
+      note: NEW_SERVICE_NOTES[m[1]] ?? e.whenToUse,
+      assist: e.id,
+      fetch: `get_assist("${e.id}")`,
+    })),
+    error: null,
+  };
 }
 
 /** Strip the `ADR NNNN — ` prefix from a record's title, keeping the descriptive part. */
@@ -124,6 +140,15 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
         ifServiceBayTarget:
           'If it will be installed on a ServiceBay box, these generic standards are not enough — fetch get_service_standards(flavor="servicebay") and follow its repoBootstrap block. The platform ADRs (SSO, non-destructive installs, network isolation, service tokens) are binding and are not derivable from generic dev discipline.',
         ifMcpNotConnected: BOOTSTRAP_STEP.ifMcpNotConnected,
+        // #2701: this flavor had `step`/`ifServiceBayTarget`/`ifMcpNotConnected`
+        // and no pasteable block — exactly what #2513 fixed for the servicebay
+        // flavor. A generic project asking for the finished text got advice to
+        // compose one, which is the thing #2513 established does not happen.
+        claudeMdBlock: renderStandardsPointerBlock('generic'),
+        commands: [
+          'npm run standards:bootstrap -- --flavor generic --write <repo>   # write/refresh the block in <repo>/CLAUDE.md',
+          'npm run standards:bootstrap -- --flavor generic --check <repo>   # exits 1 when the pointer is missing or has drifted',
+        ],
       },
       standards: {
         commitConvention:
@@ -162,7 +187,7 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
   }
 
   // flavor === 'servicebay'
-  const mustRespectAdrs = await scanCuratedAdrs();
+  const { adrs: mustRespectAdrs, error: adrScanError } = await scanCuratedAdrs();
   return {
     flavor,
     summary:
@@ -185,6 +210,10 @@ export async function buildServiceStandards(flavor: ServiceStandardsFlavor): Pro
       note: 'Every ADR is an assist (kind "adr", id "adr-NNNN-<slug>"). Fetch full text with get_assist(id), or find one by situation with list_assists(kind="adr") — each whenToUse line names when that decision applies.',
       listCall: 'list_assists(kind="adr")',
       count: mustRespectAdrs.length,
+      // #2701: the catalog is delivered at runtime. When delivery is broken this
+      // says so; without it an outage would show up as `count: 0`, which reads
+      // like a finished answer.
+      ...(adrScanError ? { unavailable: adrScanError } : {}),
     },
     enforcedInvariants: {
       pointer: 'docs/ARCHITECTURE_INVARIANTS.md',

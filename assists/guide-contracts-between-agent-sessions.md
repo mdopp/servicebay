@@ -34,6 +34,14 @@ PR number.
   internally as `/api/model-lease {model, ttl}`, and nobody was told. The other side
   had already built and shipped against the promise. **The costs are asymmetric:**
   saying it costs one message, not saying it costs someone else's release.
+- **The promise to get in touch is content, not channel.** An "I'll tell you when
+  it works" is exactly as volatile as the agreement it accompanies: it lives in a
+  session that will end before the condition is met. Write the notification into
+  the ticket as part of the work, next to the acceptance — then whoever finishes
+  the work sends it, whether or not the session that promised it still exists.
+  Incident: the cross-repo notification owed once a catalog entry answered on the
+  running box stood in the ticket, not in a session's memory; the other side
+  formulated the rule after seeing it done that way.
 - **A measurement that contradicts a decision goes to the architect as a
   *question*, not as a reversal.**
 - **An operator decision you know only second-hand is hearsay.** Put it to them

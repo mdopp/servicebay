@@ -99,21 +99,32 @@ This repo is built for a ServiceBay box, so **ServiceBay's standards catalog is
 the binding source of its architecture decisions** — this file only points at it.
 
 1. **Before the first stack, CI, storage, or auth decision**, call the ServiceBay
-   MCP tool `get_service_standards` (flavor `servicebay`) and fetch every id it
+   MCP tool `get_service_standards(flavor="servicebay")` and fetch every id it
    lists under `assistsToRead` via `get_assist(id)`. Read first, design second —
    a stack chosen before reading is a stack chosen against the ADRs by accident.
-2. **If the ServiceBay MCP is not connected in this session, stop and say so.**
+2. **Then call `get_service_standards(flavor="generic")` and read every id under
+   `workingAgreements`.** They are the cross-repo agreements on how work enters,
+   how it is gated, when to ask the operator, and how sessions hand over — they
+   are platform-agnostic, so they hang off the *generic* flavor and the
+   servicebay index does NOT repeat them. Fetching only one flavor is how a repo
+   follows this file exactly and still never hears about them.
+   Start with `get_assist("footgun-importing-a-working-agreement-from-another-repo")`:
+   the questions and mechanisms port between repos, the thresholds and autonomy
+   levels do not.
+3. **If the ServiceBay MCP is not connected in this session, stop and say so.**
    An unconnected session cannot see the ADRs, so anything it decides about auth,
    health, storage, or CI is a guess. Connecting it is the first task, not an
    optional extra.
-3. **The catalog wins.** Where this file and the catalog disagree, this file is
-   the stale one — fix it here, not in your head.
-4. **Report gaps back.** A missing, ambiguous, or wrong standard is itself a
+4. **The catalog wins.** Where this file and the catalog disagree, this file is
+   the stale one — fix it here, not in your head. The catalog is read from the
+   box at runtime, so it can be newer than any release you are running.
+5. **Report gaps back.** A missing, ambiguous, or wrong standard is itself a
    finding: file a `standards-gap` issue on `mdopp/servicebay` and propose the
    assist/docs fix. See `get_assist("report-standards-gaps")`.
 
 This block is generated. Regenerate or verify it from a `mdopp/servicebay`
-checkout: `npm run standards:bootstrap -- --write <repo>` / `-- --check <repo>`.
+checkout: `npm run standards:bootstrap -- --flavor servicebay --write <repo>` /
+`-- --flavor servicebay --check <repo>`.
 
 <!-- END SERVICEBAY STANDARDS POINTER -->
 ```

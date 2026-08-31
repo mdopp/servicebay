@@ -1,12 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import path from 'path';
 
 // Point DATA_DIR at a fixed tmp base BEFORE catalog.ts (→ @/lib/dirs) evaluates,
 // so LOCAL_ASSISTS_DIR resolves under our sandbox. Mirrors registry.local.test.ts.
+// ASSIST_CATALOG_DIR names the ONE delivered-catalog dir (#2701) — the loader has
+// no `process.cwd()/assists` fallback any more, so tests supply the delivery.
 const BASE = '/tmp/sb-assist-catalog-test';
 vi.hoisted(() => {
   process.env.DATA_DIR = '/tmp/sb-assist-catalog-test';
+  process.env.ASSIST_CATALOG_DIR = '/tmp/sb-assist-catalog-test/assists';
 });
 
 import { listAssists, getAssist } from './catalog';
@@ -14,7 +17,6 @@ import { listAssists, getAssist } from './catalog';
 const BUILTIN = path.join(BASE, 'assists');
 const LOCAL = path.join(BASE, 'local-assists');
 const LANDED = path.join(BASE, 'local-assists', 'landed');
-let origCwd: string;
 
 async function seed(dir: string, id: string, front: Record<string, string>, body = 'body') {
   const fm = Object.entries(front).map(([k, v]) => `${k}: ${v}`).join('\n');
@@ -26,12 +28,6 @@ beforeEach(async () => {
   await fs.rm(BASE, { recursive: true, force: true });
   await fs.mkdir(BUILTIN, { recursive: true });
   await fs.mkdir(LOCAL, { recursive: true });
-  origCwd = process.cwd();
-  process.chdir(BASE); // BUILTIN = process.cwd()/assists
-});
-
-afterEach(() => {
-  process.chdir(origCwd);
 });
 
 afterAll(async () => {
@@ -52,7 +48,16 @@ describe('assist catalog', () => {
     await seed(LOCAL, 'dup', { title: 'Local title', kind: 'recipe' });
     const list = await listAssists();
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ title: 'Local title', kind: 'recipe', source: 'Local' });
+    // #2701: the override still wins, but it names itself so a hand-approved
+    // copy can never be read as the repo's current text.
+    expect(list[0]).toMatchObject({ title: 'Local title', kind: 'recipe', source: 'Local (overrides repo)' });
+  });
+
+  it('a Local entry with no repo counterpart is plain Local, not an override (#2701)', async () => {
+    await seed(LOCAL, 'only-local', { title: 'Only local', kind: 'guide' });
+    const list = await listAssists();
+    expect(list).toHaveLength(1);
+    expect(list[0]).toMatchObject({ id: 'only-local', source: 'Local' });
   });
 
   it('ranks + filters by query', async () => {
