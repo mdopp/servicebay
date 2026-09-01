@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.24.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.23.0...servicebay-v5.24.0) (2026-08-31)
+
+
+### Features
+
+* **claude-dev:** the config UI in ServiceBay's design, removable projects, one MCP tool ([ce7c93e](https://github.com/mdopp/servicebay/commit/ce7c93e4315e5311442943a6659874a273c2a45a))
+* **mcp:** one tool for claude-dev projects, with the delete on the destroy tier ([225368c](https://github.com/mdopp/servicebay/commit/225368c328ae8d51d32a8a628d93c30441d794aa)), closes [#2714](https://github.com/mdopp/servicebay/issues/2714)
+
+
+### Bug Fixes
+
+* **claude-dev:** carry Claude Dev's own identity colour, indigo not violet ([3daf8c0](https://github.com/mdopp/servicebay/commit/3daf8c02ebe42159bf3090fed257590e901dc961))
+* **claude-dev:** dress the config UI in ServiceBay's design tokens, generated not copied ([4e8698f](https://github.com/mdopp/servicebay/commit/4e8698ff467a6ccd161df4ac1644ab7c354e3003)), closes [#2712](https://github.com/mdopp/servicebay/issues/2712)
+* **claude-dev:** let a project be removed even when this page did not add it ([b8d77eb](https://github.com/mdopp/servicebay/commit/b8d77eb7c4ea56eef1654dc00d03bfa9f01e2ab0)), closes [#2713](https://github.com/mdopp/servicebay/issues/2713)
+* **install:** re-mint a stored ServiceBay token that is not one, and refuse it loudly ([b905840](https://github.com/mdopp/servicebay/commit/b905840a18e4c10a6cc091f680f30f1e4063eeeb)), closes [#2711](https://github.com/mdopp/servicebay/issues/2711)
+* **updater:** name the release channel when the running build is unreleased ([7794541](https://github.com/mdopp/servicebay/commit/77945419f62afbb1e16d045893fac847fac043a2)), closes [#2708](https://github.com/mdopp/servicebay/issues/2708)
+
 ## [5.23.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.22.2...servicebay-v5.23.0) (2026-08-31)
 
 
