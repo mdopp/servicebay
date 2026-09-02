@@ -6,7 +6,7 @@ else that speaks MCP — can drive your homelab directly. Available tools includ
 `list_services`, `manage_service` (start/stop/restart/force-update via an
 `action`),
 `get_logs` (service/container/podman via a `source`), `update_service_yaml`,
-`add_proxy_route`, `run_backup`, `get_health_checks`, `exec_command`, and ~30
+`create_proxy_route`, `run_backup`, `get_health_checks`, `exec_command`, and ~30
 others. Sensitive fields (`auth.passwordHash`, SMTP/OIDC secrets) are redacted
 on read and write-allowlisted.
 
@@ -186,7 +186,7 @@ Claude Code) to see the live tool registry on your version.
 | Containers / logs | `list_containers`, `get_logs` (`source: service\|container\|podman`) |
 | Templates | `list_templates`, `get_template_artifact` (`artifact: readme\|yaml\|variables`), `install_template` |
 | Health | `get_health_checks`, `create_health_check`, `delete_health_check`, `run_check_now` |
-| Proxy | `get_proxy_routes`, `add_proxy_route`, `create_proxy_route`, `remove_proxy_route` |
+| Proxy | `get_proxy_routes`, `create_proxy_route`, `remove_proxy_route` |
 | Requests | `list_requests` (`type: access\|token`), `file_access_request`, `get_access_request_status`, `request_token`, `poll_token_request`, `get_approval_status` |
 | Backups | `list_backups`, `run_backup`, `restore_backup` |
 | System | `list_nodes`, `get_system_info`, `get_network_graph`, `get_config`, `update_config`, `exec_command`, `get_channel`, `set_channel` |
@@ -225,9 +225,15 @@ routes the container's own configuration UI calls
 the confirm-the-restart-at-the-source rule (#2682) have exactly one
 implementation.
 
-The proxy tools split by how far they push. `add_proxy_route` only records a
-config entry (a later manual sync pushes it). `create_proxy_route` pushes a
-complete NPM host live. `remove_proxy_route` is symmetric with those: by default
+There is exactly **one** way to create a route: `create_proxy_route`, which
+pushes a complete NPM host live. The older `add_proxy_route` — which only
+recorded a `config.reverseProxy.hosts` entry and asked you to click Sync
+afterwards — is **gone** (#2726). It was strictly weaker: between the write and
+the sync the config claimed a route NPM did not serve, which is precisely the
+drift `diagnose`'s `danglingProxy` / `nginxOnlineFailed` probes report as a
+fault. If a client still calls `add_proxy_route`, call `create_proxy_route`
+instead — same `domain` / `forwardPort` / `service`, plus an `exposure` tier.
+`remove_proxy_route` is symmetric with it: by default
 (`removeNpmHost:false`) it just drops the config entry, but with
 `removeNpmHost:true` (`destroy` scope) it also deletes the **live** NPM host —
 routing through the same `DELETE /api/system/nginx/proxy-hosts` path the diagnose
@@ -260,7 +266,7 @@ The manual re-run matters: it is what makes reader probes over expensive checks
 open until the daily tick.
 
 The auto-managed `domain:<host>` checks are reconciled by **route mutations**
-(`add_proxy_route`, `remove_proxy_route`, and the shared
+(`remove_proxy_route` and the shared
 `POST`/`DELETE /api/system/nginx/proxy-hosts` path), not only by the 60s timer,
 so `get_health_checks` reflects a route change straight away rather than
 listing a dead route's check for up to a minute (#2654). A route removed

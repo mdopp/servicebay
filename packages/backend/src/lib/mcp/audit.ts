@@ -67,7 +67,7 @@ const BODY_KEYS = new Set([
   'kubecontent',      // deploy_service, update_service_yaml
   'yamlcontent',      // deploy_service companion YAML
   'podspeccontent',   // update_service_yaml — newer alias for kubeContent
-  'advancedconfig',   // create/add_proxy_route — raw nginx directives
+  'advancedconfig',   // create_proxy_route — raw nginx directives
   'body',             // create_assist — free-form markdown
 ]);
 

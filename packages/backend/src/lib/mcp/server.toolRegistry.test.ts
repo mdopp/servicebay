@@ -67,16 +67,27 @@ describe('MCP tool registry completeness (#2384)', () => {
     expect(unscoped, 'registered tools with no TOOL_SCOPES entry').toEqual([]);
   });
 
-  it('exposes exactly the 64 tools the surface declares', async () => {
+  it('exposes exactly the 63 tools the surface declares', async () => {
     // Hard count, deliberately: the split was a pure mechanical extraction, so
     // the surface must not shrink OR grow by accident. Bump this number in the
     // same commit that adds or removes a tool.
     //
     // 63 → 64 in #2714, which added `manage_claude_dev_project`. That the count
     // rose by exactly ONE is the pin the operator asked for: "one tool, not 3".
+    // 64 → 63 in #2726, which retired `add_proxy_route`.
     const names = await registeredToolNames();
-    expect(names).toHaveLength(64);
+    expect(names).toHaveLength(63);
     expect(new Set(names).size, 'duplicate tool registration').toBe(names.length);
+  });
+
+  it('spends exactly ONE tool on creating a proxy route (#2726)', async () => {
+    // `add_proxy_route` wrote config and told the operator to click Sync, which
+    // manufactured the config≠NPM drift the diagnose probes report as a fault.
+    // A second creation path must fail here, not on a box.
+    const names = await registeredToolNames();
+    expect(names.filter(n => /proxy_route/.test(n)).sort())
+      .toEqual(['create_proxy_route', 'get_proxy_routes', 'remove_proxy_route']);
+    expect(Object.keys(TOOL_SCOPES)).not.toContain('add_proxy_route');
   });
 
   it('spends exactly ONE tool on claude-dev projects — the catalogue is per-session context (#2714)', async () => {

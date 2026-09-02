@@ -134,7 +134,7 @@ describe('sibling tools that pass a body-shaped arg through recordAudit', () => 
     expect(out?.id).toBe('tor');
   });
 
-  it('masks add_proxy_route advancedConfig — raw nginx directives can carry auth', async () => {
+  it('masks create_proxy_route advancedConfig — raw nginx directives can carry auth', async () => {
     const { redactArgs } = await load();
     const cfg = `auth_basic_user_file /etc/nginx/${PLACEHOLDER};`;
     const out = redactArgs({ domain: 'demo.example.invalid', advancedConfig: cfg });

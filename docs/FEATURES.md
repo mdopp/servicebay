@@ -81,7 +81,7 @@ Reinstall the box, get your config back. → **[features/backup.md](features/bac
 
 The whole control plane is an MCP surface. → **[features/mcp.md](features/mcp.md)**
 
-- **62 scoped MCP tools** — deploy a template, create a proxy route, run a backup,
+- **63 scoped MCP tools** — deploy a template, create a proxy route, run a backup,
   and a jailed `write_file` confined to the data dir. ([setup guide](MCP.md))
 - **Scoped, revocable tokens** — `read` / `lifecycle` / `mutate` / `destroy`,
   hashed at rest, with an `exec_command` denylist and auto-snapshot before

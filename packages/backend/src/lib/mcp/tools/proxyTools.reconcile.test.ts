@@ -73,12 +73,21 @@ const call = async (name: string, args: unknown) => {
 };
 
 describe('proxy-route mutations reconcile the domain checks (#2654)', () => {
-  it('add_proxy_route reconciles so the new check is listable immediately', async () => {
-    await call('add_proxy_route', { domain: 'new.dopp.cloud', forwardPort: 8080 });
-    expect(calls.updated).toHaveLength(1);
-    expect(calls.sync).toHaveLength(1);
-    // Nothing was removed — a plain reconcile.
-    expect(calls.sync[0]?.removedDomains).toBeUndefined();
+  it('registers no add_proxy_route — creation has ONE kernel path (#2726)', () => {
+    expect(tools.has('create_proxy_route')).toBe(true);
+    expect(tools.has('add_proxy_route')).toBe(false);
+  });
+
+
+  it('create_proxy_route delegates the reconcile to the POST endpoint (#2726)', async () => {
+    // #2726 removed `add_proxy_route`, so route creation has exactly one path:
+    // POST /api/system/nginx/proxy-hosts, which reconciles in route.ts. The tool
+    // must NOT reconcile a second time here, and must not write config itself.
+    calls.deleteBody = { created: ['new.dopp.cloud'], failed: [], certs: [] };
+    await call('create_proxy_route', { domain: 'new.dopp.cloud', forwardPort: 8080, exposure: 'public' });
+    expect(calls.fetches.some(f => f.method === 'POST')).toBe(true);
+    expect(calls.updated).toEqual([]);
+    expect(calls.sync).toEqual([]);
   });
 
   it('remove_proxy_route (config-only) reconciles WITHOUT claiming a removal', async () => {
