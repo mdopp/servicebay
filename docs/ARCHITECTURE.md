@@ -17,6 +17,8 @@ CI: `.github/workflows/ci.yml` runs the first three (`invariants`, `depcruise`, 
 
 **Practical consequence.** "All green" is a valid outcome of an architecture review. Future review prompts should run `npm run check:arch && npm run lint` first and only flag what crosses a defined threshold — see the rubric for what does and does not get enforced this way. Anything not mechanically detectable (data-model fit, security-boundary logic, abstraction match) is the remaining LLM-review surface.
 
+What the rubric does *not* see — the untyped UI↔backend seam, the ownerless runtime, the god modules at the cap, and a measured deletion/merge list — is in [`MAINTAINABILITY_ASSESSMENT.md`](MAINTAINABILITY_ASSESSMENT.md) (2026-09-02).
+
 The audit section below is a point-in-time snapshot from when the rubric was first calibrated. Each "What's working" bullet that survived audit is also a depcruise rule today; each open coupling/security finding has a corresponding rubric entry (or a tracked exemption with a ratchet TODO).
 
 ## Audit (2026-05-17)
