@@ -35,6 +35,13 @@ vi.mock('@/lib/dirs', async (importOriginal) => {
   };
 });
 
+// Identity crypto: `saveConfig` encrypts sensitive fields on the way out, and
+// the real KDF has nothing to do with the durability property under test.
+vi.mock('@/lib/secrets', () => ({
+  encrypt: (s: string) => s,
+  decrypt: (s: string) => s,
+}));
+
 const eio = () => Object.assign(new Error('EIO: injected crash mid-write'), { code: 'EIO' });
 
 /** Files vitest/atomicWrite may leave behind: `.config.json.<pid>.<hex>.tmp`. */
@@ -52,11 +59,13 @@ async function bareWriteInterrupted(target: string, data: string) {
 }
 
 // ---------------------------------------------------------------------------
-// ConfigTransformer — the boot-time normalizer (async, atomicWriteFile).
+// saveConfig — the boot-time config writer (async, atomicWriteFile). This is
+// what `migrateConfig` calls once per boot now that `config/transformer.ts` is
+// gone (#2725), so it is the write a crash can land in.
 // ---------------------------------------------------------------------------
-describe('ConfigTransformer config write survives a crash mid-write (#2414)', () => {
+describe('saveConfig write survives a crash mid-write (#2414)', () => {
   let configPath = '';
-  // Legacy shape, so both transforms fire and the transformer actually writes.
+  // A populated, legacy-shaped config — the file whose loss re-onboards the box.
   const ORIGINAL = {
     serverName: 'already-configured-box',
     setupCompleted: true,
@@ -111,10 +120,18 @@ describe('ConfigTransformer config write survives a crash mid-write (#2414)', ()
     }) as typeof fs.open);
   }
 
+  /** Fresh module graph per test: `config.ts` freezes CONFIG_PATH at import. */
+  async function loadSaveConfig() {
+    vi.resetModules();
+    const { saveConfig } = await import('@/lib/config');
+    const payload = { ...ORIGINAL, serverName: 'renamed-box' } as unknown as Parameters<typeof saveConfig>[0];
+    return () => saveConfig(payload);
+  }
+
   it('leaves config.json fully intact when the write dies half-written', async () => {
+    const save = await loadSaveConfig();
     injectPartialWriteThenCrash();
-    const { ConfigTransformer } = await import('@/lib/config/transformer');
-    const outcome = await new ConfigTransformer(configPath).run().then(() => null, (e: Error) => e);
+    const outcome = await save().then(() => null, (e: Error) => e);
 
     // The load-bearing assertion: whatever the writer did, the operator's
     // config must still be on disk, whole and parseable.
@@ -126,17 +143,17 @@ describe('ConfigTransformer config write survives a crash mid-write (#2414)', ()
   });
 
   it('leaves config.json fully intact when the crash lands on the rename', async () => {
+    const save = await loadSaveConfig();
     vi.spyOn(fs, 'rename').mockRejectedValue(eio());
-    const { ConfigTransformer } = await import('@/lib/config/transformer');
 
-    await expect(new ConfigTransformer(configPath).run()).rejects.toThrow(/injected crash/);
+    await expect(save()).rejects.toThrow(/injected crash/);
 
     expect(JSON.parse(await fs.readFile(configPath, 'utf-8'))).toEqual(ORIGINAL);
     expect(strayTmpFiles()).toEqual([]);
   });
 
   it('control: the pre-fix bare write truncates config.json under the same fault', async () => {
-    await bareWriteInterrupted(configPath, JSON.stringify({ ...ORIGINAL, schemaVersion: 1 }, null, 2));
+    await bareWriteInterrupted(configPath, JSON.stringify({ ...ORIGINAL, serverName: 'renamed-box' }, null, 2));
 
     const after = await fs.readFile(configPath, 'utf-8');
     expect(after).not.toBe(ORIGINAL_TEXT);

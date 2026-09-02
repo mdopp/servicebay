@@ -394,11 +394,13 @@ async function checkTwinFanIn() {
 // sanctioned way to touch them (tmp → fsync → rename: a crash leaves the
 // ORIGINAL intact).
 //
-// #2414: `config/transformer.ts` — the boot-time normalizer that runs before
+// #2414: `config/transformer.ts` — the boot-time normalizer that ran before
 // the first `getConfig()` on every backend start — wrote config.json bare while
 // `config.ts` next door already used `atomicWriteFile`. Two writers, two
 // durability contracts, on the one file whose loss is unrecoverable from the UI.
 // This check is the ratchet that keeps the second writer from coming back.
+// (#2725 deleted that module and folded its one live migration into
+// `config.ts`, so there is now a single boot-time writer, still listed below.)
 //
 // The budget is 0 and the list is forward-only: add a module when it starts
 // owning durable DATA_DIR state; never delete one to make a bare write pass.
@@ -407,7 +409,6 @@ async function checkTwinFanIn() {
 // ---------------------------------------------------------------------------
 const DURABLE_STATE_MODULES = [
     'packages/backend/src/lib/config.ts',
-    'packages/backend/src/lib/config/transformer.ts',
     'packages/backend/src/lib/health/store.ts',
 ];
 const DURABLE_STATE_BARE_WRITE_BUDGET = 0;

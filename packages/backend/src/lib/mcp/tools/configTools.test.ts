@@ -102,7 +102,6 @@ const CANARY_NEEDLES = [
  */
 function buildFixture(): AppConfig {
   const base: AppConfig = {
-    schemaVersion: 1,
     logLevel: 'info',
     serverName: 'homebox',
     domain: 'example.test',

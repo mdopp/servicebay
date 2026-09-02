@@ -6,7 +6,6 @@ import { decrypt, encrypt } from './secrets';
 import { LogLevel } from './logger';
 import { PortMapping as GraphPortMapping } from './network/types';
 import { normalizeExternalTargets } from './network/externalLinks';
-import { ConfigTransformer } from './config/transformer';
 import type { BackupConfig } from './backup/types';
 import type { MigrationAuditEntry } from './stackInstall/auditTypes';
 import { logger } from './logger';
@@ -162,19 +161,6 @@ export interface AgentConfig {
 }
 
 export interface AppConfig {
-  /**
-   * Schema version of the persisted `config.json` document (#1099 Phase 1).
-   * `1` is the baseline — every shape that existed before this field was
-   * introduced. Future breaking changes bump this number and add a
-   * migration step to Phase 2's migration ledger; on startup the ledger
-   * walks from the persisted version to `CURRENT_SCHEMA_VERSION`.
-   *
-   * Optional in the interface because legacy configs persisted before
-   * this PR don't carry the field — the ConfigTransformer below stamps
-   * them with `1` on first read so downstream code can rely on
-   * `getSchemaVersion()` returning a number.
-   */
-  schemaVersion?: number;
   logLevel?: LogLevel;
   serverName?: string; // Custom display name for this server
   /**
@@ -568,21 +554,6 @@ export function getJobLogLimits(config: AppConfig): { maxLines: number; maxBytes
   };
 }
 
-// #1099 Phase 1: schema version of the persisted config document.
-// Phase 2 will introduce a migration ledger that walks `persisted →
-// CURRENT_SCHEMA_VERSION` on startup; this PR establishes the baseline
-// so the ledger has a number to walk from. Legacy configs missing the
-// field are stamped `1` by the ConfigTransformer below, so in-memory
-// configs always carry a value once they've passed through migrateConfig().
-export const CURRENT_SCHEMA_VERSION = 1;
-
-export function getSchemaVersion(config: AppConfig): number {
-  // Fallback to 1 (the baseline) rather than CURRENT — a legacy config
-  // missing the field represents v1 data, regardless of where CURRENT
-  // moves to in the future.
-  return config.schemaVersion ?? 1;
-}
-
 export interface ServicePostDeployRecord {
   /** ISO timestamp of when the script finished (success or failure). */
   lastRunAt: string;
@@ -731,12 +702,24 @@ export function getAdminBaseUrl(config: { reverseProxy?: { publicDomain?: string
   return null;
 }
 
+/**
+ * The one real config migration left: pre-5.13 boxes persisted the field as
+ * snake_case `ip_targets`. Promote it (only when the camelCase field is
+ * absent, so a half-migrated file never loses the newer value) and drop the
+ * legacy key. Running it here rather than in a separate boot-time file pass
+ * means both the read path and `saveConfigLocked` normalize it, so the
+ * startup `migrateConfig` re-save physically removes the old key.
+ */
 const normalizeExternalLinkEntry = (link: ExternalLink): ExternalLink => {
-  const normalizedTargets = normalizeExternalTargets(link.ipTargets ?? []);
-  return {
+  const record = link as ExternalLink & { ip_targets?: string[] };
+  const legacyTargets = record.ip_targets;
+  const normalizedTargets = normalizeExternalTargets(link.ipTargets ?? legacyTargets ?? []);
+  const normalized = {
     ...link,
     ipTargets: normalizedTargets,
-  };
+  } as ExternalLink & { ip_targets?: string[] };
+  delete normalized.ip_targets;
+  return normalized;
 };
 
 const normalizeExternalLinks = (links?: ExternalLink[]): ExternalLink[] | undefined => {
@@ -745,7 +728,6 @@ const normalizeExternalLinks = (links?: ExternalLink[]): ExternalLink[] | undefi
 };
 
 const DEFAULT_CONFIG: AppConfig = {
-  schemaVersion: CURRENT_SCHEMA_VERSION,
   templateSettings: {},
   logLevel: 'info',
   agent: {
@@ -915,6 +897,11 @@ export async function getConfig(): Promise<AppConfig> {
   // the startup `migrateConfig` re-save physically removes it: a dead
   // credential is worse than dead config.
   delete (merged as Record<string, unknown>).credentialVault;
+  // #2725 — the schema-version ledger never shipped: `CURRENT_SCHEMA_VERSION`
+  // was `1` for its whole life and nothing ever branched on the field. Drop it
+  // on read the same way, so the startup re-save unstamps boxes that carry it
+  // instead of leaving a number nobody reads in operator data.
+  delete (merged as Record<string, unknown>).schemaVersion;
   return merged;
 }
 
@@ -956,16 +943,16 @@ export async function saveConfig(config: AppConfig): Promise<void> {
 }
 
 /**
- * Reads the config and re-saves it to ensure all sensitive fields are encrypted.
- * Should be called on application startup.
+ * Boot-time config normalizer. There is no version ledger (#2725): every
+ * migration this box still needs is expressed on the read path — the
+ * `ip_targets` rename in `normalizeExternalLinkEntry`, the `credentialVault`
+ * and `schemaVersion` drops in `getConfig` — so reading and re-saving once is
+ * the whole migration, and it is idempotent by construction. The re-save also
+ * (re-)encrypts every sensitive field.
  */
 export async function migrateConfig(): Promise<void> {
   try {
-    const transformer = new ConfigTransformer(CONFIG_PATH);
-    await transformer.run();
-    const config = await getConfig();
-    // saveConfig automatically handles encryption of all sensitive keys
-    await saveConfig(config);
+    await saveConfig(await getConfig());
   } catch (error) {
     logger.warn('config', 'Failed to migrate/encrypt config on startup:', error);
   }
