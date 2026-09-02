@@ -236,15 +236,17 @@ describe('Template migration scripts — Docker image coverage (#2166)', () => {
 });
 
 describe('Template migration scripts — discovery via getTemplateMigrationScripts', () => {
-  it('discovers home-assistant v1-to-v2.py from the built-in catalog', async () => {
+  // #2727 retargeted this from `v1-to-v2.py`, which was deleted: it sat below
+  // home-assistant's declared upgrade floor (v6) and could never run.
+  it('discovers home-assistant v6-to-v7.py from the built-in catalog', async () => {
     const { getTemplateMigrationScripts } = await import('@/lib/registry');
     const scripts = await getTemplateMigrationScripts('home-assistant', 'Built-in');
     expect(scripts.length).toBeGreaterThanOrEqual(1);
-    const v1to2 = scripts.find(s => s.filename === 'v1-to-v2.py');
-    expect(v1to2).toBeDefined();
-    expect(v1to2?.fromVersion).toBe(1);
-    expect(v1to2?.toVersion).toBe(2);
-    expect(v1to2?.content).toContain('def main()');
+    const v6to7 = scripts.find(s => s.filename === 'v6-to-v7.py');
+    expect(v6to7).toBeDefined();
+    expect(v6to7?.fromVersion).toBe(6);
+    expect(v6to7?.toVersion).toBe(7);
+    expect(v6to7?.content).toContain('def main()');
   });
 
   it('returns an empty array for templates without a migrations/ dir', async () => {

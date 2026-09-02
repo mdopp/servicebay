@@ -21,6 +21,18 @@ export type MigrationChainResult =
   | { ok: false; reason: 'overlapping-steps'; conflicts: { fromVersion: number; toVersion: number }[] };
 
 /**
+ * Prefix every migration-gate refusal shares (#2727).
+ *
+ * `install/runner.ts` catches errors around the whole chain-discovery block
+ * — a registry fetch failing there must NOT abort a deploy — and re-throws
+ * only the deliberate refusals, which it recognises by this prefix. Any new
+ * refusal message must start with it or it will be swallowed and logged as
+ * "continuing without migrations", i.e. the silent no-op this whole area
+ * exists to prevent.
+ */
+export const MIGRATION_REFUSAL_PREFIX = 'Migration chain for';
+
+/**
  * Pick the ordered chain of migration scripts that walks
  * `installedVersion → ... → targetVersion`.
  *
@@ -92,6 +104,48 @@ export function selectMigrationChain(
     chain.push(step);
   }
   return { ok: true, chain };
+}
+
+/**
+ * Guard the declared upgrade floor (`servicebay.min-upgradable-schema-version`,
+ * #2727) BEFORE any chain is selected.
+ *
+ * Some templates ship a `migrations/` chain with a hole in it — media has no
+ * `v2-to-v3.py`, home-assistant has no `v2-to-v3` / `v4-to-v5` / `v5-to-v6` —
+ * and reconstructing what did or did not move on disk years ago is guesswork,
+ * so the holes stay. A box recorded below the hole therefore has no upgrade
+ * path, and before this guard it found that out the worst possible way: the
+ * deploy started, ran to the migration step, and aborted with a
+ * `missing-step` message about an internal script name. Nothing rolled out,
+ * and the run still read as finished — the "Erfolg gemeldet, nichts getan"
+ * shape of #2601.
+ *
+ * Returning the message here rather than at the call site keeps ONE wording:
+ * the wizard and the MCP `install_template` tool both drive
+ * `install/runner.ts`, so both surface exactly this text.
+ *
+ * @returns the operator-facing refusal, or `null` when the upgrade may proceed.
+ */
+export function checkMinUpgradableSchemaVersion(
+  templateName: string,
+  installedVersion: number | null,
+  minUpgradableVersion: number,
+  targetVersion: number,
+): string | null {
+  // No prior install → fresh install, the floor does not apply: a fresh
+  // deploy stamps the current version without running a single hop.
+  if (installedVersion === null) return null;
+  if (installedVersion >= minUpgradableVersion) return null;
+
+  return (
+    `${MIGRATION_REFUSAL_PREFIX} ${templateName} cannot run: this box is recorded at `
+    + `schema-version v${installedVersion}, but ${templateName} can only be upgraded from `
+    + `v${minUpgradableVersion} or newer (servicebay.min-upgradable-schema-version), and the template is `
+    + `now at v${targetVersion}. The migration scripts for the hops below v${minUpgradableVersion} do not `
+    + `exist, so there is no upgrade path from v${installedVersion}. Read `
+    + `templates/${templateName}/CHANGELOG.md for what changed since v${installedVersion} and migrate the `
+    + `data by hand, or re-install ${templateName} from scratch, before retrying. Aborting deploy.`
+  );
 }
 
 /**

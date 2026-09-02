@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { selectMigrationChain } from './migrations';
+import {
+  selectMigrationChain,
+  checkMinUpgradableSchemaVersion,
+  MIGRATION_REFUSAL_PREFIX,
+} from './migrations';
 import type { TemplateMigrationScript } from '@/lib/registry';
 
 function mig(fromVersion: number, toVersion: number, content = ''): TemplateMigrationScript {
@@ -78,5 +82,54 @@ describe('selectMigrationChain', () => {
     const result = selectMigrationChain(1, 3, scripts);
     if (!result.ok) throw new Error('expected ok');
     expect(result.chain.map(s => s.filename)).toEqual(['v1-to-v2.py', 'v2-to-v3.py']);
+  });
+});
+
+// ─── #2727 — a box below the floor is told so, not left to `missing-step` ───
+//
+// The Zusage this encodes: a box below the declared minimum gets a clear,
+// actionable error AT the upgrade, naming the template, the version it is
+// recorded at, and the minimum — never a silent no-chain, and never a message
+// about an internal script filename it cannot act on.
+describe('checkMinUpgradableSchemaVersion', () => {
+  it('refuses a box recorded below the floor', () => {
+    const msg = checkMinUpgradableSchemaVersion('media', 2, 3, 8);
+    expect(msg).not.toBeNull();
+    // The three facts the operator needs to act, all present.
+    expect(msg).toContain('media');
+    expect(msg).toContain('v2');
+    expect(msg).toContain('v3');
+    expect(msg).toContain('v8');
+    expect(msg).toContain('servicebay.min-upgradable-schema-version');
+  });
+
+  it('names a concrete next step, not just the refusal', () => {
+    const msg = checkMinUpgradableSchemaVersion('home-assistant', 4, 6, 8)!;
+    expect(msg).toContain('templates/home-assistant/CHANGELOG.md');
+    expect(msg).toMatch(/migrate the\s+data by hand, or re-install/);
+  });
+
+  it('starts with the prefix install/runner.ts re-throws on', () => {
+    // The runner wraps chain discovery in a best-effort try/catch and only
+    // re-throws errors carrying this prefix. A refusal without it would be
+    // downgraded to "continuing without migrations" — the exact silent no-op
+    // the floor exists to replace.
+    expect(checkMinUpgradableSchemaVersion('media', 1, 3, 8))
+      .toMatch(new RegExp(`^${MIGRATION_REFUSAL_PREFIX}`));
+  });
+
+  it('lets a box at or above the floor through', () => {
+    expect(checkMinUpgradableSchemaVersion('media', 3, 3, 8)).toBeNull();
+    expect(checkMinUpgradableSchemaVersion('media', 7, 3, 8)).toBeNull();
+  });
+
+  it('does not apply to a fresh install', () => {
+    // No prior install → the deploy stamps the current version without
+    // running a hop, so the floor is irrelevant.
+    expect(checkMinUpgradableSchemaVersion('media', null, 3, 8)).toBeNull();
+  });
+
+  it('is a no-op for the default floor of 1', () => {
+    expect(checkMinUpgradableSchemaVersion('beets', 1, 1, 3)).toBeNull();
   });
 });

@@ -39,9 +39,10 @@ the wizard substitutes at deploy time. Use these annotations under
 | `servicebay.config-mount` | required if any `*.mustache` files | Container mountPath that companion `*.mustache` files should land in. Avoids the `/config`-suffix heuristic picking the wrong volume in multi-container pods. |
 | `servicebay.seed-only-configs` | optional (default `[]`) | Comma-separated companion config filenames (e.g. `"automations.yaml,scenes.yaml,scripts.yaml"`) that ServiceBay writes **only when they are absent** on the box. Use it for any `*.mustache` file whose real owner after first install is the application or the operator — an app that rewrites the file from its own UI, or a file the operator edits by hand. Without the annotation a deploy re-renders the file every time, which overwrites that content (#2590). Each name must match a `*.mustache` file the template ships, minus the suffix. |
 | `servicebay.schema-version` | optional (default `1`) | Bump when the pod structure or variable shape changes in a way operators need to be aware of (containers extracted, variables renamed, data paths moved). Plain image-tag bumps don't need this — Quadlet's `AutoUpdate=registry` handles those silently. Each bump should ship a `CHANGELOG.md` section + (if data needs to move) a `migrations/v{N-1}-to-v{N}.py` script. See #352. |
+| `servicebay.min-upgradable-schema-version` | optional (default `1`) | Oldest installed schema-version this template can still be upgraded **from**. Raise it when the `migrations/` chain has a hole below the current version and filling it would mean guessing what moved on disk years ago — the hole already makes the template undeployable for those boxes, this annotation makes that a declared contract instead of a mid-job `missing-step` abort. The install runner refuses a box recorded below it up front, naming template + installed + minimum version, and a build-time test pins that the chain from here to `servicebay.schema-version` is unbroken and that no unreachable migration script is left below it. Must be `>= 1` and `<= servicebay.schema-version`. See #2727. |
 | `servicebay.tier` | optional (default `"feature"`) | `"infrastructure"` for platform templates that the wizard auto-includes (DNS / proxy / SSO) and pins checked; everything else defaults to `"feature"` and starts unchecked. Stacks don't carry this annotation. |
 | `servicebay.dependencies` | optional (default `[]`) | Comma-separated list of template names that must install before this one. Drives three things in the wizard: (1) the red **`requires X`** badge under the template name; (2) auto-checking those templates when the operator checks this one; (3) the uncheck-guard that prompts before removing a template another selected template needs. The install loop then topo-sorts the deploy order so deps land first. Example: `servicebay.dependencies: "nginx,auth"`. |
-| `servicebay.requires-api.<name>` | optional | Per-API version the template's `post-deploy.py` calls. Declare one annotation per API name (`lldap`, `authelia`, `portal`), value is a positive integer. Core refuses to invoke `post-deploy.py` if any requested version exceeds what this ServiceBay ships (see `packages/backend/src/lib/template/apiVersions.ts`). Use this on any template whose post-deploy calls `/api/system/<name>/*` (#588). |
+| `servicebay.requires-api.<name>` | optional | Per-API version the template's `post-deploy.py` calls. Declare one annotation per API name (`lldap`, `authelia`, `portal`), value is a positive integer. Core refuses to invoke `post-deploy.py` if any requested version exceeds what this ServiceBay ships (see `src/lib/template/apiVersions.ts`). Use this on any template whose post-deploy calls `/api/system/<name>/*` (#588). |
 | `servicebay.healthcheck` | optional | YAML block scalar declaring a continuous health probe ServiceBay polls on the configured interval (#626). Shape: `{kind?: http|tcp, url|host+port, interval: 30s, timeout: 5s, startup_timeout: 5m}`. The endpoint should return `{ready, degraded?, deps?, message?}`. Result lands on `twin.services[].health` and is the single source of truth for install gating (`settleWait`), diagnose readers, and the core-health banner. Phase 3C (#628) replaced the install-time `servicebay.readiness` annotation with this single signal. |
 
 <!-- AUTOGEN:TEMPLATE_FIELDS_END -->
@@ -453,6 +454,39 @@ installed schema-version is older than the template's current. One
 file per one-step hop (`v1-to-v2.py`, `v2-to-v3.py`, …) — the
 engine walks the chain in order if an operator's box is multiple
 versions behind. See #352 phase 3.
+
+#### The chain must be unbroken — and you declare where it starts (#2727)
+
+`selectMigrationChain` walks **one version at a time**. A hop with no
+script is not skipped, it **refuses the deploy**: the template is
+undeployable for every box recorded below that hole. That makes the
+`migrations/` directory a contract about which boxes you still
+support, and `servicebay.min-upgradable-schema-version` is where you
+write that contract down.
+
+- **Default `1`** — "upgradable from the very first version". A
+  build-time test proves it: the chain from the floor up to
+  `servicebay.schema-version` must be walkable for *every* start
+  version in that span.
+- **Raise it** when a historic hop is missing and reconstructing what
+  moved on disk back then would be guesswork. `media` has no
+  `v2-to-v3.py` and declares `"3"`; `home-assistant` is missing
+  `v2→v3`, `v4→v5` and `v5→v6` and declares `"6"`. Templates that
+  never shipped a migration at all (`adguard`, `nginx`, `file-share`)
+  declare their current version.
+- **A script below the floor is deleted, not kept.** It can never run
+  — the chain to reach it is broken by definition — and leaving it in
+  place advertises an upgrade path the runner will refuse. The same
+  build-time test fails on one.
+- **What the operator sees.** A box below the floor is refused *before
+  the first step*, with a message naming the template, the version the
+  box is recorded at, and the minimum. The wizard, the bulk-upgrade
+  preview and the MCP `install_template` tool all surface that one
+  message — none of them starts a job that quietly rolls nothing out.
+
+To lower a floor, ship the missing hops. An informational no-op script
+counts (see `templates/beets/migrations/v2-to-v3.py`) when nothing
+actually moves on disk.
 
 The script protocol is identical to `post-deploy.py` (env file →
 `source` → `python3`, stdout streamed live to the install log), and the

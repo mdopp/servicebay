@@ -24,3 +24,17 @@ import { readManifestAnnotations } from './template/contract';
 export function parseTemplateSchemaVersion(yamlText: string): number {
   return readManifestAnnotations(yamlText).schemaVersion ?? 1;
 }
+
+/**
+ * Extract `metadata.annotations['servicebay.min-upgradable-schema-version']`
+ * — the oldest installed schema-version this template can still be upgraded
+ * FROM (#2727).
+ *
+ * Default is `1` when the annotation is missing OR unparseable, matching the
+ * historic behaviour: a template that declares no floor is assumed upgradable
+ * from its first version, and the build-time consistency test is what proves
+ * that claim (the chain from the floor to `schema-version` must be unbroken).
+ */
+export function parseTemplateMinUpgradableSchemaVersion(yamlText: string): number {
+  return readManifestAnnotations(yamlText).minUpgradableSchemaVersion ?? 1;
+}

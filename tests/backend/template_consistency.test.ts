@@ -2297,7 +2297,7 @@ describe('Template tier classification', () => {
   });
 });
 
-// ─── 8b. The migration chain reaches the declared schema-version (#2601) ───
+// ─── 8b. The chain is unbroken from the declared floor up (#2601, #2727) ───
 //
 // `selectMigrationChain` (lib/stackInstall/migrations.ts) walks
 // installedVersion → schemaVersion one hop at a time and ABORTS the deploy
@@ -2308,42 +2308,74 @@ describe('Template tier classification', () => {
 // That is exactly what #2601 hit: media and home-assistant both went to v8
 // with their chains stopping at v7.
 //
-// The rule is deliberately anchored at the TOP of the chain rather than at
-// v1: a template that has never shipped a migration (adguard, nginx,
-// file-share) is left alone here, because filling those historic hops means
-// reconstructing what did or didn't move on disk years ago — a separate
-// decision, not something to guess in a guard. What this pins is the hop the
-// author is adding right now: once a template ships ANY migration, its chain
-// must reach its current schema-version.
-describe('Template migration chain reaches the schema-version', () => {
-  for (const t of templates) {
-    const migDir = path.join(TEMPLATES_DIR, t.name, 'migrations');
-    if (!fs.existsSync(migDir)) continue;
-    const hops = fs.readdirSync(migDir)
-      .map(f => /^v(\d+)-to-v(\d+)\.py$/.exec(f))
-      .filter((m): m is RegExpExecArray => m !== null)
-      .map(m => ({ from: Number(m[1]), to: Number(m[2]) }));
-    if (hops.length === 0) continue;
+// #2601 pinned only the TOP of the chain, because filling a historic hole
+// means reconstructing what did or didn't move on disk years ago. #2727 made
+// that a *declaration* instead of a blind spot: every template states the
+// oldest version it can be upgraded FROM
+// (`servicebay.min-upgradable-schema-version`, default 1), and this section
+// checks the whole span from there to `schema-version` — for every template,
+// not just the ones that already ship a migration.
+//
+// Two rules, both over the real `selectMigrationChain`:
+//   1. Every start version from the floor upward must produce a usable chain.
+//      A hole inside the declared span is a template that lies about what it
+//      supports.
+//   2. No migration script may sit BELOW the floor. Such a script can never
+//      run — the chain to reach it is broken by definition — so it is dead
+//      code that reads like a supported upgrade path (media/v1-to-v2.py,
+//      home-assistant/v1-to-v2.py and v3-to-v4.py were exactly that, deleted
+//      in #2727).
+describe('Template migration chain is unbroken from the declared floor', () => {
+  const readHops = (name: string) => {
+    const migDir = path.join(TEMPLATES_DIR, name, 'migrations');
+    if (!fs.existsSync(migDir)) return [];
+    return fs.readdirSync(migDir)
+      .map(f => ({ f, m: /^v(\d+)-to-v(\d+)\.py$/.exec(f) }))
+      .filter((e): e is { f: string; m: RegExpExecArray } => e.m !== null)
+      .map(e => ({
+        filename: e.f,
+        fromVersion: Number(e.m[1]),
+        toVersion: Number(e.m[2]),
+        content: '',
+      }));
+  };
 
-    it(`${t.name}: every hop up to its schema-version has a script`, () => {
-      const declared = /servicebay\.schema-version:\s*"(\d+)"/.exec(t.yamlContent);
-      const schemaVersion = declared ? Number(declared[1]) : 1;
-      const froms = new Set(hops.map(h => h.from));
-      // Walk from the newest hop the template already ships up to the version
-      // it now declares. Historic gaps further down the chain (home-assistant
-      // has no v2→v3, v4→v5 or v5→v6) are left alone on purpose — see the
-      // note above; what must never regress is the tail the author is
-      // extending right now.
-      const missing: string[] = [];
-      for (let v = Math.max(...hops.map(h => h.from)); v < schemaVersion; v++) {
-        if (!froms.has(v)) missing.push(`v${v}-to-v${v + 1}.py`);
+  for (const t of templates) {
+    const declared = /servicebay\.schema-version:\s*"(\d+)"/.exec(t.yamlContent);
+    const schemaVersion = declared ? Number(declared[1]) : 1;
+    const floorDeclared = /servicebay\.min-upgradable-schema-version:\s*"(\d+)"/.exec(t.yamlContent);
+    const floor = floorDeclared ? Number(floorDeclared[1]) : 1;
+
+    it(`${t.name}: every version from its floor v${floor} up to v${schemaVersion} can still upgrade`, async () => {
+      const { selectMigrationChain } = await import('@/lib/stackInstall/migrations');
+      const scripts = readHops(t.name);
+      const broken: string[] = [];
+      for (let from = floor; from < schemaVersion; from++) {
+        const result = selectMigrationChain(from, schemaVersion, scripts);
+        if (!result.ok) broken.push(`v${from}: ${JSON.stringify(result)}`);
       }
       expect(
-        missing,
-        `${t.name} declares schema-version ${schemaVersion} but ships no ${missing.join(', ')}. `
-        + 'selectMigrationChain aborts the deploy on a missing hop, so every box still at the '
-        + 'previous version cannot upgrade at all. If nothing on disk moves, ship an '
-        + 'informational no-op script (see templates/beets/migrations/v2-to-v3.py).',
+        broken,
+        `${t.name} declares it is upgradable from v${floor} (servicebay.min-upgradable-schema-version) `
+        + `to v${schemaVersion}, but selectMigrationChain refuses:\n  ${broken.join('\n  ')}\n`
+        + 'Either ship the missing hop (an informational no-op script is fine — see '
+        + 'templates/beets/migrations/v2-to-v3.py) or raise servicebay.min-upgradable-schema-version '
+        + 'to the oldest version that actually works. A hole inside the declared span means the '
+        + 'template promises an upgrade path the runner will refuse.',
+      ).toEqual([]);
+    });
+
+    it(`${t.name}: ships no migration script below its floor v${floor}`, () => {
+      const unreachable = readHops(t.name)
+        .filter(h => h.fromVersion < floor)
+        .map(h => h.filename)
+        .sort();
+      expect(
+        unreachable,
+        `${t.name} ships ${unreachable.join(', ')} below its declared floor v${floor}. `
+        + 'selectMigrationChain can never reach those hops — the chain to get to them is broken — '
+        + 'so they are dead code that reads like a supported upgrade path. Delete them, or lower '
+        + 'servicebay.min-upgradable-schema-version and fill the hops in between.',
       ).toEqual([]);
     });
   }
@@ -2374,6 +2406,30 @@ describe('Template migration chain reaches the schema-version', () => {
     ).toBe(true);
     if (!result.ok) return;
     expect(result.chain.map(s => s.filename)).toEqual([`v${to - 1}-to-v${to}.py`]);
+  });
+
+  // #2727's binding promise, against the real shipped templates: a box below
+  // the floor is told what is wrong in terms it can act on — its own recorded
+  // version, the minimum, the template name — and NOT with `missing-step`,
+  // which names a script filename the operator has no way to produce.
+  it.each([
+    ['media', 2, 3],
+    ['home-assistant', 5, 6],
+  ])('%s at v%i is refused by name and version, not by a missing script', async (name, installed, floor) => {
+    const { checkMinUpgradableSchemaVersion } = await import('@/lib/stackInstall/migrations');
+    const yaml = fs.readFileSync(path.join(TEMPLATES_DIR, name, 'template.yml'), 'utf-8');
+    const declaredFloor = /servicebay\.min-upgradable-schema-version:\s*"(\d+)"/.exec(yaml);
+    const schemaVersion = Number(/servicebay\.schema-version:\s*"(\d+)"/.exec(yaml)![1]);
+    expect(declaredFloor, `${name} must declare its upgrade floor`).not.toBeNull();
+    expect(Number(declaredFloor![1])).toBe(floor);
+
+    const msg = checkMinUpgradableSchemaVersion(name, installed, floor, schemaVersion);
+    expect(msg, `${name} at v${installed} must be refused`).not.toBeNull();
+    expect(msg).toContain(name);
+    expect(msg).toContain(`v${installed}`);
+    expect(msg).toContain(`v${floor}`);
+    // The old message shape — the one the operator could not act on.
+    expect(msg).not.toContain('no script for');
   });
 });
 
