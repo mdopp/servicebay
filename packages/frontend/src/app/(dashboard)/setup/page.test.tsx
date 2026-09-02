@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
-import SetupPage from './page';
+import SetupPageView from './page';
 import { completeStackSetup } from '@/app/actions/onboarding';
+import { InstallJobProvider } from '@/providers/InstallJobProvider';
 
 const { push, refresh } = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 
@@ -10,6 +11,10 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push, refresh }) }));
 vi.mock('@/app/actions/onboarding', () => ({ completeStackSetup: vi.fn(async () => undefined) }));
 vi.mock('@/components/DoneStepDnsCheck', () => ({ DoneStepDnsCheck: () => <div>dns</div> }));
 vi.mock('@/components/DiagnoseProbeList', () => ({ default: () => <div>probes</div> }));
+
+/** /setup reads the job from the shared install poll (#2732); the provider
+ *  is mounted by the dashboard layout, so mount it here. */
+const SetupPage = () => <InstallJobProvider><SetupPageView /></InstallJobProvider>;
 
 function jobResponse(over: Record<string, unknown> = {}) {
   return {
@@ -53,11 +58,18 @@ describe('SetupPage — design-system tokens (#2100)', () => {
     expect(html).not.toMatch(/bg-white|dark:bg-(gray|slate)|border-(gray|slate|rose|emerald|red)-\d|text-(gray|slate|rose|emerald)-\d/);
   });
 
-  it('surfaces the service-status strip and install log (function preserved)', async () => {
+  // #2732 — the per-service rows and the log are the wizard's own
+  // `StackInstallProgress`, fed from the shared poll; /setup no longer has a
+  // status strip or a log panel of its own.
+  it('shows the shared per-service rows and the install log (function preserved)', async () => {
     render(<SetupPage />);
-    await waitFor(() => expect(screen.getByText('Service status')).toBeTruthy());
-    expect(screen.getByText('Install log')).toBeTruthy();
-    expect(screen.getByText('1/1 deployed')).toBeTruthy();
+    await waitFor(() => expect(screen.getByText('immich')).toBeTruthy());
+    expect(screen.getByText('Deployed')).toBeTruthy();
+    expect(screen.getByText('line one')).toBeTruthy();
+    expect(screen.getByText('line two')).toBeTruthy();
+    expect(screen.getByText('1 of 1 deployed')).toBeTruthy();
+    expect(screen.queryByText('Service status')).toBeNull();
+    expect(screen.queryByText('Install log')).toBeNull();
   });
 });
 

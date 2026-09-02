@@ -63,6 +63,12 @@ vi.mock('@/hooks/useDigitalTwin', () => ({
   })
 }));
 
+// #2732: the install job comes from InstallJobProvider; these tests render
+// outside it, so stub the hook to "nothing installing".
+vi.mock('@/hooks/useInstallJob', () => ({
+  useInstallJob: () => ({ ready: true, job: null, jobIsActive: false, stackSetupPending: false, serverStartedAt: null, phase: 'idle', logs: [], credentials: { prompt: false, fallback: { email: '', password: '' }, error: null }, abort: () => {}, skipCredentials: () => {}, submitCredentials: async () => {}, track: async () => false }),
+}));
+
 // Mock Router and Toast
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),

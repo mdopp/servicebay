@@ -20,8 +20,8 @@ import { useToast } from '@/providers/ToastProvider';
  * poll keeps succeeding — proving the box IS reachable. Flashing "Not online"
  * over a clearly-advancing install is a false alarm (#1504), so the banner and
  * its sticky toast are suppressed whenever an install job is active: a
- * succeeding `/api/install/progress` poll is a positive liveness signal that
- * outranks a momentarily-down socket.
+ * succeeding install poll (`InstallJobProvider`, #2732) is a positive liveness
+ * signal that outranks a momentarily-down socket.
  *
  * The "is it actually down?" judgement is NOT made here — it belongs to
  * `useConnectionStatus`, which turns the raw transport boolean into

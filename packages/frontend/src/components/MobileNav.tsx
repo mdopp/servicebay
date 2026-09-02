@@ -6,6 +6,7 @@ import { Code, Wrench } from 'lucide-react';
 import ServiceBayLogo from './ServiceBayLogo';
 import DomainTag from './DomainTag';
 import { isNavActive } from '@/config/navigation';
+import { useInstallJob } from '@/hooks/useInstallJob';
 import { useNavigationEntries } from '@/hooks/useNavigationEntries';
 import { useToast } from '@/providers/ToastProvider';
 
@@ -18,8 +19,10 @@ export function MobileTopBar() {
   const hintFired = useRef(false);
   // Mirror of the desktop Sidebar's hasActiveInstall pill — mobile
   // users who pressed "Minimize" on the wizard would otherwise have
-  // no way back to /setup since the Sidebar is hidden < md.
-  const [hasActiveInstall, setHasActiveInstall] = useState(false);
+  // no way back to /setup since the Sidebar is hidden < md. Read from the
+  // one install poll (#2732) so the badge and /setup never disagree.
+  const { jobIsActive, stackSetupPending } = useInstallJob();
+  const hasActiveInstall = jobIsActive || stackSetupPending;
   // Workspace package.json stays at 0.0.0 (release-please only bumps the
   // root). Read the live version from the API instead. (#812)
   const [appVersion, setAppVersion] = useState<string | null>(null);
@@ -45,25 +48,6 @@ export function MobileTopBar() {
       8000,
     );
   }, [addToast]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const res = await fetch('/api/install/status', { cache: 'no-store' });
-        if (!res.ok) return;
-        const data = await res.json() as {
-          jobIsActive?: boolean;
-          stackSetupPending?: boolean;
-        };
-        if (cancelled) return;
-        setHasActiveInstall(Boolean(data.jobIsActive) || Boolean(data.stackSetupPending));
-      } catch { /* offline / mid-redeploy — keep the previous value */ }
-    };
-    void tick();
-    const handle = setInterval(tick, 5000);
-    return () => { cancelled = true; clearInterval(handle); };
-  }, []);
 
   // #1992 — entries the bottom bar omits (Backup, Settings) must still be
   // reachable on a phone. Surface them as icons in the top bar's right row,

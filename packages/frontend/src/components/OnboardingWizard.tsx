@@ -20,6 +20,7 @@ import { isValidOperatorEmail, operatorEmailIssue } from '@servicebay/api-client
 import { getNodes } from '@/app/actions/system';
 import { Template } from '@servicebay/api-client';
 import type { TemplateTier } from '@servicebay/api-client';
+import { useInstallJob } from '@/hooks/useInstallJob';
 import { useStackInstall } from '@/hooks/useStackInstall';
 import type { StackVariable } from '@/hooks/useStackInstall';
 import { useInstallPlan } from '@/hooks/useInstallPlan';
@@ -429,25 +430,24 @@ export default function OnboardingWizard() {
     return () => window.removeEventListener('servicebay:open-wizard', onOpen);
   }, []);
 
+  // The mount decision below runs once, after the shared install poll has
+  // answered for the first time (#2732) — it needs to know whether a
+  // *terminal* job is sitting around that the operator never acknowledged.
+  const installJob = useInstallJob();
+  const mountDecidedRef = useRef(false);
+
   useEffect(() => {
-    // We check two things in parallel: the wizard-onboarding status
+    if (!installJob.ready || mountDecidedRef.current) return;
+    mountDecidedRef.current = true;
+    // Two things decide the auto-open: the wizard-onboarding status
     // (does setup need to start at all?) and the install-job status
     // (is there a *terminal* job sitting around that the operator
     // never acknowledged?). The second one decides whether to skip
     // the auto-open: if there's a finished install + stackSetupPending
     // we route the operator to /setup instead of slamming the modal
     // back over their screen on every reload (#wizard-pop-on-reload).
-    Promise.all([
-      checkOnboardingStatus(),
-      fetch('/api/install/status', { cache: 'no-store' })
-        .then(r => r.ok ? r.json() : null)
-        .then(d => d as {
-          job?: { phase?: string; startedAt?: string } | null;
-          jobIsActive?: boolean;
-          serverStartedAt?: string;
-        } | null)
-        .catch(() => null),
-    ]).then(([s, installStatus]) => {
+    const { job, jobIsActive, serverStartedAt } = installJob;
+    checkOnboardingStatus().then(s => {
       setStatus(s);
       // A terminal job suppresses the wizard auto-open only when it
       // belongs to the current server process. After an OS re-install
@@ -456,11 +456,10 @@ export default function OnboardingWizard() {
       // wizard off and the operator never gets prompted to deploy
       // their stack. setup-config-merge.py wipes the dir post-merge;
       // this client-side check is defense-in-depth.
-      const job = installStatus?.job;
       const jobIsFromThisBoot = !!job?.startedAt
-        && !!installStatus?.serverStartedAt
-        && job.startedAt >= installStatus.serverStartedAt;
-      const hasTerminalJob = !!job && installStatus?.jobIsActive === false && jobIsFromThisBoot;
+        && !!serverStartedAt
+        && job.startedAt >= serverStartedAt;
+      const hasTerminalJob = !!job && !jobIsActive && jobIsFromThisBoot;
 
       // If the server reports an active install job and we're NOT
       // already tracking it locally, auto-attach to it. This is the
@@ -556,7 +555,7 @@ export default function OnboardingWizard() {
       console.error('[OnboardingWizard] Failed to read onboarding status:', err);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [installJob.ready]);
 
   // Tick `nowMs` while an install is in progress so the stalled-job banner
   // re-evaluates without reading Date.now() during render.

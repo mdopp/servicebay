@@ -1,39 +1,28 @@
 /**
  * Shared install engine used by both OnboardingWizard and InstallerModal.
  *
- * Owns the configure → installing → done state machine. The configure
- * step (`startConfigure`) still runs entirely client-side because it's
- * an interactive review of resolved variables. The deploy loop itself
- * runs server-side via `src/lib/install/runner.ts`; this hook is the
- * thin RPC + socket-subscription client that:
+ * Owns the configure → start half of the state machine. The configure
+ * step (`startConfigure`) is an interactive review of resolved variables;
+ * `runInstall` POSTs the result to `/api/install/start`, after which the
+ * server owns the deploy loop (`src/lib/install/runner.ts`) and closing
+ * the browser no longer interrupts an install.
  *
- *   - POSTs to `/api/install/start` when the operator confirms
- *   - polls `/api/install/status?jobId=…&logsSince=N` every 2s while
- *     the job is in a non-terminal phase, applying state + appending
- *     new log lines as they arrive
- *   - exposes `attachToJob(jobId)` so a reopened tab can pick up an
- *     in-flight job mid-install (the runner kept working server-side
- *     while the operator was away)
- *   - forwards `retryNpmCredentials` / `skipNpmCredentials` /
- *     `abortInstall` to their `/api/install/*` endpoints
- *
- * 3.25.x had a socket-subscription model here. It was racy: useSocket
- * could return `undefined` for the socket on first render, the
- * subscription effect would throw into a swallowed React error, and
- * the wizard would never receive the runner's `done` event even
- * though the install completed end-to-end. Polling sidesteps every
- * one of those failure modes.
- *
- * Closing the browser no longer interrupts an install — the runner
- * owns the deploy loop end-to-end.
+ * Everything about the *running* job — phase, progress, log, the NPM
+ * credentials prompt — comes from `InstallJobProvider` (#2732): one poll
+ * for the whole dashboard, one cadence, one `/status → /progress` 401
+ * fallback. This hook only says which job it is following (`jobId`) and
+ * derives its view from the provider while the provider reports that job.
+ * `attachToJob` lets a reopened tab pick up an in-flight job; the
+ * credentials / skip / abort actions forward to the provider.
  */
 
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { VariableMeta } from '@servicebay/api-client';
 import { type Credential } from '@servicebay/api-client';
-import { type JobState as RemoteJobState } from '@servicebay/api-client';
+import { useInstallJob } from '@/hooks/useInstallJob';
+import { isFailedPhase } from '@/providers/InstallJobProvider';
 
 export type StackInstallPhase = 'idle' | 'configure' | 'installing' | 'done' | 'error';
 
@@ -140,9 +129,9 @@ export interface UseStackInstallReturn {
   ) => Promise<{ items: StackItem[]; variables: StackVariable[] }>;
 
   /** POST the resolved items/variables to /api/install/start. The
-   *  server owns the deploy loop from here on — this hook just
-   *  subscribes to socket events for live progress. The browser tab
-   *  can be closed without interrupting the install. */
+   *  server owns the deploy loop from here on; the InstallJobProvider
+   *  follows the job. The browser tab can be closed without
+   *  interrupting the install. */
   runInstall: (overrides?: { items?: StackItem[]; variables?: StackVariable[]; node?: string }) => Promise<void>;
 
   /** Submit operator-supplied NPM credentials to resume a paused job.
@@ -165,14 +154,13 @@ export interface UseStackInstallReturn {
   reset: () => void;
 
   /** Abort the running install via POST /api/install/abort. The runner
-   *  flips the job to phase=aborted; the subscription effect picks
-   *  that up and reflects it in local state. */
+   *  flips the job to phase=aborted; the provider's next poll picks
+   *  that up and it shows here as `error`. */
   abortInstall: () => void;
 
   /** Attach to an already-running install job. Used by the wizard when
    *  it detects an in-progress job on mount (e.g. operator reopened the
-   *  tab mid-install). Fetches the current state + log and subscribes
-   *  to socket updates. */
+   *  tab mid-install). Resolves once the provider has fetched it. */
   attachToJob: (jobId: string) => Promise<void>;
 
   /** Current job ID, or null when no install is being tracked.
@@ -185,200 +173,63 @@ export interface UseStackInstallReturn {
 // Don't re-export it here — the chain client→useStackInstall→portalProvision
 // would pull AUTH_SECRET-touching code into the browser bundle.
 
-/** Map server-side `JobPhase` to the client-facing display phase the
- *  rest of the wizard already understands. `crashed` and `aborted` both
- *  surface as `error` so the existing Start-over UI works without
- *  branching on every distinct terminal state. */
-function mapPhase(serverPhase: RemoteJobState['phase']): StackInstallPhase {
-  switch (serverPhase) {
-    case 'running':           return 'installing';
-    case 'needs_credentials': return 'installing';
-    case 'done':              return 'done';
-    case 'error':             return 'error';
-    case 'aborted':           return 'error';
-    case 'crashed':           return 'error';
-  }
-}
+const EMPTY_STRINGS: string[] = [];
+const EMPTY_CREDENTIALS: Credential[] = [];
 
 export function useStackInstall(options: UseStackInstallOptions): UseStackInstallReturn {
   const { templateSource, source } = options;
-  const [phase, setPhase] = useState<StackInstallPhase>('idle');
+  const install = useInstallJob();
+  // The action callbacks are stable across polls; the snapshot is not.
+  const { track, abort, skipCredentials: skipJobCredentials, submitCredentials } = install;
+  /** Phase before a job exists (idle / configure / a failed start). Once
+   *  `jobId` matches the provider's job, the provider's phase wins. */
+  const [localPhase, setLocalPhase] = useState<StackInstallPhase>('idle');
   const [items, setItems] = useState<StackItem[]>([]);
   const [variables, setVariables] = useState<StackVariable[]>([]);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [installingNow, setInstallingNow] = useState<string | null>(null);
-  const [deployedNames, setDeployedNames] = useState<string[]>([]);
-  const [credentialsManifest, setCredentialsManifest] = useState<Credential[]>([]);
-  const [npmCredPrompt, setNpmCredPrompt] = useState(false);
-  const [npmCredFallback, setNpmCredFallback] = useState<{ email: string; password: string }>({ email: '', password: '' });
-  const [npmCredError, setNpmCredError] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [localLogs, setLocalLogs] = useState<string[]>([]);
+  const [localError, setLocalError] = useState<string | null>(null);
+  /** Only the "no job attached" case is decided here; the provider owns
+   *  the prompt itself and every other reason a submit could fail. */
+  const [localCredError, setLocalCredError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
 
   /** Latest node value. Cached in a ref so async runInstall sees fresh
    *  value if the consumer changes nodes between configure and install. */
   const nodeRef = useRef<string>('');
 
-  /** Byte offset into the server-side log file. Bumped when /api/install/status
-   *  returns log content; lets a subsequent fetch (e.g. on socket reconnect)
-   *  pull only the new tail instead of replaying the entire log. */
-  const logsOffsetRef = useRef<number>(0);
-
-  /** Tracks the currently subscribed jobId in a ref so socket handlers
-   *  can filter incoming events without re-binding on every state change. */
-  const jobIdRef = useRef<string | null>(null);
+  const job = jobId !== null && install.job?.id === jobId ? install.job : null;
 
   const appendLog = useCallback((line: string) => {
-    setLogs(prev => [...prev, line]);
-  }, []);
-
-  /** Apply a server JobState snapshot to local React state. The server
-   *  is the source of truth for everything except `items`/`variables`
-   *  (which the client owns from startConfigure) and the few client-only
-   *  state values that don't appear on the job. */
-  const applyJobState = useCallback((state: RemoteJobState) => {
-    setPhase(mapPhase(state.phase));
-    setInstallingNow(state.progress?.currentItem ?? null);
-    setDeployedNames(state.progress?.deployedNames ?? []);
-    if (state.credentialsManifest) setCredentialsManifest(state.credentialsManifest);
-    setError(state.phase === 'aborted' || state.phase === 'crashed' || state.phase === 'error'
-      ? state.error ?? 'Install failed.'
-      : null);
-    if (state.phase === 'needs_credentials' && state.needsCredentials) {
-      setNpmCredFallback(state.needsCredentials.fallback);
-      setNpmCredPrompt(true);
-    } else {
-      setNpmCredPrompt(false);
-    }
+    setLocalLogs(prev => [...prev, line]);
   }, []);
 
   const reset = useCallback(() => {
-    setPhase('idle');
+    setLocalPhase('idle');
     setItems([]);
     setVariables([]);
-    setLogs([]);
-    setInstallingNow(null);
-    setDeployedNames([]);
-    setCredentialsManifest([]);
-    setNpmCredPrompt(false);
-    setNpmCredFallback({ email: '', password: '' });
-    setNpmCredError(null);
-    setError(null);
+    setLocalLogs([]);
+    setLocalError(null);
+    setLocalCredError(null);
     setJobId(null);
-    jobIdRef.current = null;
-    logsOffsetRef.current = 0;
     nodeRef.current = '';
   }, []);
 
-  // Poll /api/install/status for state + new log lines while a job is
-  // actively running. Replaces the socket-only subscription that was
-  // here in 3.25.x — the socket approach had a race where `useSocket`
-  // returned `undefined` on first render and the subscription effect
-  // ran (with `socket.on` throwing into a swallowed React error) before
-  // the WebSocket completed its handshake. Net effect: install ran
-  // server-side end-to-end, but the wizard never received the `done`
-  // event and stayed stuck on "Processing..." forever.
-  //
-  // Polling sidesteps that entirely:
-  //   - works whether or not the socket ever connects
-  //   - works after a tab reopen (no replay needed; we read from
-  //     wherever the log file is now)
-  //   - stops the moment phase becomes terminal (done/error/aborted/crashed)
-  //   - 2s cadence is plenty — even a 5-minute install only gets
-  //     ~150 polls, each <1KB. Latency on phase transitions is up to
-  //     2s which is invisible inside a multi-minute pipeline.
-  useEffect(() => {
-    if (!jobId) return;
-    jobIdRef.current = jobId;
-    if (phase !== 'installing') return;
-    let cancelled = false;
-    let polling = false;
-    const tick = async () => {
-      if (polling) return;
-      polling = true;
-      try {
-        // Primary: the cookie-gated /status endpoint (full data).
-        // Fallback (#663 — S1): /progress is jobId-gated and returns
-        // sanitised progress only. The fallback fires when /status
-        // 401s — which is what happens during a clean install that
-        // wipes `secrets`: AUTH_SECRET rotates mid-install and the
-        // operator's session cookie is no longer trusted. Without
-        // this, the install overlay silently stops updating.
-        const statusUrl = `/api/install/status?jobId=${encodeURIComponent(jobId)}&logsSince=${logsOffsetRef.current}`;
-        let res = await fetch(statusUrl);
-        if (res.status === 401) {
-          const progressUrl = `/api/install/progress?jobId=${encodeURIComponent(jobId)}&logsSince=${logsOffsetRef.current}`;
-          res = await fetch(progressUrl);
-        }
-        if (!res.ok || cancelled) return;
-        const data = (await res.json()) as {
-          job: RemoteJobState | null;
-          logs: string;
-          logsOffset: number;
-        };
-        if (cancelled) return;
-        if (data.logs) {
-          const newLines = data.logs.split('\n').filter(l => l.length > 0);
-          if (newLines.length > 0) setLogs(prev => [...prev, ...newLines]);
-        }
-        if (typeof data.logsOffset === 'number') {
-          logsOffsetRef.current = data.logsOffset;
-        }
-        if (data.job) {
-           applyJobState(data.job);
-           // If the job just finished, this was our last scheduled tick.
-           // The interval will be cleared by the useEffect cleanup, but
-           // we've already updated the logs and state from the terminal
-           // response.
-        }
-      } catch { /* network blip — try again next tick */ }
-      finally {
-        polling = false;
-      }
-    };
-    void tick();
-    const id = setInterval(() => { void tick(); }, 2000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [jobId, phase, applyJobState]);
-
   const abortInstall = useCallback(() => {
-    const id = jobIdRef.current;
-    if (!id) return;
-    void fetch('/api/install/abort', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId: id }),
-    }).catch(() => undefined);
-  }, []);
+    if (!jobId) return;
+    abort();
+  }, [jobId, abort]);
 
   /** Attach to an already-running job. The wizard calls this on mount
-   *  when checkOnboardingStatus reports an active install. Fetches the
-   *  full state + accumulated log so the new tab catches up immediately;
-   *  the subscription effect then keeps it live. */
+   *  when checkOnboardingStatus reports an active install. The provider
+   *  fetches the state + accumulated log so the new tab catches up
+   *  immediately, then keeps it live. */
   const attachToJob = useCallback(async (id: string): Promise<void> => {
-    try {
-      // Same /status → /progress 401 fallback as the poll loop (#663 — S1).
-      let res = await fetch(`/api/install/status?jobId=${encodeURIComponent(id)}`);
-      if (res.status === 401) {
-        res = await fetch(`/api/install/progress?jobId=${encodeURIComponent(id)}`);
-      }
-      if (!res.ok) return;
-      const data = await res.json() as {
-        job: RemoteJobState | null;
-        logs: string;
-        logsOffset: number;
-      };
-      if (!data.job) return;
-      // Reset log buffer to whatever the server has so far. After this,
-      // socket events accumulate normally; the subscription is gated on
-      // jobIdRef.current matching the incoming event's jobId.
-      const initialLogs = data.logs ? data.logs.split('\n').filter(l => l.length > 0) : [];
-      setLogs(initialLogs);
-      logsOffsetRef.current = data.logsOffset;
-      applyJobState(data.job);
-      setJobId(id);
-    } catch { /* best-effort attach */ }
-  }, [applyJobState]);
+    const found = await track(id);
+    if (!found) return;
+    setLocalError(null);
+    setLocalPhase('installing');
+    setJobId(id);
+  }, [track]);
 
   // No-op writes return the same array reference so subscribers (e.g. the
   // wizard's device-poll effect) don't see a spurious change. Pre-refactor
@@ -428,8 +279,9 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     prefilled: Record<string, string>,
     opts?: { node?: string },
   ): Promise<{ items: StackItem[]; variables: StackVariable[] }> => {
-    setPhase('configure');
-    setError(null);
+    setLocalPhase('configure');
+    setLocalError(null);
+    setJobId(null);
     if (opts?.node !== undefined) nodeRef.current = opts.node;
 
     // Manifest assembly — variable resolution, secret / RSA / bcrypt
@@ -468,16 +320,15 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
       // try/finally with no catch — surface the failure via the hook's
       // `error`/`phase` state and return empty rather than throwing.
       const msg = e instanceof Error ? e.message : String(e);
-      setError(`Could not prepare the install: ${msg}`);
-      setPhase('error');
+      setLocalError(`Could not prepare the install: ${msg}`);
+      setLocalPhase('error');
       return { items: [], variables: [] };
     }
   }, [templateSource]);
 
   /** Build the JobInput payload from the wizards resolved state and POST
    *  it to /api/install/start. The server takes ownership of the deploy
-   *  loop from there; the subscription effect above keeps local state in
-   *  sync via socket events. */
+   *  loop from there; the provider follows the new job. */
   const runInstall = useCallback(async (overrides?: {
     items?: StackItem[];
     variables?: StackVariable[];
@@ -488,11 +339,11 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     const varsBase = overrides?.variables ?? variables;
     const node = nodeRef.current;
 
-    setError(null);
-    setLogs([]);
-    setNpmCredPrompt(false);
-    setCredentialsManifest([]);
-    setPhase("installing");
+    setLocalError(null);
+    setLocalLogs([]);
+    setLocalCredError(null);
+    setJobId(null);
+    setLocalPhase("installing");
 
     const host = typeof window !== "undefined" ? window.location.hostname : "";
     const payload = {
@@ -544,78 +395,53 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
           return;
         }
         const msg = data.error || `HTTP ${res.status}`;
-        setError(msg);
-        setPhase("error");
+        setLocalError(msg);
+        setLocalPhase("error");
         return;
       }
       const newJobId = data.jobId as string;
-      logsOffsetRef.current = 0;
       setJobId(newJobId);
+      // Fetch it now rather than on the next tick so the first log lines
+      // show up as soon as the runner writes them.
+      void track(newJobId);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(`Could not start install: ${msg}`);
-      setPhase("error");
+      setLocalError(`Could not start install: ${msg}`);
+      setLocalPhase("error");
     }
-  }, [items, variables, templateSource, source, attachToJob]);
+  }, [items, variables, templateSource, source, attachToJob, track]);
 
   const retryNpmCredentials = useCallback(async (email: string, password: string): Promise<void> => {
-    // Every bail-out below used to `return` silently, which rendered the
-    // "Authenticate & Retry" button dead — the operator clicked and
-    // nothing at all happened (#2442). Each one now says why.
-    if (!email) {
-      setNpmCredError("Enter the NPM admin email — ServiceBay had no stored value to pre-fill.");
+    if (!jobId) {
+      // The provider's own bail-outs (#2442) cover the rest; this one is
+      // about this hook's job, which the provider cannot know.
+      setLocalCredError("This install is no longer attached to a job — start over to retry.");
       return;
     }
-    if (!password) {
-      setNpmCredError("Enter the NPM admin password.");
-      return;
-    }
-    const id = jobIdRef.current;
-    if (!id) {
-      setNpmCredError("This install is no longer attached to a job — start over to retry.");
-      return;
-    }
-    setNpmCredError(null);
-    setNpmCredPrompt(false);
-    try {
-      await fetch("/api/install/credentials", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId: id, email, password }),
-      });
-    } catch {
-      // Re-show the prompt so the operator can retry. The runner stays
-      // paused on the in-memory promise; nothing has been committed.
-      setNpmCredError("Could not reach ServiceBay to submit the credentials. Check the connection and retry.");
-      setNpmCredPrompt(true);
-    }
-  }, []);
+    setLocalCredError(null);
+    await submitCredentials(email, password);
+  }, [jobId, submitCredentials]);
 
   const skipNpmCredentials = useCallback(() => {
-    const id = jobIdRef.current;
-    if (!id) return;
-    setNpmCredError(null);
-    setNpmCredPrompt(false);
-    void fetch("/api/install/skip-credentials", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobId: id }),
-    }).catch(() => undefined);
-  }, []);
+    if (!jobId) return;
+    setLocalCredError(null);
+    skipJobCredentials();
+  }, [jobId, skipJobCredentials]);
 
+  const failed = job !== null && isFailedPhase(job.phase);
 
   return {
-    phase,
+    phase: job ? install.phase : localPhase,
     items,
     variables,
-    logs,
-    installingNow,
-    deployedNames,
-    credentialsManifest,
-    npmCredPrompt,
-    npmCredFallback,
-    npmCredError,
-    error,
+    logs: job ? install.logs : localLogs,
+    installingNow: job?.progress?.currentItem ?? null,
+    deployedNames: job?.progress?.deployedNames ?? EMPTY_STRINGS,
+    credentialsManifest: job?.credentialsManifest ?? EMPTY_CREDENTIALS,
+    npmCredPrompt: job !== null && install.credentials.prompt,
+    npmCredFallback: install.credentials.fallback,
+    npmCredError: localCredError ?? (job ? install.credentials.error : null),
+    error: job ? (failed ? job.error ?? 'Install failed.' : null) : localError,
     setItemChecked,
     setItems,
     setVariableValue,

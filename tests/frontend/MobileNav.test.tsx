@@ -21,6 +21,12 @@ vi.mock('@/hooks/useDigitalTwin', () => ({
   useDigitalTwin: () => ({ data: twinRef.current, isConnected: false, lastUpdate: 0, isNodeSynced: () => false }),
 }));
 
+// The Setup badge reads the shared install poll (#2732); the provider lives
+// in the dashboard layout, so stub the hook with an idle box.
+vi.mock('@/hooks/useInstallJob', () => ({
+  useInstallJob: () => ({ jobIsActive: false, stackSetupPending: false }),
+}));
+
 const renderWithToast = (ui: React.ReactNode) =>
     render(<ToastProvider>{ui}</ToastProvider>);
 
@@ -37,7 +43,7 @@ describe('MobileNav', () => {
         if (u.includes('/api/system/version')) {
             return new Response(JSON.stringify({ version: '9.9.9' }), { status: 200 });
         }
-        return new Response(JSON.stringify({ jobIsActive: false, stackSetupPending: false }), { status: 200 });
+        return new Response(JSON.stringify({}), { status: 200 });
     }
 
     beforeEach(() => {

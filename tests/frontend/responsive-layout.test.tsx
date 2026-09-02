@@ -33,6 +33,12 @@ vi.mock('@/hooks/useDigitalTwin', () => ({
   useDigitalTwin: () => ({ data: null, isConnected: false, lastUpdate: 0, isNodeSynced: () => false }),
 }));
 
+// #2732: the install job comes from InstallJobProvider; these tests render
+// outside it, so stub the hook to "nothing installing".
+vi.mock('@/hooks/useInstallJob', () => ({
+  useInstallJob: () => ({ ready: true, job: null, jobIsActive: false, stackSetupPending: false, serverStartedAt: null, phase: 'idle', logs: [], credentials: { prompt: false, fallback: { email: '', password: '' }, error: null }, abort: () => {}, skipCredentials: () => {}, submitCredentials: async () => {}, track: async () => false }),
+}));
+
 const withToast = (ui: React.ReactNode) => render(<ToastProvider>{ui}</ToastProvider>);
 
 function setViewport(width: number) {
