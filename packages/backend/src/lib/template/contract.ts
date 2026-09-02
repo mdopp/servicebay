@@ -256,7 +256,7 @@ export const TEMPLATE_FIELDS: readonly TemplateFieldSpec[] = [
     description:
       'Per-API version the template\'s `post-deploy.py` calls. Declare one annotation per API name (`lldap`, ' +
       '`authelia`, `portal`), value is a positive integer. Core refuses to invoke `post-deploy.py` if any ' +
-      'requested version exceeds what this ServiceBay ships (see `src/lib/template/apiVersions.ts`). ' +
+      'requested version exceeds what this ServiceBay ships (see `packages/backend/src/lib/template/apiVersions.ts`). ' +
       'Use this on any template whose post-deploy calls `/api/system/<name>/*` (#588).',
   },
   {
