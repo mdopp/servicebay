@@ -22,11 +22,20 @@ vi.mock('../reverseProxy/npmAdminRekey', () => ({
 }));
 vi.mock('../executor', () => ({ getExecutor: (...a: unknown[]) => mockGetExecutor(...a) }));
 
-import { restoreServiceBackup, isFreshDataDir, autoRestoreServiceOnReinstall, wipeServiceForReinstall } from './restore';
+import { restoreServiceBackup, autoRestoreServiceOnReinstall, wipeServiceForReinstall } from './restore';
 import { NAS_BACKUP_DIR } from './producer';
 
 let tmpRoot: string;
 let dataDir: string;
+
+/** Mirrors the restore backend's "safe to seed" check (absent or empty). */
+async function isEmptyDir(dir: string): Promise<boolean> {
+  try {
+    return (await fs.readdir(dir)).length === 0;
+  } catch {
+    return true;
+  }
+}
 
 /** Build a plain service tar like the producer writes: manifest files at root. */
 async function buildServiceTar(files: Record<string, string>): Promise<Buffer> {
@@ -158,17 +167,6 @@ describe('restoreServiceBackup', () => {
   });
 });
 
-describe('isFreshDataDir', () => {
-  it('is true for absent or empty dirs, false once populated', async () => {
-    expect(await isFreshDataDir(path.join(tmpRoot, 'absent'))).toBe(true);
-    const empty = path.join(tmpRoot, 'empty');
-    await fs.mkdir(empty);
-    expect(await isFreshDataDir(empty)).toBe(true);
-    await fs.writeFile(path.join(empty, 'f'), 'x');
-    expect(await isFreshDataDir(empty)).toBe(false);
-  });
-});
-
 describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
   /** NAS has a home-assistant.tar; serve its contents on download. */
   function nasHasHomeAssistantBackup() {
@@ -205,7 +203,7 @@ describe('autoRestoreServiceOnReinstall (#1218 entry point 1)', () => {
     nasHasHomeAssistantBackup();
     const logs: string[] = [];
     await autoRestoreServiceOnReinstall('home-assistant', { wipeMode: 'install', node: 'edge-node' }, async l => { logs.push(l); });
-    expect(await isFreshDataDir(dataDir)).toBe(true);
+    expect(await isEmptyDir(dataDir)).toBe(true);
     expect(logs).toEqual([]);
   });
 
@@ -307,7 +305,7 @@ describe('wipeServiceForReinstall (#1585)', () => {
     await fs.writeFile(path.join(dataDir, 'home-assistant_v2.db'), 'RECORDER');
     const logs: string[] = [];
     await wipeServiceForReinstall('home-assistant', { wipeMode: 'wipe-all', node: 'Local', local: true }, async l => { logs.push(l); });
-    expect(await isFreshDataDir(dataDir)).toBe(true);
+    expect(await isEmptyDir(dataDir)).toBe(true);
     expect(logs.some(l => l.includes('wipe-all') && l.includes('config + data'))).toBe(true);
   });
 

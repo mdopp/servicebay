@@ -62,6 +62,10 @@ describe('parseTemplateManifest — happy path', () => {
       label: 'Just Label',
       tier: 'feature',
       schemaVersion: 1,
+      // #2727 — no declaration means "upgradable from the first version",
+      // which the build-time chain check in template_consistency.test.ts
+      // then has to actually prove.
+      minUpgradableSchemaVersion: 1,
       dependencies: [],
       configMount: undefined,
       // #2590 — no declaration means "ServiceBay owns every config file",
@@ -85,6 +89,70 @@ describe('parseTemplateManifest — happy path', () => {
     );
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.manifest.dependencies).toEqual(['nginx', 'auth']);
+  });
+});
+
+// ─── #2727 — the declared upgrade floor ────────────────────────────────────
+describe('parseTemplateManifest — servicebay.min-upgradable-schema-version', () => {
+  it('parses a floor below the current schema-version', () => {
+    const r = parseTemplateManifest(
+      fixture({
+        'servicebay.label': 'X',
+        'servicebay.schema-version': '8',
+        'servicebay.min-upgradable-schema-version': '3',
+      }),
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.manifest.minUpgradableSchemaVersion).toBe(3);
+    // The two annotations share a suffix; neither may capture the other's value.
+    expect(r.manifest.schemaVersion).toBe(8);
+  });
+
+  it('accepts a floor equal to the current schema-version', () => {
+    const r = parseTemplateManifest(
+      fixture({
+        'servicebay.label': 'X',
+        'servicebay.schema-version': '2',
+        'servicebay.min-upgradable-schema-version': '2',
+      }),
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.manifest.minUpgradableSchemaVersion).toBe(2);
+  });
+
+  it('rejects a floor above the current schema-version', () => {
+    // Such a floor refuses every upgrade on every box, including the one the
+    // author is shipping right now.
+    const r = parseTemplateManifest(
+      fixture({
+        'servicebay.label': 'X',
+        'servicebay.schema-version': '3',
+        'servicebay.min-upgradable-schema-version': '4',
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors.some(e => e.includes('servicebay.min-upgradable-schema-version'))).toBe(true);
+  });
+
+  it('rejects a non-integer floor rather than silently defaulting to 1', () => {
+    for (const bad of ['0', '-1', 'two', '1.5']) {
+      const r = parseTemplateManifest(
+        fixture({ 'servicebay.label': 'X', 'servicebay.min-upgradable-schema-version': bad }),
+      );
+      expect(r.ok, `floor="${bad}" should not parse`).toBe(false);
+    }
+  });
+
+  it('readManifestAnnotations reads the floor without the schema-version bound', () => {
+    // The permissive path serves fragmentary YAML — a floor with no declared
+    // schema-version must still come through for the runner's default.
+    const out = readManifestAnnotations(
+      fixture({ 'servicebay.min-upgradable-schema-version': '6' }),
+    );
+    expect(out.minUpgradableSchemaVersion).toBe(6);
+    expect(out.schemaVersion).toBeUndefined();
   });
 });
 

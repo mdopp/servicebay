@@ -107,6 +107,7 @@ this page came to assert a wrong largest-file name, a wrong file count, and a
 | Max file LOC (each source root) | `MAX_FILE_LOC` | 2,200 |
 | `as any` in security paths | `SECURITY_AS_ANY_BUDGET` | 0 |
 | `as any` in `packages/backend/src` outside security paths | `BACKEND_AS_ANY_BUDGET` | 24 |
+| `: any` annotations in `packages/backend/src` (security paths included) | `BACKEND_COLON_ANY_BUDGET` | 79 |
 | `executor.exec` template-literal call sites | `EXEC_TEMPLATE_LITERAL_MAX` | 0 |
 | `withApiHandler` adoption across `route.ts` files | `MIN_WITH_API_HANDLER_RATIO` | 100% |
 | `DigitalTwinStore.getInstance()` call sites | `TWIN_GETINSTANCE_MAX` | 0 |
@@ -116,7 +117,7 @@ Source roots walked: `packages/frontend/src`, `packages/backend/src`.
 
 Security paths (`SECURITY_PATHS`): `packages/backend/src/lib/auth`, `packages/backend/src/lib/mcp`, `packages/backend/src/lib/agent/executor.ts`, `packages/frontend/src/proxy.ts`.
 
-Durable-state modules (`DURABLE_STATE_MODULES`): `packages/backend/src/lib/config.ts`, `packages/backend/src/lib/config/transformer.ts`, `packages/backend/src/lib/health/store.ts`.
+Durable-state modules (`DURABLE_STATE_MODULES`): `packages/backend/src/lib/config.ts`, `packages/backend/src/lib/health/store.ts`.
 
 _Generated from the constants — run `npm run check:invariants -- --write-docs` after changing one. For the **measured** values at HEAD run `npm run check:invariants`: they are deliberately not stored here, because a hand-maintained measurement table is stale the next time anyone merges (#2427)._
 
@@ -138,6 +139,13 @@ _Generated from the constants — run `npm run check:invariants -- --write-docs`
 |---|---|
 | `as any` in security paths | `check-invariants.ts:SECURITY_AS_ANY_BUDGET` |
 | `as any` in `packages/backend/src` outside security paths | `check-invariants.ts:BACKEND_AS_ANY_BUDGET` |
+| `: any` annotations in `packages/backend/src` | `check-invariants.ts:BACKEND_COLON_ANY_BUDGET` (#2723) |
+
+**Both spellings are gated (#2723).** `as any` is the cast, `: any` the
+annotation; both erase the type, so budgeting one and not the other just moves
+the erasure to the cheaper spelling — which is where it had accumulated. The
+`: any` ratchet covers **all** of `packages/backend/src` (non-test), security
+paths included, because there is no separate security budget for it.
 
 **Security paths** are listed in the generated block above (`SECURITY_PATHS`). Non-test only. Ratchet target reached — the budget is 0, so any new cast in these paths fails CI. The list must stay repo-relative: it carried pre-workspace-split `src/...` paths until #2379, which made the check resolve zero files and pass vacuously. Since #2428 a listed path that does not resolve is itself a violation, so that cannot recur silently.
 
@@ -324,19 +332,17 @@ verbatim in the new file), so the plan above is now backed by a gate:
   gate prints the current top ten on a failure). The ratchet's job is only to
   guarantee the direction — it does not schedule the sweeps.
 
-### Component discovery + duplicate detection (#2354)
+### Duplicate detection (#2354)
 
-Two companions to the reuse rules above — *you can only reuse what you can
-find, and only extract what you can see*:
+A companion to the reuse rules above — *you can only extract what you can see*:
 
-- **Component catalog — `/dev/components`** (`packages/frontend/src/app/(dashboard)/dev/components/page.tsx`).
-  A living gallery that renders every `@/components/ui` primitive in its key
-  states, driven off the barrel. Lightweight in-app route (no Storybook — the
-  CLAUDE.md ethos of not adding a heavy dependency), gated **dev-only**: the
-  whole `(dashboard)` group already sits behind the single-admin session, and
-  the page additionally `notFound()`s under a production build. When you add a
-  primitive to `@/components/ui`, add its gallery entry here — the catalog test
-  (`tests/frontend/ComponentCatalog.test.tsx`) asserts one section per primitive.
+- **Component catalog — removed (#2729).** `/dev/components` was a living
+  gallery of every `@/components/ui` primitive, gated dev-only behind a
+  `notFound()`. Nothing linked to it and nobody opened it, so it rotted while
+  still costing a page, a test and a maintenance rule ("add your primitive's
+  gallery entry"). The barrel `packages/frontend/src/components/ui/index.ts` is
+  now the only discovery surface — read it to see what exists before writing a
+  new primitive. Do not reintroduce a second rendering surface for one reader.
 
 - **Frontend duplicate-JSX report — `npm run check:frontend-dup`**
   (`scripts/check-frontend-dup.ts`). A self-hosted copy-paste detector for

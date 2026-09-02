@@ -13,7 +13,7 @@
  *   - lifecycle  start/stop/restart, force-update (re-pull image + recreate
  *                containers — snapshot + operator email, #2419),
  *                run_check_now, refresh_agent
- *   - mutate     deploy_service, update_service_yaml, add_proxy_route,
+ *   - mutate     deploy_service, update_service_yaml, create_proxy_route,
  *                create_health_check, run_backup, restore_trashed_service,
  *                rename_service
  *   - destroy    delete_service, delete_health_check, remove_proxy_route,

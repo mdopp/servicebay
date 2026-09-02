@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   ensureWildcardRewrite,
   removeWildcardRewrite,
-  wildcardForDomain,
   listRewrites,
 } from './rewrites';
 
@@ -24,16 +23,6 @@ const opts = (fetchImpl: typeof fetch) => ({
   username: 'admin',
   password: 'secret',
   fetchImpl,
-});
-
-describe('wildcardForDomain', () => {
-  it('prepends *. to a bare domain', () => {
-    expect(wildcardForDomain('home.arpa')).toBe('*.home.arpa');
-  });
-  it('strips leading wildcard chars before reapplying', () => {
-    expect(wildcardForDomain('*.example.com')).toBe('*.example.com');
-    expect(wildcardForDomain('.foo.bar')).toBe('*.foo.bar');
-  });
 });
 
 describe('listRewrites', () => {

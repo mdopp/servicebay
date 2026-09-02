@@ -12,7 +12,6 @@ import {
   ServiceBundle,
   assetKindFromPath,
   deriveBundleDisplayName,
-  generateBundleStackPreview,
   sanitizeBundleName,
   severityFromValidations
 } from './bundleShared';
@@ -1235,9 +1234,4 @@ const extractPodCandidates = (bundle: ServiceBundle): Set<string> => {
   if (bundle.displayName) pods.add(bundle.displayName);
 
   return pods;
-};
-
-// @knipignore - exported for potential UI/API use to generate bundle preview YAML
-export const ensureBundlePreview = (bundle: ServiceBundle, targetName?: string): string => {
-  return generateBundleStackPreview(bundle, targetName || bundle.displayName);
 };

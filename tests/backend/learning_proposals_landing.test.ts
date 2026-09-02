@@ -35,7 +35,7 @@ import {
   submitProposal,
   approveProposal,
   rejectProposal,
-  getProposal,
+  getProposalForReview,
 } from '@/lib/assists/proposals';
 import { listAssists, getAssist } from '@/lib/assists/catalog';
 import { DATA_DIR } from '@/lib/dirs';
@@ -82,7 +82,7 @@ describe('learning-proposal landing (#2326 s4)', () => {
     const outcome = await approveProposal(p.id, 'session:admin');
     expect(outcome.result).toBe('ok');
 
-    const after = await getProposal(p.id);
+    const after = await getProposalForReview(p.id);
     expect(after!.status).toBe('landed');
     expect(after!.landedFile).toBe(`${slug}.md`);
 
@@ -114,7 +114,7 @@ describe('learning-proposal landing (#2326 s4)', () => {
     // The outcome is still 'ok' (the store transition happened) but status is blocked.
     expect(outcome.result).toBe('ok');
 
-    const after = await getProposal(p.id);
+    const after = await getProposalForReview(p.id);
     expect(after!.status).toBe('blocked');
     expect(after!.landingError).toMatch(/secret/i);
     expect(after!.landingError).toMatch(/ServiceBay token/i);
@@ -130,14 +130,14 @@ describe('learning-proposal landing (#2326 s4)', () => {
   it('a rejected proposal never lands', async () => {
     const p = await submitProposal(CLEAN);
     await rejectProposal(p.id, 'session:admin');
-    expect((await getProposal(p.id))!.status).toBe('rejected');
+    expect((await getProposalForReview(p.id))!.status).toBe('rejected');
     const files = await fs.readdir(landedDir()).catch(() => []);
     expect(files).toEqual([]);
   });
 
   it('a not-yet-approved (pending) proposal cannot land', async () => {
     const p = await submitProposal(CLEAN);
-    expect((await getProposal(p.id))!.status).toBe('pending');
+    expect((await getProposalForReview(p.id))!.status).toBe('pending');
     const files = await fs.readdir(landedDir()).catch(() => []);
     expect(files).toEqual([]);
   });
@@ -156,6 +156,6 @@ describe('learning-proposal landing (#2326 s4)', () => {
     expect(files).toEqual([`${slug}.md`]); // exactly one file, no dupe
     const secondBytes = await fs.readFile(path.join(landedDir(), `${slug}.md`), 'utf-8');
     expect(secondBytes).toBe(firstBytes); // unchanged
-    expect((await getProposal(p.id))!.status).toBe('landed');
+    expect((await getProposalForReview(p.id))!.status).toBe('landed');
   });
 });

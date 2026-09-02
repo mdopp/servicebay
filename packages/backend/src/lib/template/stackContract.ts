@@ -312,16 +312,6 @@ export function parseStackManifest(yamlText: string): StackParseResult {
   };
 }
 
-/**
- * Compact helper for callers that only care whether a manifest exists.
- * Returns `null` when parsing fails. Use the full `parseStackManifest`
- * when you need the error list (registry sync, consistency tests).
- */
-export function tryParseStackManifest(yamlText: string): StackManifest | null {
-  const r = parseStackManifest(yamlText);
-  return r.ok ? r.manifest : null;
-}
-
 function readAnnotationString(annotations: RawAnnotations, key: string): string | undefined {
   const val = annotations[key];
   if (typeof val !== 'string') return undefined;

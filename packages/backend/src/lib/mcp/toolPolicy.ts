@@ -23,7 +23,7 @@ export const MUTATING_TOOLS = new Set([
   'manage_service',
   'deploy_service', 'delete_service', 'rename_service', 'update_service_yaml',
   'restore_trashed_service', 'purge_trashed_service',
-  'add_proxy_route', 'create_proxy_route', 'remove_proxy_route',
+  'create_proxy_route', 'remove_proxy_route',
   'write_file', 'install_template',
   'file_access_request',
   'create_health_check', 'delete_health_check', 'run_check_now',
@@ -114,7 +114,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
   set_channel: 'lifecycle',
   // mutate
   deploy_service: 'mutate', update_service_yaml: 'mutate', rename_service: 'mutate',
-  add_proxy_route: 'mutate', create_health_check: 'mutate',
+  create_health_check: 'mutate',
   // #2140 create_proxy_route (full NPM host: exposure + forward-auth + cert)
   // and #2141 install_template (assemble→start a wizard install) and #2142
   // write_file are all additive provisioning ops → `mutate`, NOT `destroy`.

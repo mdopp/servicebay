@@ -172,7 +172,11 @@ NODE_ENV=production    PORT=3000    HOSTNAME=0.0.0.0
 HOST_SSH=host.containers.internal   SSH_KEY_PATH=/root/.ssh/id_rsa
 ```
 
-Container runs as root internally — `UserNS=keep-id` maps to host's rootless user.
+Container runs as root internally (`USER root`, reasoned in the Dockerfile,
+#2722). The quadlet sets no `UserNS=`: under rootless podman the container's
+uid 0 already *is* the host user that runs it (`core`), which owns the
+bind-mounted podman socket, `/app/data` and the host SSH key. Running the image
+unprivileged therefore needs a quadlet + host-ownership change too — #2749.
 
 For a leaner local dev image that re-uses the host build (avoids
 running webpack inside the container), see `Dockerfile.dev` and
@@ -362,7 +366,7 @@ Host filesystem (after FCOS install)
 │  /run/user/1000/podman/podman.sock  ←── Host Podman API socket │
 │                                                                 │
 │  Network: host  (shares host network stack)                     │
-│  UserNS: keep-id  (root in container = user on host)           │
+│  No UserNS=   (rootless: container root = `core` on the host)  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

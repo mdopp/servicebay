@@ -27,7 +27,7 @@ import type { TemplateManifest } from '@/lib/template/contract';
 import type { StackVariable } from '@/lib/stackInstall/types';
 
 const MANIFEST: TemplateManifest = {
-  label: 'X', tier: 'feature', schemaVersion: 1, dependencies: [], seedOnlyConfigs: [],
+  label: 'X', tier: 'feature', schemaVersion: 1, minUpgradableSchemaVersion: 1, dependencies: [], seedOnlyConfigs: [],
 };
 
 function subdomainVar(

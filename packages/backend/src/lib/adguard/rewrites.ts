@@ -138,11 +138,3 @@ export async function removeWildcardRewrite(
     return 'failed';
   }
 }
-
-/**
- * Convenience — build the wildcard pattern for a given domain.
- * `home.arpa` → `*.home.arpa`. Centralizes the convention.
- */
-export function wildcardForDomain(domain: string): string {
-  return `*.${domain.replace(/^[*.]+/, '')}`;
-}

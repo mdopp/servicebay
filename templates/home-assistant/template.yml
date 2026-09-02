@@ -10,6 +10,12 @@ metadata:
     # Assistant's own 8123 is bound to the host loopback. No data move;
     # requires a re-deploy so podman recreates the pod from this manifest.
     servicebay.schema-version: "8"
+    # #2727 — home-assistant ships no v2→v3, v4→v5 or v5→v6 migration, and
+    # what moved on disk across those hops is no longer reconstructable. The
+    # chain is unbroken from v6 up, so v6 is the oldest version this template
+    # can be upgraded FROM. A box below it is refused up front, by name and
+    # version, instead of aborting mid-job on a missing script.
+    servicebay.min-upgradable-schema-version: "6"
     # Home Assistant is reached at home.<domain> via nginx and
     # authenticates via Authelia.
     servicebay.dependencies: "nginx,auth"

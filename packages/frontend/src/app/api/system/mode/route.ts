@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getConfig, updateConfig } from '@/lib/config';
-import { getMode, getActiveDomain, isLocalOnly } from '@/lib/mode';
+import { getMode, getActiveDomain } from '@/lib/mode';
 import { withApiHandler } from '@/lib/api/handler';
 
 export const dynamic = 'force-dynamic';
@@ -15,12 +15,13 @@ export const dynamic = 'force-dynamic';
  */
 export const GET = withApiHandler({}, async () => {
   const config = await getConfig();
+  const mode = getMode(config);
   return NextResponse.json({
-    mode: getMode(config),
+    mode,
     activeDomain: getActiveDomain(config),
     publicDomain: config.reverseProxy?.publicDomain ?? null,
     lanDomain: config.reverseProxy?.lanDomain ?? null,
-    localOnly: isLocalOnly(config),
+    localOnly: mode === 'lan',
   });
 });
 

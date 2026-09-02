@@ -8,6 +8,12 @@ metadata:
   annotations:
     servicebay.label: "Movies & TV"
     servicebay.schema-version: "8"
+    # #2727 — media ships no v2→v3 migration and never will: what moved on
+    # disk between those two versions is no longer reconstructable. The chain
+    # is unbroken from v3 up, so v3 is the oldest version this template can be
+    # upgraded FROM. A box below it is refused up front, by name and version,
+    # instead of aborting mid-job on a missing script.
+    servicebay.min-upgradable-schema-version: "3"
     # Jellyfin's public URL routes through nginx, and its LDAP-Auth
     # plugin binds LLDAP from the `auth` stack — both prerequisites.
     # (#1725: Audiobookshelf retired for fresh installs; audiobooks are

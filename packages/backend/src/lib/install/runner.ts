@@ -35,12 +35,16 @@ import {
   type TemplateMigrationScript,
 } from '@/lib/registry';
 import { formatRegistrySyncLog } from '@/lib/registrySyncState';
-import { parseTemplateSchemaVersion } from '@/lib/templateSchemaVersion';
+import { parseTemplateSchemaVersion, parseTemplateMinUpgradableSchemaVersion } from '@/lib/templateSchemaVersion';
 import { parseTemplateManifest } from '@/lib/template/contract';
 import { topoSortByDependencies, resolveAlreadyInstalled } from '@/lib/stackInstall/dependencies';
 import { PullTracker, describePull } from './pullProgress';
 import { parseTemplateTier } from '@/lib/templateTier';
-import { selectMigrationChain } from '@/lib/stackInstall/migrations';
+import {
+  selectMigrationChain,
+  checkMinUpgradableSchemaVersion,
+  MIGRATION_REFUSAL_PREFIX,
+} from '@/lib/stackInstall/migrations';
 import {
   bootstrapNpmAdmin,
   type StackVariable,
@@ -874,6 +878,23 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
       const preview = await previewRes.json();
       const installedVersion = typeof preview.installedVersion === 'number' ? preview.installedVersion : null;
       if (installedVersion !== null && installedVersion < targetVersion) {
+        // #2727 — the declared upgrade floor is checked BEFORE the chain is
+        // selected, so a box below it is told what is actually wrong (its
+        // recorded version is older than this template supports) instead of
+        // getting a `missing-step` message about a script filename it has no
+        // way to act on. Same message reaches the MCP `install_template`
+        // caller: the throw lands in `job.error` + the install log, which is
+        // what `get_install_progress` returns.
+        const floorRefusal = checkMinUpgradableSchemaVersion(
+          item.name,
+          installedVersion,
+          parseTemplateMinUpgradableSchemaVersion(item.yaml),
+          targetVersion,
+        );
+        if (floorRefusal) {
+          await log(jobId, `❌ ${floorRefusal}`);
+          throw new Error(floorRefusal);
+        }
         const scripts = await getTemplateMigrationScripts(item.name, input.templateSource);
         const result = selectMigrationChain(installedVersion, targetVersion, scripts);
         if (!result.ok) {
@@ -889,7 +910,7 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
       }
     }
   } catch (e) {
-    if (e instanceof Error && e.message.startsWith('Migration chain for')) throw e;
+    if (e instanceof Error && e.message.startsWith(MIGRATION_REFUSAL_PREFIX)) throw e;
     await log(jobId, `⚠️ ${item.name}: could not check migration chain (${e instanceof Error ? e.message : String(e)}). Continuing without migrations.`);
   }
 

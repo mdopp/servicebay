@@ -208,7 +208,7 @@ across services, containers, proxy, backups, health checks, and config:
 read paths like `list_nodes`, `list_services`, `get_logs`,
 `get_network_graph`, `get_health_checks`, …, and write paths like
 `manage_service` (start/stop/restart), `update_service_yaml`,
-`add_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`,
+`create_proxy_route`/`remove_proxy_route`, `run_backup`/`restore_backup`,
 `create_health_check`/`run_check_now`, `get_config`/`update_config`,
 `exec_command`. `get_config` redacts every secret-shaped field by key name at
 any depth (passwords, secrets, tokens, keys, hashes) and omits the stored

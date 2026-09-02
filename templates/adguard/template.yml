@@ -8,6 +8,12 @@ metadata:
   annotations:
     servicebay.label: "Ad Blocker (DNS)"
     servicebay.schema-version: "2"
+    # #2727 — adguard has never shipped a migration script, so there is no
+    # v1→v2 hop and `selectMigrationChain` refuses that upgrade. Declaring the
+    # floor turns that from a mid-job `missing-step` abort into an up-front,
+    # named refusal. Ship a v1→v2 script (informational is fine — see
+    # templates/beets/migrations/v2-to-v3.py) to lower it back to "1".
+    servicebay.min-upgradable-schema-version: "2"
     servicebay.tier: "infrastructure"
     # NPM proxies `<ADGUARD_SUBDOMAIN>.<PUBLIC_DOMAIN>` through Authelia
     # forward-auth, so the auth pod must exist before this template's

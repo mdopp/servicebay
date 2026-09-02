@@ -196,37 +196,62 @@ async function checkSecurityAnyBudget() {
 // ---------------------------------------------------------------------------
 const BACKEND_AS_ANY_BUDGET = 24;
 
-async function checkBackendAnyBudget() {
-    let count = 0;
-    const offenders: string[] = [];
+// ---------------------------------------------------------------------------
+// 2c. Backend-wide `: any` ANNOTATION budget.
+//
+// #2723: the ratchets above gate `as any` — the *cast* — and nothing gated
+// `: any`, the *annotation*. Both erase the type; only one cost anything to
+// write, so the ungated spelling is where the erasure accumulated (79 hits at
+// the ratchet's introduction, against a cast budget of 24). A budget covering
+// one spelling of "opt out of the type system" and not the other reads as a
+// gate and behaves as a suggestion.
+//
+// Scope is deliberately ALL of `packages/backend/src` (non-test), SECURITY_PATHS
+// included: unlike `as any` there is no separate security budget here, so
+// excluding them would leave the tightest code the only place a `: any` is
+// unmeasured.
+//
+// Forward-only ratchet, same contract as BACKEND_AS_ANY_BUDGET: drop the number
+// as annotations get typed; never raise it without a justification + an issue.
+//
+// 2026-09-02 (#2723): introduced at the measured value at HEAD.
+// ---------------------------------------------------------------------------
+const BACKEND_COLON_ANY_BUDGET = 79;
+
+// Both ratchets walk the same tree, so they share one pass. `skipSecurity`
+// drops the files the tighter SECURITY_AS_ANY_BUDGET already counts, so no cast
+// is double-counted; SECURITY_PATHS are repo-relative (#2379), compared directly.
+const BACKEND_ANY_RATCHETS = [
+    { check: 'backend-as-any-budget', label: '`as any` in packages/backend/src outside security paths', re: /\bas any\b/g, budget: BACKEND_AS_ANY_BUDGET, skipSecurity: true, remedy: 'New violations need to be cleared or the budget bumped with a justification.' },
+    { check: 'backend-colon-any-budget', label: '`: any` annotations in packages/backend/src', re: /:\s*any\b/g, budget: BACKEND_COLON_ANY_BUDGET, skipSecurity: false, remedy: 'Type the annotation, or bump the budget with a justification + an issue.' },
+];
+
+async function checkBackendAnyBudgets() {
     const root = path.join(REPO_ROOT, 'packages/backend/src');
-    let files: string[];
-    try {
-        files = await walk(root, isTs);
-    } catch {
+    // #2428 failure shape: a ratchet whose root does not resolve scans nothing
+    // and reports green. That is a violation, never a silent skip.
+    const files = await walk(root, isTs).catch(() => null);
+    if (!files) {
+        violations.push({ check: 'backend-any-budgets', detail: 'packages/backend/src does not resolve — the `as any` / `: any` ratchets scanned nothing.' });
         return;
     }
+    const inSecurity = (rel: string) => SECURITY_PATHS.some(p => rel === p || rel.startsWith(`${p}/`));
+    const tallies = BACKEND_ANY_RATCHETS.map(r => ({ ...r, count: 0, offenders: [] as string[] }));
     for (const file of files) {
         if (isTestFile(file)) continue;
         const rel = path.relative(REPO_ROOT, file);
-        // Skip files counted by the security ratchet so we don't double-count.
-        // SECURITY_PATHS are already repo-relative (#2379) — compare directly.
-        if (SECURITY_PATHS.some(p => rel === p || rel.startsWith(`${p}/`))) {
-            continue;
-        }
         const content = await readFile(file, 'utf-8');
-        const hits = content.match(/\bas any\b/g)?.length ?? 0;
-        if (hits > 0) {
-            count += hits;
-            offenders.push(`${rel} (${hits})`);
+        for (const t of tallies) {
+            if (t.skipSecurity && inSecurity(rel)) continue;
+            const hits = content.match(t.re)?.length ?? 0;
+            t.count += hits;
+            if (hits > 0) t.offenders.push(`${rel} (${hits})`);
         }
     }
-    measurements.push(`\`as any\` in packages/backend/src outside security paths: ${count} (budget ${BACKEND_AS_ANY_BUDGET})`);
-    if (count > BACKEND_AS_ANY_BUDGET) {
-        violations.push({
-            check: 'backend-as-any-budget',
-            detail: `${count} \`as any\` in packages/backend/src (budget ${BACKEND_AS_ANY_BUDGET}). New violations need to be cleared or the budget bumped with a justification. Offenders: ${offenders.join(', ')}`,
-        });
+    for (const t of tallies) {
+        measurements.push(`${t.label}: ${t.count} (budget ${t.budget})`);
+        if (t.count <= t.budget) continue;
+        violations.push({ check: t.check, detail: `${t.count} ${t.label} (budget ${t.budget}). ${t.remedy} Offenders: ${t.offenders.join(', ')}` });
     }
 }
 
@@ -369,11 +394,13 @@ async function checkTwinFanIn() {
 // sanctioned way to touch them (tmp → fsync → rename: a crash leaves the
 // ORIGINAL intact).
 //
-// #2414: `config/transformer.ts` — the boot-time normalizer that runs before
+// #2414: `config/transformer.ts` — the boot-time normalizer that ran before
 // the first `getConfig()` on every backend start — wrote config.json bare while
 // `config.ts` next door already used `atomicWriteFile`. Two writers, two
 // durability contracts, on the one file whose loss is unrecoverable from the UI.
 // This check is the ratchet that keeps the second writer from coming back.
+// (#2725 deleted that module and folded its one live migration into
+// `config.ts`, so there is now a single boot-time writer, still listed below.)
 //
 // The budget is 0 and the list is forward-only: add a module when it starts
 // owning durable DATA_DIR state; never delete one to make a bare write pass.
@@ -382,7 +409,6 @@ async function checkTwinFanIn() {
 // ---------------------------------------------------------------------------
 const DURABLE_STATE_MODULES = [
     'packages/backend/src/lib/config.ts',
-    'packages/backend/src/lib/config/transformer.ts',
     'packages/backend/src/lib/health/store.ts',
 ];
 const DURABLE_STATE_BARE_WRITE_BUDGET = 0;
@@ -1179,6 +1205,7 @@ function renderThresholdBlock(): string {
         ['Max file LOC (each source root)', 'MAX_FILE_LOC', MAX_FILE_LOC.toLocaleString('en-US')],
         ['`as any` in security paths', 'SECURITY_AS_ANY_BUDGET', String(SECURITY_AS_ANY_BUDGET)],
         ['`as any` in `packages/backend/src` outside security paths', 'BACKEND_AS_ANY_BUDGET', String(BACKEND_AS_ANY_BUDGET)],
+        ['`: any` annotations in `packages/backend/src` (security paths included)', 'BACKEND_COLON_ANY_BUDGET', String(BACKEND_COLON_ANY_BUDGET)],
         ['`executor.exec` template-literal call sites', 'EXEC_TEMPLATE_LITERAL_MAX', String(EXEC_TEMPLATE_LITERAL_MAX)],
         ['`withApiHandler` adoption across `route.ts` files', 'MIN_WITH_API_HANDLER_RATIO', `${(MIN_WITH_API_HANDLER_RATIO * 100).toFixed(0)}%`],
         ['`DigitalTwinStore.getInstance()` call sites', 'TWIN_GETINSTANCE_MAX', String(TWIN_GETINSTANCE_MAX)],
@@ -1243,7 +1270,7 @@ async function main() {
     await Promise.all([
         checkFileSize(),
         checkSecurityAnyBudget(),
-        checkBackendAnyBudget(),
+        checkBackendAnyBudgets(),
         checkExecTemplateLiterals(),
         checkWithApiHandlerAdoption(),
         checkTwinFanIn(),

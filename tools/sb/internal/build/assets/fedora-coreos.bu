@@ -1569,7 +1569,7 @@ ${SERVICEBAY_SSH_PRIV}
           echo "$ATTEMPTS" > "$ATTEMPTS_FILE"
 
           if [ "$ATTEMPTS" -gt "$MAX_ATTEMPTS" ]; then
-              echo "install-nvidia-cdi: giving up after $MAX_ATTEMPTS attempts, the nvidia kernel module never appeared. Run 'sudo bash enable-nvidia.sh' to retry by hand." | /usr/bin/tee -a "$LOG_FILE" >&2
+              echo "install-nvidia-cdi: giving up after $MAX_ATTEMPTS attempts, the nvidia kernel module never appeared. Retry by hand with the assist 'recipe-retrofit-nvidia-gpu-on-a-running-box'." | /usr/bin/tee -a "$LOG_FILE" >&2
               /usr/local/bin/append-install-log.sh "install-nvidia-cdi" "gave up after $MAX_ATTEMPTS attempts; the nvidia kernel module never appeared" 2>/dev/null || true
               /usr/bin/touch /var/lib/install-nvidia-cdi-gave-up
               stop_timer

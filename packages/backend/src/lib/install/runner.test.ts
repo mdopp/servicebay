@@ -5,8 +5,8 @@
  * readiness predicate) and `waitForDependencies` (the gate that blocks
  * a template's deploy until its declared dependencies are healthy).
  *
- * The twin is mocked the same way `stackRunner.test.ts` does it, so the
- * gate reads deterministic fixtures instead of a live digital twin.
+ * The twin is mocked with a stub module, so the gate reads
+ * deterministic fixtures instead of a live digital twin.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -304,6 +304,31 @@ describe('buildMigrationSteps — migration bodies ship verbatim (#2435)', () =>
     ];
     expect(buildMigrationSteps(chain)).toEqual(chain);
     expect(buildMigrationSteps([])).toEqual([]);
+  });
+
+  // #2727 — the floor is checked BEFORE the chain, and its refusal survives
+  // the best-effort catch. Both are source-shape guards because the block
+  // lives inside `deployItem`, which needs a full job + live apiFetch to
+  // reach; the message itself is unit-tested in
+  // `stackInstall/migrations.test.ts`.
+  it('checks the declared upgrade floor before selecting a chain', () => {
+    const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+    const floorAt = src.indexOf('checkMinUpgradableSchemaVersion(\n');
+    const chainAt = src.indexOf('selectMigrationChain(installedVersion');
+    expect(floorAt, 'runner.ts no longer calls checkMinUpgradableSchemaVersion').toBeGreaterThan(-1);
+    expect(chainAt).toBeGreaterThan(-1);
+    // A floor check after the chain selection would never fire: the missing
+    // hop below the floor makes selectMigrationChain refuse first, which is
+    // the unactionable `missing-step` message #2727 replaced.
+    expect(floorAt, 'the floor check must run before selectMigrationChain').toBeLessThan(chainAt);
+  });
+
+  it('re-throws the floor refusal instead of logging "continuing without migrations"', () => {
+    const src = fs.readFileSync(path.join(__dirname, 'runner.ts'), 'utf-8');
+    // The catch guard must key off the shared prefix constant, not a literal
+    // — a second hand-written copy is how a new refusal gets swallowed.
+    expect(src).toMatch(/e\.message\.startsWith\(MIGRATION_REFUSAL_PREFIX\)/);
+    expect(src).not.toMatch(/e\.message\.startsWith\('Migration chain for'\)/);
   });
 
   it('the deploy call site never re-introduces a render pass', () => {

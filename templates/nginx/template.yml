@@ -8,6 +8,12 @@ metadata:
   annotations:
     servicebay.label: "Reverse Proxy"
     servicebay.schema-version: "3"
+    # #2727 — nginx has never shipped a migration script, so neither the v1→v2
+    # nor the v2→v3 hop exists and `selectMigrationChain` refuses both.
+    # Declaring the floor turns that from a mid-job `missing-step` abort into
+    # an up-front, named refusal. Ship the missing hops (informational is fine
+    # — see templates/beets/migrations/v2-to-v3.py) to lower it back.
+    servicebay.min-upgradable-schema-version: "3"
     servicebay.tier: "infrastructure"
     servicebay.ports: "{{NGINX_PORT}}/tcp,{{NGINX_SSL_PORT}}/tcp,{{NGINX_ADMIN_PORT}}/tcp"
     # Continuous health probe (#626 / #628). NPM's unauthenticated

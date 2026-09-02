@@ -420,14 +420,6 @@ export const generateBundleStackArtifacts = (bundle: ServiceBundle, targetName?:
   };
 };
 
-export const generateBundleStackPreview = (bundle: ServiceBundle, targetName?: string): string => {
-  const artifacts = generateBundleStackArtifacts(bundle, targetName);
-  const configSection = artifacts.configPaths.length > 0
-    ? `\n---\n# Config/file references\n${artifacts.configPaths.map(path => `# - ${path}`).join('\n')}\n`
-    : '\n';
-  return `# Quadlet (.kube) suggestion\n${artifacts.kubeUnit}\n\n---\n# Pod specification\n${artifacts.podYaml}${configSection}`;
-};
-
 export const severityFromValidations = (validations: BundleValidation[]): ServiceBundle['severity'] => {
   if (validations.some(v => v.level === 'error')) {
     return 'critical';

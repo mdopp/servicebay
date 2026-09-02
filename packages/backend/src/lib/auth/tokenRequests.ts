@@ -280,13 +280,6 @@ export async function listTokenRequests(
     .map(publicView);
 }
 
-/** Fetch one request (no secret), or null. */
-export async function getTokenRequest(id: string): Promise<TokenRequestView | null> {
-  const all = await readStore();
-  const r = all.find(x => x.id === id);
-  return r ? publicView(r) : null;
-}
-
 /**
  * Admin approves a pending request, optionally narrowing the granted scopes
  * and/or overriding the TTL. Mints the real token via `createToken`, records

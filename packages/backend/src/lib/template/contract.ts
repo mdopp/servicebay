@@ -45,6 +45,28 @@ export interface TemplateManifest {
    */
   schemaVersion: number;
   /**
+   * `metadata.annotations['servicebay.min-upgradable-schema-version']` (#2727).
+   * The oldest installed schema-version this template can still be upgraded
+   * FROM. Defaults to 1.
+   *
+   * `selectMigrationChain` walks one hop at a time and refuses the deploy on
+   * a hop with no script, so a template whose `migrations/` directory has a
+   * hole is simply not upgradable from below that hole — media has no
+   * `v2-to-v3.py`, home-assistant has no `v2-to-v3` / `v4-to-v5` / `v5-to-v6`.
+   * Before #2727 that fact was undeclared: the box found out mid-job, via a
+   * `missing-step` abort, and the scripts sitting below the hole could never
+   * run at all.
+   *
+   * Declaring the floor makes it a contract instead of an accident. The build-
+   * time consistency test pins that the chain from this version up to
+   * `schemaVersion` is unbroken AND that no migration script sits below it,
+   * and `install/runner.ts` refuses a box recorded below it up front, naming
+   * the template, the installed version and the minimum.
+   *
+   * Must satisfy `1 <= minUpgradableSchemaVersion <= schemaVersion`.
+   */
+  minUpgradableSchemaVersion: number;
+  /**
    * `metadata.annotations['servicebay.dependencies']` — comma-separated
    * template names this template needs installed first. Empty array when
    * missing.
@@ -190,6 +212,21 @@ export const TEMPLATE_FIELDS: readonly TemplateFieldSpec[] = [
       '`CHANGELOG.md` section + (if data needs to move) a `migrations/v{N-1}-to-v{N}.py` script. See #352.',
   },
   {
+    annotation: 'servicebay.min-upgradable-schema-version',
+    field: 'minUpgradableSchemaVersion',
+    required: false,
+    default: 1,
+    description:
+      'Oldest installed schema-version this template can still be upgraded **from**. Raise it when the '
+      + '`migrations/` chain has a hole below the current version and filling it would mean guessing what '
+      + 'moved on disk years ago — the hole already makes the template undeployable for those boxes, this '
+      + 'annotation makes that a declared contract instead of a mid-job `missing-step` abort. The install '
+      + 'runner refuses a box recorded below it up front, naming template + installed + minimum version, and '
+      + 'a build-time test pins that the chain from here to `servicebay.schema-version` is unbroken and that '
+      + 'no unreachable migration script is left below it. Must be `>= 1` and `<= servicebay.schema-version`. '
+      + 'See #2727.',
+  },
+  {
     annotation: 'servicebay.tier',
     field: 'tier',
     required: false,
@@ -219,7 +256,7 @@ export const TEMPLATE_FIELDS: readonly TemplateFieldSpec[] = [
     description:
       'Per-API version the template\'s `post-deploy.py` calls. Declare one annotation per API name (`lldap`, ' +
       '`authelia`, `portal`), value is a positive integer. Core refuses to invoke `post-deploy.py` if any ' +
-      'requested version exceeds what this ServiceBay ships (see `src/lib/template/apiVersions.ts`). ' +
+      'requested version exceeds what this ServiceBay ships (see `packages/backend/src/lib/template/apiVersions.ts`). ' +
       'Use this on any template whose post-deploy calls `/api/system/<name>/*` (#588).',
   },
   {
@@ -310,6 +347,7 @@ function validateTemplateMetadata(
   configMount: string | undefined;
   seedOnlyConfigs: string[];
   schemaVersion: number;
+  minUpgradableSchemaVersion: number;
   tier: TemplateTier;
   dependencies: string[];
   requiresApi: TemplateApiVersions | undefined;
@@ -380,6 +418,31 @@ function validateTemplateMetadata(
     }
   }
 
+  // #2727 — the oldest version this template can still be upgraded from.
+  // Both bounds are errors, not warnings: a floor above the current
+  // schema-version would refuse EVERY upgrade including the current one, and
+  // a non-integer would silently fall back to 1 and re-open the mid-job
+  // `missing-step` abort this annotation exists to replace.
+  let minUpgradableSchemaVersion = 1;
+  const minUpgradableRaw = readAnnotation(yamlText, 'servicebay.min-upgradable-schema-version');
+  if (minUpgradableRaw !== undefined) {
+    const n = Number.parseInt(minUpgradableRaw, 10);
+    if (!Number.isFinite(n) || n < 1 || !/^\d+$/.test(minUpgradableRaw)) {
+      errors.push(
+        'Annotation `servicebay.min-upgradable-schema-version` must be a positive integer; '
+        + `got "${minUpgradableRaw}".`,
+      );
+    } else if (n > schemaVersion) {
+      errors.push(
+        `Annotation \`servicebay.min-upgradable-schema-version\` is ${n}, above `
+        + `\`servicebay.schema-version\` (${schemaVersion}). The floor is the oldest version an upgrade may `
+        + 'start from, so a floor above the current version refuses every deploy on every box.',
+      );
+    } else {
+      minUpgradableSchemaVersion = n;
+    }
+  }
+
   let tier: TemplateTier = 'feature';
   const tierRaw = readAnnotation(yamlText, 'servicebay.tier');
   if (tierRaw !== undefined) {
@@ -421,6 +484,7 @@ function validateTemplateMetadata(
     configMount,
     seedOnlyConfigs,
     schemaVersion,
+    minUpgradableSchemaVersion,
     tier,
     dependencies,
     requiresApi,
@@ -466,6 +530,7 @@ export function parseTemplateManifest(
       label: meta.label!,
       tier: meta.tier,
       schemaVersion: meta.schemaVersion,
+      minUpgradableSchemaVersion: meta.minUpgradableSchemaVersion,
       dependencies: meta.dependencies,
       configMount: meta.configMount,
       seedOnlyConfigs: meta.seedOnlyConfigs,
@@ -491,6 +556,19 @@ export function tryParseTemplateManifest(
 }
 
 /**
+ * Read an annotation that must be a positive integer, permissively:
+ * `undefined` for both "absent" and "present but not a positive integer".
+ * The strict counterpart lives in `validateTemplateMetadata`, which turns the
+ * second case into an error.
+ */
+function readPositiveIntAnnotation(yamlText: string, annotation: string): number | undefined {
+  const raw = readAnnotation(yamlText, annotation);
+  if (raw === undefined) return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 1 && /^\d+$/.test(raw) ? n : undefined;
+}
+
+/**
  * Resolve optional annotations and apply permissive defaults.
  */
 function resolveAnnotationDefaults(yamlText: string): Partial<TemplateManifest> {
@@ -505,13 +583,15 @@ function resolveAnnotationDefaults(yamlText: string): Partial<TemplateManifest> 
   const configMount = readAnnotation(yamlText, 'servicebay.config-mount');
   if (configMount !== undefined) out.configMount = configMount;
 
-  const schemaRaw = readAnnotation(yamlText, 'servicebay.schema-version');
-  if (schemaRaw !== undefined) {
-    const n = Number.parseInt(schemaRaw, 10);
-    if (Number.isFinite(n) && n >= 1 && /^\d+$/.test(schemaRaw)) {
-      out.schemaVersion = n;
-    }
-  }
+  const schemaVersion = readPositiveIntAnnotation(yamlText, 'servicebay.schema-version');
+  if (schemaVersion !== undefined) out.schemaVersion = schemaVersion;
+
+  // #2727 — permissive read of the upgrade floor. The `<= schemaVersion`
+  // bound is NOT checked here: this path exists for fragmentary YAML that may
+  // carry the floor without the version. `parseTemplateManifest` is the strict
+  // path that rejects an out-of-range floor.
+  const floor = readPositiveIntAnnotation(yamlText, 'servicebay.min-upgradable-schema-version');
+  if (floor !== undefined) out.minUpgradableSchemaVersion = floor;
 
   const tierRaw = readAnnotation(yamlText, 'servicebay.tier');
   if (tierRaw !== undefined && KNOWN_TIERS.has(tierRaw as TemplateTier)) {
@@ -536,12 +616,8 @@ function resolveAnnotationDefaults(yamlText: string): Partial<TemplateManifest> 
 
   let requiresApi: TemplateApiVersions | undefined;
   for (const api of Object.keys(SUPPORTED_API_VERSIONS) as TemplateApiName[]) {
-    const raw = readAnnotation(yamlText, `servicebay.requires-api.${api}`);
-    if (raw === undefined) continue;
-    const n = Number.parseInt(raw, 10);
-    if (Number.isFinite(n) && n >= 1 && /^\d+$/.test(raw)) {
-      requiresApi = { ...(requiresApi ?? {}), [api]: n };
-    }
+    const n = readPositiveIntAnnotation(yamlText, `servicebay.requires-api.${api}`);
+    if (n !== undefined) requiresApi = { ...(requiresApi ?? {}), [api]: n };
   }
   if (requiresApi) out.requiresApi = requiresApi;
 

@@ -7,6 +7,12 @@ metadata:
   annotations:
     servicebay.label: "Files"
     servicebay.schema-version: "4"
+    # #2727 — file-share has never shipped a migration script, so none of the
+    # v1→v2, v2→v3 or v3→v4 hops exist and `selectMigrationChain` refuses them
+    # all. Declaring the floor turns that from a mid-job `missing-step` abort
+    # into an up-front, named refusal. Ship the missing hops (informational is
+    # fine — see templates/beets/migrations/v2-to-v3.py) to lower it back.
+    servicebay.min-upgradable-schema-version: "4"
     # FileBrowser is fronted by Authelia via the nginx proxy host — both
     # must be running before this template's post-deploy can wire SSO.
     servicebay.dependencies: "nginx,auth"

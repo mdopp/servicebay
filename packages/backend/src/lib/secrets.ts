@@ -114,14 +114,6 @@ export function hasPreservedEncryptedConfig(configPath: string = CONFIG_PATH): b
  *  the log. The first failure still logs a single WARN. */
 let DECRYPT_MISMATCH_WARNED = false;
 
-/** True iff any decrypt() call in this process saw GCM auth-tag
- *  failure on a well-formed `enc:v1:…` string. Read by diagnose to
- *  surface the underlying problem (#780). Reset is deliberately not
- *  exported — once mismatch is detected it stays sticky. */
-export function hasDecryptMismatch(): boolean {
-  return DECRYPT_MISMATCH_WARNED;
-}
-
 /**
  * Encrypts a plain text string.
  * Format: enc:v1:IV:AUTH_TAG:CIPHERTEXT

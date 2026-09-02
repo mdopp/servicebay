@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseTemplateTier, isInfrastructureTier } from './templateTier';
+import { parseTemplateTier } from './templateTier';
 
 describe('parseTemplateTier', () => {
   it('extracts infrastructure when annotated', () => {
@@ -27,14 +27,5 @@ describe('parseTemplateTier', () => {
 
   it('does not match similarly-named keys', () => {
     expect(parseTemplateTier('  annotations:\n    servicebay-tier: "infrastructure"\n')).toBe('feature');
-  });
-});
-
-describe('isInfrastructureTier', () => {
-  it('returns true for infrastructure', () => {
-    expect(isInfrastructureTier('infrastructure')).toBe(true);
-  });
-  it('returns false for feature', () => {
-    expect(isInfrastructureTier('feature')).toBe(false);
   });
 });

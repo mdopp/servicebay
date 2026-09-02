@@ -209,15 +209,6 @@ async function reconcileNpmCredentialAfterRestore(
 }
 
 /**
- * True if `dir` is empty or doesn't exist — the safe-to-seed condition.
- * Standalone local-fs check; the restore/wipe flows resolve their backend
- * (host agent on a box, local in tests) and call `backend.isFreshDir` instead.
- */
-export async function isFreshDataDir(dir: string): Promise<boolean> {
-  return localRestoreBackend.isFreshDir(dir);
-}
-
-/**
  * Restore a service's config backup from the NAS into its data dir. By default
  * restores the MOST-RECENT dated snapshot (#1865); pass `tarName` to restore a
  * specific snapshot instead (the "restore a chosen one" path — recover from

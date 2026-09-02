@@ -39,14 +39,3 @@ export function getActiveDomain(config: Pick<AppConfig, 'reverseProxy'>): string
   const lan = config.reverseProxy?.lanDomain;
   return lan && lan.trim() !== '' ? lan.trim() : DEFAULT_LAN_DOMAIN;
 }
-
-/**
- * Backwards-compatible helper — true iff the install is in `lan` mode.
- * Existing callers from PR #247 use this; new code should call
- * `getMode(config) === 'lan'` for clarity.
- *
- * @deprecated prefer `getMode(config) === 'lan'`.
- */
-export function isLocalOnly(config: Pick<AppConfig, 'reverseProxy'>): boolean {
-  return getMode(config) === 'lan';
-}

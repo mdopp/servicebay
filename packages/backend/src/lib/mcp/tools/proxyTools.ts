@@ -1,15 +1,22 @@
 /**
  * Reverse-proxy MCP tools (#2384 extraction): reading the aggregated proxy
- * state plus the three route writers (config-only, full NPM host, removal).
+ * state plus the two route writers (full NPM host, removal).
  *
- * Note: writing to config records the desired route. Pushing to NPM (Nginx
- * Proxy Manager) needs NPM admin credentials, so the two tools that touch the
- * live host go through the app's own `/api/system/nginx/proxy-hosts` endpoint
- * over a loopback call rather than re-implementing the NPM client here.
+ * There is exactly ONE way to create a route here (#2726): `create_proxy_route`,
+ * which pushes the host to NPM. The older `add_proxy_route` only wrote
+ * `config.reverseProxy.hosts` and asked the operator to click Sync afterwards —
+ * i.e. it manufactured the config≠NPM drift that `danglingProxy` /
+ * `nginxOnlineFailed` report as a fault. It was a second, strictly weaker kernel
+ * path, not an alias, so it is gone.
+ *
+ * Note: pushing to NPM (Nginx Proxy Manager) needs NPM admin credentials, so the
+ * two tools that touch the live host go through the app's own
+ * `/api/system/nginx/proxy-hosts` endpoint over a loopback call rather than
+ * re-implementing the NPM client here.
  */
 import { z } from 'zod';
 import { getStoreSnapshot } from '@/lib/store/repository';
-import { getConfig, updateConfig, type ProxyHostEntry } from '@/lib/config';
+import { getConfig, updateConfig } from '@/lib/config';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { AUTHELIA_FORWARD_AUTH_SENTINEL } from '@/lib/stackInstall/forwardAuth';
 // #2654 — a route mutation reconciles the auto-managed `domain:<host>` checks
@@ -62,52 +69,18 @@ export function registerProxyTools({ server }: ToolRegistration) {
     return textResult({ proxyState, liveHosts, ...(liveError ? { liveStatusError: liveError } : {}) });
   });
 
-  server.tool(
-    'add_proxy_route',
-    'Add or update a reverse-proxy route entry in ServiceBay config. Domain is the public hostname; forwardPort is the internal port. Updates `config.reverseProxy.hosts`. Pushing to NPM still requires the user to click "sync" in Settings.',
-    {
-      domain: z.string().regex(/^[a-zA-Z0-9.-]+$/, 'invalid domain').describe('Public domain, e.g. "vault.example.com"'),
-      forwardPort: z.number().int().min(1).max(65535).describe('Internal port the upstream service listens on'),
-      service: z.string().optional().describe('Logical service name (default: first label of domain)'),
-    },
-    async ({ domain, forwardPort, service }) => {
-      const config = await getConfig();
-      const hosts = [...(config.reverseProxy?.hosts ?? [])];
-      const idx = hosts.findIndex(h => h.domain === domain);
-      const entry: ProxyHostEntry = {
-        domain,
-        service: service ?? domain.split('.')[0],
-        forwardPort,
-        created: idx >= 0 ? hosts[idx].created : false,
-        sslConfigured: idx >= 0 ? hosts[idx].sslConfigured : false,
-        createdAt: idx >= 0 ? hosts[idx].createdAt : new Date().toISOString(),
-      };
-      if (idx >= 0) hosts[idx] = entry;
-      else hosts.push(entry);
-      await updateConfig({ reverseProxy: { ...config.reverseProxy, hosts } });
-      // The config host list is one of syncDomainChecks' two inputs, so the
-      // new/updated entry gets its `domain:` check now rather than on the tick.
-      await syncDomainChecks();
-      return textResult({
-        action: idx >= 0 ? 'updated' : 'added',
-        entry,
-        note: 'Config updated. Push to NPM via Settings → Reverse Proxy → Sync.',
-      });
-    },
-  );
-
   // #2140 — Create a COMPLETE NPM proxy host in one MCP call, reusing the
   // install-runner's proxy-host wiring (POST /api/system/nginx/proxy-hosts):
   // exposure tier (cert + LAN allow-list), Authelia forward-auth, optional
-  // custom advanced_config / forwardHost / ssl, best-effort LE cert. Unlike
-  // add_proxy_route (which only records a config entry for a later manual
-  // sync), this pushes to NPM immediately and returns the per-host result
-  // (created, certIssued/certError, lanRestricted). The forward-auth snippet
-  // is expanded server-side by the route with the correct acme-bypass handling
-  // per exposure (#2143 — no duplicate acme location on LE hosts).
+  // custom advanced_config / forwardHost / ssl, best-effort LE cert. This is
+  // the ONLY route-creating tool (#2726 retired the config-only
+  // `add_proxy_route`): it pushes to NPM immediately and returns the per-host
+  // result (created, certIssued/certError, lanRestricted). The forward-auth
+  // snippet is expanded server-side by the route with the correct acme-bypass
+  // handling per exposure (#2143 — no duplicate acme location on LE hosts).
   server.tool(
     'create_proxy_route',
-    'Create a complete NPM reverse-proxy host in one call: pick an exposure tier (public|internal|lan), optionally gate it behind Authelia forward-auth SSO, and (for public/internal) request a Let\'s Encrypt cert — matching what a template install produces. Pushes to NPM immediately (unlike add_proxy_route, which only records a config entry). Returns the create + cert outcome per host; check get_proxy_routes for live nginx_online status afterward.',
+    'Create a reverse-proxy route — this is the ONE tool for it, and it replaces the removed `add_proxy_route` (which only recorded a config entry and left NPM out of sync). Creates a complete NPM reverse-proxy host in one call: pick an exposure tier (public|internal|lan), optionally gate it behind Authelia forward-auth SSO, and (for public/internal) request a Let\'s Encrypt cert — matching what a template install produces. Pushes to NPM immediately. Returns the create + cert outcome per host; check get_proxy_routes for live nginx_online status afterward.',
     {
       domain: z.string().regex(/^[a-zA-Z0-9.-]+$/, 'invalid domain').describe('Full public hostname, e.g. "tor.dopp.cloud".'),
       forwardPort: z.number().int().min(1).max(65535).describe('Internal port the upstream service listens on.'),

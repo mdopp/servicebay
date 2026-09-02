@@ -9,7 +9,7 @@ English. The connection setup — cookie vs. named token, env-var refresh,
 troubleshooting — lives in [docs/MCP.md](../MCP.md); this page is about *what the
 surface is and why it's safe*.
 
-## 62 scoped MCP tools
+## 63 scoped MCP tools
 
 **What it does.** The tool registry in
 `packages/backend/src/lib/mcp/tools/` exposes **63 tools** covering the same
@@ -18,9 +18,9 @@ mutation surface. Highlights beyond the read/lifecycle basics:
 
 - **`install_template`** — full template deploy (manifest assembly, variable
   defaults, secret generation, proxy wiring), not just a raw YAML push.
-- **`create_proxy_route`** — creates a complete NPM proxy host including exposure
-  tier, Authelia forward-auth, and cert handling (alongside the lower-level
-  `add_proxy_route` / `remove_proxy_route`).
+- **`create_proxy_route`** — the one way to create a route: a complete NPM proxy
+  host including exposure tier, Authelia forward-auth, and cert handling. Paired
+  with `remove_proxy_route` for the teardown.
 - **`write_file` (jailed)** — a write confined to the data dir (`/mnt/data`),
   creating the parent dir and setting `core:core` ownership. It cannot escape the
   jail.

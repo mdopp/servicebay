@@ -106,8 +106,21 @@ RUN useradd --system --uid 1001 nextjs
 
 # Runtime dependencies (libc) are standard in debian
 
-COPY --from=builder /app/packages/frontend/public ./public
-COPY --from=builder /app/packages/frontend/public ./packages/frontend/public
+# There is no `packages/frontend/public` to copy (#2729). The only file it ever
+# held was the generated MSW `mockServiceWorker.js`; deleting the mock layer
+# emptied the directory, and git does not track empty directories, so the COPY
+# failed the build with "failed to calculate checksum ... not found".
+#
+# Do not re-add it with a .gitkeep: nothing serves out of it. The frontend's
+# icons are App Router metadata files under `src/app/` (icon.svg,
+# portal/icon.svg, portal/manifest.webmanifest/route.ts), which Next compiles
+# into `.next/` and serves from there, and no source references a `/<file>`
+# static asset path. If a real static asset is ever added, create the directory
+# with that asset in it and restore ONE line — `COPY --from=builder
+# /app/packages/frontend/public ./packages/frontend/public`. The `./public`
+# target was always dead: server.ts starts Next with
+# `dir: <cwd>/packages/frontend`, so Next resolves `public` relative to that,
+# never to `/app/public`.
 
 # Copy the full Next build output. We deliberately do NOT use `output: 'standalone'`
 # because we run our own custom server (server.ts) that wires Socket.IO, MCP, and
@@ -178,10 +191,38 @@ COPY --from=prod-deps /app/packages ./packages-proddeps
 RUN for d in packages-proddeps/*/node_modules; do [ -d "$d" ] && cp -rn "$d/." node_modules/; done; rm -rf packages-proddeps
 COPY --from=builder /app/package.json ./package.json
 
-# We run as root inside the container to ensure access to mapped volumes (ssh keys)
-# When using UserNS=keep-id in Podman (standard for Quadlets), 'root' tracks to the host user.
-# RUN chown -R nextjs:nodejs /app
-# USER nextjs
+# Runtime user: root, deliberately — 2026-09-02, #2722.
+#
+# This used to be a bare commented-out `# USER nextjs` with no reason attached,
+# which reads like an oversight. It is not. Under rootless podman the container's
+# uid 0 maps to the HOST user that runs the quadlet (`core`, uid 1000 on the box);
+# every other container uid lands in that user's subuid range and owns nothing on
+# the host. Three things the app then cannot do — all three checked against the
+# running box, not assumed:
+#
+#   1. The Podman control plane. The quadlet binds the host's rootless socket
+#      /run/user/1000/podman/podman.sock -> /run/podman/podman.sock and points
+#      CONTAINER_HOST at it. That socket is core-owned, mode 0660, so a subuid
+#      gets EACCES and ServiceBay can no longer list or deploy a single service.
+#   2. DATA_DIR. /app/data is a bind of ${DATA_ROOT}/servicebay (core-owned,
+#      SELinux :Z). Boot writes into it — see packages/backend/src/lib/dirs.ts
+#      plus the mkdir/write paths in secrets.ts and nodes.ts.
+#   3. The host SSH identity. nodes.json points Agent V4 at
+#      /app/data/ssh/id_rsa (ssh://core@127.0.0.1). ssh refuses a private key it
+#      does not own, so the agent — and with it every host-side command — dies.
+#
+# Same mapping, same reason as packages/{backup-worker,disk-import-worker}/Containerfile.
+#
+# So `USER nextjs` is not an image-only flip: the quadlet must pin the mapping
+# (UserNS=keep-id:uid=...,gid=...) and the host-side ownership of
+# ${DATA_ROOT}/servicebay + podman-socket group access has to move with it, all
+# landed together. That is issue #2749. The nextjs/nodejs ids created above are
+# left in place so the image half stays a two-line change (`chown -R
+# nextjs:nodejs /app` + `USER nextjs`) once the host half is ready.
+#
+# Guard: tests/backend/dockerfile_runtime_user.test.ts — root is allowed only
+# while this reasoning is here, and a commented-out `# USER ...` fails the suite.
+USER root
 
 EXPOSE 3000
 

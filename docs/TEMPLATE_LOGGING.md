@@ -1,7 +1,7 @@
 # Template logging
 
 ServiceBay already stores every log entry it emits into a SQLite-backed
-log store (`src/lib/logger.ts`), queryable via `/api/logs/query`. Each
+log store (`packages/backend/src/lib/logger.ts`), queryable via `/api/logs/query`. Each
 entry has the shape:
 
 ```
@@ -125,5 +125,5 @@ post-deploy.py can paste.
 - [TEMPLATE_AUTHORING.md](TEMPLATE_AUTHORING.md) — the template
   contract; the `## Health checks` section there is the matching
   platform-level concern.
-- `src/lib/logger.ts` — ServiceBay's own logger, the
+- `packages/backend/src/lib/logger.ts` — ServiceBay's own logger, the
   reference shape this contract mirrors.

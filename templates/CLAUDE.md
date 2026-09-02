@@ -53,6 +53,9 @@ metadata:
     servicebay.label: "Friendly name"
     servicebay.ports: "8080/tcp"
     servicebay.schema-version: "1"     # bump on every breaking change
+    # servicebay.min-upgradable-schema-version: "1"  # oldest version an
+    #   upgrade may START from. Default 1. Raise it only when a historic hop
+    #   in migrations/ is missing and cannot be reconstructed (#2727).
     # servicebay.config-mount: "/config"   # required iff *.mustache files exist
     # servicebay.seed-only-configs: "automations.yaml"  # *.mustache files the app
     #   or the operator owns after first install — written ONLY when absent, so a
@@ -122,6 +125,19 @@ When a template needs to evolve:
    `migrations/v{N-1}-to-v{N}.py`. Idempotent by contract — probe
    before mutating. Non-zero exit aborts the deploy (fail-fast).
 
+**The chain must be unbroken (#2727).** `selectMigrationChain` walks one
+version at a time and *refuses* the deploy on a hop with no script — it does
+not skip it. So a missing `v{N-1}-to-v{N}.py` makes the template undeployable
+for every box below the hole. `servicebay.min-upgradable-schema-version`
+(default `1`) declares the oldest version an upgrade may start from; a
+build-time test proves the chain is walkable from there to `schema-version`,
+and fails if a migration script sits *below* the floor — such a script can
+never run, so it is deleted rather than kept. A box below the floor is
+refused before the first step, with a message naming the template, its
+recorded version and the minimum. Raise the floor only when a historic hop
+cannot be reconstructed (`media` declares `"3"`, `home-assistant` `"6"`);
+lower it by shipping the missing hops, informational no-ops included.
+
 ## Migration script protocol
 
 Same shell setup as `post-deploy.py` (env file → `source` →
@@ -156,7 +172,7 @@ migration script then just informs the operator.
 Pattern:
 - The source template's `migrations/v{N-1}-to-v{N}.py` stays an
   informational notice (the feature moved; install `<dest>` for it).
-  `templates/home-assistant/migrations/v1-to-v2.py` is one such notice.
+  `templates/beets/migrations/v2-to-v3.py` is one such notice.
 - The destination template's `post-deploy.py` does the actual
   idempotent `shutil.move(legacy → new)` (probe-before-mutate).
 

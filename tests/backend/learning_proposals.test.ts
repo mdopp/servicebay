@@ -27,7 +27,7 @@ vi.mock('@/lib/assists/catalog', async (orig) => {
 
 import {
   submitProposal,
-  listProposals,
+  listProposalsForReview,
   validateProposalContent,
   deriveProposalAssistId,
   ProposalError,
@@ -102,7 +102,7 @@ describe('submitProposal — persist as pending', () => {
     expect(p.assistId).toBe('local/how-to-wire-a-companion-assist');
     expect(p.submittedBy).toBe('token:agent');
 
-    const all = await listProposals();
+    const all = await listProposalsForReview('all');
     expect(all).toHaveLength(1);
     expect(all[0].id).toBe(p.id);
     expect(all[0].status).toBe('pending');
@@ -112,11 +112,11 @@ describe('submitProposal — persist as pending', () => {
     await expect(
       submitProposal({ ...VALID, title: 'servicebay-overview' }),
     ).rejects.toThrow(ProposalError);
-    expect(await listProposals()).toHaveLength(0);
+    expect(await listProposalsForReview('all')).toHaveLength(0);
   });
 
   it('rejects a bad schema without persisting', async () => {
     await expect(submitProposal({ ...VALID, kind: 'bogus' })).rejects.toThrow(/kind/);
-    expect(await listProposals()).toHaveLength(0);
+    expect(await listProposalsForReview('all')).toHaveLength(0);
   });
 });

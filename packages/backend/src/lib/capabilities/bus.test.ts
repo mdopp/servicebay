@@ -24,6 +24,7 @@ const MANIFEST: TemplateManifest = {
   label: 'Test',
   tier: 'feature',
   schemaVersion: 1,
+  minUpgradableSchemaVersion: 1,
   dependencies: [],
   seedOnlyConfigs: [],
 };

@@ -53,7 +53,3 @@ export function registerProbe(p: Probe): void {
 export function getProbe(type: CheckType): Probe | undefined {
   return probes.get(type);
 }
-
-export function registeredProbeTypes(): CheckType[] {
-  return Array.from(probes.keys());
-}

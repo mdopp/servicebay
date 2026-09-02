@@ -25,11 +25,12 @@
 import { getConfig } from '../config';
 import { getTemplateYaml, getTemplateMigrationScripts } from '../registry';
 import { getPendingTemplateUpgrades } from '../templateUpgrades';
-import { selectMigrationChain } from '../stackInstall/migrations';
+import { selectMigrationChain, checkMinUpgradableSchemaVersion } from '../stackInstall/migrations';
 import {
   parseTemplateDependencies,
   topoSortByDependencies,
 } from '../stackInstall/dependencies';
+import { parseTemplateMinUpgradableSchemaVersion } from '../templateSchemaVersion';
 import { parseTemplateTier } from '../templateTier';
 import type { TemplateTier } from '../templateTier';
 
@@ -130,6 +131,18 @@ async function describeCandidate(
   // The chain check is the honest half of the preview: it is the exact refusal
   // that stopped media/home-assistant deploying (#2601), and it costs nothing
   // to answer before the run instead of during it.
+  // #2727 — the declared upgrade floor answers before the chain does, for the
+  // same reason: "your box is older than this template supports" is
+  // actionable, "no script for v2→v3" is not. Excluding here rather than
+  // letting the run stop on it is the whole point of the preview.
+  const floorRefusal = checkMinUpgradableSchemaVersion(
+    summary.name,
+    summary.installedVersion,
+    parseTemplateMinUpgradableSchemaVersion(yaml),
+    summary.currentVersion,
+  );
+  if (floorRefusal) return { ...base, excludedReason: floorRefusal };
+
   try {
     const scripts = await getTemplateMigrationScripts(summary.name, source);
     const chain = selectMigrationChain(summary.installedVersion, summary.currentVersion, scripts);

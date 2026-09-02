@@ -1,15 +1,15 @@
 /**
  * Node major-version consistency across the four declaration sites (#2166,
- * ADR 0010). The minor deliberately floats on the Node 20 line, but the
+ * ADR 0010). The minor deliberately floats on the tracked LTS line, but the
  * MAJOR must agree everywhere or a native module compiled under one ABI can
  * be loaded under another — the "compiled against a different Node.js version"
  * crash that only surfaces at runtime on the box.
  *
  * Sources:
- *   - package.json     engines.node   (e.g. "20.x")
- *   - .nvmrc                           (e.g. "20")
- *   - .github/workflows/*.yml node-version (e.g. "20")
- *   - Dockerfile / Dockerfile.dev      FROM node:20-slim
+ *   - package.json     engines.node   (e.g. "22.x")
+ *   - .nvmrc                           (e.g. "22")
+ *   - .github/workflows/*.yml node-version (e.g. "22")
+ *   - Dockerfile / Dockerfile.dev      FROM node:22-slim
  *
  * This test is the checklist for a Node-line bump: move all four together or
  * CI goes red.
@@ -95,7 +95,7 @@ describe('Node major version consistency (#2166, ADR 0010)', () => {
       mismatches,
       `Node major mismatch (package.json engines = ${expected}):\n  ${mismatches.join('\n  ')}\n\n` +
       'All four sources (package.json / .nvmrc / workflows / Dockerfiles) must share the same Node ' +
-      'major or a native module compiled under one ABI can crash under another. See assists/adr-0010-node-20-minor-floats.md.',
+      'major or a native module compiled under one ABI can crash under another. See assists/adr-0010-node-lts-line-minor-floats.md.',
     ).toEqual([]);
   });
 });

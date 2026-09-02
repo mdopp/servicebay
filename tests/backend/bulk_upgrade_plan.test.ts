@@ -28,12 +28,15 @@ import {
  * order, and — the half #2601 taught — who *cannot* roll out at all.
  */
 
-function yamlFor(opts: { version: number; deps?: string; tier?: string }): string {
+function yamlFor(opts: { version: number; deps?: string; tier?: string; minUpgradable?: number }): string {
   const lines = [
     'metadata:',
     '  annotations:',
     `    servicebay.schema-version: "${opts.version}"`,
   ];
+  if (opts.minUpgradable !== undefined) {
+    lines.push(`    servicebay.min-upgradable-schema-version: "${opts.minUpgradable}"`);
+  }
   if (opts.deps) lines.push(`    servicebay.dependencies: "${opts.deps}"`);
   if (opts.tier) lines.push(`    servicebay.tier: "${opts.tier}"`);
   return lines.join('\n') + '\n';
@@ -124,6 +127,51 @@ describe('planBulkTemplateUpgrade', () => {
     expect(plan.excluded[0].excludedReason).toContain('no script for v7→v8');
     // The healthy service is still runnable — one hole must not void the run.
     expect(plan.order[0].migrations.map(m => m.filename)).toEqual(['v1-to-v2.py']);
+  });
+
+  it('excludes a box below the declared upgrade floor, naming its version and the minimum (#2727)', async () => {
+    // The real media shape: the box is at v2, the template declares it is
+    // upgradable from v3 up. The preview must say THAT, not "no script for
+    // v2→v3" — the operator cannot write the missing script.
+    vi.mocked(getConfig).mockResolvedValue({
+      installedTemplates: {
+        media: { schemaVersion: 2, installedAt: '' },
+        immich: { schemaVersion: 1, installedAt: '' },
+      },
+    } as any);
+    vi.mocked(getTemplateYaml).mockImplementation(async (name: string) => (
+      name === 'media'
+        ? yamlFor({ version: 8, minUpgradable: 3 })
+        : yamlFor({ version: 2 })
+    ));
+    vi.mocked(getTemplateMigrationScripts).mockImplementation(async (name: string) => (
+      name === 'media'
+        ? [migration(3, 4), migration(4, 5), migration(5, 6), migration(6, 7), migration(7, 8)]
+        : [migration(1, 2)]
+    ));
+
+    const plan = await planBulkTemplateUpgrade();
+
+    expect(plan.order.map(o => o.name)).toEqual(['immich']);
+    expect(plan.excluded).toHaveLength(1);
+    expect(plan.excluded[0].name).toBe('media');
+    const reason = plan.excluded[0].excludedReason!;
+    expect(reason).toContain('recorded at schema-version v2');
+    expect(reason).toContain('v3 or newer');
+    expect(reason).not.toContain('no script for');
+  });
+
+  it('lets a box at the declared floor upgrade normally', async () => {
+    vi.mocked(getConfig).mockResolvedValue({
+      installedTemplates: { media: { schemaVersion: 3, installedAt: '' } },
+    } as any);
+    vi.mocked(getTemplateYaml).mockResolvedValue(yamlFor({ version: 4, minUpgradable: 3 }));
+    vi.mocked(getTemplateMigrationScripts).mockResolvedValue([migration(3, 4)]);
+
+    const plan = await planBulkTemplateUpgrade();
+
+    expect(plan.excluded).toEqual([]);
+    expect(plan.order[0].migrations.map(m => m.filename)).toEqual(['v3-to-v4.py']);
   });
 
   it('reports the migration scripts each service will actually run', async () => {

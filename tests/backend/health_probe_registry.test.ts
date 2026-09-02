@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { registeredProbeTypes, getProbe } from '@/lib/health/probes/registry';
+import { getProbe } from '@/lib/health/probes/registry';
 import '@/lib/health/probes';
 
 describe('Probe registry (#592)', () => {
@@ -24,9 +24,8 @@ describe('Probe registry (#592)', () => {
   ];
 
   it('every legacy check type has a probe registered', () => {
-    const registered = new Set(registeredProbeTypes());
     for (const t of EXPECTED_TYPES) {
-      expect(registered.has(t as never), `missing probe: ${t}`).toBe(true);
+      expect(getProbe(t as never), `missing probe: ${t}`).toBeDefined();
     }
   });
 
@@ -39,7 +38,6 @@ describe('Probe registry (#592)', () => {
   // registry can execute a stored script row, whichever entry point produced
   // it. Do not re-add an eval-shaped probe to satisfy this list.
   it('has no probe for the removed script type', () => {
-    expect(registeredProbeTypes()).not.toContain('script');
     expect(getProbe('script' as never)).toBeUndefined();
   });
 

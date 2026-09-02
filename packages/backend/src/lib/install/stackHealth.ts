@@ -6,9 +6,8 @@
  * service-health poller from #626).
  *
  * Used by:
- *   - The cross-stack dependency gate (`stackRunner.canInstall`) —
- *     refuses to install a stack whose declared dependencies aren't
- *     all `ready`.
+ *   - The cross-stack dependency gate — refuses to install a stack
+ *     whose declared dependencies aren't all `ready`.
  *   - Phase 5C's tier-status gate — feature-stack installs are
  *     blocked when any `tier: core` stack reports `ready: false`.
  *
@@ -102,8 +101,8 @@ export interface DegradedCoreEntry {
 /**
  * Scan every stack whose manifest declares `tier: core` and return the
  * subset that isn't `health.ready === true`. Used by:
- *   - `installStack` to refuse feature-stack installs when core is
- *     degraded (#635 / Phase 5C tier gate).
+ *   - The stack-install tier gate, to refuse feature-stack installs
+ *     when core is degraded (#635 / Phase 5C tier gate).
  *   - `<CoreHealthBanner>` to show what's broken with click-through
  *     to diagnose actions.
  */
