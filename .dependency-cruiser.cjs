@@ -20,8 +20,9 @@
  *     `public/`, config + test files) that are never statically imported.
  *   - `one-renderer` — `template/render.ts` itself, the one module allowed to
  *     import mustache.
- *   - `no-test-from-prod` / `service-manager-single-mutation-path` — a `from`
- *     filter that says which side of the boundary the rule applies to.
+ *   - `no-test-from-prod` / `service-manager-single-mutation-path` /
+ *     `npm-api-only-from-lib-npm` — a `from` filter that says which side of
+ *     the boundary the rule applies to.
  *
  * If a future rule does ship a debt carve-out, list it here with its date and
  * drop entries as they are fixed; when its list empties, delete the `pathNot`.
@@ -119,6 +120,18 @@ module.exports = {
                 ],
             },
             to: { path: '^node_modules/mustache(/|$)' },
+        },
+        {
+            name: 'npm-api-only-from-lib-npm',
+            severity: 'error',
+            comment:
+                'Only lib/npm/ may fetch NPM\'s admin API (#2731). `lib/npm/http.ts` is the one ' +
+                'transport to `/api/nginx/...`; every caller goes through the typed client next to it ' +
+                '(proxyHosts / certs / accessLists) so URL shapes, timeouts and error handling do not ' +
+                'fork across routes, probes and MCP tools again. A raw `fetch` that re-derives the URL ' +
+                'is caught by the sibling invariant (scripts/invariants/npmApiLiterals.ts).',
+            from: { pathNot: '^packages/backend/src/lib/npm/' },
+            to: { path: '^packages/backend/src/lib/npm/http\\.ts$' },
         },
         {
             name: 'no-test-from-prod',

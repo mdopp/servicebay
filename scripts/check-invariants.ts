@@ -28,6 +28,7 @@ import path from 'node:path';
 
 import { auditHealthCheckIdLifecycle } from './invariants/healthCheckIdLifecycle';
 import { auditAssistCatalogSingleSource } from './invariants/assistCatalogSingleSource';
+import { auditNpmApiLiterals } from './invariants/npmApiLiterals';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const SRC = path.join(REPO_ROOT, 'packages', 'frontend', 'src');
@@ -1179,6 +1180,15 @@ async function checkHealthCheckIdLifecycle() {
     measurements.push(...found.measurements);
 }
 
+// 8e. Only lib/npm/ talks to NPM's admin API (#2731). depcruise keeps the
+// transport import-private; this catches the bare `fetch` that re-derives the
+// URL. See scripts/invariants/npmApiLiterals.ts.
+async function checkNpmApiLiterals() {
+    const found = await auditNpmApiLiterals({ frontendSrc: SRC, backendSrc: BACKEND_SRC });
+    violations.push(...found.violations);
+    measurements.push(...found.measurements);
+}
+
 // ---------------------------------------------------------------------------
 // 9. docs/ARCHITECTURE_INVARIANTS.md's numbers are generated, not typed.
 //
@@ -1284,6 +1294,7 @@ async function main() {
         checkMcpAuditRedaction(),
         checkMcpApprovalPollability(),
         checkHealthCheckIdLifecycle(),
+        checkNpmApiLiterals(),
         syncOrCheckThresholdDoc(),
     ]);
 

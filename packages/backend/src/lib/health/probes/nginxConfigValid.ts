@@ -20,6 +20,7 @@
 
 import { registerProbe } from './registry';
 import { resolveNpmAdmin, getNpmToken } from '@/lib/npm/client';
+import { listProxyHosts } from '@/lib/npm/proxyHosts';
 
 type Payload = { status: 'ok' | 'fail' | 'info'; detail: string; hint?: string; hostId?: number; domain?: string };
 
@@ -70,14 +71,9 @@ async function resolveHostDomain(node: string, hostId: number): Promise<string |
     if (admin.kind !== 'ok') return undefined;
     const token = await getNpmToken(admin.apiUrl);
     if (!token) return undefined;
-    const res = await fetch(`${admin.apiUrl}/api/nginx/proxy-hosts`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(6000),
-    });
-    if (!res.ok) return undefined;
-    const hosts = (await res.json()) as Array<{ id?: number; domain_names?: string[] }>;
-    if (!Array.isArray(hosts)) return undefined;
-    const host = hosts.find(h => h.id === hostId);
+    const res = await listProxyHosts(admin.apiUrl, token, { timeoutMs: 6000 });
+    if (!res.ok || !Array.isArray(res.data)) return undefined;
+    const host = res.data.find(h => h.id === hostId);
     return host?.domain_names?.[0];
   } catch {
     return undefined;

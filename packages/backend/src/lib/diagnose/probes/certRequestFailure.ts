@@ -29,6 +29,7 @@ import { agentManager } from '@/lib/agent/manager';
 import { getConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
+import { listCertificates, renewCertificate } from '@/lib/npm/certs';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
 import { HealthStore } from '@/lib/health/store';
 import { parseLetsencryptTail } from '@/lib/health/probes/letsencryptLogParser';
@@ -153,15 +154,11 @@ async function findCertId(
   domain: string,
 ): Promise<{ certId: number } | { error: ProbeActionResult }> {
   try {
-    const res = await fetch(`${adminUrl}/api/nginx/certificates`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(8_000),
-    });
+    const res = await listCertificates(adminUrl, token, { timeoutMs: 8_000 });
     if (!res.ok) {
       return { error: { ok: false, message: `NPM returned HTTP ${res.status} listing certificates.`, refresh: false } };
     }
-    const certs = await res.json() as Array<{ id?: number; domain_names?: string[] }>;
-    for (const c of certs) {
+    for (const c of res.data) {
       if ((c.domain_names ?? []).includes(domain) && typeof c.id === 'number') {
         return { certId: c.id };
       }
@@ -200,14 +197,9 @@ async function retryRequest({ node, itemId }: { node: string; itemId?: string })
   const certId = found.certId;
 
   try {
-    const res = await fetch(`${adminUrl}/api/nginx/certificates/${certId}/renew`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(60_000),
-    });
+    const res = await renewCertificate(adminUrl, token, certId, { timeoutMs: 60_000 });
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      logger.warn('diagnose:cert_request_failure', `Retry id=${certId} (${itemId}) returned HTTP ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn('diagnose:cert_request_failure', `Retry id=${certId} (${itemId}) returned HTTP ${res.status}: ${res.body.slice(0, 200)}`);
       return {
         ok: false,
         message: `NPM returned HTTP ${res.status}. Open NPM admin → SSL Certificates for the live error, or run letsdebug.net to confirm port 80 is publicly reachable.`,

@@ -850,7 +850,7 @@ export async function getTemplateYaml(name: string, source?: string): Promise<st
   }
 }
 
-/** NPM proxy host settings passed to POST /api/nginx/proxy-hosts */
+/** NPM proxy host settings the provisioning kernel (`lib/reverseProxy/proxyHostProvisioning`) forwards to NPM on create */
 export interface ProxyConfig {
   allow_websocket_upgrade?: boolean;
   block_exploits?: boolean;

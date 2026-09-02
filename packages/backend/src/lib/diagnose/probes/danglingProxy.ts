@@ -8,9 +8,9 @@
  * service is alive and only its published port moved.
  *
  * itemId is the host's primary domain (server_name from the digital
- * twin). The action handler queries NPM's GET /api/nginx/proxy-hosts
- * to map the domain back to NPM's numeric id, then DELETEs (or PUTs)
- * by id. Earlier versions tried to read the id straight from the digital
+ * twin). The action handler looks the domain up in NPM's proxy-host
+ * list (`lib/npm/proxyHosts`) to map it back to NPM's numeric id, then
+ * DELETEs (or PUTs) by id. Earlier versions tried to read the id straight from the digital
  * twin (`server._id`), but the agent doesn't actually populate that
  * field — twin proxy entries come from parsing nginx config files
  * on disk, which don't carry NPM's primary key. Looking the id up
@@ -28,6 +28,7 @@ import { getConfig } from '@/lib/config';
 import { getNodeTwin } from '@/lib/store/repository';
 import { logger } from '@/lib/logger';
 import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
+import { deleteProxyHost, findProxyHostByDomain, updateProxyHost } from '@/lib/npm/proxyHosts';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
 import {
   classifyDanglingRoute,
@@ -51,24 +52,9 @@ interface NpmProxyHostRef {
  * request fails.
  */
 async function resolveProxyHost(adminUrl: string, token: string, domain: string): Promise<NpmProxyHostRef | null> {
-  try {
-    const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts?expand=owner`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    const hosts = await res.json() as Array<NpmProxyHostRef & { domain_names?: string[] }>;
-    if (!Array.isArray(hosts)) return null;
-    for (const h of hosts) {
-      const names = h.domain_names ?? [];
-      if (names.includes(domain) && typeof h.id === 'number') {
-        return { id: h.id, forward_host: h.forward_host, forward_port: h.forward_port };
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  const h = await findProxyHostByDomain(adminUrl, token, domain, { expand: ['owner'], timeoutMs: 8000 });
+  if (!h || typeof h.id !== 'number') return null;
+  return { id: h.id, forward_host: h.forward_host, forward_port: h.forward_port };
 }
 
 /**
@@ -242,15 +228,9 @@ async function performProxyHostRepoint(
   const from = `${host.forward_host ?? '?'}:${host.forward_port ?? '?'}`;
   const to = `${patch.forward_host ?? host.forward_host ?? '?'}:${patch.forward_port}`;
   try {
-    const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts/${host.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(patch),
-      signal: AbortSignal.timeout(8000),
-    });
+    const res = await updateProxyHost(adminUrl, token, host.id, patch, { timeoutMs: 8000 });
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      logger.warn('diagnose:dangling_proxy', `PUT id=${host.id} (${domain}) returned HTTP ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn('diagnose:dangling_proxy', `PUT id=${host.id} (${domain}) returned HTTP ${res.status}: ${res.body.slice(0, 200)}`);
       return {
         ok: false,
         message: `NPM returned HTTP ${res.status} when repointing ${domain} to ${to}.`,
@@ -282,14 +262,9 @@ async function performProxyHostDelete(
   itemId: string,
 ): Promise<ProbeActionResult> {
   try {
-    const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(8000),
-    });
+    const res = await deleteProxyHost(adminUrl, token, id, { timeoutMs: 8000 });
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      logger.warn('diagnose:dangling_proxy', `DELETE id=${id} (${itemId}) returned HTTP ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn('diagnose:dangling_proxy', `DELETE id=${id} (${itemId}) returned HTTP ${res.status}: ${res.body.slice(0, 200)}`);
       return {
         ok: false,
         message: `NPM returned HTTP ${res.status} when deleting ${itemId}.`,

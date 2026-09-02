@@ -8,7 +8,7 @@
  *
  * The ground truth already exists in NPM (it records nginx_err in
  * proxy_host.meta in its database.sqlite, and mirrors it into the
- * GET /api/nginx/proxy-hosts response), but nothing surfaced it — this
+ * proxy-host list its admin API returns), but nothing surfaced it — this
  * probe reads NPM's host list and lights up every host whose nginx_online
  * is false, with the nginx_err text and a per-row "Re-render route" action
  * that disable→enables the host to force NPM to regenerate + reload the
@@ -20,6 +20,7 @@
 
 import { logger } from '@/lib/logger';
 import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
+import { listProxyHosts, setProxyHostEnabled, type NpmProxyHost } from '@/lib/npm/proxyHosts';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
 
 const PROBE_ID = 'nginx_online_failed';
@@ -31,23 +32,15 @@ export interface NginxOnlineFailedResult {
   items?: ProbeItem[];
 }
 
-interface NpmHost {
-  id?: number;
-  domain_names?: string[];
-  meta?: { nginx_online?: boolean; nginx_err?: string | null };
-}
+type NpmHost = NpmProxyHost;
 
 /** Fetch NPM's proxy host list. Returns null on any failure so the probe
  *  degrades to `info` instead of a false `ok`. */
 async function fetchNpmHosts(adminUrl: string, token: string): Promise<NpmHost[] | null> {
   try {
-    const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(8000),
-    });
+    const res = await listProxyHosts(adminUrl, token, { timeoutMs: 8000 });
     if (!res.ok) return null;
-    const hosts = await res.json();
-    return Array.isArray(hosts) ? (hosts as NpmHost[]) : null;
+    return Array.isArray(res.data) ? res.data : null;
   } catch {
     return null;
   }
@@ -161,18 +154,12 @@ async function performRerender(
   id: number,
   itemId: string,
 ): Promise<ProbeActionResult> {
-  const call = (path: string) =>
-    fetch(`${adminUrl}/api/nginx/proxy-hosts/${id}/${path}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(8000),
-    });
+  const call = (enabled: boolean) => setProxyHostEnabled(adminUrl, token, id, enabled, { timeoutMs: 8000 });
   try {
-    await call('disable');
-    const enableRes = await call('enable');
+    await call(false);
+    const enableRes = await call(true);
     if (!enableRes.ok) {
-      const body = await enableRes.text().catch(() => '');
-      logger.warn('diagnose:nginx_online_failed', `re-enable id=${id} (${itemId}) returned HTTP ${enableRes.status}: ${body.slice(0, 200)}`);
+      logger.warn('diagnose:nginx_online_failed', `re-enable id=${id} (${itemId}) returned HTTP ${enableRes.status}: ${enableRes.body.slice(0, 200)}`);
       return { ok: false, message: `NPM returned HTTP ${enableRes.status} re-enabling ${itemId}.`, refresh: true };
     }
     // Read back the live status so the toast tells the operator whether the

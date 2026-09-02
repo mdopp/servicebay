@@ -159,11 +159,14 @@ paths included, because there is no separate security budget for it.
 | `lib → dashboards` imports | `.dependency-cruiser.cjs:lib-no-import-dashboards` |
 | Circular dependency cycles | `.dependency-cruiser.cjs:no-circular` (#601 — final cycle broken by extracting `verifyNodeConnection` out of `nodes.ts`) |
 | Forks of the Mustache renderer | `.dependency-cruiser.cjs:one-renderer` (#599) |
+| NPM's admin API spoken to outside `lib/npm/` | `.dependency-cruiser.cjs:npm-api-only-from-lib-npm` + `scripts/invariants/npmApiLiterals.ts` (#2731) |
 | Bypasses of `ServiceManager` facade | `.dependency-cruiser.cjs:service-manager-single-mutation-path` |
 
 **Twin singleton fan-in.** Ratcheted to 0 — every read goes through `packages/backend/src/lib/store/repository.ts`; the store itself, the repository, and the backend `server.ts` bootstrap are the only allowed call sites.
 
 **Circular deps.** Every new cycle fails CI immediately.
+
+**One NPM client (#2731).** Nginx Proxy Manager's admin API (`/api/nginx/proxy-hosts`, `/certificates`, `/access-lists`) is spoken to from `packages/backend/src/lib/npm/` only: `http.ts` is the transport (bearer, JSON, abort budget, never throws on an HTTP status), `proxyHosts.ts` / `certs.ts` / `accessLists.ts` the typed client, `client.ts` the discovery + login (#2730). The proxy-hosts orchestration (create-or-reconcile, cert acquisition, conf-file patching, persistence, health-check sync) is the kernel in `lib/reverseProxy/proxyHostProvisioning.ts`; the HTTP route and the MCP `create_proxy_route` / `remove_proxy_route` / `get_proxy_routes` tools are thin callers of it. Two gates, because one is blind: the depcruise rule keeps `lib/npm/http.ts` import-private (only `lib/npm/` may import it), and the grep invariant fails any `/api/nginx` literal in non-test source outside `lib/npm/` — a caller that re-derives the URL with a bare `fetch` never shows up in the import graph. Before #2731 that client existed eleven times (route, migration orchestrator, two health probes, four diagnose probes, MCP tools), each with its own timeout and error text. `/api/tokens` and `/api/users` are deliberately outside this rule: they are NPM's auth surface, owned by `lib/npm/client.ts`, the auth probe and the bootstrap rekey.
 
 **Which packages depcruise walks.** `check:deps` cruises `packages/api-client/src`, `packages/backend/src`, `packages/backup-worker/src` and `packages/frontend/src`. `packages/disk-import-worker/src` is **not** covered yet: adding it surfaces a real `no-circular` violation (`cli/main.ts` ⇄ `server/index.ts`, via the deliberate lazy `import('../server/index')` in serve mode), and breaking that cycle is its own change, not a config edit. Extend the root list in `package.json` once it is broken — never add an exemption to make the package pass.
 
@@ -219,6 +222,7 @@ These are enforced as depcruise rules:
 - **One mutation path per operation** — every deploy/delete/start/stop/restart/update goes through `ServiceManager`. Direct imports of `serviceLifecycle`/`serviceListing` from outside `packages/backend/src/lib/services` are forbidden.
 - **One renderer** — all Mustache rendering goes through `packages/backend/src/lib/template/render.ts` (post-#599). No exemptions remain: the `one-renderer` depcruise rule's `pathNot` list is `render.ts` alone, and the only other file in the repo importing `mustache` is `tests/backend/template_consistency.test.ts`. (This page claimed `install/runner.ts` and `stackInstall/*` were still exempt until #2427 — they had not been for some time.)
 - **One Digital Twin store** — singleton via `DigitalTwinStore.getInstance()`. Fan-in cap enforced by `check-invariants.ts`.
+- **One NPM client** — every `/api/nginx/*` call goes through `packages/backend/src/lib/npm/` (post-#2731). `npm-api-only-from-lib-npm` keeps the transport import-private; `scripts/invariants/npmApiLiterals.ts` catches the string-literal bypass depcruise cannot see.
 
 ### One assist-catalog source (#2701, ADR 0014)
 

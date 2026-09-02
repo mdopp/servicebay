@@ -35,6 +35,7 @@ import { agentManager } from '@/lib/agent/manager';
 import { getConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
+import { findProxyHostByDomain } from '@/lib/npm/proxyHosts';
 import { AUTHELIA_FORWARD_AUTH_SENTINEL } from '@/lib/stackInstall/forwardAuth';
 import {
   createLldapUser,
@@ -543,20 +544,11 @@ function realHostHasForwardAuth(node: string) {
     if (!adminUrl) return false;
     const token = await getNpmToken(adminUrl);
     if (!token) return false;
-    try {
-      const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts?expand=owner`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
-      });
-      if (!res.ok) return false;
-      const hosts = await res.json() as Array<{ domain_names?: string[]; advanced_config?: string }>;
-      if (!Array.isArray(hosts)) return false;
-      const entry = hosts.find(h => (h.domain_names ?? []).includes(fqdn));
-      const adv = entry?.advanced_config ?? '';
-      return adv.includes(AUTHELIA_FORWARD_AUTH_SENTINEL) || /auth_request\s+\/authelia/.test(adv);
-    } catch {
-      return false;
-    }
+    // `findProxyHostByDomain` answers null for "no such host" AND "could
+    // not read the table" — both mean "not gated" here.
+    const entry = await findProxyHostByDomain(adminUrl, token, fqdn, { expand: ['owner'], timeoutMs: HTTP_TIMEOUT_MS });
+    const adv = entry?.advanced_config ?? '';
+    return adv.includes(AUTHELIA_FORWARD_AUTH_SENTINEL) || /auth_request\s+\/authelia/.test(adv);
   };
 }
 

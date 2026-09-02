@@ -19,9 +19,9 @@ const calls = vi.hoisted(() => ({
   sync: [] as ({ removedDomains?: string[] } | undefined)[],
   config: { reverseProxy: { hosts: [] as { domain: string; forwardPort: number }[] } },
   updated: [] as unknown[],
-  fetches: [] as { path: string; method?: string }[],
-  deleteStatus: 200,
-  deleteBody: {} as Record<string, unknown>,
+  kernel: [] as string[],
+  removeResult: { kind: 'removed' } as Record<string, unknown>,
+  provisionResult: { kind: 'ok' } as Record<string, unknown>,
 }));
 
 vi.mock('@/lib/health/domainChecks', () => ({
@@ -32,8 +32,14 @@ vi.mock('@/lib/config', () => ({
   getConfig: async () => calls.config,
   updateConfig: async (patch: unknown) => { calls.updated.push(patch); },
 }));
-vi.mock('@/lib/auth/internalToken', () => ({ getInternalApiToken: () => 't' }));
 vi.mock('@/lib/stackInstall/forwardAuth', () => ({ AUTHELIA_FORWARD_AUTH_SENTINEL: '#auth' }));
+// #2731 — the tools call the provisioning kernel directly (no loopback HTTP);
+// the kernel owns the reconcile on its own success paths.
+vi.mock('@/lib/reverseProxy/proxyHostProvisioning', () => ({
+  provisionProxyHosts: async () => { calls.kernel.push('provision'); return calls.provisionResult; },
+  removeProxyHost: async () => { calls.kernel.push('remove'); return calls.removeResult; },
+  listLiveProxyHosts: async () => ({ kind: 'ok', node: 'box', hosts: [] }),
+}));
 
 interface CapturedTool {
   handler: (...args: unknown[]) => Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }>;
@@ -50,18 +56,10 @@ beforeEach(async () => {
   tools.clear();
   calls.sync = [];
   calls.updated = [];
-  calls.fetches = [];
+  calls.kernel = [];
   calls.config = { reverseProxy: { hosts: [{ domain: 'gone.dopp.cloud', forwardPort: 1 }] } };
-  calls.deleteStatus = 200;
-  calls.deleteBody = { removed: true };
-  vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
-    calls.fetches.push({ path: String(url), method: init?.method });
-    return {
-      ok: calls.deleteStatus < 400,
-      status: calls.deleteStatus,
-      json: async () => calls.deleteBody,
-    } as unknown as Response;
-  });
+  calls.removeResult = { kind: 'removed', domain: 'gone.dopp.cloud', id: 1 };
+  calls.provisionResult = { kind: 'ok', success: true, created: [], failed: [], certs: [], lanRestricted: [], nginxOffline: [], adminUrl: 'http://npm', node: 'box' };
   const { registerProxyTools } = await import('./proxyTools');
   registerProxyTools({ server: stubServer });
 });
@@ -79,13 +77,14 @@ describe('proxy-route mutations reconcile the domain checks (#2654)', () => {
   });
 
 
-  it('create_proxy_route delegates the reconcile to the POST endpoint (#2726)', async () => {
+  it('create_proxy_route delegates the reconcile to the provisioning kernel (#2726)', async () => {
     // #2726 removed `add_proxy_route`, so route creation has exactly one path:
-    // POST /api/system/nginx/proxy-hosts, which reconciles in route.ts. The tool
-    // must NOT reconcile a second time here, and must not write config itself.
-    calls.deleteBody = { created: ['new.dopp.cloud'], failed: [], certs: [] };
+    // `provisionProxyHosts` (the same kernel POST /api/system/nginx/proxy-hosts
+    // is a thin handler over), which reconciles itself. The tool must NOT
+    // reconcile a second time here, and must not write config itself.
+    calls.provisionResult = { ...calls.provisionResult, created: ['new.dopp.cloud'] };
     await call('create_proxy_route', { domain: 'new.dopp.cloud', forwardPort: 8080, exposure: 'public' });
-    expect(calls.fetches.some(f => f.method === 'POST')).toBe(true);
+    expect(calls.kernel).toEqual(['provision']);
     expect(calls.updated).toEqual([]);
     expect(calls.sync).toEqual([]);
   });
@@ -99,19 +98,18 @@ describe('proxy-route mutations reconcile the domain checks (#2654)', () => {
   });
 
   it('remove_proxy_route retires the check when NPM has no such host', async () => {
-    calls.deleteStatus = 404;
-    calls.deleteBody = { reason: 'not_found' };
+    calls.removeResult = { kind: 'not-found' };
     await call('remove_proxy_route', { domain: 'gone.dopp.cloud', removeNpmHost: true });
-    // The DELETE endpoint bailed before its own reconcile, so the tool does it,
+    // The kernel bailed before its own reconcile, so the tool does it,
     // and it must name the domain — the polled route table has not caught up.
     expect(calls.sync).toEqual([{ removedDomains: ['gone.dopp.cloud'] }]);
   });
 
-  it('a successful live removal delegates the reconcile to the DELETE endpoint', async () => {
+  it('a successful live removal delegates the reconcile to the kernel', async () => {
     await call('remove_proxy_route', { domain: 'gone.dopp.cloud', removeNpmHost: true });
-    expect(calls.fetches.some(f => f.method === 'DELETE')).toBe(true);
-    // No double reconcile here: /api/system/nginx/proxy-hosts DELETE is the one
-    // path every live removal takes and it reconciles there (route.ts).
+    expect(calls.kernel).toEqual(['remove']);
+    // No double reconcile here: `removeProxyHost` is the one path every live
+    // removal takes and it reconciles there (proxyHostProvisioning.ts).
     expect(calls.sync).toEqual([]);
   });
 });

@@ -32,6 +32,8 @@
 
 import { getConfig, updateConfig } from '../config';
 import { findNpmAdmin, getNpmToken, type NpmAdmin } from '../npm/client';
+import { bindCertToProxyHost, requestLetsEncryptCert } from '../npm/certs';
+import { listProxyHosts, updateProxyHost, type NpmProxyHost } from '../npm/proxyHosts';
 import { getNodeIds } from '../store/repository';
 import { ServiceManager } from '../services/ServiceManager';
 import { logger } from '../logger';
@@ -112,15 +114,9 @@ export interface MigrationResult {
 
 type NpmTarget = NpmAdmin;
 
-interface NpmHost {
-  id: number;
-  domain_names: string[];
-  forward_host?: string;
-  forward_port?: number;
-  forward_scheme?: string;
-  certificate_id?: number;
-  enabled?: boolean;
-}
+/** The proxy-host row as the migration reads it: `domain_names` is the
+ *  one field it rewrites, so it is required here. */
+type NpmHost = NpmProxyHost & { domain_names: string[] };
 
 interface NpmDeps {
   resolveNpm(nodeHint?: string): Promise<NpmTarget | null>;
@@ -142,72 +138,46 @@ async function resolveNpmTarget(nodeHint?: string): Promise<NpmTarget | null> {
 
 /**
  * Request a Let's Encrypt certificate via NPM and extract the issued cert ID.
+ * The ACME exchange blocks until LE either issues or times out; the client's
+ * default budget for it is generous for that reason.
  */
 async function npmRequestAndReturnCertId(baseUrl: string, token: string, domain: string): Promise<number> {
-  const res = await fetch(`${baseUrl}/api/nginx/certificates`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({
-      provider: 'letsencrypt',
-      domain_names: [domain],
-      meta: { dns_challenge: false },
-    }),
-    // ACME exchange blocks until LE either issues or times out; budget
-    // generously per the existing proxy-hosts/route precedent.
-    signal: AbortSignal.timeout(120_000),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`NPM cert-request HTTP ${res.status}: ${body.slice(0, 200)}`);
+  const r = await requestLetsEncryptCert(baseUrl, token, domain);
+  if (!r.ok) {
+    throw new Error(`NPM cert-request HTTP ${r.status}: ${r.body.slice(0, 200)}`);
   }
-  const data = await res.json() as { id?: number };
-  if (typeof data.id !== 'number') {
+  if (typeof r.data.id !== 'number') {
     throw new Error('NPM accepted the cert request but returned no id.');
   }
-  return data.id;
+  return r.data.id;
 }
 
 /**
  * Lazy-loaded NPM bindings — kept behind a `deps` arg so tests can pass
- * an in-memory fake without touching `fetch`. The real implementation
- * mirrors the existing patterns in
- * `src/app/api/system/nginx/proxy-hosts/route.ts`.
+ * an in-memory fake without touching the network. The real implementation
+ * is the `lib/npm` client (#2731), the same one the proxy-host
+ * provisioning kernel uses.
  */
 async function realNpmDeps(): Promise<NpmDeps> {
   return {
     resolveNpm: async (nodeHint) => resolveNpmTarget(nodeHint),
     getToken: (baseUrl) => getNpmToken(baseUrl),
     listHosts: async (baseUrl, token) => {
-      const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts?expand=owner,access_list,certificate`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) throw new Error(`NPM list-hosts HTTP ${res.status}`);
-      return (await res.json()) as NpmHost[];
+      const r = await listProxyHosts(baseUrl, token, { expand: ['owner', 'access_list', 'certificate'] });
+      if (!r.ok) throw new Error(`NPM list-hosts HTTP ${r.status}`);
+      return r.data.map(h => ({ ...h, domain_names: h.domain_names ?? [] }));
     },
     updateHost: async (baseUrl, token, id, patch) => {
-      const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(patch),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`NPM update-host ${id} HTTP ${res.status}: ${body.slice(0, 200)}`);
+      const r = await updateProxyHost(baseUrl, token, id, patch);
+      if (!r.ok) {
+        throw new Error(`NPM update-host ${id} HTTP ${r.status}: ${r.body.slice(0, 200)}`);
       }
     },
     requestCert: npmRequestAndReturnCertId,
     bindCert: async (baseUrl, token, hostId, certId) => {
-      const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts/${hostId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ certificate_id: certId, ssl_forced: true, http2_support: true, hsts_enabled: false }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`NPM cert-bind cert=${certId} host=${hostId} HTTP ${res.status}: ${body.slice(0, 200)}`);
+      const r = await bindCertToProxyHost(baseUrl, token, hostId, certId);
+      if (!r.ok) {
+        throw new Error(`NPM cert-bind cert=${certId} host=${hostId} HTTP ${r.status}: ${r.body.slice(0, 200)}`);
       }
     },
   };

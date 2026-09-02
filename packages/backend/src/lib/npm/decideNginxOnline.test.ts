@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideNginxOnline } from './route';
+import { decideNginxOnline } from './proxyHosts';
 
 // #2156 — after NPM returns HTTP 200 for a created host, the caller reads
 // the live meta.nginx_online and flags the step when nginx refused the conf.

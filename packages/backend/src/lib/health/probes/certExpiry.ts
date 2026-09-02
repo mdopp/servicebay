@@ -26,8 +26,8 @@
  */
 
 import { registerProbe } from './registry';
-import { fetchProxyHostBindings, isCertOrphaned, type ProxyHostBindings } from './npmAdmin';
 import { resolveNpmAdmin, getNpmToken } from '@/lib/npm/client';
+import { fetchProxyHostBindings, isCertOrphaned, listCertificates, type NpmCertificate, type ProxyHostBindings } from '@/lib/npm/certs';
 
 /**
  * The action ids a `cert_expiry` item may carry. Single source of truth:
@@ -44,7 +44,7 @@ export const CERT_EXPIRY_ACTION_IDS = {
 
 export type CertExpiryActionId = (typeof CERT_EXPIRY_ACTION_IDS)[keyof typeof CERT_EXPIRY_ACTION_IDS];
 
-interface NpmCert { id: number; provider?: string; domain_names?: string[]; expires_on?: string; }
+type NpmCert = NpmCertificate;
 interface CertItem { id: string; label: string; detail: string; status: 'warn' | 'fail'; actionIds: CertExpiryActionId[]; }
 
 type Payload = { status: 'ok' | 'warn' | 'fail' | 'info'; detail: string; hint?: string; items?: CertItem[] };
@@ -119,12 +119,9 @@ registerProbe({
 
       let certs: NpmCert[];
       try {
-        const res = await fetch(`${adminUrl}/api/nginx/certificates`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(6000),
-        });
+        const res = await listCertificates(adminUrl, token, { timeoutMs: 6000 });
         if (!res.ok) return encode({ status: 'info', detail: `NPM certificates API returned HTTP ${res.status}.` });
-        certs = (await res.json()) as NpmCert[];
+        certs = res.data;
       } catch (e) {
         return encode({ status: 'info', detail: `Could not list NPM certificates: ${e instanceof Error ? e.message : String(e)}` });
       }

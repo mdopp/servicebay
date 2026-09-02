@@ -29,7 +29,7 @@ import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
 import { HealthStore } from '@/lib/health/store';
 import { CERT_EXPIRY_ACTION_IDS } from '@/lib/health/probes/certExpiry';
-import { classifyCertBinding } from '@/lib/health/probes/npmAdmin';
+import { classifyCertBinding, deleteCertificate, renewCertificate } from '@/lib/npm/certs';
 import { registerRefreshNow } from './refreshHealthCheck';
 
 const PROBE_ID = 'cert_expiry';
@@ -44,8 +44,8 @@ export interface CertExpiryResult {
 
 /** Reader: surfaces the latest persisted `cert_expiry` health-check
  *  result. Items carry the numeric NPM cert id encoded by the runner;
- *  `renew_cert` decodes it back to a `/api/nginx/certificates/<id>/renew`
- *  POST against NPM.  Diagnose route used to call this with
+ *  `renew_cert` decodes it back to a certificate-renew call against NPM
+ *  (`lib/npm/certs`).  Diagnose route used to call this with
  *  `(nodeName)` — the arg is now unused because the singleton check
  *  captures the node via its `nodeName` field. */
 export async function checkCertExpiry(): Promise<CertExpiryResult> {
@@ -153,14 +153,9 @@ async function renewCert({
 
 async function performRenew(adminUrl: string, token: string, itemId: string): Promise<ProbeActionResult> {
   try {
-    const res = await fetch(`${adminUrl}/api/nginx/certificates/${itemId}/renew`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(60_000),
-    });
+    const res = await renewCertificate(adminUrl, token, itemId, { timeoutMs: 60_000 });
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      logger.warn('diagnose:cert_expiry', `Renew id=${itemId} returned HTTP ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn('diagnose:cert_expiry', `Renew id=${itemId} returned HTTP ${res.status}: ${res.body.slice(0, 200)}`);
       return {
         ok: false,
         message: `NPM returned HTTP ${res.status}. The cert_request_failure probe shows the certbot log tail with the categorised cause (port-80 / DNS / CAA / rate-limit).`,
@@ -223,14 +218,9 @@ async function performCertDelete(
   domains: string[],
 ): Promise<ProbeActionResult> {
   try {
-    const res = await fetch(`${adminUrl}/api/nginx/certificates/${itemId}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(8000),
-    });
+    const res = await deleteCertificate(adminUrl, token, itemId, { timeoutMs: 8000 });
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      logger.warn('diagnose:cert_expiry', `DELETE cert id=${itemId} returned HTTP ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn('diagnose:cert_expiry', `DELETE cert id=${itemId} returned HTTP ${res.status}: ${res.body.slice(0, 200)}`);
       return {
         ok: false,
         message: `NPM returned HTTP ${res.status} when deleting certificate ${itemId}.`,

@@ -28,10 +28,12 @@ import path from 'node:path';
 //   3. `run_check_now`'s diagnose branch drops `manual: true` → it "succeeds"
 //      and returns the STALE finding (#1709's distinction), the worst outcome
 //      of the three because it looks like it worked;
-//   4. the live-host DELETE path stops reconciling the auto-managed `domain:`
-//      checks, or reconciles without naming the removed domain → the polled
-//      route snapshot rebuilds the check the caller just retired and the 60s
-//      race in #2654 is back.
+//   4. the live-host removal path (`removeProxyHost` in
+//      lib/reverseProxy/proxyHostProvisioning.ts — since #2731 the kernel the
+//      DELETE route, the MCP tool and uninstall all call) stops reconciling
+//      the auto-managed `domain:` checks, or reconciles without naming the
+//      removed domain → the polled route snapshot rebuilds the check the
+//      caller just retired and the 60s race in #2654 is back.
 // ---------------------------------------------------------------------------
 export interface SourceRoots {
     /** `packages/frontend/src`. */
@@ -56,10 +58,10 @@ export async function auditHealthCheckIdLifecycle(roots: SourceRoots): Promise<A
     const check = 'health-check-id-lifecycle';
     const violations: AuditResult['violations'] = [];
     const measurements: string[] = [];
-    const [lookup, healthTools, proxyRoute] = await Promise.all([
+    const [lookup, healthTools, provisioning] = await Promise.all([
         path.join(roots.backendSrc, 'lib/health/checkLookup.ts'),
         path.join(roots.backendSrc, 'lib/mcp/tools/healthTools.ts'),
-        path.join(roots.frontendSrc, 'app/api/system/nginx/proxy-hosts/route.ts'),
+        path.join(roots.backendSrc, 'lib/reverseProxy/proxyHostProvisioning.ts'),
     ].map(f => readFile(f, 'utf-8').catch(() => '')));
     if (!lookup) {
         violations.push({
@@ -76,8 +78,8 @@ export async function auditHealthCheckIdLifecycle(roots: SourceRoots): Promise<A
     // enumerated instead of derived. The prefix constant itself is imported,
     // never spelled, so any `'diagnose:<word>'` string is a list forming.
     const enumeratedProbeIds = [...lookup.matchAll(/'diagnose:\w+'/g)].map(m => m[0]);
-    // The DELETE handler is everything after the exported DELETE, up to GET.
-    const deleteHandler = proxyRoute.split('export const DELETE')[1]?.split('export const GET')[0] ?? '';
+    // `removeProxyHost` is everything from its export up to the next one.
+    const removeHost = provisioning.split('export async function removeProxyHost')[1]?.split(/\nexport /)[0] ?? '';
 
     const rules: [ok: boolean, detail: string][] = [
         [/getDiagnoseChecksEnriched\s*\(/.test(lookup),
@@ -92,8 +94,8 @@ export async function auditHealthCheckIdLifecycle(roots: SourceRoots): Promise<A
             '`run_check_now` no longer dispatches the diagnose re-run with `manual: true`. Without it a reader probe re-displays its STORED report, so the tool reports success while returning the stale finding — worse than the 400 it replaced (#2655, #1709).'],
         [/getDiagnoseChecksEnriched\s*\(/.test(getChecksTool) && /HealthStore\.getChecks\s*\(/.test(getChecksTool),
             '`get_health_checks` no longer merges both the stored checks and the diagnose rows. The resolver classifies exactly those two sources; if the list tool reads a different set the two drift apart again (#2615/#2655).'],
-        [/syncDomainChecks\s*\(\s*\{\s*removedDomains/.test(deleteHandler),
-            'The DELETE handler in app/api/system/nginx/proxy-hosts/route.ts no longer reconciles the domain checks with `syncDomainChecks({ removedDomains: [...] })`. It is the one path every live-host removal takes; without the named domain the polled route snapshot rebuilds the check that was just retired, restoring the 60s read/write race (#2654).'],
+        [/syncDomainChecks\s*\(\s*\{\s*removedDomains/.test(removeHost),
+            '`removeProxyHost` in lib/reverseProxy/proxyHostProvisioning.ts no longer reconciles the domain checks with `syncDomainChecks({ removedDomains: [...] })`. It is the one path every live-host removal takes (DELETE route, MCP remove_proxy_route, uninstall — #2731); without the named domain the polled route snapshot rebuilds the check that was just retired, restoring the 60s read/write race (#2654).'],
     ];
 
     for (const [ok, detail] of rules) {
