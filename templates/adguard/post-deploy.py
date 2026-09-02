@@ -7,8 +7,9 @@ What this replaces (was hardcoded in src/lib/stackInstall/postInstall.ts):
 
 AdGuard's first-start config is pre-seeded by the wizard's mustache step
 (AdGuardHome.yaml.mustache lives in this directory). The bcrypt password
-hash is computed server-side via /api/system/keys/bcrypt and baked into
-that config. So this script has nothing to seed — it just surfaces the
+hash is computed server-side by the install manifest assembler
+(`lib/install/manifestAssembler.ts`, the `bcrypt`-typed variable path) and
+baked into that config. So this script has nothing to seed — it just surfaces the
 credential the operator needs for their first login...
 
 ...plus, since #2632, it reconciles the two values ServiceBay still owns
