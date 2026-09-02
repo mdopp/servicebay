@@ -6,17 +6,13 @@
 // component so Service → Containers (OperateContainersTab) renders the identical
 // layout and gains the "open terminal" action instead of a divergent DataTable.
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import dynamic from 'next/dynamic';
-import { Activity, Eraser, MoreVertical, RefreshCw, Terminal as TerminalIcon, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Activity, MoreVertical, RefreshCw, Terminal as TerminalIcon } from 'lucide-react';
 import type { EnrichedContainer } from '@servicebay/api-client';
 import { Button, Card, SectionHeading, StatusDot } from '@/components/ui';
 import { useContainerActions } from '@/hooks/useContainerActions';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
-import ContainerLogsPanel, { type ContainerLogsPanelData } from '@/components/ContainerLogsPanel';
-import type { TerminalRef } from '@/components/Terminal';
-
-const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: false });
+import ContainerDrawer, { toContainerDrawerData } from '@/components/ContainerDrawer';
 
 const CONNECT_TIMEOUT_MS = 15_000;
 
@@ -61,7 +57,6 @@ export default function ContainerList({ containers, groups, showParentBadge, ini
   const [drawerMode, setDrawerMode] = useState<'logs' | 'terminal' | null>(null);
   const [drawerContainer, setDrawerContainer] = useState<ContainerListItem | null>(null);
   const [handledInitial, setHandledInitial] = useState<string | null>(null);
-  const terminalRef = useRef<TerminalRef>(null);
 
   const explicit = groups !== undefined || containers !== undefined;
 
@@ -298,30 +293,6 @@ export default function ContainerList({ containers, groups, showParentBadge, ini
   };
 
   const grouped = groups !== undefined;
-  const drawerNode = drawerContainer?.nodeName && drawerContainer.nodeName !== 'Local'
-    ? drawerContainer.nodeName
-    : drawerContainer
-      ? 'Local'
-      : null;
-
-  const logsPanelData: ContainerLogsPanelData | null = drawerContainer
-    ? {
-        id: drawerContainer.id ?? '',
-        name: primaryName(drawerContainer),
-        image: drawerContainer.image,
-        state: drawerContainer.state,
-        status: drawerContainer.status,
-        created: drawerContainer.created,
-        ports: (drawerContainer.ports ?? []).map(p => ({
-          hostIp: p.hostIp,
-          hostPort: p.hostPort,
-          containerPort: p.containerPort ?? 0,
-          protocol: p.protocol,
-        })),
-        mounts: drawerContainer.mounts as ContainerLogsPanelData['mounts'],
-        hideMeta: true,
-      }
-    : null;
 
   return (
     <>
@@ -348,73 +319,11 @@ export default function ContainerList({ containers, groups, showParentBadge, ini
 
       {containerActionsOverlay}
 
-      {drawerMode && drawerContainer && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-background/80 backdrop-blur-sm">
-          <div className="w-full max-w-5xl h-full bg-surface border-l border-border shadow-2xl animate-in slide-in-from-right-10">
-            {drawerMode === 'logs' && logsPanelData ? (
-              <ContainerLogsPanel
-                container={logsPanelData}
-                nodeName={drawerNode ?? undefined}
-                onClose={closeDrawer}
-              />
-            ) : (
-              <div className="h-full flex flex-col bg-surface">
-                <div className="flex items-start justify-between px-6 py-4 border-b border-border bg-surface-2">
-                  <div>
-                    <p className="text-xs uppercase tracking-wider text-text-subtle">Terminal</p>
-                    <div className="flex items-center gap-3 text-text text-lg font-semibold">
-                      <TerminalIcon size={18} />
-                      <span>{primaryName(drawerContainer)}</span>
-                    </div>
-                    {drawerNode && (
-                      <div className="mt-2 inline-flex items-center gap-2 text-xs text-text-muted">
-                        <span className="uppercase tracking-wide">Node</span>
-                        <span className="px-2 py-0.5 rounded-full bg-surface-2 text-text-muted border border-border">{drawerNode}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => terminalRef.current?.clear()}
-                      className="!p-2 !rounded-full"
-                      title="Clear terminal"
-                    >
-                      <Eraser size={18} />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => terminalRef.current?.reconnect()}
-                      className="!p-2 !rounded-full"
-                      title="Reconnect"
-                    >
-                      <RefreshCw size={18} />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={closeDrawer}
-                      className="!p-2 !rounded-full"
-                      title="Close"
-                    >
-                      <X size={18} />
-                    </Button>
-                  </div>
-                </div>
-                <div className="flex-1 overflow-hidden">
-                  <DynamicTerminal
-                    ref={terminalRef}
-                    id={`container:${(drawerNode && drawerNode !== 'Local' ? drawerNode : 'local')}:${drawerContainer.id}`}
-                    showControls={false}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <ContainerDrawer
+        mode={drawerMode}
+        container={drawerContainer ? toContainerDrawerData(drawerContainer) : null}
+        onClose={closeDrawer}
+      />
     </>
   );
 }
