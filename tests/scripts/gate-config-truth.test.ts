@@ -626,3 +626,44 @@ describe('#2427 — the invariants doc states nothing that is wrong at HEAD', ()
     expect(twinRow).toContain(`| ${constant} |`);
   });
 });
+
+describe('#2723 — the orientation docs name no path that does not exist', () => {
+  /**
+   * The fifth way a config lies, and the cheapest to fix: prose. The two
+   * template-contract docs are what a template author reads first, and seven
+   * of their `src/…` citations pointed at the pre-workspace-split tree — the
+   * same stale-path shape #2379 fixed inside the gates, left standing in the
+   * docs that send people to those files. #2427 pinned this for
+   * `ARCHITECTURE_INVARIANTS.md`; the rule now covers the template docs too,
+   * with `src/`-rooted paths included so a bare `src/…` cannot slip past the
+   * prefix filter the way it did there.
+   */
+  const DOCS = ['docs/TEMPLATE_AUTHORING.md', 'docs/TEMPLATE_LOGGING.md'];
+  const CITATION = /`([\w./-]+\.(?:ts|tsx|cjs|mjs|json|css|md|yml|yaml|py|sh))`/g;
+  const REPO_ROOTED = /^(packages|scripts|docs|tests|templates|tools|assists|src)\//;
+  /** A `src/…` path not rooted in a workspace package — the pre-split spelling. */
+  const BARE_SRC = /(?<![\w/.-])src\/[\w./-]+\.(?:ts|tsx|cjs|mjs|json|css|md|yml|yaml|py|sh)/g;
+
+  it.each(DOCS)('%s — every repo path it cites in backticks exists', doc => {
+    const text = readFileSync(path.join(REPO_ROOT, doc), 'utf-8');
+    const cited = [...text.matchAll(CITATION)].map(m => m[1]).filter(p => REPO_ROOTED.test(p));
+    // Not vacuous: these docs do cite the code they describe.
+    expect(cited.length).toBeGreaterThan(1);
+    expect(cited.filter(p => !existsSync(path.join(REPO_ROOT, p)))).toEqual([]);
+  });
+
+  it.each(DOCS)('%s — no pre-workspace-split `src/…` path survives anywhere in it', doc => {
+    const text = readFileSync(path.join(REPO_ROOT, doc), 'utf-8');
+    // Catches the un-backticked ones too (a comment, a code fence), which the
+    // citation rule above cannot see.
+    expect([...text.matchAll(BARE_SRC)].map(m => m[0])).toEqual([]);
+  });
+
+  it('the bare-`src/` matcher would actually have caught the #2723 citations', () => {
+    // Mutation proof: green above must be earned, not an inert regex.
+    expect([...'see `src/lib/logger.ts` and `src/lib/template/apiVersions.ts`'.matchAll(BARE_SRC)])
+      .toHaveLength(2);
+    // …and it does not fire on the repointed spellings.
+    expect([...'`packages/backend/src/lib/logger.ts`'.matchAll(BARE_SRC)]).toEqual([]);
+  });
+});

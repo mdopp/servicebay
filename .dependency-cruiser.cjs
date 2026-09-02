@@ -9,16 +9,22 @@
  *
  * ## Ratchet exemptions
  *
- * Several rules ship with `pathNot` exclusions for the *current* set of
- * violators. These are documented debt — new violations still fail CI,
- * but existing ones don't make today's adoption a blocker. As each
- * offender is fixed, drop it from the exemption list. When the list is
- * empty, delete the `pathNot` entirely.
+ * **None (2026-09-02).** `npm run check:deps` is green with no debt carve-outs:
+ * the 2026-05-17 audit batch — 6 circular deps in core, 3 `lib → app` imports,
+ * and the forked Mustache renderer in `reconfigure-preview/route.ts` — has been
+ * paid off in full, and the `pathNot` lists that carried them are gone.
  *
- * Today's exemptions (2026-05-17, audit batch):
- *   - 6 circular deps in core (agent/executor ↔ executor, config ↔ registry, …)
- *   - 3 lib → app imports (stackInstall + mcp + install reach back into UI actions)
- *   - 1 fork of the Mustache renderer (reconfigure-preview/route.ts)
+ * The `pathNot` entries that remain below are **scoping, not debt**, so don't
+ * read them as an exemption backlog:
+ *   - `no-orphans` — framework-resolved files (Next.js App Router conventions,
+ *     `public/`, config + test files) that are never statically imported.
+ *   - `one-renderer` — `template/render.ts` itself, the one module allowed to
+ *     import mustache.
+ *   - `no-test-from-prod` / `service-manager-single-mutation-path` — a `from`
+ *     filter that says which side of the boundary the rule applies to.
+ *
+ * If a future rule does ship a debt carve-out, list it here with its date and
+ * drop entries as they are fixed; when its list empties, delete the `pathNot`.
  */
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {

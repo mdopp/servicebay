@@ -48,8 +48,8 @@ full ADR at the given path when it touches your service.
   on host networking. `assists/adr-0007-container-network-isolation-and-carveouts.md`
 - **0009** — the token & trust model between services (scoped, short-lived
   grants; no ambient authority). `assists/adr-0009-service-tokens-and-trust.md`
-- **0010** — the Node runtime tracks the Node 20 line, kept consistent across
-  all sources. `assists/adr-0010-node-20-minor-floats.md`
+- **0010** — the Node runtime tracks a single LTS line (currently Node 22), kept
+  consistent across all sources. `assists/adr-0010-node-lts-line-minor-floats.md`
 
 ## enforcedInvariants — mechanically checked, run the gates
 

@@ -107,6 +107,7 @@ this page came to assert a wrong largest-file name, a wrong file count, and a
 | Max file LOC (each source root) | `MAX_FILE_LOC` | 2,200 |
 | `as any` in security paths | `SECURITY_AS_ANY_BUDGET` | 0 |
 | `as any` in `packages/backend/src` outside security paths | `BACKEND_AS_ANY_BUDGET` | 24 |
+| `: any` annotations in `packages/backend/src` (security paths included) | `BACKEND_COLON_ANY_BUDGET` | 79 |
 | `executor.exec` template-literal call sites | `EXEC_TEMPLATE_LITERAL_MAX` | 0 |
 | `withApiHandler` adoption across `route.ts` files | `MIN_WITH_API_HANDLER_RATIO` | 100% |
 | `DigitalTwinStore.getInstance()` call sites | `TWIN_GETINSTANCE_MAX` | 0 |
@@ -138,6 +139,13 @@ _Generated from the constants — run `npm run check:invariants -- --write-docs`
 |---|---|
 | `as any` in security paths | `check-invariants.ts:SECURITY_AS_ANY_BUDGET` |
 | `as any` in `packages/backend/src` outside security paths | `check-invariants.ts:BACKEND_AS_ANY_BUDGET` |
+| `: any` annotations in `packages/backend/src` | `check-invariants.ts:BACKEND_COLON_ANY_BUDGET` (#2723) |
+
+**Both spellings are gated (#2723).** `as any` is the cast, `: any` the
+annotation; both erase the type, so budgeting one and not the other just moves
+the erasure to the cheaper spelling — which is where it had accumulated. The
+`: any` ratchet covers **all** of `packages/backend/src` (non-test), security
+paths included, because there is no separate security budget for it.
 
 **Security paths** are listed in the generated block above (`SECURITY_PATHS`). Non-test only. Ratchet target reached — the budget is 0, so any new cast in these paths fails CI. The list must stay repo-relative: it carried pre-workspace-split `src/...` paths until #2379, which made the check resolve zero files and pass vacuously. Since #2428 a listed path that does not resolve is itself a violation, so that cannot recur silently.
 
