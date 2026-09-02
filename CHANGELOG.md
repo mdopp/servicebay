@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.25.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.24.0...servicebay-v5.25.0) (2026-09-02)
+
+
+### Features
+
+* **templates:** say which boxes a template can still be upgraded from ([b1eff30](https://github.com/mdopp/servicebay/commit/b1eff30b202a90cd39ebeafc931f83b0ba3fe13b)), closes [#2727](https://github.com/mdopp/servicebay/issues/2727)
+
+
+### Bug Fixes
+
+* **docker:** drop the COPY of a frontend public dir that no longer exists ([308847f](https://github.com/mdopp/servicebay/commit/308847f53933a341cd687114148e6d43990209e8))
+* **docker:** say why the runtime user is root, and guard the reason ([a331141](https://github.com/mdopp/servicebay/commit/a331141e60e8df773a969fbc08392015a41eddc0)), closes [#2722](https://github.com/mdopp/servicebay/issues/2722)
+* **gates:** make the gate config and the orientation docs say what is true ([2e967ca](https://github.com/mdopp/servicebay/commit/2e967ca3fe3e2906fffacad49a36f5301a2acec5)), closes [#2723](https://github.com/mdopp/servicebay/issues/2723)
+* **templates:** move the requires-api citation fix to its source, the contract table ([c1e3ac0](https://github.com/mdopp/servicebay/commit/c1e3ac0883287904b2d26c2afe2b0eef8e12fc00))
+
 ## [5.24.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.23.0...servicebay-v5.24.0) (2026-08-31)
 
 
