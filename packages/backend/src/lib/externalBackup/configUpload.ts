@@ -11,7 +11,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { backupServiceToNas, type ServiceBackupResult } from './producer';
-import { getServiceManifest, SERVICE_BACKUP_MANIFESTS, type ServiceBackupManifest } from './serviceManifest';
+import { getServiceManifest, SERVICE_BACKUP_MANIFESTS, type ServiceBackupManifest } from '@servicebay/backup-manifest';
 
 /** Thrown for user-facing failures (bad args, abort) so the CLI can print a
  *  clean `error: <message>` instead of a stack trace. */

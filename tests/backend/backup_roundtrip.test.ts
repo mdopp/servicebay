@@ -29,7 +29,7 @@ import { buildServiceBackupTar } from '../../packages/backup-worker/src/engine/s
 import {
   getServiceManifest,
   type ServiceBackupManifest,
-} from '../../packages/backup-worker/src/engine/serviceManifest';
+} from '@servicebay/backup-manifest';
 import { safeTarExtract } from '@/lib/systemBackup';
 
 function tarPresent(): boolean {

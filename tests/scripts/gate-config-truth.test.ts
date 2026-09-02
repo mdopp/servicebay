@@ -22,8 +22,8 @@ import {
 import {
   SERVICE_BACKUP_MANIFESTS,
   getBackupGate,
-} from '../../packages/backend/src/lib/externalBackup/serviceManifest';
-import { SERVICE_BACKUP_MANIFESTS as WORKER_MANIFESTS } from '../../packages/backup-worker/src/engine/serviceManifest';
+} from '@servicebay/backup-manifest';
+import { SERVICE_BACKUP_MANIFESTS as WORKER_MANIFESTS } from '../../packages/backup-worker/src/index';
 
 /**
  * #2428 / #2429 / #2427 — the two ways a quality gate lies, and the doc that
@@ -501,16 +501,35 @@ describe('#2595 — a backup manifest gating on a name no template has is build-
     expect(unknownGateManifests(SERVICE_BACKUP_MANIFESTS, templateNames)).toEqual([]);
   });
 
-  it('the worker mirror gates identically — a divergence is the same defect', () => {
-    // The worker's copy is what actually SELECTS services for the nightly run
-    // (backupWorker/service.ts imports it, not the backend copy), so a gate that
-    // is right here and wrong there still loses the backup.
-    // Storage location too (#2596): a `volume` set on one side only would make
-    // the worker read a stacks path while the gate believes the named volume is
-    // covered — the same lie, one level down.
-    const shape = (m: { service: string; gateOn?: string; volume?: string; dataSubdir?: string }) =>
-      [m.service, m.gateOn ?? m.service, m.volume ?? null, m.dataSubdir ?? null];
-    expect(WORKER_MANIFESTS.map(shape)).toEqual(SERVICE_BACKUP_MANIFESTS.map(shape));
+  it('the worker reads the SAME manifest array, not a mirror of it (#2733)', () => {
+    // The worker's manifests are what actually SELECT services for the nightly
+    // run, so a gate that is right on the backend side and wrong on the worker
+    // side still loses the backup. Storage location too (#2596): a `volume` set
+    // on one side only would make the worker read a stacks path while the gate
+    // believes the named volume is covered — the same lie, one level down.
+    //
+    // Until #2733 the worker carried a hand-synced FORK of the manifest file and
+    // this case compared their shapes. Both sides now import
+    // `@servicebay/backup-manifest`, so the assertion is stronger and cheaper:
+    // it is one array object, and drift is not representable.
+    expect(WORKER_MANIFESTS).toBe(SERVICE_BACKUP_MANIFESTS);
+  });
+
+  it('no second copy of the manifest survives anywhere in the tree (#2733)', () => {
+    // The fork is only gone while nobody re-adds one "so the worker stays
+    // self-contained". A file that re-declares SERVICE_BACKUP_MANIFESTS outside
+    // the shared package is the regression, and it would make the case above
+    // green again the moment someone repoints an import at it.
+    const declaring = trackedFiles.filter(
+      f =>
+        /^packages\/.*\.ts$/.test(f) &&
+        // `git ls-files` still lists a file deleted in the working tree, so read
+        // only what is actually on disk — otherwise this case throws ENOENT on
+        // the very commit that removes the fork.
+        existsSync(path.join(REPO_ROOT, f)) &&
+        /export const SERVICE_BACKUP_MANIFESTS/.test(readFileSync(path.join(REPO_ROOT, f), 'utf-8')),
+    );
+    expect(declaring).toEqual(['packages/backup-manifest/src/index.ts']);
   });
 
   it('the three #2595 entries resolve to the templates that own their data dirs', () => {

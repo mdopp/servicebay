@@ -14,6 +14,7 @@ WORKDIR /app
 # Install dependencies based on the preferred package manager
 COPY package.json package-lock.json* ./
 COPY packages/api-client/package.json ./packages/api-client/package.json
+COPY packages/backup-manifest/package.json ./packages/backup-manifest/package.json
 COPY packages/backend/package.json ./packages/backend/package.json
 COPY packages/frontend/package.json ./packages/frontend/package.json
 COPY packages/disk-import-worker/package.json ./packages/disk-import-worker/package.json
@@ -68,6 +69,7 @@ COPY package.json package-lock.json* ./
 # (ssh2, better-sqlite3, node-pty, etc. after #767) silently drop out of
 # the runner image and the custom server crashes on first import.
 COPY packages/api-client/package.json ./packages/api-client/package.json
+COPY packages/backup-manifest/package.json ./packages/backup-manifest/package.json
 COPY packages/backend/package.json ./packages/backend/package.json
 COPY packages/frontend/package.json ./packages/frontend/package.json
 COPY packages/disk-import-worker/package.json ./packages/disk-import-worker/package.json

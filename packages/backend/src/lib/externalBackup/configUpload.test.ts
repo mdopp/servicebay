@@ -13,7 +13,7 @@ import {
   ConfigUploadError,
   type UploadIO,
 } from './configUpload';
-import { getServiceManifest } from './serviceManifest';
+import { getServiceManifest } from '@servicebay/backup-manifest';
 
 let tmpDirs: string[] = [];
 async function mkTmp(): Promise<string> {

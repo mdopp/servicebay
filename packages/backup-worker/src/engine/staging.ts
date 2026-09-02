@@ -24,7 +24,7 @@ import {
   applyStripRules,
   applyTransformRules,
   type ServiceBackupManifest,
-} from './serviceManifest';
+} from '@servicebay/backup-manifest';
 
 const execFileAsync = promisify(execFile);
 

@@ -1379,7 +1379,7 @@ export async function restoreSystemBackupSelection(archivePath: string, selectio
                 serviceConfigDir = path.join(stagingDir, 'service-data');
             }
             const { resolveServiceDataDir } = await import('./externalBackup/producer');
-            const { getServiceManifest } = await import('./externalBackup/serviceManifest');
+            const { getServiceManifest } = await import('@servicebay/backup-manifest');
             const { getExecutor } = await import('./executor');
 
             // Normalize selection: support both string[] (all files) and ServiceDataSelection[]

@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { stageServiceBackup, buildServiceBackupTar } from './staging';
-import { getServiceManifest, type ServiceBackupManifest } from './serviceManifest';
+import { getServiceManifest, type ServiceBackupManifest } from '@servicebay/backup-manifest';
 
 const execFileAsync = promisify(execFile);
 

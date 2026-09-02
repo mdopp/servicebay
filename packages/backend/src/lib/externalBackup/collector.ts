@@ -11,7 +11,7 @@
  */
 import { agentManager } from '../agent/manager';
 import { logger } from '../logger';
-import type { ServiceBackupManifest } from './serviceManifest';
+import type { ServiceBackupManifest } from '@servicebay/backup-manifest';
 
 // Runs inside the NPM container: a consistent snapshot of the live WAL-mode
 // /data/database.sqlite to /data/database.sqlite.sb-backup using sqlite3's online

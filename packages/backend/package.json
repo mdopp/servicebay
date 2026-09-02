@@ -5,6 +5,7 @@
   "description": "Server-side modules: agent, install, diagnose, network, store, etc. Phase 3.3 of #753.",
   "dependencies": {
     "@servicebay/api-client": "*",
+    "@servicebay/backup-manifest": "*",
     "@servicebay/disk-import-worker": "*",
     "better-sqlite3": "^13.0.3",
     "elkjs": "^0.12.0",

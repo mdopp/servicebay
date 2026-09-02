@@ -10,7 +10,7 @@
 // control plane stays thin (feedback_control_plane_vs_worker).
 
 // --- Engine + manifest ---
-export * from './engine/serviceManifest';
+export * from '@servicebay/backup-manifest';
 export * from './engine/staging';
 
 // --- Status-file contract (shared with servicebay) ---

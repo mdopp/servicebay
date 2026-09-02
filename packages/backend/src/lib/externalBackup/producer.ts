@@ -28,7 +28,7 @@ import {
   applyStripRules,
   applyTransformRules,
   type ServiceBackupManifest,
-} from './serviceManifest';
+} from '@servicebay/backup-manifest';
 // Re-exported for back-compat: the collector moved to its own module to break the
 // producer ↔ backupWorker/service import cycle (#1955).
 export { runBackupCollector } from './collector';

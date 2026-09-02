@@ -32,6 +32,7 @@ WORKDIR /app
 # `npm ci` resolves the workspace graph (same constraint as the main Dockerfile).
 COPY package.json package-lock.json* ./
 COPY packages/api-client/package.json ./packages/api-client/package.json
+COPY packages/backup-manifest/package.json ./packages/backup-manifest/package.json
 COPY packages/backend/package.json ./packages/backend/package.json
 COPY packages/frontend/package.json ./packages/frontend/package.json
 COPY packages/disk-import-worker/package.json ./packages/disk-import-worker/package.json

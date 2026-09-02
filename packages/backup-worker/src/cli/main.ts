@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url';
 import {
   getServiceManifest,
   type ServiceBackupManifest,
-} from '../engine/serviceManifest';
+} from '@servicebay/backup-manifest';
 import { buildServiceBackupTar } from '../engine/staging';
 import {
   STATUS_FILE,

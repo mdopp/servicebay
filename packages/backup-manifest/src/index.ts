@@ -1,11 +1,21 @@
 /**
  * The single source of truth for "what counts as per-service config" in the
- * FritzBox-NAS config-survival feature (#1190). Both the backup producer and
- * the `sb-config-upload` CLI consume this, so the include/exclude/strip rules
- * live in exactly one place.
+ * FritzBox-NAS config-survival feature (#1190). The backup producer, the
+ * `sb-config-upload` CLI, the restore/install/wipe paths AND the sandboxed
+ * `@servicebay/backup-worker` (which does the heavy staging in its own capped
+ * container) all consume this, so the include/exclude/strip rules live in
+ * exactly one place.
  *
- * Pure data + pure helpers — no I/O. The producer resolves these relative
- * paths against a service's on-disk data dir.
+ * Why a workspace package (#2733): the worker used to carry a hand-maintained
+ * fork of this file with a "keep the two in sync" header, because the sandbox
+ * rule is that the worker never imports the backend. That rule is about the
+ * backend's runtime — a dependency-free pure-data package is not the backend,
+ * and `@servicebay/api-client` is the precedent. One copy, imported by both
+ * sides; a drift-detector test is no longer needed because drift is no longer
+ * representable.
+ *
+ * Pure data + pure helpers — no I/O, no imports beyond `js-yaml`. The producer
+ * resolves these relative paths against a service's on-disk data dir.
  */
 import yaml from 'js-yaml';
 

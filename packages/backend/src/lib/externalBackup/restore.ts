@@ -25,7 +25,7 @@ import {
   resolveServiceDataDir,
   type ServiceBackupMeta,
 } from './producer';
-import { getServiceManifest, getConfigPaths } from './serviceManifest';
+import { getServiceManifest, getConfigPaths } from '@servicebay/backup-manifest';
 import { safeTarExtract, extractServiceConfigToNode } from '../systemBackup';
 import { getExecutor, type Executor } from '../executor';
 import { logger } from '../logger';
