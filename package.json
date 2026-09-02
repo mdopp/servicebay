@@ -12,7 +12,7 @@
     "predev": "node scripts/predev.mjs",
     "predev:frontend": "node scripts/predev.mjs",
     "dev": "fuser -k 3000/tcp || true && ASSIST_CATALOG_DIR=$PWD/assists tsx packages/backend/src/server.ts",
-    "dev:frontend": "fuser -k 3001/tcp || true && NEXT_PUBLIC_USE_MOCKS=1 next dev packages/frontend --port 3001",
+    "dev:frontend": "fuser -k 3001/tcp || true && next dev packages/frontend --port 3001",
     "build": "next build packages/frontend && node scripts/patch-routes-manifest.mjs && node scripts/build-server.mjs",
     "start": "NODE_ENV=production node dist-server/server.cjs",
     "lint": "eslint",
@@ -98,7 +98,6 @@
     "jsdom": "^30.0.1",
     "knip": "^6.33.0",
     "lint-staged": "^17.4.1",
-    "msw": "^2.15.0",
     "postcss": "^8.5.10",
     "tailwindcss": "^4",
     "tsx": "^4.23.12",
@@ -111,7 +110,6 @@
       "gofmt"
     ],
     "ignore": [
-      "packages/frontend/public/mockServiceWorker.js",
       "templates/*/config-ui/public/**"
     ],
     "ignoreExportsUsedInFile": true,
@@ -135,7 +133,6 @@
       "packages/frontend": {
         "entry": [
           "src/app/**/{page,layout,route,loading,error,not-found,template,default,global-error,sitemap,robots,manifest,opengraph-image,twitter-image,icon,apple-icon}.{ts,tsx}",
-          "src/mocks/browser.ts",
           "src/components/ui/index.ts"
         ]
       }
@@ -148,10 +145,5 @@
     },
     "postcss": "^8.5.10",
     "eslint-plugin-react-hooks": "^7.1.1"
-  },
-  "msw": {
-    "workerDirectory": [
-      "packages/frontend/public"
-    ]
   }
 }

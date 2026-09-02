@@ -34,7 +34,6 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const BUTANE_TEMPLATE = path.join(
   REPO_ROOT, 'tools', 'sb', 'internal', 'build', 'assets', 'fedora-coreos.bu',
 );
-const ENABLE_NVIDIA = path.join(REPO_ROOT, 'scripts', 'enable-nvidia.sh');
 
 const CDI_SCRIPT = '/usr/local/bin/install-nvidia-cdi.sh';
 const CDI_SERVICE = '/etc/systemd/system/install-nvidia-cdi.service';
@@ -281,12 +280,9 @@ describe('fedora-coreos.bu unit definitions for install-nvidia-cdi (#2668)', () 
   });
 });
 
-describe('scripts/enable-nvidia.sh (retrofit path)', () => {
-  it('stops the timer after generating CDI by hand', () => {
-    const body = fs.readFileSync(ENABLE_NVIDIA, 'utf-8');
-    const markerAt = body.indexOf('touch "$CDI_MARKER"');
-    const disableAt = body.indexOf('disable --now install-nvidia-cdi.timer');
-    expect(markerAt).toBeGreaterThan(-1);
-    expect(disableAt).toBeGreaterThan(markerAt);
-  });
-});
+// The retrofit path used to be `scripts/enable-nvidia.sh`, asserted here. The
+// script was deleted in #2729 (nothing in the shipping tree ran it) and its
+// know-how now lives in the assist `recipe-retrofit-nvidia-gpu-on-a-running-box`
+// — including the step this test guarded: after generating CDI by hand, disable
+// `install-nvidia-cdi.timer`, or it keeps logging a line a minute for work that
+// is already done (#2668).

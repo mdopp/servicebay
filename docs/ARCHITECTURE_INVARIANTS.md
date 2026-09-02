@@ -332,19 +332,17 @@ verbatim in the new file), so the plan above is now backed by a gate:
   gate prints the current top ten on a failure). The ratchet's job is only to
   guarantee the direction — it does not schedule the sweeps.
 
-### Component discovery + duplicate detection (#2354)
+### Duplicate detection (#2354)
 
-Two companions to the reuse rules above — *you can only reuse what you can
-find, and only extract what you can see*:
+A companion to the reuse rules above — *you can only extract what you can see*:
 
-- **Component catalog — `/dev/components`** (`packages/frontend/src/app/(dashboard)/dev/components/page.tsx`).
-  A living gallery that renders every `@/components/ui` primitive in its key
-  states, driven off the barrel. Lightweight in-app route (no Storybook — the
-  CLAUDE.md ethos of not adding a heavy dependency), gated **dev-only**: the
-  whole `(dashboard)` group already sits behind the single-admin session, and
-  the page additionally `notFound()`s under a production build. When you add a
-  primitive to `@/components/ui`, add its gallery entry here — the catalog test
-  (`tests/frontend/ComponentCatalog.test.tsx`) asserts one section per primitive.
+- **Component catalog — removed (#2729).** `/dev/components` was a living
+  gallery of every `@/components/ui` primitive, gated dev-only behind a
+  `notFound()`. Nothing linked to it and nobody opened it, so it rotted while
+  still costing a page, a test and a maintenance rule ("add your primitive's
+  gallery entry"). The barrel `packages/frontend/src/components/ui/index.ts` is
+  now the only discovery surface — read it to see what exists before writing a
+  new primitive. Do not reintroduce a second rendering surface for one reader.
 
 - **Frontend duplicate-JSX report — `npm run check:frontend-dup`**
   (`scripts/check-frontend-dup.ts`). A self-hosted copy-paste detector for

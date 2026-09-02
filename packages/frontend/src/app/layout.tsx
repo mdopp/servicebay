@@ -3,7 +3,6 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "@/providers/ToastProvider";
 import { DigitalTwinProvider } from "@/providers/DigitalTwinProvider";
-import MockProvider from "@/providers/MockProvider";
 import ServerIdentityWatcher from "@/components/ServerIdentityWatcher";
 import { getConfig } from "@/lib/config";
 import { getFirstNodeHostname } from "@/lib/store/repository";
@@ -58,14 +57,12 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <MockProvider>
-          <ToastProvider>
-            <DigitalTwinProvider>
-              <ServerIdentityWatcher />
-              {children}
-            </DigitalTwinProvider>
-          </ToastProvider>
-        </MockProvider>
+        <ToastProvider>
+          <DigitalTwinProvider>
+            <ServerIdentityWatcher />
+            {children}
+          </DigitalTwinProvider>
+        </ToastProvider>
       </body>
     </html>
   );
