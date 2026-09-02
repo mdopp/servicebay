@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getConfig, updateConfig, ProxyHostEntry } from '@/lib/config';
-import { getNodeTwins, getNodeTwin } from '@/lib/store/repository';
-import { ServiceManager } from '@/lib/services/ServiceManager';
+import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
 import { withApiHandler } from '@/lib/api/handler';
 import { logger } from '@/lib/logger';
 import { agentManager } from '@/lib/agent/manager';
@@ -99,124 +98,13 @@ interface ProxyHostRequest {
     };
 }
 
-interface NpmResolution {
-    /** URL to reach NPM API (from the servicebay backend) */
-    apiUrl: string;
-    /** Node name where NPM is running */
-    nodeName: string;
-    /**
-     * The IP address of the node where NPM runs.
-     * NPM is inside a container, so proxy_pass must use the host IP
-     * to reach services in other pods — NOT 127.0.0.1.
-     */
-    nodeIp: string;
-}
-
-/**
- * Resolve the NPM admin API URL and the node IP (for proxy_pass forward_host).
- *
- * NPM runs inside a podman container. From within that container, 127.0.0.1
- * is the pod's own loopback — it can NOT reach services in other pods.
- * The forward_host must be the node's LAN IP so NPM's proxy_pass can
- * reach vaultwarden, immich, home-assistant etc. on their host ports.
- */
-async function resolveNpm(nodeHint?: string): Promise<NpmResolution | null> {
-    const nodeNames = nodeHint ? [nodeHint] : Object.keys(getNodeTwins());
-    if (nodeNames.length === 0) nodeNames.push('Local');
-
-    for (const nodeName of nodeNames) {
-        const services = await ServiceManager.listServices(nodeName);
-        const nginxService = services.find(s =>
-            s.name === 'nginx' ||
-            (s.name.includes('nginx') && !s.name.startsWith('install-'))
-        );
-        if (!nginxService?.active) continue;
-
-        // Discover admin port from the running service's port mappings.
-        // NPM's admin UI listens on container port 81; find the host port mapped to it.
-        // Falls back to config or default if port info is unavailable.
-        const svc = nginxService as { ports?: { containerPort?: number; hostPort?: number }[] };
-        const adminMapping = svc.ports?.find(p => p.containerPort === 81);
-        let adminPort = adminMapping?.hostPort?.toString();
-        if (!adminPort) {
-            const config = await getConfig();
-            adminPort = config.templateSettings?.NGINX_ADMIN_PORT || '81';
-        }
-
-        // For the API call from our backend → NPM: use 127.0.0.1 if local
-        const apiHost = nodeName === 'Local' ? '127.0.0.1' : getNodeIp(nodeName);
-
-        // For NPM's proxy_pass → other services: always use the node's LAN IP
-        const nodeIp = getNodeIp(nodeName);
-
-        return {
-            apiUrl: `http://${apiHost}:${adminPort}`,
-            nodeName,
-            nodeIp,
-        };
-    }
-    return null;
-}
-
-function getNodeIp(nodeName: string): string {
-    const twin = getNodeTwin(nodeName);
-    // Prefer the first non-loopback IP
-    if (twin?.nodeIPs?.length) {
-        const lanIp = twin.nodeIPs.find(ip => !ip.startsWith('127.'));
-        if (lanIp) return lanIp;
-        return twin.nodeIPs[0];
-    }
-    return '127.0.0.1';
-}
-
-/**
- * Get an NPM API token. Tries credentials in order:
- * 1. Explicitly provided credentials (from wizard form)
- * 2. Stored credentials from config (config.reverseProxy.npm)
- * 3. NPM default credentials (admin@example.com / changeme)
- */
-async function getNpmToken(
-    baseUrl: string,
-    providedCredentials?: { email: string; password: string },
-): Promise<string | null> {
-    const candidates: { identity: string; secret: string }[] = [];
-
-    if (providedCredentials) {
-        candidates.push({ identity: providedCredentials.email, secret: providedCredentials.password });
-    }
-
-    // Stored credentials — set by Settings → Networking & Access → Reverse Proxy
-    try {
-        const config = await getConfig();
-        const stored = config.reverseProxy?.npm;
-        if (stored?.email && stored?.password) {
-            candidates.push({ identity: stored.email, secret: stored.password });
-        }
-    } catch {
-        // config not ready — fall through to defaults
-    }
-
-    // Always try default credentials last
-    candidates.push({ identity: 'admin@example.com', secret: 'changeme' });
-
-    for (const cred of candidates) {
-        try {
-            const res = await fetch(`${baseUrl}/api/tokens`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(cred),
-                signal: AbortSignal.timeout(5000),
-            });
-            if (res.ok) {
-                const data = await res.json();
-                return data.token;
-            }
-        } catch {
-            // try next
-        }
-    }
-    return null;
-}
+// NPM discovery is `findNpmAdmin({ requireActive: true })` at every handler
+// below: they all mutate NPM's tables (or read them to answer for the
+// running instance), and without a node hint the iteration must land on the
+// node whose NPM is actually up, not the first stale twin entry. `nodeIp` is
+// what a proxy host's forward_host must carry: from inside NPM's pod
+// 127.0.0.1 is NPM itself.
+const NPM_LOOKUP = { requireActive: true } as const;
 
 /** Name we use for the auto-managed LAN-only access list in NPM. The
  *  GET-then-POST flow keys off this exact string, so don't change it
@@ -1046,7 +934,7 @@ export const POST = withApiHandler({ tokenScope: 'mutate' }, async ({ request })
             return NextResponse.json({ error: 'No hosts provided' }, { status: 400 });
         }
 
-        const npm = await resolveNpm(node);
+        const npm = await findNpmAdmin({ node, ...NPM_LOOKUP });
         if (!npm) {
             return NextResponse.json({
                 error: 'Nginx Proxy Manager not found or not running',
@@ -1397,7 +1285,7 @@ export const DELETE = withApiHandler<undefined, z.infer<typeof DeleteQuery>>(
             return NextResponse.json({ error: 'domain query parameter is required' }, { status: 400 });
         }
 
-        const npm = await resolveNpm(node);
+        const npm = await findNpmAdmin({ node, ...NPM_LOOKUP });
         if (!npm) {
             return NextResponse.json({
                 error: 'Nginx Proxy Manager not found or not running',
@@ -1493,7 +1381,7 @@ export const GET = withApiHandler<undefined, z.infer<typeof GetQuery>>(
   { query: GetQuery, tokenScope: 'read' },
   async ({ query }) => {
     try {
-        const npm = await resolveNpm(query.node);
+        const npm = await findNpmAdmin({ node: query.node, ...NPM_LOOKUP });
         if (!npm) {
             return NextResponse.json({ error: 'Nginx Proxy Manager not found or not running' }, { status: 404 });
         }

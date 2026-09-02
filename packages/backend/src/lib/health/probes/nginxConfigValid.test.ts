@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Keep id→domain resolution inert by default; the parse/fail tests don't
 // depend on it, and individual tests override the NPM API fetch as needed.
-vi.mock('./npmAdmin', () => ({
-  findNpmAdminUrl: vi.fn(async () => ({ kind: 'url', url: 'http://localhost:81' })),
+vi.mock('@/lib/npm/client', () => ({
+  resolveNpmAdmin: vi.fn(async () => ({ kind: 'ok', apiUrl: 'http://localhost:81', nodeName: 'Local', nodeIp: '127.0.0.1' })),
   getNpmToken: vi.fn(async () => 'tok'),
 }));
 

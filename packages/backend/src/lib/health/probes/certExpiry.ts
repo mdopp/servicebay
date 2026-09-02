@@ -26,7 +26,8 @@
  */
 
 import { registerProbe } from './registry';
-import { findNpmAdminUrl, getNpmToken, fetchProxyHostBindings, isCertOrphaned, type ProxyHostBindings } from './npmAdmin';
+import { fetchProxyHostBindings, isCertOrphaned, type ProxyHostBindings } from './npmAdmin';
+import { resolveNpmAdmin, getNpmToken } from '@/lib/npm/client';
 
 /**
  * The action ids a `cert_expiry` item may carry. Single source of truth:
@@ -107,10 +108,12 @@ registerProbe({
   async run(check) {
     const node = check.nodeName ?? 'Local';
     try {
-      const admin = await findNpmAdminUrl(node);
+      // requireActive: false — the `active` flag is unreliable for the
+      // kube-deployed nginx pod (#496); the certificate fetch is the real check.
+      const admin = await resolveNpmAdmin({ node, requireActive: false });
       if (admin.kind === 'twin-not-ready') return encode({ status: 'info', detail: 'Digital twin not populated yet — check will retry on the next tick.' });
-      if (admin.kind === 'nginx-not-found') return encode({ status: 'info', detail: 'Nginx Proxy Manager not deployed — no certificates to check.' });
-      const adminUrl = admin.url;
+      if (admin.kind !== 'ok') return encode({ status: 'info', detail: 'Nginx Proxy Manager not deployed — no certificates to check.' });
+      const adminUrl = admin.apiUrl;
       const token = await getNpmToken(adminUrl);
       if (!token) return encode({ status: 'info', detail: 'Could not authenticate with NPM — skipping certificate check.' });
 

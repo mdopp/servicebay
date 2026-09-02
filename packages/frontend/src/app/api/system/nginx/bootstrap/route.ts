@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getConfig, updateConfig } from '@/lib/config';
-import { getNodeTwins, getNodeTwin } from '@/lib/store/repository';
-import { ServiceManager } from '@/lib/services/ServiceManager';
+import { findNpmAdmin, loginNpm, NPM_DEFAULT_CREDENTIALS } from '@/lib/npm/client';
 import { agentManager } from '@/lib/agent/manager';
 import { logger } from '@/lib/logger';
 import { withApiHandler } from '@/lib/api/handler';
@@ -65,63 +64,13 @@ export const dynamic = 'force-dynamic';
  *                                                            must enter creds
  *   { ok: false, error: '…', status: <http> }              – fatal
  */
-const NPM_DEFAULT_EMAIL = 'admin@example.com';
-const NPM_DEFAULT_PASSWORD = 'changeme';
+const NPM_DEFAULT_EMAIL = NPM_DEFAULT_CREDENTIALS.email;
+const NPM_DEFAULT_PASSWORD = NPM_DEFAULT_CREDENTIALS.password;
 
-interface NpmResolution {
-  apiUrl: string;
-  nodeName: string;
-}
-
-function getNodeIp(nodeName: string): string {
-  const twin = getNodeTwin(nodeName);
-  if (twin?.nodeIPs?.length) {
-    const lanIp = twin.nodeIPs.find(ip => !ip.startsWith('127.'));
-    if (lanIp) return lanIp;
-    return twin.nodeIPs[0];
-  }
-  return '127.0.0.1';
-}
-
-async function resolveNpm(nodeHint?: string): Promise<NpmResolution | null> {
-  const nodeNames = nodeHint ? [nodeHint] : Object.keys(getNodeTwins());
-  if (nodeNames.length === 0) nodeNames.push('Local');
-
-  for (const nodeName of nodeNames) {
-    const services = await ServiceManager.listServices(nodeName);
-    const nginxService = services.find(s =>
-      s.name === 'nginx' ||
-      (s.name.includes('nginx') && !s.name.startsWith('install-'))
-    );
-    if (!nginxService?.active) continue;
-
-    const svc = nginxService as { ports?: { containerPort?: number; hostPort?: number }[] };
-    const adminMapping = svc.ports?.find(p => p.containerPort === 81);
-    let adminPort = adminMapping?.hostPort?.toString();
-    if (!adminPort) {
-      const config = await getConfig();
-      adminPort = config.templateSettings?.NGINX_ADMIN_PORT || '81';
-    }
-    const apiHost = nodeName === 'Local' ? '127.0.0.1' : getNodeIp(nodeName);
-    return { apiUrl: `http://${apiHost}:${adminPort}`, nodeName };
-  }
-  return null;
-}
-
-async function npmLogin(baseUrl: string, identity: string, secret: string): Promise<string | null> {
-  try {
-    const res = await fetch(`${baseUrl}/api/tokens`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identity, secret }),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return typeof data.token === 'string' ? data.token : null;
-  } catch {
-    return null;
-  }
+/** One login attempt with exactly these credentials — no fallback, the
+ *  bootstrap decision tree needs to know which credential set worked. */
+function npmLogin(baseUrl: string, identity: string, secret: string): Promise<string | null> {
+  return loginNpm(baseUrl, { email: identity, password: secret });
 }
 
 async function npmUpdateUser(baseUrl: string, token: string, payload: Record<string, unknown>): Promise<void> {
@@ -172,7 +121,10 @@ export const POST = withApiHandler({}, async ({ request }) => {
       return NextResponse.json({ ok: false, error: 'email and password are required' }, { status: 400 });
     }
 
-    const npm = await resolveNpm(node);
+    // requireActive: true — bootstrap rewrites the admin user's e-mail and
+    // password through the API and then persists them; it must address the
+    // node whose NPM is actually running, never a stale twin entry.
+    const npm = await findNpmAdmin({ node, requireActive: true });
     if (!npm) {
       return NextResponse.json({ ok: false, error: 'Nginx Proxy Manager not found or not running' }, { status: 404 });
     }

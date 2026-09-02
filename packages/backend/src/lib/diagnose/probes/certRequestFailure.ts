@@ -27,8 +27,8 @@
 
 import { agentManager } from '@/lib/agent/manager';
 import { getConfig } from '@/lib/config';
-import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
+import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
 import { HealthStore } from '@/lib/health/store';
 import { parseLetsencryptTail } from '@/lib/health/probes/letsencryptLogParser';
@@ -124,47 +124,6 @@ async function readLogTail(node: string, path: string, bytes: number): Promise<s
   }
 }
 
-async function findNpmAdminUrl(node: string): Promise<string | null> {
-  try {
-    const services = await ServiceManager.listServices(node);
-    const nginx = services.find(
-      s => s.name === 'nginx' || s.name === 'nginx-web' || (s.name.includes('nginx') && !s.name.startsWith('install-')),
-    );
-    if (!nginx?.active) return null;
-    const ports = (nginx.ports ?? [])
-      .map(p => parseInt(String(p.host ?? ''), 10))
-      .filter(p => Number.isFinite(p) && p !== 80 && p !== 443);
-    return `http://localhost:${ports[0] ?? 81}`;
-  } catch {
-    return null;
-  }
-}
-
-async function getNpmToken(adminUrl: string): Promise<string | null> {
-  const config = await getConfig();
-  const candidates: { identity: string; secret: string }[] = [];
-  const stored = config.reverseProxy?.npm;
-  if (stored?.email && stored?.password) {
-    candidates.push({ identity: stored.email, secret: stored.password });
-  }
-  candidates.push({ identity: 'admin@example.com', secret: 'changeme' });
-  for (const cred of candidates) {
-    try {
-      const res = await fetch(`${adminUrl}/api/tokens`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cred),
-        signal: AbortSignal.timeout(4000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (typeof data.token === 'string') return data.token;
-      }
-    } catch { /* try next */ }
-  }
-  return null;
-}
-
 async function showLogTail({ node }: { node: string }): Promise<ProbeActionResult> {
   const config = await getConfig();
   const dataDir = config.templateSettings?.DATA_DIR ?? '/mnt/data';
@@ -221,7 +180,9 @@ async function findCertId(
 
 async function retryRequest({ node, itemId }: { node: string; itemId?: string }): Promise<ProbeActionResult> {
   if (!itemId) return { ok: false, message: 'No domain supplied.', refresh: false };
-  const adminUrl = await findNpmAdminUrl(node);
+  // requireActive: false — the twin's `active` flag lies for the kube nginx
+  // pod (#496); the cert request itself fails with the real reason if NPM is down.
+  const adminUrl = (await findNpmAdmin({ node, requireActive: false }))?.apiUrl;
   if (!adminUrl) {
     return { ok: false, message: 'Nginx Proxy Manager is not deployed on this node.', refresh: false };
   }

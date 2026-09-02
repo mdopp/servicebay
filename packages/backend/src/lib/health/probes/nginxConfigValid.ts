@@ -19,7 +19,7 @@
  */
 
 import { registerProbe } from './registry';
-import { findNpmAdminUrl, getNpmToken } from './npmAdmin';
+import { resolveNpmAdmin, getNpmToken } from '@/lib/npm/client';
 
 type Payload = { status: 'ok' | 'fail' | 'info'; detail: string; hint?: string; hostId?: number; domain?: string };
 
@@ -64,11 +64,13 @@ export function parseNginxTestOutput(output: string, exitCode: number): NginxTes
  *  (NPM unreachable / id not found) — the check still reds either way. */
 async function resolveHostDomain(node: string, hostId: number): Promise<string | undefined> {
   try {
-    const admin = await findNpmAdminUrl(node);
-    if (admin.kind !== 'url') return undefined;
-    const token = await getNpmToken(admin.url);
+    // requireActive: false — read-only lookup; an unreachable NPM just
+    // leaves the id unresolved, and the `active` flag lies for kube pods (#496).
+    const admin = await resolveNpmAdmin({ node, requireActive: false });
+    if (admin.kind !== 'ok') return undefined;
+    const token = await getNpmToken(admin.apiUrl);
     if (!token) return undefined;
-    const res = await fetch(`${admin.url}/api/nginx/proxy-hosts`, {
+    const res = await fetch(`${admin.apiUrl}/api/nginx/proxy-hosts`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(6000),
     });

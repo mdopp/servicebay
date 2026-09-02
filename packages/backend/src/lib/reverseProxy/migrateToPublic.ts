@@ -31,7 +31,8 @@
  */
 
 import { getConfig, updateConfig } from '../config';
-import { getNodeIds, getNodeTwin } from '../store/repository';
+import { findNpmAdmin, getNpmToken, type NpmAdmin } from '../npm/client';
+import { getNodeIds } from '../store/repository';
 import { ServiceManager } from '../services/ServiceManager';
 import { logger } from '../logger';
 import yaml from 'js-yaml';
@@ -109,11 +110,7 @@ export interface MigrationResult {
 
 // ─── NPM helpers (slim, migration-scoped) ───────────────────────────
 
-interface NpmTarget {
-  apiUrl: string;
-  nodeName: string;
-  nodeIp: string;
-}
+type NpmTarget = NpmAdmin;
 
 interface NpmHost {
   id: number;
@@ -135,74 +132,12 @@ interface NpmDeps {
 }
 
 /**
- * Find the admin port for NPM given a service record.
- */
-async function getNpmAdminPort(svc: { ports?: { containerPort?: number; hostPort?: number }[] }): Promise<string> {
-  const adminMapping = svc.ports?.find(p => p.containerPort === 81);
-  const portFromSvc = adminMapping?.hostPort?.toString();
-  if (portFromSvc) return portFromSvc;
-  const config = await getConfig();
-  return config.templateSettings?.NGINX_ADMIN_PORT || '81';
-}
-
-/**
- * Derive the API host (loopback for Local, node IP otherwise).
- */
-function getApiHost(nodeName: string, nodeIp: string): string {
-  return nodeName === 'Local' ? '127.0.0.1' : nodeIp;
-}
-
-/**
- * Pick the first non-loopback IP from node, fall back to first IP or loopback.
- */
-function selectNodeIp(t: { nodeIPs?: string[] } | undefined): string {
-  return t?.nodeIPs?.find((ip: string) => !ip.startsWith('127.')) ?? t?.nodeIPs?.[0] ?? '127.0.0.1';
-}
-
-/**
- * Find and return NPM target (API URL + node info) by trying candidate nodes.
+ * Where NPM is, for a migration. requireActive: true — this rewrites proxy
+ * hosts and binds certificates, and without a node hint the iteration must
+ * pick the node whose NPM is actually running, not the first stale entry.
  */
 async function resolveNpmTarget(nodeHint?: string): Promise<NpmTarget | null> {
-  const nodeNames = nodeHint ? [nodeHint] : getNodeIds();
-  if (nodeNames.length === 0) nodeNames.push('Local');
-  for (const nodeName of nodeNames) {
-    const services = await ServiceManager.listServices(nodeName);
-    const nginx = services.find(s => s.name === 'nginx' || (s.name.includes('nginx') && !s.name.startsWith('install-')));
-    if (!nginx?.active) continue;
-    const svc = nginx as { ports?: { containerPort?: number; hostPort?: number }[] };
-    const adminPort = await getNpmAdminPort(svc);
-    const t = getNodeTwin(nodeName);
-    const nodeIp = selectNodeIp(t);
-    const apiHost = getApiHost(nodeName, nodeIp);
-    return { apiUrl: `http://${apiHost}:${adminPort}`, nodeName, nodeIp };
-  }
-  return null;
-}
-
-/**
- * Try each credential candidate to obtain an NPM API token.
- */
-async function getNpmToken(baseUrl: string): Promise<string | null> {
-  const config = await getConfig();
-  const candidates: { identity: string; secret: string }[] = [];
-  const stored = config.reverseProxy?.npm;
-  if (stored?.email && stored?.password) candidates.push({ identity: stored.email, secret: stored.password });
-  candidates.push({ identity: 'admin@example.com', secret: 'changeme' });
-  for (const cred of candidates) {
-    try {
-      const res = await fetch(`${baseUrl}/api/tokens`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cred),
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.ok) {
-        const data = await res.json() as { token?: string };
-        if (data.token) return data.token;
-      }
-    } catch { /* try next */ }
-  }
-  return null;
+  return findNpmAdmin({ node: nodeHint, requireActive: true });
 }
 
 /**
@@ -241,7 +176,7 @@ async function npmRequestAndReturnCertId(baseUrl: string, token: string, domain:
 async function realNpmDeps(): Promise<NpmDeps> {
   return {
     resolveNpm: async (nodeHint) => resolveNpmTarget(nodeHint),
-    getToken: getNpmToken,
+    getToken: (baseUrl) => getNpmToken(baseUrl),
     listHosts: async (baseUrl, token) => {
       const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts?expand=owner,access_list,certificate`, {
         headers: { Authorization: `Bearer ${token}` },

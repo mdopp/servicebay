@@ -18,9 +18,8 @@
  * (creation failed): this one is "created, but nginx won't serve it".
  */
 
-import { getConfig } from '@/lib/config';
-import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
+import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
 
 const PROBE_ID = 'nginx_online_failed';
@@ -36,57 +35,6 @@ interface NpmHost {
   id?: number;
   domain_names?: string[];
   meta?: { nginx_online?: boolean; nginx_err?: string | null };
-}
-
-/** Locate NPM's admin URL on the given node. Returns null when nginx
- *  isn't deployed or its admin port can't be derived. Mirrors the
- *  helper in danglingProxy.ts / npmDataStale.ts — kept local to avoid
- *  coupling probes to each other. */
-async function findNpmAdminUrl(node: string): Promise<string | null> {
-  try {
-    const services = await ServiceManager.listServices(node);
-    const nginx = services.find(
-      s => s.name === 'nginx' || s.name === 'nginx-web' || (s.name.includes('nginx') && !s.name.startsWith('install-')),
-    );
-    if (!nginx?.active) return null;
-    const ports = (nginx.ports ?? [])
-      .map(p => parseInt(String(p.host ?? ''), 10))
-      .filter(p => Number.isFinite(p) && p !== 80 && p !== 443);
-    const adminPort = ports[0] ?? 81;
-    return `http://localhost:${adminPort}`;
-  } catch {
-    return null;
-  }
-}
-
-/** Try stored credentials first, then NPM defaults. Returns the bearer
- *  token, or null when nothing works. Mirrors danglingProxy.ts. */
-async function getNpmToken(adminUrl: string): Promise<string | null> {
-  const config = await getConfig();
-  const candidates: { identity: string; secret: string }[] = [];
-  const stored = config.reverseProxy?.npm;
-  if (stored?.email && stored?.password) {
-    candidates.push({ identity: stored.email, secret: stored.password });
-  }
-  candidates.push({ identity: 'admin@example.com', secret: 'changeme' });
-
-  for (const cred of candidates) {
-    try {
-      const res = await fetch(`${adminUrl}/api/tokens`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cred),
-        signal: AbortSignal.timeout(4000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (typeof data.token === 'string') return data.token;
-      }
-    } catch {
-      // try next
-    }
-  }
-  return null;
 }
 
 /** Fetch NPM's proxy host list. Returns null on any failure so the probe
@@ -106,9 +54,11 @@ async function fetchNpmHosts(adminUrl: string, token: string): Promise<NpmHost[]
 }
 
 export async function checkNginxOnlineFailed(node: string): Promise<NginxOnlineFailedResult> {
-  const adminUrl = await findNpmAdminUrl(node);
+  // requireActive: false — the twin's `active` flag lies for the kube nginx
+  // pod (#496); the per-host status read below is the real liveness check.
+  const adminUrl = (await findNpmAdmin({ node, requireActive: false }))?.apiUrl;
   if (!adminUrl) {
-    return { status: 'info', detail: 'Nginx Proxy Manager is not deployed or not active on this node.' };
+    return { status: 'info', detail: 'Nginx Proxy Manager is not deployed on this node.' };
   }
   const token = await getNpmToken(adminUrl);
   if (!token) {
@@ -178,9 +128,11 @@ async function rerenderHost({
   if (!itemId) {
     return { ok: false, message: 'No domain supplied — cannot re-render.', refresh: false };
   }
-  const adminUrl = await findNpmAdminUrl(node);
+  // requireActive: false — same reasoning as checkNginxOnlineFailed; the
+  // re-render PUT fails loudly if NPM is really down.
+  const adminUrl = (await findNpmAdmin({ node, requireActive: false }))?.apiUrl;
   if (!adminUrl) {
-    return { ok: false, message: 'Nginx Proxy Manager is not deployed or active on this node.', refresh: false };
+    return { ok: false, message: 'Nginx Proxy Manager is not deployed on this node.', refresh: false };
   }
   const token = await getNpmToken(adminUrl);
   if (!token) {

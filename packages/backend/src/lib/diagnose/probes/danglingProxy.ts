@@ -26,8 +26,8 @@
 
 import { getConfig } from '@/lib/config';
 import { getNodeTwin } from '@/lib/store/repository';
-import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
+import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
 import {
   classifyDanglingRoute,
@@ -37,56 +37,6 @@ import {
 } from './danglingRouteState';
 
 const PROBE_ID = 'dangling_proxy';
-
-/** Locate NPM's admin URL on the given node. Returns null when nginx
- *  isn't deployed or its admin port can't be derived. Mirrors the
- *  helper in npmDataStale.ts but kept local to avoid coupling. */
-async function findNpmAdminUrl(node: string): Promise<string | null> {
-  try {
-    const services = await ServiceManager.listServices(node);
-    const nginx = services.find(
-      s => s.name === 'nginx' || s.name === 'nginx-web' || (s.name.includes('nginx') && !s.name.startsWith('install-')),
-    );
-    if (!nginx?.active) return null;
-    const ports = (nginx.ports ?? [])
-      .map(p => parseInt(String(p.host ?? ''), 10))
-      .filter(p => Number.isFinite(p) && p !== 80 && p !== 443);
-    const adminPort = ports[0] ?? 81;
-    return `http://localhost:${adminPort}`;
-  } catch {
-    return null;
-  }
-}
-
-/** Try stored credentials first, then NPM defaults. Returns the bearer
- *  token, or null when nothing works. */
-async function getNpmToken(adminUrl: string): Promise<string | null> {
-  const config = await getConfig();
-  const candidates: { identity: string; secret: string }[] = [];
-  const stored = config.reverseProxy?.npm;
-  if (stored?.email && stored?.password) {
-    candidates.push({ identity: stored.email, secret: stored.password });
-  }
-  candidates.push({ identity: 'admin@example.com', secret: 'changeme' });
-
-  for (const cred of candidates) {
-    try {
-      const res = await fetch(`${adminUrl}/api/tokens`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cred),
-        signal: AbortSignal.timeout(4000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (typeof data.token === 'string') return data.token;
-      }
-    } catch {
-      // try next
-    }
-  }
-  return null;
-}
 
 /** The bit of an NPM proxy-host row both actions need. */
 interface NpmProxyHostRef {
@@ -147,7 +97,11 @@ async function currentVerdictFor(
 /** Resolve NPM admin URL + token, or the reason we couldn't. Shared by
  *  both actions so the two failure messages stay identical. */
 async function connectToNpm(node: string): Promise<{ adminUrl: string; token: string } | ProbeActionResult> {
-  const adminUrl = await findNpmAdminUrl(node);
+  // requireActive: false — the twin's `active` flag lies for the kube nginx
+  // pod (#496); if NPM is really down the API call below fails with the
+  // precise reason instead of a misleading "not deployed".
+  const npm = await findNpmAdmin({ node, requireActive: false });
+  const adminUrl = npm?.apiUrl;
   if (!adminUrl) {
     return {
       ok: false,
