@@ -6,12 +6,17 @@ import {
   getBackupGate,
   getSiblingBackupServices,
   getConfigPaths,
-  getDataPaths,
   stripYamlKeys,
   applyStripRules,
   applyTransformRules,
   translateHaAddonConfigEntries,
 } from './serviceManifest';
+
+/** The manifest's DATA class (#1585) — the large on-RAID artifacts a
+ *  `wipe-config` reinstall keeps. Read straight off the manifest. */
+function dataPaths(service: string): string[] {
+  return [...(getServiceManifest(service)?.data ?? [])];
+}
 
 describe('service backup manifests', () => {
   it('covers the #1190 services plus the #2153 coverage-gap services', () => {
@@ -47,7 +52,7 @@ describe('service backup manifests', () => {
     );
     // The sync index is regenerable bulk — excluded from the tar, kept on disk.
     expect(syncthing.exclude).toContain('index-v0.14.0.db');
-    expect(getDataPaths('syncthing')).toContain('index-v0.14.0.db');
+    expect(dataPaths('syncthing')).toContain('index-v0.14.0.db');
   });
 
   it('backs up LLDAP users.db — the family identity store (#2153)', () => {
@@ -213,14 +218,14 @@ describe('config/data classification (#1585)', () => {
     expect(getConfigPaths('home-assistant')).toContain('.storage/zwave_js');
   });
 
-  it('getDataPaths returns the large on-RAID artifacts kept through wipe-config', () => {
-    expect(getDataPaths('home-assistant')).toContain('home-assistant_v2.db');
-    expect(getDataPaths('home-assistant')).toContain('zwave_js_network.db');
+  it('the DATA class holds the large on-RAID artifacts kept through wipe-config', () => {
+    expect(dataPaths('home-assistant')).toContain('home-assistant_v2.db');
+    expect(dataPaths('home-assistant')).toContain('zwave_js_network.db');
   });
 
   it('CONFIG and DATA are disjoint for home-assistant (recorder db is DATA, mesh keys are CONFIG)', () => {
     const config = new Set(getConfigPaths('home-assistant'));
-    const data = getDataPaths('home-assistant');
+    const data = dataPaths('home-assistant');
     // The heavy recorder DB must NOT be in the CONFIG (backed-up) set.
     expect(config.has('home-assistant_v2.db')).toBe(false);
     // No DATA path is also a CONFIG path.
@@ -229,12 +234,12 @@ describe('config/data classification (#1585)', () => {
 
   it('returns empty arrays for a service with no manifest', () => {
     expect(getConfigPaths('not-a-service')).toEqual([]);
-    expect(getDataPaths('not-a-service')).toEqual([]);
+    expect(dataPaths('not-a-service')).toEqual([]);
   });
 
   it('a service may declare no DATA class (authelia is config-only)', () => {
     expect(getServiceManifest('authelia')!.data).toBeUndefined();
-    expect(getDataPaths('authelia')).toEqual([]);
+    expect(dataPaths('authelia')).toEqual([]);
   });
 
   it('authelia backs up the SQLite secret store, not the dead legacy YAML (#2153)', () => {

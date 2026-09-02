@@ -23,5 +23,4 @@ export const NodeTwinUpdateSchema = z.object({
   nodeIPs: z.array(z.string()).optional(),
   unmanagedBundles: z.array(z.unknown()).optional(),
   dismissedBundles: z.array(z.string()).optional(),
-  history: z.array(z.unknown()).optional(),
 }).passthrough();

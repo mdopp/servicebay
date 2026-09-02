@@ -91,8 +91,7 @@ describe('ServicesDashboard E2E Data Rendering', () => {
                     proxyRoutes: [],
                     nodeIPs: [],
                     unmanagedBundles: [],
-                    dismissedBundles: [],
-                    history: []
+                    dismissedBundles: []
                 }
             },
             gateway: { provider: 'mock', status: 'down', uptime: 0 } as any,
@@ -144,8 +143,7 @@ describe('ServicesDashboard E2E Data Rendering', () => {
                     proxyRoutes: [],
                     nodeIPs: [],
                     unmanagedBundles: [],
-                    dismissedBundles: [],
-                    history: []
+                    dismissedBundles: []
                 }
             },
             gateway: { provider: 'mock' } as any,

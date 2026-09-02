@@ -65,8 +65,7 @@ describe('ContainersDashboard Port Rendering', () => {
                     proxyRoutes: [],
                     nodeIPs: [],
                     unmanagedBundles: [],
-                    dismissedBundles: [],
-                    history: []
+                    dismissedBundles: []
                 }
             },
             gateway: { provider: 'mock' } as any,
@@ -133,8 +132,7 @@ describe('ContainersDashboard Port Rendering', () => {
                     proxyRoutes: [],
                     nodeIPs: [],
                     unmanagedBundles: [],
-                    dismissedBundles: [],
-                    history: []
+                    dismissedBundles: []
                 }
             },
             gateway: { provider: 'mock' } as any,

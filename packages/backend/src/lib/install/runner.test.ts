@@ -5,8 +5,8 @@
  * readiness predicate) and `waitForDependencies` (the gate that blocks
  * a template's deploy until its declared dependencies are healthy).
  *
- * The twin is mocked the same way `stackRunner.test.ts` does it, so the
- * gate reads deterministic fixtures instead of a live digital twin.
+ * The twin is mocked with a stub module, so the gate reads
+ * deterministic fixtures instead of a live digital twin.
  */
 import fs from 'node:fs';
 import path from 'node:path';

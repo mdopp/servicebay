@@ -169,17 +169,6 @@ async function writeStore(items: LearningProposal[]): Promise<void> {
   await fs.writeFile(file, JSON.stringify(items, null, 2), 'utf-8');
 }
 
-/** List all persisted proposals (any status). */
-export async function listProposals(): Promise<LearningProposal[]> {
-  return readStore();
-}
-
-/** Fetch one proposal by its store id, or `undefined` if not found. */
-export async function getProposal(id: string): Promise<LearningProposal | undefined> {
-  const items = await readStore();
-  return items.find(p => p.id === id);
-}
-
 /**
  * Admin-visibility view of a proposal (#2326 s3). Carries the full frontmatter,
  * body, and submitter self-assessment the admin needs to judge, PLUS a

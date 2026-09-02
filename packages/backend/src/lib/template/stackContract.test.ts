@@ -6,7 +6,7 @@
  * input + expected outcome — failures point at one rule.
  */
 import { describe, it, expect } from 'vitest';
-import { parseStackManifest, tryParseStackManifest } from './stackContract';
+import { parseStackManifest } from './stackContract';
 
 const VALID_BASIC = `apiVersion: v1
 kind: Stack
@@ -65,10 +65,6 @@ describe('parseStackManifest — happy paths', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.manifest.dependsOnStacks).toEqual(['basic', 'identity', 'media']);
-  });
-
-  it('tryParseStackManifest returns the manifest on success', () => {
-    expect(tryParseStackManifest(VALID_BASIC)?.name).toBe('basic');
   });
 });
 

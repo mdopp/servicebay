@@ -51,7 +51,6 @@ import {
   submitProposal,
   approveProposal,
   rejectProposal,
-  getProposal,
   listProposalsForReview,
   getProposalForReview,
 } from '@/lib/assists/proposals';
@@ -123,7 +122,7 @@ describe('learning-proposal approval store (#2326 s3)', () => {
     const p = await submitProposal(VALID, 'token:proposer');
     const outcome = await approveProposal(p.id, 'session:admin');
     expect(outcome.result).toBe('ok');
-    const after = await getProposal(p.id);
+    const after = await getProposalForReview(p.id);
     // s4: clean content lands -> status `landed`.
     expect(after!.status).toBe('landed');
     expect(after!.resolvedBy).toBe('session:admin');
@@ -134,7 +133,7 @@ describe('learning-proposal approval store (#2326 s3)', () => {
     const p = await submitProposal(VALID);
     const outcome = await rejectProposal(p.id, 'session:admin');
     expect(outcome.result).toBe('ok');
-    const after = await getProposal(p.id);
+    const after = await getProposalForReview(p.id);
     expect(after!.status).toBe('rejected');
     expect(after!.resolvedBy).toBe('session:admin');
   });
@@ -143,7 +142,7 @@ describe('learning-proposal approval store (#2326 s3)', () => {
     const p = await submitProposal(VALID);
     await approveProposal(p.id, 'session:admin');
     // s4: clean content lands -> status `landed` and a `.md` is written.
-    expect((await getProposal(p.id))!.status).toBe('landed');
+    expect((await getProposalForReview(p.id))!.status).toBe('landed');
     const landed = await fs.readdir(localAssistsDir()).catch(() => []);
     expect(landed).toHaveLength(1);
   });
@@ -154,7 +153,7 @@ describe('learning-proposal approval store (#2326 s3)', () => {
     const again = await rejectProposal(p.id, 'session:other');
     expect(again.result).toBe('not-pending');
     // Status unchanged — the first decision (landed) stands.
-    expect((await getProposal(p.id))!.status).toBe('landed');
+    expect((await getProposalForReview(p.id))!.status).toBe('landed');
   });
 
   it('resolving an unknown id reports not-found', async () => {

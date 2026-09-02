@@ -24,8 +24,3 @@ export type { TemplateTier };
 export function parseTemplateTier(yamlText: string): TemplateTier {
   return readManifestAnnotations(yamlText).tier ?? 'feature';
 }
-
-/** True iff the tier marks the template as platform-tier (always installed). */
-export function isInfrastructureTier(tier: TemplateTier): boolean {
-  return tier === 'infrastructure';
-}

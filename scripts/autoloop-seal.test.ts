@@ -36,7 +36,7 @@ describe('isPathMandated', () => {
 
   it('does NOT match unrelated / pure-logic files', () => {
     expect(isPathMandated('packages/backend/src/lib/auth/apiTokens.ts')).toBe(false);
-    expect(isPathMandated('packages/backend/src/lib/stackInstall/nginxScratchValidate.ts')).toBe(true); // stackInstall/ IS mandated
+    expect(isPathMandated('packages/backend/src/lib/stackInstall/portalProvision.ts')).toBe(true); // stackInstall/ IS mandated
     expect(isPathMandated('scripts/autoloop-seal.ts')).toBe(false);
     expect(isPathMandated('docs/ARCHITECTURE_INVARIANTS.md')).toBe(false);
     expect(isPathMandated('packages/frontend/src/hooks/useServiceActions.tsx')).toBe(false);

@@ -39,24 +39,6 @@ const collectContainerNameTokens = (container: EnrichedContainer): string[] => {
     return Array.from(tokens);
 };
 
-export interface MigrationHistoryEntry {
-    id: string;
-    timestamp: string;
-    actor: string;
-    targetName: string;
-    nodeName: string;
-    bundleSize: number;
-    services: Array<{
-        name: string;
-        sourcePath?: string;
-        unitFile?: string;
-        containerIds: string[];
-    }>;
-    backupArchive?: string;
-    status: 'success' | 'failed' | 'rolled_back';
-    error?: string;
-}
-
 export interface NodeTwin {
   connected: boolean;
   lastSync: number;
@@ -75,7 +57,6 @@ export interface NodeTwin {
   nodeIPs: string[];
   unmanagedBundles: ServiceBundle[];
     dismissedBundles: string[];
-    history: MigrationHistoryEntry[];
 }
 
 export interface GatewayState {
@@ -96,7 +77,6 @@ export interface ProxyState {
 
 export class DigitalTwinStore {
   private static instance: DigitalTwinStore;
-    private static readonly HISTORY_LIMIT = 25;
 
   public nodes: Record<string, NodeTwin> = {};
   
@@ -168,8 +148,7 @@ export class DigitalTwinStore {
         proxyRoutes: [],
         nodeIPs: [],
                     unmanagedBundles: [],
-                                        dismissedBundles: [],
-        history: []
+                                        dismissedBundles: []
       };
       this.notifyListeners();
     }
@@ -899,14 +878,6 @@ export class DigitalTwinStore {
       }
       const fallbackKey = Object.keys(files).find((filePath) => filePath.endsWith(`/${relative}`));
       return fallbackKey ? files[fallbackKey].content : null;
-  }
-
-  public recordMigrationEvent(nodeId: string, event: MigrationHistoryEntry) {
-      this.registerNode(nodeId);
-      const node = this.nodes[nodeId];
-      const nextHistory = [event, ...(node.history || [])].slice(0, DigitalTwinStore.HISTORY_LIMIT);
-      node.history = nextHistory;
-      this.notifyListeners();
   }
 
   public updateGateway(data: Partial<GatewayState>) {

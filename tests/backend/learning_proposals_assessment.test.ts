@@ -24,7 +24,7 @@ vi.mock('@/lib/assists/catalog', async (orig) => {
 
 import {
   submitProposal,
-  listProposals,
+  listProposalsForReview,
   validateAssessment,
   ProposalError,
 } from '@/lib/assists/proposals';
@@ -109,7 +109,7 @@ describe('submitProposal — assessment persisted when provided', () => {
     expect(p.assessment!.redundancyNote).toBe('none');
 
     // confirm it survived the round-trip through the JSON store
-    const stored = await listProposals();
+    const stored = await listProposalsForReview('all');
     expect(stored[0].assessment).toEqual(p.assessment);
   });
 
@@ -118,7 +118,7 @@ describe('submitProposal — assessment persisted when provided', () => {
     expect(p.status).toBe('pending');
     expect(p.assessment).toBeUndefined();
 
-    const stored = await listProposals();
+    const stored = await listProposalsForReview('all');
     expect(stored).toHaveLength(1);
     expect(stored[0].assessment).toBeUndefined();
   });
@@ -127,13 +127,13 @@ describe('submitProposal — assessment persisted when provided', () => {
     await expect(
       submitProposal({ ...VALID_BASE, assessment: { pros: 'not-an-array', cons: [] } }),
     ).rejects.toThrow(ProposalError);
-    expect(await listProposals()).toHaveLength(0);
+    expect(await listProposalsForReview('all')).toHaveLength(0);
   });
 
   it('rejects assessment with wrong cons type and does not persist', async () => {
     await expect(
       submitProposal({ ...VALID_BASE, assessment: { pros: [], cons: 'bad' } }),
     ).rejects.toThrow(ProposalError);
-    expect(await listProposals()).toHaveLength(0);
+    expect(await listProposalsForReview('all')).toHaveLength(0);
   });
 });

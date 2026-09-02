@@ -551,15 +551,6 @@ export function getConfigPaths(service: string): string[] {
 }
 
 /**
- * The DATA class for a service (#1585): the large on-RAID artifacts a
- * `wipe-config` reinstall KEEPS (and a `wipe-all` wipes). Returns `[]` when the
- * manifest declares none.
- */
-export function getDataPaths(service: string): string[] {
-  return [...(getServiceManifest(service)?.data ?? [])];
-}
-
-/**
  * Remove `dropKeys` from a YAML document wherever they appear (the top-level
  * mapping and every nested mapping — e.g. each user under authelia's `users:`).
  * Best-effort: returns the original text unchanged if it doesn't parse as YAML.

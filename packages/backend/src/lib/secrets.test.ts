@@ -80,7 +80,6 @@ describe('decrypt key-mismatch behaviour (#780)', () => {
     const modB = await loadSecretsModule();
 
     expect(modB.decrypt(sealed)).toBe('');
-    expect(modB.hasDecryptMismatch()).toBe(true);
   });
 
   it('logs the mismatch warning only once per process', async () => {
@@ -97,16 +96,6 @@ describe('decrypt key-mismatch behaviour (#780)', () => {
     expect(mod2.decrypt(sealed)).toBe('');
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toMatch(/secret\.key/);
-  });
-
-  it('hasDecryptMismatch stays false when every value decrypts cleanly', async () => {
-    freshDataDir();
-    const mod = await loadSecretsModule();
-    mod.decrypt(mod.encrypt('a'));
-    mod.decrypt(mod.encrypt('b'));
-    mod.decrypt('not encrypted');
-    mod.decrypt('');
-    expect(mod.hasDecryptMismatch()).toBe(false);
   });
 });
 

@@ -39,7 +39,7 @@ vi.mock('@/lib/nodes', () => ({
 }));
 
 import { createMcpServer } from '@/lib/mcp/server';
-import { listProposals } from '@/lib/assists/proposals';
+import { listProposalsForReview } from '@/lib/assists/proposals';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
@@ -78,7 +78,7 @@ describe('propose_learning MCP tool (#2326)', () => {
     expect(out.id).toBeTruthy();
     expect(out.assistId).toBe('local/a-brand-new-companion-recipe');
 
-    const stored = await listProposals();
+    const stored = await listProposalsForReview('all');
     expect(stored).toHaveLength(1);
     expect(stored[0].status).toBe('pending');
     expect(stored[0].submittedBy).toBe('token:proposer');
@@ -91,7 +91,7 @@ describe('propose_learning MCP tool (#2326)', () => {
       arguments: { ...VALID, kind: 'nonsense' },
     });
     expect(res.isError).toBe(true);
-    expect(await listProposals()).toHaveLength(0);
+    expect(await listProposalsForReview('all')).toHaveLength(0);
   });
 
   it('a token without propose scope is refused (no persistence)', async () => {
@@ -100,6 +100,6 @@ describe('propose_learning MCP tool (#2326)', () => {
     expect(res.isError).toBe(true);
     const text = (res.content as { text?: string }[])[0]?.text ?? '';
     expect(text).toMatch(/scope 'propose' required/i);
-    expect(await listProposals()).toHaveLength(0);
+    expect(await listProposalsForReview('all')).toHaveLength(0);
   });
 });
