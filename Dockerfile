@@ -106,8 +106,21 @@ RUN useradd --system --uid 1001 nextjs
 
 # Runtime dependencies (libc) are standard in debian
 
-COPY --from=builder /app/packages/frontend/public ./public
-COPY --from=builder /app/packages/frontend/public ./packages/frontend/public
+# There is no `packages/frontend/public` to copy (#2729). The only file it ever
+# held was the generated MSW `mockServiceWorker.js`; deleting the mock layer
+# emptied the directory, and git does not track empty directories, so the COPY
+# failed the build with "failed to calculate checksum ... not found".
+#
+# Do not re-add it with a .gitkeep: nothing serves out of it. The frontend's
+# icons are App Router metadata files under `src/app/` (icon.svg,
+# portal/icon.svg, portal/manifest.webmanifest/route.ts), which Next compiles
+# into `.next/` and serves from there, and no source references a `/<file>`
+# static asset path. If a real static asset is ever added, create the directory
+# with that asset in it and restore ONE line — `COPY --from=builder
+# /app/packages/frontend/public ./packages/frontend/public`. The `./public`
+# target was always dead: server.ts starts Next with
+# `dir: <cwd>/packages/frontend`, so Next resolves `public` relative to that,
+# never to `/app/public`.
 
 # Copy the full Next build output. We deliberately do NOT use `output: 'standalone'`
 # because we run our own custom server (server.ts) that wires Socket.IO, MCP, and

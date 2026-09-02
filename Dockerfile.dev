@@ -57,8 +57,8 @@ RUN set -e; for d in packages/*/node_modules; do \
 # Pre-built artifacts from the host. `dev-container.sh` ensures these exist.
 COPY packages/frontend/.next ./packages/frontend/.next
 COPY dist-server ./dist-server
-COPY packages/frontend/public ./public
-COPY packages/frontend/public ./packages/frontend/public
+# No `packages/frontend/public` COPY here either — see the long note in the
+# production Dockerfile's runner stage (#2729). The directory no longer exists.
 COPY templates ./templates
 COPY stacks ./stacks
 
