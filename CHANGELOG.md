@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.25.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.25.0...servicebay-v5.25.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **install:** mint the API token on a jobStore replay too, never in preview ([211a299](https://github.com/mdopp/servicebay/commit/211a2998545f5153ce6e318ab78111b372e17e6b)), closes [#2716](https://github.com/mdopp/servicebay/issues/2716)
+* **services:** repair the whole root-owned chain a sudo asset write leaves ([d3b8adf](https://github.com/mdopp/servicebay/commit/d3b8adf0cef03b074c0603ef04363f7dcc21a4a0)), closes [#2717](https://github.com/mdopp/servicebay/issues/2717)
+
 ## [5.25.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.24.0...servicebay-v5.25.0) (2026-09-02)
 
 
