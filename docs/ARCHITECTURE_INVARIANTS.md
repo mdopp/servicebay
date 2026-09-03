@@ -104,7 +104,7 @@ this page came to assert a wrong largest-file name, a wrong file count, and a
 
 | Invariant | Constant in `scripts/check-invariants.ts` | Threshold |
 |---|---|---:|
-| Max file LOC (each source root) | `MAX_FILE_LOC` | 2,200 |
+| Max file LOC (each source root) | `MAX_FILE_LOC` | 1,700 |
 | `as any` in security paths | `SECURITY_AS_ANY_BUDGET` | 0 |
 | `as any` in `packages/backend/src` outside security paths | `BACKEND_AS_ANY_BUDGET` | 24 |
 | `: any` annotations in `packages/backend/src` (security paths included) | `BACKEND_COLON_ANY_BUDGET` | 79 |
@@ -136,7 +136,9 @@ _Generated from the constants — run `npm run check:invariants -- --write-docs`
 | Files > 2,000 LOC | (untracked — reported by the run, no threshold) |
 | Functions > 150 LOC | (untracked) |
 
-**File-size ceiling.** Two roots, **one** pin. The backend root was **not walked at all** until #2379, which enforced it behind a temporary, looser `MAX_BACKEND_FILE_LOC` (2,400) pinned to `lib/mcp/server.ts` at 2,391; #2384 split that file into `lib/mcp/tools/*` (one module per tool group) and the separate backend pin was deleted, so both roots share `MAX_FILE_LOC` again. Ratchet target: one shared 1,500 cap once the largest dashboard and the largest backend service module are split per the audit follow-ups.
+**File-size ceiling.** Two roots, **one** pin, and it only ever goes **down**: each god-module cut lowers `MAX_FILE_LOC` to the next-largest survivor, so the file that was just split cannot grow back and the next-biggest file inherits the pressure. The backend root was **not walked at all** until #2379, which enforced it behind a temporary, looser `MAX_BACKEND_FILE_LOC` (2,400) pinned to `lib/mcp/server.ts` at 2,391; #2384 split that file into `lib/mcp/tools/*` (one module per tool group) and the separate backend pin was deleted, so both roots share `MAX_FILE_LOC` again. #2743 cut the two 2k frontend god modules — `dashboards/NetworkDashboard.tsx` 2,149 → 1,421 (graph node/edge renderers and the legend now live in `dashboards/_lib/NetworkGraph*.tsx`) and `app/(dashboard)/backup/page.tsx` 1,851 → 62 (one component per backup backend under `backup/_lib/`) — and lowered the pin from 2,200 to **1,700**.
+
+Ratchet target is still **1,500**. Exactly two files block it, and each needs its own cut rather than an exemption: `components/OnboardingWizard.tsx` (1,668 — a second per-step split) and `packages/backend/src/lib/registry.ts` (1,505). Lower the constant to the next-largest survivor as each lands.
 
 ### Type safety
 

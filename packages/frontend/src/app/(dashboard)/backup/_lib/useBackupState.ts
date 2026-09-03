@@ -238,3 +238,6 @@ export function useBackupState() {
     fetchNasOverview,
   };
 }
+
+/** The shared backup state bag, passed down to each per-backend panel (#2743). */
+export type BackupState = ReturnType<typeof useBackupState>;
