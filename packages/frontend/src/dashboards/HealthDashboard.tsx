@@ -99,7 +99,6 @@ export default function HealthDashboard() {
   const normalizedTab: HealthTab | null = tabParam === 'logs' || tabParam === 'checks' || tabParam === 'system' || tabParam === 'containers' ? (tabParam as HealthTab) : null;
 
   const closeOverlaysOnEscape = useCallback(() => {
-    if (isDeleteModalOpen) return;
     if (repairCheck) {
       setRepairCheck(null);
       return;
@@ -113,9 +112,16 @@ export default function HealthDashboard() {
     if (isModalOpen) {
       setIsModalOpen(false);
     }
-  }, [repairCheck, historyCheck, isModalOpen, isDeleteModalOpen]);
+  }, [repairCheck, historyCheck, isModalOpen]);
 
-  useEscapeKey(closeOverlaysOnEscape, Boolean(repairCheck || historyCheck || isModalOpen));
+  // `topMostOnly` joins the shared overlay stack instead of registering an
+  // independent window listener, so the delete ConfirmModal stacked over this
+  // dashboard takes the first Escape and the drawer/modal underneath only
+  // closes on the next press. That replaces the ad-hoc `isDeleteModalOpen`
+  // guard this callback used to carry — the stack decides who is on top, and
+  // keeping the flag out of the deps also keeps this listener from jumping
+  // above the modal when the confirmation opens (#2775, follow-up to #2774).
+  useEscapeKey(closeOverlaysOnEscape, Boolean(repairCheck || historyCheck || isModalOpen), true);
 
   useEffect(() => {
     if (!normalizedTab) return;

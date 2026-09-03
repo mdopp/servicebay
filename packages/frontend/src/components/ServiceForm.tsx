@@ -117,9 +117,14 @@ export default function ServiceForm({ initialData, isEdit, defaultNode, onClose,
 
   // Escape closes the rename modal like every other modal in the app
   // (ConfirmModal etc.), but not while a rename request is in flight (#2188).
+  // `topMostOnly` joins the shared overlay stack rather than registering an
+  // independent window listener, so a confirmation stacked over this modal
+  // takes the first Escape and the rename modal only closes on the next
+  // press (#2775).
   useEscapeKey(
     () => setShowRenameModal(false),
     showRenameModal && !isRenaming,
+    true,
   );
 
   // Options for generation
