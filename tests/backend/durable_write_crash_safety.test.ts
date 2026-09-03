@@ -229,3 +229,74 @@ describe('HealthStore.writeChecks survives a crash mid-write (#2414)', () => {
     expect(() => JSON.parse(after)).toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// A versioned store's write (#2739). `defineStore` wraps the payload in a
+// `{ __store, version, data }` envelope before handing it to `atomicWriteFile`
+// — the envelope must not weaken the #2414 guarantee, so the same fault is
+// injected against an adopted store (NetworkStore, async).
+// ---------------------------------------------------------------------------
+describe('a versioned store write survives a crash mid-write (#2739 keeps #2414)', () => {
+  let edgesFile = '';
+  const mkEdge = (id: string) => ({
+    id, source: `s-${id}`, target: `t-${id}`, created_at: new Date().toISOString(),
+  });
+
+  async function loadStore() {
+    vi.resetModules();
+    return (await import('@/lib/network/store')).NetworkStore;
+  }
+
+  beforeEach(async () => {
+    dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sb-durable-edges-'));
+    edgesFile = path.join(dataDir, 'network-edges.json');
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await fs.rm(dataDir, { recursive: true, force: true });
+  });
+
+  it('leaves network-edges.json fully intact when the write dies half-written', async () => {
+    const NetworkStore = await loadStore();
+    await NetworkStore.addEdge(mkEdge('first'));
+    const before = fsSync.readFileSync(edgesFile, 'utf-8');
+    expect(JSON.parse(before).version).toBe(1);
+
+    // Land half the payload on the temp fd, then throw — the crash window a
+    // bare write would have opened on the target itself.
+    const realOpen = fs.open.bind(fs);
+    vi.spyOn(fs, 'open').mockImplementation((async (...args: Parameters<typeof fs.open>) => {
+      const handle = await realOpen(...args);
+      const realWrite = handle.writeFile.bind(handle);
+      handle.writeFile = (async (data: string | Uint8Array, opts?: unknown) => {
+        const text = typeof data === 'string' ? data : Buffer.from(data).toString();
+        await realWrite(text.slice(0, Math.floor(text.length / 2)), opts as Parameters<typeof handle.writeFile>[1]);
+        throw eio();
+      }) as typeof handle.writeFile;
+      return handle;
+    }) as typeof fs.open);
+
+    await expect(NetworkStore.addEdge(mkEdge('second'))).rejects.toThrow(/injected crash/);
+    vi.restoreAllMocks();
+
+    const after = fsSync.readFileSync(edgesFile, 'utf-8');
+    expect(after).toBe(before);
+    expect(JSON.parse(after).data.map((e: { id: string }) => e.id)).toEqual(['first']);
+    expect(strayTmpFiles()).toEqual([]);
+    // And the store still reads it back, envelope and all.
+    expect((await NetworkStore.getEdges()).map(e => e.id)).toEqual(['first']);
+  });
+
+  it('control: the pre-fix bare write truncates network-edges.json under the same fault', async () => {
+    const NetworkStore = await loadStore();
+    await NetworkStore.addEdge(mkEdge('first'));
+    const before = fsSync.readFileSync(edgesFile, 'utf-8');
+
+    await bareWriteInterrupted(edgesFile, JSON.stringify({ __store: 'network-edges', version: 1, data: [mkEdge('first'), mkEdge('second')] }, null, 2));
+
+    const after = fsSync.readFileSync(edgesFile, 'utf-8');
+    expect(after).not.toBe(before);
+    expect(() => JSON.parse(after)).toThrow();
+  });
+});

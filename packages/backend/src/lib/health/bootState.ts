@@ -20,39 +20,68 @@
 
 import fs from 'fs';
 import path from 'path';
+import { z } from 'zod';
 import { DATA_DIR } from '../dirs';
 import { logger } from '../logger';
+import { defineStore, StoreVersionError } from '../store/defineStore';
 
-const BOOT_STATE_FILE = path.join(DATA_DIR, 'boot-state.json');
-
-export interface BootState {
+const BootStateSchema = z.object({
   /** The app version recorded at the previous boot (or last heartbeat). */
-  lastSeenVersion?: string;
+  lastSeenVersion: z.string().optional(),
   /** Epoch ms of the last time the running process wrote a heartbeat.
    *  Approximates "the last healthy moment before this restart", so the
    *  digest can report downtime + recovery as a single duration. */
-  lastSeenAt?: number;
-}
+  lastSeenAt: z.number().optional(),
+});
 
-/** Read the persisted boot state. Returns `{}` on first boot or any read /
- *  parse error — the digest treats an empty state as "no prior version". */
+export type BootState = z.infer<typeof BootStateSchema>;
+
+/**
+ * The boot-state store (#2739 adoption).
+ *
+ * Version 1 is the first versioned shape; `migrations[1]` names the
+ * pre-`defineStore` on-disk form every existing box carries — a bare
+ * `{ lastSeenVersion?, lastSeenAt? }` object with no envelope. Anything that is
+ * not an object migrates to `{}`, which is what this store has always reported
+ * for an unreadable file.
+ *
+ * Adoption also puts the write on `atomicWriteFileSync` (it used to be a bare
+ * `fs.writeFileSync`, which truncates before refilling): the heartbeat fires
+ * every 60 s, so a restart landing mid-write is not hypothetical.
+ */
+const bootStateStore = defineStore<BootState>({
+  name: 'boot-state',
+  file: () => path.join(DATA_DIR, 'boot-state.json'),
+  version: 1,
+  schema: BootStateSchema,
+  migrations: {
+    1: previous => (previous && typeof previous === 'object' && !Array.isArray(previous) ? previous : {}),
+  },
+  fallback: () => ({}),
+});
+
+/** Read the persisted boot state. Returns `{}` on first boot or an unreadable
+ *  file — the digest treats an empty state as "no prior version". A file written
+ *  by a NEWER ServiceBay is the one case that is not swallowed: it throws
+ *  rather than letting the next heartbeat overwrite it (ADR 0016). */
 export function readBootState(): BootState {
   try {
-    if (!fs.existsSync(BOOT_STATE_FILE)) return {};
-    return JSON.parse(fs.readFileSync(BOOT_STATE_FILE, 'utf-8')) as BootState;
+    return bootStateStore.readSync();
   } catch (e) {
+    if (e instanceof StoreVersionError) throw e;
     logger.warn('BootState', `Could not read boot state: ${e instanceof Error ? e.message : String(e)}`);
     return {};
   }
 }
 
 /** Persist the current version + heartbeat timestamp. Best-effort: a write
- *  failure is logged, never thrown (the digest is non-critical). */
+ *  failure is logged, never thrown (the digest is non-critical) — except a
+ *  refusal to overwrite a newer file, which must surface. */
 export function writeBootState(state: BootState): void {
   try {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    fs.writeFileSync(BOOT_STATE_FILE, JSON.stringify(state, null, 2));
+    bootStateStore.writeSync(state);
   } catch (e) {
+    if (e instanceof StoreVersionError) throw e;
     logger.warn('BootState', `Could not write boot state: ${e instanceof Error ? e.message : String(e)}`);
   }
 }

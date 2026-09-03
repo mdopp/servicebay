@@ -29,6 +29,11 @@ import path from 'node:path';
 import { auditHealthCheckIdLifecycle } from './invariants/healthCheckIdLifecycle';
 import { auditAssistCatalogSingleSource } from './invariants/assistCatalogSingleSource';
 import { auditNpmApiLiterals } from './invariants/npmApiLiterals';
+import {
+    auditDurableStateAtomicWrites, auditVersionedStores,
+    DURABLE_STATE_MODULES, DURABLE_STATE_BARE_WRITE_BUDGET,
+    VERSIONED_STORE_MODULES, VERSIONED_STORE_MIN,
+} from './invariants/durableStores';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const SRC = path.join(REPO_ROOT, 'packages', 'frontend', 'src');
@@ -395,79 +400,19 @@ async function checkTwinFanIn() {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Durable-state files are written atomically.
-//
-// `config.json` and `checks.json` under DATA_DIR are the operator's data, not
-// caches: losing one re-onboards the box or drops every configured health
-// check. A bare `fs.writeFile`/`writeFileSync` truncates the target before the
-// new bytes land, so a power cut / OOM-kill / container stop mid-write leaves
-// the file permanently half-written. `lib/util/atomicWrite.ts` is the only
-// sanctioned way to touch them (tmp → fsync → rename: a crash leaves the
-// ORIGINAL intact).
-//
-// #2414: `config/transformer.ts` — the boot-time normalizer that ran before
-// the first `getConfig()` on every backend start — wrote config.json bare while
-// `config.ts` next door already used `atomicWriteFile`. Two writers, two
-// durability contracts, on the one file whose loss is unrecoverable from the UI.
-// This check is the ratchet that keeps the second writer from coming back.
-// (#2725 deleted that module and folded its one live migration into
-// `config.ts`, so there is now a single boot-time writer, still listed below.)
-//
-// The budget is 0 and the list is forward-only: add a module when it starts
-// owning durable DATA_DIR state; never delete one to make a bare write pass.
-// `lib/util/atomicWrite.ts` is deliberately absent — it IS the primitive, and
-// its own `writeFileSync` is the fsync'd temp-file write.
+// 6. Durable state: writes are atomic (#2414) and adopted stores are versioned
+// (#2739, ADR 0016). Both halves — the DURABLE_STATE_MODULES list, the
+// bare-write budget, the VERSIONED_STORE_MODULES growth ratchet and their
+// rationale — live in scripts/invariants/durableStores.ts, because this file is
+// at its max-lines budget. The driver below folds their results in.
 // ---------------------------------------------------------------------------
-const DURABLE_STATE_MODULES = [
-    'packages/backend/src/lib/config.ts',
-    'packages/backend/src/lib/health/store.ts',
-];
-const DURABLE_STATE_BARE_WRITE_BUDGET = 0;
-
-// `fs.writeFile(` / `fsSync.writeFileSync(` (namespace import) and the bare
-// `writeFile(` / `writeFileSync(` named-import form. The `(?<![.\w])` guard
-// keeps `atomicWriteFile(`, `atomicWriteFileSync(` and `executor.writeFile(`
-// (a remote/agent write, not a local durable-state one) out of the count.
-const BARE_WRITE_RE = /\bfs\w*\.writeFile(?:Sync)?\s*\(|(?<![.\w])writeFile(?:Sync)?\s*\(/g;
-
-async function checkDurableStateAtomicWrites() {
-    let count = 0;
-    const offenders: string[] = [];
-    for (const target of DURABLE_STATE_MODULES) {
-        const abs = path.join(REPO_ROOT, target);
-        let files: string[];
-        try {
-            const s = await stat(abs);
-            files = s.isDirectory() ? await walk(abs, isTs) : [abs];
-        } catch {
-            // Unlike the older checks, a missing entry is a VIOLATION, not a
-            // silent skip (#2379): a moved/renamed module must not quietly
-            // disable its own durability gate.
-            violations.push({
-                check: 'durable-state-atomic-write',
-                detail: `${target} is listed as a durable-state module but does not exist — update DURABLE_STATE_MODULES to its new path (do not drop it).`,
-            });
-            continue;
-        }
-        for (const file of files) {
-            if (isTestFile(file)) continue;
-            const content = await readFile(file, 'utf-8');
-            const hits = content.match(BARE_WRITE_RE)?.length ?? 0;
-            if (hits > 0) {
-                count += hits;
-                offenders.push(`${path.relative(REPO_ROOT, file)} (${hits})`);
-            }
-        }
-    }
-    measurements.push(
-        `bare fs.writeFile/writeFileSync in the ${DURABLE_STATE_MODULES.length} durable-state modules: ` +
-        `${count} (budget ${DURABLE_STATE_BARE_WRITE_BUDGET})`,
-    );
-    if (count > DURABLE_STATE_BARE_WRITE_BUDGET) {
-        violations.push({
-            check: 'durable-state-atomic-write',
-            detail: `${count} bare fs.writeFile/writeFileSync call(s) in durable-state modules (budget ${DURABLE_STATE_BARE_WRITE_BUDGET}). Use atomicWriteFile / atomicWriteFileSync from packages/backend/src/lib/util/atomicWrite.ts — a bare write truncates the file a crash lands in. Offenders: ${offenders.join(', ')}`,
-        });
+async function checkDurableState() {
+    for (const found of await Promise.all([
+        auditDurableStateAtomicWrites(REPO_ROOT),
+        auditVersionedStores(REPO_ROOT),
+    ])) {
+        violations.push(...found.violations);
+        measurements.push(...found.measurements);
     }
 }
 
@@ -1231,6 +1176,7 @@ function renderThresholdBlock(): string {
         ['`withApiHandler` adoption across `route.ts` files', 'MIN_WITH_API_HANDLER_RATIO', `${(MIN_WITH_API_HANDLER_RATIO * 100).toFixed(0)}%`],
         ['`DigitalTwinStore.getInstance()` call sites', 'TWIN_GETINSTANCE_MAX', String(TWIN_GETINSTANCE_MAX)],
         ['Bare `fs.writeFile`/`writeFileSync` in durable-state modules', 'DURABLE_STATE_BARE_WRITE_BUDGET', String(DURABLE_STATE_BARE_WRITE_BUDGET)],
+        ['Durable stores adopted onto `defineStore` (floor, forward-only)', 'VERSIONED_STORE_MIN', String(VERSIONED_STORE_MIN)],
     ];
     const lines = [
         DOC_BEGIN,
@@ -1244,6 +1190,8 @@ function renderThresholdBlock(): string {
         `Security paths (\`SECURITY_PATHS\`): ${SECURITY_PATHS.map(p => `\`${p}\``).join(', ')}.`,
         '',
         `Durable-state modules (\`DURABLE_STATE_MODULES\`): ${DURABLE_STATE_MODULES.map(p => `\`${p}\``).join(', ')}.`,
+        '',
+        `Versioned stores (\`VERSIONED_STORE_MODULES\`): ${VERSIONED_STORE_MODULES.map(p => `\`${p}\``).join(', ')}.`,
         '',
         '_Generated from the constants — run `npm run check:invariants -- --write-docs` after changing one. For the **measured** values at HEAD run `npm run check:invariants`: they are deliberately not stored here, because a hand-maintained measurement table is stale the next time anyone merges (#2427)._',
         '',
@@ -1295,7 +1243,7 @@ async function main() {
         checkExecCallSiteBudgets(),
         checkWithApiHandlerAdoption(),
         checkTwinFanIn(),
-        checkDurableStateAtomicWrites(),
+        checkDurableState(),
         checkGatePathsResolve(),
         checkCiRunsEveryCheckScript(),
         checkServiceRepoBootstrapStep(),
