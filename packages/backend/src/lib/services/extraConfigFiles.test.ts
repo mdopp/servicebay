@@ -5,6 +5,8 @@ import {
     writeExtraConfigFiles,
     isPrunableDeliveryPath,
     selectStaleDeliveries,
+    parseOwnerReference,
+    ownershipRepairTargets,
 } from './extraConfigFiles';
 
 vi.mock('../logger', () => ({
@@ -52,6 +54,29 @@ function makeAgent(responder: (action: string, params: CmdParams) => unknown) {
 
 const file = { path: '/mnt/data/stacks/oscar-household/skills/README.md', content: '# skills' };
 
+/**
+ * Agent that forces the sudo write path and answers the #2717 ownership
+ * probe with `ownerRef` — the nearest ancestor of the target dir that exists
+ * and is NOT root-owned, which is what the probe reports from the box.
+ *
+ * `plainWriteFails` lists the paths whose unprivileged write rejects (the
+ * EACCES a container-owned asset dir produces); everything else writes
+ * plainly.
+ */
+function makeSudoWriteAgent(ownerRef: string, plainWriteFails: string[]) {
+    return makeAgent((action, params) => {
+        if (action === 'exec' && /sb-owner-ref/.test(params?.command ?? '')) {
+            return { code: 0, stdout: `sb-owner-ref:${ownerRef}\n` };
+        }
+        if (action === 'exec') return { code: 0 };
+        if (params?.sudo) return 'ok';
+        if (plainWriteFails.includes(params?.path ?? '')) {
+            throw new Error(`[Errno 13] Permission denied: '${params?.path}'`);
+        }
+        return 'ok';
+    });
+}
+
 describe('writeExtraConfigFiles', () => {
     beforeEach(() => vi.clearAllMocks());
 
@@ -77,20 +102,16 @@ describe('writeExtraConfigFiles', () => {
     it('realigns ownership to the parent dir after a sudo write (#1298)', async () => {
         // A sudo write lands the file root-owned inside a subuid-owned asset
         // dir, which breaks the next rootless `kube play --replace` relabel.
-        // After the sudo write we `chown --reference=<dir>` so the new file
-        // matches its siblings' (subuid) ownership.
-        const agent = makeAgent((action, params) => {
-            if (action === 'exec') return { code: 0 };
-            if (params?.sudo) return 'ok';
-            throw new Error("[Errno 13] Permission denied: '" + file.path + "'");
-        });
+        // The dir itself already exists and is properly owned, so it IS the
+        // ownership reference and only the file needs realigning.
+        const dir = file.path.substring(0, file.path.lastIndexOf('/'));
+        const agent = makeSudoWriteAgent(dir, [file.path]);
 
         await writeExtraConfigFiles(agent, 'oscar-household', [file]);
 
-        const dir = file.path.substring(0, file.path.lastIndexOf('/'));
         const chowns = agent.calls.filter(c => c.action === 'exec' && /chown/.test(c.params?.command ?? ''));
         expect(chowns).toHaveLength(1);
-        expect(chowns[0].params?.command).toBe(`sudo chown --reference=${dir} ${file.path}`);
+        expect(chowns[0].params?.command).toBe(`sudo chown --reference='${dir}' -- '${file.path}'`);
     });
 
     it('does not fail the deploy when the post-sudo chown fails (#1298)', async () => {
@@ -106,6 +127,143 @@ describe('writeExtraConfigFiles', () => {
         });
 
         await expect(writeExtraConfigFiles(agent, 'oscar-household', [file])).resolves.toBeUndefined();
+    });
+
+    // ── #2717: the recurrence — the root-owned DIRECTORY ────────────────
+    //
+    // #1298's repair chowned the file `--reference=<its parent dir>`. When a
+    // template adds a NEW skill directory, the agent's sudo `write_file`
+    // creates that directory with `sudo mkdir -p` first, so the parent dir is
+    // root-owned too and the reference resolves to root:root — a no-op chown.
+    // Podman then failed to relabel the DIRECTORY, not the file:
+    //   lsetxattr(...) .../skills/household/task-tool: operation not permitted
+    describe('root-owned directory chain after a sudo write (#2717)', () => {
+        const ASSETS = '/mnt/data/stacks/oscar-household/skills';
+        const skill = { path: `${ASSETS}/task-tool/SKILL.md`, content: '# task tool' };
+
+        const chownsOf = (agent: ReturnType<typeof makeAgent>) =>
+            agent.calls.filter(c => c.action === 'exec' && /chown/.test(c.params?.command ?? ''));
+
+        it('realigns the newly created directory, not only the file', async () => {
+            const agent = makeSudoWriteAgent(ASSETS, [skill.path]);
+
+            await writeExtraConfigFiles(agent, 'oscar-household', [skill]);
+
+            const chowns = chownsOf(agent);
+            expect(chowns).toHaveLength(1);
+            expect(chowns[0].params?.command).toBe(
+                `sudo chown --reference='${ASSETS}' -- '${ASSETS}/task-tool' '${skill.path}'`,
+            );
+        });
+
+        it('never takes the root-owned parent dir as the ownership reference', async () => {
+            // This is the exact regression: `--reference=<the new dir>` is
+            // root:root, so the chown "succeeds" and changes nothing.
+            const agent = makeSudoWriteAgent(ASSETS, [skill.path]);
+
+            await writeExtraConfigFiles(agent, 'oscar-household', [skill]);
+
+            const command = chownsOf(agent)[0].params?.command ?? '';
+            expect(command).not.toContain(`--reference='${ASSETS}/task-tool'`);
+            expect(command).toContain(`--reference='${ASSETS}'`);
+        });
+
+        it('heals a whole chain left root-owned by an earlier deploy', async () => {
+            // The probe walks past every root-owned ancestor, so a directory
+            // an older ServiceBay created as root is repaired on the next
+            // deploy instead of being adopted as the reference.
+            const nested = { path: `${ASSETS}/household/task-tool/SKILL.md`, content: '# task tool' };
+            const agent = makeSudoWriteAgent(ASSETS, [nested.path]);
+
+            await writeExtraConfigFiles(agent, 'oscar-household', [nested]);
+
+            expect(chownsOf(agent)[0].params?.command).toBe(
+                `sudo chown --reference='${ASSETS}' -- ` +
+                `'${ASSETS}/household' '${ASSETS}/household/task-tool' '${nested.path}'`,
+            );
+        });
+
+        it('probes the owner before creating the dir, in the mkdir round trip', async () => {
+            // Probing after the mkdir would read back the root-owned dir the
+            // sudo write is about to create — and it must not cost an extra
+            // round trip per file either.
+            const agent = makeSudoWriteAgent(ASSETS, [skill.path]);
+
+            await writeExtraConfigFiles(agent, 'oscar-household', [skill]);
+
+            const mkdirs = agent.calls.filter(c => c.action === 'exec' && /mkdir -p/.test(c.params?.command ?? ''));
+            expect(mkdirs).toHaveLength(1);
+            const command = mkdirs[0].params?.command ?? '';
+            expect(command).toContain('sb-owner-ref');
+            expect(command.indexOf('sb-owner-ref')).toBeLessThan(command.indexOf('mkdir -p'));
+        });
+
+        it('falls back to the file-only repair when the probe answers nothing usable', async () => {
+            // No reference means no owner to adopt — repair what #1298 already
+            // repaired rather than guessing, and never fail the deploy.
+            const agent = makeAgent((action, params) => {
+                if (action === 'exec') return { code: 0 };
+                if (params?.sudo) return 'ok';
+                throw new Error('[Errno 13] Permission denied');
+            });
+
+            await expect(writeExtraConfigFiles(agent, 'oscar-household', [skill])).resolves.toBeUndefined();
+
+            expect(chownsOf(agent)[0].params?.command).toBe(
+                `sudo chown --reference='${ASSETS}/task-tool' -- '${skill.path}'`,
+            );
+        });
+
+        it('does not chown anything when the plain write succeeds', async () => {
+            const agent = makeSudoWriteAgent(ASSETS, []);
+            await writeExtraConfigFiles(agent, 'oscar-household', [skill]);
+            expect(chownsOf(agent)).toHaveLength(0);
+        });
+
+        describe('parseOwnerReference', () => {
+            it('reads the reference the probe printed', () => {
+                expect(parseOwnerReference(`sb-owner-ref:${ASSETS}\n`, `${ASSETS}/task-tool`)).toBe(ASSETS);
+            });
+
+            it('declines a reference that is not an ancestor of the target dir', () => {
+                expect(parseOwnerReference('sb-owner-ref:/mnt/data/stacks/other\n', `${ASSETS}/task-tool`)).toBeNull();
+            });
+
+            it('declines a reference too shallow to be inside a service tree', () => {
+                // Walking up to /mnt or / means the repair left the service's
+                // own tree — chowning a shared parent is not this fix's job.
+                expect(parseOwnerReference('sb-owner-ref:/mnt\n', `${ASSETS}/task-tool`)).toBeNull();
+                expect(parseOwnerReference('sb-owner-ref:/\n', `${ASSETS}/task-tool`)).toBeNull();
+            });
+
+            it('declines a missing, empty or garbled answer', () => {
+                expect(parseOwnerReference(null, ASSETS)).toBeNull();
+                expect(parseOwnerReference('', ASSETS)).toBeNull();
+                expect(parseOwnerReference('stat: cannot stat\n', ASSETS)).toBeNull();
+                expect(parseOwnerReference('sb-owner-ref:not/absolute\n', ASSETS)).toBeNull();
+            });
+        });
+
+        describe('ownershipRepairTargets', () => {
+            it('lists each created dir shallowest-first, then the file', () => {
+                expect(ownershipRepairTargets(ASSETS, `${ASSETS}/a/b`, `${ASSETS}/a/b/f.md`))
+                    .toEqual([`${ASSETS}/a`, `${ASSETS}/a/b`, `${ASSETS}/a/b/f.md`]);
+            });
+
+            it('repairs only the file when the dir already is the reference', () => {
+                expect(ownershipRepairTargets(ASSETS, ASSETS, `${ASSETS}/f.md`)).toEqual([`${ASSETS}/f.md`]);
+            });
+
+            it('ignores a trailing slash on either path', () => {
+                expect(ownershipRepairTargets(`${ASSETS}/`, `${ASSETS}/a/`, `${ASSETS}/a/f.md`))
+                    .toEqual([`${ASSETS}/a`, `${ASSETS}/a/f.md`]);
+            });
+
+            it('repairs only the file when the reference is not an ancestor', () => {
+                expect(ownershipRepairTargets('/mnt/data/stacks/other', `${ASSETS}/a`, `${ASSETS}/a/f.md`))
+                    .toEqual([`${ASSETS}/a/f.md`]);
+            });
+        });
     });
 
     it('retries with sudo when the plain write_file rejects (EACCES on container-owned dir)', async () => {
@@ -393,7 +551,9 @@ describe('delivered-files manifest and prune pass (#2703)', () => {
             expect(cmd).toMatch(/^rm -f -- '\/mnt\/data\/stacks\/solaris\/skills\/household\/[^']+'$/);
         }
         const everyExec = agent.calls.filter(c => c.action === 'exec').map(c => c.params?.command ?? '');
-        expect(everyExec.some(c => /-r|-R|--recursive|--delete|rsync/.test(c))).toBe(false);
+        // Flags as whole words: `--reference=` (the #2717 ownership repair)
+        // contains the letters of `-r` without being a recursive flag.
+        expect(everyExec.some(c => /(^|\s)(-r|-R|--recursive|--delete)(\s|$)|rsync/.test(c))).toBe(false);
         // Above all: no command names a bare directory as its target.
         expect(everyExec.some(c => /\brm\b[^|]*(skills|household)'?\s*$/.test(c) && !c.includes('SKILL.md'))).toBe(false);
     });
