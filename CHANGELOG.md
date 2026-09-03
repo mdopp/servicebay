@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.26.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.26.1...servicebay-v5.26.2) (2026-09-03)
+
+
+### Bug Fixes
+
+* **backend:** drain sockets so graceful shutdown stops hitting the 10 s cap ([403c47b](https://github.com/mdopp/servicebay/commit/403c47b1a908ac66d3c35c310009bc0c3b5634fe)), closes [#2763](https://github.com/mdopp/servicebay/issues/2763)
+
 ## [5.26.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.26.0...servicebay-v5.26.1) (2026-09-03)
 
 
