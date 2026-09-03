@@ -353,14 +353,15 @@ Both are **scoped to `packages/frontend/src/**` and EXEMPT
 `packages/frontend/src/components/ui/**`** (the primitives legitimately wrap the
 raw elements and map raw colours to tokens internally) plus `*.test.*`.
 
-**Severity is `warn` during rollout.** A one-shot fix was infeasible: the
-colour rule alone fires ~3,100 times across ~85 files, and rewriting each to a
+**Both started at `warn` during rollout.** A one-shot fix was infeasible: the
+colour rule alone fired ~3,100 times across ~85 files, and rewriting each to a
 token while keeping every component visually identical is far past one unit's
-safe blast radius. `warn` keeps the 0-error lint gate green while surfacing
+safe blast radius. `warn` kept the 0-error lint gate green while surfacing
 every new + legacy violation in the editor and CI. **Ratchet plan:** burn the
 count down file-by-file via lint-sweep units, then flip each rule to `error`
-once its class reaches 0 — forward-only, never loosen. The `TODO(#2353)` in
-`eslint.config.mjs` tracks the two flips (colour-literal, ui-primitive).
+once its class reaches 0 — forward-only, never loosen. `no-raw-color-literal`
+has already cleared and flipped (see below); the remaining `TODO(#2353)` in
+`eslint.config.mjs` tracks the `no-raw-ui-primitive` flip.
 
 #### The ratchet is enforced, and here is how the flip happens (#2430)
 
@@ -387,8 +388,8 @@ verbatim in the new file), so the plan above is now backed by a gate:
   `.eslint-ratchet-baseline.json` (ESLint's own 0-error gate owns it from then
   on), and delete its half of the `TODO(#2353)` ROLLOUT comment. The script
   prints this instruction whenever a count hits 0. The rules flip
-  **independently** — `no-raw-ui-primitive` is the far smaller class and will
-  clear first; it must not wait on the colour migration. (For the counts at
+  **independently** — `no-raw-color-literal` cleared first and has already
+  flipped; `no-raw-ui-primitive` need not wait on it. (For the counts at
   HEAD run the script — they are deliberately not typed here, #2427.)
 - **The burn-down itself** is ordinary lint-sweep work (worst files first; the
   gate prints the current top ten on a failure). The ratchet's job is only to
@@ -399,8 +400,13 @@ Rules currently under the ratchet — the counts live in
 
 | Rule | Scope | Exempt | Flip target |
 |---|---|---|---|
-| `sb/no-raw-color-literal` | `packages/frontend/src/**` | `components/ui/**`, `*.test.*` | `error` at 0 (#2353) |
 | `sb/no-raw-ui-primitive` | `packages/frontend/src/**` | `components/ui/**`, `*.test.*` | `error` at 0 (#2353) |
+
+`sb/no-raw-color-literal` (#2353) cleared its ratchet and has already flipped:
+it is a hard `error` in `eslint.config.mjs`, no longer in `RATCHETED_RULES` or
+`.eslint-ratchet-baseline.json` — ESLint itself is the gate now, at 0
+tolerance. Scope was `packages/frontend/src/**`, exempt `components/ui/**`,
+`*.test.*`.
 
 `sb/no-raw-api-fetch` (#2736) cleared its ratchet and has already flipped: it is
 a hard `error` in `eslint.config.mjs`, no longer in `RATCHETED_RULES` or

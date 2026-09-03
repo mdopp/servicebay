@@ -333,7 +333,7 @@ function OperateActionModals({
               You are about to delete <strong className="text-text dark:text-white">{service.name}</strong>.
               This will permanently stop the service and remove all of its configuration files.
             </p>
-            <div className="p-3 rounded-lg bg-status-info/10 border border-status-info/20 text-xs text-blue-700 dark:text-blue-300">
+            <div className="p-3 rounded-lg bg-status-info/10 border border-status-info/20 text-xs text-status-info">
               ℹ️ <strong>Safety Net Active:</strong> ServiceBay snapshots your configuration before deleting. Restore it any time from <strong>Settings &rarr; Backups</strong>.
             </div>
           </div>
