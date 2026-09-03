@@ -58,6 +58,8 @@ const LEGACY_SYSTEM_TIMER_DROPIN = `/etc/systemd/system/${PODMAN_TIMER_UNIT}.d/5
  * never left without a bus address. Lingering is provisioned for the host
  * user in `fedora-coreos.bu`, so the user manager is up without a login.
  */
+/** Shell required: `${VAR:-default}` and `$(id -u)` are shell expansions,
+ *  and the leading `export …;` is a shell statement. */
 function userSystemctl(args: string): string {
   return `export XDG_RUNTIME_DIR="\${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"; systemctl --user ${args}`;
 }
@@ -109,9 +111,11 @@ const ZINCATI_LOCK_TOML = `# Managed by ServiceBay — auto-updates locked until
 enabled = false
 `;
 
-async function execIgnoringFailure(executor: Executor, cmd: string, tag: string): Promise<void> {
+/** Run a best-effort host command; a failure is logged, never fatal. Takes a
+ *  thunk so each caller picks execSafe (argv) or exec (real shell need). */
+async function execIgnoringFailure(run: () => Promise<unknown>, tag: string): Promise<void> {
   try {
-    await executor.exec(cmd);
+    await run();
   } catch (e) {
     logger.warn('updateWindow', `${tag} failed: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -123,14 +127,14 @@ async function writeRoot(executor: Executor, tmpPath: string, finalPath: string,
   // The intermediate file is harmless (regenerated each save).
   await executor.writeFile(tmpPath, content);
   const dir = finalPath.slice(0, finalPath.lastIndexOf('/'));
-  await executor.execArgv(['sudo', 'mkdir', '-p', dir]);
-  await executor.execArgv(['sudo', 'install', '-m', '0644', '-o', 'root', '-g', 'root', tmpPath, finalPath]);
+  await executor.execSafe(['mkdir', '-p', dir], { sudo: true });
+  await executor.execSafe(['install', '-m', '0644', '-o', 'root', '-g', 'root', tmpPath, finalPath], { sudo: true });
 }
 
 async function writeZincatiWindow(executor: Executor, window: Window): Promise<void> {
-  await execIgnoringFailure(executor, `sudo rm -f ${ZINCATI_LOCK_PATH}`, 'rm zincati lock');
+  await execIgnoringFailure(() => executor.execSafe(['rm', '-f', ZINCATI_LOCK_PATH], { sudo: true }), 'rm zincati lock');
   await writeRoot(executor, ZINCATI_TMP, ZINCATI_PATH, renderZincatiToml(window));
-  await execIgnoringFailure(executor, 'sudo systemctl restart zincati', 'restart zincati');
+  await execIgnoringFailure(() => executor.execSafe(['systemctl', 'restart', 'zincati'], { sudo: true }), 'restart zincati');
 }
 
 async function writeZincatiLock(executor: Executor): Promise<void> {
@@ -139,9 +143,9 @@ async function writeZincatiLock(executor: Executor): Promise<void> {
   // alphabetically and uses the later value — `55-servicebay-lock`
   // sorts after `55-servicebay-window`, but we delete the window
   // file anyway to keep the diagnostic state obvious.
-  await execIgnoringFailure(executor, `sudo rm -f ${ZINCATI_PATH}`, 'rm zincati window');
+  await execIgnoringFailure(() => executor.execSafe(['rm', '-f', ZINCATI_PATH], { sudo: true }), 'rm zincati window');
   await writeRoot(executor, ZINCATI_TMP, ZINCATI_LOCK_PATH, ZINCATI_LOCK_TOML);
-  await execIgnoringFailure(executor, 'sudo systemctl restart zincati', 'restart zincati');
+  await execIgnoringFailure(() => executor.execSafe(['systemctl', 'restart', 'zincati'], { sudo: true }), 'restart zincati');
 }
 
 /**
@@ -155,10 +159,10 @@ async function writeZincatiLock(executor: Executor): Promise<void> {
  * second, invisible schedule for the same operator switch.
  */
 async function retireSystemPodmanTimer(executor: Executor): Promise<void> {
-  await execIgnoringFailure(executor, `sudo rm -f ${LEGACY_SYSTEM_TIMER_DROPIN}`, 'rm legacy system dropin');
-  await execIgnoringFailure(executor, `sudo systemctl unmask ${PODMAN_TIMER_UNIT}`, 'unmask legacy system timer');
-  await execIgnoringFailure(executor, 'sudo systemctl daemon-reload', 'system daemon-reload');
-  await execIgnoringFailure(executor, `sudo systemctl disable --now ${PODMAN_TIMER_UNIT}`, 'disable legacy system timer');
+  await execIgnoringFailure(() => executor.execSafe(['rm', '-f', LEGACY_SYSTEM_TIMER_DROPIN], { sudo: true }), 'rm legacy system dropin');
+  await execIgnoringFailure(() => executor.execSafe(['systemctl', 'unmask', PODMAN_TIMER_UNIT], { sudo: true }), 'unmask legacy system timer');
+  await execIgnoringFailure(() => executor.execSafe(['systemctl', 'daemon-reload'], { sudo: true }), 'system daemon-reload');
+  await execIgnoringFailure(() => executor.execSafe(['systemctl', 'disable', '--now', PODMAN_TIMER_UNIT], { sudo: true }), 'disable legacy system timer');
 }
 
 async function writePodmanTimerWindow(executor: Executor, window: Window): Promise<void> {
@@ -166,9 +170,9 @@ async function writePodmanTimerWindow(executor: Executor, window: Window): Promi
   // and creates the `.d` directory, so the drop-in lands directly in the
   // user unit search path.
   await executor.writeFile(PODMAN_USER_TIMER_DROPIN, renderPodmanTimerDropin(window));
-  await execIgnoringFailure(executor, userSystemctl('daemon-reload'), 'user daemon-reload');
-  await execIgnoringFailure(executor, userSystemctl(`unmask ${PODMAN_TIMER_UNIT}`), 'unmask user podman timer');
-  await execIgnoringFailure(executor, userSystemctl(`enable --now ${PODMAN_TIMER_UNIT}`), 'enable user podman timer');
+  await execIgnoringFailure(() => executor.exec(userSystemctl('daemon-reload')), 'user daemon-reload');
+  await execIgnoringFailure(() => executor.exec(userSystemctl(`unmask ${PODMAN_TIMER_UNIT}`)), 'unmask user podman timer');
+  await execIgnoringFailure(() => executor.exec(userSystemctl(`enable --now ${PODMAN_TIMER_UNIT}`)), 'enable user podman timer');
   await retireSystemPodmanTimer(executor);
 }
 
@@ -181,10 +185,12 @@ async function lockPodmanTimer(executor: Executor): Promise<void> {
   // This MUST act at the same level `writePodmanTimerWindow` enables at
   // (user), or switching the window off would leave the rootless timer
   // running on our schedule with nothing left to turn it off (#2515).
-  await execIgnoringFailure(executor, `rm -f ${PODMAN_USER_TIMER_DROPIN}`, 'rm user podman dropin');
-  await execIgnoringFailure(executor, userSystemctl('daemon-reload'), 'user daemon-reload');
-  await execIgnoringFailure(executor, userSystemctl(`disable --now ${PODMAN_TIMER_UNIT}`), 'stop user podman timer');
-  await execIgnoringFailure(executor, userSystemctl(`mask ${PODMAN_TIMER_UNIT}`), 'mask user podman timer');
+  // Shell required: PODMAN_USER_TIMER_DROPIN is a `~`-relative path the host
+  // shell expands (write_file expands it too, see writePodmanTimerWindow).
+  await execIgnoringFailure(() => executor.exec('rm -f ' + PODMAN_USER_TIMER_DROPIN), 'rm user podman dropin');
+  await execIgnoringFailure(() => executor.exec(userSystemctl('daemon-reload')), 'user daemon-reload');
+  await execIgnoringFailure(() => executor.exec(userSystemctl(`disable --now ${PODMAN_TIMER_UNIT}`)), 'stop user podman timer');
+  await execIgnoringFailure(() => executor.exec(userSystemctl(`mask ${PODMAN_TIMER_UNIT}`)), 'mask user podman timer');
   await retireSystemPodmanTimer(executor);
 }
 

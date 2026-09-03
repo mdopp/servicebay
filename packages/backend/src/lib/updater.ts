@@ -74,7 +74,7 @@ export function extractImageDigest(manifest: unknown): string | null {
 async function getRemoteImageDigest(): Promise<string | null> {
   try {
     const executor = getExecutor('Local');
-    const { stdout } = await executor.execArgv(['podman', 'manifest', 'inspect', IMAGE], {
+    const { stdout } = await executor.execSafe(['podman', 'manifest', 'inspect', IMAGE], {
       timeoutMs: 30 * 1000,
     });
     return extractImageDigest(JSON.parse(stdout));
@@ -98,7 +98,7 @@ async function getRemoteImageDigest(): Promise<string | null> {
 async function getRunningImageDigest(): Promise<string | null> {
   try {
     const executor = getExecutor('Local');
-    const { stdout } = await executor.execArgv(
+    const { stdout } = await executor.execSafe(
       ['podman', 'inspect', 'servicebay', '--format', '{{.ImageDigest}}'],
       { timeoutMs: 30 * 1000 },
     );
@@ -145,7 +145,7 @@ export interface RunningBuild {
 async function getRunningBuild(): Promise<RunningBuild> {
   try {
     const executor = getExecutor('Local');
-    const { stdout } = await executor.execArgv(
+    const { stdout } = await executor.execSafe(
       [
         'podman', 'inspect', 'servicebay', '--format',
         '{{.ImageName}}|{{index .Config.Labels "org.opencontainers.image.revision"}}',
@@ -410,7 +410,7 @@ export async function performUpdate(version: string): Promise<PerformUpdateResul
     emitProgress('download', 0, 'Pulling new image...');
 
     // Pulls can take time on slower links; extend timeout to avoid premature failure
-    const { stdout, stderr } = await executor.exec('podman pull ghcr.io/mdopp/servicebay:latest', { timeoutMs: 5 * 60 * 1000 });
+    const { stdout, stderr } = await executor.execSafe(['podman', 'pull', 'ghcr.io/mdopp/servicebay:latest'], { timeoutMs: 5 * 60 * 1000 });
     const pullOutput = [stdout.trim(), stderr.trim()].filter(Boolean).join(' | ');
     const safeOutput = pullOutput.length > 800 ? `${pullOutput.slice(0, 800)}...` : pullOutput;
 
@@ -453,8 +453,8 @@ export async function performUpdate(version: string): Promise<PerformUpdateResul
     emitProgress('restart', 0, 'Recreating container via podman rm -f + systemctl --user restart --no-block servicebay.service');
     void (async () => {
       try {
-        await executor.exec('podman rm -f servicebay');
-        await executor.exec('systemctl --user restart --no-block servicebay.service');
+        await executor.execSafe(['podman', 'rm', '-f', 'servicebay']);
+        await executor.execSafe(['systemctl', '--user', 'restart', '--no-block', 'servicebay.service']);
         logger.info('updater', 'Container recreate + restart triggered.');
       } catch (e) {
         logger.error('updater', 'Recreate/restart failed:', e);

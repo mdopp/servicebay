@@ -130,15 +130,15 @@ export const POST = withApiHandlerParams<z.infer<typeof Body>, z.infer<typeof Qu
             }
 
             await write('Starting service...');
-            await executor.execArgv(['systemctl', '--user', 'start', `${name}.service`]);
+            await executor.execSafe(['systemctl', '--user', 'start', `${name}.service`]);
             await write('✓ Service started successfully.');
         } else if (action === 'stop') {
             await write(`Stopping service ${name}...`);
-            await executor.execArgv(['systemctl', '--user', 'stop', `${name}.service`]);
+            await executor.execSafe(['systemctl', '--user', 'stop', `${name}.service`]);
             await write('✓ Service stopped.');
         } else if (action === 'restart') {
             await write(`Restarting service ${name}...`);
-            await executor.execArgv(['systemctl', '--user', 'restart', `${name}.service`]);
+            await executor.execSafe(['systemctl', '--user', 'restart', `${name}.service`]);
             await write('✓ Service restarted.');
         }
 

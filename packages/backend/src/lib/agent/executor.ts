@@ -3,7 +3,6 @@ import { AgentHandler } from './handler';
 import { AgentManager } from './manager';
 import { Readable } from 'stream';
 import { logger } from '@/lib/logger';
-import { shellQuoteAll } from '../util/shellQuote';
 import { currentTraceId } from '../util/traceContext';
 
 export class CommandError extends Error {
@@ -52,11 +51,19 @@ export class AgentExecutor implements Executor {
     return { stdout: res.stdout, stderr: res.stderr };
   }
 
+  /**
+   * @deprecated Alias for {@link execSafe} (#2737). It used to be
+   * `exec(shellQuoteAll(argv))` — a structured argv quoted into a shell
+   * string and re-parsed on the host, i.e. one quoting layer in which a
+   * filename with a space or a `$` could mean something else. It now
+   * delegates straight to the agent's `safe_exec`, so nothing is
+   * shell-parsed. `EXEC_ARGV_MAX = 0` in `scripts/check-invariants.ts`
+   * keeps the call-site count at zero; the method survives only so
+   * out-of-tree `Executor` implementations keep compiling.
+   */
   async execArgv(argv: string[], options: { timeoutMs?: number } = {}): Promise<{ stdout: string; stderr: string }> {
-    if (!Array.isArray(argv) || argv.length === 0) {
-      throw new Error('execArgv requires a non-empty argv array');
-    }
-    return this.exec(shellQuoteAll(argv), options);
+    const { stdout, stderr } = await this.execSafe(argv, options);
+    return { stdout, stderr };
   }
 
   /**
@@ -67,13 +74,16 @@ export class AgentExecutor implements Executor {
    * The agent rejects the call unless argv[0] is on its
    * SAFE_EXEC_ALLOWLIST.
    *
-   * Use this for any new call site that doesn't need shell features
-   * (pipelines, redirection, glob expansion). The legacy `exec` /
-   * `execArgv` paths remain available for sites that genuinely need
-   * shell semantics; those are the migration target for future
-   * hardening passes.
+   * This is *the* exec path for argv (#2737). `exec()` with a shell
+   * string is reserved for the handful of sites that genuinely need
+   * shell semantics (pipelines, redirection, `command -v`), and each of
+   * those carries a comment saying so.
+   *
+   * `check` (default `true`) mirrors `exec()`: a non-zero exit throws
+   * `CommandError`. Callers that want to inspect the exit code instead
+   * pass `check: false` — the historic `execSafe` contract.
    */
-  async execSafe(argv: string[], options: { timeoutMs?: number; sudo?: boolean } = {}): Promise<{ stdout: string; stderr: string; code: number }> {
+  async execSafe(argv: string[], options: { timeoutMs?: number; sudo?: boolean; check?: boolean } = {}): Promise<{ stdout: string; stderr: string; code: number }> {
     if (!Array.isArray(argv) || argv.length === 0) {
       throw new Error('execSafe requires a non-empty argv array');
     }
@@ -83,9 +93,20 @@ export class AgentExecutor implements Executor {
     // the agent prepends `sudo -n` and still enforces the allow-list on the
     // real argv[0]. Default stays unprivileged.
     const sudo = options.sudo === true;
-    logger.info(`Executor:${this.agent.nodeName}`, `safe_exec${sudo ? ' (sudo)' : ''}: ${truncatedCmd}`);
+    // Trace-ID parity with `exec()` (#594): the shell path could smuggle the ID
+    // into the command line as a trailing comment; argv is sent verbatim, so the
+    // ID rides the agent's exec log line instead of the command.
+    const traceId = currentTraceId();
+    logger.info(
+      `Executor:${this.agent.nodeName}`,
+      `safe_exec${sudo ? ' (sudo)' : ''}: ${truncatedCmd}${traceId ? `  # SB_TRACE=${traceId}` : ''}`,
+    );
     const res = await this.agent.sendCommand('safe_exec', { argv, sudo }, { timeoutMs: options.timeoutMs });
-    return { stdout: res.stdout ?? '', stderr: res.stderr ?? '', code: res.code ?? -1 };
+    const result = { stdout: res.stdout ?? '', stderr: res.stderr ?? '', code: res.code ?? -1 };
+    if (options.check !== false && result.code !== 0) {
+      throw new CommandError(`Command failed: ${argv.join(' ')}\n${result.stderr}`, result.code, result.stdout, result.stderr);
+    }
+    return result;
   }
 
   async readFile(path: string): Promise<string> {
@@ -101,7 +122,7 @@ export class AgentExecutor implements Executor {
 
   async exists(path: string): Promise<boolean> {
      try {
-         await this.execArgv(['test', '-e', path]);
+         await this.execSafe(['test', '-e', path]);
          return true;
      } catch {
          return false;
@@ -109,20 +130,20 @@ export class AgentExecutor implements Executor {
   }
 
   async mkdir(path: string): Promise<void> {
-      await this.execArgv(['mkdir', '-p', path]);
+      await this.execSafe(['mkdir', '-p', path]);
   }
 
   async readdir(path: string): Promise<string[]> {
-      const { stdout } = await this.execArgv(['ls', '-1', path]);
+      const { stdout } = await this.execSafe(['ls', '-1', path]);
       return stdout.trim().split('\n').filter(s => s.length > 0);
   }
 
   async rm(path: string): Promise<void> {
-      await this.execArgv(['rm', '-rf', path]);
+      await this.execSafe(['rm', '-rf', path]);
   }
 
   async rename(oldPath: string, newPath: string): Promise<void> {
-      await this.execArgv(['mv', oldPath, newPath]);
+      await this.execSafe(['mv', oldPath, newPath]);
   }
 
   spawn(command: string, options: { pty?: boolean; cols?: number; rows?: number } = {}): { stdout: Readable; stderr: Readable; promise: Promise<void> } {

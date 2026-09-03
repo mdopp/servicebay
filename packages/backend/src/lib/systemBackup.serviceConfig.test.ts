@@ -159,36 +159,38 @@ describe('extractServiceConfigToNode', () => {
         const files = new Map<string, string>();
         const exec: Partial<Executor> = {
             writeFile: vi.fn(async (p: string, content: string) => { files.set(p, content); }),
-            execArgv: vi.fn(async (argv: string[]) => {
+            // The `base64 -d "$1" > "$2"` step genuinely needs a shell, so it
+            // arrives as a quoted string on `exec`; the two paths are the last
+            // two words of it (#2737).
+            exec: vi.fn(async (command: string) => {
+                const parts = command.split(' ');
+                const b64Path = parts[parts.length - 2];
+                const outPath = parts[parts.length - 1];
+                const b64 = files.get(b64Path) ?? '';
+                await fs.writeFile(outPath, Buffer.from(b64, 'base64'));
+                return { stdout: '', stderr: '' };
+            }),
+            execSafe: vi.fn(async (argv: string[]) => {
                 const [cmd, ...rest] = argv;
                 if (cmd === 'mktemp') {
                     const f = path.join(hostRoot, `mktemp-${Math.random().toString(36).slice(2)}`);
-                    return { stdout: f + '\n', stderr: '' };
-                }
-                if (cmd === 'sh' && rest[0] === '-c') {
-                    // argv: ['sh','-c',<script>,'sh',<b64path>,<tarpath>]
-                    // → rest = ['-c',<script>,'sh',<b64path>,<tarpath>]
-                    const b64Path = rest[3];
-                    const outPath = rest[4];
-                    const b64 = files.get(b64Path) ?? '';
-                    await fs.writeFile(outPath, Buffer.from(b64, 'base64'));
-                    return { stdout: '', stderr: '' };
+                    return { stdout: f + '\n', stderr: '', code: 0 };
                 }
                 if (cmd === 'mkdir') {
                     await fs.mkdir(rest[rest.length - 1], { recursive: true });
-                    return { stdout: '', stderr: '' };
+                    return { stdout: '', stderr: '', code: 0 };
                 }
                 if (cmd === 'tar') {
                     // tar -xf <hostTar> -C <destDir> ...
                     const fIdx = argv.indexOf('-xf');
                     const cIdx = argv.indexOf('-C');
                     await execFileAsync('tar', ['-xf', argv[fIdx + 1], '-C', argv[cIdx + 1], '--no-same-owner']);
-                    return { stdout: '', stderr: '' };
+                    return { stdout: '', stderr: '', code: 0 };
                 }
                 if (cmd === 'readlink') {
                     const target = rest[rest.length - 1];
                     const resolved = await fs.realpath(target).catch(() => target);
-                    return { stdout: resolved + '\n', stderr: '' };
+                    return { stdout: resolved + '\n', stderr: '', code: 0 };
                 }
                 if (cmd === 'find') {
                     // find <dir> -type l
@@ -202,15 +204,15 @@ describe('extractServiceConfigToNode', () => {
                         }
                     };
                     await walk(dir).catch(() => {});
-                    return { stdout: out.join('\n') + '\n', stderr: '' };
+                    return { stdout: out.join('\n') + '\n', stderr: '', code: 0 };
                 }
                 if (cmd === 'rm') {
                     for (const a of rest) {
                         if (a.startsWith('/')) await fs.rm(a, { recursive: true, force: true }).catch(() => {});
                     }
-                    return { stdout: '', stderr: '' };
+                    return { stdout: '', stderr: '', code: 0 };
                 }
-                return { stdout: '', stderr: '' };
+                return { stdout: '', stderr: '', code: 0 };
             }),
         };
         return exec as Executor;

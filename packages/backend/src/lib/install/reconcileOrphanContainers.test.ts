@@ -15,7 +15,7 @@ const { mockGetPodmanPs, mockExecutor, mockGetExecutor } = vi.hoisted(() => ({
   mockGetPodmanPs: vi.fn(),
   mockExecutor: {
     exec: vi.fn(),
-    execArgv: vi.fn(),
+    execSafe: vi.fn(),
   },
   mockGetExecutor: vi.fn(),
 }));
@@ -34,7 +34,7 @@ const {
 
 beforeEach(() => {
   mockGetExecutor.mockReturnValue(mockExecutor);
-  mockExecutor.execArgv.mockReset();
+  mockExecutor.execSafe.mockReset();
   mockGetPodmanPs.mockReset();
 });
 
@@ -108,10 +108,10 @@ describe('reconcileOrphanContainers', () => {
       { Id: 'live1', Names: ['/hermes-hermes-new'], State: 'running', Labels: { PODMAN_SYSTEMD_UNIT: 'hermes.service' } },
     ];
     mockGetPodmanPs.mockResolvedValue(records);
-    mockExecutor.execArgv.mockImplementation(async (argv: string[]) => {
+    mockExecutor.execSafe.mockImplementation(async (argv: string[]) => {
       if (argv[0] === 'systemctl') return systemctlShow('not-found', '');
       if (argv[0] === 'podman' && argv[1] === 'rm') return { stdout: '', stderr: '' };
-      throw new Error(`unexpected execArgv: ${argv.join(' ')}`);
+      throw new Error(`unexpected execSafe: ${argv.join(' ')}`);
     });
 
     const result = await reconcileOrphanContainers();
@@ -121,7 +121,7 @@ describe('reconcileOrphanContainers', () => {
     // only the exited record is even inspected (running is skipped)
     expect(result.inspected).toBe(1);
     // podman rm called exactly once, on the ghost id
-    const rmCalls = mockExecutor.execArgv.mock.calls.filter(c => c[0][0] === 'podman');
+    const rmCalls = mockExecutor.execSafe.mock.calls.filter(c => c[0][0] === 'podman');
     expect(rmCalls).toHaveLength(1);
     expect(rmCalls[0][0]).toEqual(['podman', 'rm', '-f', 'ghost1']);
   });
@@ -130,11 +130,11 @@ describe('reconcileOrphanContainers', () => {
     mockGetPodmanPs.mockResolvedValue([
       { Id: 'kept1', Names: ['/immich-server'], State: 'exited', Labels: { PODMAN_SYSTEMD_UNIT: 'immich.service' } },
     ]);
-    mockExecutor.execArgv.mockImplementation(async (argv: string[]) => {
+    mockExecutor.execSafe.mockImplementation(async (argv: string[]) => {
       if (argv[0] === 'systemctl') {
         return systemctlShow('loaded', '/home/core/.config/containers/systemd/immich.service');
       }
-      throw new Error(`unexpected execArgv: ${argv.join(' ')}`);
+      throw new Error(`unexpected execSafe: ${argv.join(' ')}`);
     });
 
     const result = await reconcileOrphanContainers();
@@ -142,32 +142,32 @@ describe('reconcileOrphanContainers', () => {
     expect(result.removed).toEqual([]);
     expect(result.inspected).toBe(1);
     // no podman rm issued
-    expect(mockExecutor.execArgv.mock.calls.some(c => c[0][0] === 'podman')).toBe(false);
+    expect(mockExecutor.execSafe.mock.calls.some(c => c[0][0] === 'podman')).toBe(false);
   });
 
   it('fails SAFE: keeps the container when the unit probe errors', async () => {
     mockGetPodmanPs.mockResolvedValue([
       { Id: 'maybe1', Names: ['/mystery'], State: 'exited', Labels: { PODMAN_SYSTEMD_UNIT: 'mystery.service' } },
     ]);
-    mockExecutor.execArgv.mockImplementation(async (argv: string[]) => {
+    mockExecutor.execSafe.mockImplementation(async (argv: string[]) => {
       if (argv[0] === 'systemctl') throw new Error('dbus unavailable');
-      throw new Error(`unexpected execArgv: ${argv.join(' ')}`);
+      throw new Error(`unexpected execSafe: ${argv.join(' ')}`);
     });
 
     const result = await reconcileOrphanContainers();
 
     expect(result.removed).toEqual([]);
-    expect(mockExecutor.execArgv.mock.calls.some(c => c[0][0] === 'podman')).toBe(false);
+    expect(mockExecutor.execSafe.mock.calls.some(c => c[0][0] === 'podman')).toBe(false);
   });
 
   it('records a removal failure without throwing', async () => {
     mockGetPodmanPs.mockResolvedValue([
       { Id: 'ghost2', Names: ['/old-stack'], State: 'exited', Labels: { PODMAN_SYSTEMD_UNIT: 'old.service' } },
     ]);
-    mockExecutor.execArgv.mockImplementation(async (argv: string[]) => {
+    mockExecutor.execSafe.mockImplementation(async (argv: string[]) => {
       if (argv[0] === 'systemctl') return systemctlShow('not-found', '');
       if (argv[0] === 'podman') throw new Error('container in use');
-      throw new Error(`unexpected execArgv: ${argv.join(' ')}`);
+      throw new Error(`unexpected execSafe: ${argv.join(' ')}`);
     });
 
     const result = await reconcileOrphanContainers();

@@ -17,13 +17,13 @@ describe('Discovery', () => {
 
     it('should identify a .container file in systemd dir as managed', async () => {
         const mockExec = vi.fn();
-        // #1097: systemctl now goes through execArgv. Mock both — exec
+        // #1097: systemctl now goes through execSafe. Mock both — exec
         // is still used for `echo $HOME` (needs shell expansion).
-        const mockExecArgv = vi.fn();
+        const mockExecSafe = vi.fn();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (getExecutor as any).mockReturnValue({
             exec: mockExec,
-            execArgv: mockExecArgv,
+            execSafe: mockExecSafe,
             exists: vi.fn(),
         });
 
@@ -37,8 +37,8 @@ describe('Discovery', () => {
             }
         ]);
 
-        // Mock systemctl show (via execArgv) to return the Quadlet path
-        mockExecArgv.mockImplementation(async (argv: string[]) => {
+        // Mock systemctl show (via execSafe) to return the Quadlet path
+        mockExecSafe.mockImplementation(async (argv: string[]) => {
             if (argv[0] === 'systemctl' && argv.includes('show')) {
                 return {
                     stdout: `FragmentPath=/home/user/.config/containers/systemd/servicebay.container\nSourcePath=/home/user/.config/containers/systemd/servicebay.container\n`
@@ -58,11 +58,11 @@ describe('Discovery', () => {
 
     it('should identify a .service file outside systemd dir as unmanaged', async () => {
         const mockExec = vi.fn();
-        const mockExecArgv = vi.fn();
+        const mockExecSafe = vi.fn();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (getExecutor as any).mockReturnValue({
             exec: mockExec,
-            execArgv: mockExecArgv,
+            execSafe: mockExecSafe,
             exists: vi.fn(),
         });
 
@@ -75,7 +75,7 @@ describe('Discovery', () => {
             }
         ]);
 
-        mockExecArgv.mockImplementation(async (argv: string[]) => {
+        mockExecSafe.mockImplementation(async (argv: string[]) => {
             if (argv[0] === 'systemctl' && argv.includes('show')) {
                  // Return a path that is NOT in .config/containers/systemd
                 return {

@@ -8,7 +8,14 @@ const execMock = vi.fn(async (argv: string[]) => {
   return { stdout: '', stderr: '' };
 });
 
-vi.mock('@/lib/executor', () => ({ getExecutor: () => ({ execArgv: (a: string[]) => execMock(a) }) }));
+// #2737: podman/systemctl ride execSafe (argv, no shell); only the tag-swap
+// `sh -c` script still needs a shell, so it comes through `exec` as a string.
+vi.mock('@/lib/executor', () => ({
+  getExecutor: () => ({
+    execSafe: (a: string[]) => execMock(a),
+    exec: (c: string) => execMock(c.split(' ')),
+  }),
+}));
 vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), error: vi.fn() } }));
 
 import { getServicebayChannel, setServicebayChannel, isChannel } from './servicebayChannel';

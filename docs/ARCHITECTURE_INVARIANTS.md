@@ -109,6 +109,7 @@ this page came to assert a wrong largest-file name, a wrong file count, and a
 | `as any` in `packages/backend/src` outside security paths | `BACKEND_AS_ANY_BUDGET` | 24 |
 | `: any` annotations in `packages/backend/src` (security paths included) | `BACKEND_COLON_ANY_BUDGET` | 79 |
 | `executor.exec` template-literal call sites | `EXEC_TEMPLATE_LITERAL_MAX` | 0 |
+| `executor.execArgv` call sites (deprecated alias for `execSafe`) | `EXEC_ARGV_MAX` | 0 |
 | `withApiHandler` adoption across `route.ts` files | `MIN_WITH_API_HANDLER_RATIO` | 100% |
 | `DigitalTwinStore.getInstance()` call sites | `TWIN_GETINSTANCE_MAX` | 0 |
 | Bare `fs.writeFile`/`writeFileSync` in durable-state modules | `DURABLE_STATE_BARE_WRITE_BUDGET` | 0 |

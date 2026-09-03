@@ -18,7 +18,7 @@ import { logger } from './logger';
 import { listNodes, PodmanConnection } from './nodes';
 import { SSHConnectionPool } from './ssh/pool';
 import { getConfig, updateConfig } from './config';
-import { shellQuote } from './util/shellQuote';
+import { shellQuote, shellQuoteAll } from './util/shellQuote';
 import type { Executor } from './executor';
 
 const execFileAsync = promisify(execFile);
@@ -441,31 +441,32 @@ export async function extractServiceConfigToNode(executor: Executor, tar: Buffer
     } finally {
         await fs.rm(tmp, { force: true });
     }
-    const { stdout } = await executor.execArgv(['mktemp', '-t', 'sb-svcconfig-XXXXXX']);
+    const { stdout } = await executor.execSafe(['mktemp', '-t', 'sb-svcconfig-XXXXXX']);
     const hostTar = stdout.trim();
     const hostTarB64 = `${hostTar}.b64`;
     try {
         await executor.writeFile(hostTarB64, tar.toString('base64'));
-        await executor.execArgv(['sh', '-c', 'base64 -d "$1" > "$2"', 'sh', hostTarB64, hostTar], { timeoutMs: 120_000 });
-        await executor.execArgv(['mkdir', '-p', destDir]);
-        await executor.execArgv(
+        // Shell required: `>` redirection is the whole point of this step.
+        await executor.exec(shellQuoteAll(['sh', '-c', 'base64 -d "$1" > "$2"', 'sh', hostTarB64, hostTar]), { timeoutMs: 120_000 });
+        await executor.execSafe(['mkdir', '-p', destDir]);
+        await executor.execSafe(
             ['tar', '-xf', hostTar, '-C', destDir, '--no-same-owner', '--no-overwrite-dir', '--no-same-permissions'],
             { timeoutMs: 120_000 },
         );
         // Host-side symlink-escape walk (defense in depth): refuse any symlink
         // that resolves outside destDir, cleaning up on refusal.
-        const realRoot = (await executor.execArgv(['readlink', '-f', destDir])).stdout.trim();
-        const links = (await executor.execArgv(['find', destDir, '-type', 'l'])).stdout
+        const realRoot = (await executor.execSafe(['readlink', '-f', destDir])).stdout.trim();
+        const links = (await executor.execSafe(['find', destDir, '-type', 'l'])).stdout
             .split('\n').map(l => l.trim()).filter(Boolean);
         for (const link of links) {
-            const resolved = (await executor.execArgv(['readlink', '-f', link]).catch(() => ({ stdout: '' }))).stdout.trim();
+            const resolved = (await executor.execSafe(['readlink', '-f', link]).catch(() => ({ stdout: '' }))).stdout.trim();
             if (!resolved || (resolved !== realRoot && !resolved.startsWith(realRoot + '/'))) {
-                await executor.execArgv(['rm', '-rf', destDir]).catch(() => {});
+                await executor.execSafe(['rm', '-rf', destDir]).catch(() => {});
                 throw new Error(`Refused archive: symlink "${link}" → "${resolved}" escapes the extraction directory`);
             }
         }
     } finally {
-        await executor.execArgv(['rm', '-f', hostTarB64, hostTar]).catch(() => {});
+        await executor.execSafe(['rm', '-f', hostTarB64, hostTar]).catch(() => {});
     }
 }
 

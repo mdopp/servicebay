@@ -87,6 +87,7 @@ registerProbe({
     try {
       // Locate the running NPM container (same discovery the rekey path
       // uses — match the proxy-manager image, take the first name).
+      // Shell required: this is a `podman ps | awk` pipeline.
       const find = await ctx.executor.exec(
         `podman ps --format '{{.Names}} {{.Image}}' | awk '/proxy-manager/{print $1; exit}'`,
         { timeoutMs: 15_000 },
@@ -99,9 +100,9 @@ registerProbe({
       let output = '';
       let exitCode = 0;
       try {
-        // execArgv quotes each arg (shellQuoteAll) — `container` comes from
-        // `podman ps` output but is never shell-interpolated.
-        const res = await ctx.executor.execArgv(['podman', 'exec', container, 'nginx', '-t'], { timeoutMs: 20_000 });
+        // execSafe sends the argv verbatim to the agent — `container` comes
+        // from `podman ps` output and is never shell-parsed at all.
+        const res = await ctx.executor.execSafe(['podman', 'exec', container, 'nginx', '-t'], { timeoutMs: 20_000 });
         // `nginx -t` writes its "syntax is ok" banner to stderr even on success.
         output = `${res.stdout}\n${res.stderr}`;
       } catch (e) {

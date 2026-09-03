@@ -77,8 +77,8 @@ describe('nginx_config_valid probe.run', () => {
     executor: {
       // Container discovery uses exec (pipe/awk needs a shell).
       exec: vi.fn(async () => ({ stdout: 'nginx-nginx-proxy-manager docker.io/jc21/nginx-proxy-manager\n', stderr: '' })),
-      // `nginx -t` runs via execArgv (no shell).
-      execArgv: vi.fn(async () => nginxResult()),
+      // `nginx -t` runs via execSafe (no shell).
+      execSafe: vi.fn(async () => nginxResult()),
     } as never,
   });
 

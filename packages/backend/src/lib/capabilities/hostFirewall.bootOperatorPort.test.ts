@@ -42,10 +42,16 @@ vi.mock('@/lib/install/handlerFailures', () => ({
 }));
 vi.mock('@/lib/executor', () => ({
   getExecutor: () => ({
-    execArgv: async (argv: string[]) => {
-      argvCalls.push(argv);
-      if (argv.join(' ') === 'sh -c command -v nft') return { stdout: '/usr/sbin/nft\n', stderr: '' };
+    // #2737: argv rides execSafe (`sudo` is an option); the genuinely-shell
+    // commands still arrive as a string on `exec`.
+    exec: async (command: string) => {
+      argvCalls.push(command.split(' '));
+      if (command.includes('command -v nft')) return { stdout: '/usr/sbin/nft\n', stderr: '' };
       return { stdout: '', stderr: '' };
+    },
+    execSafe: async (argv: string[], o?: { sudo?: boolean }) => {
+      argvCalls.push(o?.sudo ? ['sudo', ...argv] : argv);
+      return { stdout: '', stderr: '', code: 0 };
     },
     writeFile: async (path: string, content: string) => {
       writes[path] = content;

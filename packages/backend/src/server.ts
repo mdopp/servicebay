@@ -777,7 +777,7 @@ app.prepare().then(() => {
           const { refreshWorkerImage } = await import('./lib/diskImport/launcher');
           const node = (await listNodes())[0]?.Name ?? 'Local';
           const executor = new AgentExecutor(node);
-          await refreshWorkerImage((argv, options) => executor.execSafe(argv, options ?? {}));
+          await refreshWorkerImage((argv, options) => executor.execSafe(argv, { ...(options ?? {}), check: false }));
           logger.info('Server', 'Disk-import worker image refreshed in background.');
         } catch (err) {
           logger.warn('Server', `Disk-import worker image refresh failed: ${err instanceof Error ? err.message : String(err)}`);

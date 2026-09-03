@@ -170,17 +170,18 @@ describe('write_file (#2142)', () => {
     // realpath escape guard ran on the target.
     expect(execSafe).toHaveBeenCalledWith(
       expect.arrayContaining(['realpath', '-m', '--', `${JAIL_ROOT}/local-templates/templates/tor/template.yml`]),
+      { check: false },
     );
     // parent-dir create (sudo) on the file's parent.
     expect(execSafe).toHaveBeenCalledWith(
       ['mkdir', '-p', '--', `${JAIL_ROOT}/local-templates/templates/tor`],
-      { sudo: true },
+      { sudo: true, check: false },
     );
     expect(writeFile).toHaveBeenCalledWith(`${JAIL_ROOT}/local-templates/templates/tor/template.yml`, 'name: tor');
     // core:core ownership (sudo).
     expect(execSafe).toHaveBeenCalledWith(
       ['chown', 'core:core', '--', `${JAIL_ROOT}/local-templates/templates/tor/template.yml`],
-      { sudo: true },
+      { sudo: true, check: false },
     );
     expect(snapshotBeforeMutation).not.toHaveBeenCalled();
     await client.close();

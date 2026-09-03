@@ -8,7 +8,8 @@ type ProgressPayload = { step: string; progress: number; message: string };
 type GlobalWithUpdater = Omit<typeof global, 'updaterIO'> & { updaterIO?: Server };
 
 vi.mock('@/lib/executor', () => ({
-  getExecutor: vi.fn(() => ({ exec: execMock })),
+  // #2737: the pull/recreate/restart argv rides execSafe now (no shell).
+  getExecutor: vi.fn(() => ({ exec: execMock, execSafe: execMock })),
 }));
 
 describe('performUpdate', () => {
@@ -35,12 +36,12 @@ describe('performUpdate', () => {
 
     expect(execMock).toHaveBeenNthCalledWith(
       1,
-      'podman pull ghcr.io/mdopp/servicebay:latest',
+      ['podman', 'pull', 'ghcr.io/mdopp/servicebay:latest'],
       { timeoutMs: 5 * 60 * 1000 }
     );
     // #2063: recreate the container (rm -f) so the freshly-pulled image lands,
     // then restart via systemd.
-    const cmds = execMock.mock.calls.map((c) => String(c[0]));
+    const cmds = execMock.mock.calls.map((c) => (Array.isArray(c[0]) ? c[0].join(' ') : String(c[0])));
     expect(cmds).toContain('podman rm -f servicebay');
     expect(cmds).toContain('systemctl --user restart --no-block servicebay.service');
 

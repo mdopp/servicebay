@@ -13,7 +13,7 @@
  * `deleteBundleResources` lives here rather than in migration.ts
  * because it operates on an *already-identified* unmanaged bundle —
  * the inverse of discovery — and shares the same primitive set
- * (executor.execArgv on `systemctl --user disable --now`, file
+ * (executor.execSafe on `systemctl --user disable --now`, file
  * removal). Migration is about transforming bundles into managed
  * Quadlets; deletion is about purging them.
  */
@@ -52,16 +52,16 @@ async function parseSystemdUnitLine(
     let sourcePath: string | undefined;
 
     try {
-        // #1097: route systemctl through execArgv so the shell never
-        // sees serviceName as part of a command-line string. The
+        // #1097: route systemctl through the structured argv path so the
+        // shell never sees serviceName as part of a command-line string. The
         // upstream regex validator already constrains the input, but
         // argv-based exec removes the shell-injection class entirely
         // and matches the convention the rest of the codebase uses.
-        let { stdout } = await executor.execArgv(['systemctl', '--user', 'show', '-p', 'FragmentPath', '-p', 'SourcePath', serviceName]);
+        let { stdout } = await executor.execSafe(['systemctl', '--user', 'show', '-p', 'FragmentPath', '-p', 'SourcePath', serviceName]);
 
         // If empty output or properties missing, try appending .service if not present
         if ((!stdout || (!stdout.includes('FragmentPath=') && !stdout.includes('SourcePath='))) && !serviceName.endsWith('.service')) {
-             const res = await executor.execArgv(['systemctl', '--user', 'show', '-p', 'FragmentPath', '-p', 'SourcePath', `${serviceName}.service`]);
+             const res = await executor.execSafe(['systemctl', '--user', 'show', '-p', 'FragmentPath', '-p', 'SourcePath', `${serviceName}.service`]);
              stdout = res.stdout;
         }
 
@@ -74,6 +74,7 @@ async function parseSystemdUnitLine(
         // Fallback: Check common locations if unitFile is still empty
         if (!unitFile) {
              // Get home dir dynamically (remote or local)
+             // Shell required: `$HOME` is expanded by the host's shell.
              const { stdout: homeDir } = await executor.exec('echo $HOME');
              const cleanHome = homeDir.trim();
 
@@ -238,8 +239,8 @@ export async function deleteBundleResources(bundle: ServiceBundle, connection?: 
 
     for (const unit of serviceUnits) {
         try {
-            await executor.execArgv(['systemctl', '--user', 'disable', '--now', unit]);
-            await executor.execArgv(['systemctl', '--user', 'reset-failed', unit]);
+            await executor.execSafe(['systemctl', '--user', 'disable', '--now', unit]);
+            await executor.execSafe(['systemctl', '--user', 'reset-failed', unit]);
             stoppedUnits.push(unit);
         } catch (error) {
             logger.warn('discovery', `Failed to disable unmanaged unit ${unit}`, error);
@@ -250,6 +251,7 @@ export async function deleteBundleResources(bundle: ServiceBundle, connection?: 
     let homeDir: string | undefined;
     if (needsHomeDir) {
         try {
+            // Shell required: `$HOME` is expanded by the host's shell.
             const { stdout } = await executor.exec('echo $HOME');
             homeDir = stdout.trim() || undefined;
         } catch (error) {
@@ -260,7 +262,7 @@ export async function deleteBundleResources(bundle: ServiceBundle, connection?: 
     const { removedFiles, missingFiles } = await removeUnitFiles(executor, fileCandidates, homeDir);
 
     try {
-        await executor.exec('systemctl --user daemon-reload');
+        await executor.execSafe(['systemctl', '--user', 'daemon-reload']);
     } catch (error) {
         logger.warn('discovery', 'Failed to reload systemd after deleting unmanaged bundle', error);
     }

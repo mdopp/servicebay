@@ -27,5 +27,7 @@ export function resolveNode(node?: string): string {
 /** Build the launcher's `SafeExec` seam over the agent's structured `safe_exec`. */
 export function makeExec(node: string): SafeExec {
   const executor = new AgentExecutor(node);
-  return (argv, options) => executor.execSafe(argv, options ?? {});
+  // `check: false`: the SafeExec seam reports the exit code to the launcher
+  // rather than throwing (#2737 made throwing the execSafe default).
+  return (argv, options) => executor.execSafe(argv, { ...(options ?? {}), check: false });
 }

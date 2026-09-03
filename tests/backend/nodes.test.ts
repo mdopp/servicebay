@@ -69,6 +69,7 @@ describe('NodesManager', () => {
         vi.mocked(getExecutor).mockReturnValue({
             exec: mockExec,
             execArgv: vi.fn().mockResolvedValue({ stdout: 'ok', stderr: '' }),
+            execSafe: mockExec,
             spawn: vi.fn(), // Add missing spawn mock
             readFile: vi.fn(),
             writeFile: vi.fn(),
@@ -83,7 +84,7 @@ describe('NodesManager', () => {
         
         expect(getExecutor).toHaveBeenCalled();
         expect(result.success).toBe(true);
-        expect(mockExec).toHaveBeenCalledWith('podman info');
+        expect(mockExec).toHaveBeenCalledWith(['podman', 'info']);
     });
 
     it('verifyNodeConnection should fail if node not found', async () => {

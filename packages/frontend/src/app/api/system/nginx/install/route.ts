@@ -65,15 +65,17 @@ WantedBy=default.target
 async function cleanupInstallerService(nodeName: string) {
     const executor = getExecutor(nodeName);
     try {
-        await executor.exec('systemctl --user stop install-nginx.service');
+        await executor.execSafe(['systemctl', '--user', 'stop', 'install-nginx.service']);
     } catch { /* may already be stopped */ }
     try {
-        await executor.exec('systemctl --user disable install-nginx.service');
+        await executor.execSafe(['systemctl', '--user', 'disable', 'install-nginx.service']);
     } catch { /* may not be enabled */ }
     try {
+        // Shell required for the two `rm`s: `~` is expanded by the host's shell.
         await executor.exec('rm -f ~/.config/systemd/user/install-nginx.service');
         await executor.exec('rm -f ~/.config/systemd/user/default.target.wants/install-nginx.service');
-        await executor.exec('systemctl --user daemon-reload');
+        await executor.execSafe(['systemctl', '--user', 'daemon-reload']);
+        // Shell required: stderr redirection + `|| true` (the unit may be absent).
         await executor.exec('systemctl --user reset-failed install-nginx.service 2>/dev/null || true');
         logger.info('NginxInstall', `Cleaned up install-nginx oneshot on ${nodeName}`);
     } catch (e) {

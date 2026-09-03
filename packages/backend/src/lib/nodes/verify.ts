@@ -24,7 +24,7 @@ export async function verifyNodeConnection(name: string): Promise<{ success: boo
     // `podman info` is the canonical "everything's wired up" probe —
     // proves both SSH access and a working Podman socket on the
     // remote side.
-    await executor.exec('podman info');
+    await executor.execSafe(['podman', 'info']);
     return { success: true };
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);

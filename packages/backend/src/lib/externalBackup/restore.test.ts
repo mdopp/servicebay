@@ -517,20 +517,20 @@ describe('host-agent-routed restore/wipe (#1600 — stacks dir not in container)
   function makeHostExecutor() {
     const run = (argv: string[]) => execFileAsync(argv[0], argv.slice(1));
     const exec: {
-      execArgv: ReturnType<typeof vi.fn>;
+      exec: ReturnType<typeof vi.fn>;
+      execSafe: ReturnType<typeof vi.fn>;
       exists: ReturnType<typeof vi.fn>;
       writeFile: ReturnType<typeof vi.fn>;
     } = {
-      execArgv: vi.fn(async (argv: string[]) => {
-        // `sh -c <script> sh <args...>` — run the script with positional args.
-        if (argv[0] === 'sh' && argv[1] === '-c') {
-          const script = argv[2];
-          const rest = argv.slice(3); // [$0, $1, $2, ...]
-          const { stdout, stderr } = await execFileAsync('sh', ['-c', script, ...rest]);
-          return { stdout, stderr };
-        }
-        const { stdout, stderr } = await run(argv);
+      // #2737: only the genuinely-shell step (`base64 -d "$1" > "$2"`) still
+      // arrives as a quoted string; everything else is argv on execSafe.
+      exec: vi.fn(async (command: string) => {
+        const { stdout, stderr } = await execFileAsync('sh', ['-c', command]);
         return { stdout, stderr };
+      }),
+      execSafe: vi.fn(async (argv: string[]) => {
+        const { stdout, stderr } = await run(argv);
+        return { stdout, stderr, code: 0 };
       }),
       exists: vi.fn(async (p: string) => {
         try { await fs.access(p); return true; } catch { return false; }

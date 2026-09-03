@@ -83,9 +83,11 @@ function makeExecutor() {
       commands.push(command);
       return { stdout: '', stderr: '' };
     }),
-    execArgv: vi.fn(async (argv: string[]) => {
-      commands.push(argv.join(' '));
-      return { stdout: '', stderr: '' };
+    // `sudo` is an option now (#2737), not argv[0] — re-prefix it so the
+    // recorded command line still reads the way the box sees it.
+    execSafe: vi.fn(async (argv: string[], opts?: { sudo?: boolean }) => {
+      commands.push((opts?.sudo ? ['sudo', ...argv] : argv).join(' '));
+      return { stdout: '', stderr: '', code: 0 };
     }),
     spawn: vi.fn(),
     readFile: vi.fn(async () => ''),

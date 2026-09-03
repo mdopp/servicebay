@@ -109,10 +109,10 @@ async function getAllContainersInspect(connection?: PodmanConnection) {
   }
   const executor = getExecutor(connection);
   try {
-    const { stdout: ids } = await executor.exec('podman ps -a -q');
+    const { stdout: ids } = await executor.execSafe(['podman', 'ps', '-a', '-q']);
     if (!ids.trim()) return [];
 
-    const { stdout } = await executor.execArgv(['podman', 'inspect', ...ids.split('\n').filter(Boolean)]);
+    const { stdout } = await executor.execSafe(['podman', 'inspect', ...ids.split('\n').filter(Boolean)]);
     return JSON.parse(stdout);
   } catch (e) {
     logger.error('manager', 'Error inspecting all containers:', e);
@@ -123,7 +123,7 @@ async function getAllContainersInspect(connection?: PodmanConnection) {
 export async function getPodmanPs(connection?: PodmanConnection) {
   const executor = getExecutor(connection);
   try {
-    const { stdout } = await executor.exec(`podman ps -a --pod --format json`);
+    const { stdout } = await executor.execSafe(['podman', 'ps', '-a', '--pod', '--format', 'json']);
     const containers = JSON.parse(stdout);
     return containers.map((c: any) => {
         const names: string[] = Array.isArray(c.Names) ? c.Names : [];
@@ -147,7 +147,7 @@ export async function getPodmanPs(connection?: PodmanConnection) {
 export async function getAllSystemServices(connection?: PodmanConnection) {
   const executor = getExecutor(connection);
   try {
-    const { stdout: textOut } = await executor.exec('systemctl list-units --type=service --all --no-pager --plain --no-legend');
+    const { stdout: textOut } = await executor.execSafe(['systemctl', 'list-units', '--type=service', '--all', '--no-pager', '--plain', '--no-legend']);
 
     return textOut.split('\n')
       .filter(line => line.trim())
@@ -174,8 +174,8 @@ async function getHostPortsForPids(pids: number[], connection?: PodmanConnection
     try {
         // Fetch listening ports and process tree in parallel
         const [ssRes, psRes] = await Promise.all([
-            executor.exec('ss -tulpnH'),
-            executor.exec('ps -eo pid,ppid --no-headers')
+            executor.execSafe(['ss', '-tulpnH']),
+            executor.execSafe(['ps', '-eo', 'pid,ppid', '--no-headers']),
         ]);
 
         const { stdout } = ssRes;
