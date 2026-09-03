@@ -77,7 +77,7 @@ export function serviceAccent(card: PortalCard): ServiceAccent {
 /** The light grouping sections, in display order (#2126). */
 export type PortalSection = 'Media' | 'Productivity' | 'Files & Sync' | 'Smart Home & Dev' | 'More';
 
-export const SECTION_ORDER: PortalSection[] = [
+const SECTION_ORDER: PortalSection[] = [
   'Media', 'Productivity', 'Files & Sync', 'Smart Home & Dev', 'More',
 ];
 

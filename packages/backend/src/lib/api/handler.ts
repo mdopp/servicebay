@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger';
 import type { ApiScope } from '@/lib/auth/apiScope';
 import type { SessionPayload } from '@/lib/auth/session';
 
-export interface ApiErrorBody {
+interface ApiErrorBody {
   ok: false;
   error: string;
   code?: string;

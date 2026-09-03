@@ -689,7 +689,7 @@ async function pruneServiceBackups(service: string, keep: number): Promise<strin
  * Shared by the dir-based producer (`backupServiceToNas`) and the upload route
  * (#1351) so the on-NAS format has a single source of truth.
  */
-export async function writeServiceBackupToNas(service: string, tar: Buffer): Promise<ServiceBackupResult> {
+async function writeServiceBackupToNas(service: string, tar: Buffer): Promise<ServiceBackupResult> {
   const now = new Date();
   const meta: ServiceBackupMeta = {
     service,

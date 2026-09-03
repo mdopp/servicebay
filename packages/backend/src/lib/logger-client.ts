@@ -21,7 +21,7 @@
 
 import { renderLogArg, toSingleJournalLine } from './log-format';
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
   debug: 0,

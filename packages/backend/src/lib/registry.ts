@@ -851,7 +851,7 @@ export async function getTemplateYaml(name: string, source?: string): Promise<st
 }
 
 /** NPM proxy host settings the provisioning kernel (`lib/reverseProxy/proxyHostProvisioning`) forwards to NPM on create */
-export interface ProxyConfig {
+interface ProxyConfig {
   allow_websocket_upgrade?: boolean;
   block_exploits?: boolean;
   caching_enabled?: boolean;
@@ -894,7 +894,7 @@ export interface ProxyConfig {
   authSkipPaths?: string[];
 }
 
-export interface OidcClientConfig {
+interface OidcClientConfig {
   client_id: string;
   client_name: string;
   authorization_policy?: string;

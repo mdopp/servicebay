@@ -39,7 +39,7 @@ export interface NetworkNode {
  * Optional for backwards compatibility; absent is treated as a plain
  * structural edge.
  */
-export type NetworkEdgeKind = 'gateway' | 'proxy' | 'observed' | 'declared' | 'inferred' | 'manual';
+type NetworkEdgeKind = 'gateway' | 'proxy' | 'observed' | 'declared' | 'inferred' | 'manual';
 
 export interface NetworkEdge {
   id: string;

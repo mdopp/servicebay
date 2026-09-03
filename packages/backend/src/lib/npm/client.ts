@@ -99,7 +99,7 @@ function twinHasData(nodeName: string): boolean {
 
 /** First non-loopback IP the twin knows for the node, else its first IP,
  *  else loopback. */
-export function getNodeLanIp(nodeName: string): string {
+function getNodeLanIp(nodeName: string): string {
   const twin = getNodeTwin(nodeName);
   if (twin?.nodeIPs?.length) {
     return twin.nodeIPs.find(ip => !ip.startsWith('127.')) ?? twin.nodeIPs[0];

@@ -30,7 +30,7 @@
  */
 import yaml from 'js-yaml';
 
-export type HealthcheckKind = 'http' | 'tcp';
+type HealthcheckKind = 'http' | 'tcp';
 const KNOWN_KINDS: ReadonlySet<HealthcheckKind> = new Set(['http', 'tcp']);
 
 /** Parsed config. Durations are normalised to milliseconds. */

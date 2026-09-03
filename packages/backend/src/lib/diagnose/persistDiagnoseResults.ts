@@ -46,7 +46,7 @@ type DiagnoseProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
  * this into the typed `DiagnosticProbeItem` (#1539) carried on the
  * persisted `payload`.
  */
-export interface PersistableProbeItem {
+interface PersistableProbeItem {
   id: string;
   label: string;
   detail?: string;
@@ -88,7 +88,7 @@ function toPayloadItem(item: PersistableProbeItem): DiagnosticProbeItem {
 /** Message marker so the #1423 Checks-tab popup reader can recognise a
  *  diagnose row's persisted payload and decode the original probe (incl.
  *  four-way status + self-repair actions) without re-running the suite. */
-export const DIAGNOSE_MESSAGE_PREFIX = 'diagnose:';
+const DIAGNOSE_MESSAGE_PREFIX = 'diagnose:';
 
 /** Build the persisted result message for a probe: a JSON payload behind
  *  the marker so the popup reader recovers status, detail, hint, actions

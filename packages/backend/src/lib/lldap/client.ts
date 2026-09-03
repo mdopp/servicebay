@@ -182,7 +182,7 @@ function classifyCreateUserResponse(data: CreateUserResponse, input: CreateUserI
   return { ok: true, userId: created.id, displayName: created.displayName ?? input.displayName ?? input.id };
 }
 
-export interface LldapUser {
+interface LldapUser {
   id: string;
   displayName?: string;
   email?: string;
@@ -230,7 +230,7 @@ export async function listLldapUsers(): Promise<LldapListUsersResult> {
 }
 
 /** One exported user — group memberships by displayName; no password (OPAQUE). */
-export interface LldapDirectoryUser {
+interface LldapDirectoryUser {
   id: string;
   email?: string;
   displayName?: string;
@@ -360,7 +360,7 @@ async function runAuthedGraphql<T>(
   }
 }
 
-export interface LldapGroup {
+interface LldapGroup {
   id: number;
   displayName: string;
 }

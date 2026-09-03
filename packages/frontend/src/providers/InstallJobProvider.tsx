@@ -52,7 +52,7 @@ export type InstallJobSnapshot =
 /** Client-facing display phase shared by every install surface. */
 export type InstallDisplayPhase = 'idle' | 'installing' | 'done' | 'error';
 
-export interface InstallCredentialsPrompt {
+interface InstallCredentialsPrompt {
   /** The runner is paused on the NPM credentials prompt and the operator
    *  has not answered it since the last poll. An answer (submit or skip)
    *  hides the prompt until the next poll reports the job again — if the
@@ -104,7 +104,7 @@ const InstallJobContext = createContext<InstallJobContextValue | undefined>(unde
 const ACTIVE_PHASES: ReadonlySet<JobPhase> = new Set<JobPhase>(['running', 'needs_credentials']);
 const FAILED_PHASES: ReadonlySet<JobPhase> = new Set<JobPhase>(['error', 'aborted', 'crashed']);
 
-export function isActivePhase(phase: JobPhase | undefined): boolean {
+function isActivePhase(phase: JobPhase | undefined): boolean {
   return phase !== undefined && ACTIVE_PHASES.has(phase);
 }
 
@@ -115,7 +115,7 @@ export function isFailedPhase(phase: JobPhase | undefined): boolean {
 /** Map the server phase to the display phase the wizard understands.
  *  `crashed` and `aborted` both surface as `error` so one Start-over UI
  *  covers every terminal failure. */
-export function toDisplayPhase(phase: JobPhase | undefined): InstallDisplayPhase {
+function toDisplayPhase(phase: JobPhase | undefined): InstallDisplayPhase {
   if (phase === undefined) return 'idle';
   if (isActivePhase(phase)) return 'installing';
   if (phase === 'done') return 'done';

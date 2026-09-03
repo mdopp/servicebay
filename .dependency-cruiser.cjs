@@ -100,10 +100,17 @@ module.exports = {
                 'ARCH audit: every deploy / delete / start / stop / restart / update-yaml call must ' +
                 'funnel through ServiceManager. Direct imports of the split modules ' +
                 '(serviceLifecycle / serviceListing) from outside src/lib/services bypass the ' +
-                'facade and re-introduce the multi-path-mutation bug #589 cleaned up.',
+                'facade and re-introduce the multi-path-mutation bug #589 cleaned up. ' +
+                '#2741 split serviceLifecycle.ts by verb into services/lifecycle/*; that whole ' +
+                'DIRECTORY is covered — by prefix, not by a file list — so a module added there ' +
+                'tomorrow is behind the facade without anyone remembering to edit this rule. ' +
+                'tests/scripts/service-mutation-path.test.ts pins that coverage.',
             from: { pathNot: '^packages/backend/src/lib/services/' },
             to: {
-                path: '^packages/backend/src/lib/services/(serviceLifecycle|serviceListing)(\\.ts)?$',
+                path: [
+                    '^packages/backend/src/lib/services/(serviceLifecycle|serviceListing)(\\.ts)?$',
+                    '^packages/backend/src/lib/services/lifecycle/',
+                ],
             },
         },
         {

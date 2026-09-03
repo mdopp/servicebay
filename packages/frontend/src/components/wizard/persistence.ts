@@ -56,7 +56,7 @@ export interface PersistedWizardState {
   emailRecipients: string;
 }
 
-export const WIZARD_STATE_KEY = 'sb.onboarding.v1';
+const WIZARD_STATE_KEY = 'sb.onboarding.v1';
 
 /** Migrate legacy bare-WizardStep entries to {step, subStep:'select'}
  *  so a partially-completed wizard from a pre-#691 session keeps

@@ -31,7 +31,7 @@ export type AssistKind = (typeof ASSIST_KINDS)[number];
  * (tests/backend/assist_consistency.test.ts). A body matching any of these is
  * blocked before it can be proposed.
  */
-export const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
+const SECRET_PATTERNS: { name: string; re: RegExp }[] = [
   { name: 'PEM private key', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/ },
   { name: 'ServiceBay token (sb_)', re: /\bsb_[a-z0-9]{6,}_[A-Za-z0-9]{20,}\b/ },
   { name: 'AWS access key id', re: /\bAKIA[0-9A-Z]{16}\b/ },

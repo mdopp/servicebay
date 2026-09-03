@@ -130,4 +130,3 @@ registerProbeAction(
   resyncJellyfinAccess,
 );
 
-export { PROBE_ID };

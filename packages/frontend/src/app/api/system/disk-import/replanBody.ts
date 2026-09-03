@@ -27,7 +27,7 @@ const ruleSchema = z
   .strict();
 
 /** The re-plan request: explicit rules keyed by source-relative dir + root default. */
-export const replanBodySchema = z
+const replanBodySchema = z
   .object({
     /** relDir → the (partial) Rule the operator set on that folder (`''` = root). */
     rules: z.record(z.string(), ruleSchema).default({}),
@@ -36,7 +36,7 @@ export const replanBodySchema = z
   })
   .strict();
 
-export type ReplanBody = z.infer<typeof replanBodySchema>;
+type ReplanBody = z.infer<typeof replanBodySchema>;
 
 /**
  * The APPLY body: the re-plan rules PLUS the review-gate proof (#2383) — the
@@ -46,7 +46,7 @@ export type ReplanBody = z.infer<typeof replanBodySchema>;
  * plan that was scanned in this process and shown to the caller. `confirmed` is a
  * `literal(true)` — `false`/absent fails the schema rather than falling through.
  */
-export const applyBodySchema = replanBodySchema.extend({
+const applyBodySchema = replanBodySchema.extend({
   runId: z.string().min(1),
   confirmed: z.literal(true),
 });
@@ -61,7 +61,7 @@ export interface ApplyBody {
 /** Map the validated body to the worker's {@link ReplanRequest} wire shape. The
  *  zod enums validate the values at runtime; the cast narrows the inferred
  *  `string` to the engine's literal-union types (`Disposition`/`Owner`). */
-export function toReplanRequest(body: ReplanBody): ReplanRequest {
+function toReplanRequest(body: ReplanBody): ReplanRequest {
   return {
     explicit: body.rules as ReplanRequest['explicit'],
     rootDefault: body.rootDefault as ReplanRequest['rootDefault'],

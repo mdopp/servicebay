@@ -35,13 +35,13 @@ import { parseTemplateTier } from '../templateTier';
 import type { TemplateTier } from '../templateTier';
 
 /** One migration hop that will run for a service in this plan. */
-export interface PlannedMigration {
+interface PlannedMigration {
   filename: string;
   fromVersion: number;
   toVersion: number;
 }
 
-export interface BulkUpgradeEntry {
+interface BulkUpgradeEntry {
   name: string;
   installedVersion: number;
   currentVersion: number;

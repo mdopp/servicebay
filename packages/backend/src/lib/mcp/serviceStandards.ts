@@ -45,7 +45,7 @@ const NEW_SERVICE_NOTES: Record<string, string> = {
   '0010': 'The Node runtime tracks one LTS line, kept consistent across all sources.',
 };
 
-export interface AdrPointer {
+interface AdrPointer {
   adr: string;
   title: string;
   note: string;
@@ -108,7 +108,7 @@ export async function scanCuratedAdrs(): Promise<CuratedAdrScan> {
 }
 
 /** Strip the `ADR NNNN — ` prefix from a record's title, keeping the descriptive part. */
-export function extractAdrTitle(title: string): string {
+function extractAdrTitle(title: string): string {
   return title.replace(/^ADR\s+\d{4}\s*[—-]\s*/, '').trim();
 }
 

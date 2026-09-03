@@ -73,7 +73,7 @@ const message = (e: unknown): string => {
   return String(e);
 };
 
-export async function runCredentialHandover(): Promise<HandoverOutcome> {
+async function runCredentialHandover(): Promise<HandoverOutcome> {
   let offer: { pending: number; token?: string; filename?: string; csv?: string };
   try {
     const res = await fetch('/api/system/credentials/handover', { method: 'POST' });

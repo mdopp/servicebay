@@ -24,7 +24,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
-export interface McpToolContent {
+interface McpToolContent {
   type: string;
   text?: string;
 }

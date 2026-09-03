@@ -216,7 +216,7 @@ export interface CheckResult {
  * self-repair popup straight from the row, without re-running the suite.
  * Declared structurally here (no import) to avoid a health⇄diagnose cycle.
  */
-export interface DiagnoseCheckPayload {
+interface DiagnoseCheckPayload {
   status: 'ok' | 'warn' | 'fail' | 'info';
   label?: string;
   detail?: string;

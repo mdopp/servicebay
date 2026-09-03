@@ -20,7 +20,7 @@ export const ServiceName = z.string()
 // applied (services/serviceLifecycle.ts) so both trash paths share one rule.
 // `..` and a leading dot are rejected on top of the character class: `..` alone
 // satisfies the class but resolves to the trash root's parent.
-export const TRASH_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
+const TRASH_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
 export const TrashId = z.string()
   .min(1)
   .max(255)

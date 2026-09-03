@@ -6,7 +6,7 @@ import { Card } from '@/components/ui';
 import type { SettingTier } from './ia';
 
 /** Icon-chip tone — maps to a semantic token pair (bg/10 + text). */
-export type DisclosureTone = 'accent' | 'warn' | 'ok' | 'fail' | 'info';
+type DisclosureTone = 'accent' | 'warn' | 'ok' | 'fail' | 'info';
 
 const TONE_CHIP: Record<DisclosureTone, string> = {
   accent: 'bg-accent/10 text-accent',

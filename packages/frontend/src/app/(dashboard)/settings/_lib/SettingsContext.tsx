@@ -29,7 +29,7 @@ import {
   type TemplateSettingsSchemaEntry,
 } from './helpers';
 
-export interface NodeHealthEntry {
+interface NodeHealthEntry {
   loading: boolean;
   online: boolean;
   auth: boolean;

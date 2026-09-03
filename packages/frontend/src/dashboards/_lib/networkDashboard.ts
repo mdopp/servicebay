@@ -406,7 +406,7 @@ export const DOWN_EDGE_COLOR = 'var(--edge-down)';
 export const DOWN_EDGE_DASHES = '6 3';
 
 export const DECLARED_EDGE_COLOR = 'var(--edge-declared)';
-export const DECLARED_EDGE_DASHES = '4 4';
+const DECLARED_EDGE_DASHES = '4 4';
 export const OBSERVED_EDGE_COLOR = 'var(--edge-observed)';
 // #2175 — inferred edges (env-target inference + fallback anchor). Violet
 // with a dotted stroke so they read as "derived, not declared/observed":

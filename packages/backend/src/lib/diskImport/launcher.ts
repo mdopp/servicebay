@@ -31,7 +31,7 @@ export const WORKER_IMAGE = 'ghcr.io/mdopp/servicebay-disk-import-worker:latest'
 export const WORKER_MEMORY = '1g';
 
 /** Port the worker app server listens on inside the container (Containerfile EXPOSE). */
-export const WORKER_PORT = 8080;
+const WORKER_PORT = 8080;
 
 /**
  * Timeout for slow host ops in the scan path (image pull, mounting a real
@@ -69,7 +69,7 @@ export interface ImportDevice {
  * both `mkdir`'d and bind-mounted (`-v <outDir>:/out`) by host-side commands — the
  * in-container `/app/data` is read-only on the host.
  */
-export function workerOutBase(hostDataDir: string): string {
+function workerOutBase(hostDataDir: string): string {
   return `${hostDataDir}/disk-import-runs`;
 }
 

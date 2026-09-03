@@ -47,7 +47,7 @@ export async function npmRequest(apiUrl: string, path: string, opts: NpmRequestO
 
 /** The (truncated) body of a non-ok response, for log lines and error
  *  messages. Never throws — a body that cannot be read is simply empty. */
-export async function readErrorBody(res: Response, max = 500): Promise<string> {
+async function readErrorBody(res: Response, max = 500): Promise<string> {
   try {
     return (await res.text()).slice(0, max);
   } catch {

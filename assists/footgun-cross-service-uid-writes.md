@@ -1,6 +1,6 @@
 ---
 title: Writing another service's files — container→host uid mapping, foreign ownership, and locks
-whenToUse: Your service needs to write into a store another on-box service owns (a CalDAV/CardDAV tree, a notes vault, another app's data dir) and the writes silently fail, files come out foreign-owned, or the owning app can't see/manage them.
+whenToUse: Your service needs to write into a store another on-box service owns (a CalDAV/CardDAV tree, a notes vault, another app's data dir) and the writes silently fail, files come out foreign-owned or root-owned after a sudo retry, the owning app can't see/manage them, or the consuming pod's next kube play --replace fails to relabel with lsetxattr "operation not permitted".
 kind: footgun
 tags: [uid, subuid, userns, podman, permissions, cross-service, mount, ownership, lock, rootless]
 ---
@@ -44,6 +44,26 @@ silently never appears. The tree looks written; the owning app disagrees.
    under SELinux, prefer `type: Directory` over `DirectoryOrCreate` and disable
    the per-container SELinux relabel (relabel rewrites the owning service's
    labels). See `new-service-architecture` "Data storage".
+
+## The escalated-write repair, and its blind spot
+A writer that retries a failed unprivileged write **with sudo** succeeds, but
+leaves the file — *and every parent directory the escalated write had to create*
+— owned by **root**. A root-owned path inside a rootless pod's volume breaks that
+pod's next `podman kube play --replace`: rootless podman cannot `lsetxattr`
+(relabel) a path it does not own, so the volume relabel fails with `operation not
+permitted` and the pod will not restart. Often masked by `Restart=on-failure`
+retrying five seconds later — which is why it is usually found as "the first
+start attempt always fails".
+
+The repair is to chown the escalated write's leftovers back to the uid the
+siblings carry, and the sharp edge is **choosing the reference**:
+`chown --reference=<the file's parent dir>` is a **no-op** exactly when it
+matters, because for a newly created subdirectory the same sudo write created
+that parent as root too. Walk **up past every root-owned ancestor**, take the
+first non-root directory as the reference, and repair the whole chain from below
+it down to the file. That also heals a directory an earlier run left root-owned,
+instead of adopting its ownership. Bound the walk (refuse a reference above the
+service's own tree) so a probe that keeps walking cannot chown a shared parent.
 
 Rule: **one writer per store.** If two services write the same tree without a
 coordination model, the uid/lock friction above is guaranteed. See the

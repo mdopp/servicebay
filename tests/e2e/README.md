@@ -74,6 +74,44 @@ npm run test:e2e
 
 Runs headless (no `DISPLAY`). `SB_BOX_URL` defaults to `http://192.168.178.100:5888`.
 
+## Where these run
+
+Two targets, one harness:
+
+| Target | Booted by | Specs that run |
+|---|---|---|
+| **CI** — the `e2e` job in `.github/workflows/ci.yml` (#2744) | `scripts/e2e-ci-server.sh start` | `smoke`, `portal` |
+| **Box-Verify** — the `:dev`-flipped box | the box itself | all three, incl. `sso-login` |
+
+Until #2744 the specs ran in exactly one place — Box-Verify, *after* merge. A PR
+that broke the portal page or the login form merged green. The `e2e` job closes
+that: it boots the same artifact the dev image runs (`node
+dist-server/server.cjs`, Dockerfile.dev's `CMD`) against a throwaway data dir
+with **no SSH key in `data/ssh/`**. ServiceBay seeds a default `Local` node on
+boot regardless, but its identity file does not exist, so every agent call
+fails on the key read before it opens a socket — fast, loud in the log, never a
+hang. The UI, the API and the auth path are real; only the box is missing.
+
+`sso-login.e2e.ts` self-skips when `SB_PUBLIC_DOMAIN` is unset — it needs a real
+Authelia deployment at `<svc>.<domain>`, which only the box has. Set the domain
+and it is live again; a missing *credential* still throws rather than skipping.
+
+### Reproducing a CI red locally
+
+The CI job and this command boot the server the same way, so a red in the `e2e`
+job reproduces in two steps:
+
+```bash
+npm run build                                # .next + dist-server
+scripts/e2e-ci-server.sh start               # boots :5899, writes creds to $SB_E2E_DIR/env.sh
+source "${TMPDIR:-/tmp}/servicebay-e2e/env.sh"
+npm run test:e2e
+scripts/e2e-ci-server.sh stop
+```
+
+`SB_E2E_PORT` / `SB_E2E_DIR` override the port and the state dir. Boot to
+verdict is ~5 s once the build exists.
+
 ## Adding a verify spec for a frontend unit
 
 Copy `smoke.e2e.ts`, name it `<feature>.e2e.ts`, and assert on the specific

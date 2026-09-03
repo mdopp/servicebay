@@ -28,7 +28,7 @@ import { logger } from '../logger';
 type CheckId = 'dns' | 'http01' | 'port-forward';
 type CheckStatus = 'pass' | 'fail' | 'unknown';
 
-export interface PreflightCheck {
+interface PreflightCheck {
   id: CheckId;
   label: string;
   status: CheckStatus;

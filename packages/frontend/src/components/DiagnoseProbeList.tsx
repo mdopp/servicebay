@@ -35,7 +35,7 @@ export interface ProbeAction {
   inputs?: ProbeActionInput[];
 }
 
-export interface ProbeItem {
+interface ProbeItem {
   id: string;
   label: string;
   detail?: string;
@@ -64,7 +64,7 @@ export type ProbeGroup =
  *  structural (no shared import) to match the existing duplicated
  *  `DiagnoseProbe` shape across the package boundary. `trend` is
  *  oldest → newest binary statuses for a left-to-right sparkline. */
-export interface ProbeHistory {
+interface ProbeHistory {
   firstSeen: string;
   lastOk: string | null;
   trend: ('ok' | 'fail')[];

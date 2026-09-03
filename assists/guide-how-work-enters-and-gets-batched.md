@@ -27,6 +27,36 @@ never rides along in a batch — it gets its own branch. A combined PR carrying
 eight issues receives a review of *the whole*, not of the one place where it
 matters.
 
+## The one slot consolidation gets
+
+A backlog held at a constant depth by a pipeline that only plans user issues has
+no entrance for **consolidation** — the work the project's own measurements ask
+for: a lint ratchet that stopped moving, duplicated components, invariant
+exemptions nobody retired. It never arrives, because a real issue always outranks
+it.
+
+So it gets exactly one door, and the door is narrow:
+
+- **At most one consolidation unit per batch**, and
+- **only once no user issue is waiting.**
+
+The source is a **report, not a hunch** — the ratchet/duplication/invariant checks
+the repo already runs. The unit's acceptance is the report's number moving, plus
+the ratchet tightened to the new number so it cannot drift back.
+
+Put the cap in the broker rather than the playbook. A rule a fresh model re-reads
+each run is a rule it can talk itself out of; a `plan` that exits non-zero with
+"this batch already holds a consolidation slot" is not. Same reasoning as the
+ticket rules below — the mechanism, not the intention, is what holds.
+
+## A regression names its predecessor, and owes a gate
+
+An issue that says "← #N" or "same as #N" is not a second bug. It is the first
+bug's **missing gate**: the original fix corrected one occurrence and left the
+shape. Label the class (`recurrence`), and make the acceptance a test or an
+invariant covering **the whole class** — otherwise the third occurrence is
+already scheduled, and it arrives with "but that was fixed" in front of it.
+
 ## Finding versus proposal — the distinction that ruins tickets
 
 A **finding** is *measured*. It belongs in the ticket and saves a cold-starting

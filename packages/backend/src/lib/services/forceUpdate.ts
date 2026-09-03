@@ -48,9 +48,9 @@ const PULL_TIMEOUT_MS = 30 * 60 * 1000;
 const STOP_TIMEOUT_MS = 3 * 60 * 1000;
 const SHORT_TIMEOUT_MS = 60 * 1000;
 
-export type ForceUpdateMode = 'pull' | 'fresh';
+type ForceUpdateMode = 'pull' | 'fresh';
 
-export interface ForceUpdateImage {
+interface ForceUpdateImage {
   image: string;
   /** Local image digest before the pull; null = not present / unknown. */
   before: string | null;

@@ -82,7 +82,7 @@ function readExpiresAt(payload: Record<string, unknown> | null | undefined): num
 }
 
 /** Project the durable approvals feed onto the MCP-kind rows these views show. */
-export function toPendingMcpApprovals(records: ApprovalRecord[]): PendingApproval[] {
+function toPendingMcpApprovals(records: ApprovalRecord[]): PendingApproval[] {
   return records
     .filter(r => r.status === 'pending' && r.on_approve?.mcp)
     .map(r => {

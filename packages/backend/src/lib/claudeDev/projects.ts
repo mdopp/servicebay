@@ -50,7 +50,7 @@ import { resolveEffectiveVariable } from '@/lib/template/effectiveVariables';
 import { logger } from '@/lib/logger';
 
 /** The template that declares the variables below. */
-export const CLAUDE_DEV_TEMPLATE = 'claude-dev';
+const CLAUDE_DEV_TEMPLATE = 'claude-dev';
 /** Template variable holding the configuration UI's loopback port. */
 const CONFIG_PORT_VAR = 'CLAUDE_DEV_CONFIG_PORT';
 /** Template variable holding the group `server.mjs` authorizes against. */
@@ -63,7 +63,7 @@ const DEFAULT_CONFIG_PORT = 8790;
 const DEFAULT_GROUP = 'admins';
 
 /** Where the container's configuration UI is, and which group it wants. */
-export interface ClaudeDevConnection {
+interface ClaudeDevConnection {
   /** e.g. `http://127.0.0.1:8790` */
   baseUrl: string;
   /** The group `authorizeRequest` requires the caller to be in. */
@@ -74,7 +74,7 @@ export interface ClaudeDevConnection {
  * Resolve the loopback connection from config: global Template Setting >
  * operator-set `installedVariables` > the template's declared default (#2544).
  */
-export async function resolveClaudeDevConnection(config: AppConfig): Promise<ClaudeDevConnection> {
+async function resolveClaudeDevConnection(config: AppConfig): Promise<ClaudeDevConnection> {
   const declarations = await getTemplateVariables(CLAUDE_DEV_TEMPLATE).catch(() => null);
   const portRaw = resolveEffectiveVariable(config, declarations, CONFIG_PORT_VAR);
   const parsed = portRaw ? Number.parseInt(portRaw, 10) : NaN;
@@ -84,7 +84,7 @@ export async function resolveClaudeDevConnection(config: AppConfig): Promise<Cla
 }
 
 /** The three verbs the operator asked for — one tool, one discriminator. */
-export type ClaudeDevProjectAction = 'create' | 'delete' | 'restart';
+type ClaudeDevProjectAction = 'create' | 'delete' | 'restart';
 
 export interface ClaudeDevProjectInput {
   action: ClaudeDevProjectAction;
@@ -118,7 +118,7 @@ export interface ClaudeDevProjectOutcome {
  * refuses). Token names are operator-set free text, so this is a real edge and
  * not a formality.
  */
-export function callerIdentity(caller?: string): string {
+function callerIdentity(caller?: string): string {
   const cleaned = String(caller ?? '').replace(/[^A-Za-z0-9._@+-]/g, '').slice(0, 64);
   return cleaned || 'servicebay';
 }

@@ -29,7 +29,7 @@ import { STATUS_FILE, getServiceManifest } from '@servicebay/backup-worker';
 import { DATA_DIR } from '@/lib/dirs';
 
 /** Result of one structured `safe_exec` argv invocation (the agent seam). */
-export interface SafeExecResult {
+interface SafeExecResult {
   stdout: string;
   stderr: string;
   code: number;
@@ -86,7 +86,7 @@ function containerName(runId: string): string {
  * host-side by `podman run` — the in-container /app/data is read-only on the host
  * (the disk-import worker's exit-125 lesson, #1963/#1965).
  */
-export function backupWorkerOutBase(dataDir: string): string {
+function backupWorkerOutBase(dataDir: string): string {
   return `${dataDir}/backup-runs`;
 }
 

@@ -93,7 +93,7 @@ export interface HandoverOffer {
 }
 
 /** Every entry ServiceBay is still the only copy of. */
-export function pendingCredentials(creds: readonly Credential[]): Credential[] {
+function pendingCredentials(creds: readonly Credential[]): Credential[] {
   return creds.filter(c => !isCredentialSecured(c));
 }
 

@@ -47,6 +47,7 @@ import {
   batchIssueCount,
   claimRef,
   clip,
+  consolidationRefusal,
   freshCache,
   parkUnits,
   pruneState,
@@ -505,6 +506,42 @@ describe('verbs — batch, verify, park', () => {
     expect(calls.some(a => a.includes('--add-label') && a.includes(L_QUEUED))).toBe(true);
     runVerb('next', [], ctx);
     expect(JSON.parse(out.at(-1)!).id).toBe('a1');
+  });
+
+  it('plan refuses an unknown kind rather than queueing a typo', () => {
+    seed({});
+    expect(runVerb('plan', ['{"id":"a1","kind":"consolidaton","issues":[]}'], ctx)).toBe(2);
+    expect(cache.load().units.a1).toBeUndefined();
+  });
+
+  // #2746 — consolidation is what the loop does with a DRY queue, never instead
+  // of the backlog, and it may take at most one slot per batch. Both rules are
+  // enforced here rather than in the planner playbook's prose.
+  it('plan takes a consolidation slot when no user issue waits, and shows it in summary', () => {
+    seed({ ls: { id: 'ls', kind: 'lint-sweep', issues: [], status: 'planned' } });
+    expect(runVerb('plan', ['{"id":"90-consolidate","kind":"consolidation","issues":[]}'], ctx)).toBe(0);
+    ctx.offline = true;
+    runVerb('summary', [], ctx);
+    expect(JSON.parse(out.at(-1)!).consolidation_slot).toBe('90-consolidate');
+  });
+
+  it('plan refuses a consolidation slot while a user issue is still waiting', () => {
+    seed({ u1: { id: 'u1', kind: 'issue', issues: [42], status: 'planned' } });
+    expect(runVerb('plan', ['{"id":"90-consolidate","kind":"consolidation","issues":[]}'], ctx)).toBe(2);
+    expect(cache.load().units['90-consolidate']).toBeUndefined();
+    expect(out.at(-1)).toContain('user issues are waiting');
+  });
+
+  it('plan refuses a SECOND consolidation slot in the same batch', () => {
+    seed({ c1: { id: 'c1', kind: 'consolidation', issues: [], status: 'built' } });
+    expect(runVerb('plan', ['{"id":"c2","kind":"consolidation","issues":[]}'], ctx)).toBe(2);
+    expect(out.at(-1)).toContain('at most one per batch');
+  });
+
+  it('consolidationRefusal clears once the batch resets', () => {
+    const d = freshCache();
+    d.units = { c1: { id: 'c1', kind: 'consolidation', issues: [], status: 'done' } };
+    expect(consolidationRefusal(d)).toBeNull();
   });
 
   it('claim on an unknown unit is a setup error (2), not a silent win', () => {

@@ -202,7 +202,7 @@ export interface WatchedFile {
     modified: number;
 }
 
-export interface NodeStateSnapshot {
+interface NodeStateSnapshot {
   resources: SystemResources | null;
   containers: EnrichedContainer[];
   services: ServiceUnit[];

@@ -64,7 +64,7 @@ export interface InternalNavigationEntry extends NavigationEntryBase {
 
 /** A destination that LEAVES the app — rendered as an `<a target="_blank">`
  *  in its own visual group, never as a router push (#2521). */
-export interface ExternalNavigationEntry extends NavigationEntryBase {
+interface ExternalNavigationEntry extends NavigationEntryBase {
   external: true;
   /** Static URL, when it is known without asking the box (`/portal`). */
   href?: string;

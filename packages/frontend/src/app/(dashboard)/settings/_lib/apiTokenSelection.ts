@@ -43,15 +43,15 @@ export interface TokenSummary {
 const PRIVILEGED_SCOPES: ApiScope[] = ['destroy', 'exec', 'reboot'];
 
 export const isPrivileged = (t: TokenView): boolean => t.scopes.some(s => PRIVILEGED_SCOPES.includes(s));
-export const isNeverUsed = (t: TokenView): boolean => !t.lastUsedAt;
-export const hasNoExpiry = (t: TokenView): boolean => !t.expiresAt;
+const isNeverUsed = (t: TokenView): boolean => !t.lastUsedAt;
+const hasNoExpiry = (t: TokenView): boolean => !t.expiresAt;
 export const isExpired = (t: TokenView, now: number = Date.now()): boolean =>
   Boolean(t.expiresAt) && Date.parse(t.expiresAt as string) < now;
 
 /** Older than N days by mint date — the "these have been sitting here since
  *  June" filter. Uses `createdAt`, which every token has, rather than
  *  `lastUsedAt`, which the never-used ones lack. */
-export const isOlderThanDays = (t: TokenView, days: number, now: number = Date.now()): boolean =>
+const isOlderThanDays = (t: TokenView, days: number, now: number = Date.now()): boolean =>
   Date.parse(t.createdAt) < now - days * 86_400_000;
 
 /** The bulk filters offered as one-click selections. `id` doubles as the test

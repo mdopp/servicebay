@@ -48,7 +48,7 @@ import { useSocket } from '@/hooks/useSocket';
  *    user the box is unreachable, hiding/showing the tab must not flap the
  *    banner off and back on; only a real `connect` clears it.
  */
-export type ConnectionStatus = 'online' | 'reconnecting' | 'offline';
+type ConnectionStatus = 'online' | 'reconnecting' | 'offline';
 
 /** Grace for the *first* connect of a page-load. Short: nothing has ever
  *  worked yet, `useSocket` force-recycles a stalled handshake at 3s, and a

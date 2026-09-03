@@ -52,6 +52,40 @@ migrations) gets a real deployment and a real check before the release is consid
 good. Verify runs in the background so building continues while it does; only the
 seal→release critical section serialises.
 
+### A recurring bug is a missing gate, not a missing fix
+
+When an issue names a **predecessor** — "← #N", "same as #N", "this was fixed and
+is back" — the first fix was not wrong, it was **ungated**: it corrected one call
+site and left the shape that produced it intact. Treat that as its own class of
+work.
+
+- **Label it** (`recurrence` in this repo) at triage, so the pair is visible
+  rather than rediscovered a third time.
+- **It closes only with a test or an invariant for the CLASS**, never for the
+  case: every route on that gate, every caller of that helper, a rule in the
+  invariant checker — not an assertion on the one line that broke.
+- Write that into the unit's **acceptance**, not into a review comment. A builder
+  builds the acceptance it is given; a vague one ships another ungated fix.
+
+The number that made this a rule: a third of the commits over one quarter were
+`fix(…)`, and three pairs in that window were the same defect fixed twice. Count
+your own `fix:` share before deciding you don't need this.
+
+### Consolidation needs an entrance, or it never happens
+
+A loop that only plans user issues never pays down what its own reports measure —
+lint-ratchet counts, duplicate-component counts, invariant exemptions. Give
+consolidation exactly one door: **at most one consolidation unit per batch, and
+only once no user issue is waiting.** Both halves matter — without the cap it
+crowds out the backlog; without the "queue is dry" condition it competes with
+real work.
+
+Make the cap **structural**, not advisory: the broker refuses a second
+consolidation unit, refuses one while a user-issue unit is still planned, and its
+`summary` shows whether the slot is spent. A rule that lives only in the planner's
+prose is re-decided every run by a fresh model — which is the same reason the
+claim is a git ref and not a label.
+
 ## State: durable in GitHub, ephemeral in a tiny cache
 
 Put **durable** state where it survives crashes, machines, and concurrent loop

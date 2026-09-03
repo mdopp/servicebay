@@ -80,7 +80,7 @@ export interface ServiceBundle {
   serviceTemplates?: BundleServiceTemplate[];
 }
 
-export interface BundleStackContainer {
+interface BundleStackContainer {
   name: string;
   image: string;
   role: 'primary' | 'sidecar';

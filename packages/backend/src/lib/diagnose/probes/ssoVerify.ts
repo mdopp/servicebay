@@ -28,7 +28,7 @@ import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '@/l
 import { verifySso, type SsoVerifyReport, type SsoDomainResult, type SsoStepResult } from '@/lib/diagnose/ssoVerify';
 import { loadSsoVerifyReport, saveSsoVerifyReport, type StoredSsoVerifyReport } from '@/lib/diagnose/ssoVerifyStore';
 
-export const PROBE_ID = 'sso_verify';
+const PROBE_ID = 'sso_verify';
 
 export interface SsoVerifyProbeResult {
   status: 'ok' | 'warn' | 'fail' | 'info';

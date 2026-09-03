@@ -42,7 +42,7 @@ const METADATA_VERSION = 2;
  * suffix scheme. They are treated as MANUAL for safety (never auto-pruned),
  * but surfaced with their own kind so the UI/operator can tell them apart.
  */
-export type SystemBackupKind = 'auto' | 'manual' | 'legacy';
+type SystemBackupKind = 'auto' | 'manual' | 'legacy';
 
 /** How many `auto` (pre-mutation) snapshots to keep. Older auto ones are
  *  pruned after each new auto snapshot. Manual and legacy are never pruned. */
@@ -121,7 +121,7 @@ interface BackupPreviewNotification {
     to?: string[];
 }
 
-export interface BackupPreviewConfig {
+interface BackupPreviewConfig {
     nodes: BackupPreviewNode[];
     checks: BackupPreviewCheck[];
     externalLinks: BackupPreviewExternalLink[];
@@ -141,12 +141,12 @@ interface BackupPreviewNodeFile {
     fileName: string;
 }
 
-export interface BackupPreviewNodeFiles {
+interface BackupPreviewNodeFiles {
     nodeName: string;
     files: BackupPreviewNodeFile[];
 }
 
-export interface BackupPreviewServiceData {
+interface BackupPreviewServiceData {
     name: string;
     files: string[];
     sourcePath?: string;
@@ -179,7 +179,7 @@ export interface BackupRestoreSelection {
     serviceData?: string[] | ServiceDataSelection[];
 }
 
-export interface ServiceDataSelection {
+interface ServiceDataSelection {
     name: string;
     files?: string[]; // if omitted, restore all files
 }
@@ -274,7 +274,7 @@ function linkTargetEscapes(linkName: string, target: string): boolean {
     return resolved === '..' || resolved.startsWith('../');
 }
 
-export async function assertSafeArchiveEntries(archivePath: string, gzip = true): Promise<void> {
+async function assertSafeArchiveEntries(archivePath: string, gzip = true): Promise<void> {
     let stdout: string;
     try {
         const result = await execFileAsync('tar', [gzip ? '-tvzf' : '-tvf', archivePath]);

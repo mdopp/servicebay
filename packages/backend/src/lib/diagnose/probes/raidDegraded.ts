@@ -30,7 +30,7 @@ export const PROBE_ID = 'raid';
 export const PROBE_LABEL = 'RAID array';
 
 /** One member device line-item of an md array, as `/proc/mdstat` lists it. */
-export interface MdMember {
+interface MdMember {
   /** Block device name, e.g. `nvme0n1p1`. */
   name: string;
   /** Slot index from the `[N]` suffix, or null when unparseable. */
@@ -152,7 +152,7 @@ function describeArray(array: MdArray): string {
   return `${array.device}${level}: ${counts}${map}`;
 }
 
-export type RaidProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
+type RaidProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
 
 export interface RaidProbeResult {
   status: RaidProbeStatus;

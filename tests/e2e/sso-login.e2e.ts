@@ -32,8 +32,29 @@ import { ssoLogin, ssoServices, publicDomain } from './helpers/portal'
 
 const services = ssoServices()
 
+/**
+ * This spec needs a real Authelia/OIDC deployment reachable at
+ * `<svc>.<domain>` — the CI e2e gate (#2744) boots the bundled server alone,
+ * with no reverse proxy and no identity provider, so there is nothing here to
+ * log into. `SB_PUBLIC_DOMAIN` is the declaration that such a deployment
+ * exists; without it the group skips with a stated reason instead of failing
+ * on a precondition it can never satisfy.
+ *
+ * The skip is deliberately narrow: the moment the domain IS set (Box-Verify),
+ * every assertion below is live again, and a missing credential still throws
+ * rather than skipping — a run that silently tests nothing is the failure mode
+ * #1561 exists to prevent.
+ */
+const ssoTargetConfigured = Boolean(process.env.SB_PUBLIC_DOMAIN)
+
 test.describe('SSO login smoke per service (#1561)', () => {
+  test.skip(
+    !ssoTargetConfigured,
+    'SB_PUBLIC_DOMAIN is unset — the SSO login flow needs a real Authelia deployment (Box-Verify), not the CI dev server',
+  )
+
   test.beforeAll(() => {
+    if (!ssoTargetConfigured) return
     // Surface the resolved target up front so a verify run logs exactly what it
     // exercised — a green run that silently tested nothing is the failure mode
     // this issue exists to prevent.

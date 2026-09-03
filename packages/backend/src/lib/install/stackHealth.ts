@@ -76,14 +76,14 @@ export function aggregateStackHealth(
  * banner. Patterns must be conservative — a wrong hint is worse than
  * none.
  */
-export interface UnhealthyCause {
+interface UnhealthyCause {
   /** Short headline rendered next to the template name. */
   summary: string;
   /** Optional action label + href for the banner button. */
   action?: { label: string; href: string };
 }
 
-export interface NotReadyChild {
+interface NotReadyChild {
   template: string;
   state: 'unhealthy' | 'unknown';
   /** Populated when a known config-side cause matches (#665 — S5). */

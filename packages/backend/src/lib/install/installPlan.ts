@@ -41,7 +41,7 @@ export interface PlanStack {
   known: boolean;
 }
 
-export interface PlanStackChange {
+interface PlanStackChange {
   stack: string;
   templates: string[];
 }

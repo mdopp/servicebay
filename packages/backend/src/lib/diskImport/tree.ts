@@ -36,7 +36,7 @@ import { listLldapUsers } from '@/lib/lldap/client';
 import { runOutDir } from './apply';
 
 /** An owner choice for the picker: `shared` plus each box user. */
-export interface ReviewOwner {
+interface ReviewOwner {
   /** The owner id used in `data/<owner>/…` and rules (`shared` or a username). */
   id: Owner;
   /** Human label for the dropdown. */
@@ -44,7 +44,7 @@ export interface ReviewOwner {
 }
 
 /** A review-tree node: the folder rollup + resolved rule, plus a live target preview. */
-export interface ReviewNode extends FolderNode {
+interface ReviewNode extends FolderNode {
   /**
    * Live `data/<owner>/<category>/…` destination preview for this folder, derived
    * from its resolved rule (#2000). `shared` omits the owner segment; a `skip`

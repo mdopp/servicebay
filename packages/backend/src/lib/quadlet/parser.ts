@@ -51,7 +51,7 @@ export interface QuadletDirectives {
  * Exported for public API use as documented in QUADLET_PARSER_USAGE.md
  */
 // @knipignore - exported for public API
-export class QuadletParser {
+class QuadletParser {
   private lines: string[];
   private currentSection: string = '';
 

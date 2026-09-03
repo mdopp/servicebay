@@ -83,7 +83,7 @@ const LOCAL_ASSISTS_DIR = () => path.join(DATA_DIR, 'local-assists');
 /** Additive, namespaced landing dir for approved proposals (#2326 s4). */
 export const LANDED_ASSISTS_DIR = () => path.join(DATA_DIR, 'local-assists', 'landed');
 /** Id prefix every landed (namespaced) assist carries. */
-export const LOCAL_ID_PREFIX = 'local/';
+const LOCAL_ID_PREFIX = 'local/';
 
 interface AssistSource {
   dir: string;
@@ -96,7 +96,7 @@ interface AssistSource {
  * Label a Local bare-id entry carries once it shadows a delivered repo entry.
  * The override stays effective; it just stops being invisible (#2701).
  */
-export const LOCAL_OVERRIDE_SOURCE = 'Local (overrides repo)';
+const LOCAL_OVERRIDE_SOURCE = 'Local (overrides repo)';
 
 /**
  * Throws `AssistCatalogUnavailableError` when delivery has failed or aged out —

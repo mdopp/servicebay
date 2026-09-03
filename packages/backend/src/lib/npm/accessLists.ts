@@ -5,7 +5,7 @@
 import { logger } from '../logger';
 import { npmRequest, toResult, type NpmResult } from './http';
 
-export interface NpmAccessListClient {
+interface NpmAccessListClient {
   address: string;
   directive: 'allow' | 'deny' | string;
 }
@@ -16,7 +16,7 @@ export interface NpmAccessList {
   clients?: NpmAccessListClient[];
 }
 
-export interface NpmAccessListCreate {
+interface NpmAccessListCreate {
   name: string;
   satisfy_any: boolean;
   pass_auth: boolean;
@@ -40,7 +40,7 @@ export async function listAccessLists(
   return toResult<NpmAccessList[]>(res);
 }
 
-export async function createAccessList(
+async function createAccessList(
   apiUrl: string,
   token: string,
   body: NpmAccessListCreate,

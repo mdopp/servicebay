@@ -44,7 +44,7 @@ export const LAN_DENIED_PAGE_CONTAINER_PATH = '/data/nginx/servicebay/lan-denied
  * (`/mnt/data/stacks/nginx-proxy-manager/data/nginx/proxy_host/<id>.conf`),
  * so a single hard-coded data root keeps both writers consistent.
  */
-export const LAN_DENIED_PAGE_HOST_PATH =
+const LAN_DENIED_PAGE_HOST_PATH =
   '/mnt/data/stacks/nginx-proxy-manager/data/nginx/servicebay/lan-denied.html';
 
 /** Internal URI the 403 is re-routed to. Kept distinct from any real path. */

@@ -40,7 +40,7 @@ export async function listCertificates(
   return toResult<NpmCertificate[]>(res);
 }
 
-export async function getCertificate(
+async function getCertificate(
   apiUrl: string,
   token: string,
   id: number | string,

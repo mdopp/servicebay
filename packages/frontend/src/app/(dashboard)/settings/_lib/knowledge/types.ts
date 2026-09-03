@@ -3,7 +3,6 @@
 
 import type { AssistKind } from './validation';
 
-export type { AssistKind };
 
 /** GET /api/assists → { assists: AssistSummary[] }. Mirrors backend AssistSummary. */
 export interface AssistSummary {

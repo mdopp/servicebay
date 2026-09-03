@@ -1,5 +1,18 @@
 #!/bin/sh
+# Fast pre-push gate (#2746).
+#
+# It used to be `npm run test && npm run build` — several minutes, which is an
+# invitation to `--no-verify`, and a hook everybody bypasses gates nothing. So
+# this runs only what a push can break locally and cheaply: the full type-check
+# (vitest does NOT type-check) plus the tests transitively affected by what this
+# push adds over `origin/main`. The complete suite and the build stay in CI.
+set -e
 
-echo "Running pre-push checks..."
-npm run test
-npm run build
+# `--changed <ref>` needs the ref locally; a fresh clone or a missing fetch must
+# not turn every push into a hard failure — fall back to the working-tree diff.
+BASE=origin/main
+git rev-parse --verify --quiet "$BASE" >/dev/null || BASE=HEAD
+
+echo "Pre-push: tsc --noEmit + tests changed vs $BASE (full suite + build run in CI)"
+npx tsc --noEmit
+npx vitest run --changed "$BASE"

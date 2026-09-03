@@ -14,7 +14,7 @@ import { expect, type Page } from '@playwright/test'
  * finds them unset skips the browser layer and reports it owed rather than going
  * to look for them.
  */
-export function credentials(): { username: string; password: string } {
+function credentials(): { username: string; password: string } {
   const username = process.env.SB_USERNAME
   const password = process.env.SB_PASSWORD
   if (!username || !password) {

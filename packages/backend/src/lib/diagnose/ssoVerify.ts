@@ -150,7 +150,7 @@ export const OIDC_CLIENT_SUBDOMAINS: Readonly<Record<string, { clientId: string;
  */
 export const ADMIN_ONLY_HOSTS: readonly string[] = ['nginx', 'dns', 'ldap'];
 
-export type SsoStepStatus = 'pass' | 'fail' | 'skip';
+type SsoStepStatus = 'pass' | 'fail' | 'skip';
 
 export interface SsoStepResult {
   /** Stable step id, e.g. `create_user`, `authelia_firstfactor`. */
@@ -653,7 +653,7 @@ export async function realProbeJellyfinLogin(ephemeralUser: string, password: st
  *  mints an admin token from the stored `JELLYFIN_ADMIN_PASSWORD` (decrypted by
  *  getConfig) and DELETEs the user. Returns false (never throws) when the admin
  *  creds are unavailable/drifted — the login result must not hinge on cleanup. */
-export async function cleanupJellyfinProfile(base: string, userId: string | undefined): Promise<boolean> {
+async function cleanupJellyfinProfile(base: string, userId: string | undefined): Promise<boolean> {
   if (!userId) return false;
   try {
     const config = await getConfig();

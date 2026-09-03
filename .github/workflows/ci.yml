@@ -22,6 +22,8 @@ name: CI
 #   dev-image   — builds Dockerfile.dev (the `scripts/dev-container.sh` image)
 #                 and smoke-checks that the backend runtime deps load and the
 #                 bundled server boots without a missing-module crash (#2422)
+#   e2e         — boots the bundled server and drives it with the three
+#                 Playwright specs under tests/e2e/ (#2744)
 #
 # ANY failure blocks merge. Adoption-ratio floors and per-file ratchets in the
 # config files mean today's debt passes — new regressions do not.
@@ -436,3 +438,98 @@ jobs:
             echo "::error::dev image boots with a missing module — see log above"
             exit 1
           fi
+
+  # Playwright end-to-end gate (#2744). The three specs under tests/e2e/ have
+  # existed since #1473 and ran in exactly one place: the out-of-band Box-Verify
+  # stage, after merge, against the real box. Nothing in this workflow ever
+  # opened a browser — so a PR that broke the portal page, the login form or the
+  # services dashboard merged green and was only caught on the box, if at all.
+  #
+  # `needs: dev-image` because e2e assertions on top of a server that cannot
+  # boot are noise, not signal — dev-image is the job that proves the boot.
+  # What this job then drives is the SAME artifact the dev image runs
+  # (`node dist-server/server.cjs`, Dockerfile.dev's CMD), started directly on
+  # the runner by scripts/e2e-ci-server.sh against a throwaway data dir with no
+  # SSH key — so the agent layer fails on the key read before it opens a socket
+  # and can never hang the job. The UI, the API and the auth path are real;
+  # only the box is missing. A docker save/load round-trip to reuse the
+  # dev-image container adds minutes and nothing a browser test can see.
+  #
+  # Budget: the job is meant to stay under 5 minutes. The Playwright browser
+  # download is the part that would blow that, so ~/.cache/ms-playwright is
+  # cached on the PINNED @playwright/test version — the browser build is a
+  # function of that version, so the key changes exactly when the browser does.
+  #
+  # sso-login.e2e.ts self-skips here: it needs a real Authelia deployment at
+  # <svc>.<domain> (SB_PUBLIC_DOMAIN), which only Box-Verify has. smoke and
+  # portal run in full.
+  e2e:
+    runs-on: ubuntu-latest
+    needs: dev-image
+    if: "${{ github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release-please--') }}"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Cache node modules
+        id: cache-npm
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+          # Node version is part of the key: native modules (e.g. better-sqlite3)
+          # are compiled against a specific Node ABI. Without it, a cache built on
+          # Node 20 (ABI 115) is reused on Node 22 (ABI 127), causing ERR_DLOPEN_FAILED.
+          key: node-modules-v3-node22-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies
+        if: steps.cache-npm.outputs.cache-hit != 'true'
+        run: npm ci --prefer-offline --no-audit --no-fund
+      # Read the pin straight out of package.json (not the installed tree) so
+      # the cache key is available before anything downloads.
+      - name: Resolve the pinned Playwright version
+        id: playwright
+        run: |
+          node -e "const v=require('./package.json').devDependencies['@playwright/test']; if(!/^\d+\.\d+\.\d+$/.test(v)) { console.error('@playwright/test must be pinned to an exact version, got '+v); process.exit(1); } console.log('version='+v)" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      # Downloads nothing on a cache hit; the `--with-deps` half (apt shared
+      # libraries) has to run either way, so this stays unconditional.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Restore Next.js build cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/packages/frontend/.next/cache
+          key: nextjs-e2e-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: |
+            nextjs-e2e-${{ hashFiles('package-lock.json') }}-
+      - name: Build (.next + dist-server)
+        run: npm run build
+      # Boots the bundled server against a throwaway data dir, waits for
+      # GET /login to answer 200, and exports SB_BOX_URL / SB_USERNAME /
+      # SB_PASSWORD via $GITHUB_ENV. The same script boots the same server
+      # locally, so a red here reproduces with two commands.
+      - name: Boot the bundled server (agent stubbed, no box)
+        run: scripts/e2e-ci-server.sh start
+      - name: Playwright specs
+        run: npm run test:e2e
+      - name: Stop the server
+        if: always()
+        env:
+          SB_E2E_PRINT_LOG: '1'
+        run: scripts/e2e-ci-server.sh stop
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-e2e
+          path: |
+            test-results/
+            tests/e2e/.report/
+          retention-days: 7
+          if-no-files-found: ignore
