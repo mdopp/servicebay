@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.26.5](https://github.com/mdopp/servicebay/compare/servicebay-v5.26.4...servicebay-v5.26.5) (2026-09-03)
+
+
+### Bug Fixes
+
+* **api-client:** parse list responses per row so one bad row cannot empty a list ([bcab047](https://github.com/mdopp/servicebay/commit/bcab047a5cf2d5bf58b8ce5568c750d6839c99be)), closes [#2784](https://github.com/mdopp/servicebay/issues/2784)
+* **api-client:** parse lists per row, fix the container picker schema, and finish the raw-fetch sweep (16→0) ([5be61d1](https://github.com/mdopp/servicebay/commit/5be61d1536739bdd585045f4cf9b020a1a2501d2))
+
 ## [5.26.4](https://github.com/mdopp/servicebay/compare/servicebay-v5.26.3...servicebay-v5.26.4) (2026-09-03)
 
 
