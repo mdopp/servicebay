@@ -155,6 +155,24 @@ module.exports = {
             to: { path: '^packages/backend/src/lib/npm/http\\.ts$' },
         },
         {
+            name: 'no-app-actions',
+            severity: 'error',
+            comment:
+                'No `packages/frontend/src/app/actions/` (#2745). The directory held the last ' +
+                'Server Actions: nodes / ssh / onboarding CRUD with no route twin, `getNodes` ' +
+                'defined identically in two of its modules, and — because Server Actions are ' +
+                'routed on PAGE paths — no coverage from the `/api/*` auth gate in proxy.ts, so ' +
+                'each one had to remember to call assertAdminSession() itself (#1203). They are ' +
+                'now `withApiHandler` routes under /api/system/{nodes,ssh,onboarding,os-updates} ' +
+                'behind zod-contracted @servicebay/api-client methods, which get the session gate ' +
+                'structurally and the 401 -> /login redirect via apiFetch. This rule was the ' +
+                '"legacy" line in docs/ARCHITECTURE_INVARIANTS.md; a doc line is advisory, an ' +
+                'import-graph edge is not. New server-side surfaces: route handler + api-client ' +
+                'method, never a new action module here.',
+            from: {},
+            to: { path: '^packages/frontend/src/app/actions/' },
+        },
+        {
             name: 'no-test-from-prod',
             severity: 'error',
             comment: 'Production code must not import test files.',

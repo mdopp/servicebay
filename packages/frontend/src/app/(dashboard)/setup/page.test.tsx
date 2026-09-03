@@ -2,13 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 import SetupPageView from './page';
-import { completeStackSetup } from '@/app/actions/onboarding';
+import { completeStackSetup } from '@servicebay/api-client';
 import { InstallJobProvider } from '@/providers/InstallJobProvider';
 
 const { push, refresh } = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push, refresh }) }));
-vi.mock('@/app/actions/onboarding', () => ({ completeStackSetup: vi.fn(async () => undefined) }));
+vi.mock('@servicebay/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@servicebay/api-client')>()),
+  completeStackSetup: vi.fn(async () => ({ success: true as const })),
+}));
 vi.mock('@/components/DoneStepDnsCheck', () => ({ DoneStepDnsCheck: () => <div>dns</div> }));
 vi.mock('@/components/DiagnoseProbeList', () => ({ default: () => <div>probes</div> }));
 
@@ -36,7 +39,7 @@ describe('SetupPage — design-system tokens (#2100)', () => {
   beforeEach(() => {
     push.mockClear();
     refresh.mockClear();
-    vi.mocked(completeStackSetup).mockReset().mockResolvedValue(undefined);
+    vi.mocked(completeStackSetup).mockReset().mockResolvedValue({ success: true });
     vi.stubGlobal('fetch', vi.fn(async (u: RequestInfo | URL) => {
       if (String(u).includes('/api/install/status')) {
         return new Response(JSON.stringify(jobResponse()), { headers: { 'Content-Type': 'application/json' } });
@@ -82,7 +85,7 @@ describe('SetupPage — Finish failure is visible (#2460)', () => {
   beforeEach(() => {
     push.mockClear();
     refresh.mockClear();
-    vi.mocked(completeStackSetup).mockReset().mockResolvedValue(undefined);
+    vi.mocked(completeStackSetup).mockReset().mockResolvedValue({ success: true });
     vi.stubGlobal('fetch', vi.fn(async (u: RequestInfo | URL) => {
       if (String(u).includes('/api/install/status')) {
         return new Response(JSON.stringify(jobResponse()), { headers: { 'Content-Type': 'application/json' } });

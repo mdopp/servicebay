@@ -11,7 +11,11 @@
 
 export * from './agent';
 export * from './install';
+export * from './nodes';
+export * from './onboarding';
 export * from './services';
+export * from './ssh';
+export * from './systemUpdates';
 export * from './serviceView';
 export * from './client';
 export * from './apiFetch';

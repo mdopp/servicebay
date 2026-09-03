@@ -12,12 +12,13 @@ import {
     saveEmailConfig,
     completeStackSetup,
     forceClearInstallLock,
-    OnboardingStatus
-} from '@/app/actions/onboarding';
-import { generateLocalKey } from '@/app/actions/ssh';
+    generateLocalKey,
+    fetchNodes,
+    isValidOperatorEmail,
+    operatorEmailIssue,
+    type OnboardingStatus,
+} from '@servicebay/api-client';
 import { fetchTemplates, fetchReadme } from '@/app/actions';
-import { isValidOperatorEmail, operatorEmailIssue } from '@servicebay/api-client';
-import { getNodes } from '@/app/actions/system';
 import { Template } from '@servicebay/api-client';
 import type { TemplateTier } from '@servicebay/api-client';
 import { useInstallJob } from '@/hooks/useInstallJob';
@@ -670,7 +671,7 @@ export default function OnboardingWizard() {
   const loadStacks = useCallback(async () => {
     setStacksLoading(true);
     try {
-      const [templates, nodes] = await Promise.all([fetchTemplates(), getNodes()]);
+      const [templates, nodes] = await Promise.all([fetchTemplates(), fetchNodes()]);
       const stacks = templates.filter(t => t.type === 'stack');
       setAvailableStacks(stacks);
       // Cache per-template tier info so handleSelectStack can decorate
@@ -869,12 +870,12 @@ export default function OnboardingWizard() {
     // can have `stackSetupPending=true` on the server while
     // `stacksOnlyMode=false` in React state — the old branch would
     // call `skipOnboarding()`, which leaves `stackSetupPending` set
-    // and the sidebar "Setup" pill never goes away. Both server
-    // actions are idempotent; calling both is correct in every mode.
+    // and the sidebar "Setup" pill never goes away. Both calls hit the
+    // same idempotent route; making both is correct in every mode.
     //
-    // Wrap in try/catch so a transient server-action failure (CSRF
-    // hiccup, network blip) does not strand the wizard open — the
-    // operator clicked Finish, the UI must close. (#811)
+    // Wrap in try/catch so a transient request failure (CSRF hiccup,
+    // network blip) does not strand the wizard open — the operator
+    // clicked Finish, the UI must close. (#811)
     setLoading(true);
     try {
       await Promise.allSettled([completeStackSetup(), skipOnboarding()]);

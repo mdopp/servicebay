@@ -35,7 +35,10 @@ vi.mock('@/providers/ToastProvider', () => ({
   ToastType: {},
 }));
 vi.mock('@/hooks/useSocket', () => ({ useSocket: () => ({ socket: null }) }));
-vi.mock('@/app/actions/nodes', () => ({ getNodes: () => Promise.resolve([]) }));
+vi.mock('@servicebay/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@servicebay/api-client')>()),
+  fetchNodes: vi.fn(async () => []),
+}));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/status',
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),

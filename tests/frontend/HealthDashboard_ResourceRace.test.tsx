@@ -31,7 +31,10 @@ const NODES: PodmanConnection[] = [
   { Name: 'node-a', URI: 'ssh://a', Identity: '', Default: false },
   { Name: 'node-b', URI: 'ssh://b', Identity: '', Default: false },
 ];
-vi.mock('@/app/actions/nodes', () => ({ getNodes: vi.fn(async () => NODES) }));
+vi.mock('@servicebay/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@servicebay/api-client')>()),
+  fetchNodes: vi.fn(async () => NODES),
+}));
 
 // Heavy siblings rendered by other tabs — out of scope for this race.
 vi.mock('@/components/LogViewer', () => ({ default: () => null }));

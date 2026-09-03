@@ -23,11 +23,10 @@ vi.mock('@/hooks/useDigitalTwin', () => ({
 vi.mock('@/hooks/useSocket', () => ({
   useSocket: () => ({ socket: null, isConnected: false }),
 }));
-vi.mock('@/app/actions/nodes', () => ({
-  getNodes: vi.fn().mockResolvedValue([]),
-}));
-vi.mock('@/app/actions/system', () => ({
-  getSystemUpdates: vi.fn().mockResolvedValue({ count: 0, list: [] }),
+vi.mock('@servicebay/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@servicebay/api-client')>()),
+  fetchNodes: vi.fn(async () => []),
+  getSystemUpdates: vi.fn(async () => ({ count: 0, list: [] })),
 }));
 vi.mock('@/providers/ToastProvider', () => ({
   useToast: () => ({ addToast: vi.fn() }),

@@ -36,7 +36,7 @@ import ConfirmModal from '@/components/ConfirmModal';
 import FileViewer from '@/components/FileViewer';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import type { BackupPreviewResult, BackupRestoreSelection } from '@/lib/systemBackup';
-import { getNodes } from '@/app/actions/nodes';
+import { fetchNodes } from '@servicebay/api-client';
 import type { PodmanConnection } from '@/lib/nodes';
 import {
   formatBytes,
@@ -59,7 +59,7 @@ export default function BackupPage() {
   // so it loads the node list directly instead of reading the settings context.
   const [nodes, setNodes] = useState<PodmanConnection[]>([]);
   useEffect(() => {
-    void getNodes().then(setNodes).catch(() => {});
+    void fetchNodes().then(setNodes).catch(() => {});
   }, []);
   const BACKUP_PREVIEW_COUNT = 5;
   // NAS snapshot list can grow long (per-service, every push) and flood the

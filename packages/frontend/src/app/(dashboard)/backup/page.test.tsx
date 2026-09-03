@@ -3,10 +3,11 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ToastProvider } from '@/providers/ToastProvider';
 import BackupPage from './page';
 
-// The backup app loads its node list via the getNodes server action; stub it so
-// the page can render without a live backend.
-vi.mock('@/app/actions/nodes', () => ({
-  getNodes: () => Promise.resolve([]),
+// The backup app loads its node list through the api-client; stub it so the
+// page can render without a live backend.
+vi.mock('@servicebay/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@servicebay/api-client')>()),
+  fetchNodes: vi.fn(async () => []),
 }));
 
 // PageHeader calls useRouter(); the app router isn't mounted under bare render().

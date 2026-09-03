@@ -32,7 +32,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckCircle2, AlertTriangle, Loader2, KeyRound, Maximize2 } from 'lucide-react';
-import { completeStackSetup } from '@/app/actions/onboarding';
+import { completeStackSetup } from '@servicebay/api-client';
 import { Card, Button } from '@/components/ui';
 import type { Credential, JobPhase } from '@servicebay/api-client';
 import { DoneStepDnsCheck } from '@/components/DoneStepDnsCheck';

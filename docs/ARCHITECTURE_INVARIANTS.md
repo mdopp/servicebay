@@ -313,8 +313,18 @@ What enforces what:
 Frontend reaches the backend exclusively through:
 
 - `@servicebay/api-client` — typed seam (default for new code).
-- `@/app/actions/*` — server actions, already typed (legacy; new server-action surfaces go through the api-client client + a route handler instead).
 - Direct `fetch('/api/...')` — grandfathered for ~80 legacy call sites; new code uses `typedFetch`.
+
+**No Server Actions under `packages/frontend/src/app/actions/`** — enforced by the
+depcruise rule `no-app-actions`, not by this paragraph (#2745). The directory held
+nodes / ssh / onboarding CRUD as the *only* implementation of those surfaces, with
+`getNodes` defined identically in two of its modules. Because Server Actions are
+routed on page paths, the `/api/*`-only gate in `proxy.ts` never covered them and
+each action had to remember `assertAdminSession()` itself (#1203). They are now
+`withApiHandler` routes under `/api/system/{nodes,ssh,onboarding,os-updates}` behind
+zod-contracted api-client methods, which pick up the session gate structurally and
+the 401 → `/login` redirect via `apiFetch`. A new server-side surface is a route
+handler plus an api-client method — never a new action module.
 
 ---
 

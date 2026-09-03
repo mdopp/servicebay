@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import SSHSetupModal from './SSHSetupModal';
 
-// Mock the server action
-vi.mock('@/app/actions/ssh', () => ({
+// Stub the api-client method the modal drives.
+vi.mock('@servicebay/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@servicebay/api-client')>()),
   installSSHKey: vi.fn(async () => ({ success: true, logs: ['Test log'] })),
 }));
 
@@ -129,7 +130,7 @@ describe('SSHSetupModal (#2430 design-token migration)', () => {
   });
 
   it('should render logs with semantic token text color', async () => {
-    const { installSSHKey } = await import('@/app/actions/ssh');
+    const { installSSHKey } = await import('@servicebay/api-client');
     vi.mocked(installSSHKey).mockResolvedValueOnce({
       success: true,
       logs: ['Test log message'],

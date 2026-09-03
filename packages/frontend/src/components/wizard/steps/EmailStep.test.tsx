@@ -3,9 +3,12 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 import { EmailStep } from './EmailStep';
 
-const saveEmailConfig = vi.fn(async (...a: unknown[]) => { void a; return undefined; });
-vi.mock('@/app/actions/onboarding', () => ({
-  saveEmailConfig: (...a: unknown[]) => saveEmailConfig(...a),
+const { saveEmailConfig } = vi.hoisted(() => ({
+  saveEmailConfig: vi.fn(async (...a: unknown[]) => { void a; return { success: true as const }; }),
+}));
+vi.mock('@servicebay/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@servicebay/api-client')>()),
+  saveEmailConfig,
 }));
 
 function cfg(over: Record<string, unknown> = {}) {

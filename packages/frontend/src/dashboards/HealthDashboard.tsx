@@ -11,7 +11,7 @@ import ConfirmModal from '@/components/ConfirmModal';
 import LogViewer from '@/components/LogViewer';
 import HealthChecks, { type StatusFilter } from '@/components/HealthChecks';
 import { CheckConfig, CheckType, Check } from '@servicebay/api-client';
-import { getNodes } from '@/app/actions/nodes';
+import { fetchNodes } from '@servicebay/api-client';
 import { PodmanConnection } from '@servicebay/api-client';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
@@ -158,7 +158,7 @@ export default function HealthDashboard() {
     try {
       const [checksRes, nodeList] = await Promise.all([
         fetch('/api/health/checks'),
-        getNodes()
+        fetchNodes()
       ]);
       
       if (checksRes.ok) setChecks(await checksRes.json());

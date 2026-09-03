@@ -172,7 +172,7 @@ zero-caller claim was established.
 
 | Candidate | LOC | Groundwork first |
 |---|---:|---|
-| `packages/frontend/src/app/actions/*` server actions — `ARCHITECTURE_INVARIANTS.md` calls the directory legacy; `getNodes` is defined identically in `actions/system.ts` and `actions/nodes.ts` | 560 (+115 test) | They are the *only* implementation (no route twins for nodes/ssh/onboarding). Write the route handlers + api-client methods, then delete. Deletable today: the duplicate `getNodes` in `actions/system.ts`. |
+| ~~`packages/frontend/src/app/actions/*` server actions~~ — **deleted (#2745)**: nodes / ssh / onboarding CRUD had no route twin and `getNodes` was defined identically in two of its modules. Now `withApiHandler` routes under `/api/system/{nodes,ssh,onboarding,os-updates}` behind zod-contracted api-client methods; the depcruise rule `no-app-actions` keeps the directory gone. | 560 (+115 test) | — |
 | ~~`packages/backend/src/lib/mcp/approveRoute.ts` + `/api/system/mcp/approve`~~ — **deleted (#2735)**: a third view over the durable approvals store (#2234) that reshaped records and hard-coded `expiresAt: null`. Both UI surfaces read `/api/approvals`; the `server.ts` intercept is gone. | 144 | — |
 
 ### 3.5 Checked and **not** removable — so nobody re-litigates it

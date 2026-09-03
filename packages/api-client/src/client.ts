@@ -7,7 +7,8 @@
 // sites in src/{components,hooks,dashboards} onto this helper. Today
 // only the worked example (Sidebar.tsx → /api/install/status) does.
 
-import type { ZodType } from 'zod';
+import { z, type ZodType } from 'zod';
+import { apiFetch } from './apiFetch';
 
 export class TypedFetchError extends Error {
   constructor(
@@ -48,4 +49,71 @@ export async function typedFetch<T>(
     );
   }
   return parsed.data;
+}
+
+// ---------------------------------------------------------------------------
+// The `withApiHandler` envelope seam (#2745)
+// ---------------------------------------------------------------------------
+//
+// A route handler that returns a plain value is wrapped by
+// `withApiHandler` as `{ ok: true, data }`; a failure comes back as
+// `{ ok: false, error, code?, details? }` with a non-2xx status. The two
+// helpers below are the ONLY thing a typed api-client method needs to talk
+// to such a route: they unwrap the envelope, validate `data` against the
+// route's zod contract, and surface a server-authored error message
+// instead of a bare "HTTP 500".
+//
+// They go through `apiFetch`, so every call site inherits the single
+// client-side 401 → /login handler (see apiFetch.ts) — which is exactly
+// what the server actions this replaced could never do.
+
+const ApiErrorEnvelopeSchema = z.object({
+  ok: z.literal(false),
+  error: z.string(),
+  code: z.string().optional(),
+});
+
+/** Call a `withApiHandler` route and validate the unwrapped `data` payload. */
+export async function callApi<T>(
+  url: string,
+  schema: ZodType<T>,
+  init?: RequestInit,
+): Promise<T> {
+  const method = init?.method ?? 'GET';
+  const res = await apiFetch(url, init);
+  const raw: unknown = await res.json().catch(() => undefined);
+
+  if (!res.ok) {
+    const err = ApiErrorEnvelopeSchema.safeParse(raw);
+    throw new TypedFetchError(
+      err.success ? err.data.error : `${method} ${url} → HTTP ${res.status}`,
+      raw,
+      res.status,
+    );
+  }
+
+  const parsed = z.object({ ok: z.literal(true), data: schema }).safeParse(raw);
+  if (!parsed.success) {
+    throw new TypedFetchError(
+      `${method} ${url}: response failed schema validation`,
+      parsed.error,
+      res.status,
+    );
+  }
+  return parsed.data.data;
+}
+
+/** `callApi` for a JSON-body mutation. `method` defaults to POST. */
+export function mutateApi<T>(
+  url: string,
+  schema: ZodType<T>,
+  body?: unknown,
+  method: 'POST' | 'PATCH' | 'PUT' | 'DELETE' = 'POST',
+): Promise<T> {
+  return callApi(url, schema, {
+    method,
+    ...(body === undefined
+      ? {}
+      : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  });
 }

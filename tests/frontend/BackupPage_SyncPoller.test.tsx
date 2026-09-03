@@ -23,7 +23,10 @@ vi.mock('next/navigation', () => ({
 
 const toast = vi.hoisted(() => ({ addToast: vi.fn(), updateToast: vi.fn() }));
 vi.mock('@/providers/ToastProvider', () => ({ useToast: () => toast, ToastType: {} }));
-vi.mock('@/app/actions/nodes', () => ({ getNodes: vi.fn(async () => []) }));
+vi.mock('@servicebay/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@servicebay/api-client')>()),
+  fetchNodes: vi.fn(async () => []),
+}));
 
 // Panels with their own fetching/state that this lifecycle test doesn't exercise.
 vi.mock('@/app/(dashboard)/backup/_lib/ExternalBackupDestinationSection', () => ({ default: () => null }));

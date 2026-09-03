@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Template } from '@servicebay/api-client';
 import { useStackInstall } from '@/hooks/useStackInstall';
-import { getNodes } from '@/app/actions/system';
+import { fetchNodes } from '@servicebay/api-client';
 import { PodmanConnection } from '@servicebay/api-client';
 import { Layers, Folder, X } from 'lucide-react';
 import TemplateUpgradeBanner from './TemplateUpgradeBanner';
@@ -60,7 +60,7 @@ export default function InstallerModal({ template, readme, isOpen, onClose }: In
   const allUpgradesReady = checkedItems.length > 0 && checkedItems.every(i => upgradeReady[i.name] === true);
 
   useEffect(() => {
-    getNodes().then(ns => {
+    fetchNodes().then(ns => {
       setNodes(ns);
       // Single-node installs: the picker in StackInstallFlow hides itself
       // when nodes.length <= 1, so without this the Install button would

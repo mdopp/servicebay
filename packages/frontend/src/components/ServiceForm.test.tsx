@@ -17,7 +17,10 @@ const toastMocks = vi.hoisted(() => ({ addToast: vi.fn(), updateToast: vi.fn() }
 vi.mock('@/providers/ToastProvider', () => ({
   useToast: () => toastMocks,
 }));
-vi.mock('@/app/actions/system', () => ({ getNodes: () => Promise.resolve([]) }));
+vi.mock('@servicebay/api-client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@servicebay/api-client')>()),
+  fetchNodes: vi.fn(async () => []),
+}));
 // Keep the history panel out of the render.
 vi.mock('./HistoryViewer', () => ({ __esModule: true, default: () => <div /> }));
 
