@@ -33,7 +33,10 @@ describe('AutoUpdateWindowNudge', () => {
   it('reads the update-window setting from GET /api/system/update-window', async () => {
     const fetchMock = stubWindowResponse({ window: null });
     render(<AutoUpdateWindowNudge />);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/update-window'));
+    // The GET now goes out through the typed api-client's `apiFetch`, which
+    // always forwards an `init` slot — undefined for a bodyless read. Same
+    // request on the wire.
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/update-window', undefined));
   });
 
   it('renders the nudge when no update window has ever been configured', async () => {

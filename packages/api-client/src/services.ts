@@ -181,7 +181,18 @@ export function runForceUpdateAction(name: string, mode: 'pull' | 'fresh', nodeN
 // rather than re-deriving the route's full response shape here.
 // ---------------------------------------------------------------------------
 
-export const ServiceSummarySchema = z.object({ name: z.string().optional() }).passthrough();
+export const ServiceSummarySchema = z
+  .object({
+    name: z.string().optional(),
+    // Read by RestoreStatusBanner (#337) to count managed services that are
+    // back up after a reinstall; every other field beyond these stays
+    // passthrough-only.
+    active: z.boolean().optional(),
+    isManaged: z.boolean().optional(),
+  })
+  .passthrough();
+
+export type ServiceSummaryView = z.infer<typeof ServiceSummarySchema>;
 
 export const ServiceSummaryListSchema = z.array(ServiceSummarySchema);
 

@@ -8,6 +8,7 @@
 // `@/contracts` and inverts the import direction.
 
 import { z } from 'zod';
+import { rawApi } from './client';
 
 export type { JobState, JobPhase } from '@/lib/install/jobStore';
 export type { StackHealth, ChildHealthState } from '@/lib/install/stackHealth';
@@ -70,3 +71,61 @@ export const ParseDependenciesRequestSchema = z.object({
 export const ParseDependenciesResponseSchema = z.object({
   dependencies: z.array(z.string()),
 });
+
+// ---------------------------------------------------------------------------
+// GET /api/system/templates/upgrades-pending — aggregated "which deployed
+// templates have a newer schema version" answer (#510). Bare
+// `NextResponse.json(...)` body, no `withApiHandler` envelope, so rawApi.
+// ---------------------------------------------------------------------------
+
+export const TemplateUpgradeSummarySchema = z.object({
+  name: z.string(),
+  installedVersion: z.number(),
+  currentVersion: z.number(),
+  hasBreakingChange: z.boolean(),
+  sectionHeaders: z.array(z.string()),
+});
+export type TemplateUpgradeSummary = z.infer<typeof TemplateUpgradeSummarySchema>;
+
+export const PendingTemplateUpgradesResponseSchema = z.object({
+  pending: z.array(TemplateUpgradeSummarySchema),
+  hasBreakingChange: z.boolean(),
+});
+export type PendingTemplateUpgradesResponse = z.infer<typeof PendingTemplateUpgradesResponseSchema>;
+
+/** GET /api/system/templates/upgrades-pending */
+export function fetchPendingTemplateUpgrades() {
+  return rawApi('/api/system/templates/upgrades-pending', PendingTemplateUpgradesResponseSchema);
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/system/templates/:name/upgrade-preview?source=… — the CHANGELOG
+// diff for one template between its installed schema version and current
+// (#353/#354/#352). Same bare-body shape as above, so rawApi.
+// ---------------------------------------------------------------------------
+
+export const TemplateUpgradeSectionSchema = z.object({
+  version: z.number(),
+  breaking: z.boolean(),
+  body: z.string(),
+});
+
+export const TemplateUpgradePreviewSchema = z.object({
+  installedVersion: z.number().nullable(),
+  currentVersion: z.number(),
+  hasUpgrade: z.boolean(),
+  hasBreakingChange: z.boolean(),
+  sections: z.array(TemplateUpgradeSectionSchema),
+});
+export type TemplateUpgradePreview = z.infer<typeof TemplateUpgradePreviewSchema>;
+
+/** GET /api/system/templates/:name/upgrade-preview?source=… */
+export function fetchTemplateUpgradePreview(templateName: string, source?: string) {
+  const params = new URLSearchParams();
+  if (source) params.set('source', source);
+  const qs = params.toString();
+  return rawApi(
+    `/api/system/templates/${encodeURIComponent(templateName)}/upgrade-preview${qs ? `?${qs}` : ''}`,
+    TemplateUpgradePreviewSchema,
+  );
+}

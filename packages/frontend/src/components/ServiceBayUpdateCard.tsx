@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import { Badge, Button, Card, StatusDot } from '@/components/ui';
+import { fetchAppUpdateStatus, triggerAppUpdate, configureAutoUpdate, type AppUpdateStatus } from '@servicebay/api-client';
 
 /** Short commit for display — the running build's only distinguishing mark
  *  when the version number is shared with the release it sits after. */
@@ -15,50 +16,13 @@ function shortRevision(revision: string | null | undefined): string | null {
 }
 
 /**
- * ServiceBay self-update status.
- *
- * Lives here (not in the settings `_lib/helpers`) so both the Settings →
- * System tab AND the Home overview can share this card without duplicating the
- * shape (#2082 consolidates the updater onto Home). Re-exported from
- * settings `_lib/helpers` for backward-compat with its existing importers.
+ * ServiceBay self-update status. Canonical shape now lives in
+ * `@servicebay/api-client` (`AppUpdateStatusSchema`/`AppUpdateStatus`) —
+ * re-exported here for backward-compat with existing importers (settings
+ * `_lib/helpers` and any Home-overview consumer that reaches for it off this
+ * module, #2082).
  */
-export interface AppUpdateStatus {
-  hasUpdate: boolean;
-  current: string;
-  /**
-   * Release tag is ahead but the `:latest` image hasn't been published yet
-   * (release-please cuts the tag before the Release workflow pushes the image).
-   * Shown as "new version building" rather than an actionable update.
-   */
-  imageBuilding?: boolean;
-  latest: {
-    version: string;
-    url: string;
-    date: string;
-    notes: string;
-  } | null;
-  /**
-   * The image the box is ACTUALLY running, read off the running container by
-   * the backend — not the configured channel, which can describe an image that
-   * never started (#2493, #2387).
-   */
-  running?: {
-    channel: string | null;
-    revision: string | null;
-  };
-  /**
-   * The running image comes from a non-release channel (`:dev` / `:test`), so
-   * `current` is the last release's number and cannot answer "am I up to
-   * date?" (#2708).
-   */
-  unreleasedBuild?: boolean;
-  config: {
-    autoUpdate: {
-      enabled: boolean;
-      schedule: string;
-    };
-  };
-}
+export type { AppUpdateStatus };
 
 /**
  * ServiceBay self-updater card (#2082).
@@ -93,9 +57,7 @@ export default function ServiceBayUpdateCard() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/system/update');
-        if (!res.ok) return;
-        const data: AppUpdateStatus = await res.json();
+        const data = await fetchAppUpdateStatus();
         if (!cancelled) setAppUpdate(data);
       } catch {
         // ignore — keeps null and user can hit Check Now
@@ -107,32 +69,25 @@ export default function ServiceBayUpdateCard() {
   const handleCheckUpdate = async () => {
     setCheckingUpdate(true);
     try {
-      const res = await fetch('/api/system/update');
-      if (res.ok) {
-        const data: AppUpdateStatus = await res.json();
-        setAppUpdate(data);
-        const latestVer = data.latest?.version || 'Unknown';
-        if (data.hasUpdate) {
-          addToast('success', 'Update available', `Version ${latestVer} is available.`);
-        } else if (data.unreleasedBuild) {
-          // Same lie as the card used to tell, in toast form: on `:dev` the
-          // version matches the release only because release-please has not
-          // bumped it yet (#2708). Name the channel instead.
-          const rev = shortRevision(data.running?.revision);
-          addToast(
-            'info',
-            `Running the ${data.running?.channel ?? 'non-release'} channel`,
-            `This is an unreleased build${rev ? ` (${rev})` : ''}, not release ${latestVer}.`,
-          );
-        } else if (data.imageBuilding) {
-          addToast('info', 'New version building', `Version ${latestVer} was released but its image is still building. Try again shortly.`);
-        } else {
-          addToast('info', 'System up to date', `You are using the latest version (${latestVer}).`);
-        }
+      const data = await fetchAppUpdateStatus();
+      setAppUpdate(data);
+      const latestVer = data.latest?.version || 'Unknown';
+      if (data.hasUpdate) {
+        addToast('success', 'Update available', `Version ${latestVer} is available.`);
+      } else if (data.unreleasedBuild) {
+        // Same lie as the card used to tell, in toast form: on `:dev` the
+        // version matches the release only because release-please has not
+        // bumped it yet (#2708). Name the channel instead.
+        const rev = shortRevision(data.running?.revision);
+        addToast(
+          'info',
+          `Running the ${data.running?.channel ?? 'non-release'} channel`,
+          `This is an unreleased build${rev ? ` (${rev})` : ''}, not release ${latestVer}.`,
+        );
+      } else if (data.imageBuilding) {
+        addToast('info', 'New version building', `Version ${latestVer} was released but its image is still building. Try again shortly.`);
       } else {
-        const errorData = await res.json().catch(() => ({}));
-        const errorMessage = errorData.error || `Server error (${res.status})`;
-        throw new Error(errorMessage);
+        addToast('info', 'System up to date', `You are using the latest version (${latestVer}).`);
       }
     } catch (e) {
       console.error(e);
@@ -184,15 +139,7 @@ export default function ServiceBayUpdateCard() {
         socket.disconnect();
       });
 
-      const res = await fetch('/api/system/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update', version: appUpdate.latest.version }),
-      });
-
-      if (!res.ok) {
-        throw new Error('Update failed to start');
-      }
+      await triggerAppUpdate(appUpdate.latest.version);
     } catch (e) {
       setUpdateStatus('error');
       setUpdateError(e instanceof Error ? e.message : 'Unknown error');
@@ -204,17 +151,9 @@ export default function ServiceBayUpdateCard() {
     const newState = !appUpdate.config.autoUpdate.enabled;
 
     try {
-      const res = await fetch('/api/system/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'configure', autoUpdate: { enabled: newState } }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setAppUpdate(prev => (prev ? { ...prev, config: data.config } : null));
-        addToast('success', 'Settings saved', `Auto-update ${newState ? 'enabled' : 'disabled'}.`);
-      }
+      const data = await configureAutoUpdate(newState);
+      setAppUpdate(prev => (prev ? { ...prev, config: data.config } : null));
+      addToast('success', 'Settings saved', `Auto-update ${newState ? 'enabled' : 'disabled'}.`);
     } catch {
       addToast('error', 'Error', 'Failed to save settings.');
     }

@@ -4,20 +4,7 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, Info, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Input } from '@/components/ui';
-
-interface UpgradeSection {
-  version: number;
-  breaking: boolean;
-  body: string;
-}
-
-interface UpgradePreview {
-  installedVersion: number | null;
-  currentVersion: number;
-  hasUpgrade: boolean;
-  hasBreakingChange: boolean;
-  sections: UpgradeSection[];
-}
+import { fetchTemplateUpgradePreview, type TemplateUpgradePreview } from '@servicebay/api-client';
 
 interface Props {
   templateName: string;
@@ -56,22 +43,13 @@ interface Props {
  * is reported.
  */
 export default function TemplateUpgradeBanner({ templateName, source, onReadyToInstall }: Props) {
-  const [preview, setPreview] = useState<UpgradePreview | null>(null);
+  const [preview, setPreview] = useState<TemplateUpgradePreview | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
 
   useEffect(() => {
-    const params = new URLSearchParams();
-    if (source) params.set('source', source);
-    fetch(`/api/system/templates/${encodeURIComponent(templateName)}/upgrade-preview?${params}`)
-      .then(r => (r.ok ? r.json() : null))
-      .then((data: UpgradePreview | null) => {
-        if (data) {
-          setPreview(data);
-        } else {
-          setLoadFailed(true);
-        }
-      })
+    fetchTemplateUpgradePreview(templateName, source)
+      .then(data => setPreview(data))
       .catch(() => setLoadFailed(true));
   }, [templateName, source]);
 

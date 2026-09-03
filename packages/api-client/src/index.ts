@@ -22,6 +22,7 @@ export * from './settings';
 export * from './ssh';
 export * from './system';
 export * from './systemUpdates';
+export * from './update';
 export * from './serviceView';
 export * from './client';
 export * from './apiFetch';

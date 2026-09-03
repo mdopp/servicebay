@@ -2,20 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, RefreshCw, X } from 'lucide-react';
-
-interface ReinstallStatus {
-  active: boolean;
-  minutesRemaining?: number;
-}
-
-interface ServiceLike {
-  name: string;
-  active?: boolean;
-  status?: string;
-  isManaged?: boolean;
-  isServiceBay?: boolean;
-  type?: string;
-}
+import {
+  fetchReinstallStatus,
+  dismissReinstallBanner,
+  fetchServiceSummaries,
+  TypedFetchError,
+  type ReinstallStatus,
+  type ServiceSummaryView,
+} from '@servicebay/api-client';
 
 /**
  * Re-install welcome banner (#337). After setup-raid restores
@@ -37,14 +31,24 @@ interface ServiceLike {
  */
 export default function RestoreStatusBanner() {
   const [status, setStatus] = useState<ReinstallStatus | null>(null);
-  const [services, setServices] = useState<ServiceLike[] | null>(null);
+  const [services, setServices] = useState<ServiceSummaryView[] | null>(null);
   const [dismissing, setDismissing] = useState(false);
 
   const refresh = async () => {
     try {
+      // Mirrors the old `r.ok ? r.json() : null`/`[]` fallbacks: an HTTP-level
+      // failure (TypedFetchError) resolves to the same "nothing active" /
+      // "no services" shape; a genuine network/parse error propagates to the
+      // outer catch below and leaves the previous state untouched.
       const [statusRes, servicesRes] = await Promise.all([
-        fetch('/api/system/reinstall').then(r => (r.ok ? r.json() : null)),
-        fetch('/api/services').then(r => (r.ok ? r.json() : [])),
+        fetchReinstallStatus().catch((e: unknown) => {
+          if (e instanceof TypedFetchError) return null;
+          throw e;
+        }),
+        fetchServiceSummaries().catch((e: unknown) => {
+          if (e instanceof TypedFetchError) return [];
+          throw e;
+        }),
       ]);
       setStatus(statusRes);
       setServices(Array.isArray(servicesRes) ? servicesRes : null);
@@ -96,9 +100,12 @@ export default function RestoreStatusBanner() {
   const dismiss = async () => {
     setDismissing(true);
     try {
-      await fetch('/api/system/reinstall', { method: 'DELETE' });
-      setStatus({ active: false });
+      await dismissReinstallBanner();
+    } catch {
+      // best-effort — the banner still dismisses locally even if the DELETE
+      // didn't land, matching the original fire-and-forget dismiss.
     } finally {
+      setStatus({ active: false });
       setDismissing(false);
     }
   };
