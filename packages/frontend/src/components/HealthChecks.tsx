@@ -1,7 +1,7 @@
 'use client';
 
 import { Activity, CheckCircle, XCircle, AlertTriangle, AlertCircle, Play, Edit, Trash2, History, Search, Wrench } from 'lucide-react';
-import { Check } from '@servicebay/api-client';
+import { Check, type NodeContainer } from '@servicebay/api-client';
 import { Button } from '@/components/ui';
 
 /** Four-way row status. Real checks are ok/fail/unknown; synthetic
@@ -56,7 +56,7 @@ const ROW_STATUS_META: Record<RowStatus, { color: string; bg: string; Icon: type
 
 interface HealthChecksProps {
   checks: Check[];
-  containers: { Id: string; Names: string[]; Image: string }[];
+  containers: NodeContainer[];
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   statusFilter: StatusFilter;
@@ -102,8 +102,11 @@ export default function HealthChecks({
     const type = check.type;
     if (type === 'http') return 'HTTP';
     if (type === 'podman') {
-      const container = containers.find(c => c.Names[0].substring(1) === check.target);
-      return container ? container.Names[0].substring(1) : check.target;
+      // The agent's `names` are already bare (`media-jellyfin`) — the old
+      // `.substring(1)` here stripped a leading `/` that only docker's raw
+      // `Names` carry, so this lookup never matched (#2782).
+      const container = containers.find(c => c.names?.[0] === check.target);
+      return container?.names?.[0] ?? check.target;
     }
     if (type === 'systemd') {
       return check.target;

@@ -22,6 +22,7 @@ import {
   getNodeContainers,
   getNodeServices,
   getNodeSystemServices,
+  type NodeContainer,
 } from '@servicebay/api-client';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
@@ -39,12 +40,6 @@ import {
   tabPanelProps,
   type TabItem,
 } from '@/components/ui';
-
-interface Container {
-  Id: string;
-  Names: string[];
-  Image: string;
-}
 
 interface HistoryItem {
   status: 'ok' | 'fail';
@@ -79,7 +74,7 @@ const SEARCH_SCOPE: Partial<Record<HealthTab, string>> = {
 
 export default function HealthDashboard() {
   const [checks, setChecks] = useState<Check[]>([]);
-  const [containers, setContainers] = useState<Container[]>([]);
+  const [containers, setContainers] = useState<NodeContainer[]>([]);
   const [systemServices, setSystemServices] = useState<string[]>([]);
   const [managedServices, setManagedServices] = useState<string[]>([]);
   // const [loading, setLoading] = useState(true);
@@ -227,7 +222,7 @@ export default function HealthDashboard() {
             // two, so a failure resolves to `null` rather than rejecting the
             // whole batch.
             const [nextContainers, nextServices, nextSystem] = await Promise.all([
-                getNodeContainers(node).catch(() => null) as Promise<Container[] | null>,
+                getNodeContainers(node).catch(() => null),
                 getNodeServices(node).catch(() => null) as Promise<{ name: string }[] | null>,
                 getNodeSystemServices(node).catch(() => null) as Promise<{ unit: string }[] | null>,
             ]);
@@ -854,11 +849,18 @@ export default function HealthDashboard() {
                             className={`w-full p-2 rounded-lg border border-border bg-surface-2 text-text focus:ring-2 focus:ring-accent outline-none ${resourcesLoading || isSystemCheck() ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
                             <option value="">{resourcesLoading ? 'Loading containers...' : 'Select a container...'}</option>
-                            {!resourcesLoading && containers.map((c) => (
-                                <option key={c.Id} value={c.Names[0]}>
-                                    {c.Names[0]} ({c.Image})
-                                </option>
-                            ))}
+                            {!resourcesLoading && containers.map((c) => {
+                                // The agent's `names` is a list; the first entry is the
+                                // `<service>-<app>` name a podman check targets. A row
+                                // without one still gets an entry keyed by id rather
+                                // than an option with an empty value (#2782).
+                                const name = c.names?.[0] ?? c.id;
+                                return (
+                                    <option key={c.id} value={name}>
+                                        {c.image ? `${name} (${c.image})` : name}
+                                    </option>
+                                );
+                            })}
                         </Select>
                         {resourcesLoading && (
                             <div className="absolute right-8 top-2.5">

@@ -173,18 +173,36 @@ export function getHealthCheckHistory(id: string) {
 // Node resources — the Health "add check" modal's container/service picker
 // ---------------------------------------------------------------------------
 
-/** GET /api/containers?node= — raw podman shape (capitalized fields), not
- *  the enriched twin `EnrichedContainer`. Only used to populate the resource
- *  picker's dropdown. */
+/** GET /api/containers?node= — the route hands back `agent.sendCommand('listContainers')`
+ *  verbatim, and the V4 agent already normalises `podman ps` into the
+ *  camelCase `EnrichedContainer` shape (`packages/backend/src/lib/agent/types.ts`,
+ *  built in `agent/v4/agent.py`'s `fetch_containers`): **lowercase**
+ *  `id`/`names`/`image`, not podman's raw `Id`/`Names`/`Image` (#2782 — the
+ *  capitalized guess made every call throw a `TypedFetchError`, so the health
+ *  picker was always empty). Only the three fields the picker reads are
+ *  declared; the rest of `EnrichedContainer` rides through `.passthrough()`. */
 const NodeContainerSchema = z
   .object({
-    Id: z.string(),
-    Names: z.array(z.string()).optional(),
-    Image: z.string().optional(),
+    id: z.string(),
+    names: z.array(z.string()).optional(),
+    image: z.string().optional(),
   })
   .passthrough();
+export type NodeContainer = z.infer<typeof NodeContainerSchema>;
+
+/** Lenient list read: one odd row (an id-less record, a future shape) must not
+ *  empty the whole picker, so rows are parsed individually and the
+ *  unparseable ones are dropped rather than failing the array. A non-array
+ *  body still throws — that is a real route break. */
+const NodeContainerListSchema = z.array(z.unknown()).transform(rows =>
+  rows.flatMap(row => {
+    const parsed = NodeContainerSchema.safeParse(row);
+    return parsed.success ? [parsed.data] : [];
+  }),
+);
+
 export function getNodeContainers(node: string) {
-  return rawApi(`/api/containers?node=${encodeURIComponent(node)}`, z.array(NodeContainerSchema));
+  return rawApi(`/api/containers?node=${encodeURIComponent(node)}`, NodeContainerListSchema);
 }
 
 /** GET /api/services?node= — the full service-view-model list for that node

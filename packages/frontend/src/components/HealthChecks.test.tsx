@@ -48,8 +48,10 @@ function makeCheck(over: CheckOverrides): Check {
   } as unknown as Check;
 }
 
+// The V4 agent's `listContainers` shape: lowercase keys and BARE names (no
+// leading `/` — that is a docker-ism the old fixture invented, #2782).
 const containers = [
-  { Id: 'abc', Names: ['/media-jellyfin'], Image: 'jellyfin:latest' },
+  { id: 'abc', names: ['media-jellyfin'], image: 'jellyfin:latest' },
 ];
 
 type Handlers = {
