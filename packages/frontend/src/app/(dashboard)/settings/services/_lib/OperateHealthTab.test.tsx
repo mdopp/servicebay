@@ -36,12 +36,24 @@ function svc(over: Partial<ServiceViewModel> = {}): ServiceViewModel {
   };
 }
 
+// Fields every row the real /api/health/checks route sends, whether it's a
+// stored check (created_at/interval/enabled from CheckConfig — see
+// packages/frontend/src/app/api/health/checks/route.ts's `enrichedChecks`
+// map, which spreads the stored check as-is) or a synthetic `diagnose:*` row
+// (stamped explicitly in packages/backend/src/lib/diagnose/diagnoseChecks.ts
+// `getDiagnoseChecksEnriched`). `HealthCheckRowSchema` requires them, so a
+// mock missing them fails validation and `useServiceHealth` correctly (if
+// silently) settles to an empty state — matching this file's own defaults
+// with the real route keeps the mock from drifting off the wire contract.
 const row = (over: Partial<Check>): Partial<Check> => ({
   id: Math.random().toString(36),
   name: 'x',
   type: 'http',
   status: 'ok',
   target: '',
+  interval: 60,
+  enabled: true,
+  created_at: new Date(0).toISOString(),
   history: [],
   lastRun: null,
   lastResult: null,
