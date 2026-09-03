@@ -1,10 +1,19 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { z } from 'zod';
 import { useSearchParams } from 'next/navigation';
-import { HistoryEntry } from '@servicebay/api-client';
+import { HistoryEntry, typedFetch, apiFetch } from '@servicebay/api-client';
 import { Loader2, RotateCcw, Clock } from 'lucide-react';
 import * as Diff from 'diff';
+
+// Zod schemas for API responses
+const HistoryListResponseSchema = z.array(z.object({
+  timestamp: z.string(),
+  displayDate: z.string(),
+  filename: z.string(),
+  path: z.string(),
+}));
 
 interface HistoryViewerProps {
   filename: string;
@@ -23,10 +32,13 @@ export default function HistoryViewer({ filename, currentContent, onRestore }: H
 
   useEffect(() => {
     const query = node ? `?node=${node}` : '';
-    fetch(`/api/history/${filename}${query}`)
-      .then(res => res.json())
+    typedFetch(`/api/history/${filename}${query}`, HistoryListResponseSchema)
       .then(data => {
         setHistory(data);
+        setLoading(false);
+      })
+      .catch(() => {
+        setHistory([]);
         setLoading(false);
       });
   }, [filename, node]);
@@ -36,7 +48,7 @@ export default function HistoryViewer({ filename, currentContent, onRestore }: H
     setLoadingVersion(true);
     try {
       const query = node ? `&node=${node}` : '';
-      const res = await fetch(`/api/history/${filename}?timestamp=${timestamp}${query}`);
+      const res = await apiFetch(`/api/history/${filename}?timestamp=${timestamp}${query}`);
       const content = await res.text();
       setVersionContent(content);
     } finally {

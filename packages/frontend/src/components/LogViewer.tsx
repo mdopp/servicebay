@@ -1,15 +1,37 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { z } from 'zod';
 import { RefreshCw, Download, ChevronRight, ChevronDown, Info, Settings, Copy, Pause, Play, ListFilter } from 'lucide-react';
 import Link from 'next/link';
 import { useToast } from '@/providers/ToastProvider';
 import { useSocket } from '@/hooks/useSocket';
-import { humanizeError } from '@servicebay/api-client';
+import { humanizeError, typedFetch } from '@servicebay/api-client';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { MultiSelect } from './MultiSelect';
+
+// Zod schemas for API responses
+const LogLevelResponseSchema = z.object({
+  success: z.boolean(),
+  logLevel: z.string().optional(),
+});
+
+const LogTagsResponseSchema = z.object({
+  success: z.boolean(),
+  tags: z.array(z.string()).optional(),
+});
+
+const LogListResponseSchema = z.object({
+  success: z.boolean(),
+  files: z.array(z.object({ name: z.string() })).optional(),
+});
+
+const LogQueryResponseSchema = z.object({
+  success: z.boolean(),
+  logs: z.array(z.record(z.string(), z.unknown())).optional(),
+});
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -270,8 +292,7 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
 
   const loadSystemLogLevel = async () => {
       try {
-          const res = await fetch('/api/settings/logLevel');
-          const data = await res.json();
+          const data = await typedFetch('/api/settings/logLevel', LogLevelResponseSchema);
           if (data.success && data.logLevel) {
               setCurrentSystemLogLevel(data.logLevel);
           }
@@ -284,10 +305,9 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
 
   const loadTags = async () => {
     try {
-        const response = await fetch('/api/logs/tags');
-        const data = await response.json();
+        const data = await typedFetch('/api/logs/tags', LogTagsResponseSchema);
         if (data.success) {
-            setAvailableTags(data.tags);
+            setAvailableTags(data.tags || []);
         }
     } catch (err) {
         // Tag filter is a convenience; failure degrades to free-text only.
@@ -297,11 +317,10 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
 
   const loadLogDates = async () => {
     try {
-      const response = await fetch('/api/logs/list');
-      const data = await response.json();
+      const data = await typedFetch('/api/logs/list', LogListResponseSchema);
       if (data.success) {
         // API returns dates directly
-        setLogDates(data.files.map((f: {name: string}) => f.name));
+        setLogDates((data.files || []).map((f: {name: string}) => f.name));
       }
     } catch (err) {
         // Date picker fallback is empty list — visible to operator.
@@ -326,17 +345,16 @@ export default function LogViewer({ file, searchQuery }: LogViewerProps) {
       if (filter.tags && filter.tags.length > 0) {
           filter.tags.forEach(t => params.append('tag', t));
       }
-      
+
       const effectiveSearch = searchQuery || filter.search;
       if (effectiveSearch) params.append('search', effectiveSearch);
-      
+
       params.append('limit', String(filter.limit));
 
-      const response = await fetch(`/api/logs/query?${params}`);
-      const data = await response.json();
+      const data = await typedFetch(`/api/logs/query?${params}`, LogQueryResponseSchema);
 
       if (data.success) {
-        setLogs(data.logs);
+        setLogs((data.logs as unknown as LogEntry[]) || []);
       } else {
         setLogs([]);
       }

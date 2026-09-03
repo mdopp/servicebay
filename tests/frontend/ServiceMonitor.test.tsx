@@ -42,8 +42,11 @@ describe('ServiceMonitor', () => {
         await waitFor(() => {
             expect(screen.getByText(/active \(running\)/i)).toBeDefined();
         });
-        
-        expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/services/nginx.service/status'));
+
+        // Check that fetch was called with URLs for status, logs, and graph
+        expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/services/nginx.service/logs'), undefined);
+        expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/services/nginx.service/status'), undefined);
+        expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/api/network/graph'), undefined);
     });
 
     it('handles tab switching', async () => {

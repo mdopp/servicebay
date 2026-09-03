@@ -1,14 +1,48 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { z } from 'zod';
 import { RefreshCw, Terminal, Activity, Box, ArrowLeft, FileJson, DatabaseBackup } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { logger } from '@servicebay/api-client';
+import { logger, typedFetch } from '@servicebay/api-client';
 import ContainerList from './ContainerList';
 import { Button } from './ui/Button';
 import { Select } from './ui/Select';
 import { Tabs, tabPanelProps, type TabItem } from './ui';
 import type { EnrichedContainer } from '@servicebay/api-client';
+
+// Zod schemas for API responses
+const BackupNowResponseSchema = z.object({
+  ok: z.boolean().optional(),
+  backedUp: z.number().optional(),
+  total: z.number().optional(),
+  results: z.array(z.record(z.string(), z.unknown())).optional(),
+  error: z.string().optional(),
+});
+
+const ServiceLogsResponseSchema = z.object({
+  serviceLogs: z.string(),
+  podmanLogs: z.string().optional(),
+  podmanPs: z.array(z.record(z.string(), z.unknown())).optional(),
+});
+
+const ServiceStatusResponseSchema = z.object({
+  status: z.string(),
+});
+
+const NetworkGraphResponseSchema = z.object({
+  nodes: z.array(z.object({
+    id: z.string(),
+    type: z.string(),
+    node: z.string(),
+    rawData: z.record(z.string(), z.unknown()).optional(),
+  }).passthrough()).optional(),
+  edges: z.array(z.record(z.string(), z.unknown())).optional(),
+});
+
+const ContainerLogsResponseSchema = z.object({
+  logs: z.string(),
+});
 
 type MonitorTab = 'status' | 'service' | 'container-logs' | 'network';
 
@@ -75,13 +109,16 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
     setBackingUp(true);
     setBackupMsg(null);
     try {
-      const res = await fetch('/api/system/external-backup/backup-now', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ service: baseName }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.ok === false) {
+      const data = await typedFetch(
+        '/api/system/external-backup/backup-now',
+        BackupNowResponseSchema,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ service: baseName }),
+        },
+      );
+      if (data?.ok === false) {
         setBackupMsg({ text: data?.error || 'Backup failed', ok: false });
       } else {
         setBackupMsg({ text: 'Config backed up to NAS', ok: true });
@@ -97,21 +134,21 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
     setLoading(true);
     try {
             const query = node ? `?node=${encodeURIComponent(node)}` : '';
-      const [logsRes, statusRes, graphRes] = await Promise.all([
-        fetch(`/api/services/${serviceName}/logs${query}`),
-        fetch(`/api/services/${serviceName}/status${query}`),
-        fetch(`/api/network/graph${query}`)
+      const [logsRes, statusRes, graphRes] = await Promise.allSettled([
+        typedFetch(`/api/services/${serviceName}/logs${query}`, ServiceLogsResponseSchema),
+        typedFetch(`/api/services/${serviceName}/status${query}`, ServiceStatusResponseSchema),
+        typedFetch(`/api/network/graph${query}`, NetworkGraphResponseSchema)
       ]);
 
-      if (logsRes.ok) {
-        const data = await logsRes.json();
+      if (logsRes.status === 'fulfilled') {
+        const data = logsRes.value;
         // Filter containers relevant to this service
         // We assume the service name is part of the container name or pod name
         // Quadlet usually names containers like "systemd-<service>" or just uses the name from .container
         // We'll try to match loosely
         const startName = serviceName.replace('.service', '');
-        
-        const filteredPs: PodmanContainerRaw[] = (data.podmanPs || []).filter((c: PodmanContainerRaw) => {
+
+        const filteredPs: PodmanContainerRaw[] = ((data.podmanPs as unknown as PodmanContainerRaw[]) || []).filter((c: PodmanContainerRaw) => {
             const names = Array.isArray(c.Names) ? c.Names : [c.Names];
             return names.some((n: string) => n.includes(startName));
         });
@@ -126,27 +163,27 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
             status: c.Status,
             nodeName: node || 'Local'
         }));
-        
+
         setLogs({ ...data, podmanPs: normalizedPs });
-        
+
         if (normalizedPs.length > 0 && !selectedContainerId) {
             setSelectedContainerId(normalizedPs[0].id || null);
         }
       }
-      if (statusRes.ok) {
-        const data = await statusRes.json();
+      if (statusRes.status === 'fulfilled') {
+        const data = statusRes.value;
         setStatus(data.status);
       }
-      if (graphRes.ok) {
-          const graph = await graphRes.json();
+      if (graphRes.status === 'fulfilled') {
+          const graph = graphRes.value;
           // Find the node corresponding to this service
           // STRICT LOOKUP: Use rawData.name to match serviceName directly.
           // No fuzzy guessing, no hardcoded proxy checks.
           const cleanName = serviceName.replace('.service', '');
 
-          const targetNode = graph.nodes.find((n: NetworkGraphNode) => {
+          const targetNode = (graph.nodes || []).find((n: NetworkGraphNode) => {
                // Normal Service Match
-               if (n.rawData && n.rawData.name === cleanName && (node ? n.node === node : true)) {
+               if (n.rawData && (n.rawData as Record<string, unknown>).name === cleanName && (node ? n.node === node : true)) {
                    return true;
                }
                // Gateway Match (Special Case)
@@ -172,11 +209,11 @@ export default function ServiceMonitor({ serviceName, initialNode, onBack, varia
     const fetchContainerLogs = async (id: string) => {
     try {
                 const query = node ? `?node=${encodeURIComponent(node)}` : '';
-        const res = await fetch(`/api/containers/${id}/logs${query}`);
-        if (res.ok) {
-            const data = await res.json();
-            setContainerLogs(data.logs);
-        }
+        const data = await typedFetch(
+          `/api/containers/${id}/logs${query}`,
+          ContainerLogsResponseSchema,
+        );
+        setContainerLogs(data.logs);
     } catch (e) {
         logger.error('ServiceMonitor', 'Failed to fetch container logs', e);
     }

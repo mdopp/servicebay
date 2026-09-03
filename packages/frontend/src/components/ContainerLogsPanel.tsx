@@ -1,9 +1,17 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { z } from 'zod';
 import { Box, RefreshCw, X, Copy, Check } from 'lucide-react';
-import { logger } from '@servicebay/api-client';
+import { logger, typedFetch, apiFetch } from '@servicebay/api-client';
 import { Badge, Button, SectionHeading } from '@/components/ui';
+
+// Zod schemas for API responses
+const ContainerDetailsResponseSchema = z.object({
+  Config: z.object({
+    Env: z.array(z.string()).optional(),
+  }).optional(),
+});
 
 type ContainerMount = string | { Source?: string; Destination?: string; Type?: string };
 
@@ -44,10 +52,9 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async container-detail fetch on id/node change
     setDetails(null);
 
-    fetch(`/api/containers/${container.id}${query}`)
-      .then(res => (res.ok ? res.json() : null))
+    typedFetch(`/api/containers/${container.id}${query}`, ContainerDetailsResponseSchema)
       .then(data => {
-        if (data) setDetails(data);
+        setDetails(data);
       })
       .catch((error) => logger.error('ContainerLogsPanel', 'Failed to load details', error));
   }, [container.id, nodeName]);
@@ -61,7 +68,7 @@ export default function ContainerLogsPanel({ container, nodeName, onClose }: Con
 
     const streamLogs = async () => {
       try {
-        const response = await fetch(`/api/containers/${container.id}/logs/stream${query}`, {
+        const response = await apiFetch(`/api/containers/${container.id}/logs/stream${query}`, {
           signal: controller.signal,
         });
 
