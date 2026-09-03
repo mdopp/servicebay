@@ -114,6 +114,20 @@ module.exports = {
             },
         },
         {
+            name: 'install-runner-single-entry',
+            severity: 'error',
+            comment:
+                'Every install path — wizard, MCP install_template, napi upgrade, reconfigure — ' +
+                'converges on assembleManifest → createJob → startJob in install/runner.ts. ' +
+                '#2742 split that file into phase modules under install/phases/; the runner stays ' +
+                'the facade that owns the phase ORDER and the job status, so a caller reaching ' +
+                'past it into a single phase would deploy without the surrounding order and ' +
+                'without a job to report into. Covered by DIRECTORY prefix, not a file list, so a ' +
+                'phase added tomorrow is behind the facade with no edit here.',
+            from: { pathNot: '^packages/backend/src/lib/install/' },
+            to: { path: '^packages/backend/src/lib/install/phases/' },
+        },
+        {
             name: 'one-renderer',
             severity: 'error',
             comment:
