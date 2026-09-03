@@ -15,8 +15,8 @@ function mockFetch(allowMutations: boolean) {
     if (url === '/api/settings' && (!opts || opts.method === undefined)) {
       return Promise.resolve(new Response(JSON.stringify({ mcp: { allowMutations, allowDangerousExec: false } }), { status: 200 }));
     }
-    if (url.startsWith('/api/system/mcp/approve')) {
-      return Promise.resolve(new Response(JSON.stringify({ pending: [] }), { status: 200 }));
+    if (url.startsWith('/api/approvals')) {
+      return Promise.resolve(new Response(JSON.stringify({ approvals: [] }), { status: 200 }));
     }
     return Promise.resolve(new Response('{}', { status: 200 }));
   }));
@@ -31,7 +31,7 @@ function mockFetchWithBrokenApprovals(status = 401) {
     if (url === '/api/settings' && (!opts || opts.method === undefined)) {
       return Promise.resolve(new Response(JSON.stringify({ mcp: { allowMutations: true, allowDangerousExec: false } }), { status: 200 }));
     }
-    if (url.startsWith('/api/system/mcp/approve')) {
+    if (url.startsWith('/api/approvals')) {
       return Promise.resolve(new Response(JSON.stringify({ error: 'nope' }), { status }));
     }
     return Promise.resolve(new Response('{}', { status: 200 }));
@@ -40,12 +40,18 @@ function mockFetchWithBrokenApprovals(status = 401) {
   return fetchMock;
 }
 
-const APPROVAL = {
-  pendingId: 'abc-123',
-  toolName: 'remove_proxy_route',
-  args: { domain: 'example.test' },
-  caller: 'token:Repair',
-  expiresAt: null,
+/** A durable MCP approval as `/api/approvals` serves it (#2735). */
+const RECORD = {
+  id: 'abc-123',
+  service: 'mcp',
+  title: 'remove_proxy_route',
+  description: null,
+  status: 'pending' as const,
+  node: 'local',
+  created_at: '2026-07-11T11:00:00Z',
+  payload: { toolName: 'remove_proxy_route', args: { domain: 'example.test' }, caller: 'token:Repair' },
+  on_approve: { mcp: { toolName: 'remove_proxy_route', args: { domain: 'example.test' } } },
+  on_reject: {},
 };
 
 describe('McpSection (#2100 settings migration)', () => {
@@ -130,10 +136,10 @@ describe('McpSection (#2100 settings migration)', () => {
         if (url === '/api/settings' && (!opts || opts.method === undefined)) {
           return Promise.resolve(new Response(JSON.stringify({ mcp: { allowMutations: true, allowDangerousExec: false } }), { status: 200 }));
         }
-        if (url.startsWith('/api/system/mcp/approve')) {
+        if (url.startsWith('/api/approvals')) {
           approveCalls += 1;
           return approveCalls === 1
-            ? Promise.resolve(new Response(JSON.stringify({ pending: [APPROVAL] }), { status: 200 }))
+            ? Promise.resolve(new Response(JSON.stringify({ approvals: [RECORD] }), { status: 200 }))
             : Promise.resolve(new Response(JSON.stringify({ error: 'nope' }), { status: 500 }));
         }
         return Promise.resolve(new Response('{}', { status: 200 }));
@@ -160,6 +166,75 @@ describe('McpSection (#2100 settings migration)', () => {
       await act(async () => { vi.advanceTimersByTime(POLL_MS); });
       expect(screen.queryByText(/Pending destructive approvals/i)).toBeNull();
       expect(screen.queryByText(/Couldn't check for pending approvals/i)).toBeNull();
+    });
+  });
+
+  // #2735. Settings → MCP used to re-implement the approvals list inline: its
+  // own poll, its own grace period, its own rows, against a private
+  // `/api/system/mcp/approve` view that reshaped the durable records. It now
+  // mounts the SAME `usePendingApprovals` hook and `PendingApprovalList` as
+  // Home's card, against the SAME `/api/approvals` route.
+  describe('one approvals list, one route (#2735)', () => {
+    it('reads the shared /api/approvals feed and never the removed MCP view', async () => {
+      const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/settings' && (!opts || opts.method === undefined)) {
+          return Promise.resolve(new Response(JSON.stringify({ mcp: { allowMutations: true, allowDangerousExec: false } }), { status: 200 }));
+        }
+        if (url.startsWith('/api/approvals')) {
+          return Promise.resolve(new Response(JSON.stringify({ approvals: [RECORD] }), { status: 200 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<McpSection />);
+      expect(await screen.findByText('remove_proxy_route')).toBeTruthy();
+      expect(fetchMock).toHaveBeenCalledWith('/api/approvals');
+      expect(fetchMock.mock.calls.some(c => String(c[0]).includes('/api/system/mcp/approve'))).toBe(false);
+    });
+
+    it('approves through the generic route', async () => {
+      const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/settings' && (!opts || opts.method === undefined)) {
+          return Promise.resolve(new Response(JSON.stringify({ mcp: { allowMutations: true, allowDangerousExec: false } }), { status: 200 }));
+        }
+        if (url.endsWith('/approve') && opts?.method === 'POST') {
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+        }
+        if (url.startsWith('/api/approvals')) {
+          return Promise.resolve(new Response(JSON.stringify({ approvals: [RECORD] }), { status: 200 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      render(<McpSection />);
+      fireEvent.click(await screen.findByText(/Approve & run/i));
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith('/api/approvals/abc-123/approve', { method: 'POST' }),
+      );
+    });
+
+    // The twin of the Home-card assertion in
+    // `components/PendingApprovalsCard.test.tsx`: the deleted third view
+    // hard-coded `expiresAt: null`, so a request carrying a deadline read as
+    // "awaiting approval" on BOTH surfaces. Both must now show the expiry.
+    it('shows the expiry of an approval that carries one', async () => {
+      const expiresAt = Date.parse('2026-07-11T12:00:00Z');
+      vi.stubGlobal('fetch', vi.fn((url: string, opts?: RequestInit) => {
+        if (url === '/api/settings' && (!opts || opts.method === undefined)) {
+          return Promise.resolve(new Response(JSON.stringify({ mcp: { allowMutations: true, allowDangerousExec: false } }), { status: 200 }));
+        }
+        if (url.startsWith('/api/approvals')) {
+          return Promise.resolve(new Response(JSON.stringify({
+            approvals: [{ ...RECORD, payload: { ...RECORD.payload, expiresAt } }],
+          }), { status: 200 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      }));
+      render(<McpSection />);
+      expect(await screen.findByText(
+        new RegExp(`expires ${new Date(expiresAt).toLocaleTimeString()}`),
+      )).toBeTruthy();
+      expect(screen.queryByText(/awaiting approval/i)).toBeNull();
     });
   });
 

@@ -41,7 +41,6 @@ import { reconcileLanIp } from './lib/lanIp';
 import { lazyInitializeExpiry as initBootstrapTokenExpiry } from './lib/mcp/bootstrapToken';
 import { createMcpServer } from './lib/mcp/server';
 import { registerAssistPrompts } from './lib/mcp/assistCatalog';
-import { isMcpApprovePath, handleMcpApproveRequest } from './lib/mcp/approveRoute';
 import { scheduleBackup } from './lib/backup/service';
 import { scheduleExternalNasBackup } from './lib/externalBackup/producer';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -298,25 +297,14 @@ app.prepare().then(() => {
         return;
       }
 
-      // MCP pending-approval routes — a cookie-gated adapter over the durable
-      // approvals queue (lib/approvals), listing/approving/rejecting the MCP-
-      // kind approvals a token agent proposed (#1766, #2234). Kept as an
-      // intercept (not a Next.js API route) so it runs in the SAME module graph
-      // as the /mcp handler, which registers the tool re-dispatcher at startup.
-      // The handler is cookie-session ONLY (Bearer/anon → 401); see
-      // lib/mcp/approveRoute.ts for the full security/CSRF rationale.
-      if (isMcpApprovePath(parsedUrl.pathname)) {
-        const { status, body } = await handleMcpApproveRequest({
-          method: req.method,
-          pathname: parsedUrl.pathname!,
-          resolveSession: () => getSessionFromCookieHeader(req.headers.cookie),
-          onError: (e) => logger.error('Server', 'MCP approve error', e),
-        });
-        res.writeHead(status, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(body));
-        return;
-      }
-
+      // NOTE (#2735): there is no `/api/system/mcp/approve` intercept any more.
+      // It was a third view over the durable approvals queue that reshaped the
+      // records (and hard-coded `expiresAt: null`). Both UI surfaces — Home's
+      // PendingApprovalsCard and Settings → MCP — now read and resolve MCP-kind
+      // approvals through the generic Next.js routes under `/api/approvals`,
+      // which carry the same cookie/token gating plus the self-approve guard.
+      // `/api/approvals/[id]/approve` side-effect-imports `lib/mcp/server`, so
+      // the tool re-dispatcher is registered in that route's module graph.
       await handle(req, res, parsedUrl);
     } catch (err) {
       logger.error('Server', `Error occurred handling ${req.url}`, err);
