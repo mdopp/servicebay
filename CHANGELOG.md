@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.26.4](https://github.com/mdopp/servicebay/compare/servicebay-v5.26.3...servicebay-v5.26.4) (2026-09-03)
+
+
+### Bug Fixes
+
+* **api-client:** tolerate legacy credential importance values ([b2d3a59](https://github.com/mdopp/servicebay/commit/b2d3a59c96203ec069a954aa58daec34b69bfb64))
+* **api-client:** tolerate legacy credential importance values ([80eed49](https://github.com/mdopp/servicebay/commit/80eed4993087eaa45f72790ee3f815b3688c8044))
+* **frontend:** mirror the real backup-sync POST body in the sync-poller mock ([0ff2652](https://github.com/mdopp/servicebay/commit/0ff26520f4d52829a0c36f232e0ed847980ab1f4))
+* **frontend:** overlay-stack Escape handlers + typed api-client sweeps (batch 8) ([2cc183d](https://github.com/mdopp/servicebay/commit/2cc183deb48cde7a2d9dde98df6bf7854a09bd01))
+* **frontend:** use the un-enveloped raw seam for backup and settings routes ([642308d](https://github.com/mdopp/servicebay/commit/642308d29996771a269bc7f6410708e5a543f6df))
+
 ## [5.26.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.26.2...servicebay-v5.26.3) (2026-09-03)
 
 
