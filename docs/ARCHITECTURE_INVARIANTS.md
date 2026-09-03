@@ -401,7 +401,12 @@ Rules currently under the ratchet — the counts live in
 |---|---|---|---|
 | `sb/no-raw-color-literal` | `packages/frontend/src/**` | `components/ui/**`, `*.test.*` | `error` at 0 (#2353) |
 | `sb/no-raw-ui-primitive` | `packages/frontend/src/**` | `components/ui/**`, `*.test.*` | `error` at 0 (#2353) |
-| `sb/no-raw-api-fetch` | `packages/frontend/src/**` | `app/api/**`, `app/napi/**`, `*.test.*` | `error` at 0 (#2736) |
+
+`sb/no-raw-api-fetch` (#2736) cleared its ratchet and has already flipped: it is
+a hard `error` in `eslint.config.mjs`, no longer in `RATCHETED_RULES` or
+`.eslint-ratchet-baseline.json` — ESLint itself is the gate now, at 0
+tolerance. Scope was `packages/frontend/src/**`, exempt `app/api/**`,
+`app/napi/**`, `*.test.*`.
 
 ### A single typed API seam (#2736)
 
@@ -426,10 +431,11 @@ while their number kept growing. One explicit seam beats an invisible one:
 
 Consequence, stated plainly: a raw `fetch('/api/...')` in the frontend no
 longer redirects on session expiry. That is the pressure — `sb/no-raw-api-fetch`
-counts those call sites and the ratchet above forbids the count from rising, so
-lint-sweep units burn them down file by file exactly like the #2353 rules. The
-Next route handlers under `app/api/**` and `app/napi/**` are exempt: they are
-the *server* side of this seam and have no browser session to bounce.
+counted those call sites; the lint-sweep burn-down took it to 0 and it is now a
+hard ESLint `error`, so a new raw call site fails the build outright rather
+than padding a ratchet count. The Next route handlers under `app/api/**` and
+`app/napi/**` are exempt: they are the *server* side of this seam and have no
+browser session to bounce.
 
 ### Duplicate detection (#2354)
 

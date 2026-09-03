@@ -41,15 +41,16 @@ const BASELINE_FILE = path.join(REPO_ROOT, '.eslint-ratchet-baseline.json');
  * point ESLint itself is the gate — see docs/ARCHITECTURE_INVARIANTS.md
  * § UI-primitive and design-token reuse, § A single typed API seam).
  *
- * `sb/no-raw-api-fetch` joined in #2736: with the global `window.fetch`
+ * `sb/no-raw-api-fetch` joined in #2736 (with the global `window.fetch`
  * monkey-patch deleted, every raw `fetch('/api/...')` is a call site missing
  * the 401 → /login handler, and the count was growing precisely because the
- * patch hid that. Same mechanism, different class.
+ * patch hid that — same mechanism, different class) and left again once its
+ * baseline hit 0: it is now a hard `error` in eslint.config.mjs, so ESLint
+ * itself is the gate from here on.
  */
 const RATCHETED_RULES = [
     'sb/no-raw-color-literal',
     'sb/no-raw-ui-primitive',
-    'sb/no-raw-api-fetch',
 ] as const;
 
 /**
