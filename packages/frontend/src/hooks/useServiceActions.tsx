@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { z } from 'zod';
 import { Box, ArrowLeft, PlayCircle, Power, RotateCw, RefreshCw, Trash2, X, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui';
 import WorkspaceDrawer from '@/components/WorkspaceDrawer';
 import ServiceMonitor from '@/components/ServiceMonitor';
 import ServiceForm, { ServiceFormInitialData } from '@/components/ServiceForm';
@@ -409,19 +410,19 @@ function ServiceActionsModal({
       <div className="bg-surface rounded-lg shadow-xl w-full max-w-md border border-border p-6">
         <div className="flex justify-between items-center mb-6">
           <div className="flex items-center gap-4">
-            <button onClick={() => setShowActions(false)} className="text-text-muted hover:text-text flex items-center gap-1 text-sm font-medium">
+            <Button onClick={() => setShowActions(false)} variant="ghost" size="sm">
               <ArrowLeft size={18} />
               Back
-            </button>
+            </Button>
             <h3 className="text-lg font-bold">Service Actions</h3>
           </div>
-          <button
+          <Button
             onClick={() => setShowActions(false)}
-            className="text-text-muted hover:text-text"
+            variant="ghost"
             aria-label="Close service actions"
           >
             <X size={20} />
-          </button>
+          </Button>
         </div>
 
         <div className="mb-6">
@@ -470,17 +471,18 @@ function ServiceActionsModal({
             fullWidth
           />
 
-          <button
+          <Button
             onClick={() => {
               setShowActions(false);
               requestDelete(selectedService);
             }}
             disabled={actionLoading}
-            className="w-full flex items-center justify-center gap-2 p-3 rounded-lg border border-status-fail/20 bg-status-fail/10 hover:bg-status-fail/20 transition-colors text-status-fail disabled:opacity-60"
+            variant="danger"
+            className="w-full"
           >
             <Trash2 size={18} />
             <span className="font-medium">Delete Service</span>
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -585,14 +587,14 @@ function ActionButton({
   fullWidth?: boolean;
 }) {
   return (
-    <button
-      type="button"
+    <Button
       onClick={onClick}
       disabled={disabled}
-      className={`${fullWidth ? 'w-full ' : ''}flex items-center justify-center gap-2 p-3 rounded-lg border border-border hover:bg-surface-2 transition-colors disabled:opacity-60 disabled:cursor-not-allowed`}
+      variant="secondary"
+      className={fullWidth ? 'w-full' : ''}
     >
       {running ? <Loader2 size={18} className="animate-spin text-status-info" /> : icon}
       <span className="font-medium">{running ? 'Running…' : label}</span>
-    </button>
+    </Button>
   );
 }
