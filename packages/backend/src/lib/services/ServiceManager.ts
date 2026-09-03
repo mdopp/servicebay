@@ -9,14 +9,15 @@
  *                              listTrashed / getServiceStatus).
  *   - `serviceLifecycle.ts` — write paths (deploy / start / stop /
  *                              restart / delete / save / rename /
- *                              restore / purge / update*) plus the
- *                              entangled private helpers
- *                              (migratePredecessors, runPostDeployScript,
- *                              runMigrationScript, runPreStartHooks,
- *                              fixVolumeOwnership, backupQuadlets,
- *                              refreshAgent, prePullImages,
- *                              ensurePodmanSocket,
- *                              ensureUnprivilegedPorts).
+ *                              restore / purge / update*). Since #2741
+ *                              that file is itself a facade: the verbs
+ *                              live one per module under
+ *                              `services/lifecycle/` (units, quadletFiles,
+ *                              migrations, postDeploy, preStartHooks,
+ *                              containerQuadlet, deploy, trash, rename,
+ *                              imageRefresh), all of them behind this one
+ *                              door by the depcruise rule
+ *                              `service-manager-single-mutation-path`.
  *
  * This file is the back-compat facade: every static method on
  * `ServiceManager` re-aliases the equivalent on `ServiceListing` /
