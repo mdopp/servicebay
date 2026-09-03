@@ -7,6 +7,7 @@ import ConfirmModal from '@/components/ConfirmModal';
 import ServiceBayUpdateCard from '@/components/ServiceBayUpdateCard';
 import { useToast } from '@/providers/ToastProvider';
 import { fetchBootStatus, setBootNext, cancelBootNext, TypedFetchError } from '@servicebay/api-client';
+import { Button } from '@/components/ui';
 
 /**
  * Settings → System updates tab.
@@ -141,20 +142,24 @@ export default function UpdatesSection() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <button
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       onClick={cancelUsbBoot}
                       disabled={cancellingBoot || rebooting}
-                      className="px-3 py-1.5 text-xs bg-white dark:bg-surface border border-border text-status-warn dark:text-status-warn rounded hover:bg-surface-2 dark:hover:bg-surface-2 transition disabled:opacity-50"
+                      className="text-status-warn"
                     >
                       {cancellingBoot ? 'Cancelling...' : 'Cancel USB Boot'}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
                       onClick={triggerManualReboot}
                       disabled={cancellingBoot || rebooting}
-                      className="px-3 py-1.5 text-xs bg-status-warn text-text rounded hover:bg-status-warn/90 transition disabled:opacity-50"
+                      className="bg-status-warn hover:bg-status-warn/90"
                     >
                       {rebooting ? 'Rebooting...' : 'Reboot Now'}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               );
@@ -172,14 +177,16 @@ export default function UpdatesSection() {
                   </span>
                 )}
               </div>
-              <button
+              <Button
+                variant="primary"
+                size="md"
                 onClick={() => setIsReinstallModalOpen(true)}
                 disabled={armingBoot || rebooting || !bootStatus?.candidates || bootStatus.candidates.length === 0}
-                className="px-4 py-2 bg-status-fail text-text rounded-lg hover:bg-status-fail/90 transition-colors shadow-sm font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="bg-status-fail hover:bg-status-fail/90"
               >
                 <Power size={16} />
                 {armingBoot ? 'Arming...' : 'Arm USB Boot & Reinstall'}
-              </button>
+              </Button>
             </div>
           )}
         </div>
