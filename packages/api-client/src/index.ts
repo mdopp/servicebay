@@ -15,6 +15,7 @@ export * from './install';
 export * from './nodes';
 export * from './onboarding';
 export * from './services';
+export * from './settings';
 export * from './ssh';
 export * from './systemUpdates';
 export * from './serviceView';

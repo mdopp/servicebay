@@ -12,9 +12,9 @@ vi.mock('@/providers/ToastProvider', () => ({ useToast: () => ({ addToast: vi.fn
 function mockFetch() {
   vi.stubGlobal('fetch', vi.fn((url: string, opts?: RequestInit) => {
     if (url === '/api/system/update-window' && (!opts || opts.method === undefined)) {
-      return Promise.resolve(new Response(JSON.stringify({ window: { enabled: true, days: ['Sat'], startTime: '03:00', lengthMinutes: 120, applyTo: { os: true, containers: true, servicebay: false } } }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ ok: true, data: { window: { enabled: true, days: ['Sat'], startTime: '03:00', lengthMinutes: 120, applyTo: { os: true, containers: true, servicebay: false } } } }), { status: 200 }));
     }
-    return Promise.resolve(new Response('{}', { status: 200 }));
+    return Promise.resolve(new Response(JSON.stringify({ ok: true, data: {} }), { status: 200 }));
   }));
 }
 

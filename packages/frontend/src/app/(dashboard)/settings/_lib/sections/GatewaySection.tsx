@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { Button, Field, Input } from '@/components/ui';
+import { fetchGatewaySettings, updateGatewaySettings, TypedFetchError } from '@servicebay/api-client';
 
 interface GatewayState {
   configured: boolean;
@@ -35,17 +36,23 @@ export default function GatewaySection() {
   const [ssl, setSsl] = useState(false);
 
   useEffect(() => {
-    fetch('/api/settings/gateway')
-      .then(r => (r.ok ? r.json() : null))
-      .then((data: GatewayState | null) => {
-        if (data) {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await fetchGatewaySettings();
+        if (!cancelled) {
           setState(data);
           setHost(data.host);
           setUsername(data.username);
           setSsl(data.ssl);
         }
-      })
-      .finally(() => setBusy(null));
+      } catch (e) {
+        // Silently ignore errors on load
+      } finally {
+        if (!cancelled) setBusy(null);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
 
   const submit = async (test: boolean) => {
@@ -55,34 +62,29 @@ export default function GatewaySection() {
     }
     setBusy(test ? 'test' : 'save');
     try {
-      const res = await fetch('/api/settings/gateway', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          host: host.trim(),
-          username: username.trim(),
-          password,
-          ssl,
-          test,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        addToast(
-          'error',
-          test ? 'Connection test failed' : 'Could not save gateway',
-          data.message || data.error || `HTTP ${res.status}`,
-        );
-        return;
-      }
+      const data = await updateGatewaySettings(
+        host.trim(),
+        username.trim(),
+        password,
+        ssl,
+        test,
+      );
       addToast(
         'success',
         test ? 'Connected — credentials saved' : 'Gateway saved',
       );
       // Refresh to reset the password placeholder + reflect new hasPassword
-      const refreshed = await fetch('/api/settings/gateway').then(r => r.ok ? r.json() : null);
-      if (refreshed) setState(refreshed);
+      setState(data);
       setPassword('');
+    } catch (e) {
+      const message = e instanceof TypedFetchError
+        ? e.message
+        : e instanceof Error ? e.message : 'Unknown error';
+      addToast(
+        'error',
+        test ? 'Connection test failed' : 'Could not save gateway',
+        message,
+      );
     } finally {
       setBusy(null);
     }

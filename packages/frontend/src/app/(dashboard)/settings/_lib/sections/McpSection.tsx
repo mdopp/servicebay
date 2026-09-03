@@ -6,6 +6,7 @@ import SectionHelp from '@/components/SectionHelp';
 import { PendingApprovalList, usePendingApprovals } from '@/components/PendingApprovalsCard';
 import { Button, Input } from '@/components/ui';
 import { copyToClipboard } from '../clipboard';
+import { fetchMcpAudit, fetchSettings, updateSettings, TypedFetchError } from '@servicebay/api-client';
 
 interface AuditEntry {
   ts: string;
@@ -222,13 +223,16 @@ export default function McpSection() {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
 
-  const loadAudit = () => {
+  const loadAudit = async () => {
     setAuditLoading(true);
-    fetch('/api/system/mcp-audit?limit=50')
-      .then(r => r.ok ? r.json() : { entries: [] })
-      .then(data => setAudit(data.entries ?? []))
-      .catch(() => setAudit([]))
-      .finally(() => setAuditLoading(false));
+    try {
+      const data = await fetchMcpAudit(50);
+      setAudit(data.entries ?? []);
+    } catch (_e) {
+      setAudit([]);
+    } finally {
+      setAuditLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -240,13 +244,18 @@ export default function McpSection() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/settings').then(r => r.ok ? r.json() : null).then((data: { mcp?: { allowMutations?: boolean; allowDangerousExec?: boolean } } | null) => {
-      if (cancelled || !data) return;
-      // Treat absent allowMutations as `true` for back-compat with installs
-      // that predate the flag — same semantics the server uses.
-      setAllowMutations(data.mcp?.allowMutations !== false);
-      setAllowDangerousExec(data.mcp?.allowDangerousExec === true);
-    }).catch(() => { /* leave nulls so spinner stays */ });
+    (async () => {
+      try {
+        const data = await fetchSettings();
+        if (cancelled || !data) return;
+        // Treat absent allowMutations as `true` for back-compat with installs
+        // that predate the flag — same semantics the server uses.
+        setAllowMutations(data.mcp?.allowMutations !== false);
+        setAllowDangerousExec(data.mcp?.allowDangerousExec === true);
+      } catch (_e) {
+        // Leave nulls so spinner stays
+      }
+    })();
     return () => { cancelled = true; };
   }, []);
 
@@ -254,16 +263,17 @@ export default function McpSection() {
     setSaving(true);
     setSaveError(null);
     try {
-      const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mcp: { allowMutations: allowMutations ?? true, allowDangerousExec: allowDangerousExec === true, ...next } }),
+      await updateSettings({
+        mcp: {
+          allowMutations: allowMutations ?? true,
+          allowDangerousExec: allowDangerousExec === true,
+          ...next,
+        },
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       if (next.allowMutations !== undefined) setAllowMutations(next.allowMutations);
       if (next.allowDangerousExec !== undefined) setAllowDangerousExec(next.allowDangerousExec);
-    } catch (e) {
-      setSaveError(e instanceof Error ? e.message : String(e));
+    } catch (_e) {
+      setSaveError(e instanceof TypedFetchError ? e.message : e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
