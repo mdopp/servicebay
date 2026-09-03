@@ -57,6 +57,7 @@ import {
   startBackgroundTasks,
   runGracefulShutdown,
 } from './lib/runtime/lifecycle';
+import { drainSockets } from './lib/runtime/drain';
 
 // Fail-fast at startup so misconfigured deploys don't appear to work.
 assertAuthSecret();
@@ -650,9 +651,11 @@ app.prepare().then(() => {
   const shutdown = (signal: string) => runGracefulShutdown({
       signal,
       drain: async () => {
-          io.close();
           await SSHConnectionPool.getInstance().shutdown(2000);
-          await new Promise<void>(resolve => server.close(() => resolve()));
+          // Closes socket.io and the keep-alive sockets too — `server.close()`
+          // alone waits for them forever, which is what burned the whole 10 s
+          // budget on every restart (#2763).
+          await drainSockets({ server, io });
       },
       exit: (code) => process.exit(code),
   });
