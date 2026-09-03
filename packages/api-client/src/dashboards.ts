@@ -12,6 +12,7 @@
 
 import { z } from 'zod';
 import { mutateApi, rawApi, mutateRawApi } from './client';
+import { lenientArray } from './lenient';
 import type { Check, StackManifest } from './lib-types';
 
 // ---------------------------------------------------------------------------
@@ -119,7 +120,7 @@ export type HealthCheckRow = z.infer<typeof HealthCheckRowSchema>;
  *  the dashboards' existing `Check`-typed state — see the field-for-field
  *  schema above. */
 export function getHealthChecks(): Promise<Check[]> {
-  return rawApi('/api/health/checks', z.array(HealthCheckRowSchema));
+  return rawApi('/api/health/checks', lenientArray(HealthCheckRowSchema, 'GET /api/health/checks'));
 }
 
 /** POST /api/health/checks — create/update. Goes through `withApiHandler`
@@ -166,25 +167,41 @@ const CheckHistoryRowSchema = z
   })
   .passthrough();
 export function getHealthCheckHistory(id: string) {
-  return rawApi(`/api/health/checks/${encodeURIComponent(id)}/history`, z.array(CheckHistoryRowSchema));
+  return rawApi(
+    `/api/health/checks/${encodeURIComponent(id)}/history`,
+    lenientArray(CheckHistoryRowSchema, 'GET /api/health/checks/:id/history'),
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Node resources — the Health "add check" modal's container/service picker
 // ---------------------------------------------------------------------------
 
-/** GET /api/containers?node= — raw podman shape (capitalized fields), not
- *  the enriched twin `EnrichedContainer`. Only used to populate the resource
- *  picker's dropdown. */
+/** GET /api/containers?node= — the route hands back `agent.sendCommand('listContainers')`
+ *  verbatim, and the V4 agent already normalises `podman ps` into the
+ *  camelCase `EnrichedContainer` shape (`packages/backend/src/lib/agent/types.ts`,
+ *  built in `agent/v4/agent.py`'s `fetch_containers`): **lowercase**
+ *  `id`/`names`/`image`, not podman's raw `Id`/`Names`/`Image` (#2782 — the
+ *  capitalized guess made every call throw a `TypedFetchError`, so the health
+ *  picker was always empty). Only the three fields the picker reads are
+ *  declared; the rest of `EnrichedContainer` rides through `.passthrough()`. */
 const NodeContainerSchema = z
   .object({
-    Id: z.string(),
-    Names: z.array(z.string()).optional(),
-    Image: z.string().optional(),
+    id: z.string(),
+    names: z.array(z.string()).optional(),
+    image: z.string().optional(),
   })
   .passthrough();
+export type NodeContainer = z.infer<typeof NodeContainerSchema>;
+
+/** Lenient list read (#2784): one odd row (an id-less record, a future shape)
+ *  must not empty the whole picker, so rows are parsed individually and the
+ *  unparseable ones are dropped rather than failing the array. A non-array
+ *  body still throws — that is a real route break. */
+const NodeContainerListSchema = lenientArray(NodeContainerSchema, 'GET /api/containers');
+
 export function getNodeContainers(node: string) {
-  return rawApi(`/api/containers?node=${encodeURIComponent(node)}`, z.array(NodeContainerSchema));
+  return rawApi(`/api/containers?node=${encodeURIComponent(node)}`, NodeContainerListSchema);
 }
 
 /** GET /api/services?node= — the full service-view-model list for that node
@@ -192,13 +209,19 @@ export function getNodeContainers(node: string) {
  *  response shape). The resource picker only reads `.name`. */
 const NamedServiceSchema = z.object({ name: z.string() }).passthrough();
 export function getNodeServices(node: string) {
-  return rawApi(`/api/services?node=${encodeURIComponent(node)}`, z.array(NamedServiceSchema));
+  return rawApi(
+    `/api/services?node=${encodeURIComponent(node)}`,
+    lenientArray(NamedServiceSchema, 'GET /api/services?node='),
+  );
 }
 
 /** GET /api/system/services?node= — raw systemd unit list; the picker reads `.unit`. */
 const SystemServiceSchema = z.object({ unit: z.string() }).passthrough();
 export function getNodeSystemServices(node: string) {
-  return rawApi(`/api/system/services?node=${encodeURIComponent(node)}`, z.array(SystemServiceSchema));
+  return rawApi(
+    `/api/system/services?node=${encodeURIComponent(node)}`,
+    lenientArray(SystemServiceSchema, 'GET /api/system/services'),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -280,7 +303,7 @@ export const ApiLinkPayloadSchema = z
 
 /** GET /api/services?scope=links — raw seam. */
 export function getExternalLinks() {
-  return rawApi('/api/services?scope=links', z.array(ApiLinkPayloadSchema));
+  return rawApi('/api/services?scope=links', lenientArray(ApiLinkPayloadSchema, 'GET /api/services?scope=links'));
 }
 
 export interface ExternalLinkWritePayload {
@@ -318,7 +341,9 @@ const StackSummarySchema = z
   })
   .passthrough();
 
-const StacksResponseSchema = z.object({ stacks: z.array(StackSummarySchema) }).passthrough();
+const StacksResponseSchema = z
+  .object({ stacks: lenientArray(StackSummarySchema, 'GET /api/system/stacks#stacks') })
+  .passthrough();
 
 /** One row of GET /api/system/stacks' `stacks` array, with `manifest` typed
  *  as the real `StackManifest` shape (zod validates it loosely at runtime —
@@ -334,6 +359,39 @@ export interface StackSummary {
  *  grouping and ContainersDashboard's mirror of it (#2095). */
 export function getStacks(): Promise<{ stacks: StackSummary[] }> {
   return rawApi('/api/system/stacks', StacksResponseSchema) as Promise<{ stacks: StackSummary[] }>;
+}
+
+// ---------------------------------------------------------------------------
+// Per-stack wipe — POST /api/system/stacks/:name/wipe
+// ---------------------------------------------------------------------------
+
+const StackWipeFailureSchema = z.object({ template: z.string(), error: z.string() }).passthrough();
+
+const StackWipeCapabilityFailureSchema = z
+  .object({ template: z.string(), handler: z.string(), message: z.string() })
+  .passthrough();
+
+/** Lenient — a row shape drift in `failed`/`capabilityFailures` should not
+ *  hide the wipe outcome itself; those arrays only feed a toast count. */
+const StackWipeResultSchema = z
+  .object({
+    ok: z.boolean().optional(),
+    deleted: z.array(z.string()).optional(),
+    failed: lenientArray(StackWipeFailureSchema, 'POST /api/system/stacks/:name/wipe#failed').optional(),
+    capabilityFailures: lenientArray(
+      StackWipeCapabilityFailureSchema,
+      'POST /api/system/stacks/:name/wipe#capabilityFailures',
+    ).optional(),
+    wipedPaths: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+export type StackWipeResult = z.infer<typeof StackWipeResultSchema>;
+
+/** POST /api/system/stacks/:name/wipe — scoped, per-stack wipe (StackGroupHeader's
+ *  destructive action). `confirm` must be the literal `WIPE-<name>` token. */
+export function wipeStack(name: string, confirm: string) {
+  return mutateRawApi(`/api/system/stacks/${encodeURIComponent(name)}/wipe`, StackWipeResultSchema, { confirm });
 }
 
 // ---------------------------------------------------------------------------

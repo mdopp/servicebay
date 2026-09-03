@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type HumanizedYamlError } from '@servicebay/api-client';
 import { typedFetch, ValidateYamlResponseSchema } from '@servicebay/api-client';
+import { fetchReconfigurePreview, renameService } from '@servicebay/api-client';
 import { Settings, FileCode, FileJson, FileText, AlertCircle, Network, HardDrive, Pencil, AlertTriangle, Clock, Server, Clipboard, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import Editor from 'react-simple-code-editor';
 import Prism from 'prismjs';
@@ -245,27 +246,20 @@ WantedBy=default.target`;
     }
     setRerendering(true);
     try {
-      const res = await fetch(`/api/services/${encodeURIComponent(name)}/reconfigure-preview`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        addToast('error', 'Re-render failed', typeof data.error === 'string' ? data.error : `HTTP ${res.status}`);
-        return;
-      }
-      if (typeof data.yamlContent === 'string') {
-        handleYamlChange(data.yamlContent);
-        // #2537 — a variable the server could not resolve renders empty. Name it
-        // here rather than let the operator find the blank after a save; the
-        // blanked-value diff is exactly what scrolls off screen unnoticed.
-        const unresolved: string[] = Array.isArray(data.unresolved) ? data.unresolved : [];
-        if (unresolved.length > 0) {
-          addToast(
-            'warning',
-            'Re-rendered with empty values',
-            `${unresolved.join(', ')} could not be resolved and rendered empty. Check ${unresolved.length === 1 ? 'it' : 'them'} in the YAML before saving.`,
-          );
-        } else {
-          addToast('success', 'Re-rendered', 'Review the changes and click Save to apply.');
-        }
+      const data = await fetchReconfigurePreview(name);
+      handleYamlChange(data.yamlContent);
+      // #2537 — a variable the server could not resolve renders empty. Name it
+      // here rather than let the operator find the blank after a save; the
+      // blanked-value diff is exactly what scrolls off screen unnoticed.
+      const unresolved = data.unresolved;
+      if (unresolved.length > 0) {
+        addToast(
+          'warning',
+          'Re-rendered with empty values',
+          `${unresolved.join(', ')} could not be resolved and rendered empty. Check ${unresolved.length === 1 ? 'it' : 'them'} in the YAML before saving.`,
+        );
+      } else {
+        addToast('success', 'Re-rendered', 'Review the changes and click Save to apply.');
       }
     } catch (e) {
       addToast('error', 'Re-render failed', e instanceof Error ? e.message : String(e));
@@ -442,17 +436,7 @@ WantedBy=default.target`;
     setIsRenaming(true);
 
     try {
-        const query = selectedNode ? `?node=${selectedNode}` : '';
-        const res = await fetch(`/api/services/${name}/rename${query}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ newName: newServiceName }),
-        });
-
-        if (!res.ok) {
-            const data = await res.json();
-            throw new Error(data.error || 'Failed to rename service');
-        }
+        await renameService(name, newServiceName, selectedNode || undefined);
 
         if (variant === 'embedded') {
             onClose?.();

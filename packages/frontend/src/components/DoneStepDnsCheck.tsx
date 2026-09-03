@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { verifyDnsRecords, type DnsVerifyResponse } from '@servicebay/api-client';
 
 /**
  * DNS-resolution check shown on the wizard's Done step. Replaces the
@@ -21,18 +22,6 @@ interface DoneStepDnsCheckProps {
   subdomains: string[];
 }
 
-interface DomainResult {
-  domain: string;
-  resolvesTo: string | null;
-  matches: boolean;
-  error?: string;
-}
-
-interface VerifyResponse {
-  expectedIPs: string[];
-  results: DomainResult[];
-}
-
 export function DoneStepDnsCheck({ domain, subdomains }: DoneStepDnsCheckProps) {
   // Initial state already differentiates "nothing to verify" from "loading"
   // — keeps the effect's only job to "fire fetch + handle response", which
@@ -40,7 +29,7 @@ export function DoneStepDnsCheck({ domain, subdomains }: DoneStepDnsCheckProps) 
   const [state, setState] = useState<
     | { phase: 'loading' }
     | { phase: 'error'; message: string }
-    | { phase: 'ready'; data: VerifyResponse }
+    | { phase: 'ready'; data: DnsVerifyResponse }
   >(
     subdomains.length === 0
       ? { phase: 'ready', data: { expectedIPs: [], results: [] } }
@@ -52,17 +41,7 @@ export function DoneStepDnsCheck({ domain, subdomains }: DoneStepDnsCheckProps) 
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/system/dns/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ domains: subdomains }),
-        });
-        if (cancelled) return;
-        if (!res.ok) {
-          setState({ phase: 'error', message: `HTTP ${res.status}` });
-          return;
-        }
-        const data = (await res.json()) as VerifyResponse;
+        const data = await verifyDnsRecords(subdomains);
         if (cancelled) return;
         setState({ phase: 'ready', data });
       } catch (e) {

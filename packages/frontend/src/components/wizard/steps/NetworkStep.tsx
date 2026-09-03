@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Globe, Network, Key, CheckCircle, Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
 import { Input, Button } from '../WizardUI';
-import type { OnboardingStatus } from '@servicebay/api-client';
+import { updateGatewaySettings, TypedFetchError, type OnboardingStatus } from '@servicebay/api-client';
 
 interface NetworkStepProps {
     selection: {
@@ -135,37 +135,36 @@ function GatewaySection({
         setTesting(true);
         setResult(null);
         try {
-            const res = await fetch('/api/settings/gateway', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    host: gwHost.trim(),
-                    username: gwUser.trim() || undefined,
-                    password: gwPass || undefined,
-                    test: true,
-                }),
-            });
-            const data = await res.json().catch(() => ({}));
-            if (res.ok) {
-                setResult({ kind: 'ok', message: `Reached ${gwHost} successfully.` });
-            } else if (data.error === 'connection_failed') {
-                setResult({
-                    kind: 'fail',
-                    message: typeof data.message === 'string'
-                        ? `Could not authenticate: ${data.message}`
-                        : 'Could not authenticate to the gateway.',
-                });
+            // No `ssl` toggle in this step — omit it so the backend keeps
+            // whatever is already configured instead of resetting it to
+            // `false` (see updateGatewaySettings' doc comment).
+            await updateGatewaySettings(
+                gwHost.trim(),
+                gwUser.trim() || undefined,
+                gwPass || undefined,
+                undefined,
+                true,
+            );
+            setResult({ kind: 'ok', message: `Reached ${gwHost} successfully.` });
+        } catch (e) {
+            if (e instanceof TypedFetchError) {
+                const raw = e.cause as { error?: string; message?: string } | undefined;
+                if (raw?.error === 'connection_failed') {
+                    setResult({
+                        kind: 'fail',
+                        message: typeof raw.message === 'string'
+                            ? `Could not authenticate: ${raw.message}`
+                            : 'Could not authenticate to the gateway.',
+                    });
+                } else {
+                    setResult({ kind: 'fail', message: e.message });
+                }
             } else {
                 setResult({
                     kind: 'fail',
-                    message: typeof data.error === 'string' ? data.error : `HTTP ${res.status}`,
+                    message: e instanceof Error ? e.message : 'Network error while reaching the gateway.',
                 });
             }
-        } catch (e) {
-            setResult({
-                kind: 'fail',
-                message: e instanceof Error ? e.message : 'Network error while reaching the gateway.',
-            });
         } finally {
             setTesting(false);
         }

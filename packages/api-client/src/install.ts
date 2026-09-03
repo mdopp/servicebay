@@ -9,6 +9,7 @@
 
 import { z } from 'zod';
 import { rawApi } from './client';
+import { lenientArray } from './lenient';
 
 export type { JobState, JobPhase } from '@/lib/install/jobStore';
 export type { StackHealth, ChildHealthState } from '@/lib/install/stackHealth';
@@ -88,7 +89,9 @@ export const TemplateUpgradeSummarySchema = z.object({
 export type TemplateUpgradeSummary = z.infer<typeof TemplateUpgradeSummarySchema>;
 
 export const PendingTemplateUpgradesResponseSchema = z.object({
-  pending: z.array(TemplateUpgradeSummarySchema),
+  // Per-row lenient (#2784) — one template whose summary row fails validation
+  // must not hide every other pending upgrade.
+  pending: lenientArray(TemplateUpgradeSummarySchema, 'GET /api/system/templates/upgrades-pending#pending'),
   hasBreakingChange: z.boolean(),
 });
 export type PendingTemplateUpgradesResponse = z.infer<typeof PendingTemplateUpgradesResponseSchema>;
@@ -115,7 +118,7 @@ export const TemplateUpgradePreviewSchema = z.object({
   currentVersion: z.number(),
   hasUpgrade: z.boolean(),
   hasBreakingChange: z.boolean(),
-  sections: z.array(TemplateUpgradeSectionSchema),
+  sections: lenientArray(TemplateUpgradeSectionSchema, 'GET /api/system/templates/:name/upgrade-preview#sections'),
 });
 export type TemplateUpgradePreview = z.infer<typeof TemplateUpgradePreviewSchema>;
 
@@ -128,4 +131,31 @@ export function fetchTemplateUpgradePreview(templateName: string, source?: strin
     `/api/system/templates/${encodeURIComponent(templateName)}/upgrade-preview${qs ? `?${qs}` : ''}`,
     TemplateUpgradePreviewSchema,
   );
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/system/external-backup/orphans — NAS config backups for services
+// not currently installed (#1218 entry 2), surfaced by the wizard's Finish
+// step. Route never errors: an unreachable NAS still returns `{ orphans: [] }`
+// with a 200, so this is a plain rawApi read with no error branch to model.
+// ---------------------------------------------------------------------------
+
+export const OrphanBackupSchema = z
+  .object({
+    service: z.string(),
+    tarName: z.string(),
+    size: z.number(),
+  })
+  .passthrough();
+export type OrphanBackup = z.infer<typeof OrphanBackupSchema>;
+
+export const OrphanBackupsResponseSchema = z.object({
+  // Per-row lenient (#2784): one malformed backup entry must not hide the
+  // rest of the NAS-orphans hint.
+  orphans: lenientArray(OrphanBackupSchema, 'GET /api/system/external-backup/orphans#orphans'),
+});
+
+/** GET /api/system/external-backup/orphans */
+export function fetchOrphanBackups() {
+  return rawApi('/api/system/external-backup/orphans', OrphanBackupsResponseSchema);
 }

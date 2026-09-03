@@ -10,6 +10,7 @@
 
 import { z } from 'zod';
 import { rawApi, mutateRawApi } from './client';
+import { lenientArray } from './lenient';
 
 /** A folder's explicit (partial) routing rule. Structurally compatible with the
  *  frontend's own `Rule` type (`disk-import/_lib/types.ts`) without importing it
@@ -40,7 +41,11 @@ export type DiskImportDevice = z.infer<typeof DiskImportDeviceSchema>;
 
 const ListDevicesResponseSchema = z.object({
   ok: z.literal(true),
-  devices: z.array(DiskImportDeviceSchema).catch([]),
+  // Per-row lenient (#2784) — `.catch([])` alone still emptied the picker on a
+  // single odd row; now the bad row is dropped and the rest survive. The
+  // outer `.catch([])` keeps the existing "field missing/not an array" -> []
+  // behaviour these long-lived-box reads were written for.
+  devices: lenientArray(DiskImportDeviceSchema, 'GET /api/system/disk-import/list-devices#devices').catch([]),
 });
 
 /** GET /api/system/disk-import/list-devices — the tile's device picker. */
@@ -74,7 +79,7 @@ const DiskImportRunStatusDetailSchema = z.object({
   planned: z.number().catch(0),
   applied: z.number().catch(0),
   conflicts: z.number().catch(0),
-  categories: z.array(DiskImportCategoryRollupSchema).optional(),
+  categories: lenientArray(DiskImportCategoryRollupSchema, 'GET /api/system/disk-import/status#categories').optional(),
   totalBytes: z.number().optional(),
   error: z.string().nullable(),
 });
@@ -134,8 +139,8 @@ const ReviewOwnerSchema = z.object({ id: z.string(), label: z.string() });
 
 const ReviewTreeResponseSchema = z.object({
   ok: z.literal(true),
-  tree: z.array(ReviewNodeSchema).catch([]),
-  owners: z.array(ReviewOwnerSchema).catch([]),
+  tree: lenientArray(ReviewNodeSchema, 'GET /api/system/disk-import/tree#tree').catch([]),
+  owners: lenientArray(ReviewOwnerSchema, 'GET /api/system/disk-import/tree#owners').catch([]),
   dispositions: z.array(z.string()).catch([]),
   mountBase: z.string(),
 });
@@ -170,7 +175,7 @@ export type DiskImportRoutingProfile = z.infer<typeof DiskImportRoutingProfileSc
 
 const ListProfilesResponseSchema = z.object({
   ok: z.literal(true),
-  profiles: z.array(DiskImportRoutingProfileSchema).catch([]),
+  profiles: lenientArray(DiskImportRoutingProfileSchema, 'GET /api/system/disk-import/profiles#profiles').catch([]),
 });
 
 /** GET /api/system/disk-import/profiles — saved routing presets, newest first. */

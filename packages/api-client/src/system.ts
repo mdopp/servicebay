@@ -8,6 +8,7 @@
 
 import { z } from 'zod';
 import { rawApi, mutateRawApi } from './client';
+import { lenientArray } from './lenient';
 
 // ---------------------------------------------------------------------------
 // GET /api/system/version
@@ -40,13 +41,44 @@ export const DiagnoseProbeSchema = z
 
 export const DiagnoseResultSchema = z.object({
   node: z.string().optional(),
-  probes: z.array(DiagnoseProbeSchema),
+  // Per-row lenient (#2784): a probe row from an older/newer backend is
+  // dropped, the rest of the diagnose result still renders.
+  probes: lenientArray(DiagnoseProbeSchema, 'POST /api/system/diagnose#probes'),
 });
 export type DiagnoseResult = z.infer<typeof DiagnoseResultSchema>;
 
 /** POST /api/system/diagnose */
 export function runSystemDiagnose(node?: string) {
   return mutateRawApi('/api/system/diagnose', DiagnoseResultSchema, node ? { node } : {});
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/system/dns/verify — backs the install wizard's Done-step DNS
+// check (`DoneStepDnsCheck.tsx`). Per-domain lookup result; lenient because
+// the wizard only reads domain/resolvesTo/matches/error off each row.
+// ---------------------------------------------------------------------------
+
+export const DnsVerifyResultSchema = z
+  .object({
+    domain: z.string(),
+    resolvesTo: z.string().nullable(),
+    matches: z.boolean(),
+    error: z.string().optional(),
+  })
+  .passthrough();
+export type DnsVerifyResult = z.infer<typeof DnsVerifyResultSchema>;
+
+export const DnsVerifyResponseSchema = z.object({
+  expectedIPs: z.array(z.string()).catch([]),
+  // Per-row lenient (#2784): one odd domain result must not blank the
+  // whole DNS-check panel.
+  results: lenientArray(DnsVerifyResultSchema, 'POST /api/system/dns/verify#results'),
+});
+export type DnsVerifyResponse = z.infer<typeof DnsVerifyResponseSchema>;
+
+/** POST /api/system/dns/verify — Body: { domains: string[] } */
+export function verifyDnsRecords(domains: string[]) {
+  return mutateRawApi('/api/system/dns/verify', DnsVerifyResponseSchema, { domains });
 }
 
 // ---------------------------------------------------------------------------
@@ -65,10 +97,12 @@ export function detectGateway() {
 
 // ---------------------------------------------------------------------------
 // GET/POST /api/system/storage — RAID + block-device layout, and mounting
-// a detected array. Kept intentionally strict on the fields the #2626
-// storage guard relies on (device/mountpoint/degraded, …): a malformed
-// response should fail validation and surface as "disk layout unknown"
-// rather than being coerced into a shape that looks safe when it isn't.
+// a detected array. Kept intentionally strict on the FIELDS the #2626
+// storage guard relies on (device/mountpoint/degraded, …): none of them get
+// a `.catch(...)` default, so a row is never coerced into a shape that looks
+// safe when it isn't. #2784 changes only the array level: such a row is now
+// dropped-and-warned instead of failing the whole read, so one unparseable
+// array cannot blank the entire disk list.
 // ---------------------------------------------------------------------------
 
 export const RaidArraySchema = z
@@ -123,8 +157,9 @@ export const DetectedDriveSchema: z.ZodType<DetectedDrive> = z.lazy(() =>
 
 export const StorageLayoutSchema = z
   .object({
-    raids: z.array(RaidArraySchema).optional(),
-    drives: z.array(DetectedDriveSchema).optional(),
+    // Per-row lenient (#2784): one odd array/drive must not empty the picker.
+    raids: lenientArray(RaidArraySchema, 'GET /api/system/storage#raids').optional(),
+    drives: lenientArray(DetectedDriveSchema, 'GET /api/system/storage#drives').optional(),
   })
   .passthrough();
 
@@ -197,4 +232,32 @@ const ReinstallDismissResultSchema = z
 /** DELETE /api/system/reinstall — dismiss the restore banner. */
 export function dismissReinstallBanner() {
   return mutateRawApi('/api/system/reinstall', ReinstallDismissResultSchema, undefined, 'DELETE');
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/system/files — the file-viewer overlay's raw file read. Bare
+// `NextResponse.json(...)` body (`{ content }` / `{ error }`) despite the
+// route using `withApiHandler` — it returns a `Response` directly, which
+// bypasses the `{ ok, data }` auto-envelope — so `rawApi`.
+// ---------------------------------------------------------------------------
+
+export const FileContentSchema = z.object({ content: z.string().catch('') }).passthrough();
+
+/** GET /api/system/files?path=…&node=… */
+export function fetchFileContent(path: string, node?: string, signal?: AbortSignal) {
+  const params = new URLSearchParams({ path });
+  if (node) params.set('node', node);
+  return rawApi(`/api/system/files?${params.toString()}`, FileContentSchema, { cache: 'no-store', signal });
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/help — the SectionHelp popover's markdown content read. Same
+// bare-body shape as the file read above.
+// ---------------------------------------------------------------------------
+
+export const HelpContentSchema = z.object({ content: z.string().catch('') }).passthrough();
+
+/** GET /api/help?id=… */
+export function fetchHelpContent(id: string) {
+  return rawApi(`/api/help?id=${encodeURIComponent(id)}`, HelpContentSchema);
 }

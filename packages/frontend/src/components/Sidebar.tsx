@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ChevronLeft, Code, ExternalLink, Sparkles, User as UserIcon, LogOut } from 'lucide-react';
+import { fetchSystemVersion, fetchCurrentUser, logout as logoutRequest } from '@servicebay/api-client';
 import ServiceBayLogo from './ServiceBayLogo';
 import SectionHelp from './SectionHelp';
 import DomainTag from './DomainTag';
@@ -65,8 +66,7 @@ export default function Sidebar() {
   }, []);
 
   useEffect(() => {
-    fetch('/api/system/version')
-      .then(r => r.ok ? r.json() : null)
+    fetchSystemVersion()
       .then(d => { if (d?.version) setAppVersion(d.version); })
       .catch(() => {});
   }, []);
@@ -76,13 +76,12 @@ export default function Sidebar() {
   // direct LAN hit those don't exist and the endpoint returns
   // `{ authenticated: false }`, which we render as "Not signed in".
   useEffect(() => {
-    fetch('/api/auth/me')
-      .then(r => r.ok ? r.json() : null)
+    fetchCurrentUser()
       .then(d => {
         if (d?.authenticated) {
           setCurrentUser({
-            displayName: d.displayName || d.username,
-            username: d.username,
+            displayName: d.displayName || d.username || '',
+            username: d.username || '',
             groups: Array.isArray(d.groups) ? d.groups : [],
             source: d.source === 'session' ? 'session' : 'forward-auth',
           });
@@ -111,7 +110,7 @@ export default function Sidebar() {
   const handleLogout = async () => {
     if (currentUser && currentUser.source === 'session') {
       try {
-        await fetch('/api/auth/logout', { method: 'POST' });
+        await logoutRequest();
       } catch {
         /* clear best-effort; redirect regardless so a stale cookie doesn't trap the user */
       }
