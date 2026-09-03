@@ -171,7 +171,7 @@ describe('scopeSatisfiedBy: exec is never implied (#2623 ratchet)', () => {
       path.resolve(__dirname, '..', '..', 'packages', 'backend', 'src', 'server.ts'),
       'utf-8',
     );
-    const m = src.match(/auth = \{ user: session\.user, scopes: \[([^\]]*)\] \}/);
+    const m = src.match(/scopes: session\.scopes \?\? \[([^\]]*)\]/);
     expect(m, 'the cookie-session bridge grant moved — re-point this guard').not.toBeNull();
     const granted = m![1]
       .split(',')
@@ -182,5 +182,22 @@ describe('scopeSatisfiedBy: exec is never implied (#2623 ratchet)', () => {
     // It keeps the rest of the operator surface, including reboot by implication.
     expect(tokenHasScope(granted, 'destroy')).toBe(true);
     expect(tokenHasScope(granted, 'reboot')).toBe(true);
+  });
+
+  // #2768: the broad set above is the fallback for a scope-less (password-login)
+  // cookie ONLY. A bridged session minted by /api/auth/session-from-token carries
+  // the source token's `scopes`, and /mcp must honour those instead — otherwise a
+  // `read`-only token traded for a cookie becomes a full operator over MCP.
+  it('the /mcp cookie bridge prefers the session own scopes over the broad fallback', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '..', '..', 'packages', 'backend', 'src', 'server.ts'),
+      'utf-8',
+    );
+    expect(
+      /scopes: session\.scopes \?\? \[/.test(src),
+      'the /mcp cookie fallback must read session.scopes when present (#2768)',
+    ).toBe(true);
+    // And the broad literal must never be handed out unconditionally again.
+    expect(src).not.toMatch(/auth = \{ user: session\.user, scopes: \['read'/);
   });
 });

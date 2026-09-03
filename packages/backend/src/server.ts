@@ -261,7 +261,8 @@ app.prepare().then(() => {
             return null;
           });
           if (session) {
-            // Cookie auth retains the broad operator scopes for back-compat.
+            // A scope-less cookie (password login) retains the broad operator
+            // scopes for back-compat.
             // Fresh installs that want stricter behaviour use named tokens.
             // `exec` is deliberately ABSENT and must stay absent (#2623): this
             // list never carried it literally — it only ever arrived through
@@ -269,7 +270,13 @@ app.prepare().then(() => {
             // session therefore can no longer call exec_command/container_exec
             // over /mcp; that is the point, not an oversight. `reboot` is still
             // reached via the surviving `destroy`⇒`reboot` rule (#1765).
-            auth = { user: session.user, scopes: ['read', 'lifecycle', 'mutate', 'destroy', 'propose'] };
+            // A bridged session (POST /api/auth/session-from-token) carries the
+            // source token's `scopes`; honour them instead of the broad set, or
+            // a `read`-only token becomes a full operator over /mcp (#2768).
+            auth = {
+              user: session.user,
+              scopes: session.scopes ?? ['read', 'lifecycle', 'mutate', 'destroy', 'propose'],
+            };
           }
         }
         if (!auth) {

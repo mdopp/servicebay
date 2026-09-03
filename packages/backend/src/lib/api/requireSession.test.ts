@@ -9,6 +9,7 @@ vi.mock('@/lib/auth/internalToken', () => ({
 }));
 vi.mock('@/lib/auth/apiTokens', () => ({
   verifyToken: vi.fn(),
+  tokenIsLive: vi.fn(async () => true),
 }));
 
 import { requireSession } from './requireSession';
@@ -115,6 +116,62 @@ describe('requireSession', () => {
       expect(result instanceof NextResponse).toBe(true);
       // The token machinery is never consulted on non-opted-in routes.
       expect(mockVerify.mock.calls).toHaveLength(0);
+    });
+  });
+
+  // A cookie minted by /api/auth/session-from-token carries the source token's
+  // `scopes`. The cookie branch must hold it to them, exactly like the Bearer
+  // branch — the gap #2768 closed. (End-to-end, through the real bridge route
+  // and real session crypto:
+  // packages/frontend/src/app/api/auth/session-from-token/route.test.ts.)
+  describe('scoped cookie session (token→session bridge) — #2768', () => {
+    it('rejects a read-only bridged cookie on a tokenScope:destroy route with 403', async () => {
+      mockCookie.mockResolvedValueOnce({
+        user: 'token:readonly',
+        expires: new Date(Date.now() + 60_000),
+        scopes: ['read'],
+        viaToken: 'a1b2c3d4',
+      });
+      const result = await requireSession(mkRequest({ cookie: 'session=abc' }), {
+        tokenScope: 'destroy',
+      });
+      expect(result instanceof NextResponse).toBe(true);
+      expect((result as NextResponse).status).toBe(403);
+    });
+
+    it('admits a bridged cookie on a route whose scope it holds', async () => {
+      mockCookie.mockResolvedValueOnce({
+        user: 'token:readonly',
+        expires: new Date(Date.now() + 60_000),
+        scopes: ['read'],
+        viaToken: 'a1b2c3d4',
+      });
+      const result = await requireSession(mkRequest({ cookie: 'session=abc' }), {
+        tokenScope: 'read',
+      });
+      expect(result instanceof NextResponse).toBe(false);
+    });
+
+    it('honours destroy ⇒ reboot for a bridged cookie (one surviving implication)', async () => {
+      mockCookie.mockResolvedValueOnce({
+        user: 'token:ops',
+        expires: new Date(Date.now() + 60_000),
+        scopes: ['destroy'],
+        viaToken: 'a1b2c3d4',
+      });
+      const result = await requireSession(mkRequest({ cookie: 'session=abc' }), {
+        tokenScope: 'reboot',
+      });
+      expect(result instanceof NextResponse).toBe(false);
+    });
+
+    it('leaves a scope-less cookie (password login) unrestricted — back-compat', async () => {
+      mockCookie.mockResolvedValueOnce({ user: 'admin', expires: new Date(Date.now() + 60_000) });
+      const result = await requireSession(mkRequest({ cookie: 'session=abc' }), {
+        tokenScope: 'destroy',
+      });
+      expect(result instanceof NextResponse).toBe(false);
+      expect((result as { user: string }).user).toBe('admin');
     });
   });
 });

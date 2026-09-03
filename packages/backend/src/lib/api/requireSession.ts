@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSessionFromCookieHeader, type SessionPayload } from '@/lib/auth/session';
 import { getInternalApiToken } from '@/lib/auth/internalToken';
-import type { ApiScope } from '@/lib/auth/apiScope';
+import { scopeSatisfiedBy, type ApiScope } from '@/lib/auth/apiScope';
 
 export interface RequireSessionOptions {
   /**
@@ -35,7 +35,11 @@ export interface RequireSessionOptions {
  *   2. `Authorization: Bearer sb_…` named API token — only when the caller
  *      opts in via `options.tokenScope` AND the token holds that scope
  *      (#1264). Returns `user: 'token:<name>'` carrying the token's scopes.
- *   3. A valid session cookie (all scopes, for back-compat).
+ *   3. A valid session cookie. A cookie minted by the token→session bridge
+ *      (`POST /api/auth/session-from-token`) carries the source token's
+ *      `scopes`, and is held to them on `tokenScope` routes exactly like the
+ *      Bearer branch (#2768). A cookie without `scopes` (password login)
+ *      means all scopes, for back-compat.
  *
  * This is intentionally a per-handler helper rather than a global
  * middleware: the broader hardening plan (PR1) layers a `middleware.ts`
@@ -97,5 +101,30 @@ export async function requireSession(
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
   }
-  return session;
+  return cookieScopeRefusal(session, options.tokenScope) ?? session;
+}
+
+/**
+ * Hold a *scoped* cookie session to the scopes it carries (#2768).
+ *
+ * A cookie minted by the token→session bridge
+ * (`POST /api/auth/session-from-token`) carries `scopes = token.scopes`. Without
+ * this check a `read`-only token could be traded for a cookie and then drive a
+ * `tokenScope: 'destroy'` route — the Bearer branch's scope gate, laundered away
+ * by a round-trip through the bridge.
+ *
+ * Omitted `scopes` means "all" (password login / internal) and is untouched, and
+ * a route without `tokenScope` is cookie-only anyway. Returns a 403 (authenticated
+ * but under-scoped, like `requireAssistAdmin`) or null to proceed.
+ */
+function cookieScopeRefusal(
+  session: SessionPayload,
+  tokenScope: ApiScope | undefined,
+): NextResponse | null {
+  if (!tokenScope || !session.scopes) return null;
+  if (scopeSatisfiedBy(session.scopes, tokenScope)) return null;
+  return NextResponse.json(
+    { error: `Forbidden: '${tokenScope}' scope required` },
+    { status: 403 },
+  );
 }
