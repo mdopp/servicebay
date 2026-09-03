@@ -83,7 +83,7 @@ The builder enforces the per-issue side (fast gates only, commit to the batch br
 ## Step 0 — Preflight (every firing)
 
 1. **Working tree clean?** `git status --porcelain`. If dirty, exit — another session owns this tree. Don't stash or switch branches.
-2. **On `main`, up to date?** `git fetch origin && git checkout main && git pull --ff-only`. If FF fails, exit and report.
+2. **On `main`, up to date?** `git fetch origin && git checkout main && git pull --ff-only`. If FF fails, exit and report. If a `git` step dies with `fatal: remote error: GitHub is temporarily limiting some unauthenticated downloads`, re-run it with the gh token sent proactively — `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraHeader GIT_CONFIG_VALUE_0="Authorization: Basic $(printf 'x-access-token:%s' "$(gh auth token)" | base64 -w0)" git …` — the same triple `gitEnv()` in `scripts/autoloop-git.ts` puts on every autoloop git call (#2761).
 3. **Lock check.** If `.claude/state/autoloop.lock` exists with mtime < 10 min, another firing is running — exit. Otherwise touch it.
 4. **Read status.** `npm run autoloop:queue -- summary` (compact — batch, verify, planned count, gh label counts). On a cold start (no cache), `… -- rebuild --release-pr <n>` reconstructs it from GitHub. `… -- mirror --pr <n>` prunes the cache + re-projects the release-PR label.
 5. **Fold in any background Box-Verify result.** If `.claude/state/box-verify.json` exists, the background agent finished: fold it in with `npm run autoloop:queue -- verify-set <sha> <status> --detail "<…>" --pr <release PR>` (you are the single writer of the verify field), then **delete the result file**. `verify-get` auto-resets a `verifying` entry stuck >20 min (the agent died → it relaunches).

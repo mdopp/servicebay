@@ -61,6 +61,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { gitEnv } from './autoloop-git';
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -125,7 +126,9 @@ export type GitRunner = (args: string[]) => string | null;
 
 export const realGit: GitRunner = args => {
   try {
-    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    // `env: gitEnv()` sends the gh token proactively — GitHub's unauthenticated
+    // throttle answers without a 401, so the credential helper never fires (#2761).
+    return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: gitEnv() }).trim();
   } catch {
     return null;
   }

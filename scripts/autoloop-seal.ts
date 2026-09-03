@@ -29,6 +29,12 @@
  * orchestrator):
  *   AUTOLOOP_SEAL_RESULT {"ok":true,"pr":123,"sha":"abc1234","pathMandated":[...],"effects":[...],"boxVerifyOwed":true,"detail":"..."}
  *
+ * Once the PR is MERGED that line is printed from a `finally` and every
+ * post-merge git step is best-effort (a failure shows up as `postMergeWarning`,
+ * not a non-zero exit) — a throttled `git pull` used to lose the whole result
+ * after a successful merge (#2761). All git calls carry `gitEnv()` so the token
+ * goes out proactively; see scripts/autoloop-git.ts.
+ *
  * `boxVerifyOwed` is decided on TWO axes (#2700): the *place* the change lives
  * (`PATH_MANDATED_PATHS`) and the *effect* it has (`durableStateEffects` —
  * anything that writes or migrates persisted state). See `gateDecision`.
@@ -38,6 +44,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { gitEnv, redactGitSecrets } from './autoloop-git';
 
 /**
  * Path prefixes/files whose change means the release must run a real on-box
@@ -249,14 +256,27 @@ export function parseAddedLines(diffText: string): Map<string, string[]> {
 function sh(cmd: string, args: string[]): string {
   // maxBuffer well above the default 1 MiB: the merged-diff read below can be
   // large, and a truncation throw there would silently lose the effect axis.
-  return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }).trim();
+  // `env: gitEnv()` sends the gh token proactively so GitHub's unauthenticated
+  // download throttle can't kill a fetch/pull mid-seal (#2761).
+  try {
+    return execFileSync(cmd, args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 64 * 1024 * 1024,
+      env: gitEnv(),
+    }).trim();
+  } catch (e) {
+    const err = e as Error;
+    err.message = redactGitSecrets(err.message ?? '');
+    throw err;
+  }
 }
 function shSafe(cmd: string, args: string[]): { ok: boolean; out: string } {
   try {
     return { ok: true, out: sh(cmd, args) };
   } catch (e) {
     const err = e as { stdout?: string; stderr?: string; message?: string };
-    return { ok: false, out: `${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`.trim() };
+    return { ok: false, out: redactGitSecrets(`${err.stdout ?? ''}${err.stderr ?? ''}${err.message ?? ''}`.trim()) };
   }
 }
 function emit(result: Record<string, unknown>): void {
@@ -301,6 +321,53 @@ function gateForRange(from: string, to: string): GateDecision {
   return gateDecision(changedPaths.map(path => ({ path, addedLines: added.get(path) ?? [] })));
 }
 
+/**
+ * Post-merge fold (#2761). The PR is MERGED, so every step here is best-effort
+ * and the result line is printed from a `finally`: the orchestrator needs
+ * sha/pathMandated/boxVerifyOwed to fold the verify state, and losing them to a
+ * throttled `git pull` meant folding it by hand. Failures become
+ * `postMergeWarning`, never a non-zero exit.
+ */
+function foldMerged(pr: number, oldMain: string, batchTip: string): void {
+  const warnings: string[] = [];
+  let newSha = '';
+  let gate: GateDecision = { pathMandated: [], effects: [], boxVerifyOwed: false, detail: '' };
+  try {
+    const checkout = shSafe('git', ['checkout', 'main']);
+    if (!checkout.ok) warnings.push(`git checkout main failed: ${checkout.out.slice(0, 300)}`);
+    const pull = shSafe('git', ['pull', '--ff-only', '--quiet']);
+    if (!pull.ok) warnings.push(`git pull --ff-only failed: ${pull.out.slice(0, 300)}`);
+
+    // sha for the verify fold: local HEAD when the pull landed, else the merge
+    // commit straight from the API (gh always authenticates, so it survives the
+    // throttle), else the batch tip.
+    const head = checkout.ok && pull.ok ? shSafe('git', ['rev-parse', '--short', 'HEAD']) : { ok: false, out: '' };
+    if (head.ok && head.out) newSha = head.out;
+    else {
+      const api = shSafe('gh', ['pr', 'view', String(pr), '--json', 'mergeCommit', '--jq', '.mergeCommit.oid']);
+      newSha = api.ok && api.out ? api.out.slice(0, 7) : batchTip.slice(0, 7);
+    }
+
+    gate = gateForRange(oldMain, batchTip);
+  } catch (e) {
+    warnings.push(redactGitSecrets(String((e as Error)?.message ?? e)).slice(0, 300));
+  } finally {
+    const postMergeWarning = warnings.length ? warnings.join('; ') : undefined;
+    emit({
+      ok: true,
+      pr,
+      sha: newSha,
+      pathMandated: gate.pathMandated,
+      effects: gate.effects,
+      boxVerifyOwed: gate.boxVerifyOwed,
+      ...(postMergeWarning ? { postMergeWarning } : {}),
+      detail: gate.boxVerifyOwed
+        ? `Merged PR #${pr} → ${newSha}; box_verify=owed (${gate.detail})`
+        : `Merged PR #${pr} → ${newSha}; neither path-mandated nor a durable-state effect (box_verify stays clear unless a unit's gate=verify)`,
+    });
+  }
+}
+
 function main(): void {
   const argv = process.argv.slice(2);
   const branch = argv.find(a => !a.startsWith('--'));
@@ -314,7 +381,10 @@ function main(): void {
   if (sh('git', ['status', '--porcelain'])) fail(2, { detail: 'working tree is dirty — refusing to seal' });
   if (!shSafe('git', ['rev-parse', '--verify', branch!]).ok) fail(2, { detail: `batch branch not found: ${branch}` });
 
-  sh('git', ['fetch', 'origin', '--quiet']);
+  // Pre-merge fetch: a failure here means nothing shipped, but it still has to
+  // leave a result line rather than an uncaught throw (#2761).
+  const fetched = shSafe('git', ['fetch', 'origin', '--quiet']);
+  if (!fetched.ok) fail(2, { detail: `git fetch failed: ${fetched.out.slice(0, 500)}` });
   const oldMain = sh('git', ['rev-parse', 'origin/main']);
 
   // Push with --no-verify (structural: skip the slow/flaky local pre-push hook; CI is the gate).
@@ -340,26 +410,16 @@ function main(): void {
   if (ci.verdict === 'red') fail(3, { pr, detail: `CI red: ${ci.failing.join(', ')}`, failing: ci.failing });
   if (ci.verdict === 'timeout') fail(3, { pr, detail: 'CI did not resolve within the poll cap', failing: [] });
 
+  // The batch tip, captured BEFORE the merge: `--delete-branch` drops the local
+  // ref, and this range (oldMain..batchTip) is exactly what the merge shipped —
+  // so the gate still computes when the post-merge pull is throttled (#2761).
+  const batchTip = sh('git', ['rev-parse', branch!]);
+
   // Merge on green.
   const merge = shSafe('gh', ['pr', 'merge', String(pr), '--merge', '--delete-branch']);
   if (!merge.ok) fail(2, { pr, detail: `merge failed (conflict?): ${merge.out.slice(0, 500)}` });
-  sh('git', ['checkout', 'main']);
-  sh('git', ['pull', '--ff-only', '--quiet']);
-  const newSha = sh('git', ['rev-parse', '--short', 'HEAD']);
 
-  const gate = gateForRange(oldMain, 'HEAD');
-
-  emit({
-    ok: true,
-    pr,
-    sha: newSha,
-    pathMandated: gate.pathMandated,
-    effects: gate.effects,
-    boxVerifyOwed: gate.boxVerifyOwed,
-    detail: gate.boxVerifyOwed
-      ? `Merged PR #${pr} → ${newSha}; box_verify=owed (${gate.detail})`
-      : `Merged PR #${pr} → ${newSha}; neither path-mandated nor a durable-state effect (box_verify stays clear unless a unit's gate=verify)`,
-  });
+  foldMerged(pr, oldMain, batchTip);
 }
 
 // Only run when invoked directly (so tests can import isPathMandated purely).
