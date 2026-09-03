@@ -488,17 +488,27 @@ export interface AppConfig {
    */
   installedSecrets?: Array<{ varName: string; password: string }>;
   /**
-   * Internal: every NON-secret template variable the operator set by hand on
-   * the most recent install — i.e. a non-empty value that differs from the
-   * template's own default (#2531). Read back by the manifest assembler so a
-   * plain reinstall doesn't rebuild the variable set from `variables.json`
-   * defaults and silently blank a value the operator typed. Only genuinely
-   * operator-set values are recorded, so a template bumping a default still
-   * reaches a box that never overrode it. Plaintext by design — `type: secret`
-   * variables are excluded and live in `installedSecrets` (encrypted at rest).
-   * See `install/savedVariables.ts`.
+   * Internal: the **per-service record of what the last successful install of
+   * each template actually deployed** (#2531, widened by #2785). Read back by
+   * the manifest assembler so a plain reinstall doesn't rebuild the variable
+   * set from `variables.json` defaults and silently blank a value the operator
+   * typed, and read by `get_service_files` so an operator (or a reconciler —
+   * ADR 0012) can see the values a service is installed with.
+   *
+   * See `install/savedVariables.ts` for the write/read rules. Two of them are
+   * the whole contract:
+   *   - **REUSE is narrower than the RECORD.** Every per-service variable is
+   *     recorded (with the `default` in force when it was written); only an
+   *     entry whose value *differs* from that default is offered back as a
+   *     value to reuse, so a template that BUMPS a default still reaches a box
+   *     that never overrode it (the #1297 contract).
+   *   - **No secret value is ever stored here.** A `secret | bcrypt |
+   *     rsa-private` variable is recorded as a `kind: 'secret'` REFERENCE with
+   *     an empty `value`; the value itself lives in `installedSecrets`
+   *     (encrypted at rest). Everything else is plaintext by design — the same
+   *     values already sit in `templateSettings` and in the pod YAML on disk.
    */
-  installedVariables?: Array<{ varName: string; value: string }>;
+  installedVariables?: InstalledVariableRecord[];
   /**
    * Anonymous "request access" submissions from the family portal
    * (#242). Public POST endpoint appends here; admin Settings page
@@ -605,6 +615,48 @@ export interface InstallManifest {
   /** ISO timestamp of when this manifest was persisted. */
   savedAt: string;
   credentials: InstalledCredential[];
+}
+
+/**
+ * One entry of `config.installedVariables` — "template variable V of service S
+ * was deployed with this value" (#2531; per-service + complete since #2785).
+ *
+ * None of the optional fields exist on records written before #2785, so the
+ * readers treat an absent `default` as "" (any non-empty value counted as
+ * operator-set, which is exactly what the old store held) and an absent
+ * `service` as "not attributed". No migration is needed or wanted.
+ */
+export interface InstalledVariableRecord {
+  /** The template-variable name, e.g. `SOLARIS_WHISPER_MODEL`. */
+  varName: string;
+  /**
+   * The value this variable was deployed with. **Empty for a `kind: 'secret'`
+   * entry** — a credential is never written into this plaintext store.
+   */
+  value: string;
+  /**
+   * The template that DECLARED the variable (`meta.templateName`), i.e. the
+   * service this record belongs to (#2785). Absent when the deploy path had no
+   * metadata for the variable (a replayed manifest that predates it); in that
+   * case the previous record's attribution is carried forward rather than lost.
+   */
+  service?: string;
+  /**
+   * The template's own `variables.json` default AT THE TIME this record was
+   * written (#2785). This is what separates "the operator chose this" from
+   * "this is just what the template ships": only a value that differs from it
+   * is offered back for reuse, so a template bumping a default still reaches a
+   * box that never overrode it.
+   */
+  default?: string;
+  /**
+   * `'secret'` marks a REFERENCE, not a value: the variable is
+   * `secret | bcrypt | rsa-private`, it deployed with a value, and that value
+   * lives in `installedSecrets[varName]` (encrypted at rest). Recording the
+   * reference keeps the per-service set complete without ever duplicating
+   * credential material in plaintext.
+   */
+  kind?: 'secret';
 }
 
 /**

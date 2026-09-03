@@ -20,6 +20,7 @@ import { checkExtraFileScope, DEFAULT_TEMPLATE_DATA_DIR } from '@/lib/services/d
 import { getConfig } from '@/lib/config';
 import { ServiceManager } from '@/lib/services/ServiceManager';
 import { redactServiceFiles } from '../redact';
+import { loadServiceVariables } from '@/lib/install/savedVariables';
 import { nodeParam, resolveNode, textResult, errorResult, type ToolRegistration } from './context';
 
 // A register function is a flat LIST of tool declarations, not a unit of logic:
@@ -68,17 +69,37 @@ export function registerServiceTools({ server }: ToolRegistration) {
   // --- Get Service Files ---
   server.tool(
     'get_service_files',
-    'Get the on-disk files for a service. Returns `kubeContent` = the systemd Quadlet unit, `yamlContent` = the Kubernetes Pod-spec `.yml` (apiVersion/kind/spec), and `quadletKind` = "kube" or "container". For a `.kube` service (quadletKind="kube"): `kubeContent` is the [Kube]/[Install] unit and `yamlContent` is the pod spec; these field names are REVERSED relative to update_service_yaml — to write back the pod spec, pass this tool\'s `yamlContent` into update_service_yaml (the Quadlet unit is regenerated on its own). For a single-container `.container` service (quadletKind="container", e.g. ollama after the GPU fixup): `kubeContent` is the whole `.container` unit ([Container] section) and `yamlContent` is empty — the unit file IS the artifact, so edit `kubeContent` and pass it straight into update_service_yaml.',
+    'Get the on-disk files for a service. Returns `kubeContent` = the systemd Quadlet unit, `yamlContent` = the Kubernetes Pod-spec `.yml` (apiVersion/kind/spec), and `quadletKind` = "kube" or "container". For a `.kube` service (quadletKind="kube"): `kubeContent` is the [Kube]/[Install] unit and `yamlContent` is the pod spec; these field names are REVERSED relative to update_service_yaml — to write back the pod spec, pass this tool\'s `yamlContent` into update_service_yaml (the Quadlet unit is regenerated on its own). For a single-container `.container` service (quadletKind="container", e.g. ollama after the GPU fixup): `kubeContent` is the whole `.container` unit ([Container] section) and `yamlContent` is empty — the unit file IS the artifact, so edit `kubeContent` and pass it straight into update_service_yaml. Also returns `installedVariables` = the template-variable values this service was last DEPLOYED with (`isTemplateDefault` says whether a value is just what the template ships); a secret-typed variable is listed by name with `value: null` — its value lives encrypted in `installedSecrets` and is never returned here.',
     { name: ServiceName.describe('Service name'), node: nodeParam },
     async ({ name, node }) => {
       const nodeName = await resolveNode(node);
       const files = await ServiceManager.getServiceFiles(nodeName, name);
+      // #2785 — the variable values this service was last DEPLOYED with, so a
+      // redeploy/upgrade/repair can be reasoned about (and reproduced) without
+      // reverse-engineering them out of the rendered YAML. Best-effort: an
+      // unreadable config must not cost the caller the files it asked for.
+      const recorded = await getConfig()
+        .then(cfg => loadServiceVariables(cfg, name))
+        .catch(() => []);
       // Rendered kube YAML inlines templated `{{X_PASSWORD}}` values.
       // Redact env entries with sensitive names before returning to the
       // MCP client (#321). The dashboard's own service-file viewer
       // doesn't go through this path; it reads from the same source
       // files but is gated by the admin session.
-      return textResult(redactServiceFiles(files));
+      return textResult({
+        ...redactServiceFiles(files),
+        installedVariables: recorded.map(e =>
+          // A secret is named, never valued — the value lives in
+          // `installedSecrets`, encrypted at rest, and has no business here.
+          e.kind === 'secret'
+            ? { name: e.varName, value: null, storedIn: 'installedSecrets' }
+            : {
+              name: e.varName,
+              value: e.value,
+              isTemplateDefault: e.default !== undefined && e.value === e.default,
+            },
+        ),
+      });
     },
   );
 
