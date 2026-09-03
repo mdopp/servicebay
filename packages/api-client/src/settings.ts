@@ -292,6 +292,34 @@ export function fetchSettings() {
   return rawApi('/api/settings', McpSettingsSchema);
 }
 
+// ---------------------------------------------------------------------------
+// GET /api/settings — onboarding-wizard prefill slice
+// ---------------------------------------------------------------------------
+//
+// Same route as `fetchSettings` above, read for a different slice of the
+// (much larger) `AppConfig` body: the baked-in public domain and the
+// operator's notification email, both used only to pre-fill wizard fields.
+// Lenient/optional throughout — a missing section just means "nothing to
+// pre-fill", not a load failure.
+
+export const OnboardingPrefillSettingsSchema = z
+  .object({
+    reverseProxy: z.object({ publicDomain: z.string().optional() }).passthrough().optional(),
+    notifications: z
+      .object({
+        email: z.object({ to: z.array(z.string()).optional() }).passthrough().optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+export type OnboardingPrefillSettings = z.infer<typeof OnboardingPrefillSettingsSchema>;
+
+/** GET /api/settings — wizard prefill slice (publicDomain / notify email). */
+export function fetchOnboardingPrefillSettings() {
+  return rawApi('/api/settings', OnboardingPrefillSettingsSchema);
+}
+
 /** POST /api/settings */
 export function updateSettings(update: SettingsUpdate) {
   return mutateRawApi('/api/settings', McpSettingsSchema, update);

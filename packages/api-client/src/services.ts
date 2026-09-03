@@ -173,3 +173,20 @@ export function runForceUpdateAction(name: string, mode: 'pull' | 'fresh', nodeN
     { action: 'force-update', mode },
   );
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/services — the full listing (name/status/etc per service, plus
+// synthetic gateway/link/self rows). Lenient — most callers of this schema
+// only read `.name`, so every field beyond it is optional passthrough
+// rather than re-deriving the route's full response shape here.
+// ---------------------------------------------------------------------------
+
+export const ServiceSummarySchema = z.object({ name: z.string().optional() }).passthrough();
+
+export const ServiceSummaryListSchema = z.array(ServiceSummarySchema);
+
+/** GET /api/services?node=… — bare array, not the `{ok,data}` envelope. */
+export function fetchServiceSummaries(node?: string) {
+  const query = node ? `?node=${node}` : '';
+  return rawApi(`/api/services${query}`, ServiceSummaryListSchema);
+}

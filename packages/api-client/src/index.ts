@@ -19,6 +19,7 @@ export * from './onboarding';
 export * from './services';
 export * from './settings';
 export * from './ssh';
+export * from './system';
 export * from './systemUpdates';
 export * from './serviceView';
 export * from './client';

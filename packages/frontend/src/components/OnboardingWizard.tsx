@@ -14,9 +14,20 @@ import {
     forceClearInstallLock,
     generateLocalKey,
     fetchNodes,
+    fetchServiceSummaries,
+    fetchSystemVersion,
+    runSystemDiagnose,
+    detectGateway,
+    fetchStorageLayout,
+    mountStorageArray,
+    fetchDeviceList,
+    fetchOnboardingPrefillSettings,
     isValidOperatorEmail,
     operatorEmailIssue,
     type OnboardingStatus,
+    type RaidArray,
+    type DetectedDrive,
+    type MountAttempt,
 } from '@servicebay/api-client';
 import { fetchTemplates, fetchReadme } from '@/app/actions';
 import { Template } from '@servicebay/api-client';
@@ -104,11 +115,9 @@ interface StackItem {
 /** Fetch names of services already deployed on the target node */
 async function fetchExistingServices(node?: string): Promise<Set<string>> {
   try {
-    const query = node ? `?node=${node}` : '';
-    const res = await fetch(`/api/services${query}`);
-    if (!res.ok) return new Set();
-    const services = await res.json();
-    return new Set(services.map((s: { name: string }) => s.name?.toLowerCase()));
+    const services = await fetchServiceSummaries(node);
+    const names = services.map(s => s.name?.toLowerCase()).filter((n): n is string => !!n);
+    return new Set(names);
   } catch {
     return new Set();
   }
@@ -125,14 +134,6 @@ const DATA_MOUNTPOINT = '/var/mnt/data';
 function expressStopMessage(stacks: number, why: string, consequence?: string): string {
   const tail = consequence ? ` ${consequence}` : '';
   return `${why} NOT installed: 0 of ${stacks} stack(s).${tail}`;
-}
-
-/** What `POST /api/system/storage` reports back about a mount attempt. */
-interface MountAttempt {
-  mounted?: boolean;
-  error?: string;
-  persistent?: boolean;
-  incomplete?: string[];
 }
 
 export default function OnboardingWizard() {
@@ -274,18 +275,12 @@ export default function OnboardingWizard() {
   const [stackLoadingDevices, setStackLoadingDevices] = useState(false);
 
   // RAID detection
-  const [raidArrays, setRaidArrays] = useState<{ device: string; label: string; fstype: string; size: string; mountpoint: string | null; degraded: boolean }[]>([]);
+  const [raidArrays, setRaidArrays] = useState<RaidArray[]>([]);
   // Full block-device list from /api/system/storage. Surfaced as a
   // "Detected drives" panel so the operator can confirm every expected
   // disk is visible before deciding what to mount. Tree-shaped (top-level
-  // disks with children for partitions / RAID members).
-  type DetectedDrive = {
-    name: string; path: string; type: string; size: string;
-    model?: string; vendor?: string; serial?: string; rota?: boolean;
-    fstype?: string; label?: string; mountpoint?: string | null;
-    fsAvail?: string; fsUsedPct?: string;
-    children?: DetectedDrive[];
-  };
+  // disks with children for partitions / RAID members). Shape is
+  // `DetectedDrive` (@servicebay/api-client), imported above.
   const [detectedDrives, setDetectedDrives] = useState<DetectedDrive[]>([]);
   const [, setRaidMounting] = useState(false);
   const [raidMounted, setRaidMounted] = useState(false);
@@ -414,8 +409,7 @@ export default function OnboardingWizard() {
     : installFlow.phase;
 
   useEffect(() => {
-    fetch('/api/system/version')
-      .then(r => r.ok ? r.json() : null)
+    fetchSystemVersion()
       .then(d => { if (d?.version) setAppVersion(d.version); })
       .catch(() => { /* version is informational; silent failure is fine */ });
   }, []);
@@ -644,16 +638,9 @@ export default function OnboardingWizard() {
     setDiagnoseRanOnce(true);
     setDiagnoseRunning(true);
     setDiagnoseError(null);
-    fetch('/api/system/diagnose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-      .then(async r => {
-        if (!r.ok) {
-          const data = await r.json().catch(() => ({}));
-          throw new Error(data.error || `HTTP ${r.status}`);
-        }
-        return r.json();
-      })
-      .then((data: { node?: string; probes: DiagnoseProbe[] }) => {
-        setDiagnoseProbes(data.probes);
+    runSystemDiagnose()
+      .then(data => {
+        setDiagnoseProbes(data.probes as DiagnoseProbe[]);
         if (data.node) setDiagnoseNode(data.node);
       })
       .catch(e => setDiagnoseError(e instanceof Error ? e.message : String(e)))
@@ -756,9 +743,9 @@ export default function OnboardingWizard() {
     let cancelled = false;
 
     if (!publicDomain) {
-      fetch('/api/settings').then(r => r.ok ? r.json() : null).then(s => {
+      fetchOnboardingPrefillSettings().then(s => {
         if (cancelled) return;
-        const baked = s?.reverseProxy?.publicDomain;
+        const baked = s.reverseProxy?.publicDomain;
         if (typeof baked === 'string' && baked.length > 0) {
           setPublicDomain(baked);
         }
@@ -766,7 +753,7 @@ export default function OnboardingWizard() {
     }
 
     if (gwHost === 'fritz.box' || !gwHost) {
-      fetch('/api/system/gateway/detect').then(r => r.ok ? r.json() : null).then(d => {
+      detectGateway().then(d => {
         if (cancelled) return;
         if (d?.gateway && d.gateway !== 'fritz.box') {
           setGwHost(d.gateway);
@@ -781,16 +768,16 @@ export default function OnboardingWizard() {
     if (currentStep !== 'install-confirm') return;
     if (stackDomain && operatorEmail) return;
     let cancelled = false;
-    fetch('/api/settings').then(r => r.ok ? r.json() : null).then(s => {
+    fetchOnboardingPrefillSettings().then(s => {
       if (cancelled) return;
       if (!stackDomain && !stackNoDomain) {
-        const baked = s?.reverseProxy?.publicDomain;
+        const baked = s.reverseProxy?.publicDomain;
         if (typeof baked === 'string' && baked.length > 0) {
           setStackDomain(baked);
         }
       }
       if (!operatorEmail) {
-        const notifyTo = s?.notifications?.email?.to;
+        const notifyTo = s.notifications?.email?.to;
         const firstTo = Array.isArray(notifyTo) ? notifyTo[0] : undefined;
         if (typeof firstTo === 'string' && firstTo.includes('@')) {
           setOperatorEmail(firstTo);
@@ -949,20 +936,18 @@ export default function OnboardingWizard() {
       setStackLoadingDevices(true);
       setStorageProbe('pending');
       const [storage, usb] = await Promise.allSettled([
-        fetch(`/api/system/storage?node=${stackSelectedNode}`),
-        fetch(`/api/system/devices?node=${stackSelectedNode}&path=/dev/serial/by-id`),
+        fetchStorageLayout(stackSelectedNode),
+        fetchDeviceList(stackSelectedNode, '/dev/serial/by-id'),
       ]);
 
-      try {
-        if (storage.status === 'rejected') throw storage.reason;
-        if (!storage.value.ok) throw new Error(`the box answered HTTP ${storage.value.status}`);
-        const { drives, raids } = await storage.value.json();
+      if (storage.status === 'fulfilled') {
+        const { drives, raids } = storage.value;
         setDetectedDrives(drives || []);
-        setRaidArrays((raids || []).filter((r: { mountpoint: string | null }) => !r.mountpoint));
+        setRaidArrays((raids || []).filter(r => !r.mountpoint));
         setStorageProbeError(null);
         setStorageProbe('ready');
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+      } else {
+        const message = storage.reason instanceof Error ? storage.reason.message : String(storage.reason);
         setDetectedDrives([]);
         setRaidArrays([]);
         setStorageProbeError(message);
@@ -972,8 +957,8 @@ export default function OnboardingWizard() {
 
       try {
         const opts: Record<string, string[]> = {};
-        if (usb.status === 'fulfilled' && usb.value.ok) {
-          opts['/dev/serial/by-id'] = await usb.value.json();
+        if (usb.status === 'fulfilled') {
+          opts['/dev/serial/by-id'] = usb.value.devices;
         }
         setStackDeviceOptions(opts);
       } finally {
@@ -1186,24 +1171,19 @@ export default function OnboardingWizard() {
 
     setRaidMounting(true);
     try {
-      const res = await fetch(`/api/system/storage?node=${stackSelectedNode}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device: raid.device,
-          mountpoint: DATA_MOUNTPOINT,
-          label: raid.label,
-          fstype: raid.fstype,
-        }),
+      const attempt: MountAttempt = await mountStorageArray(stackSelectedNode, {
+        device: raid.device,
+        mountpoint: DATA_MOUNTPOINT,
+        label: raid.label,
+        fstype: raid.fstype,
       });
-      const attempt = await res.json().catch(() => null) as MountAttempt | null;
       // The outcome comes from what the box reported happening, not from the
       // request having been sent: a 200 that doesn't say `mounted` is not a
       // mount.
-      if (!res.ok || attempt?.mounted !== true) {
+      if (attempt.mounted !== true) {
         addToast('error', 'Install stopped: data drive not mounted', expressStopMessage(
           stacks,
-          `${raid.device} could not be mounted at ${DATA_MOUNTPOINT} (${attempt?.error ?? `the box answered HTTP ${res.status}`}).`,
+          `${raid.device} could not be mounted at ${DATA_MOUNTPOINT} (${attempt.error ?? 'the mount did not take'}).`,
           'Every service would have written its data to the boot disk instead of the array.',
         ));
         return false;
