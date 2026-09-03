@@ -25,6 +25,43 @@ const INITIAL_CONNECT_RETRY_MS = 3000;
  *  (#2398). We own that retry. */
 const SERVER_CLOSE_RETRY_MS = 1000;
 
+/** The stalled-initial-connect retry belongs to the singleton socket, not to
+ *  a consumer. `useSocket` is called from ~6 components that mount together
+ *  from the root layout, and a per-consumer timer fired the same
+ *  `disconnect(); connect()` kick once per consumer — N teardowns of the very
+ *  handshake the kick exists to rescue (#2772). Same dedup as
+ *  `recoveryWired`: at most one pending kick at a time, shared by every
+ *  mounted consumer. `mountedConsumers` is what lets the last unmount cancel
+ *  it without the first unmount cancelling it out from under the others. */
+let initialRetryTimer: ReturnType<typeof setTimeout> | undefined;
+let mountedConsumers = 0;
+
+/**
+ * Bounded retry on the *initial* connect: if the handshake hasn't reported
+ * `connected` within the window, force one fresh reconnect cycle. Socket.IO's
+ * own backoff handles repeated transport errors, but a connect that silently
+ * stalls before `connect`/`connect_error` fires isn't covered by that — this
+ * is the missing self-recovery the hydration gate needs (#1509). Idempotent:
+ * a second consumer mounting into the same pending window is a no-op.
+ */
+function scheduleInitialConnectRetry(s: Socket) {
+  if (initialRetryTimer !== undefined) return;
+  initialRetryTimer = setTimeout(() => {
+    initialRetryTimer = undefined;
+    if (!s.connected) {
+      s.disconnect();
+      s.connect();
+    }
+  }, INITIAL_CONNECT_RETRY_MS);
+}
+
+/** Cancel the shared kick once the *last* consumer has unmounted. */
+function releaseInitialConnectRetry() {
+  if (mountedConsumers > 0) return;
+  clearTimeout(initialRetryTimer);
+  initialRetryTimer = undefined;
+}
+
 /**
  * Attach the singleton socket's self-recovery listeners. Idempotent — the
  * first `useSocket()` mount wires them for the lifetime of the page.
@@ -116,6 +153,7 @@ export const useSocket = () => {
         socket = io({ path: '/socket.io' });
     }
     wireRecovery(socket);
+    mountedConsumers += 1;
 
     function onConnect() {
       setIsConnected(true);
@@ -146,21 +184,11 @@ export const useSocket = () => {
         socket.connect();
     }
 
-    // Bounded retry on the *initial* connect: if the handshake hasn't
-    // reported `connected` within the window, force one fresh reconnect
-    // cycle. Socket.IO's own backoff handles repeated transport errors,
-    // but a connect that silently stalls before `connect`/`connect_error`
-    // fires isn't covered by that — this is the missing self-recovery the
-    // hydration gate needs (#1509).
-    const retryTimer = setTimeout(() => {
-      if (!socket.connected) {
-        socket.disconnect();
-        socket.connect();
-      }
-    }, INITIAL_CONNECT_RETRY_MS);
+    scheduleInitialConnectRetry(socket);
 
     return () => {
-      clearTimeout(retryTimer);
+      mountedConsumers -= 1;
+      releaseInitialConnectRetry();
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
       socket.off('connect_error', onConnectError);
