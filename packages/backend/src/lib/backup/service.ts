@@ -506,10 +506,22 @@ async function updateBackupStatus(success: boolean, message: string, duration: n
 
 // ─── Scheduler ───────────────────────────────────────────────────────
 
-function getNextDateForSchedule(now: Date, schedule: string, dayOfWeek?: number, dayOfMonth?: number): Date {
-    const next = new Date(now);
+/**
+ * `now` is the real wall clock; `anchor` is today's date at the configured
+ * HH:MM. These used to be the same object (#2770) — the caller passed the
+ * anchor as `now` — so every `next <= now` comparison below compared the anchor
+ * to itself, was always true, and rolled every schedule forward a full cycle
+ * even when today's slot was still ahead. With the agent updater restarting the
+ * backend nightly, that pushed a daily backup out by another day every night.
+ */
+function getNextDateForSchedule(now: Date, anchor: Date, schedule: string, dayOfWeek?: number, dayOfMonth?: number): Date {
+    const next = new Date(anchor);
     switch (schedule) {
         case 'hourly':
+            // Only the configured minute means anything hourly — anchoring on
+            // the configured HOUR would return a time in the past for most of
+            // the day, and a negative setTimeout delay fires immediately.
+            next.setUTCHours(now.getUTCHours());
             if (next <= now) next.setUTCHours(next.getUTCHours() + 1);
             break;
         case 'daily':
@@ -536,17 +548,17 @@ function getNextDateForSchedule(now: Date, schedule: string, dayOfWeek?: number,
     return next;
 }
 
-function getNextRunTime(config: BackupConfig): Date {
+export function getNextRunTime(config: BackupConfig): Date {
     const now = new Date();
     const [hourStr, minuteStr] = (config.time || '02:00').split(':');
     const hour = Number(hourStr) || 0;
     const minute = Number(minuteStr) || 0;
 
-    const next = new Date(now);
-    next.setUTCSeconds(0, 0);
-    next.setUTCHours(hour, minute);
+    const anchor = new Date(now);
+    anchor.setUTCSeconds(0, 0);
+    anchor.setUTCHours(hour, minute);
 
-    return getNextDateForSchedule(next, config.schedule, config.dayOfWeek, config.dayOfMonth);
+    return getNextDateForSchedule(now, anchor, config.schedule, config.dayOfWeek, config.dayOfMonth);
 }
 
 export function scheduleBackup(): void {
