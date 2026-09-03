@@ -48,7 +48,7 @@ export default function ReverseProxySection() {
       const data = await rekeyNginxCredentials();
       addToast('success', 'NPM admin re-keyed', 'A fresh admin password was written into NPM and saved — proxy routes preserved.');
       setState(data);
-    } catch (_e) {
+    } catch (e) {
       const message = e instanceof TypedFetchError
         ? e.message
         : e instanceof Error ? e.message : 'Unknown error';
@@ -64,7 +64,7 @@ export default function ReverseProxySection() {
       await forgetNginxCredentials();
       addToast('success', 'NPM credentials removed');
       await load();
-    } catch (_e) {
+    } catch (e) {
       const message = e instanceof TypedFetchError
         ? e.message
         : e instanceof Error ? e.message : 'Unknown error';

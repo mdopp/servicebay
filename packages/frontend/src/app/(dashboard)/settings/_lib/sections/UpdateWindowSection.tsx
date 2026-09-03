@@ -148,7 +148,7 @@ export default function UpdateWindowSection() {
       addToast('success', 'Update window saved', window.enabled
         ? `${sortedDays.join(', ')} ${window.startTime} UTC (+${lengthHumanised(window.lengthMinutes)})`
         : 'Auto-updates locked — nothing will restart on its own.');
-    } catch (_e) {
+    } catch (e) {
       const msg = e instanceof TypedFetchError
         ? e.message
         : e instanceof Error ? e.message : 'Network error';

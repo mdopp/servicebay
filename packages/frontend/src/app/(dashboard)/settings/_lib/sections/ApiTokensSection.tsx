@@ -23,10 +23,16 @@ import { useBulkTokenRevoke, type BulkRevokeReport as BulkRevokeReportData } fro
 // from the scope vocabulary (SCOPE_BADGE, the help text) is covered by the
 // "scope vocabulary" block in ApiTokensSection.test.tsx, which fails on drift.
 import { ALL_SCOPES, type ApiScope } from '@/lib/auth/apiScope';
-
-type BootstrapStatus =
-  | { active: false; present?: boolean }
-  | { active: true; present?: boolean; expiresAt: string | null; minutesRemaining: number | null };
+import {
+  fetchBootstrapStatus,
+  revokeBootstrap as revokeBootstrapApi,
+  reactivateBootstrap as reactivateBootstrapApi,
+  fetchApiTokens,
+  createApiToken,
+  revokeApiToken,
+  TypedFetchError,
+  type BootstrapStatus,
+} from '@servicebay/api-client';
 
 // Scope tiers mapped onto semantic status/accent tokens (#2100): destroy =
 // status-fail (most dangerous), exec = accent, mutate/reboot = status-warn,
@@ -451,17 +457,18 @@ export default function ApiTokensSection() {
   // offers a manual revoke. Auto-revoked when the operator mints their first
   // regular token (#322).
   const loadBootstrap = useCallback(() => {
-    fetch('/api/system/mcp-bootstrap')
-      .then(r => r.ok ? r.json() : { active: false })
+    fetchBootstrapStatus()
       .then((data: BootstrapStatus) => setBootstrap(data))
       .catch(() => setBootstrap({ active: false }));
   }, []);
 
   const loadTokens = useCallback(() => {
-    fetch('/api/system/api-tokens')
-      .then(r => r.ok ? r.json() : { tokens: [] })
+    fetchApiTokens()
       .then(data => {
-        const list: TokenView[] = data.tokens ?? [];
+        // `scopes` comes back as `string[]` from the typed client (the
+        // `ApiScope` literal union is frontend-internal, not part of
+        // api-client's surface — see settings.ts's `TokenViewSchema`).
+        const list = (data.tokens ?? []) as TokenView[];
         setTokens(list);
         setSummary(data.summary ?? null);
         setCurrentTokenId(data.currentTokenId ?? null);
@@ -479,9 +486,13 @@ export default function ApiTokensSection() {
   const revokeBootstrap = async () => {
     setRevokingBootstrap(true);
     try {
-      await fetch('/api/system/mcp-bootstrap', { method: 'DELETE' });
-      loadBootstrap();
+      // Neither the previous raw fetch nor this typed call inspects the
+      // response — the banner always refreshes from a fresh GET below,
+      // and `fetch()` never rejected on an HTTP error status, so a
+      // non-2xx here is swallowed the same way to keep that behaviour.
+      await revokeBootstrapApi().catch(() => {});
     } finally {
+      loadBootstrap();
       setRevokingBootstrap(false);
     }
   };
@@ -491,9 +502,9 @@ export default function ApiTokensSection() {
   const reactivateBootstrap = async () => {
     setReactivatingBootstrap(true);
     try {
-      await fetch('/api/system/mcp-bootstrap', { method: 'POST' });
-      loadBootstrap();
+      await reactivateBootstrapApi().catch(() => {});
     } finally {
+      loadBootstrap();
       setReactivatingBootstrap(false);
     }
   };
@@ -506,13 +517,7 @@ export default function ApiTokensSection() {
       // Only a read-only scope set may carry neverExpires (the server enforces
       // this too, fail-closed) — never send it alongside a broader scope.
       const readOnly = newScopes.length > 0 && newScopes.every(s => s === 'read');
-      const res = await fetch('/api/system/api-tokens', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim(), scopes: newScopes, neverExpires: readOnly && newNeverExpires }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const data = await createApiToken({ name: newName.trim(), scopes: newScopes, neverExpires: readOnly && newNeverExpires });
       setRevealedSecret(data.secret);
       setNewName('');
       setNewScopes(['read']);
@@ -539,19 +544,14 @@ export default function ApiTokensSection() {
     setRevoking(true);
     setRevokeError(null);
     try {
-      const res = await fetch(`/api/system/api-tokens?id=${revokeTarget.id}`, { method: 'DELETE' });
       // Close the dialog only when the token is actually gone. Closing
       // unconditionally made a failed revoke look like a success, so the
       // operator believed a live token was locked out (#2461).
-      if (!res.ok) {
-        const detail = await res.json().then(d => d?.error).catch(() => null);
-        setRevokeError(detail || `Revoke failed — HTTP ${res.status}`);
-        return;
-      }
+      await revokeApiToken(revokeTarget.id);
       loadTokens();
       setRevokeTarget(null);
     } catch (e) {
-      setRevokeError(e instanceof Error ? e.message : String(e));
+      setRevokeError(e instanceof TypedFetchError || e instanceof Error ? e.message : String(e));
     } finally {
       setRevoking(false);
     }

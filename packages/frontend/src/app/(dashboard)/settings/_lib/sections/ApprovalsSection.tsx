@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, ChevronDown, ChevronRight, Loader2, X } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { Badge, Button, Card } from '@/components/ui';
+import { fetchApprovals, decideApproval, TypedFetchError } from '@servicebay/api-client';
 
 /** Mirrors the backend `ApprovalRequest` shape (see lib/approvals, #1843).
  *  Only the reviewer-facing fields are needed here. */
@@ -25,15 +26,10 @@ function useApprovals() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/approvals');
-      if (res.ok) {
-        const data = await res.json();
-        setRequests(Array.isArray(data.approvals) ? data.approvals : []);
-      } else {
-        addToast('error', 'Could not load approval requests', `HTTP ${res.status}`);
-      }
+      const data = await fetchApprovals();
+      setRequests(Array.isArray(data.approvals) ? data.approvals : []);
     } catch (e) {
-      addToast('error', 'Could not load approval requests', e instanceof Error ? e.message : 'Network error');
+      addToast('error', 'Could not load approval requests', e instanceof TypedFetchError || e instanceof Error ? e.message : 'Network error');
     } finally {
       setBusy(null);
     }
@@ -42,21 +38,16 @@ function useApprovals() {
   const resolveRequest = useCallback(async (id: string, decision: 'approve' | 'reject', title: string) => {
     setBusy('action');
     try {
-      const res = await fetch(`/api/approvals/${encodeURIComponent(id)}/${decision}`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        const verb = decision === 'approve' ? 'Approved' : 'Rejected';
-        if (data.restarted === false) {
-          addToast('warning', `${verb}, but a restart failed`, data.restartError ?? 'Restart the affected service manually.');
-        } else {
-          addToast('success', `${verb}: ${title}`, undefined);
-        }
-        await load();
+      const data = await decideApproval(id, decision);
+      const verb = decision === 'approve' ? 'Approved' : 'Rejected';
+      if (data.restarted === false) {
+        addToast('warning', `${verb}, but a restart failed`, data.restartError ?? 'Restart the affected service manually.');
       } else {
-        addToast('error', `Could not ${decision}`, data.error ?? `HTTP ${res.status}`);
+        addToast('success', `${verb}: ${title}`, undefined);
       }
+      await load();
     } catch (e) {
-      addToast('error', `Could not ${decision}`, e instanceof Error ? e.message : 'Network error');
+      addToast('error', `Could not ${decision}`, e instanceof TypedFetchError || e instanceof Error ? e.message : 'Network error');
     } finally {
       setBusy(null);
     }

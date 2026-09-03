@@ -272,7 +272,7 @@ export default function McpSection() {
       });
       if (next.allowMutations !== undefined) setAllowMutations(next.allowMutations);
       if (next.allowDangerousExec !== undefined) setAllowDangerousExec(next.allowDangerousExec);
-    } catch (_e) {
+    } catch (e) {
       setSaveError(e instanceof TypedFetchError ? e.message : e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);

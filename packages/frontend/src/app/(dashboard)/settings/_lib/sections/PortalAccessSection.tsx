@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Loader2, Save } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { Button } from '@/components/ui';
+import { fetchPortalSettings, updatePortalSettings, TypedFetchError } from '@servicebay/api-client';
 
 /**
  * Settings section for the family-portal access limits (#1456):
@@ -23,12 +24,11 @@ export default function PortalAccessSection() {
 
   useEffect(() => {
     let alive = true;
-    fetch('/api/system/portal-settings')
-      .then(r => (r.ok ? r.json() : null))
+    fetchPortalSettings()
       .then(data => {
-        if (!alive || !data) return;
-        if (typeof data.maxUsers === 'number') setMaxUsers(data.maxUsers);
-        if (typeof data.portalLanOnly === 'boolean') setLanOnly(data.portalLanOnly);
+        if (!alive) return;
+        setMaxUsers(data.maxUsers);
+        setLanOnly(data.portalLanOnly);
       })
       .catch(() => {})
       .finally(() => { if (alive) setBusy(null); });
@@ -38,17 +38,11 @@ export default function PortalAccessSection() {
   const save = async (next: { maxUsers: number; portalLanOnly: boolean }) => {
     setBusy('save');
     try {
-      const res = await fetch('/api/system/portal-settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(next),
-      });
-      if (res.ok) {
-        addToast('success', 'Saved', 'Portal access settings updated.');
-      } else {
-        const data = await res.json().catch(() => ({}));
-        addToast('error', 'Could not save', typeof data.error === 'string' ? data.error : `HTTP ${res.status}`);
-      }
+      await updatePortalSettings(next);
+      addToast('success', 'Saved', 'Portal access settings updated.');
+    } catch (e) {
+      const message = e instanceof TypedFetchError || e instanceof Error ? e.message : 'Unknown error';
+      addToast('error', 'Could not save', message);
     } finally {
       setBusy(null);
     }

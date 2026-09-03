@@ -7,6 +7,8 @@ import {
   isHttpUrl,
   resolveCredentialUrl,
   summarizeCredentialSecurity,
+  fetchSystemCredentials,
+  deleteSystemCredentials,
   type CredentialView,
   type CredentialSecuritySummary,
   type CredentialUrlHost,
@@ -213,15 +215,13 @@ export default function CredentialsSection() {
   const { run: runHandover, busy: downloading } = useCredentialHandover();
 
   const load = () =>
-    fetch('/api/system/credentials')
-      .then(r => (r.ok ? r.json() : null))
+    fetchSystemCredentials()
       .then(data => {
-        if (data) {
-          setManifest(data.manifest ?? null);
-          setProxyHosts(Array.isArray(data.proxyHosts) ? data.proxyHosts : []);
-          setPublicDomain(data.publicDomain ?? null);
-        }
-      });
+        setManifest(data.manifest ?? null);
+        setProxyHosts(Array.isArray(data.proxyHosts) ? data.proxyHosts : []);
+        setPublicDomain(data.publicDomain ?? null);
+      })
+      .catch(() => {});
 
   useEffect(() => {
     // Mount-only: the section re-reads on demand after a hand-over/wipe.
@@ -260,15 +260,12 @@ export default function CredentialsSection() {
     )) return;
     setBusy('wipe');
     try {
-      const res = await fetch('/api/system/credentials', { method: 'DELETE' });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        addToast('error', 'Could not wipe credentials', data.error || `HTTP ${res.status}`);
-        return;
-      }
+      await deleteSystemCredentials();
       setManifest(null);
       notifyCredentialsChanged();
       addToast('success', 'Entries forgotten', 'Services keep running with the same passwords — they just aren\'t in ServiceBay\'s config anymore.');
+    } catch (e) {
+      addToast('error', 'Could not wipe credentials', e instanceof Error ? e.message : 'Unknown error');
     } finally {
       setBusy(null);
     }

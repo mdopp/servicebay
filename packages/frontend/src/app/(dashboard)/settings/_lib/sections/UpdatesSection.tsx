@@ -42,7 +42,7 @@ export default function UpdatesSection() {
     try {
       const data = await fetchBootStatus();
       setBootStatus(data);
-    } catch (_e) {
+    } catch (e) {
       console.error('Failed to fetch boot status:', e);
     }
   };

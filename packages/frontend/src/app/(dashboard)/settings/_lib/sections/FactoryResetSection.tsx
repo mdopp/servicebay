@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Loader2, Trash2 } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
+import { initiateFactoryReset } from '@servicebay/api-client';
 
 /**
  * Factory Reset card (#623). The migration entry point for moving an
@@ -37,13 +38,7 @@ export default function FactoryResetSection() {
     setRunning(true);
     setResult(null);
     try {
-      const res = await fetch('/api/system/factory-reset', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: REQUIRED_CONFIRM }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
+      const data = await initiateFactoryReset(REQUIRED_CONFIRM);
       setResult({
         deleted: data.reset?.deleted?.length ?? 0,
         cleared: data.config?.cleared ?? [],

@@ -4,6 +4,15 @@ import { useEffect, useState } from 'react';
 import { Bot, Check, ExternalLink, Globe, Loader2, Mail, Send, Trash2, UserCheck } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { Badge, Button, Card, SectionHeading, StatusDot } from '@/components/ui';
+import {
+  fetchAccessRequests,
+  fetchLldapUrl,
+  resolveAccessRequest,
+  approveAccessRequest,
+  resendWelcomeEmail,
+  deleteAccessRequest,
+  TypedFetchError,
+} from '@servicebay/api-client';
 
 interface AccessRequest {
   id: string;
@@ -50,33 +59,34 @@ export default function AccessRequestsSection() {
 
   const load = async () => {
     try {
-      const res = await fetch('/api/system/access-requests');
-      if (res.ok) {
-        const data = await res.json();
-        setRequests(Array.isArray(data.requests) ? data.requests : []);
-      }
+      const data = await fetchAccessRequests();
+      setRequests(Array.isArray(data.requests) ? data.requests : []);
+    } catch {
+      // Matches the previous `res.ok` guard: a failed load just leaves
+      // the current list in place rather than surfacing a toast.
     } finally {
       setBusy(null);
     }
   };
 
   useEffect(() => {
-    load();
-    fetch('/api/auth/lldap-url')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.url) setLldapUrl(data.url); })
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async load on mount
+    void load();
+    fetchLldapUrl()
+      .then(data => { if (data.url) setLldapUrl(data.url); })
       .catch(() => {});
   }, []);
+
+  const errorMessage = (e: unknown) =>
+    e instanceof TypedFetchError || e instanceof Error ? e.message : 'Unknown error';
 
   const onResolve = async (id: string) => {
     setBusy('action');
     try {
-      const res = await fetch(`/api/system/access-requests/${id}`, { method: 'PATCH' });
-      if (res.ok) {
-        await load();
-      } else {
-        addToast('error', 'Could not resolve', `HTTP ${res.status}`);
-      }
+      await resolveAccessRequest(id);
+      await load();
+    } catch (e) {
+      addToast('error', 'Could not resolve', errorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -85,18 +95,14 @@ export default function AccessRequestsSection() {
   const onApprove = async (id: string) => {
     setBusy('action');
     try {
-      const res = await fetch(`/api/system/access-requests/${id}/approve`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        addToast('success', 'User created in LLDAP', 'Assign groups in the LLDAP tab that just opened.');
-        if (typeof data.lldapUrl === 'string') {
-          window.open(data.lldapUrl, '_blank', 'noopener,noreferrer');
-        }
-        await load();
-      } else {
-        const message = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
-        addToast('error', 'Could not approve', message);
+      const data = await approveAccessRequest(id);
+      addToast('success', 'User created in LLDAP', 'Assign groups in the LLDAP tab that just opened.');
+      if (typeof data.lldapUrl === 'string') {
+        window.open(data.lldapUrl, '_blank', 'noopener,noreferrer');
       }
+      await load();
+    } catch (e) {
+      addToast('error', 'Could not approve', errorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -105,14 +111,10 @@ export default function AccessRequestsSection() {
   const onResendWelcome = async (id: string) => {
     setBusy('action');
     try {
-      const res = await fetch(`/api/system/access-requests/${id}/welcome`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        addToast('success', 'Welcome email sent', 'The family member should see it shortly.');
-      } else {
-        const message = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
-        addToast('error', 'Could not send welcome email', message);
-      }
+      await resendWelcomeEmail(id);
+      addToast('success', 'Welcome email sent', 'The family member should see it shortly.');
+    } catch (e) {
+      addToast('error', 'Could not send welcome email', errorMessage(e));
     } finally {
       setBusy(null);
     }
@@ -122,12 +124,10 @@ export default function AccessRequestsSection() {
     if (!window.confirm('Delete this access request? Use for spam — there\'s no undo.')) return;
     setBusy('action');
     try {
-      const res = await fetch(`/api/system/access-requests/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        await load();
-      } else {
-        addToast('error', 'Could not delete', `HTTP ${res.status}`);
-      }
+      await deleteAccessRequest(id);
+      await load();
+    } catch (e) {
+      addToast('error', 'Could not delete', errorMessage(e));
     } finally {
       setBusy(null);
     }
