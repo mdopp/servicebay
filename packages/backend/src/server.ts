@@ -756,6 +756,22 @@ app.prepare().then(() => {
           // independently re-checks the live ruleset either way.
           logger.warn('Server', `Host firewall reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
         }
+
+        // Keep `servicebay.container`'s user-namespace mapping in step with
+        // the uid the image declares (#2788). Same deferred window, same
+        // idempotent shape, its own try/catch. On today's root image this is
+        // a no-op — it exists so an image that later declares a non-root user
+        // finds the quadlet already uid-agnostic on boxes Ignition wrote once
+        // and never revisits. Failure is never fatal: the migration leaves the
+        // quadlet exactly as it found it rather than guess a mapping.
+        try {
+          const { getExecutor } = await import('./lib/executor');
+          const { reconcileServicebayQuadletUserNs } = await import('./lib/quadletUserNs');
+          const res = await reconcileServicebayQuadletUserNs(getExecutor());
+          logger.info('Server', `servicebay.container UserNS reconcile: ${res.outcome} (${res.detail})`);
+        } catch (err) {
+          logger.warn('Server', `servicebay.container UserNS reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
       })();
     }, 30_000);
 

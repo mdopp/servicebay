@@ -200,3 +200,79 @@ describe('applyVariableDefaults — operator-set values survive a reinstall (#25
     expect(out.variables.find(v => v.name === 'SOME_OTHER_TEMPLATES_VAR')).toBeUndefined();
   });
 });
+
+/**
+ * #2785 — an UNATTENDED redeploy must keep the per-service values the last
+ * install actually deployed, instead of silently re-deriving them from the
+ * template. The values in question arrive through `install_template({variables})`,
+ * i.e. `prefilled`, which the assembler flags global+explicit — so before this
+ * they were never recorded and every redeploy fell back to the default.
+ */
+describe('applyVariableDefaults — a redeploy reuses the recorded per-service values (#2785)', () => {
+  const solaris = {
+    SOLARIS_WHISPER_MODEL: { type: 'text', default: 'base' },
+    SOLARIS_TTS_SPEAKER: { type: 'text', default: 'thorsten' },
+  };
+
+  it('restores a recorded per-service value over the template default', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue(solaris);
+    mockCfg.getConfig.mockResolvedValue({
+      installedVariables: [
+        { varName: 'SOLARIS_WHISPER_MODEL', value: 'large-v3', service: 'solaris', default: 'base' },
+      ],
+    });
+    // The redeploy: the replayed manifest carries the slot empty.
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'solaris', checked: true }],
+      variables: [{ name: 'SOLARIS_WHISPER_MODEL', value: '' }],
+    }));
+    expect(out.variables.find(v => v.name === 'SOLARIS_WHISPER_MODEL')?.value).toBe('large-v3');
+  });
+
+  it('adds a recorded per-service variable the replayed manifest never had', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue(solaris);
+    mockCfg.getConfig.mockResolvedValue({
+      installedVariables: [
+        { varName: 'SOLARIS_WHISPER_MODEL', value: 'large-v3', service: 'solaris', default: 'base' },
+      ],
+    });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'solaris', checked: true }],
+      variables: [],
+    }));
+    expect(out.variables.find(v => v.name === 'SOLARIS_WHISPER_MODEL')?.value).toBe('large-v3');
+  });
+
+  // The other half of the contract: a record whose value is merely what the
+  // template shipped is NOT an override, so a template that bumps its default
+  // still reaches the box (#1297).
+  it('still lets a bumped template default through for a value the operator never changed', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue({
+      SOLARIS_TTS_SPEAKER: { type: 'text', default: 'kerstin' },
+    });
+    mockCfg.getConfig.mockResolvedValue({
+      installedVariables: [
+        { varName: 'SOLARIS_TTS_SPEAKER', value: 'thorsten', service: 'solaris', default: 'thorsten' },
+      ],
+    });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'solaris', checked: true }],
+      variables: [{ name: 'SOLARIS_TTS_SPEAKER', value: '' }],
+    }));
+    expect(out.variables.find(v => v.name === 'SOLARIS_TTS_SPEAKER')?.value).toBe('kerstin');
+  });
+
+  it('never resolves a recorded secret reference from the plaintext store', async () => {
+    mockReg.getTemplateVariables.mockResolvedValue({ SOLARIS_TTS_PASSWORD: { type: 'secret' } });
+    mockCfg.getConfig.mockResolvedValue({
+      installedVariables: [
+        { varName: 'SOLARIS_TTS_PASSWORD', value: '', service: 'solaris', kind: 'secret' },
+      ],
+    });
+    const out = await applyVariableDefaults(input({
+      items: [{ name: 'solaris', checked: true }],
+      variables: [{ name: 'SOLARIS_TTS_PASSWORD', value: '' }],
+    }));
+    expect(out.variables.find(v => v.name === 'SOLARIS_TTS_PASSWORD')?.value).toBe('');
+  });
+});

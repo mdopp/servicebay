@@ -20,7 +20,13 @@ const state: {
   config: Record<string, unknown> | null;
   variables: Record<string, { type?: string; default?: string }> | null;
   yaml: string | null;
-} = { config: null, variables: null, yaml: null };
+  /** The node twin's watched files — i.e. what is DEPLOYED on the box. */
+  files: Record<string, { content: string }>;
+} = { config: null, variables: null, yaml: null, files: {} };
+
+vi.mock('@/lib/store/repository', () => ({
+  getNodeTwin: vi.fn(() => ({ files: state.files })),
+}));
 
 vi.mock('@/lib/config', () => ({
   getConfig: vi.fn(async () => {
@@ -89,6 +95,7 @@ describe('serviceHealthBootstrap variable resolution (#2544)', () => {
     state.yaml = TEMPLATE_YAML;
     state.variables = { IMMICH_PORT: { type: 'text', default: '2283' } };
     state.config = { templateSettings: {}, installedVariables: [] };
+    state.files = {};
   });
 
   it('probes the port the OPERATOR set, not the template default', async () => {
@@ -163,5 +170,131 @@ describe('serviceHealthBootstrap variable resolution (#2544)', () => {
     };
     await bootstrapServiceHealth('Local');
     expect(probeUrl()).not.toContain('super-secret-token');
+  });
+});
+
+/**
+ * #2656 — the probe target must come from the manifest that is DEPLOYED, not
+ * from the current template rendered against the current config.
+ *
+ * The reported box case, reproduced literally below: a hostNetwork service
+ * deployed with `url: http://localhost:8701/healthz` whose template had since
+ * moved to `http://localhost:{{CHRONICLE_PORT}}/healthz` with `default: 8700`.
+ * The poller probed 8700 — nothing listens there — and the tile read
+ * `ready: false / "fetch failed"` forever, while the annotated URL answered
+ * 200 the whole time. `localhost` was never the problem (ServiceBay's own
+ * container runs `Network=host`, so loopback IS the host's loopback); the
+ * drift between the two manifests was.
+ */
+describe('serviceHealthBootstrap probes the DEPLOYED manifest (#2656)', () => {
+  const DEPLOYED_YAML = `apiVersion: v1
+kind: Pod
+metadata:
+  name: daggerheart-chronik
+  annotations:
+    servicebay.healthcheck: |
+      url: http://localhost:8701/healthz
+      interval: 30s
+      timeout: 5s
+spec:
+  hostNetwork: true
+  containers: []
+`;
+
+  /** The same template the box carries: the port is a variable, default 8700. */
+  const CURRENT_TEMPLATE_YAML = `apiVersion: v1
+kind: Pod
+metadata:
+  name: daggerheart-chronik
+  annotations:
+    servicebay.ports: "{{CHRONICLE_PORT}}/tcp"
+    servicebay.healthcheck: |
+      url: http://localhost:{{CHRONICLE_PORT}}/healthz
+      interval: 30s
+      timeout: 5s
+spec:
+  hostNetwork: true
+  containers:
+  - name: chronik
+    ports:
+      - containerPort: {{CHRONICLE_PORT}}
+`;
+
+  const deployedSvc = {
+    ...svc('daggerheart-chronik'),
+    yamlFile: 'daggerheart-chronik.yml',
+    yamlPath: '/var/home/core/.config/containers/systemd/daggerheart-chronik.yml',
+  };
+
+  beforeEach(() => {
+    registered.length = 0;
+    start.mockReset();
+    listServices.mockReset().mockResolvedValue([deployedSvc]);
+    state.yaml = CURRENT_TEMPLATE_YAML;
+    state.variables = { CHRONICLE_PORT: { type: 'text', default: '8700' } };
+    state.config = { templateSettings: {}, installedVariables: [] };
+    state.files = { [deployedSvc.yamlPath]: { content: DEPLOYED_YAML } };
+  });
+
+  it('probes the port the DEPLOYED pod declares, not the template default', async () => {
+    const result = await bootstrapServiceHealth('Local');
+    expect(result.registered).toEqual(['daggerheart-chronik']);
+    // 8700 is what the template resolves and what produced "fetch failed".
+    expect(probeUrl()).toBe('http://localhost:8701/healthz');
+  });
+
+  it('keeps probing the deployed target when the template moves the port again', async () => {
+    // A template-side bump with no intervening redeploy is the same drift.
+    state.variables = { CHRONICLE_PORT: { type: 'text', default: '9100' } };
+    await bootstrapServiceHealth('Local');
+    expect(probeUrl()).toBe('http://localhost:8701/healthz');
+  });
+
+  it('follows the template once a redeploy has converged the deployed manifest', async () => {
+    // What a redeploy leaves behind: the pod YAML IS the rendered template,
+    // ports: block and all. The poller must now agree with it — same code
+    // path, no second source of truth.
+    state.files = {
+      [deployedSvc.yamlPath]: {
+        content: CURRENT_TEMPLATE_YAML.replace(/\{\{CHRONICLE_PORT\}\}/g, '8700'),
+      },
+    };
+    await bootstrapServiceHealth('Local');
+    expect(probeUrl()).toBe('http://localhost:8700/healthz');
+  });
+
+  it('falls back to the template when the twin has no deployed pod YAML', async () => {
+    // A `.container` Quadlet, or a node that has not reported its files yet.
+    listServices.mockResolvedValue([svc('daggerheart-chronik')]);
+    state.files = {};
+    await bootstrapServiceHealth('Local');
+    expect(probeUrl()).toBe('http://localhost:8700/healthz');
+  });
+
+  it('falls back to the template when the deployed annotation is unusable', async () => {
+    // An unrendered placeholder survived into the deployed file — that file is
+    // not a probe target, but the service must not lose its health tile.
+    state.files = {
+      [deployedSvc.yamlPath]: {
+        content: DEPLOYED_YAML.replace('http://localhost:8701/healthz', ''),
+      },
+    };
+    await bootstrapServiceHealth('Local');
+    expect(probeUrl()).toBe('http://localhost:8700/healthz');
+  });
+
+  it('registers a service the registry has no template for at all', async () => {
+    // A hand-deployed / box-local service used to be skipped outright, so it
+    // showed no health even though its own manifest says how to probe it.
+    state.yaml = null;
+    const result = await bootstrapServiceHealth('Local');
+    expect(result.registered).toEqual(['daggerheart-chronik']);
+    expect(probeUrl()).toBe('http://localhost:8701/healthz');
+  });
+
+  it('resolves the deployed YAML through the twin key suffix as listServices does', async () => {
+    state.files = { 'daggerheart-chronik.yml': { content: DEPLOYED_YAML } };
+    await bootstrapServiceHealth('Local');
+    expect(probeUrl()).toBe('http://localhost:8701/healthz');
   });
 });

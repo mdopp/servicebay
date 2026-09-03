@@ -529,12 +529,13 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    // #2736 — a single typed API seam. Same staging shape as the two #2353
-    // rules above (warn + ratchet), but a different exemption set: the Next
-    // route handlers under app/api and app/napi ARE the server side of that
-    // seam — they proxy to the backend and have no browser session to bounce,
-    // so a raw fetch there is correct, not debt. Tests are exempt so fixtures
-    // and fetch-mocking specs don't pad the count.
+    // #2736 — a single typed API seam. Started with the same staging shape as
+    // the two #2353 rules above (warn + ratchet); the ratchet reached 0 and the
+    // rule flipped to a hard `error` (docs/ARCHITECTURE_INVARIANTS.md § A single
+    // typed API seam). Exemption set: the Next route handlers under app/api and
+    // app/napi ARE the server side of that seam — they proxy to the backend and
+    // have no browser session to bounce, so a raw fetch there is correct, not
+    // debt. Tests are exempt so fixtures and fetch-mocking specs don't trip it.
     files: ["packages/frontend/src/**/*.{ts,tsx,js,jsx}"],
     ignores: [
       "packages/frontend/src/app/api/**",
@@ -542,7 +543,7 @@ const eslintConfig = defineConfig([
       "**/*.test.{ts,tsx,js,jsx}",
     ],
     rules: {
-      "sb/no-raw-api-fetch": "warn",
+      "sb/no-raw-api-fetch": "error",
     },
   },
   {

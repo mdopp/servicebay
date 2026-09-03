@@ -177,6 +177,23 @@ function buildHealthFromBody(body: HealthBody, ts: string): ServiceHealth {
   return health;
 }
 
+/**
+ * Turn a thrown fetch error into something an operator can act on (#2656).
+ *
+ * `undici` throws a bare `TypeError: fetch failed` and hangs the only useful
+ * detail off `cause` — `connect ECONNREFUSED 127.0.0.1:8700`, a DNS failure, a
+ * TLS error. The tile used to show just "fetch failed", which is why a probe
+ * aimed at the wrong port looked identical to a service that was genuinely
+ * down and took a box session to tell apart. The cause names the address, so
+ * a wrong probe target is visible in the message itself.
+ */
+function describeFetchError(e: unknown): string {
+  const base = e instanceof Error ? e.message : String(e);
+  const cause = e instanceof Error ? (e as Error & { cause?: unknown }).cause : undefined;
+  const detail = cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : '';
+  return detail && !base.includes(detail) ? `${base}: ${detail}` : base;
+}
+
 async function probeHttp(url: string, timeoutMs: number, ts: string): Promise<ServiceHealth> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -201,7 +218,7 @@ async function probeHttp(url: string, timeoutMs: number, ts: string): Promise<Se
     return {
       ready: false,
       lastCheckedAt: ts,
-      message: aborted ? `timeout after ${timeoutMs}ms` : (e instanceof Error ? e.message : String(e)),
+      message: aborted ? `timeout after ${timeoutMs}ms` : describeFetchError(e),
     };
   } finally {
     clearTimeout(timer);
