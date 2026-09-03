@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.27.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.26.5...servicebay-v5.27.0) (2026-09-03)
+
+
+### Features
+
+* **runtime:** derive servicebay.container UserNS from the image declared user ([467193a](https://github.com/mdopp/servicebay/commit/467193a25b5ca44a50ef05d60c82729f79d67068)), closes [#2788](https://github.com/mdopp/servicebay/issues/2788)
+
+
+### Bug Fixes
+
+* **health:** probe the deployed manifest, not the current template render ([8ca46aa](https://github.com/mdopp/servicebay/commit/8ca46aaa4c5a76991924240ceb68ca9578df2b98)), closes [#2656](https://github.com/mdopp/servicebay/issues/2656) [#2651](https://github.com/mdopp/servicebay/issues/2651)
+* **install:** capture per-service variables in installedVariables so redeploys keep their settings ([44ad7f9](https://github.com/mdopp/servicebay/commit/44ad7f9f2be1c0a89a0d1a8961a5ca14181a1dac)), closes [#2785](https://github.com/mdopp/servicebay/issues/2785)
+* **install:** keep per-service variables across redeploys; probe the deployed manifest for health; uid-agnostic quadlet (Release N) ([28d6d81](https://github.com/mdopp/servicebay/commit/28d6d81352fe0993c4c0e411ab77f29138ad7e2f))
+
 ## [5.26.5](https://github.com/mdopp/servicebay/compare/servicebay-v5.26.4...servicebay-v5.26.5) (2026-09-03)
 
 
