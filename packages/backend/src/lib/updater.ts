@@ -6,6 +6,7 @@ import { getExecutor } from '@/lib/executor';
 import { getConfig, updateConfig } from '@/lib/config';
 import { sendEmailAlert } from '@/lib/email';
 import { logger } from '@/lib/logger';
+import { intervalBackgroundTask, type BackgroundTask } from '@/lib/runtime/lifecycle';
 
 declare global {
    
@@ -374,17 +375,27 @@ async function notifyOnUpdate(): Promise<void> {
 
 const NOTIFY_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
 const NOTIFY_INITIAL_DELAY_MS = 60 * 1000; // 1 min after boot — let everything settle first
-let notifyTimer: NodeJS.Timeout | null = null;
 
 /**
- * Kick off the periodic update-availability email notifier. Safe to call
- * multiple times — second call clears the existing timer first. Idempotent.
+ * The periodic update-availability email notifier, as a background task
+ * (#2738). `server.ts` registers it in the runtime task list; the kernel owns
+ * the timer and clears it on SIGTERM.
  */
-export function scheduleUpdateNotifier(): void {
-  if (notifyTimer) clearInterval(notifyTimer);
-  setTimeout(() => { void notifyOnUpdate(); }, NOTIFY_INITIAL_DELAY_MS);
-  notifyTimer = setInterval(() => { void notifyOnUpdate(); }, NOTIFY_INTERVAL_MS);
-  logger.info('Updater', `Update-notification poll scheduled every ${NOTIFY_INTERVAL_MS / 3600000}h`);
+export function updateNotifierTask(): BackgroundTask {
+  const task = intervalBackgroundTask({
+    name: 'update-notifier',
+    intervalMs: NOTIFY_INTERVAL_MS,
+    firstRunDelayMs: NOTIFY_INITIAL_DELAY_MS,
+    tick: notifyOnUpdate,
+  });
+  return {
+    name: task.name,
+    start() {
+      task.start();
+      logger.info('Updater', `Update-notification poll scheduled every ${NOTIFY_INTERVAL_MS / 3600000}h`);
+    },
+    stop() { task.stop(); },
+  };
 }
 
 export interface PerformUpdateResult {

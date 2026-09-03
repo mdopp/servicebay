@@ -18,7 +18,7 @@ import { parse } from 'url';
 import next from 'next';
 import path from 'path';
 import { Server } from 'socket.io';
-import { setUpdaterIO, scheduleUpdateNotifier } from './lib/updater';
+import { setUpdaterIO, updateNotifierTask } from './lib/updater';
 import { runWithTrace, newTraceId, currentTraceId } from './lib/util/traceContext';
 import { setTraceProvider } from './lib/logger';
 import crypto from 'crypto';
@@ -32,7 +32,7 @@ import { AgentEvent } from './lib/agent/handler';
 import { DigitalTwinStore, NodeTwin } from './lib/store/twin';
 import { AgentMessage } from './lib/agent/types';
 import { GatewayPoller } from './lib/gateway/poller';
-import { startFlowSampler } from './lib/network/flowSampler';
+import { flowSamplerTask } from './lib/network/flowSampler';
 import { logger } from './lib/logger';
 import { migrateConfig, getConfig, updateConfig } from './lib/config';
 import { syncRegistries } from './lib/registry';
@@ -51,6 +51,12 @@ import { SSHConnectionPool } from './lib/ssh/pool';
 import { assertAuthSecret, getSessionFromCookieHeader, type SessionPayload } from './lib/auth/session';
 import { setIo as setInstallSocketIo } from './lib/install/socketBridge';
 import { markCrashedOnStartup as markCrashedInstallsOnStartup } from './lib/install/jobStore';
+import {
+  registerBackgroundTask,
+  registerIntervalTask,
+  startBackgroundTasks,
+  runGracefulShutdown,
+} from './lib/runtime/lifecycle';
 
 // Fail-fast at startup so misconfigured deploys don't appear to work.
 assertAuthSecret();
@@ -373,7 +379,13 @@ app.prepare().then(() => {
     historyBytes: 50_000,
     createHistory: (bytes) => new CharRingBuffer(bytes),
   });
-  terminalManager.start();
+  // The PTY sweep is a background timer, so the manager is a runtime task
+  // (#2738). Registered first => stopped last, after every leaf timer is gone.
+  registerBackgroundTask({
+    name: 'terminal-sessions',
+    start: () => terminalManager.start(),
+    stop: () => terminalManager.stop(),
+  });
 
   // Track active clients for monitoring optimization
   const updateMonitoringState = () => {
@@ -488,84 +500,111 @@ app.prepare().then(() => {
     logger.error('Server', 'Failed to initialise capability bus:', err);
   }
 
-  // Initialize Monitoring Service (V4 Legacy Bridge)
-  HealthService.init(io).catch(err => {
-      logger.error('Server', 'Failed to start monitoring service:', err);
-  });
-  
-  // Start V4.1 Gateway Poller
-  GatewayPoller.getInstance().start().catch(err => {
-      logger.error('Server', 'Failed to start Gateway Poller:', err);
-  });
+  // ─── Background work: what each job DOES ───────────────────────────
+  // The kernel owns when it runs and when it stops (lib/runtime/lifecycle.ts,
+  // #2738); these are just the bodies.
 
-  // #505 — periodic service↔service socket-flow sampler. Feeds the
-  // network map's `observed` edges; self-contained + best-effort.
-  startFlowSampler();
-
-    // Schedule agent restarts based on config
-    scheduleAgentRestart();
-
-    // Schedule backup sync based on config
-    scheduleBackup();
-
-    // Schedule the nightly per-service config backup to the FritzBox NAS (#1217)
-    scheduleExternalNasBackup();
-
-    // Email the operator when a new ServiceBay release lands. No-op when
-    // email isn't configured. Deduped per-release via config.autoUpdate.
-    scheduleUpdateNotifier();
-
-    // Auto-purge soft-deleted services older than 7 days. Runs once at
-    // boot, then every 12 hours — the deletion latency target is "you have
-    // a week to undo", not "we delete on the dot".
-    const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-    const TRASH_PURGE_INTERVAL_MS = 12 * 60 * 60 * 1000;
-    const purgeTrashAcrossNodes = async () => {
-      try {
-        const { listNodes: lN } = await import('./lib/nodes');
-        const { ServiceManager: SM } = await import('./lib/services/ServiceManager');
-        const nodes = await lN();
-        for (const n of nodes) {
-          try {
-            await SM.purgeTrash(n.Name, { olderThanMs: TRASH_RETENTION_MS });
-          } catch (e) {
-            logger.warn('Server', `Trash purge failed for ${n.Name}: ${e instanceof Error ? e.message : String(e)}`);
-          }
+  // Auto-purge soft-deleted services older than 7 days. Runs once shortly
+  // after boot, then every 12 hours — the deletion latency target is "you
+  // have a week to undo", not "we delete on the dot".
+  const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+  const TRASH_PURGE_INTERVAL_MS = 12 * 60 * 60 * 1000;
+  const purgeTrashAcrossNodes = async () => {
+    try {
+      const { listNodes: lN } = await import('./lib/nodes');
+      const { ServiceManager: SM } = await import('./lib/services/ServiceManager');
+      const nodes = await lN();
+      for (const n of nodes) {
+        try {
+          await SM.purgeTrash(n.Name, { olderThanMs: TRASH_RETENTION_MS });
+        } catch (e) {
+          logger.warn('Server', `Trash purge failed for ${n.Name}: ${e instanceof Error ? e.message : String(e)}`);
         }
-      } catch (e) {
-        logger.warn('Server', `Trash purge sweep failed: ${e instanceof Error ? e.message : String(e)}`);
       }
-    };
-    setTimeout(() => { void purgeTrashAcrossNodes(); }, 60_000);
-    setInterval(() => { void purgeTrashAcrossNodes(); }, TRASH_PURGE_INTERVAL_MS);
+    } catch (e) {
+      logger.warn('Server', `Trash purge sweep failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
 
-    // Retire API tokens that lapsed more than their grace period ago (#2606).
-    // sweepExpiredTokens' own docs claimed a boot timer since #2139 — there
-    // never was one, so the only cleanup that ever ran was the opportunistic
-    // pass on the verify path, which cannot fire for a token nobody uses. That
-    // is precisely the token that needs sweeping. Twice a day is ample against
-    // a three-day grace; it no-ops (no write) when nothing is past grace.
-    const TOKEN_SWEEP_INTERVAL_MS = 12 * 60 * 60 * 1000;
-    const sweepApiTokens = async () => {
-      try {
-        const { sweepExpiredTokens } = await import('./lib/auth/apiTokens');
-        await sweepExpiredTokens();
-      } catch (e) {
-        logger.warn('Server', `API token expiry sweep failed: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    };
-    setTimeout(() => { void sweepApiTokens(); }, 60_000);
-    setInterval(() => { void sweepApiTokens(); }, TOKEN_SWEEP_INTERVAL_MS);
+  // Retire API tokens that lapsed more than their grace period ago (#2606).
+  // sweepExpiredTokens' own docs claimed a boot timer since #2139 — there
+  // never was one, so the only cleanup that ever ran was the opportunistic
+  // pass on the verify path, which cannot fire for a token nobody uses. That
+  // is precisely the token that needs sweeping. Twice a day is ample against
+  // a three-day grace; it no-ops (no write) when nothing is past grace.
+  const TOKEN_SWEEP_INTERVAL_MS = 12 * 60 * 60 * 1000;
+  const sweepApiTokens = async () => {
+    try {
+      const { sweepExpiredTokens } = await import('./lib/auth/apiTokens');
+      await sweepExpiredTokens();
+    } catch (e) {
+      logger.warn('Server', `API token expiry sweep failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
 
-  // Periodic Agent Health Sync (every 30 seconds)
-  setInterval(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const agents = (agentManager as any).agents as Map<string, { getHealth: () => any }>;
-      agents.forEach((agent, nodeName) => {
-          const health = agent.getHealth();
-          twinStore.updateNode(nodeName, { health });
-      });
-  }, 30000);
+  const syncAgentHealthIntoTwin = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const agents = (agentManager as any).agents as Map<string, { getHealth: () => any }>;
+    agents.forEach((agent, nodeName) => {
+      const health = agent.getHealth();
+      twinStore.updateNode(nodeName, { health });
+    });
+  };
+
+  // ─── The background-task list ──────────────────────────────────────
+  // Registration order is boot order; shutdown walks it in reverse. Add a job
+  // here, not as a loose `setInterval` — `check:invariants` enforces that
+  // (`BACKEND_BARE_SETINTERVAL_BUDGET`, 0 outside lib/runtime).
+
+  // Monitoring service (V4 legacy bridge): checks, heartbeat, daily diagnose.
+  registerBackgroundTask({
+    name: 'health-service',
+    start: () => HealthService.init(io),
+    stop: () => HealthService.shutdown(),
+  });
+
+  // V4.1 gateway poller.
+  registerBackgroundTask({
+    name: 'gateway-poller',
+    start: () => GatewayPoller.getInstance().start(),
+    stop: () => GatewayPoller.getInstance().stop(),
+  });
+
+  // #505 — periodic service↔service socket-flow sampler. Feeds the network
+  // map's `observed` edges; self-contained + best-effort.
+  registerBackgroundTask(flowSamplerTask());
+
+  // Email the operator when a new ServiceBay release lands. No-op when email
+  // isn't configured. Deduped per-release via config.autoUpdate.
+  registerBackgroundTask(updateNotifierTask());
+
+  registerIntervalTask({
+    name: 'trash-purge',
+    intervalMs: TRASH_PURGE_INTERVAL_MS,
+    firstRunDelayMs: 60_000,
+    tick: purgeTrashAcrossNodes,
+  });
+
+  registerIntervalTask({
+    name: 'api-token-sweep',
+    intervalMs: TOKEN_SWEEP_INTERVAL_MS,
+    firstRunDelayMs: 60_000,
+    tick: sweepApiTokens,
+  });
+
+  registerIntervalTask({
+    name: 'agent-health-sync',
+    intervalMs: 30_000,
+    tick: syncAgentHealthIntoTwin,
+  });
+
+  void startBackgroundTasks();
+
+  // One-shot boot schedules (not recurring timers, so not runtime tasks).
+  scheduleAgentRestart();
+  scheduleBackup();
+  // Nightly per-service config backup to the FritzBox NAS (#1217).
+  scheduleExternalNasBackup();
 
 
 
@@ -605,32 +644,18 @@ app.prepare().then(() => {
   });
 
   // ─── Graceful shutdown ─────────────────────────────────────────────
-  // PTY sweep + session cleanup live inside TerminalSessionManager; we just
-  // ask the manager to stop, then drain everything else.
-  let shuttingDown = false;
-  const shutdown = async (signal: string) => {
-      if (shuttingDown) return;
-      shuttingDown = true;
-      logger.info('Server', `Received ${signal}, starting graceful shutdown`);
-
-      const finish = setTimeout(() => {
-          logger.error('Server', 'Graceful shutdown timeout, forcing exit');
-          process.exit(1);
-      }, 10_000);
-      finish.unref();
-
-      try {
-          terminalManager.stop();
+  // The kernel stops every registered background task in reverse registration
+  // order first (#2738) — so no timer is still writing while we close the
+  // sockets — then this drain runs, then the process exits.
+  const shutdown = (signal: string) => runGracefulShutdown({
+      signal,
+      drain: async () => {
           io.close();
           await SSHConnectionPool.getInstance().shutdown(2000);
           await new Promise<void>(resolve => server.close(() => resolve()));
-          logger.info('Server', 'Shutdown complete');
-          process.exit(0);
-      } catch (e) {
-          logger.error('Server', 'Error during shutdown', e);
-          process.exit(1);
-      }
-  };
+      },
+      exit: (code) => process.exit(code),
+  });
   process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
   process.on('SIGINT', () => { void shutdown('SIGINT'); });
   process.on('uncaughtException', (err) => {
@@ -655,11 +680,16 @@ app.prepare().then(() => {
     void deliverAssistCatalogAtBoot().catch(err =>
       logger.error('Server', `Assist catalog delivery failed: ${err instanceof Error ? err.message : String(err)}`),
     );
-    setInterval(() => {
-      void syncAssistCatalog().catch(err =>
-        logger.error('Server', `Assist catalog delivery failed: ${err instanceof Error ? err.message : String(err)}`),
-      );
-    }, catalogSyncIntervalMs()).unref();
+    registerIntervalTask({
+      name: 'assist-catalog-sync',
+      intervalMs: catalogSyncIntervalMs(),
+      unref: true,
+      tick: async () => {
+        await syncAssistCatalog().catch(err =>
+          logger.error('Server', `Assist catalog delivery failed: ${err instanceof Error ? err.message : String(err)}`),
+        );
+      },
+    });
 
     // Safety lock: until the operator picks an update window, hold
     // Zincati and podman-auto-update.timer off. Closes the foot-gun
@@ -728,7 +758,7 @@ app.prepare().then(() => {
         }
       };
       void runDomainCheckSync();
-      setInterval(() => { void runDomainCheckSync(); }, 60_000);
+      registerIntervalTask({ name: 'domain-check-sync', intervalMs: 60_000, tick: runDomainCheckSync });
     }
 
     // #1564 — the per-domain `dns_routing:<domain>` rows were collapsed

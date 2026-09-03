@@ -29,6 +29,7 @@ import path from 'node:path';
 import { auditHealthCheckIdLifecycle } from './invariants/healthCheckIdLifecycle';
 import { auditAssistCatalogSingleSource } from './invariants/assistCatalogSingleSource';
 import { auditNpmApiLiterals } from './invariants/npmApiLiterals';
+import { auditBareSetInterval, BACKEND_BARE_SETINTERVAL_BUDGET, RUNTIME_KERNEL_DIR } from './invariants/backgroundTasks';
 import {
     auditDurableStateAtomicWrites, auditVersionedStores,
     DURABLE_STATE_MODULES, DURABLE_STATE_BARE_WRITE_BUDGET,
@@ -1144,6 +1145,15 @@ async function checkNpmApiLiterals() {
     measurements.push(...found.measurements);
 }
 
+// 8f. Recurring backend work goes through the runtime kernel, never a bare
+// `setInterval` (#2738). The budget, the kernel path and the why live in
+// scripts/invariants/backgroundTasks.ts; this file is at its max-lines budget.
+async function checkBackgroundTaskKernel() {
+    const found = await auditBareSetInterval(REPO_ROOT);
+    violations.push(...found.violations);
+    measurements.push(...found.measurements);
+}
+
 // ---------------------------------------------------------------------------
 // 9. docs/ARCHITECTURE_INVARIANTS.md's numbers are generated, not typed.
 //
@@ -1177,6 +1187,7 @@ function renderThresholdBlock(): string {
         ['`DigitalTwinStore.getInstance()` call sites', 'TWIN_GETINSTANCE_MAX', String(TWIN_GETINSTANCE_MAX)],
         ['Bare `fs.writeFile`/`writeFileSync` in durable-state modules', 'DURABLE_STATE_BARE_WRITE_BUDGET', String(DURABLE_STATE_BARE_WRITE_BUDGET)],
         ['Durable stores adopted onto `defineStore` (floor, forward-only)', 'VERSIONED_STORE_MIN', String(VERSIONED_STORE_MIN)],
+        [`Bare \`setInterval\` in \`packages/backend/src\` outside \`${RUNTIME_KERNEL_DIR}\``, 'BACKEND_BARE_SETINTERVAL_BUDGET', String(BACKEND_BARE_SETINTERVAL_BUDGET)],
     ];
     const lines = [
         DOC_BEGIN,
@@ -1254,6 +1265,7 @@ async function main() {
         checkMcpApprovalPollability(),
         checkHealthCheckIdLifecycle(),
         checkNpmApiLiterals(),
+        checkBackgroundTaskKernel(),
         syncOrCheckThresholdDoc(),
     ]);
 

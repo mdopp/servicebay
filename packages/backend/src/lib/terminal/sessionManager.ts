@@ -4,6 +4,7 @@ import os from 'os';
 import fs from 'fs';
 import { listNodes } from '../nodes';
 import { logger } from '../logger';
+import { managedInterval, type ManagedInterval } from '../runtime/timers';
 
 interface PtySession {
   process: pty.IPty;
@@ -50,23 +51,21 @@ const DEFAULT_HISTORY_BYTES = 100_000;
 
 export class TerminalSessionManager {
   private readonly sessions = new Map<string, PtySession>();
-  private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  private sweepTimer: ManagedInterval | null = null;
 
   constructor(private readonly options: SessionManagerOptions) {}
 
   start() {
     if (this.sweepTimer) return;
-    this.sweepTimer = setInterval(() => this.sweep(), PTY_SWEEP_INTERVAL_MS);
+    this.sweepTimer = managedInterval('pty-sweep', () => this.sweep(), PTY_SWEEP_INTERVAL_MS);
     this.options.io.on('connection', socket => this.bind(socket));
     // Pre-spawn the host PTY so first-open is instant. Best-effort.
     this.ensure('host').catch(err => logger.error('Server', 'ensurePty(host) failed', err));
   }
 
   stop() {
-    if (this.sweepTimer) {
-      clearInterval(this.sweepTimer);
-      this.sweepTimer = null;
-    }
+    this.sweepTimer?.stop();
+    this.sweepTimer = null;
     for (const [id, session] of this.sessions.entries()) {
       try { session.process.kill(); } catch { /* ignore */ }
       this.sessions.delete(id);

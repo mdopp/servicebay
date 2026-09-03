@@ -114,6 +114,7 @@ this page came to assert a wrong largest-file name, a wrong file count, and a
 | `DigitalTwinStore.getInstance()` call sites | `TWIN_GETINSTANCE_MAX` | 0 |
 | Bare `fs.writeFile`/`writeFileSync` in durable-state modules | `DURABLE_STATE_BARE_WRITE_BUDGET` | 0 |
 | Durable stores adopted onto `defineStore` (floor, forward-only) | `VERSIONED_STORE_MIN` | 2 |
+| Bare `setInterval` in `packages/backend/src` outside `packages/backend/src/lib/runtime` | `BACKEND_BARE_SETINTERVAL_BUDGET` | 0 |
 
 Source roots walked: `packages/frontend/src`, `packages/backend/src`.
 
@@ -211,6 +212,41 @@ Explicitly out of scope: `health/store.ts` result files are a cache, cheap to re
 **Durable stores are versioned; migrations are forward-only (#2739).** Writing durably is half the problem; the other half is *changing the shape* of what is written. `packages/backend/src/lib/store/defineStore.ts` is the mechanism: a store declares `{ name, schema, version, migrations }`, a file at an older version is pulled forward through every registered migration on load, and a file at a **newer** version is refused loudly — on read *and* on write — rather than being silently overwritten by a downgraded build. A file with no envelope is version 0, so adopting an existing store means registering the `migrations[1]` that names its pre-adoption on-disk shape; no flag day, and the next write re-stamps the file. The predecessor pattern — a `CURRENT_SCHEMA_VERSION` field nothing ever branched on — was deleted in #2725 and must not come back. Rationale and the full rule: ADR 0016 (`assists/adr-0016-durable-stores-are-versioned-and-forward-only.md`).
 
 Adoption is store-by-store, so the gate is a growth ratchet rather than a budget: `VERSIONED_STORE_MODULES` (enumerated in the generated block above) may only get longer, every listed module must still call `defineStore` and must also appear in `DURABLE_STATE_MODULES`, and a listed path that no longer resolves is a violation. Un-adopting a store means lowering `VERSIONED_STORE_MIN` — a visible, deliberate edit. `defineStore.ts` itself is deliberately absent from the list for the same reason `atomicWrite.ts` is: it *is* the mechanism. The envelope is proved not to weaken #2414 by a third fault-injection case in `tests/backend/durable_write_crash_safety.test.ts`.
+
+### Background work (runtime kernel, #2738)
+
+| Invariant | Enforced by |
+|---|---|
+| Bare `setInterval` in `packages/backend/src` outside `lib/runtime/` | `scripts/invariants/backgroundTasks.ts:BACKEND_BARE_SETINTERVAL_BUDGET` |
+
+**Every recurring backend job is a registered background task.** Before #2738 the
+backend had **13** bare `setInterval` calls across seven modules and `server.ts`.
+None was cleared on SIGTERM, so a restart could leave a tick mid-flight writing
+to a store the process was already tearing down; and the only thing declaring
+boot order for ~30 subsystems was where a call happened to sit in an 800-line
+linear boot script.
+
+`packages/backend/src/lib/runtime/` is the kernel. `timers.ts` owns the single
+`setInterval` call site and hands back a named, idempotently-cancellable
+`ManagedInterval` whose callback is wrapped so a throwing tick logs instead of
+killing the process. `lifecycle.ts` owns the registry: `registerBackgroundTask`
+/ `registerIntervalTask` declare `{ name, start, stop }`, `startBackgroundTasks`
+starts them in registration order (a task registered later — e.g. from the
+`server.listen` callback — starts immediately and still joins the shutdown
+order), and `runGracefulShutdown` on SIGTERM/SIGINT stops every task in
+**reverse registration order**, then drains the sockets, then exits. Reverse
+order makes teardown the mirror of boot: a task can rely on everything
+registered before it still being alive while it stops. Each stop is logged, so
+`journalctl --user -u servicebay` shows an ordered teardown instead of silence.
+The ordering, the late-registration path and the force-exit timer are proved on
+fake timers in `packages/backend/src/lib/runtime/lifecycle.test.ts`.
+
+`server.ts` therefore holds the **task list**, not timers. The budget is **0**
+and downward-only: a new recurring job registers a task. Tests are exempt (they
+drive their own clock) and the kernel directory is exempt because it *is* the
+mechanism — the same carve-out `lib/util/atomicWrite.ts` gets from the
+bare-write budget. `RUNTIME_KERNEL_DIR` is asserted to resolve to a non-empty
+file set, so moving the kernel cannot silently disable its own gate (#2379).
 
 ### Security boundaries (pattern enforcement)
 
