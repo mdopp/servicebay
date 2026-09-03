@@ -686,3 +686,89 @@ describe('#2723 — the orientation docs name no path that does not exist', () =
     expect([...'`packages/backend/src/lib/logger.ts`'.matchAll(BARE_SRC)]).toEqual([]);
   });
 });
+
+/**
+ * #2744 — the Playwright specs run in CI, and the pieces that make that true
+ * cannot drop out silently.
+ *
+ * This is the same failure shape the file already pins one level up: a gate
+ * that runs nowhere reports green. `tests/e2e/{smoke,portal,sso-login}.e2e.ts`
+ * existed from #1473 and no job in .github/workflows/ ever executed them —
+ * `grep -n playwright .github/workflows/*.yml` returned nothing. The
+ * `ci-runs-every-check-script` meta-gate could not see it, because `test:e2e`
+ * is not a `check:*` script; this block is that registration.
+ */
+describe('#2744 — the e2e job actually runs the Playwright specs', () => {
+  const CI_YML = readFileSync(path.join(REPO_ROOT, '.github/workflows/ci.yml'), 'utf-8');
+  const pkg = JSON.parse(readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8')) as {
+    scripts: Record<string, string>;
+    devDependencies: Record<string, string>;
+  };
+
+  /** The YAML block of one top-level job (2-space indent under `jobs:`). */
+  const ciJobBlock = (job: string): string => {
+    const lines = CI_YML.split('\n');
+    const start = lines.findIndex(l => l === `  ${job}:`);
+    if (start === -1) return '';
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i++) {
+      if (/^ {2}\S/.test(lines[i])) {
+        end = i;
+        break;
+      }
+    }
+    return lines.slice(start, end).join('\n');
+  };
+
+  const e2eJob = ciJobBlock('e2e');
+
+  it('ci.yml defines an `e2e` job', () => {
+    expect(e2eJob).not.toBe('');
+    // The slicer is not vacuous — it finds a job that predates this one too.
+    expect(ciJobBlock('dev-image')).toContain('Dockerfile.dev');
+  });
+
+  it('the e2e job executes `npm run test:e2e` — as a step, not as a comment', () => {
+    // extractCiRunText drops comments, so a step deleted in a refactor with its
+    // descriptive comment left behind fails this (#2466).
+    expect(runsInText(extractCiRunText(e2eJob), 'test:e2e')).toBe(true);
+    expect(pkg.scripts['test:e2e']).toContain('playwright test');
+  });
+
+  it('the e2e job runs after the job that proves the server boots', () => {
+    expect(e2eJob).toMatch(/^\s*needs:\s*dev-image\s*$/m);
+  });
+
+  it('it boots the server through the script the local red-probe uses', () => {
+    const runText = extractCiRunText(e2eJob);
+    expect(runText).toContain('scripts/e2e-ci-server.sh start');
+    expect(runText).toContain('scripts/e2e-ci-server.sh stop');
+    expect(existsSync(path.join(REPO_ROOT, 'scripts/e2e-ci-server.sh'))).toBe(true);
+  });
+
+  it('the Playwright browser cache is keyed on the pinned browser version', () => {
+    // An unpinned key would serve a stale browser build forever, or (worse) a
+    // key that never hits would re-download on every PR and blow the 5-minute
+    // budget the job is held to.
+    expect(pkg.devDependencies['@playwright/test']).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(e2eJob).toContain('~/.cache/ms-playwright');
+    expect(e2eJob).toMatch(/key:\s*playwright-\$\{\{\s*runner\.os\s*\}\}-\$\{\{\s*steps\.playwright\.outputs\.version\s*\}\}/);
+  });
+
+  it('all three e2e specs are still present and collected by the config', () => {
+    for (const spec of ['smoke', 'portal', 'sso-login']) {
+      expect(existsSync(path.join(REPO_ROOT, `tests/e2e/${spec}.e2e.ts`)), spec).toBe(true);
+    }
+    const config = readFileSync(path.join(REPO_ROOT, 'tests/e2e/playwright.config.ts'), 'utf-8');
+    expect(config).toContain("testMatch: '**/*.e2e.ts'");
+  });
+
+  it('the SSO spec skips on a CI target instead of failing on a missing box', () => {
+    // It needs a real Authelia deployment; without SB_PUBLIC_DOMAIN it must
+    // declare that, not throw — and it must NOT become unconditionally skipped,
+    // which would silently retire the #1561 login gate on the box too.
+    const sso = readFileSync(path.join(REPO_ROOT, 'tests/e2e/sso-login.e2e.ts'), 'utf-8');
+    expect(sso).toContain('SB_PUBLIC_DOMAIN');
+    expect(sso).toMatch(/test\.skip\(\s*\n?\s*!ssoTargetConfigured/);
+  });
+});
