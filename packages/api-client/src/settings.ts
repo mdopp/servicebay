@@ -663,7 +663,19 @@ export const CredentialViewSchema = z.object({
   service: z.string(),
   url: z.string(),
   username: z.string(),
-  importance: z.enum(['critical', 'system']),
+  // `.catch('system')`, not a bare enum (box-verify 2cc183de, #2778 batch 8):
+  // long-lived boxes carry manifest rows written before `importance` was
+  // narrowed to two values (a real one has a stray "optional" row) — a
+  // strict enum fails the *entire* GET's schema validation on one bad row,
+  // which `CredentialsSection`'s `.catch(() => {})` (pre-existing, not new
+  // here) turns into "all credentials silently vanish from the UI", not an
+  // error the operator ever sees. The component itself only ever narrows on
+  // `c.importance === 'system'` / `=== 'critical'` (never exhaustively), so
+  // falling an unrecognized legacy value back to the default 'system'
+  // styling is exactly what the pre-migration untyped `fetch()` did too —
+  // no behavior change for well-formed data, no more all-or-nothing outage
+  // for a box with one stale row.
+  importance: z.enum(['critical', 'system']).catch('system'),
   notes: z.string().optional(),
   template: z.string().optional(),
   secured: z.boolean(),
