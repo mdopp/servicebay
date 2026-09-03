@@ -13,6 +13,16 @@ import HealthChecks, { type StatusFilter } from '@/components/HealthChecks';
 import { CheckConfig, CheckType, Check } from '@servicebay/api-client';
 import { fetchNodes } from '@servicebay/api-client';
 import { PodmanConnection } from '@servicebay/api-client';
+import {
+  getHealthChecks,
+  saveHealthCheck,
+  deleteHealthCheck,
+  runHealthCheck,
+  getHealthCheckHistory,
+  getNodeContainers,
+  getNodeServices,
+  getNodeSystemServices,
+} from '@servicebay/api-client';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { SystemInfoContent } from '@/dashboards/SystemInfoDashboard';
 import DiagnoseProbeList, { type DiagnoseProbe } from '@/components/DiagnoseProbeList';
@@ -162,12 +172,12 @@ export default function HealthDashboard() {
     // if (!silent) setLoading(true); // Only show spinner on initial load
     
     try {
-      const [checksRes, nodeList] = await Promise.all([
-        fetch('/api/health/checks'),
+      const [checksList, nodeList] = await Promise.all([
+        getHealthChecks(),
         fetchNodes()
       ]);
-      
-      if (checksRes.ok) setChecks(await checksRes.json());
+
+      setChecks(checksList);
       setNodes(nodeList);
     } catch (error) {
       // Background sync — toast intentionally suppressed (would spam on
@@ -211,17 +221,15 @@ export default function HealthDashboard() {
 
         setResourcesLoading(true);
         try {
-            const query = `?node=${formData.nodeName}`;
-            const [containersRes, servicesRes, systemRes] = await Promise.all([
-                fetch(`/api/containers${query}`),
-                fetch(`/api/services${query}`),
-                fetch(`/api/system/services${query}`)
-            ]);
-
+            const node = formData.nodeName;
+            // Each list is independent — one node/route being unavailable
+            // (e.g. a not-yet-connected agent) must not blank out the other
+            // two, so a failure resolves to `null` rather than rejecting the
+            // whole batch.
             const [nextContainers, nextServices, nextSystem] = await Promise.all([
-                containersRes.ok ? containersRes.json() as Promise<Container[]> : null,
-                servicesRes.ok ? servicesRes.json() as Promise<{ name: string }[]> : null,
-                systemRes.ok ? systemRes.json() as Promise<{ unit: string }[]> : null,
+                getNodeContainers(node).catch(() => null) as Promise<Container[] | null>,
+                getNodeServices(node).catch(() => null) as Promise<{ name: string }[] | null>,
+                getNodeSystemServices(node).catch(() => null) as Promise<{ unit: string }[] | null>,
             ]);
 
             if (cancelled) return;
@@ -315,22 +323,13 @@ export default function HealthDashboard() {
     if (isSaving) return; // guard against a double-submit creating duplicate checks
     setIsSaving(true);
     try {
-      const url = '/api/health/checks';
-      // const method = editingCheck ? 'PUT' : 'POST'; // Note: PUT not implemented in API yet, need to fix that
-      const body = editingCheck ? { ...formData, id: editingCheck.id } : formData;
-
       // For now, POST handles both create and update in our simple store implementation if ID is present
       // But let's stick to POST for create. We need to update the API to handle updates properly.
       // Actually, the store.ts saveCheck handles updates if ID exists.
       // So we just need to make sure the API passes the ID through.
-      
-      const res = await fetch(url, {
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
+      const body = editingCheck ? { ...formData, id: editingCheck.id } : formData;
 
-      if (!res.ok) throw new Error('Failed to save check');
+      await saveHealthCheck(body);
 
       addToast('success', `Check ${editingCheck ? 'updated' : 'created'} successfully`);
       setIsModalOpen(false);
@@ -350,11 +349,9 @@ export default function HealthDashboard() {
 
   const confirmDelete = async () => {
     if (!checkToDelete) return;
-    
+
     try {
-        // We need a DELETE endpoint
-        const res = await fetch(`/api/health/checks?id=${checkToDelete}`, { method: 'DELETE' });
-        if (!res.ok) throw new Error('Failed to delete');
+        await deleteHealthCheck(checkToDelete);
         addToast('success', 'Check deleted');
         fetchData();
     } catch {
@@ -368,12 +365,10 @@ export default function HealthDashboard() {
   const handleRun = async (id: string) => {
     const toastId = addToast('loading', 'Running check...', 'Executing check immediately', 0);
     try {
-        const res = await fetch(`/api/health/checks/${id}/run`, { method: 'POST' });
-        if (!res.ok) throw new Error('Failed to run check');
-        const result = await res.json();
-        
-        updateToast(toastId, result.status === 'ok' ? 'success' : 'error', 
-            `Check ${result.status === 'ok' ? 'Passed' : 'Failed'}`, 
+        const result = await runHealthCheck(id);
+
+        updateToast(toastId, result.status === 'ok' ? 'success' : 'error',
+            `Check ${result.status === 'ok' ? 'Passed' : 'Failed'}`,
             result.message || `Latency: ${result.latency}ms`
         );
         fetchData();
@@ -387,10 +382,7 @@ export default function HealthDashboard() {
     setHistoryData([]);
     setHistoryLoading(true);
     try {
-      const res = await fetch(`/api/health/checks/${check.id}/history`);
-      if (res.ok) {
-        setHistoryData(await res.json());
-      }
+      setHistoryData(await getHealthCheckHistory(check.id));
     } catch {
       addToast('error', 'Failed to fetch history');
     } finally {

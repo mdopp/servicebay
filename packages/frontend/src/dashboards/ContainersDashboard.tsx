@@ -8,6 +8,7 @@ import { Search, SEARCH_SLOT_CLASS } from '@/components/ui';
 import PageHeader from '@/components/PageHeader';
 import ContainerList, { type ContainerListItem } from '@/components/ContainerList';
 import { logger, type ServiceBundle } from '@servicebay/api-client';
+import { getStacks } from '@servicebay/api-client';
 import {
     groupContainersByStack,
     type StackSummaryLite,
@@ -30,9 +31,7 @@ export default function ContainersDashboard() {
         let cancelled = false;
         (async () => {
             try {
-                const res = await fetch('/api/system/stacks', { cache: 'no-store' });
-                if (!res.ok) throw new Error('Failed to load stacks');
-                const payload = await res.json();
+                const payload = await getStacks();
                 const stacks: StackSummaryLite[] = Array.isArray(payload?.stacks)
                     ? payload.stacks.map((s: StackSummaryLite) => ({ name: s.name, manifest: s.manifest ?? null }))
                     : [];

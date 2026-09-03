@@ -31,6 +31,13 @@ import type { EnrichedContainer } from '@servicebay/api-client';
 import { Plus, Trash2, Box, X, AlertCircle, FileCode } from 'lucide-react';
 import { ServiceBundle, BundlePortSummary } from '@servicebay/api-client';
 import {
+    getExternalLinks,
+    getStacks,
+    dismissUnmanagedBundle,
+    createExternalLink,
+    updateExternalLink,
+} from '@servicebay/api-client';
+import {
     bundleSeverityClasses,
     groupServicesByStack,
     UNGROUPED_STACK_ID,
@@ -122,12 +129,7 @@ export default function ServicesDashboard() {
 
     const loadExternalLinks = useCallback(async () => {
         try {
-            const res = await fetch('/api/services?scope=links', { cache: 'no-store' });
-            if (!res.ok) {
-                throw new Error('Failed to load external links');
-            }
-
-            const payload = await res.json();
+            const payload = await getExternalLinks();
             const parsed: ServiceViewModel[] = Array.isArray(payload)
                 ? payload.map((link: ApiLinkPayload) => {
                       const status = typeof link.status === 'string' ? link.status : link.active ? 'active' : 'inactive';
@@ -188,9 +190,7 @@ export default function ServicesDashboard() {
     // overview falls back to a single "Ungrouped" bucket.
     const loadStacks = useCallback(async () => {
         try {
-            const res = await fetch('/api/system/stacks', { cache: 'no-store' });
-            if (!res.ok) throw new Error('Failed to load stacks');
-            const payload = await res.json();
+            const payload = await getStacks();
             const stacks: StackSummaryLite[] = Array.isArray(payload?.stacks)
                 ? payload.stacks.map((s: StackSummaryLite) => ({ name: s.name, manifest: s.manifest ?? null }))
                 : [];
@@ -776,15 +776,7 @@ export default function ServicesDashboard() {
       setBundleDeleteLoading(true);
       const toastId = addToast('loading', 'Deleting bundle', targetBundle.displayName, 0);
       try {
-          const res = await fetch('/api/system/discovery/dismiss', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ bundleId: targetBundle.id, nodeName: targetBundle.nodeName })
-          });
-          const payload = await res.json().catch(() => ({}));
-          if (!res.ok) {
-              throw new Error(payload.error || 'Failed to delete bundle');
-          }
+          const payload = await dismissUnmanagedBundle(targetBundle.id, targetBundle.nodeName);
           setServiceBundles(prev => prev.filter(bundle => bundle.id !== targetBundle.id));
           setBundlePendingDelete(null);
           refreshBundles();
@@ -879,27 +871,23 @@ export default function ServicesDashboard() {
     }
 
     try {
-        const method = isEditingLink ? 'PUT' : 'POST';
-        const url = isEditingLink ? `/api/services/${editingLinkId}` : '/api/services';
-
         const ipTargets = linkForm.ipTargetsText
             ? linkForm.ipTargetsText.split(',').map(s => s.trim()).filter(Boolean)
             : [];
+        const payload = {
+            name: linkForm.name,
+            url: linkForm.url,
+            description: linkForm.description,
+            monitor: linkForm.monitor,
+            ipTargets,
+            type: 'link' as const
+        };
 
-        const res = await fetch(url, {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                name: linkForm.name,
-                url: linkForm.url,
-                description: linkForm.description,
-                monitor: linkForm.monitor,
-                ipTargets,
-                type: 'link'
-            })
-        });
-
-        if (!res.ok) throw new Error('Failed to save link');
+        if (isEditingLink) {
+            await updateExternalLink(String(editingLinkId), payload);
+        } else {
+            await createExternalLink(payload);
+        }
 
         addToast('success', isEditingLink ? 'Link updated successfully' : 'Link added successfully');
         setShowLinkModal(false);
