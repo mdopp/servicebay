@@ -191,9 +191,10 @@ export function useBackupState() {
   const fetchNasOverview = useCallback(async () => {
     setNasLoading(true);
     try {
+      // `rawApi` already throws on a non-2xx; the body is the overview itself
+      // (`{ ok: true, ...getNasBackupOverview() }`), so read its real fields.
       const data = await fetchExternalBackupList();
-      if (!data.ok) throw new Error(data.error || 'Unable to read NAS backups');
-      setNasOverview({ configured: data.registered, connection: data.connected ? { ok: true } : { ok: false, error: 'Not connected' }, backups: data.backups ?? [], schedule: data.schedule });
+      setNasOverview({ configured: data.configured, connection: data.connection, backups: data.backups ?? [], schedule: data.schedule });
     } catch (error) {
       console.error(error);
       setNasOverview({ configured: false, connection: null, backups: [] });

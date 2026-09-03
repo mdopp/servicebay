@@ -62,7 +62,7 @@ export default function GatewaySection() {
     }
     setBusy(test ? 'test' : 'save');
     try {
-      const data = await updateGatewaySettings(
+      await updateGatewaySettings(
         host.trim(),
         username.trim(),
         password,
@@ -73,8 +73,9 @@ export default function GatewaySection() {
         'success',
         test ? 'Connected — credentials saved' : 'Gateway saved',
       );
-      // Refresh to reset the password placeholder + reflect new hasPassword
-      setState(data);
+      // The POST only acks; re-read the view to reset the password
+      // placeholder + reflect the new hasPassword.
+      setState(await fetchGatewaySettings());
       setPassword('');
     } catch (e) {
       const message = e instanceof TypedFetchError

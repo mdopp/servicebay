@@ -132,7 +132,21 @@ export function mutateApi<T>(
 // unwrap), but still read a `{ error }` field out of a non-OK body so a
 // server-authored message survives the migration.
 
-const RawErrorBodySchema = z.object({ error: z.string() });
+// Un-enveloped routes are not uniform about the failure field: most send
+// `{ error }` (that is all `apiError` ever emits), while a few hand-rolled
+// ones carry the operator-facing text in `message` (`/api/settings/gateway`'s
+// connection_failed, `/api/system/nginx/credentials`' re-key refusal). Read
+// both so the server's own wording survives instead of a bare "HTTP 400".
+const RawErrorBodySchema = z.object({
+  error: z.string().optional(),
+  message: z.string().optional(),
+});
+
+function rawErrorMessage(raw: unknown): string | undefined {
+  const parsed = RawErrorBodySchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+  return parsed.data.message ?? parsed.data.error;
+}
 
 /** Call a route whose success body is NOT wrapped in `{ ok, data }`. */
 export async function rawApi<T>(
@@ -145,9 +159,8 @@ export async function rawApi<T>(
   const raw: unknown = await res.json().catch(() => undefined);
 
   if (!res.ok) {
-    const err = RawErrorBodySchema.safeParse(raw);
     throw new TypedFetchError(
-      err.success ? err.data.error : `${method} ${url} → HTTP ${res.status}`,
+      rawErrorMessage(raw) ?? `${method} ${url} → HTTP ${res.status}`,
       raw,
       res.status,
     );

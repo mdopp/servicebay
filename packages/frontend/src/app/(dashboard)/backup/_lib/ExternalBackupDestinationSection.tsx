@@ -258,9 +258,11 @@ export default function ExternalBackupDestinationSection({ onSaved }: { onSaved?
     try {
       const target = buildTarget(form);
       if (action === 'test') {
+        // The probe answers `{ ok }` at HTTP 200 — a failed connection is a
+        // value here, not a throw.
         const data = await testExternalBackupTarget(target);
-        if (data.success) addToast('success', 'Connected to the backup destination');
-        else addToast('error', 'Connection test failed', data.message);
+        if (data.ok) addToast('success', 'Connected to the backup destination');
+        else addToast('error', 'Connection test failed', data.error);
         return;
       }
       await saveExternalBackupTarget(target);

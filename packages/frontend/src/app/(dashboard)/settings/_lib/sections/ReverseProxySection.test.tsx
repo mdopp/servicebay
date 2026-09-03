@@ -12,9 +12,9 @@ vi.mock('@/providers/ToastProvider', () => ({ useToast: () => ({ addToast: vi.fn
 function mockFetch(status: string) {
   vi.stubGlobal('fetch', vi.fn((url: string, opts?: RequestInit) => {
     if (url === '/api/system/nginx/credentials' && (!opts || opts.method === undefined)) {
-      return Promise.resolve(new Response(JSON.stringify({ ok: true, data: { configured: true, email: 'admin@box', status } }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ configured: true, email: 'admin@box', status }), { status: 200 }));
     }
-    return Promise.resolve(new Response(JSON.stringify({ ok: true, data: { message: 'ok' } }), { status: 200 }));
+    return Promise.resolve(new Response(JSON.stringify({ message: 'ok' }), { status: 200 }));
   }));
 }
 

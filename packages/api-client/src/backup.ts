@@ -1,12 +1,16 @@
 // Backup and restore API contracts. Phase 2 of the FE/BE separation (#762)
 // — frontend routes backup dashboard fetches through typed methods.
 //
-// Schemas capture response shapes from withApiHandler routes and enable
-// zod validation at the call site. Callers wrap responses in try/catch
-// to handle TypedFetchError on validation failure or non-2xx status.
+// Every route in this module predates the api-client migration and shapes
+// its own body with `NextResponse.json(...)`, so `withApiHandler`'s auto
+// envelope never kicks in — the success body is the payload itself. That
+// makes `rawApi`/`mutateRawApi` (not `callApi`/`mutateApi`) the correct
+// helpers here; `callApi` would fail schema validation on every call.
+// Callers wrap responses in try/catch to handle TypedFetchError on
+// validation failure or non-2xx status.
 
 import { z } from 'zod';
-import { callApi, mutateApi } from './client';
+import { rawApi, mutateRawApi } from './client';
 import { apiFetch } from './apiFetch';
 
 // ---------------------------------------------------------------------------
@@ -163,6 +167,18 @@ export const ExternalBackupTargetResponseSchema = z.object({
 
 export type ExternalBackupTargetResponse = z.infer<typeof ExternalBackupTargetResponseSchema>;
 
+/**
+ * Response from POST /api/system/external-backup/target with action: 'test'.
+ * `testCandidateTarget` answers `{ ok: false, error }` at HTTP 200, so a failed
+ * probe is a value the caller renders, not a thrown TypedFetchError.
+ */
+export const ExternalBackupTestResultSchema = z.object({
+  ok: z.boolean(),
+  error: z.string().optional(),
+});
+
+export type ExternalBackupTestResult = z.infer<typeof ExternalBackupTestResultSchema>;
+
 /** Response from POST /api/system/external-backup/backup-now */
 export const BackupNowResponseSchema = z.object({
   ok: z.boolean(),
@@ -187,13 +203,28 @@ export const ExternalBackupListResponseSchema = z.any();
 
 export type ExternalBackupListResponse = z.infer<typeof ExternalBackupListResponseSchema>;
 
-/** Response from POST /api/system/external-backup/restore */
+/**
+ * Response from POST /api/system/external-backup/restore — `{ ok: true }`
+ * spread with `restoreServiceBackup`'s result. Only the fields the Backup page
+ * renders are pinned; the rest (meta, credentialReconcile) are passed through.
+ */
 export const ExternalBackupRestoreResponseSchema = z.object({
   ok: z.boolean().optional(),
-  success: z.boolean().optional(),
+  service: z.string().optional(),
+  dataDir: z.string().optional(),
+  files: z.number().optional(),
 });
 
 export type ExternalBackupRestoreResponse = z.infer<typeof ExternalBackupRestoreResponseSchema>;
+
+/** Response from POST /api/system/external-backup/delete */
+export const ExternalBackupDeleteResponseSchema = z.object({
+  ok: z.boolean().optional(),
+  tarName: z.string().optional(),
+  metaRemoved: z.boolean().optional(),
+});
+
+export type ExternalBackupDeleteResponse = z.infer<typeof ExternalBackupDeleteResponseSchema>;
 
 /** Response from GET /api/settings/backup-sync/mounts */
  
@@ -207,12 +238,12 @@ export type MountsResponse = z.infer<typeof MountsResponseSchema>;
 
 /** GET /api/settings/backup-sync */
 export function fetchBackupSyncState() {
-  return callApi('/api/settings/backup-sync', BackupSyncStateSchema);
+  return rawApi('/api/settings/backup-sync', BackupSyncStateSchema);
 }
 
 /** POST /api/settings/backup-sync with action: 'save' */
 export function saveBackupSync(config: BackupSyncConfig) {
-  return mutateApi('/api/settings/backup-sync', SuccessResponseSchema, {
+  return mutateRawApi('/api/settings/backup-sync', SuccessResponseSchema, {
     action: 'save',
     config,
   });
@@ -220,14 +251,14 @@ export function saveBackupSync(config: BackupSyncConfig) {
 
 /** POST /api/settings/backup-sync with action: 'run' */
 export function runBackupSync() {
-  return mutateApi('/api/settings/backup-sync', SuccessResponseSchema, {
+  return mutateRawApi('/api/settings/backup-sync', SuccessResponseSchema, {
     action: 'run',
   });
 }
 
 /** POST /api/settings/backup-sync with action: 'test' */
 export function testBackupSyncTarget(target: BackupTarget) {
-  return mutateApi('/api/settings/backup-sync', BackupTestResultSchema, {
+  return mutateRawApi('/api/settings/backup-sync', BackupTestResultSchema, {
     action: 'test',
     target,
   });
@@ -235,7 +266,7 @@ export function testBackupSyncTarget(target: BackupTarget) {
 
 /** GET /api/settings/backup-sync/mounts */
 export function fetchBackupSyncMounts() {
-  return callApi('/api/settings/backup-sync/mounts', MountsResponseSchema);
+  return rawApi('/api/settings/backup-sync/mounts', MountsResponseSchema);
 }
 
 // ---------------------------------------------------------------------------
@@ -244,12 +275,12 @@ export function fetchBackupSyncMounts() {
 
 /** GET /api/settings/backups */
 export function fetchSystemBackups() {
-  return callApi('/api/settings/backups', BackupListResponseSchema);
+  return rawApi('/api/settings/backups', BackupListResponseSchema);
 }
 
 /** DELETE /api/settings/backups */
 export function deleteSystemBackup(fileName: string) {
-  return mutateApi('/api/settings/backups', SuccessResponseSchema, { fileName }, 'DELETE');
+  return mutateRawApi('/api/settings/backups', SuccessResponseSchema, { fileName }, 'DELETE');
 }
 
 /** POST /api/settings/backups/preview */
@@ -265,7 +296,7 @@ export function previewSystemBackup(input: { fileName: string } | FormData) {
     init.body = JSON.stringify(input);
   }
 
-  return callApi('/api/settings/backups/preview', BackupPreviewResponseSchema, init);
+  return rawApi('/api/settings/backups/preview', BackupPreviewResponseSchema, init);
 }
 
 /** POST /api/settings/backups/file */
@@ -275,7 +306,7 @@ export function fetchBackupFile(
   nodeName: string,
   relativePath: string,
 ) {
-  return mutateApi('/api/settings/backups/file', BackupFileResponseSchema, {
+  return mutateRawApi('/api/settings/backups/file', BackupFileResponseSchema, {
     fileName,
     uploadToken,
     nodeName,
@@ -291,7 +322,7 @@ export function restoreSystemBackup(
     selection?: unknown;
   },
 ) {
-  return mutateApi('/api/settings/backups/restore', RestoreResponseSchema, input, 'POST');
+  return mutateRawApi('/api/settings/backups/restore', RestoreResponseSchema, input, 'POST');
 }
 
 // ---------------------------------------------------------------------------
@@ -300,12 +331,12 @@ export function restoreSystemBackup(
 
 /** GET /api/system/external-backup/target */
 export function fetchExternalBackupTarget() {
-  return callApi('/api/system/external-backup/target', ExternalBackupTargetResponseSchema);
+  return rawApi('/api/system/external-backup/target', ExternalBackupTargetResponseSchema);
 }
 
 /** POST /api/system/external-backup/target with action: 'save' */
 export function saveExternalBackupTarget(target: ExternalBackupTarget) {
-  return mutateApi('/api/system/external-backup/target', ExternalBackupTargetResponseSchema, {
+  return mutateRawApi('/api/system/external-backup/target', ExternalBackupTargetResponseSchema, {
     action: 'save',
     target,
   });
@@ -313,7 +344,7 @@ export function saveExternalBackupTarget(target: ExternalBackupTarget) {
 
 /** POST /api/system/external-backup/target with action: 'test' */
 export function testExternalBackupTarget(target: ExternalBackupTarget) {
-  return mutateApi('/api/system/external-backup/target', BackupTestResultSchema, {
+  return mutateRawApi('/api/system/external-backup/target', ExternalBackupTestResultSchema, {
     action: 'test',
     target,
   });
@@ -321,28 +352,33 @@ export function testExternalBackupTarget(target: ExternalBackupTarget) {
 
 /** POST /api/system/external-backup/backup-now */
 export function backupNowToExternal(service?: string) {
-  return mutateApi('/api/system/external-backup/backup-now', BackupNowResponseSchema, {
+  return mutateRawApi('/api/system/external-backup/backup-now', BackupNowResponseSchema, {
     service,
   });
 }
 
 /** GET /api/system/external-backup/list */
 export function fetchExternalBackupList() {
-  return callApi('/api/system/external-backup/list', ExternalBackupListResponseSchema);
+  return rawApi('/api/system/external-backup/list', ExternalBackupListResponseSchema);
 }
 
-/** POST /api/system/external-backup/restore */
-export function restoreFromExternalBackup(backupName: string, selection?: unknown) {
-  return mutateApi('/api/system/external-backup/restore', ExternalBackupRestoreResponseSchema, {
-    backupName,
-    selection,
+/**
+ * POST /api/system/external-backup/restore. The route keys off `service` and
+ * takes `tarName` to pin the SPECIFIC snapshot the operator picked (#1865) —
+ * both fields are required by the handler.
+ */
+export function restoreFromExternalBackup(service: string, tarName?: string) {
+  return mutateRawApi('/api/system/external-backup/restore', ExternalBackupRestoreResponseSchema, {
+    service,
+    ...(tarName ? { tarName } : {}),
   });
 }
 
-/** POST /api/system/external-backup/delete */
-export function deleteExternalBackup(backupName: string) {
-  return mutateApi('/api/system/external-backup/delete', SuccessResponseSchema, {
-    backupName,
+/** POST /api/system/external-backup/delete — the route validates `tarName`. */
+export function deleteExternalBackup(service: string, tarName: string) {
+  return mutateRawApi('/api/system/external-backup/delete', ExternalBackupDeleteResponseSchema, {
+    service,
+    tarName,
   });
 }
 

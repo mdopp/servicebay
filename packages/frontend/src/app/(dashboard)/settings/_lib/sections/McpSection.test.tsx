@@ -13,12 +13,12 @@ vi.mock('@/components/SectionHelp', () => ({ default: () => <button>How to conne
 function mockFetch(allowMutations: boolean) {
   vi.stubGlobal('fetch', vi.fn((url: string, opts?: RequestInit) => {
     if (url === '/api/settings' && (!opts || opts.method === undefined)) {
-      return Promise.resolve(new Response(JSON.stringify({ ok: true, data: { mcp: { allowMutations, allowDangerousExec: false } } }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ mcp: { allowMutations, allowDangerousExec: false } }), { status: 200 }));
     }
     if (url.startsWith('/api/approvals')) {
-      return Promise.resolve(new Response(JSON.stringify({ ok: true, data: { approvals: [] } }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ approvals: [] }), { status: 200 }));
     }
-    return Promise.resolve(new Response(JSON.stringify({ ok: true, data: {} }), { status: 200 }));
+    return Promise.resolve(new Response('{}', { status: 200 }));
   }));
 }
 
@@ -29,12 +29,12 @@ function mockFetch(allowMutations: boolean) {
 function mockFetchWithBrokenApprovals(status = 401) {
   const fetchMock = vi.fn((url: string, opts?: RequestInit) => {
     if (url === '/api/settings' && (!opts || opts.method === undefined)) {
-      return Promise.resolve(new Response(JSON.stringify({ ok: true, data: { mcp: { allowMutations: true, allowDangerousExec: false } } }), { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ mcp: { allowMutations: true, allowDangerousExec: false } }), { status: 200 }));
     }
     if (url.startsWith('/api/approvals')) {
-      return Promise.resolve(new Response(JSON.stringify({ ok: false, error: 'nope' }), { status }));
+      return Promise.resolve(new Response(JSON.stringify({ error: 'nope' }), { status }));
     }
-    return Promise.resolve(new Response(JSON.stringify({ ok: true, data: {} }), { status: 200 }));
+    return Promise.resolve(new Response('{}', { status: 200 }));
   });
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
@@ -246,11 +246,10 @@ describe('McpSection (#2100 settings migration)', () => {
     // Wait for the initial GET /api/settings to resolve so the toggle reflects
     // loaded state — clicking before that races the async load and the POST
     // never fires within the window (CI parallel-load flake).
+    // The GET now goes out through `apiFetch`, which always forwards an
+    // `init` slot — undefined for a bodyless read. Same request on the wire.
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        '/api/settings',
-        expect.anything(),
-      ),
+      expect(fetchMock).toHaveBeenCalledWith('/api/settings', undefined),
     );
     const switches = screen.getAllByRole('switch');
     fireEvent.click(switches[0]);

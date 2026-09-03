@@ -1,10 +1,16 @@
 // Settings and system configuration API contracts.
 //
 // Covers gateway, MCP, update window, reverse proxy, nginx credentials,
-// public domain migration, and boot settings endpoints.
+// public domain migration, boot settings, and the access/security endpoints.
+//
+// Every route reached from here shapes its own body with
+// `NextResponse.json(...)`, so `withApiHandler`'s `{ ok, data }` auto-envelope
+// never wraps it — the success body IS the payload. That makes
+// `rawApi`/`mutateRawApi` the right helpers throughout this module;
+// `callApi`/`mutateApi` would fail schema validation on every call.
 
 import { z } from 'zod';
-import { callApi, mutateApi, rawApi, mutateRawApi } from './client';
+import { rawApi, mutateRawApi } from './client';
 
 // ---------------------------------------------------------------------------
 // Gateway Settings Schemas
@@ -30,6 +36,9 @@ export const GatewayRequestSchema = z.object({
 });
 
 export type GatewayRequest = z.infer<typeof GatewayRequestSchema>;
+
+/** POST /api/settings/gateway answers a bare ack, not the settings view. */
+export const GatewayAckSchema = z.object({ ok: z.boolean() });
 
 // ---------------------------------------------------------------------------
 // MCP Audit Schemas
@@ -157,6 +166,22 @@ export const CredStateSchema = z.object({
 
 export type CredState = z.infer<typeof CredStateSchema>;
 
+/**
+ * POST /api/system/nginx/credentials answers `rekeyNpmAdmin`'s result — an
+ * outcome + operator-facing message, NOT the CredState view. A refusal comes
+ * back as `{ ok: false, message }` at HTTP 400.
+ */
+export const RekeyResultSchema = z.object({
+  ok: z.boolean(),
+  message: z.string(),
+  email: z.string().optional(),
+});
+
+export type RekeyResult = z.infer<typeof RekeyResultSchema>;
+
+/** DELETE /api/system/nginx/credentials answers a bare ack. */
+export const CredForgetAckSchema = z.object({ ok: z.boolean() });
+
 // ---------------------------------------------------------------------------
 // Update Window Schemas
 // ---------------------------------------------------------------------------
@@ -209,13 +234,23 @@ export const BootStatusSchema = z.object({
 
 export type BootStatus = z.infer<typeof BootStatusSchema>;
 
+/** POST/DELETE /api/system/boot/usb-next answer an ack, not the boot status. */
+export const BootActionResponseSchema = z.object({
+  success: z.boolean(),
+  bootNum: z.string().optional(),
+  warning: z.string().optional(),
+  message: z.string().optional(),
+});
+
+export type BootActionResponse = z.infer<typeof BootActionResponseSchema>;
+
 // ---------------------------------------------------------------------------
 // API Methods - Gateway
 // ---------------------------------------------------------------------------
 
 /** GET /api/settings/gateway */
 export function fetchGatewaySettings() {
-  return callApi('/api/settings/gateway', GatewaySettingsSchema);
+  return rawApi('/api/settings/gateway', GatewaySettingsSchema);
 }
 
 /** POST /api/settings/gateway */
@@ -226,7 +261,7 @@ export function updateGatewaySettings(
   ssl: boolean,
   test: boolean,
 ) {
-  return mutateApi('/api/settings/gateway', GatewaySettingsSchema, {
+  return mutateRawApi('/api/settings/gateway', GatewayAckSchema, {
     host,
     username,
     password,
@@ -244,7 +279,7 @@ export function fetchMcpAudit(limit?: number) {
   const url = limit
     ? `/api/system/mcp-audit?limit=${limit}`
     : '/api/system/mcp-audit';
-  return callApi(url, McpAuditResponseSchema);
+  return rawApi(url, McpAuditResponseSchema);
 }
 
 // ---------------------------------------------------------------------------
@@ -253,12 +288,12 @@ export function fetchMcpAudit(limit?: number) {
 
 /** GET /api/settings */
 export function fetchSettings() {
-  return callApi('/api/settings', McpSettingsSchema);
+  return rawApi('/api/settings', McpSettingsSchema);
 }
 
 /** POST /api/settings */
 export function updateSettings(update: SettingsUpdate) {
-  return mutateApi('/api/settings', McpSettingsSchema, update);
+  return mutateRawApi('/api/settings', McpSettingsSchema, update);
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +302,7 @@ export function updateSettings(update: SettingsUpdate) {
 
 /** GET /api/system/mode */
 export function fetchSystemMode() {
-  return callApi('/api/system/mode', ModeInfoSchema);
+  return rawApi('/api/system/mode', ModeInfoSchema);
 }
 
 // ---------------------------------------------------------------------------
@@ -277,12 +312,12 @@ export function fetchSystemMode() {
 /** GET /api/system/reverse-proxy/preflight */
 export function checkMigrationPreflight(publicDomain: string) {
   const url = `/api/system/reverse-proxy/preflight?publicDomain=${encodeURIComponent(publicDomain)}`;
-  return callApi(url, PreflightStatusSchema);
+  return rawApi(url, PreflightStatusSchema);
 }
 
 /** POST /api/system/reverse-proxy/migrate-to-public */
 export function migrateToPublicDomain(publicDomain: string, dryRun: boolean) {
-  return mutateApi(
+  return mutateRawApi(
     '/api/system/reverse-proxy/migrate-to-public',
     MigrationResultSchema,
     { publicDomain, dryRun },
@@ -295,17 +330,17 @@ export function migrateToPublicDomain(publicDomain: string, dryRun: boolean) {
 
 /** GET /api/system/nginx/credentials */
 export function fetchNginxCredentials() {
-  return callApi('/api/system/nginx/credentials', CredStateSchema);
+  return rawApi('/api/system/nginx/credentials', CredStateSchema);
 }
 
 /** POST /api/system/nginx/credentials - Re-key NPM admin credentials */
 export function rekeyNginxCredentials() {
-  return mutateApi('/api/system/nginx/credentials', CredStateSchema, {});
+  return mutateRawApi('/api/system/nginx/credentials', RekeyResultSchema, {});
 }
 
 /** DELETE /api/system/nginx/credentials - Forget stored credentials */
 export function forgetNginxCredentials() {
-  return mutateApi('/api/system/nginx/credentials', z.object({ success: z.boolean() }), undefined, 'DELETE');
+  return mutateRawApi('/api/system/nginx/credentials', CredForgetAckSchema, undefined, 'DELETE');
 }
 
 // ---------------------------------------------------------------------------
@@ -314,12 +349,12 @@ export function forgetNginxCredentials() {
 
 /** GET /api/system/update-window */
 export function fetchUpdateWindow() {
-  return callApi('/api/system/update-window', UpdateWindowResponseSchema);
+  return rawApi('/api/system/update-window', UpdateWindowResponseSchema);
 }
 
 /** PUT /api/system/update-window */
 export function updateUpdateWindow(window: WindowConfig) {
-  return mutateApi('/api/system/update-window', UpdateWindowResponseSchema, window, 'PUT');
+  return mutateRawApi('/api/system/update-window', UpdateWindowResponseSchema, window, 'PUT');
 }
 
 // ---------------------------------------------------------------------------
@@ -328,17 +363,17 @@ export function updateUpdateWindow(window: WindowConfig) {
 
 /** GET /api/system/boot/usb-next */
 export function fetchBootStatus() {
-  return callApi('/api/system/boot/usb-next', BootStatusSchema);
+  return rawApi('/api/system/boot/usb-next', BootStatusSchema);
 }
 
 /** POST /api/system/boot/usb-next */
 export function setBootNext(reboot: boolean, bootNum?: string) {
-  return mutateApi('/api/system/boot/usb-next', BootStatusSchema, { reboot, bootNum });
+  return mutateRawApi('/api/system/boot/usb-next', BootActionResponseSchema, { reboot, bootNum });
 }
 
 /** DELETE /api/system/boot/usb-next */
 export function cancelBootNext() {
-  return mutateApi('/api/system/boot/usb-next', z.object({ success: z.boolean() }), undefined, 'DELETE');
+  return mutateRawApi('/api/system/boot/usb-next', BootActionResponseSchema, undefined, 'DELETE');
 }
 
 // ---------------------------------------------------------------------------

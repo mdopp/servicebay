@@ -58,8 +58,8 @@ export default function NasBackupPanel({ state, scheduleLine }: Props) {
     try {
       // Restore the SPECIFIC snapshot the operator picked (#1865), not just
       // the latest — recovering from before a silently-corrupted run.
-      await restoreFromExternalBackup(tarName);
-      addToast('success', 'Restored from NAS', `${tarName} restored successfully`);
+      const data = await restoreFromExternalBackup(service, tarName);
+      addToast('success', 'Restored from NAS', `${tarName} → ${data.dataDir} (${data.files} files)`);
     } catch (error) {
       addToast('error', 'NAS restore failed', error instanceof Error ? error.message : 'Unknown error');
     } finally {
@@ -99,7 +99,7 @@ export default function NasBackupPanel({ state, scheduleLine }: Props) {
     const { tarName } = nasDeleteTarget;
     setNasDeleting(true);
     try {
-      await deleteExternalBackup(tarName);
+      await deleteExternalBackup(nasDeleteTarget.service, tarName);
       addToast('success', 'NAS backup deleted', `${tarName} has been removed from the NAS.`);
       await fetchNasOverview();
     } catch (error) {

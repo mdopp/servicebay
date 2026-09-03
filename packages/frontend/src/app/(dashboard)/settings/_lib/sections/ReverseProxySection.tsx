@@ -45,9 +45,11 @@ export default function ReverseProxySection() {
   const handleRekey = async () => {
     setBusy('rekey');
     try {
+      // The POST answers the re-key outcome, not the CredState view — re-read
+      // it so the section reflects the freshly stored credential.
       const data = await rekeyNginxCredentials();
-      addToast('success', 'NPM admin re-keyed', 'A fresh admin password was written into NPM and saved — proxy routes preserved.');
-      setState(data);
+      addToast('success', 'NPM admin re-keyed', data.message || 'A fresh admin password was written into NPM and saved — proxy routes preserved.');
+      await load();
     } catch (e) {
       const message = e instanceof TypedFetchError
         ? e.message
