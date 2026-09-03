@@ -10,23 +10,18 @@
 
 import { z } from 'zod';
 import type { NextRequest } from 'next/server';
-import { DISPOSITIONS, type ReplanRequest } from '@servicebay/disk-import-worker';
+import { ruleSchema, type ReplanRequest } from '@servicebay/disk-import-worker';
 
-/** A single folder's explicit (partial) routing rule — every axis optional. */
-const ruleSchema = z
-  .object({
-    disposition: z.enum(DISPOSITIONS as unknown as [string, ...string[]]).optional(),
-    mode: z.enum(['merge', 'parallel']).optional(),
-    // owner is `shared` or a box-user id (free string); the engine clamps it to a
-    // single clean path segment before it ever forms a target (#1929).
-    owner: z.string().optional(),
-    // Base-root mark: drop this folder's own name, keep the structure below it
-    // (#2006 follow-up — strips redundant backup wrappers).
-    base: z.boolean().optional(),
-  })
-  .strict();
-
-/** The re-plan request: explicit rules keyed by source-relative dir + root default. */
+/**
+ * The re-plan request: explicit rules keyed by source-relative dir + root default.
+ *
+ * `ruleSchema` is the WORKER's schema (`contract/schema.ts`), not a local copy: this
+ * route used to re-declare the rule shape — dispositions widened to plain strings,
+ * owner/mode/base spelled out again — so the wire contract lived in two places and
+ * `toReplanRequest` needed a cast to get back to the engine's literal unions. One
+ * schema means `z.infer` already IS `Rule`, and a new axis on the rule cannot be
+ * accepted here without the worker knowing about it (#2747).
+ */
 const replanBodySchema = z
   .object({
     /** relDir → the (partial) Rule the operator set on that folder (`''` = root). */
@@ -58,14 +53,11 @@ export interface ApplyBody {
   replan: ReplanRequest | undefined;
 }
 
-/** Map the validated body to the worker's {@link ReplanRequest} wire shape. The
- *  zod enums validate the values at runtime; the cast narrows the inferred
- *  `string` to the engine's literal-union types (`Disposition`/`Owner`). */
+/** Map the validated body to the worker's {@link ReplanRequest} wire shape — a
+ *  pure key rename (`rules` -> `explicit`). No cast: the shared `ruleSchema`
+ *  already infers the engine's literal-union types. */
 function toReplanRequest(body: ReplanBody): ReplanRequest {
-  return {
-    explicit: body.rules as ReplanRequest['explicit'],
-    rootDefault: body.rootDefault as ReplanRequest['rootDefault'],
-  };
+  return { explicit: body.rules, rootDefault: body.rootDefault };
 }
 
 /**

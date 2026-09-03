@@ -220,10 +220,16 @@ precede the next new store.
 **For.** `packages/disk-import-worker` (5.3k LOC) is already a sandboxed one-shot
 worker with its own CLI and server layer; the backend side (`lib/diskImport/`,
 1.6k) plus `app/(dashboard)/disk-import/page.tsx` (760) plus the routes are a thin
-shell. It is a one-time migration tool, not a running service. It is already
-excluded from `check:deps` because of the `cli/main.ts ⇄ server/index.ts` cycle
-(`ARCHITECTURE_INVARIANTS.md`). Its own release cycle would keep core release
-notes about the core.
+shell. It is a one-time migration tool, not a running service. Its own release
+cycle would keep core release notes about the core.
+
+**Status (#2747).** The precondition this section named — "first the contract
+becomes explicit" — is done: the three wire documents (`status.json`, `plan.json`,
+`replan-request.json`) have zod schemas in one place
+(`packages/disk-import-worker/src/contract/schema.ts`), a two-sided contract test
+(`packages/backend/src/lib/diskImport/contract.test.ts`), and the `cli/main.ts ⇄
+server/index.ts` cycle is gone, so the package is a `check:deps` root like every
+other. A move is now a move, decidable on its own merit.
 
 **Against.** It shares the session and `mutate` scope gate, the
 `file_access_request` flow, and the canonical target-folder conventions. A second

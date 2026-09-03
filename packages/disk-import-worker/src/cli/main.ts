@@ -29,13 +29,13 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync, mkdirSync, openSync, readSync, closeSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildInventory, type ScannedFile } from '../engine/inventory';
-import { hashFileContent } from '../engine/hashFile';
+import { hashFileContent, fingerprintFileContent } from '../engine/hashFile';
 import { buildPlan, type HashResolver } from '../engine/dedup';
 import { ImportCatalog } from '../engine/catalog';
 import { applyPlan } from '../engine/plan';
@@ -46,7 +46,7 @@ import {
   scanLibrariesForOwners,
 } from '../engine/immichLibraries';
 import type { SafeExec } from '../engine/hostExec';
-import type { ImportPlan, ImportRecord } from '../engine/types';
+import type { ImportPlan } from '../engine/types';
 import {
   STATUS_FILE,
   PLAN_SIDECAR_FILE,
@@ -215,48 +215,12 @@ export async function walkMount(mount: string, fsImpl: typeof fs = fs): Promise<
 // The full-file hash now lives in the engine (`engine/hashFile.ts`) so the
 // host-side `scripts/disk-import.ts` can share this one constant-memory
 // implementation instead of keeping its own eager `readFileSync` copy (#2438).
-// Re-exported here because this module's importers (and its #2423 tests) have
-// always reached it through `cli/main`.
-export { hashFileContent, HASH_CHUNK_BYTES, type HashFileIO } from '../engine/hashFile';
-
-/** Bytes read from each end for the cheap dedup fingerprint (#1995). */
-const FINGERPRINT_EDGE_BYTES = 64 * 1024;
-
-/**
- * Cheap content FINGERPRINT: sha256 of (size + 64KB head + 64KB middle + 64KB
- * tail) — reads at most 192KB instead of the whole file. This IS the dedup
- * identity (#1995): equal size+fingerprint is treated as the same content, with
- * no full-hash confirm, so a backup disk full of same-size duplicates is not
- * read whole. A head+middle+tail+size collision between two genuinely different
- * files is astronomically unlikely, and the import is copy-only over a READ-ONLY
- * source — worst case of a false match is one file not copied (still on the
- * disk), never data loss.
- */
-export function fingerprintFileContent(record: ImportRecord): string {
-  const size = record.size;
-  const h = createHash('sha256').update(String(size));
-  const fd = openSync(record.sourcePath, 'r');
-  try {
-    if (size <= FINGERPRINT_EDGE_BYTES * 3) {
-      const buf = Buffer.allocUnsafe(size);
-      readSync(fd, buf, 0, size, 0);
-      h.update(buf);
-    } else {
-      const seg = Buffer.allocUnsafe(FINGERPRINT_EDGE_BYTES);
-      for (const offset of [
-        0,
-        Math.floor(size / 2 - FINGERPRINT_EDGE_BYTES / 2),
-        size - FINGERPRINT_EDGE_BYTES,
-      ]) {
-        readSync(fd, seg, 0, FINGERPRINT_EDGE_BYTES, offset);
-        h.update(seg);
-      }
-    }
-  } finally {
-    closeSync(fd);
-  }
-  return h.digest('hex');
-}
+// #2747 moved the cheap dedup FINGERPRINT there too, so `server/index.ts` can take
+// both hashers from the engine instead of importing back into this CLI entrypoint
+// (that edge was the `cli/main` <-> `server/index` cycle).
+// Both are re-exported here because this module's importers (and its #2423/#1995
+// tests) have always reached them through `cli/main`.
+export { hashFileContent, fingerprintFileContent, HASH_CHUNK_BYTES, type HashFileIO } from '../engine/hashFile';
 
 /** IO seams — injected so the run is testable without a real device/agent. */
 export interface WorkerIO {
