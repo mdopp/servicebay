@@ -84,6 +84,29 @@ describe('ServiceHealthPoller.probe — HTTP', () => {
     expect(h.message).toMatch(/ECONNREFUSED/);
   });
 
+  // #2656 — the reported tile read exactly `fetch failed` and nothing else,
+  // which is undici's whole message: the address it could not reach hangs off
+  // `cause`. Without it, a probe aimed at the wrong port and a service that is
+  // genuinely down are indistinguishable from the UI.
+  it('unwraps undici\'s `fetch failed` onto the cause that names the address', async () => {
+    const wrapped = new TypeError('fetch failed');
+    (wrapped as Error & { cause?: unknown }).cause = new Error('connect ECONNREFUSED 127.0.0.1:8700');
+    fetchSpy.mockRejectedValueOnce(wrapped);
+    const poller = new ServiceHealthPoller();
+    const h = await poller.probe({ nodeName: 'Local', serviceName: 'x', config: http('http://localhost:8700/healthz') });
+    expect(h.ready).toBe(false);
+    expect(h.message).toBe('fetch failed: connect ECONNREFUSED 127.0.0.1:8700');
+  });
+
+  it('does not repeat a cause the message already carries', async () => {
+    const wrapped = new TypeError('connect ECONNREFUSED 127.0.0.1:8700');
+    (wrapped as Error & { cause?: unknown }).cause = new Error('connect ECONNREFUSED 127.0.0.1:8700');
+    fetchSpy.mockRejectedValueOnce(wrapped);
+    const poller = new ServiceHealthPoller();
+    const h = await poller.probe({ nodeName: 'Local', serviceName: 'x', config: http('http://x/h') });
+    expect(h.message).toBe('connect ECONNREFUSED 127.0.0.1:8700');
+  });
+
   it('passes through `degraded` + `message` + `deps`', async () => {
     fetchSpy.mockResolvedValueOnce(makeResponse(200, {
       ready: true,

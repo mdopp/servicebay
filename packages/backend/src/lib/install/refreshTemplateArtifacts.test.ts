@@ -193,3 +193,95 @@ describe('refreshTemplateArtifacts (#2530)', () => {
     expect(items[0].yaml).toBe(STALE_YAML);
   });
 });
+
+/**
+ * #2656 — the ADR 0012 half of the question: does a REDEPLOY converge an
+ * installed manifest whose `ports:` block the current template no longer
+ * declares, or is that accepted drift?
+ *
+ * It converges, and this is where: the redeploy re-resolves the pod spec from
+ * the registry and replaces the item's yaml WHOLESALE, so a block the template
+ * has dropped is gone from what `deployKubeService` writes to
+ * `<service>.yml`. That is reconciliation via the existing, well-trodden
+ * deploy path — no separate heal action, no auto-reconcile behind anyone's
+ * back. The tests below pin it in both directions, because "the stale block
+ * survived a redeploy" is unfalsifiable from the outside: the service just
+ * keeps answering on the old port and the health tile keeps disagreeing.
+ */
+describe('a redeploy converges a stale ports: block onto the current template (#2656)', () => {
+  /** What the box has installed: a published hostPort from an older template. */
+  const INSTALLED_WITH_PORTS = `apiVersion: v1
+kind: Pod
+metadata:
+  name: chronik
+  annotations:
+    servicebay.ports: "8701/tcp"
+spec:
+  hostNetwork: true
+  containers:
+  - name: chronik
+    image: example/chronik:latest
+    ports:
+      - containerPort: 8701
+        hostPort: 8701
+`;
+
+  /** The template today: hostNetwork, publishes nothing, no ports: block. */
+  const TEMPLATE_WITHOUT_PORTS = `apiVersion: v1
+kind: Pod
+metadata:
+  name: chronik
+spec:
+  hostNetwork: true
+  containers:
+  - name: chronik
+    image: example/chronik:latest
+`;
+
+  const installed = (yaml: string): JobInputItem[] => [{ name: 'chronik', checked: true, yaml }];
+
+  it('drops a ports: block the template no longer declares', async () => {
+    getTemplateYaml.mockResolvedValue(TEMPLATE_WITHOUT_PORTS);
+    const items = installed(INSTALLED_WITH_PORTS);
+
+    const result = await refreshTemplateArtifacts(items, 'Built-in');
+
+    expect(result.updated).toEqual(['chronik']);
+    expect(items[0].yaml).toBe(TEMPLATE_WITHOUT_PORTS);
+    expect(items[0].yaml).not.toContain('hostPort');
+    expect(items[0].yaml).not.toContain('servicebay.ports');
+  });
+
+  it('adds a ports: block the template has since gained', async () => {
+    // The same convergence the other way round — the installed manifest is the
+    // one missing the block, and the redeploy must not preserve that either.
+    getTemplateYaml.mockResolvedValue(INSTALLED_WITH_PORTS);
+    const items = installed(TEMPLATE_WITHOUT_PORTS);
+
+    const result = await refreshTemplateArtifacts(items, 'Built-in');
+
+    expect(result.updated).toEqual(['chronik']);
+    expect(items[0].yaml).toContain('hostPort: 8701');
+  });
+
+  it('converges the healthcheck annotation the poller then probes', async () => {
+    // The two halves of #2656 meet here: the deployed manifest is what
+    // `bootstrapServiceHealth` reads, so converging it IS what makes the
+    // health tile agree with the template again.
+    const stale = INSTALLED_WITH_PORTS.replace(
+      '    servicebay.ports: "8701/tcp"',
+      '    servicebay.healthcheck: |\n      url: http://localhost:8701/healthz',
+    );
+    const current = TEMPLATE_WITHOUT_PORTS.replace(
+      '  name: chronik',
+      '  name: chronik\n  annotations:\n    servicebay.healthcheck: |\n      url: http://localhost:8700/healthz',
+    );
+    getTemplateYaml.mockResolvedValue(current);
+    const items = installed(stale);
+
+    await refreshTemplateArtifacts(items, 'Built-in');
+
+    expect(items[0].yaml).toContain('http://localhost:8700/healthz');
+    expect(items[0].yaml).not.toContain('8701');
+  });
+});
