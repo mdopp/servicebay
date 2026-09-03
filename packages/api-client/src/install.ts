@@ -9,6 +9,7 @@
 
 import { z } from 'zod';
 import { rawApi } from './client';
+import { lenientArray } from './lenient';
 
 export type { JobState, JobPhase } from '@/lib/install/jobStore';
 export type { StackHealth, ChildHealthState } from '@/lib/install/stackHealth';
@@ -88,7 +89,9 @@ export const TemplateUpgradeSummarySchema = z.object({
 export type TemplateUpgradeSummary = z.infer<typeof TemplateUpgradeSummarySchema>;
 
 export const PendingTemplateUpgradesResponseSchema = z.object({
-  pending: z.array(TemplateUpgradeSummarySchema),
+  // Per-row lenient (#2784) — one template whose summary row fails validation
+  // must not hide every other pending upgrade.
+  pending: lenientArray(TemplateUpgradeSummarySchema, 'GET /api/system/templates/upgrades-pending#pending'),
   hasBreakingChange: z.boolean(),
 });
 export type PendingTemplateUpgradesResponse = z.infer<typeof PendingTemplateUpgradesResponseSchema>;
@@ -115,7 +118,7 @@ export const TemplateUpgradePreviewSchema = z.object({
   currentVersion: z.number(),
   hasUpgrade: z.boolean(),
   hasBreakingChange: z.boolean(),
-  sections: z.array(TemplateUpgradeSectionSchema),
+  sections: lenientArray(TemplateUpgradeSectionSchema, 'GET /api/system/templates/:name/upgrade-preview#sections'),
 });
 export type TemplateUpgradePreview = z.infer<typeof TemplateUpgradePreviewSchema>;
 

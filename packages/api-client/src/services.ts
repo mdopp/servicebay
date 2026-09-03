@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import { rawApi, mutateRawApi } from './client';
+import { lenientArray } from './lenient';
 
 // ---------------------------------------------------------------------------
 // POST /api/services/validate-yaml
@@ -194,7 +195,9 @@ export const ServiceSummarySchema = z
 
 export type ServiceSummaryView = z.infer<typeof ServiceSummarySchema>;
 
-export const ServiceSummaryListSchema = z.array(ServiceSummarySchema);
+/** Per-row lenient (#2784): a partially-migrated service row is dropped, the
+ *  rest of the list still renders. */
+export const ServiceSummaryListSchema = lenientArray(ServiceSummarySchema, 'GET /api/services');
 
 /** GET /api/services?node=… — bare array, not the `{ok,data}` envelope. */
 export function fetchServiceSummaries(node?: string) {

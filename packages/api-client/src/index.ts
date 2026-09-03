@@ -27,6 +27,7 @@ export * from './systemUpdates';
 export * from './update';
 export * from './serviceView';
 export * from './client';
+export * from './lenient';
 export * from './apiFetch';
 export * from './lib-types';
 export * from './lib-utils';

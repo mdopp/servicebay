@@ -12,6 +12,7 @@
 
 import { z } from 'zod';
 import { mutateApi, rawApi, mutateRawApi } from './client';
+import { lenientArray } from './lenient';
 import type { Check, StackManifest } from './lib-types';
 
 // ---------------------------------------------------------------------------
@@ -119,7 +120,7 @@ export type HealthCheckRow = z.infer<typeof HealthCheckRowSchema>;
  *  the dashboards' existing `Check`-typed state — see the field-for-field
  *  schema above. */
 export function getHealthChecks(): Promise<Check[]> {
-  return rawApi('/api/health/checks', z.array(HealthCheckRowSchema));
+  return rawApi('/api/health/checks', lenientArray(HealthCheckRowSchema, 'GET /api/health/checks'));
 }
 
 /** POST /api/health/checks — create/update. Goes through `withApiHandler`
@@ -166,7 +167,10 @@ const CheckHistoryRowSchema = z
   })
   .passthrough();
 export function getHealthCheckHistory(id: string) {
-  return rawApi(`/api/health/checks/${encodeURIComponent(id)}/history`, z.array(CheckHistoryRowSchema));
+  return rawApi(
+    `/api/health/checks/${encodeURIComponent(id)}/history`,
+    lenientArray(CheckHistoryRowSchema, 'GET /api/health/checks/:id/history'),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -190,16 +194,11 @@ const NodeContainerSchema = z
   .passthrough();
 export type NodeContainer = z.infer<typeof NodeContainerSchema>;
 
-/** Lenient list read: one odd row (an id-less record, a future shape) must not
- *  empty the whole picker, so rows are parsed individually and the
+/** Lenient list read (#2784): one odd row (an id-less record, a future shape)
+ *  must not empty the whole picker, so rows are parsed individually and the
  *  unparseable ones are dropped rather than failing the array. A non-array
  *  body still throws — that is a real route break. */
-const NodeContainerListSchema = z.array(z.unknown()).transform(rows =>
-  rows.flatMap(row => {
-    const parsed = NodeContainerSchema.safeParse(row);
-    return parsed.success ? [parsed.data] : [];
-  }),
-);
+const NodeContainerListSchema = lenientArray(NodeContainerSchema, 'GET /api/containers');
 
 export function getNodeContainers(node: string) {
   return rawApi(`/api/containers?node=${encodeURIComponent(node)}`, NodeContainerListSchema);
@@ -210,13 +209,19 @@ export function getNodeContainers(node: string) {
  *  response shape). The resource picker only reads `.name`. */
 const NamedServiceSchema = z.object({ name: z.string() }).passthrough();
 export function getNodeServices(node: string) {
-  return rawApi(`/api/services?node=${encodeURIComponent(node)}`, z.array(NamedServiceSchema));
+  return rawApi(
+    `/api/services?node=${encodeURIComponent(node)}`,
+    lenientArray(NamedServiceSchema, 'GET /api/services?node='),
+  );
 }
 
 /** GET /api/system/services?node= — raw systemd unit list; the picker reads `.unit`. */
 const SystemServiceSchema = z.object({ unit: z.string() }).passthrough();
 export function getNodeSystemServices(node: string) {
-  return rawApi(`/api/system/services?node=${encodeURIComponent(node)}`, z.array(SystemServiceSchema));
+  return rawApi(
+    `/api/system/services?node=${encodeURIComponent(node)}`,
+    lenientArray(SystemServiceSchema, 'GET /api/system/services'),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -298,7 +303,7 @@ export const ApiLinkPayloadSchema = z
 
 /** GET /api/services?scope=links — raw seam. */
 export function getExternalLinks() {
-  return rawApi('/api/services?scope=links', z.array(ApiLinkPayloadSchema));
+  return rawApi('/api/services?scope=links', lenientArray(ApiLinkPayloadSchema, 'GET /api/services?scope=links'));
 }
 
 export interface ExternalLinkWritePayload {
@@ -336,7 +341,9 @@ const StackSummarySchema = z
   })
   .passthrough();
 
-const StacksResponseSchema = z.object({ stacks: z.array(StackSummarySchema) }).passthrough();
+const StacksResponseSchema = z
+  .object({ stacks: lenientArray(StackSummarySchema, 'GET /api/system/stacks#stacks') })
+  .passthrough();
 
 /** One row of GET /api/system/stacks' `stacks` array, with `manifest` typed
  *  as the real `StackManifest` shape (zod validates it loosely at runtime —

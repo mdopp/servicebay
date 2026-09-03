@@ -9,6 +9,7 @@
 
 import { z } from 'zod';
 import { rawApi, mutateRawApi } from './client';
+import { lenientArray } from './lenient';
 import type { NetworkGraph } from './lib-types';
 
 // ---------------------------------------------------------------------------
@@ -39,9 +40,12 @@ const NetworkEdgeSchema = z
   })
   .passthrough();
 
+// Per-row lenient (#2784): a node/edge that fails validation is dropped and
+// logged, so one malformed row cannot collapse the whole topology to an empty
+// graph. A non-array `nodes`/`edges` still fails — that is a route break.
 const NetworkGraphSchema = z.object({
-  nodes: z.array(NetworkNodeSchema),
-  edges: z.array(NetworkEdgeSchema),
+  nodes: lenientArray(NetworkNodeSchema, 'GET /api/network/graph#nodes'),
+  edges: lenientArray(NetworkEdgeSchema, 'GET /api/network/graph#edges'),
 });
 
 /** GET /api/network/graph?node=… — raw seam. Typed as the full `NetworkGraph`

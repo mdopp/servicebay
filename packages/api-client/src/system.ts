@@ -8,6 +8,7 @@
 
 import { z } from 'zod';
 import { rawApi, mutateRawApi } from './client';
+import { lenientArray } from './lenient';
 
 // ---------------------------------------------------------------------------
 // GET /api/system/version
@@ -40,7 +41,9 @@ export const DiagnoseProbeSchema = z
 
 export const DiagnoseResultSchema = z.object({
   node: z.string().optional(),
-  probes: z.array(DiagnoseProbeSchema),
+  // Per-row lenient (#2784): a probe row from an older/newer backend is
+  // dropped, the rest of the diagnose result still renders.
+  probes: lenientArray(DiagnoseProbeSchema, 'POST /api/system/diagnose#probes'),
 });
 export type DiagnoseResult = z.infer<typeof DiagnoseResultSchema>;
 
@@ -65,10 +68,12 @@ export function detectGateway() {
 
 // ---------------------------------------------------------------------------
 // GET/POST /api/system/storage — RAID + block-device layout, and mounting
-// a detected array. Kept intentionally strict on the fields the #2626
-// storage guard relies on (device/mountpoint/degraded, …): a malformed
-// response should fail validation and surface as "disk layout unknown"
-// rather than being coerced into a shape that looks safe when it isn't.
+// a detected array. Kept intentionally strict on the FIELDS the #2626
+// storage guard relies on (device/mountpoint/degraded, …): none of them get
+// a `.catch(...)` default, so a row is never coerced into a shape that looks
+// safe when it isn't. #2784 changes only the array level: such a row is now
+// dropped-and-warned instead of failing the whole read, so one unparseable
+// array cannot blank the entire disk list.
 // ---------------------------------------------------------------------------
 
 export const RaidArraySchema = z
@@ -123,8 +128,9 @@ export const DetectedDriveSchema: z.ZodType<DetectedDrive> = z.lazy(() =>
 
 export const StorageLayoutSchema = z
   .object({
-    raids: z.array(RaidArraySchema).optional(),
-    drives: z.array(DetectedDriveSchema).optional(),
+    // Per-row lenient (#2784): one odd array/drive must not empty the picker.
+    raids: lenientArray(RaidArraySchema, 'GET /api/system/storage#raids').optional(),
+    drives: lenientArray(DetectedDriveSchema, 'GET /api/system/storage#drives').optional(),
   })
   .passthrough();
 

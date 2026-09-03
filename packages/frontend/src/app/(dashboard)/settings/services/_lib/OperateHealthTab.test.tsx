@@ -135,6 +135,33 @@ describe('OperateHealthTab (#2080 attribution)', () => {
     expect(screen.queryByText('Domain — paperless.dopp.cloud')).toBeNull();
   });
 
+  // #2784 — the batch-10 box-verify symptom, at the DOM level: ONE row the
+  // backend emitted without `interval`/`enabled`/`created_at` used to fail the
+  // whole `z.array(HealthCheckRowSchema)` parse, so `useServiceHealth` settled
+  // to an empty state and the tab rendered "no checks" instead of the rows
+  // that were perfectly fine. The list read is per-row now.
+  it('still renders the good rows when one row is missing interval/enabled/created_at', async () => {
+    const partial = row({ name: 'Service: partial', type: 'service', target: 'jellyfin', status: 'ok' });
+    delete (partial as Record<string, unknown>).interval;
+    delete (partial as Record<string, unknown>).enabled;
+    delete (partial as Record<string, unknown>).created_at;
+
+    global.fetch = mockChecks([
+      row({ name: 'Service: jellyfin', type: 'service', target: 'jellyfin', status: 'ok' }),
+      partial,
+      row({ id: 'diagnose:dns_routing', name: 'Self-diagnose: DNS routing', boxWide: true, status: 'ok' }),
+    ]);
+
+    render(<OperateHealthTab service={svc()} />);
+
+    await waitFor(() => expect(screen.getByText('Service: jellyfin')).toBeDefined());
+    const boxWide = screen.getByLabelText('Box-wide health checks');
+    expect(within(boxWide).getByText('Self-diagnose: DNS routing')).toBeDefined();
+    // only the malformed row is missing — the tab is NOT empty
+    expect(screen.queryByText('Service: partial')).toBeNull();
+    expect(screen.queryByText('No service-specific health checks yet.')).toBeNull();
+  });
+
   // #2078 migration: rows render via design-system primitives (StatusDot per
   // check, no ad-hoc green-500/red-500 icon-box literals).
   it('renders check status via the StatusDot primitive, not raw colour literals', async () => {

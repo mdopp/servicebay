@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import { rawApi, mutateRawApi } from './client';
+import { lenientArray } from './lenient';
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -28,7 +29,9 @@ export const AssistSummarySchema = z.object({
 export type AssistSummaryView = z.infer<typeof AssistSummarySchema>;
 
 export const AssistListResponseSchema = z.object({
-  assists: z.array(AssistSummarySchema),
+  // Per-row lenient (#2784): a drifted catalog entry is dropped, the rest of
+  // the catalog still lists.
+  assists: lenientArray(AssistSummarySchema, 'GET /api/assists#assists'),
 });
 
 export const AssistContentResponseSchema = z.object({
@@ -47,7 +50,7 @@ export type AssistHistoryEntryView = z.infer<typeof AssistHistoryEntrySchema>;
 
 export const AssistHistoryResponseSchema = z.object({
   id: z.string().optional(),
-  history: z.array(AssistHistoryEntrySchema),
+  history: lenientArray(AssistHistoryEntrySchema, 'GET /api/assists/:id/history#history'),
 });
 
 export const AssistProposeResponseSchema = z.object({

@@ -11,6 +11,7 @@
 
 import { z } from 'zod';
 import { rawApi, mutateRawApi, TypedFetchError } from './client';
+import { lenientArray } from './lenient';
 import { apiFetch } from './apiFetch';
 
 // ---------------------------------------------------------------------------
@@ -57,7 +58,7 @@ export const McpAuditEntrySchema = z.object({
 export type McpAuditEntry = z.infer<typeof McpAuditEntrySchema>;
 
 export const McpAuditResponseSchema = z.object({
-  entries: z.array(McpAuditEntrySchema).nullable().optional(),
+  entries: lenientArray(McpAuditEntrySchema, 'GET /api/system/mcp-audit#entries').nullable().optional(),
 });
 
 export type McpAuditResponse = z.infer<typeof McpAuditResponseSchema>;
@@ -226,8 +227,10 @@ export const BootEntrySchema = z.object({
 export type BootEntry = z.infer<typeof BootEntrySchema>;
 
 export const BootStatusSchema = z.object({
-  entries: z.array(BootEntrySchema),
-  candidates: z.array(BootEntrySchema),
+  // Per-row lenient (#2784): one unparseable efibootmgr row is dropped, the
+  // rest of the boot menu still renders.
+  entries: lenientArray(BootEntrySchema, 'GET /api/system/boot/usb-next#entries'),
+  candidates: lenientArray(BootEntrySchema, 'GET /api/system/boot/usb-next#candidates'),
   bootNext: z.string().nullable(),
   bootCurrent: z.string().nullable(),
   bootOrder: z.array(z.string()),
@@ -450,7 +453,7 @@ export const AccessRequestSchema = z.object({
 export type AccessRequest = z.infer<typeof AccessRequestSchema>;
 
 export const AccessRequestsResponseSchema = z.object({
-  requests: z.array(AccessRequestSchema),
+  requests: lenientArray(AccessRequestSchema, 'GET /api/system/access-requests#requests'),
 });
 
 export type AccessRequestsResponse = z.infer<typeof AccessRequestsResponseSchema>;
@@ -651,7 +654,7 @@ export const TokenSummarySchema = z.object({
 export type TokenSummary = z.infer<typeof TokenSummarySchema>;
 
 export const ApiTokensResponseSchema = z.object({
-  tokens: z.array(TokenViewSchema),
+  tokens: lenientArray(TokenViewSchema, 'GET /api/system/api-tokens#tokens'),
   // Always present in production; several unit-test mocks return only
   // `{ tokens }`, so both stay optional to match the section's own
   // `data.summary ?? null` / `data.currentTokenId ?? null` fallbacks.
@@ -784,7 +787,7 @@ export const ApprovalRequestSchema = z.object({
 export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>;
 
 export const ApprovalsResponseSchema = z.object({
-  approvals: z.array(ApprovalRequestSchema),
+  approvals: lenientArray(ApprovalRequestSchema, 'GET /api/approvals#approvals'),
 });
 
 export type ApprovalsResponse = z.infer<typeof ApprovalsResponseSchema>;
@@ -854,9 +857,9 @@ export const CredentialUrlHostSchema = z.object({
 export const SystemCredentialsSchema = z.object({
   manifest: z.object({
     savedAt: z.string(),
-    credentials: z.array(CredentialViewSchema),
+    credentials: lenientArray(CredentialViewSchema, 'GET /api/system/credentials#credentials'),
   }).nullable(),
-  proxyHosts: z.array(CredentialUrlHostSchema),
+  proxyHosts: lenientArray(CredentialUrlHostSchema, 'GET /api/system/credentials#proxyHosts'),
   publicDomain: z.string().nullable(),
 });
 
@@ -943,7 +946,7 @@ export type SambaUser = z.infer<typeof SambaUserSchema>;
 
 export const SambaUsersResponseSchema = z.object({
   ok: z.literal(true),
-  users: z.array(SambaUserSchema),
+  users: lenientArray(SambaUserSchema, 'GET /api/system/file-share/samba/users#users'),
   added: z.array(z.string()),
   removed: z.array(z.string()),
 });
@@ -1138,7 +1141,7 @@ export type BulkRevokeResult = z.infer<typeof BulkRevokeResultSchema>;
 export const BulkRevokeReportSchema = z.object({
   requested: z.number(),
   revoked: z.number(),
-  results: z.array(BulkRevokeResultSchema),
+  results: lenientArray(BulkRevokeResultSchema, 'POST /api/system/api-tokens/revoke#results'),
 });
 
 export type BulkRevokeReport = z.infer<typeof BulkRevokeReportSchema>;
