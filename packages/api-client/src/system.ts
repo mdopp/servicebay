@@ -233,3 +233,31 @@ const ReinstallDismissResultSchema = z
 export function dismissReinstallBanner() {
   return mutateRawApi('/api/system/reinstall', ReinstallDismissResultSchema, undefined, 'DELETE');
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/system/files — the file-viewer overlay's raw file read. Bare
+// `NextResponse.json(...)` body (`{ content }` / `{ error }`) despite the
+// route using `withApiHandler` — it returns a `Response` directly, which
+// bypasses the `{ ok, data }` auto-envelope — so `rawApi`.
+// ---------------------------------------------------------------------------
+
+export const FileContentSchema = z.object({ content: z.string().catch('') }).passthrough();
+
+/** GET /api/system/files?path=…&node=… */
+export function fetchFileContent(path: string, node?: string, signal?: AbortSignal) {
+  const params = new URLSearchParams({ path });
+  if (node) params.set('node', node);
+  return rawApi(`/api/system/files?${params.toString()}`, FileContentSchema, { cache: 'no-store', signal });
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/help — the SectionHelp popover's markdown content read. Same
+// bare-body shape as the file read above.
+// ---------------------------------------------------------------------------
+
+export const HelpContentSchema = z.object({ content: z.string().catch('') }).passthrough();
+
+/** GET /api/help?id=… */
+export function fetchHelpContent(id: string) {
+  return rawApi(`/api/help?id=${encodeURIComponent(id)}`, HelpContentSchema);
+}

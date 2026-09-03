@@ -115,6 +115,7 @@ export default function ActionProgressModal({ isOpen, onClose, serviceName, node
   const startAction = useCallback(async (signal: AbortSignal, term: Terminal) => {
     try {
       const query = nodeName && nodeName !== 'Local' ? `?node=${nodeName}` : '';
+      // eslint-disable-next-line sb/no-raw-api-fetch -- streamed terminal output (body.getReader()), not a JSON response
       const response = await fetch(`/api/services/${serviceName}/action-stream${query}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

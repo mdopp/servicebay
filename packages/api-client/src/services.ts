@@ -204,3 +204,43 @@ export function fetchServiceSummaries(node?: string) {
   const query = node ? `?node=${node}` : '';
   return rawApi(`/api/services${query}`, ServiceSummaryListSchema);
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/services/:name/reconfigure-preview — "Re-render from template"
+// (#2537/#421). Doesn't write or restart; the editor drops the returned
+// yamlContent in and the existing save flow handles the rest. Bare
+// `NextResponse.json(...)` body (success `{yamlContent, unresolved}`,
+// failure `{error}` — possibly with extra `missing`/`unresolvedSecrets`
+// fields the caller doesn't read), so rawApi.
+// ---------------------------------------------------------------------------
+
+export const ReconfigurePreviewSchema = z
+  .object({
+    yamlContent: z.string(),
+    // #2537 — variables the server could not resolve render empty; named
+    // here so the caller can warn the operator instead of a silent blank.
+    unresolved: z.array(z.string()).catch([]),
+  })
+  .passthrough();
+export type ReconfigurePreviewView = z.infer<typeof ReconfigurePreviewSchema>;
+
+/** GET /api/services/:name/reconfigure-preview */
+export function fetchReconfigurePreview(name: string) {
+  return rawApi(`/api/services/${encodeURIComponent(name)}/reconfigure-preview`, ReconfigurePreviewSchema);
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/services/:name/rename
+// ---------------------------------------------------------------------------
+
+const RenameResultSchema = z.object({ success: z.boolean().optional() }).passthrough();
+
+/** POST /api/services/:name/rename?node=… — Body: { newName }. */
+export function renameService(name: string, newName: string, nodeName?: string) {
+  const query = nodeName ? `?node=${encodeURIComponent(nodeName)}` : '';
+  return mutateRawApi(
+    `/api/services/${encodeURIComponent(name)}/rename${query}`,
+    RenameResultSchema,
+    { newName },
+  );
+}

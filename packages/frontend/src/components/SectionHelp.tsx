@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { CircleHelp, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { fetchHelpContent, TypedFetchError } from '@servicebay/api-client';
 
 interface SectionHelpProps {
   helpId: string;
@@ -23,16 +24,14 @@ export default function SectionHelp({ helpId, label, className, title = 'Section
     setIsOpen(true);
     if (!content) {
       setLoading(true);
-      fetch(`/api/help?id=${helpId}`)
-        .then(res => res.json())
+      fetchHelpContent(helpId)
         .then(data => {
-          if (data.content) {
-            setContent(data.content);
-          } else {
-            setContent('Help content not found.');
-          }
+          setContent(data.content || 'Help content not found.');
         })
-        .catch(() => setContent('Failed to load help content.'))
+        .catch((error: unknown) => {
+          const status = error instanceof TypedFetchError ? error.status : undefined;
+          setContent(status === 404 ? 'Help content not found.' : 'Failed to load help content.');
+        })
         .finally(() => setLoading(false));
     }
   };

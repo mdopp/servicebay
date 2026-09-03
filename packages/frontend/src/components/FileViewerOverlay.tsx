@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, FileText, RefreshCw, X } from 'lucide-react';
+import { fetchFileContent } from '@servicebay/api-client';
 import FileViewer from '@/components/FileViewer';
 import FocusTrap from '@/components/FocusTrap';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
@@ -42,22 +43,9 @@ export default function FileViewerOverlay({ isOpen, path, nodeName, onClose }: F
   }, [isOpen, nodeLabel, nodeName, path]);
 
   const fetchContent = useCallback(async (activePath: string, activeNode?: string, signal?: AbortSignal) => {
-    const params = new URLSearchParams({ path: activePath });
-    if (activeNode && activeNode !== 'Local') {
-      params.set('node', activeNode);
-    }
-
-    const res = await fetch(`/api/system/files?${params.toString()}`, {
-      cache: 'no-store',
-      signal
-    });
-
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(payload.error || 'Unable to read file');
-    }
-
-    return payload.content || '';
+    const node = activeNode && activeNode !== 'Local' ? activeNode : undefined;
+    const { content } = await fetchFileContent(activePath, node, signal);
+    return content || '';
   }, []);
 
   useEffect(() => {
