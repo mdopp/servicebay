@@ -14,9 +14,9 @@ vi.mock('@/lib/config', () => ({
   }),
 }));
 
-// executor.exec / execArgv are stubbed per test.
+// executor.exec / execSafe are stubbed per test.
 //
-// execArgv now serves two distinct podman calls: `manifest inspect` (registry
+// execSafe now serves two distinct podman calls: `manifest inspect` (registry
 // digest) and `inspect servicebay --format {{.ImageDigest}}` (running container
 // digest). The default impl routes by argv so a test that only sets the
 // registry manifest still gets a sane "running digest" answer; tests that care
@@ -29,7 +29,7 @@ const mockRunningBuild = vi.hoisted(() => ({
 }));
 const mockExec = vi.hoisted(() => ({
   exec: vi.fn(async (_cmd: string, _opts?: unknown) => ({ stdout: '', stderr: '' })),
-  execArgv: vi.fn(async (_argv: string[], _opts?: unknown) => ({ stdout: '', stderr: '' })),
+  execSafe: vi.fn(async (_argv: string[], _opts?: unknown) => ({ stdout: '', stderr: '' })),
 }));
 vi.mock('@/lib/executor', () => ({
   getExecutor: () => mockExec,
@@ -64,13 +64,13 @@ function mockReleaseTag(tag: string) {
   ) as typeof fetch;
 }
 
-// Route execArgv by which podman subcommand it is. `manifestStdout` is the
+// Route execSafe by which podman subcommand it is. `manifestStdout` is the
 // `podman manifest inspect` (registry) answer; `mockRunningDigest.value` is the
-// running container's digest. Tests that set execArgv via mockResolvedValue
+// running container's digest. Tests that set execSafe via mockResolvedValue
 // override this entirely (their value answers BOTH calls — fine where the
 // running-digest lookup just needs to not be the registry digest).
 function routeExecArgv(manifestStdout: string) {
-  mockExec.execArgv.mockImplementation(async (argv: string[]) => {
+  mockExec.execSafe.mockImplementation(async (argv: string[]) => {
     if (argv.includes('manifest')) return { stdout: manifestStdout, stderr: '' };
     if (argv.includes('inspect')) {
       // Two distinct `podman inspect servicebay` calls now: the digest lookup
@@ -90,7 +90,7 @@ beforeEach(() => {
   mockRunningDigest.value = null;
   mockRunningBuild.value = 'ghcr.io/mdopp/servicebay:latest|1d3fa8d6c7d60ddc24f8b75ee7b49f5a58796d10';
   mockExec.exec.mockResolvedValue({ stdout: '', stderr: '' });
-  mockExec.execArgv.mockResolvedValue({ stdout: '', stderr: '' });
+  mockExec.execSafe.mockResolvedValue({ stdout: '', stderr: '' });
   global.fetch = ORIG_FETCH;
   // Pin the running version so semver comparisons are deterministic.
   vi.spyOn(process, 'cwd').mockReturnValue('/nonexistent-pkg-path');
@@ -158,7 +158,7 @@ describe('checkForUpdates — tag/image reconciliation', () => {
   it('tag ahead but remote digest unknown (registry unreachable) → falls back to tag (available)', async () => {
     mockReleaseTag('4.104.0');
     mockConfig.current.autoUpdate.appliedImageDigest = 'sha256:OLD';
-    mockExec.execArgv.mockRejectedValue(new Error('no registry'));
+    mockExec.execSafe.mockRejectedValue(new Error('no registry'));
 
     const res = await checkForUpdates();
     expect(res.hasUpdate).toBe(true);
@@ -168,7 +168,7 @@ describe('checkForUpdates — tag/image reconciliation', () => {
   it('tag ahead with no applied-digest baseline yet → falls back to tag (available)', async () => {
     mockReleaseTag('4.104.0');
     // no appliedImageDigest
-    mockExec.execArgv.mockResolvedValue({ stdout: manifestList('sha256:NEW'), stderr: '' });
+    mockExec.execSafe.mockResolvedValue({ stdout: manifestList('sha256:NEW'), stderr: '' });
 
     const res = await checkForUpdates();
     expect(res.hasUpdate).toBe(true);
@@ -176,7 +176,7 @@ describe('checkForUpdates — tag/image reconciliation', () => {
 
   it('tag not ahead seeds the applied digest baseline from the registry', async () => {
     mockReleaseTag('0.0.0'); // equal to the 0.0.0 fallback current → not ahead
-    mockExec.execArgv.mockResolvedValue({ stdout: manifestList('sha256:SEED'), stderr: '' });
+    mockExec.execSafe.mockResolvedValue({ stdout: manifestList('sha256:SEED'), stderr: '' });
 
     const res = await checkForUpdates();
     expect(res.hasUpdate).toBe(false);
@@ -242,7 +242,7 @@ describe('checkForUpdates — running build vs. release (#2708)', () => {
 
   it('unknown running build (inspect fails) is not silently treated as a release', async () => {
     mockReleaseTag('0.0.0');
-    mockExec.execArgv.mockRejectedValue(new Error('no podman'));
+    mockExec.execSafe.mockRejectedValue(new Error('no podman'));
 
     const res = await checkForUpdates();
     expect(res.running?.channel).toBeNull();
@@ -259,7 +259,7 @@ describe('performUpdate — honest pull result', () => {
   it('pull unchanged (image not ready) → reports building, does NOT recreate/restart', async () => {
     mockConfig.current.autoUpdate.appliedImageDigest = 'sha256:SAME';
     mockExec.exec.mockResolvedValue({ stdout: 'up to date', stderr: '' }); // podman pull
-    mockExec.execArgv.mockResolvedValue({ stdout: manifestList('sha256:SAME'), stderr: '' }); // remote digest
+    mockExec.execSafe.mockResolvedValue({ stdout: manifestList('sha256:SAME'), stderr: '' }); // remote digest
 
     const res = await performUpdate('4.104.0');
     await flush();
@@ -267,8 +267,11 @@ describe('performUpdate — honest pull result', () => {
     expect(res.updated).toBe(false);
     expect(res.message).toMatch(/still building|latest/i);
     // never issued the recreate or the systemctl restart
-    const recreated = mockExec.exec.mock.calls.some((c) => String(c[0]).includes('rm -f servicebay'));
-    const restarted = mockExec.exec.mock.calls.some((c) => String(c[0]).includes('systemctl'));
+    // #2737: the recreate/restart argv rides execSafe; exec is the shell tier.
+    const line = (c: unknown[]) => (Array.isArray(c[0]) ? c[0].join(' ') : String(c[0]));
+    const issued = [...mockExec.exec.mock.calls, ...mockExec.execSafe.mock.calls].map(line);
+    const recreated = issued.some((c) => c.includes('rm -f servicebay'));
+    const restarted = issued.some((c) => c.includes('systemctl'));
     expect(recreated).toBe(false);
     expect(restarted).toBe(false);
   });
@@ -276,7 +279,7 @@ describe('performUpdate — honest pull result', () => {
   it('pull advanced the image → persists new digest, recreates (rm -f) and restarts (#2063)', async () => {
     mockConfig.current.autoUpdate.appliedImageDigest = 'sha256:OLD';
     mockExec.exec.mockResolvedValue({ stdout: 'Pulled new layers', stderr: '' });
-    mockExec.execArgv.mockResolvedValue({ stdout: manifestList('sha256:NEW'), stderr: '' });
+    mockExec.execSafe.mockResolvedValue({ stdout: manifestList('sha256:NEW'), stderr: '' });
 
     const res = await performUpdate('4.104.0');
     await flush(); // let the detached recreate/restart run
@@ -287,8 +290,11 @@ describe('performUpdate — honest pull result', () => {
     expect(typeof mockConfig.current.autoUpdate.appliedImageUpdatedAt).toBe('string');
     expect(Number.isNaN(Date.parse(mockConfig.current.autoUpdate.appliedImageUpdatedAt as string))).toBe(false);
     // #2063: a plain restart keeps the old container — recreate with rm -f first.
-    const recreated = mockExec.exec.mock.calls.some((c) => String(c[0]).includes('rm -f servicebay'));
-    const restarted = mockExec.exec.mock.calls.some((c) => String(c[0]).includes('systemctl'));
+    // #2737: the recreate/restart argv rides execSafe; exec is the shell tier.
+    const line = (c: unknown[]) => (Array.isArray(c[0]) ? c[0].join(' ') : String(c[0]));
+    const issued = [...mockExec.exec.mock.calls, ...mockExec.execSafe.mock.calls].map(line);
+    const recreated = issued.some((c) => c.includes('rm -f servicebay'));
+    const restarted = issued.some((c) => c.includes('systemctl'));
     expect(recreated).toBe(true);
     expect(restarted).toBe(true);
   });

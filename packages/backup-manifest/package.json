@@ -1,0 +1,18 @@
+{
+  "name": "@servicebay/backup-manifest",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The single source of truth for per-service backup manifests (include/exclude/strip/transform) shared by the backend and the sandboxed backup worker. Pure data + pure helpers, no I/O — #2733 replaced the hand-synced worker fork with this package.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "js-yaml": "^4.3.2"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9"
+  }
+}

@@ -34,7 +34,8 @@ import { randomBytes } from 'node:crypto';
 import { agentManager } from '@/lib/agent/manager';
 import { getConfig } from '@/lib/config';
 import { logger } from '@/lib/logger';
-import { ServiceManager } from '@/lib/services/ServiceManager';
+import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
+import { findProxyHostByDomain } from '@/lib/npm/proxyHosts';
 import { AUTHELIA_FORWARD_AUTH_SENTINEL } from '@/lib/stackInstall/forwardAuth';
 import {
   createLldapUser,
@@ -527,52 +528,6 @@ export async function realProbeAdminDecision(publicDomain: string, host: string,
   }
 }
 
-
-/** Resolve NPM's admin API base URL on this node (the admin port, not 80/443).
- *  Mirrors the local helper in danglingProxy.ts; kept local to avoid coupling. */
-async function findNpmAdminUrl(node: string): Promise<string | null> {
-  try {
-    const services = await ServiceManager.listServices(node);
-    const nginx = services.find(
-      s => s.name === 'nginx' || s.name === 'nginx-web' || (s.name.includes('nginx') && !s.name.startsWith('install-')),
-    );
-    if (!nginx?.active) return null;
-    const ports = (nginx.ports ?? [])
-      .map(p => parseInt(String(p.host ?? ''), 10))
-      .filter(p => Number.isFinite(p) && p !== 80 && p !== 443);
-    const adminPort = ports[0] ?? 81;
-    return `http://localhost:${adminPort}`;
-  } catch {
-    return null;
-  }
-}
-
-/** Mint an NPM admin bearer token (stored creds first, then NPM defaults). */
-async function getNpmToken(adminUrl: string): Promise<string | null> {
-  const config = await getConfig();
-  const candidates: { identity: string; secret: string }[] = [];
-  const stored = config.reverseProxy?.npm;
-  if (stored?.email && stored?.password) candidates.push({ identity: stored.email, secret: stored.password });
-  candidates.push({ identity: 'admin@example.com', secret: 'changeme' });
-  for (const cred of candidates) {
-    try {
-      const res = await fetch(`${adminUrl}/api/tokens`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cred),
-        signal: AbortSignal.timeout(4000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (typeof data.token === 'string') return data.token;
-      }
-    } catch {
-      // try next candidate
-    }
-  }
-  return null;
-}
-
 /** True iff the NPM proxy host for `host.<publicDomain>` carries Authelia
  *  forward-auth. Derives gating from the host's ACTUAL `advanced_config`
  *  (the forward-auth sentinel / `auth_request /authelia` snippet the
@@ -583,24 +538,17 @@ async function getNpmToken(adminUrl: string): Promise<string | null> {
  *  the host rather than false-failing). */
 function realHostHasForwardAuth(node: string) {
   return async (fqdn: string): Promise<boolean> => {
-    const adminUrl = await findNpmAdminUrl(node);
+    // requireActive: false — read-only lookup that degrades to "not gated";
+    // the twin's `active` flag lies for the kube nginx pod (#496).
+    const adminUrl = (await findNpmAdmin({ node, requireActive: false }))?.apiUrl;
     if (!adminUrl) return false;
     const token = await getNpmToken(adminUrl);
     if (!token) return false;
-    try {
-      const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts?expand=owner`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
-      });
-      if (!res.ok) return false;
-      const hosts = await res.json() as Array<{ domain_names?: string[]; advanced_config?: string }>;
-      if (!Array.isArray(hosts)) return false;
-      const entry = hosts.find(h => (h.domain_names ?? []).includes(fqdn));
-      const adv = entry?.advanced_config ?? '';
-      return adv.includes(AUTHELIA_FORWARD_AUTH_SENTINEL) || /auth_request\s+\/authelia/.test(adv);
-    } catch {
-      return false;
-    }
+    // `findProxyHostByDomain` answers null for "no such host" AND "could
+    // not read the table" — both mean "not gated" here.
+    const entry = await findProxyHostByDomain(adminUrl, token, fqdn, { expand: ['owner'], timeoutMs: HTTP_TIMEOUT_MS });
+    const adv = entry?.advanced_config ?? '';
+    return adv.includes(AUTHELIA_FORWARD_AUTH_SENTINEL) || /auth_request\s+\/authelia/.test(adv);
   };
 }
 

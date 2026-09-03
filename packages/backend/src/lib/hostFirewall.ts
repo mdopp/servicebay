@@ -72,6 +72,7 @@
  */
 import type { Executor } from './interfaces';
 import { logger } from './logger';
+import { shellQuoteAll } from './util/shellQuote';
 
 /** Our own nft table. Nothing outside it is ever touched. */
 export const NFT_TABLE = 'servicebay_lanblock';
@@ -291,7 +292,8 @@ WantedBy=multi-user.target
  */
 async function findNftBin(executor: Executor): Promise<string | null> {
   try {
-    const { stdout } = await executor.execArgv(['sh', '-c', 'command -v nft']);
+    // Shell required: `command -v` is a shell builtin, not a binary.
+    const { stdout } = await executor.exec(shellQuoteAll(['sh', '-c', 'command -v nft']));
     const first = stdout.trim().split('\n')[0]?.trim();
     if (first && first.startsWith('/')) return first;
   } catch {
@@ -359,9 +361,11 @@ export function parseNftPorts(listing: string): number[] {
  *  for every not-good answer, so the word is what we want, not the code. */
 async function systemdVerdict(executor: Executor, verb: string): Promise<string | null> {
   try {
-    const { stdout } = await executor.execArgv([
+    // Shell required: stderr redirection + `|| true` so a not-good verdict
+    // still prints the word instead of failing the call.
+    const { stdout } = await executor.exec(shellQuoteAll([
       'sh', '-c', `systemctl ${verb} ${UNIT_NAME} 2>/dev/null || true`,
-    ]);
+    ]));
     const word = stdout.trim().split('\n').pop()?.trim();
     return word || null;
   } catch {
@@ -387,7 +391,10 @@ export async function inspectHostFirewall(executor: Executor): Promise<HostFirew
   if (!nftBin) return state;
 
   try {
-    const { stdout } = await executor.execArgv(['sudo', nftBin, 'list', 'table', 'inet', NFT_TABLE]);
+    // Stays on the shell tier: `nftBin` is an absolute path resolved at
+    // runtime (Fedora keeps nft in /usr/sbin, off the agent's PATH), and
+    // safe_exec's allow-list matches argv[0] by exact binary name.
+    const { stdout } = await executor.exec(shellQuoteAll(['sudo', nftBin, 'list', 'table', 'inet', NFT_TABLE]));
     state.tableLoaded = true;
     state.loadedPorts = parseNftPorts(stdout);
   } catch (e) {
@@ -403,13 +410,13 @@ export async function inspectHostFirewall(executor: Executor): Promise<HostFirew
 /** Agent writes /tmp (its own user can), then `sudo install` places it root-owned. */
 async function installRoot(executor: Executor, tmpPath: string, finalPath: string): Promise<void> {
   const dir = finalPath.slice(0, finalPath.lastIndexOf('/'));
-  await executor.execArgv(['sudo', 'mkdir', '-p', dir]);
-  await executor.execArgv(['sudo', 'install', '-m', '0644', '-o', 'root', '-g', 'root', tmpPath, finalPath]);
+  await executor.execSafe(['mkdir', '-p', dir], { sudo: true });
+  await executor.execSafe(['install', '-m', '0644', '-o', 'root', '-g', 'root', tmpPath, finalPath], { sudo: true });
 }
 
-async function execIgnoringFailure(executor: Executor, argv: string[], tag: string): Promise<void> {
+async function execIgnoringFailure(run: () => Promise<unknown>, tag: string): Promise<void> {
   try {
-    await executor.execArgv(argv);
+    await run();
   } catch (e) {
     logger.warn('HostFirewall', `${tag} failed: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -442,18 +449,20 @@ export async function reconcileHostFirewall(executor: Executor, ports: number[])
   // bad render can't even land in /etc (where the boot unit would then
   // fail to load it). `-c` is a dry run: it commits nothing.
   await executor.writeFile(NFT_TMP, ruleset);
-  await executor.execArgv(['sudo', nftBin, '-c', '-f', NFT_TMP]);
+  // Shell tier: resolved absolute `nftBin`, see resolveNftBin — safe_exec's
+  // allow-list matches argv[0] by exact binary name.
+  await executor.exec(shellQuoteAll(['sudo', nftBin, '-c', '-f', NFT_TMP]));
 
   await installRoot(executor, NFT_TMP, NFT_PATH);
   await executor.writeFile(UNIT_TMP, renderUnit(nftBin));
   await installRoot(executor, UNIT_TMP, UNIT_PATH);
 
-  await executor.execArgv(['sudo', 'systemctl', 'daemon-reload']);
-  await executor.execArgv(['sudo', 'systemctl', 'enable', UNIT_NAME]);
+  await executor.execSafe(['systemctl', 'daemon-reload'], { sudo: true });
+  await executor.execSafe(['systemctl', 'enable', UNIT_NAME], { sudo: true });
   // `restart`, not `start`: the unit is `RemainAfterExit=yes`, so an
   // already-active unit would ignore `start` and the kernel would keep
   // the previous port set.
-  await executor.execArgv(['sudo', 'systemctl', 'restart', UNIT_NAME]);
+  await executor.execSafe(['systemctl', 'restart', UNIT_NAME], { sudo: true });
 
   logger.info('HostFirewall', `LAN access refused for port(s) ${ports.join(', ')} (table inet ${NFT_TABLE}).`);
 }
@@ -472,16 +481,18 @@ export async function removeHostFirewall(executor: Executor): Promise<void> {
   const unitPresent = await executor.exists(UNIT_PATH).catch(() => true);
   let tablePresent = false;
   try {
-    await executor.execArgv(['sudo', nftBin, 'list', 'table', 'inet', NFT_TABLE]);
+    // Shell tier: resolved absolute `nftBin`, see resolveNftBin.
+    await executor.exec(shellQuoteAll(['sudo', nftBin, 'list', 'table', 'inet', NFT_TABLE]));
     tablePresent = true;
   } catch {
     tablePresent = false;
   }
   if (!unitPresent && !tablePresent) return;
 
-  await execIgnoringFailure(executor, ['sudo', 'systemctl', 'disable', '--now', UNIT_NAME], 'disable unit');
-  await execIgnoringFailure(executor, ['sudo', nftBin, 'delete', 'table', 'inet', NFT_TABLE], 'delete table');
-  await execIgnoringFailure(executor, ['sudo', 'rm', '-f', UNIT_PATH, NFT_PATH], 'remove files');
-  await execIgnoringFailure(executor, ['sudo', 'systemctl', 'daemon-reload'], 'daemon-reload');
+  await execIgnoringFailure(() => executor.execSafe(['systemctl', 'disable', '--now', UNIT_NAME], { sudo: true }), 'disable unit');
+  // Shell tier: resolved absolute `nftBin`, see resolveNftBin.
+  await execIgnoringFailure(() => executor.exec(shellQuoteAll(['sudo', nftBin, 'delete', 'table', 'inet', NFT_TABLE])), 'delete table');
+  await execIgnoringFailure(() => executor.execSafe(['rm', '-f', UNIT_PATH, NFT_PATH], { sudo: true }), 'remove files');
+  await execIgnoringFailure(() => executor.execSafe(['systemctl', 'daemon-reload'], { sudo: true }), 'daemon-reload');
   logger.info('HostFirewall', `Host firewall removed (no port declares blockLanAccess).`);
 }

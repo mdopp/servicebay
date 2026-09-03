@@ -19,7 +19,8 @@
  */
 
 import { registerProbe } from './registry';
-import { findNpmAdminUrl, getNpmToken } from './npmAdmin';
+import { resolveNpmAdmin, getNpmToken } from '@/lib/npm/client';
+import { listProxyHosts } from '@/lib/npm/proxyHosts';
 
 type Payload = { status: 'ok' | 'fail' | 'info'; detail: string; hint?: string; hostId?: number; domain?: string };
 
@@ -64,18 +65,15 @@ export function parseNginxTestOutput(output: string, exitCode: number): NginxTes
  *  (NPM unreachable / id not found) — the check still reds either way. */
 async function resolveHostDomain(node: string, hostId: number): Promise<string | undefined> {
   try {
-    const admin = await findNpmAdminUrl(node);
-    if (admin.kind !== 'url') return undefined;
-    const token = await getNpmToken(admin.url);
+    // requireActive: false — read-only lookup; an unreachable NPM just
+    // leaves the id unresolved, and the `active` flag lies for kube pods (#496).
+    const admin = await resolveNpmAdmin({ node, requireActive: false });
+    if (admin.kind !== 'ok') return undefined;
+    const token = await getNpmToken(admin.apiUrl);
     if (!token) return undefined;
-    const res = await fetch(`${admin.url}/api/nginx/proxy-hosts`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(6000),
-    });
-    if (!res.ok) return undefined;
-    const hosts = (await res.json()) as Array<{ id?: number; domain_names?: string[] }>;
-    if (!Array.isArray(hosts)) return undefined;
-    const host = hosts.find(h => h.id === hostId);
+    const res = await listProxyHosts(admin.apiUrl, token, { timeoutMs: 6000 });
+    if (!res.ok || !Array.isArray(res.data)) return undefined;
+    const host = res.data.find(h => h.id === hostId);
     return host?.domain_names?.[0];
   } catch {
     return undefined;
@@ -89,6 +87,7 @@ registerProbe({
     try {
       // Locate the running NPM container (same discovery the rekey path
       // uses — match the proxy-manager image, take the first name).
+      // Shell required: this is a `podman ps | awk` pipeline.
       const find = await ctx.executor.exec(
         `podman ps --format '{{.Names}} {{.Image}}' | awk '/proxy-manager/{print $1; exit}'`,
         { timeoutMs: 15_000 },
@@ -101,9 +100,9 @@ registerProbe({
       let output = '';
       let exitCode = 0;
       try {
-        // execArgv quotes each arg (shellQuoteAll) — `container` comes from
-        // `podman ps` output but is never shell-interpolated.
-        const res = await ctx.executor.execArgv(['podman', 'exec', container, 'nginx', '-t'], { timeoutMs: 20_000 });
+        // execSafe sends the argv verbatim to the agent — `container` comes
+        // from `podman ps` output and is never shell-parsed at all.
+        const res = await ctx.executor.execSafe(['podman', 'exec', container, 'nginx', '-t'], { timeoutMs: 20_000 });
         // `nginx -t` writes its "syntax is ok" banner to stderr even on success.
         output = `${res.stdout}\n${res.stderr}`;
       } catch (e) {

@@ -9,25 +9,42 @@ import { Button, Card } from '@/components/ui';
  *
  * A token-authenticated MCP agent can only *propose* a destructive tool call;
  * it parks as a pending approval that a human (session cookie) must confirm.
- * These live in-memory with a short (~5 min) TTL, so if the operator isn't
- * looking they expire unseen — which is exactly what happened when a route
- * deletion was proposed and the Settings-only approval list stayed empty.
+ * If the operator isn't looking they sit unseen — which is exactly what
+ * happened when a route deletion was proposed and the Settings-only approval
+ * list stayed empty.
  *
  * This card puts the same list on Home so a pending approval is visible where
  * the operator already looks ("is my box OK?"). It renders nothing when the
  * queue is *confirmed* empty — but a failed poll is a third state, not an empty
- * one, so it says so instead (#2691). It polls on a short interval to stay
- * fresh, and drives the same `/api/system/mcp/approve` endpoints as the
- * Settings list.
+ * one, so it says so instead (#2691).
+ *
+ * **One list, one route (#2735).** The hook, the row and the list below are the
+ * single implementation shared by Home and Settings → MCP, and they read the
+ * durable approvals store through the generic `/api/approvals` route — the same
+ * records the operator's Approvals section shows. The old third view
+ * (`lib/mcp/approveRoute.ts` behind `/api/system/mcp/approve`) reshaped those
+ * records and hard-coded `expiresAt: null`; it is gone.
  */
+
+/**
+ * Mirrors the backend `ApprovalRequest` (see `lib/approvals`, #1843) — only the
+ * fields these two surfaces read. An approval is an *MCP* approval when it
+ * carries an `on_approve.mcp` action, i.e. approving it re-dispatches the tool.
+ */
+export interface ApprovalRecord {
+  id: string;
+  status: 'pending' | 'approved' | 'rejected';
+  payload?: Record<string, unknown> | null;
+  on_approve?: { mcp?: { toolName: string; args: Record<string, unknown> } } | null;
+}
 
 export interface PendingApproval {
   pendingId: string;
   toolName: string;
   args: Record<string, unknown>;
   caller?: string;
-  // Durable approvals (#2234) never expire, so this is null; a legacy numeric
-  // expiry is still rendered if present.
+  /** Expiry in epoch ms when the record carries one, else null (durable
+   *  approvals do not expire and render a stable label instead). */
   expiresAt: number | null;
 }
 
@@ -35,7 +52,7 @@ export interface PendingApproval {
 const POLL_MS = 15_000;
 
 /**
- * Consecutive failed polls before the card says so (#2691).
+ * Consecutive failed polls before the surface says so (#2691).
  *
  * A failed poll and an empty queue used to render identically — both as
  * nothing — so an expired session cookie looked exactly like "all clear" while
@@ -47,6 +64,48 @@ const POLL_MS = 15_000;
  */
 const FAILURES_BEFORE_ALERT = 2;
 
+/**
+ * Read an expiry off the durable record. The removed third view hard-coded
+ * `null` here, so an approval that *did* carry a deadline still rendered as
+ * "awaiting approval" — the operator could not tell a request that will lapse
+ * from one that waits forever. Accepts epoch ms or an ISO timestamp; anything
+ * unparseable degrades to `null` rather than "Invalid Date".
+ */
+function readExpiresAt(payload: Record<string, unknown> | null | undefined): number | null {
+  const raw = payload?.expiresAt ?? payload?.expires_at;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === 'string') {
+    const parsed = Date.parse(raw);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+}
+
+/** Project the durable approvals feed onto the MCP-kind rows these views show. */
+export function toPendingMcpApprovals(records: ApprovalRecord[]): PendingApproval[] {
+  return records
+    .filter(r => r.status === 'pending' && r.on_approve?.mcp)
+    .map(r => {
+      const mcp = r.on_approve!.mcp!;
+      const caller = typeof r.payload?.caller === 'string' ? (r.payload.caller as string) : undefined;
+      return {
+        pendingId: r.id,
+        toolName: mcp.toolName,
+        args: mcp.args,
+        caller,
+        expiresAt: readExpiresAt(r.payload),
+      };
+    });
+}
+
+/**
+ * The one pending-MCP-approvals hook (#2735). Home's card and Settings → MCP
+ * both mount this; neither runs a poll of its own.
+ *
+ * `refresh()` is the explicit-user-action variant: it reports a failure on the
+ * first miss, with no grace period, because a Refresh button that silently does
+ * nothing is the same "reported success, did nothing" defect in miniature.
+ */
 export function usePendingApprovals() {
   const [pending, setPending] = useState<PendingApproval[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -54,33 +113,33 @@ export function usePendingApprovals() {
   const [pollError, setPollError] = useState<string | null>(null);
   const failures = useRef(0);
 
-  const load = useCallback(() => {
-    fetch('/api/system/mcp/approve')
+  const load = useCallback((reportNow = false) => {
+    fetch('/api/approvals')
       .then(async r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return (await r.json()) as { pending?: PendingApproval[] };
+        return (await r.json()) as { approvals?: ApprovalRecord[] };
       })
       .then(data => {
         failures.current = 0;
         setPollError(null);
-        setPending(data.pending ?? []);
+        setPending(toPendingMcpApprovals(data.approvals ?? []));
       })
       .catch((e: unknown) => {
         // Deliberately do NOT touch `pending`: a failed poll must never
         // overwrite a known-pending queue with an empty one, and must never
         // turn "we never got a look" into a confirmed-empty [].
         failures.current += 1;
-        if (failures.current >= FAILURES_BEFORE_ALERT) {
+        if (reportNow || failures.current >= FAILURES_BEFORE_ALERT) {
           setPollError(e instanceof Error ? e.message : String(e));
         }
       });
   }, []);
 
-  const resolve = useCallback(async (id: string, method: 'POST' | 'DELETE') => {
+  const resolve = useCallback(async (id: string, decision: 'approve' | 'reject') => {
     setBusyId(id);
     setError(null);
     try {
-      const res = await fetch(`/api/system/mcp/approve/${id}`, { method });
+      const res = await fetch(`/api/approvals/${encodeURIComponent(id)}/${decision}`, { method: 'POST' });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error ?? `HTTP ${res.status}`);
@@ -93,16 +152,17 @@ export function usePendingApprovals() {
     }
   }, [load]);
 
-  const approve = useCallback((id: string) => resolve(id, 'POST'), [resolve]);
-  const reject = useCallback((id: string) => resolve(id, 'DELETE'), [resolve]);
+  const approve = useCallback((id: string) => resolve(id, 'approve'), [resolve]);
+  const reject = useCallback((id: string) => resolve(id, 'reject'), [resolve]);
+  const refresh = useCallback(() => load(true), [load]);
 
   useEffect(() => {
     load();
-    const t = setInterval(load, POLL_MS);
+    const t = setInterval(() => load(), POLL_MS);
     return () => clearInterval(t);
   }, [load]);
 
-  return { pending, busyId, error, pollError, approve, reject };
+  return { pending, busyId, error, pollError, approve, reject, refresh };
 }
 
 function ApprovalRow({ entry, busy, onApprove, onReject }: { entry: PendingApproval; busy: boolean; onApprove: (id: string) => void; onReject: (id: string) => void }) {
@@ -125,6 +185,22 @@ function ApprovalRow({ entry, busy, onApprove, onReject }: { entry: PendingAppro
         </Button>
       </div>
     </li>
+  );
+}
+
+/** The shared row list — Home's card and Settings → MCP render the same rows. */
+export function PendingApprovalList({ entries, busyId, onApprove, onReject }: {
+  entries: PendingApproval[];
+  busyId: string | null;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+}) {
+  return (
+    <ul className="space-y-2">
+      {entries.map(p => (
+        <ApprovalRow key={p.pendingId} entry={p} busy={busyId === p.pendingId} onApprove={onApprove} onReject={onReject} />
+      ))}
+    </ul>
   );
 }
 
@@ -161,11 +237,7 @@ export default function PendingApprovalsCard() {
             the agent cannot approve its own request. Requests persist until you approve or reject them.
           </p>
           {error && <p className="text-xs text-status-fail mb-2">{error}</p>}
-          <ul className="space-y-2">
-            {entries.map(p => (
-              <ApprovalRow key={p.pendingId} entry={p} busy={busyId === p.pendingId} onApprove={approve} onReject={reject} />
-            ))}
-          </ul>
+          <PendingApprovalList entries={entries} busyId={busyId} onApprove={approve} onReject={reject} />
         </>
       )}
     </Card>

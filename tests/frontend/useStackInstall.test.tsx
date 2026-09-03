@@ -1,8 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { renderHook, act } from '@testing-library/react';
+import { renderHook as rtlRenderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useStackInstall } from '@/hooks/useStackInstall';
+import { InstallJobProvider } from '@/providers/InstallJobProvider';
+
+/** The hook reads the running job from `InstallJobProvider` (#2732), so it
+ *  is rendered under one — the provider's own poll hits the same `fetch`
+ *  mock as the hook. */
+const renderHook: typeof rtlRenderHook = (cb, opts) => rtlRenderHook(cb, { wrapper: InstallJobProvider, ...opts });
 
 /**
  * `useStackInstall` tests.
@@ -213,7 +219,7 @@ describe('useStackInstall', () => {
       });
     }
 
-    /** Attach to that paused job so `jobIdRef` is populated, exactly as the
+    /** Attach to that paused job so the hook follows it, exactly as the
      *  wizard does when the poll reports `needs_credentials`. */
     async function attachedToPausedJob(fetchMock: ReturnType<typeof pausedJobFetchMock>) {
       global.fetch = fetchMock;

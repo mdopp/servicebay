@@ -16,7 +16,8 @@ There are two backup systems in ServiceBay, and they answer different questions:
 
 **What it does.** Each service has a backup **manifest**
 (`SERVICE_BACKUP_MANIFESTS` in
-`packages/backend/src/lib/externalBackup/serviceManifest.ts`) that declares
+`packages/backup-manifest/src/index.ts` — the workspace package the backend and
+the sandboxed backup worker both import, one copy since #2733) that declares
 exactly:
 
 - `include[]` — the config paths worth keeping (HA's `automations.yaml`,
@@ -55,7 +56,7 @@ install log, so the operator can see *why* a restore did or didn't happen.
 **What it does.** Re-enterable secrets are removed from the archive before it lands
 on the NAS, so a leaked backup file doesn't leak live credentials.
 
-**How it works.** `applyStripRules` + `stripYamlKeys` (in `serviceManifest.ts`)
+**How it works.** `applyStripRules` + `stripYamlKeys` (in `@servicebay/backup-manifest`)
 drop the manifest's `strip` keys from each file during tar creation. Example: the
 Hermes manifest strips `api_key` / `apiKey` / `llm_api_key` from `config.yaml`
 ("LLM API keys are re-entered after a restore").

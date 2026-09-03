@@ -100,6 +100,15 @@ SAFE_EXEC_ALLOWLIST = frozenset({
     'mv',            # rename helper (callers validate paths)
     'test',          # exists() probe in the agent executor
     'ping',          # router-DNS probe
+    # #2737 — the execArgv shell tier was folded into safe_exec, so the
+    # argv these three already used now arrives here instead of through a
+    # quoted shell string. Same commands, same call sites, one quoting
+    # layer fewer.
+    'mktemp',        # systemBackup service-config restore: host scratch file
+    'readlink',      # systemBackup restore: symlink-escape walk (`readlink -f`)
+    'install',       # hostFirewall + updateWindow: `sudo install -m 0644 -o root`
+                     # places a rendered unit/ruleset root-owned under /etc
+    'ps',            # manager.ts host process tree for the listening-ports map
     # Disk-import (#1694) — host-side mount + apply of an approved plan. These
     # run via safe_exec with argv assembled + validated TS-side in
     # diskImport/mounter.ts + plan.ts (device paths are /dev/... only; mount is

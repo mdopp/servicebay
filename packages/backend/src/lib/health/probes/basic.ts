@@ -50,7 +50,7 @@ registerProbe({
   async run(check, ctx) {
     const validatedHost = HostString.parse(check.target);
     try {
-      const { stdout } = await ctx.executor.execArgv(['ping', '-c', '1', '-W', '2', validatedHost]);
+      const { stdout } = await ctx.executor.execSafe(['ping', '-c', '1', '-W', '2', validatedHost]);
       if (!stdout.includes('1 received')) throw new Error('Ping failed: no reply');
     } catch (e) {
       throw new Error(`Ping ${validatedHost} failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -63,7 +63,7 @@ registerProbe({
   async run(check, ctx) {
     const validated = ContainerId.parse(check.target);
     try {
-      const { stdout } = await ctx.executor.execArgv([
+      const { stdout } = await ctx.executor.execSafe([
         'podman', 'inspect', validated,
         '--format', '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}',
       ]);
@@ -82,7 +82,7 @@ registerProbe({
     const validated = ServiceName.parse(check.target);
     const unit = validated.includes('.') ? validated : `${validated}.service`;
     try {
-      const { stdout } = await ctx.executor.execArgv(['systemctl', '--user', 'is-active', unit]);
+      const { stdout } = await ctx.executor.execSafe(['systemctl', '--user', 'is-active', unit]);
       const status = stdout.trim();
       if (status !== 'active') throw new Error(`Service is ${status}`);
     } catch (e) {
@@ -96,7 +96,7 @@ registerProbe({
   async run(check, ctx) {
     const validated = ServiceName.parse(check.target);
     try {
-      const { stdout } = await ctx.executor.execArgv(['systemctl', 'is-active', validated]);
+      const { stdout } = await ctx.executor.execSafe(['systemctl', 'is-active', validated]);
       const status = stdout.trim();
       if (status !== 'active') throw new Error(`System unit is ${status}`);
     } catch (e) {

@@ -8,9 +8,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('./npmAdmin', async importOriginal => ({
-  ...(await importOriginal<typeof import('./npmAdmin')>()),
-  findNpmAdminUrl: vi.fn(async () => ({ kind: 'url' as const, url: 'http://localhost:81' })),
+vi.mock('@/lib/npm/client', () => ({
+  resolveNpmAdmin: vi.fn(async () => ({ kind: 'ok' as const, apiUrl: 'http://localhost:81', nodeName: 'Local', nodeIp: '127.0.0.1' })),
   getNpmToken: vi.fn(async () => 'tok'),
 }));
 

@@ -96,7 +96,7 @@ export interface JobInputVariable {
  *   wipe-all    | WIPE   | WIPE | RESTORE CONFIG from NAS
  *
  * CONFIG / DATA paths come from each service's backup manifest
- * (`externalBackup/serviceManifest.ts`). Distinct from the *build-time*
+ * (`@servicebay/backup-manifest`). Distinct from the *build-time*
  * `FACTORY_FRESH=wipe-configs` flag, which wipes ServiceBay's OWN identity
  * (config.json/secret.key/tokens) — not a service's config.
  */

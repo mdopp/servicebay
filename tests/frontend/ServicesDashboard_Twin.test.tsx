@@ -34,6 +34,12 @@ vi.mock('@/hooks/useDigitalTwin', () => ({
     useDigitalTwin: () => mockUseDigitalTwin()
 }));
 
+// #2732: the install job comes from InstallJobProvider; these tests render
+// outside it, so stub the hook to "nothing installing".
+vi.mock('@/hooks/useInstallJob', () => ({
+  useInstallJob: () => ({ ready: true, job: null, jobIsActive: false, stackSetupPending: false, serverStartedAt: null, phase: 'idle', logs: [], credentials: { prompt: false, fallback: { email: '', password: '' }, error: null }, abort: () => {}, skipCredentials: () => {}, submitCredentials: async () => {}, track: async () => false }),
+}));
+
 // Components Mocks to focus on Data Logic
 vi.mock('@/components/SectionLoading', () => ({ default: () => <div>Loading...</div> }));
 vi.mock('@/components/PageHeader', () => ({ default: ({ title }: any) => <div>{title}</div> }));

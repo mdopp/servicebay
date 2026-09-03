@@ -57,7 +57,7 @@ export function isUpdateAvailable(
 export async function getRegistryImageDigest(image: string, nodeName = 'Local'): Promise<string | null> {
   try {
     const executor = getExecutor(nodeName);
-    const { stdout } = await executor.execArgv(['podman', 'manifest', 'inspect', image], {
+    const { stdout } = await executor.execSafe(['podman', 'manifest', 'inspect', image], {
       timeoutMs: INSPECT_TIMEOUT_MS,
     });
     return extractImageDigest(JSON.parse(stdout));
@@ -77,7 +77,7 @@ export async function getRegistryImageDigest(image: string, nodeName = 'Local'):
 export async function getRunningImageDigest(image: string, nodeName = 'Local'): Promise<string | null> {
   try {
     const executor = getExecutor(nodeName);
-    const { stdout } = await executor.execArgv(['podman', 'inspect', image], {
+    const { stdout } = await executor.execSafe(['podman', 'inspect', image], {
       timeoutMs: INSPECT_TIMEOUT_MS,
     });
     const parsed = JSON.parse(stdout);

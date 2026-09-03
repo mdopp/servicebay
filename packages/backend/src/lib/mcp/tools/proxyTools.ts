@@ -9,39 +9,26 @@
  * `nginxOnlineFailed` report as a fault. It was a second, strictly weaker kernel
  * path, not an alias, so it is gone.
  *
- * Note: pushing to NPM (Nginx Proxy Manager) needs NPM admin credentials, so the
- * two tools that touch the live host go through the app's own
- * `/api/system/nginx/proxy-hosts` endpoint over a loopback call rather than
- * re-implementing the NPM client here.
+ * The two tools that touch the live host call the same kernel the
+ * `/api/system/nginx/proxy-hosts` route is a thin handler over
+ * (`@/lib/reverseProxy/proxyHostProvisioning`, #2731) — no loopback HTTP hop,
+ * no second NPM client. NPM itself is only ever spoken to through `@/lib/npm/*`.
  */
 import { z } from 'zod';
 import { getStoreSnapshot } from '@/lib/store/repository';
 import { getConfig, updateConfig } from '@/lib/config';
-import { getInternalApiToken } from '@/lib/auth/internalToken';
 import { AUTHELIA_FORWARD_AUTH_SENTINEL } from '@/lib/stackInstall/forwardAuth';
 // #2654 — a route mutation reconciles the auto-managed `domain:<host>` checks
 // immediately instead of leaving them to the 60s timer, so `get_health_checks`
 // reflects the change the caller just made. `create_proxy_route` needs no call
-// here: it goes through POST /api/system/nginx/proxy-hosts, which already
-// reconciles (and DELETE now does too, for the live-removal branch below).
+// here: `provisionProxyHosts` already reconciles (and `removeProxyHost` does
+// too, for the live-removal branch below).
 import { syncDomainChecks } from '@/lib/health/domainChecks';
+import { listLiveProxyHosts, provisionProxyHosts, removeProxyHost } from '@/lib/reverseProxy/proxyHostProvisioning';
 import { nodeParam, textResult, errorResult, type ToolRegistration } from './context';
 
-/**
- * Loopback fetch to this process's own Next API, carrying the internal
- * API token so proxy.ts's CSRF/session gate accepts the state-changing
- * call (no cookie, no Origin). Same pattern as the install runner's
- * `apiFetch` (postInstallDispatcher.ts) — used by the MCP proxy/install
- * tools that reuse the install-runner HTTP wiring (#2140/#2141).
- */
-function loopbackFetch(path: string, init?: RequestInit): Promise<Response> {
-  const port = process.env.PORT || '3000';
-  const headers = new Headers(init?.headers);
-  if (!headers.has('x-sb-internal-token')) {
-    headers.set('x-sb-internal-token', getInternalApiToken());
-  }
-  return fetch(`http://127.0.0.1:${port}${path}`, { ...init, headers });
-}
+const NPM_NOT_FOUND = 'Nginx Proxy Manager not found or not running';
+const NPM_AUTH_FAILED = 'Could not authenticate with NPM. Please provide your NPM admin credentials.';
 
 // A register function is a flat LIST of tool declarations, not a unit of logic:
 // its length just counts how many tools the group holds. The rule stays ON for the
@@ -58,11 +45,11 @@ export function registerProxyTools({ server }: ToolRegistration) {
     let liveHosts: unknown = null;
     let liveError: string | undefined;
     try {
-      const qs = node ? `?node=${encodeURIComponent(node)}` : '';
-      const res = await loopbackFetch(`/api/system/nginx/proxy-hosts${qs}`, { method: 'GET' });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) liveHosts = (data as { hosts?: unknown }).hosts ?? [];
-      else liveError = (data as { error?: string }).error ?? `HTTP ${res.status}`;
+      const live = await listLiveProxyHosts(node);
+      if (live.kind === 'ok') liveHosts = live.hosts;
+      else if (live.kind === 'npm-not-found') liveError = NPM_NOT_FOUND;
+      else if (live.kind === 'auth-failed') liveError = 'Could not authenticate with NPM.';
+      else liveError = `NPM API returned ${live.status}`;
     } catch (e) {
       liveError = e instanceof Error ? e.message : String(e);
     }
@@ -70,14 +57,14 @@ export function registerProxyTools({ server }: ToolRegistration) {
   });
 
   // #2140 — Create a COMPLETE NPM proxy host in one MCP call, reusing the
-  // install-runner's proxy-host wiring (POST /api/system/nginx/proxy-hosts):
+  // install-runner's proxy-host wiring (`provisionProxyHosts`):
   // exposure tier (cert + LAN allow-list), Authelia forward-auth, optional
   // custom advanced_config / forwardHost / ssl, best-effort LE cert. This is
   // the ONLY route-creating tool (#2726 retired the config-only
   // `add_proxy_route`): it pushes to NPM immediately and returns the per-host
   // result (created, certIssued/certError, lanRestricted). The forward-auth
-  // snippet is expanded server-side by the route with the correct acme-bypass
-  // handling per exposure (#2143 — no duplicate acme location on LE hosts).
+  // snippet is expanded by the kernel with the correct acme-bypass handling
+  // per exposure (#2143 — no duplicate acme location on LE hosts).
   server.tool(
     'create_proxy_route',
     'Create a reverse-proxy route — this is the ONE tool for it, and it replaces the removed `add_proxy_route` (which only recorded a config entry and left NPM out of sync). Creates a complete NPM reverse-proxy host in one call: pick an exposure tier (public|internal|lan), optionally gate it behind Authelia forward-auth SSO, and (for public/internal) request a Let\'s Encrypt cert — matching what a template install produces. Pushes to NPM immediately. Returns the create + cert outcome per host; check get_proxy_routes for live nginx_online status afterward.',
@@ -98,7 +85,7 @@ export function registerProxyTools({ server }: ToolRegistration) {
       if (forwardAuth && exposure === 'lan') {
         return errorResult('forwardAuth requires exposure "public" or "internal": Authelia forward-auth needs an https (cert-bound) host, and a "lan" host serves plain HTTP. Use exposure "internal" for a LAN-only SSO-gated service.');
       }
-      // Compose the advanced_config: forward-auth sentinel first (the route
+      // Compose the advanced_config: forward-auth sentinel first (the kernel
       // expands + port-substitutes it with the correct acme-bypass for the
       // exposure, #2143), then any custom directives the caller supplied.
       let composedAdvanced: string | undefined;
@@ -123,28 +110,20 @@ export function registerProxyTools({ server }: ToolRegistration) {
         },
       };
       try {
-        const res = await loopbackFetch('/api/system/nginx/proxy-hosts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ hosts: [host], node }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          const msg = (data as { error?: string }).error ?? `HTTP ${res.status}`;
-          return errorResult(`Failed to create proxy route for ${domain}: ${msg}`);
-        }
-        const d = data as { created?: string[]; failed?: { domain: string; error?: string }[]; certs?: { domain: string; issued: boolean; error?: string }[]; lanRestricted?: string[] };
-        const failedHere = (d.failed ?? []).find(f => f.domain === domain);
+        const d = await provisionProxyHosts({ hosts: [host], node });
+        if (d.kind === 'npm-not-found') return errorResult(`Failed to create proxy route for ${domain}: ${NPM_NOT_FOUND}`);
+        if (d.kind === 'auth-failed') return errorResult(`Failed to create proxy route for ${domain}: ${NPM_AUTH_FAILED}`);
+        const failedHere = d.failed.find(f => f.domain === domain);
         if (failedHere) {
           return errorResult(`NPM rejected the proxy host for ${domain}: ${failedHere.error ?? 'unknown error'}`);
         }
         return textResult({
-          created: (d.created ?? []).includes(domain),
+          created: d.created.includes(domain),
           domain,
           exposure,
           forwardAuth: !!forwardAuth,
-          cert: (d.certs ?? []).find(c => c.domain === domain) ?? null,
-          lanRestricted: (d.lanRestricted ?? []).includes(domain),
+          cert: d.certs.find(c => c.domain === domain) ?? null,
+          lanRestricted: d.lanRestricted.includes(domain),
           note: 'Route pushed to NPM. Poll get_proxy_routes to confirm nginx_online=true (a bad conf reverts silently otherwise).',
         });
       } catch (e) {
@@ -155,12 +134,12 @@ export function registerProxyTools({ server }: ToolRegistration) {
 
   // #2343 — remove_proxy_route is config-only by default, but with
   // `removeNpmHost:true` it also deletes the LIVE NPM host (symmetry with
-  // create_proxy_route). It routes through the same DELETE
-  // /api/system/nginx/proxy-hosts endpoint the diagnose `delete_route`
-  // remediation and the uninstall capability use — that endpoint deletes the
-  // NPM host AND drops it from config.reverseProxy.hosts in one step, so both
-  // sides stay drift-free (no config-entry-gone-but-live-host-lingers). We do
-  // NOT re-implement the NPM deletion here.
+  // create_proxy_route). It routes through the same `removeProxyHost` kernel
+  // the DELETE /api/system/nginx/proxy-hosts route, the diagnose `delete_route`
+  // remediation and the uninstall capability use — it deletes the NPM host AND
+  // drops it from config.reverseProxy.hosts in one step, so both sides stay
+  // drift-free (no config-entry-gone-but-live-host-lingers). We do NOT
+  // re-implement the NPM deletion here.
   server.tool(
     'remove_proxy_route',
     'Remove a reverse-proxy route. By default (removeNpmHost=false) this only drops the ServiceBay config entry and does NOT touch NPM. Set removeNpmHost=true to also delete the LIVE Nginx Proxy Manager host — this is the dedicated, destroy-scoped way to clean up a dangling route (one whose forward target has no backing service) end-to-end, so both the config entry AND the live host go away together (no config↔NPM drift). Read get_proxy_routes / run diagnose first to confirm the route is genuinely dangling before removing it — the live-host deletion is permanent.',
@@ -186,14 +165,11 @@ export function registerProxyTools({ server }: ToolRegistration) {
         await syncDomainChecks();
         return textResult({ action: 'removed', domain, npmHostRemoved: false });
       }
-      // Live removal: reuse the shared DELETE endpoint (deletes the NPM host
-      // AND drops it from config.reverseProxy.hosts — drift-free).
+      // Live removal: reuse the shared kernel (deletes the NPM host AND drops
+      // it from config.reverseProxy.hosts — drift-free).
       try {
-        const qs = new URLSearchParams({ domain });
-        if (node) qs.set('node', node);
-        const res = await loopbackFetch(`/api/system/nginx/proxy-hosts?${qs.toString()}`, { method: 'DELETE' });
-        const data = await res.json().catch(() => ({}));
-        if (res.status === 404 && (data as { reason?: string }).reason === 'not_found') {
+        const result = await removeProxyHost(domain, node);
+        if (result.kind === 'not-found') {
           // NPM had no such host. Still reconcile config so we don't leave a
           // stale config entry behind (drift-free either way).
           const config = await getConfig();
@@ -202,15 +178,14 @@ export function registerProxyTools({ server }: ToolRegistration) {
           if (filtered.length !== hosts.length) {
             await updateConfig({ reverseProxy: { ...config.reverseProxy, hosts: filtered } });
           }
-          // NPM has no such host and config no longer claims it — the DELETE
-          // handler bailed before its own reconcile, so retire the check here.
+          // NPM has no such host and config no longer claims it — the kernel
+          // bailed before its own reconcile, so retire the check here.
           await syncDomainChecks({ removedDomains: [domain] });
           return textResult({ action: 'removed', domain, npmHostRemoved: false, note: 'No live NPM host found for this domain; config entry cleared if present.' });
         }
-        if (!res.ok) {
-          const msg = (data as { error?: string }).error ?? `HTTP ${res.status}`;
-          return errorResult(`Failed to remove NPM host for ${domain}: ${msg}`);
-        }
+        if (result.kind === 'npm-not-found') return errorResult(`Failed to remove NPM host for ${domain}: ${NPM_NOT_FOUND}`);
+        if (result.kind === 'auth-failed') return errorResult(`Failed to remove NPM host for ${domain}: ${NPM_AUTH_FAILED}`);
+        if (result.kind === 'npm-error') return errorResult(`Failed to remove NPM host for ${domain}: NPM API returned ${result.status}`);
         return textResult({ action: 'removed', domain, npmHostRemoved: true, note: 'Live NPM host and config entry both removed. Confirm via get_proxy_routes (gone from liveHosts and routes).' });
       } catch (e) {
         return errorResult(`Error removing proxy route: ${e instanceof Error ? e.message : String(e)}`);

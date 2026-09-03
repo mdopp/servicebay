@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, Copy, ShieldAlert, History, RefreshCw, ShieldCheck } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Check, Copy, ShieldAlert, History, RefreshCw } from 'lucide-react';
 import SectionHelp from '@/components/SectionHelp';
+import { PendingApprovalList, usePendingApprovals } from '@/components/PendingApprovalsCard';
 import { Button, Input } from '@/components/ui';
 import { copyToClipboard } from '../clipboard';
 
@@ -111,60 +112,16 @@ function McpSafetyToggles(props: SafetyTogglesProps) {
   );
 }
 
-interface PendingApproval {
-  pendingId: string;
-  toolName: string;
-  args: Record<string, unknown>;
-  caller?: string;
-  // Durable approvals (#2234) never expire, so this is null; a legacy numeric
-  // expiry is still rendered if present.
-  expiresAt: number | null;
-}
-
-function PendingApprovalRow({ entry, busy, onApprove, onReject }: { entry: PendingApproval; busy: boolean; onApprove: (id: string) => void; onReject: (id: string) => void }) {
-  const expiresAtLabel = entry.expiresAt != null ? new Date(entry.expiresAt).toLocaleTimeString() : null;
-  return (
-    <li className="text-xs rounded-card border border-status-warn/40 bg-status-warn/10 p-2">
-      <div className="flex items-center gap-2">
-        <span className="font-mono font-semibold text-status-warn">{entry.toolName}</span>
-        {entry.caller && <span className="text-text-subtle">from {entry.caller}</span>}
-        <span className="text-text-subtle ml-auto">{expiresAtLabel ? `expires ${expiresAtLabel}` : 'awaiting approval'}</span>
-      </div>
-      <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] text-text-muted font-mono">{JSON.stringify(entry.args, null, 2)}</pre>
-      <div className="mt-1.5 flex justify-end gap-1">
-        <Button
-          type="button"
-          variant="danger"
-          size="sm"
-          disabled={busy}
-          onClick={() => onReject(entry.pendingId)}
-        >
-          Reject
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={busy}
-          onClick={() => onApprove(entry.pendingId)}
-        >
-          <ShieldCheck size={12} />
-          {busy ? 'Approving…' : 'Approve & run'}
-        </Button>
-      </div>
-    </li>
-  );
-}
-
-function McpPendingApprovals({ pending, busyId, error, pollError, onRefresh, onApprove, onReject }: {
-  pending: PendingApproval[] | null;
-  busyId: string | null;
-  error: string | null;
-  /** Set when the approvals poll itself is failing — a third state, distinct from an empty queue (#2691). */
-  pollError: string | null;
-  onRefresh: () => void;
-  onReject: (id: string) => void;
-  onApprove: (id: string) => void;
-}) {
+/**
+ * Settings → MCP's view of the pending destructive-tool approvals.
+ *
+ * It owns no state and no poll of its own (#2735): `usePendingApprovals` — the
+ * same hook Home's `PendingApprovalsCard` mounts — reads the durable store over
+ * `/api/approvals`, and `PendingApprovalList` draws the same rows. Only the
+ * surrounding chrome (the section heading and the Refresh button) is local.
+ */
+function McpPendingApprovals() {
+  const { pending, busyId, error, pollError, approve, reject, refresh } = usePendingApprovals();
   const entries = pending ?? [];
   const hasPending = entries.length > 0;
   // A confirmed-empty queue still renders nothing. A queue we could not read
@@ -179,7 +136,7 @@ function McpPendingApprovals({ pending, busyId, error, pollError, onRefresh, onA
           Pending destructive approvals
           {hasPending && <span className="text-xs font-normal text-text-subtle">({entries.length})</span>}
         </p>
-        <Button type="button" variant="secondary" size="sm" onClick={onRefresh}>
+        <Button type="button" variant="secondary" size="sm" onClick={refresh}>
           <RefreshCw size={12} /> Refresh
         </Button>
       </div>
@@ -196,11 +153,7 @@ function McpPendingApprovals({ pending, busyId, error, pollError, onRefresh, onA
             An MCP agent proposed these destructive tool calls. They run only after you approve them here — the agent cannot approve its own request.
           </p>
           {error && <p className="text-xs text-status-fail mb-2">{error}</p>}
-          <ul className="space-y-2">
-            {entries.map(p => (
-              <PendingApprovalRow key={p.pendingId} entry={p} busy={busyId === p.pendingId} onApprove={onApprove} onReject={onReject} />
-            ))}
-          </ul>
+          <PendingApprovalList entries={entries} busyId={busyId} onApprove={approve} onReject={reject} />
         </>
       )}
     </div>
@@ -256,9 +209,6 @@ function McpAuditFeed({ entries, loading, onRefresh }: { entries: AuditEntry[] |
 const ON_BOX_HOST = 'host.containers.internal';
 const DEFAULT_APP_PORT = '5888';
 
-/** Consecutive failed approvals polls before the section says the check is broken (#2691). */
-const PENDING_FAILURES_BEFORE_ALERT = 2;
-
 export default function McpSection() {
   const [mcpUrl, setMcpUrl] = useState('');
   const [onBoxUrl, setOnBoxUrl] = useState('');
@@ -271,57 +221,6 @@ export default function McpSection() {
   const [audit, setAudit] = useState<AuditEntry[] | null>(null);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
-  const [pending, setPending] = useState<PendingApproval[] | null>(null);
-  const [approveBusyId, setApproveBusyId] = useState<string | null>(null);
-  const [approveError, setApproveError] = useState<string | null>(null);
-  const [pendingPollError, setPendingPollError] = useState<string | null>(null);
-  const pendingFailures = useRef(0);
-
-  /**
-   * Poll the approvals queue. A failure is absorbed once and reported on the
-   * second consecutive miss, so a transient blip on the 15s poll does not train
-   * the operator to ignore the banner (#2691). `reportNow` skips that grace for
-   * the explicit Refresh click — a button that silently does nothing is the
-   * same defect in miniature. On failure `pending` is left untouched: a failed
-   * poll must never overwrite a known-pending list with an empty one.
-   */
-  const loadPending = useCallback((reportNow = false) => {
-    fetch('/api/system/mcp/approve')
-      .then(async r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return (await r.json()) as { pending?: PendingApproval[] };
-      })
-      .then(data => {
-        pendingFailures.current = 0;
-        setPendingPollError(null);
-        setPending(data.pending ?? []);
-      })
-      .catch((e: unknown) => {
-        pendingFailures.current += 1;
-        if (reportNow || pendingFailures.current >= PENDING_FAILURES_BEFORE_ALERT) {
-          setPendingPollError(e instanceof Error ? e.message : String(e));
-        }
-      });
-  }, []);
-
-  const resolvePending = useCallback(async (id: string, method: 'POST' | 'DELETE') => {
-    setApproveBusyId(id);
-    setApproveError(null);
-    try {
-      const res = await fetch(`/api/system/mcp/approve/${id}`, { method });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.error ?? `HTTP ${res.status}`);
-      }
-      loadPending();
-    } catch (e) {
-      setApproveError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setApproveBusyId(null);
-    }
-  }, [loadPending]);
-  const approvePending = useCallback((id: string) => resolvePending(id, 'POST'), [resolvePending]);
-  const rejectPending = useCallback((id: string) => resolvePending(id, 'DELETE'), [resolvePending]);
 
   const loadAudit = () => {
     setAuditLoading(true);
@@ -338,14 +237,6 @@ export default function McpSection() {
     setMcpUrl(`${window.location.origin}/mcp`);
     setOnBoxUrl(`http://${ON_BOX_HOST}:${DEFAULT_APP_PORT}/mcp`);
   }, []);
-
-  // Poll for pending destructive-tool approvals (#1766). In-memory + short TTL,
-  // so a light poll keeps the badge fresh without a socket channel.
-  useEffect(() => {
-    loadPending();
-    const t = setInterval(() => loadPending(), 15000);
-    return () => clearInterval(t);
-  }, [loadPending]);
 
   useEffect(() => {
     let cancelled = false;
@@ -481,16 +372,9 @@ export default function McpSection() {
           propose a destroy-tier tool (delete/purge/restore/factory_reset/USB
           boot) but cannot execute it — it parks here for a logged-in human to
           approve. Renders when something is pending, or when the check for
-          pending requests is itself failing (#2691). */}
-      <McpPendingApprovals
-        pending={pending}
-        busyId={approveBusyId}
-        error={approveError}
-        pollError={pendingPollError}
-        onRefresh={() => loadPending(true)}
-        onApprove={approvePending}
-        onReject={rejectPending}
-      />
+          pending requests is itself failing (#2691). Same hook, same rows and
+          same `/api/approvals` route as Home's card (#2735). */}
+      <McpPendingApprovals />
 
       {/* Recent MCP activity. Toggleable so the section stays compact for
           operators who don't care about the audit feed. Lazy-loads on

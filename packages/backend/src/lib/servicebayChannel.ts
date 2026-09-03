@@ -15,6 +15,7 @@
  */
 import { getExecutor } from '@/lib/executor';
 import { logger } from '@/lib/logger';
+import { shellQuoteAll } from '@/lib/util/shellQuote';
 
 export const CHANNELS = ['latest', 'dev', 'test'] as const;
 export type Channel = (typeof CHANNELS)[number];
@@ -35,7 +36,7 @@ export function isChannel(s: string): s is Channel {
  *  restart lands). So a caller polling this only sees the new channel once the
  *  box has restarted onto it. Falls back to 'latest' if unparseable. */
 export async function getServicebayChannel(): Promise<string> {
-  const { stdout } = await getExecutor('Local').execArgv(['podman', 'inspect', 'servicebay', '--format', '{{.ImageName}}']);
+  const { stdout } = await getExecutor('Local').execSafe(['podman', 'inspect', 'servicebay', '--format', '{{.ImageName}}']);
   const tag = stdout.trim().match(/:([A-Za-z0-9._-]+)$/);
   return tag ? tag[1] : 'latest';
 }
@@ -64,18 +65,19 @@ export async function setServicebayChannel(channel: Channel): Promise<void> {
   }
   const executor = getExecutor('Local');
   // Swap `…/servicebay:<anything>` → `…/servicebay:<channel>` ($1 = channel).
-  await executor.execArgv(['sh', '-c', SWAP_TAG_SH, 'sh', channel]);
+  // Shell required: SWAP_TAG_SH is a shell program (`sed` pipeline + `mv`).
+  await executor.exec(shellQuoteAll(['sh', '-c', SWAP_TAG_SH, 'sh', channel]));
   // Pull the new tag and reload the unit up front, AWAITED — a missing/unauthed
   // tag throws here and propagates to the caller instead of being swallowed in
   // a detached async (which left the box reporting the old channel, #2064).
-  await executor.execArgv(['podman', 'pull', `${IMAGE}:${channel}`], { timeoutMs: 5 * 60 * 1000 });
-  await executor.execArgv(['systemctl', '--user', 'daemon-reload']);
+  await executor.execSafe(['podman', 'pull', `${IMAGE}:${channel}`], { timeoutMs: 5 * 60 * 1000 });
+  await executor.execSafe(['systemctl', '--user', 'daemon-reload']);
   // Recreate + restart, detached: rm -f tears down the running container (us)
   // so the quadlet recreates it from the new image; the request returns first.
   void (async () => {
     try {
-      await executor.execArgv(['podman', 'rm', '-f', 'servicebay']);
-      await executor.execArgv(['systemctl', '--user', 'restart', '--no-block', 'servicebay.service']);
+      await executor.execSafe(['podman', 'rm', '-f', 'servicebay']);
+      await executor.execSafe(['systemctl', '--user', 'restart', '--no-block', 'servicebay.service']);
       logger.info('channel', `Switched ServiceBay to '${channel}' and triggered container recreate.`);
     } catch (e) {
       logger.error('channel', `Channel switch to '${channel}' failed during recreate/restart: ${e instanceof Error ? e.message : String(e)}`);

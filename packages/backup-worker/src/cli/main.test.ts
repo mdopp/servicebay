@@ -11,7 +11,7 @@ import {
   WorkerArgError,
   type WorkerIO,
 } from './main';
-import { getServiceManifest, type ServiceBackupManifest } from '../engine/serviceManifest';
+import { getServiceManifest, type ServiceBackupManifest } from '@servicebay/backup-manifest';
 import type { WorkerStatus } from '../contract/status';
 
 describe('parseWorkerArgs', () => {

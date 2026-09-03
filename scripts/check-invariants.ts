@@ -28,6 +28,7 @@ import path from 'node:path';
 
 import { auditHealthCheckIdLifecycle } from './invariants/healthCheckIdLifecycle';
 import { auditAssistCatalogSingleSource } from './invariants/assistCatalogSingleSource';
+import { auditNpmApiLiterals } from './invariants/npmApiLiterals';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const SRC = path.join(REPO_ROOT, 'packages', 'frontend', 'src');
@@ -272,34 +273,44 @@ async function checkBackendAnyBudgets() {
 // ---------------------------------------------------------------------------
 const EXEC_TEMPLATE_LITERAL_MAX = 0;
 
-async function checkExecTemplateLiterals() {
-    const files = [
-        ...await walk(SRC, isTs),
-        ...await walk(BACKEND_SRC, isTs),
-    ];
-    let count = 0;
-    const offenders: string[] = [];
-    for (const file of files) {
-        if (isTestFile(file)) continue;
-        const content = await readFile(file, 'utf-8');
-        // Match: <ident>.exec(`...${ ... }...`)
+// ---------------------------------------------------------------------------
+// 3b. executor.execArgv call-site count. Sibling of EXEC_TEMPLATE_LITERAL_MAX.
+//
+// `execArgv(argv)` used to be `exec(shellQuoteAll(argv))` — a structured argv
+// quoted into a shell string and re-parsed on the host, a layer in which a
+// filename with a space or a `$` can mean something else. #2737 swept every
+// call site onto `execSafe` (argv handed to the agent's `safe_exec` verbatim);
+// `execArgv` survives only as a deprecated alias. Zero keeps the shell-string
+// tier for argv from regrowing. Sites that genuinely need a shell stay on
+// `exec()` and each carries a comment saying why.
+// ---------------------------------------------------------------------------
+const EXEC_ARGV_MAX = 0;
+
+async function checkExecCallSiteBudgets() {
+    const budgets = [
         // Conservative: only flags template literals that contain ${...}.
-        const re = /\b\w+\.exec\(`[^`]*\$\{[^`]*`/g;
-        const hits = content.match(re)?.length ?? 0;
-        if (hits > 0) {
-            count += hits;
-            offenders.push(`${path.relative(REPO_ROOT, file)} (${hits})`);
+        { label: 'executor.exec template-literal call sites', check: 'exec-template-literal',
+          re: /\b\w+\.exec\(`[^`]*\$\{[^`]*`/g, max: EXEC_TEMPLATE_LITERAL_MAX, remedy: 'Use execSafe instead.' },
+        // A *call site*: `<expr>.execArgv(`. The method declaration and the
+        // interface signature are not calls, so they stay allowed.
+        { label: 'executor.execArgv call sites', check: 'exec-argv-call-site',
+          re: /\.execArgv\(/g, max: EXEC_ARGV_MAX,
+          remedy: 'execArgv is a deprecated alias for execSafe (#2737) — call execSafe directly, or exec() with a comment saying why a shell is needed.' },
+    ];
+    const files = [...await walk(SRC, isTs), ...await walk(BACKEND_SRC, isTs)];
+    const roots = [SRC, BACKEND_SRC].map(r => path.relative(REPO_ROOT, r)).join(' + ');
+    for (const b of budgets) {
+        let count = 0;
+        const offenders: string[] = [];
+        for (const file of files) {
+            if (isTestFile(file)) continue;
+            const hits = (await readFile(file, 'utf-8')).match(b.re)?.length ?? 0;
+            if (hits > 0) { count += hits; offenders.push(`${path.relative(REPO_ROOT, file)} (${hits})`); }
         }
-    }
-    measurements.push(
-        `executor.exec template-literal call sites: ${count} across ${files.length} files in ` +
-        `${[SRC, BACKEND_SRC].map(r => path.relative(REPO_ROOT, r)).join(' + ')} (max ${EXEC_TEMPLATE_LITERAL_MAX})`,
-    );
-    if (count > EXEC_TEMPLATE_LITERAL_MAX) {
-        violations.push({
-            check: 'exec-template-literal',
-            detail: `${count} \`executor.exec(\`...\${x}...\`)\` calls (max ${EXEC_TEMPLATE_LITERAL_MAX}). Use execArgv instead. Offenders: ${offenders.join(', ')}`,
-        });
+        measurements.push(`${b.label}: ${count} across ${files.length} files in ${roots} (max ${b.max})`);
+        if (count > b.max) {
+            violations.push({ check: b.check, detail: `${count} ${b.label} (max ${b.max}). ${b.remedy} Offenders: ${offenders.join(', ')}` });
+        }
     }
 }
 
@@ -1179,6 +1190,15 @@ async function checkHealthCheckIdLifecycle() {
     measurements.push(...found.measurements);
 }
 
+// 8e. Only lib/npm/ talks to NPM's admin API (#2731). depcruise keeps the
+// transport import-private; this catches the bare `fetch` that re-derives the
+// URL. See scripts/invariants/npmApiLiterals.ts.
+async function checkNpmApiLiterals() {
+    const found = await auditNpmApiLiterals({ frontendSrc: SRC, backendSrc: BACKEND_SRC });
+    violations.push(...found.violations);
+    measurements.push(...found.measurements);
+}
+
 // ---------------------------------------------------------------------------
 // 9. docs/ARCHITECTURE_INVARIANTS.md's numbers are generated, not typed.
 //
@@ -1207,6 +1227,7 @@ function renderThresholdBlock(): string {
         ['`as any` in `packages/backend/src` outside security paths', 'BACKEND_AS_ANY_BUDGET', String(BACKEND_AS_ANY_BUDGET)],
         ['`: any` annotations in `packages/backend/src` (security paths included)', 'BACKEND_COLON_ANY_BUDGET', String(BACKEND_COLON_ANY_BUDGET)],
         ['`executor.exec` template-literal call sites', 'EXEC_TEMPLATE_LITERAL_MAX', String(EXEC_TEMPLATE_LITERAL_MAX)],
+        ['`executor.execArgv` call sites (deprecated alias for `execSafe`)', 'EXEC_ARGV_MAX', String(EXEC_ARGV_MAX)],
         ['`withApiHandler` adoption across `route.ts` files', 'MIN_WITH_API_HANDLER_RATIO', `${(MIN_WITH_API_HANDLER_RATIO * 100).toFixed(0)}%`],
         ['`DigitalTwinStore.getInstance()` call sites', 'TWIN_GETINSTANCE_MAX', String(TWIN_GETINSTANCE_MAX)],
         ['Bare `fs.writeFile`/`writeFileSync` in durable-state modules', 'DURABLE_STATE_BARE_WRITE_BUDGET', String(DURABLE_STATE_BARE_WRITE_BUDGET)],
@@ -1271,7 +1292,7 @@ async function main() {
         checkFileSize(),
         checkSecurityAnyBudget(),
         checkBackendAnyBudgets(),
-        checkExecTemplateLiterals(),
+        checkExecCallSiteBudgets(),
         checkWithApiHandlerAdoption(),
         checkTwinFanIn(),
         checkDurableStateAtomicWrites(),
@@ -1284,6 +1305,7 @@ async function main() {
         checkMcpAuditRedaction(),
         checkMcpApprovalPollability(),
         checkHealthCheckIdLifecycle(),
+        checkNpmApiLiterals(),
         syncOrCheckThresholdDoc(),
     ]);
 

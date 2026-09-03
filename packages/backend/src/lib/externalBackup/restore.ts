@@ -25,7 +25,7 @@ import {
   resolveServiceDataDir,
   type ServiceBackupMeta,
 } from './producer';
-import { getServiceManifest, getConfigPaths } from './serviceManifest';
+import { getServiceManifest, getConfigPaths } from '@servicebay/backup-manifest';
 import { safeTarExtract, extractServiceConfigToNode } from '../systemBackup';
 import { getExecutor, type Executor } from '../executor';
 import { logger } from '../logger';
@@ -122,19 +122,19 @@ function agentRestoreBackend(executor: Executor): RestoreFsBackend {
     async isFreshDir(dir) {
       if (!(await executor.exists(dir))) return true;
       // `ls -A` lists entries (incl. dotfiles, excl. . and ..); empty stdout → fresh.
-      const { stdout } = await executor.execArgv(['ls', '-A', dir]);
+      const { stdout } = await executor.execSafe(['ls', '-A', dir]);
       return stdout.trim().length === 0;
     },
     async countFiles(dir) {
       if (!(await executor.exists(dir))) return 0;
-      const { stdout } = await executor.execArgv(['find', dir, '-type', 'f']);
+      const { stdout } = await executor.execSafe(['find', dir, '-type', 'f']);
       return stdout.split('\n').filter(l => l.trim().length > 0).length;
     },
     async mkdirp(dir) {
-      await executor.execArgv(['mkdir', '-p', dir]);
+      await executor.execSafe(['mkdir', '-p', dir]);
     },
     async rmrf(target) {
-      await executor.execArgv(['rm', '-rf', target]);
+      await executor.execSafe(['rm', '-rf', target]);
     },
     async extractTar(tar, destDir) {
       // #1610 — the host-side per-service tar extraction (in-container

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildForwardAuthPatch } from './route';
+import { buildForwardAuthPatch } from './proxyHostPolicy';
 
 // A minimal NPM-style proxy_host conf with a forward-auth `auth_request`
 // and a `location /` block that includes proxy.conf (where NPM lays down

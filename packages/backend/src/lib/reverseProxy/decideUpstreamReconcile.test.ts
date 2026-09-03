@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideUpstreamReconcile } from './route';
+import { decideUpstreamReconcile } from './proxyHostPolicy';
 
 // #2364 (completes #2357) — a radicale redeploy must re-point the EXISTING
 // caldav.<domain> proxy host from the (now-closed) LAN address to

@@ -24,7 +24,7 @@ vi.mock('@/lib/executor', () => {
     return {
         getExecutor: vi.fn(() => ({
             exec: vi.fn((cmd: string) => dispatch(cmd)),
-            execArgv: vi.fn((argv: string[]) => dispatch(argv.join(' '))),
+            execSafe: vi.fn((argv: string[]) => dispatch(argv.join(' '))),
         })),
     };
 });

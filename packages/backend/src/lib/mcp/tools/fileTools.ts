@@ -32,8 +32,8 @@ async function assertRealpathInJail(
   // *resolved* root, not the literal string (else every legit path is
   // wrongly rejected — #1872 2nd box-verify RED).
   const [real, rootReal] = await Promise.all([
-    exec.execSafe(['realpath', '-m', '--', jailedPath]),
-    exec.execSafe(['realpath', '-m', '--', JAIL_ROOT]),
+    exec.execSafe(['realpath', '-m', '--', jailedPath], { check: false }),
+    exec.execSafe(['realpath', '-m', '--', JAIL_ROOT], { check: false }),
   ]);
   if (realPathInJail(real.stdout ?? '', rootReal.stdout ?? '')) return null;
   return `Path escapes the allowed root ${JAIL_ROOT}: "${reqPath}" resolves (via symlink) to "${(real.stdout ?? '').trim()}".`;
@@ -50,7 +50,7 @@ async function assertReadableRegularFile(
   reqPath: string,
   limit: number,
 ): Promise<string | null> {
-  const stat = await exec.execSafe(['stat', '-Lc', '%F %s', '--', jailedPath]);
+  const stat = await exec.execSafe(['stat', '-Lc', '%F %s', '--', jailedPath], { check: false });
   if (stat.code !== 0) {
     return `Cannot stat "${reqPath}": ${(stat.stderr ?? '').trim() || `exit ${stat.code}`}`;
   }
@@ -131,14 +131,14 @@ export function registerFileTools({ server }: ToolRegistration) {
         // Parent-dir create (idempotent). Derive the parent lexically from the
         // already-jailed absolute path.
         const parent = jailed.path.slice(0, jailed.path.lastIndexOf('/')) || JAIL_ROOT;
-        const mk = await exec.execSafe(['mkdir', '-p', '--', parent], { sudo: true });
+        const mk = await exec.execSafe(['mkdir', '-p', '--', parent], { sudo: true, check: false });
         if (mk.code !== 0) {
           return errorResult(`Could not create parent directory "${parent}": ${(mk.stderr ?? '').trim() || `exit ${mk.code}`}`);
         }
         // Write the content via the agent's write_file (handles the transfer),
         // then set core:core ownership so the box's service user owns it.
         await exec.writeFile(jailed.path, content);
-        const chown = await exec.execSafe(['chown', 'core:core', '--', jailed.path], { sudo: true });
+        const chown = await exec.execSafe(['chown', 'core:core', '--', jailed.path], { sudo: true, check: false });
         const ownershipSet = chown.code === 0;
         return textResult({
           path: jailed.path,
@@ -172,7 +172,7 @@ export function registerFileTools({ server }: ToolRegistration) {
         const res = await exec.execSafe([
           'find', jailed.path, '-maxdepth', '1', '-mindepth', '1',
           '-printf', '%y\t%s\t%T@\t%f\n',
-        ]);
+        ], { check: false });
         if (res.code !== 0) {
           return errorResult(`Cannot list "${jailed.path}": ${(res.stderr ?? '').trim() || `exit ${res.code}`}`);
         }

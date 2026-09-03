@@ -274,6 +274,72 @@ const servicebayPlugin = {
         };
       },
     },
+    // #2736 — one typed API seam. `apiFetch` (@servicebay/api-client) is the
+    // single client-side 401 → /login handler now that the global
+    // `window.fetch` monkey-patch in DigitalTwinProvider is gone. A raw
+    // `fetch('/api/...')` therefore silently loses session-expiry handling —
+    // and, being untyped, also loses any chance of noticing a response-shape
+    // change (it compiles, deploys, and renders `undefined`).
+    //
+    // Staged at "warn" like the two #2353 rules: ~190 call sites across ~79
+    // files is far past one unit's blast radius. The count is pinned in
+    // .eslint-ratchet-baseline.json and may only ever go DOWN
+    // (scripts/check-lint-ratchet.ts). Flip to "error" + drop from
+    // RATCHETED_RULES when it reaches 0.
+    "no-raw-api-fetch": {
+      meta: {
+        type: "suggestion",
+        docs: {
+          description:
+            "Use apiFetch/typedFetch from @servicebay/api-client instead of a raw fetch('/api/...') in the frontend.",
+        },
+        schema: [],
+        messages: {
+          raw: "Raw fetch('{{url}}…') to our own API. Use `apiFetch` (or `typedFetch`) from @servicebay/api-client — it is the only client-side 401 → /login handler. See docs/ARCHITECTURE_INVARIANTS.md § A single typed API seam.",
+        },
+      },
+      create(context) {
+        /** `fetch(…)`, `window.fetch(…)`, `globalThis.fetch(…)`. */
+        function isFetchCallee(callee) {
+          if (callee.type === "Identifier") return callee.name === "fetch";
+          if (callee.type !== "MemberExpression" || callee.computed) return false;
+          const { object, property } = callee;
+          return (
+            property.type === "Identifier" &&
+            property.name === "fetch" &&
+            object.type === "Identifier" &&
+            ["window", "globalThis", "global", "self"].includes(object.name)
+          );
+        }
+        /**
+         * The statically known start of the URL argument. Every raw call site
+         * in this tree spells its own API as a literal or as a template whose
+         * first chunk is the path (`/api/services/${name}`), so the leading
+         * chunk is enough — and it is what makes the rule's answer stable
+         * (an interpolated variable is not something a lint rule can resolve).
+         */
+        function staticPrefix(arg) {
+          if (!arg) return null;
+          if (arg.type === "Literal") return typeof arg.value === "string" ? arg.value : null;
+          if (arg.type === "TemplateLiteral") {
+            return arg.quasis[0]?.value.cooked ?? null;
+          }
+          return null;
+        }
+        return {
+          CallExpression(node) {
+            if (!isFetchCallee(node.callee)) return;
+            const prefix = staticPrefix(node.arguments[0]);
+            if (prefix === null || !prefix.startsWith("/api")) return;
+            context.report({
+              node,
+              messageId: "raw",
+              data: { url: prefix.slice(0, 40) },
+            });
+          },
+        };
+      },
+    },
     "no-fe-backend-import": {
       meta: {
         type: "problem",
@@ -460,6 +526,23 @@ const eslintConfig = defineConfig([
     rules: {
       "sb/no-raw-ui-primitive": "warn",
       "sb/no-raw-color-literal": "warn",
+    },
+  },
+  {
+    // #2736 — a single typed API seam. Same staging shape as the two #2353
+    // rules above (warn + ratchet), but a different exemption set: the Next
+    // route handlers under app/api and app/napi ARE the server side of that
+    // seam — they proxy to the backend and have no browser session to bounce,
+    // so a raw fetch there is correct, not debt. Tests are exempt so fixtures
+    // and fetch-mocking specs don't pad the count.
+    files: ["packages/frontend/src/**/*.{ts,tsx,js,jsx}"],
+    ignores: [
+      "packages/frontend/src/app/api/**",
+      "packages/frontend/src/app/napi/**",
+      "**/*.test.{ts,tsx,js,jsx}",
+    ],
+    rules: {
+      "sb/no-raw-api-fetch": "warn",
     },
   },
   {

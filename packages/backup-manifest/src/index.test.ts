@@ -10,7 +10,7 @@ import {
   applyStripRules,
   applyTransformRules,
   translateHaAddonConfigEntries,
-} from './serviceManifest';
+} from './index';
 
 /** The manifest's DATA class (#1585) — the large on-RAID artifacts a
  *  `wipe-config` reinstall keeps. Read straight off the manifest. */

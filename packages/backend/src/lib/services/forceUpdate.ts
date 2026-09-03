@@ -166,7 +166,7 @@ type Exec = ReturnType<typeof getExecutor>;
  *  — every step here is best-effort-and-reported, never fatal-and-silent. */
 async function tryExec(executor: Exec, argv: string[], timeoutMs: number): Promise<string | null> {
   try {
-    await executor.execArgv(argv, { timeoutMs });
+    await executor.execSafe(argv, { timeoutMs });
     return null;
   } catch (e) {
     return e instanceof Error ? e.message : String(e);

@@ -60,23 +60,32 @@ function inspectExecutor(opts: {
   isEnabled?: string;
 } = {}) {
   const argvCalls: string[][] = [];
+  // #2737: argv commands ride execSafe (`sudo` is an option, not argv[0]);
+  // only the genuinely-shell ones (`command -v`, `… || true`, the resolved
+  // absolute nft path) still arrive as a string on `exec`. Both funnel into
+  // one recorded command line so the assertions read like the box's log.
+  const run = async (argv: string[]) => {
+    argvCalls.push(argv);
+    const cmd = argv.join(' ');
+    if (cmd.includes('command -v nft')) {
+      if (opts.nftOnPath === false) throw new Error('command failed: exit 1');
+      return { stdout: '/usr/sbin/nft\n', stderr: '' };
+    }
+    if (cmd.includes('systemctl is-active')) return { stdout: `${opts.isActive ?? 'inactive'}\n`, stderr: '' };
+    if (cmd.includes('systemctl is-enabled')) return { stdout: `${opts.isEnabled ?? 'disabled'}\n`, stderr: '' };
+    if (cmd.includes('list table')) {
+      if (opts.listError) throw new Error(opts.listError);
+      if (opts.listing === undefined) throw new Error('No such file or directory');
+      return { stdout: opts.listing, stderr: '' };
+    }
+    return { stdout: '', stderr: '' };
+  };
   const executor = {
-    execArgv: vi.fn(async (argv: string[]) => {
-      argvCalls.push(argv);
-      const cmd = argv.join(' ');
-      if (cmd === 'sh -c command -v nft') {
-        if (opts.nftOnPath === false) throw new Error('command failed: exit 1');
-        return { stdout: '/usr/sbin/nft\n', stderr: '' };
-      }
-      if (cmd.includes('systemctl is-active')) return { stdout: `${opts.isActive ?? 'inactive'}\n`, stderr: '' };
-      if (cmd.includes('systemctl is-enabled')) return { stdout: `${opts.isEnabled ?? 'disabled'}\n`, stderr: '' };
-      if (cmd.includes('list table')) {
-        if (opts.listError) throw new Error(opts.listError);
-        if (opts.listing === undefined) throw new Error('No such file or directory');
-        return { stdout: opts.listing, stderr: '' };
-      }
-      return { stdout: '', stderr: '' };
-    }),
+    exec: vi.fn(async (command: string) => run(command.split(' '))),
+    execSafe: vi.fn(async (argv: string[], o?: { sudo?: boolean }) => ({
+      ...(await run(o?.sudo ? ['sudo', ...argv] : argv)),
+      code: 0,
+    })),
     writeFile: vi.fn(async () => undefined),
     exists: vi.fn(async () => opts.nftAtDefault ?? false),
   } as unknown as Executor;
@@ -87,15 +96,20 @@ function inspectExecutor(opts: {
 function fakeExecutor(opts: { failArgv?: RegExp; unitExists?: boolean; tableExists?: boolean } = {}) {
   const argvCalls: string[][] = [];
   const writes: Record<string, string> = {};
+  const run = async (argv: string[]) => {
+    argvCalls.push(argv);
+    const joined = argv.join(' ');
+    if (joined.includes('command -v nft')) return { stdout: '/usr/sbin/nft\n', stderr: '' };
+    if (/nft list table/.test(joined) && opts.tableExists !== true) throw new Error('No such file or directory');
+    if (opts.failArgv?.test(joined)) throw new Error(`boom: ${joined}`);
+    return { stdout: '', stderr: '' };
+  };
   const executor = {
-    execArgv: vi.fn(async (argv: string[]) => {
-      argvCalls.push(argv);
-      const joined = argv.join(' ');
-      if (joined === 'sh -c command -v nft') return { stdout: '/usr/sbin/nft\n', stderr: '' };
-      if (/nft list table/.test(joined) && opts.tableExists !== true) throw new Error('No such file or directory');
-      if (opts.failArgv?.test(joined)) throw new Error(`boom: ${joined}`);
-      return { stdout: '', stderr: '' };
-    }),
+    exec: vi.fn(async (command: string) => run(command.split(' '))),
+    execSafe: vi.fn(async (argv: string[], o?: { sudo?: boolean }) => ({
+      ...(await run(o?.sudo ? ['sudo', ...argv] : argv)),
+      code: 0,
+    })),
     writeFile: vi.fn(async (path: string, content: string) => {
       writes[path] = content;
     }),
@@ -355,10 +369,11 @@ describe('reconcileHostFirewall (#2388)', () => {
 
   it('falls back to a known nft path when the probe cannot resolve one', async () => {
     const { executor, writes } = fakeExecutor();
-    (executor.execArgv as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (argv: string[]) => {
-      if (argv.join(' ') === 'sh -c command -v nft') throw new Error('no shell');
+    (executor.exec as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (command: string) => {
+      if (command.includes('command -v nft')) throw new Error('no shell');
       return { stdout: '', stderr: '' };
     });
+    (executor.execSafe as unknown as ReturnType<typeof vi.fn>).mockImplementation(async () => ({ stdout: '', stderr: '', code: 0 }));
     await reconcileHostFirewall(executor, [3890]);
     expect(writes['/tmp/servicebay-host-firewall.service']).toContain('ExecStart=/usr/sbin/nft -f');
   });

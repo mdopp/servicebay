@@ -2,7 +2,7 @@
  * Force-update action (#2397).
  *
  * The acceptance is behavioural, so these tests drive the real orchestrator
- * against a fake node: `execArgv` records every podman/systemctl argv, and the
+ * against a fake node: `execSafe` records every podman/systemctl argv, and the
  * digest reads are keyed off the recorded pull so "did the image actually
  * advance" is exercised end-to-end rather than asserted on a mock's return.
  */
@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockExec = vi.hoisted(() => ({
   calls: [] as string[][],
-  execArgv: vi.fn(async (_argv: string[], _opts?: unknown) => ({ stdout: '', stderr: '' })),
+  execSafe: vi.fn(async (_argv: string[], _opts?: unknown) => ({ stdout: '', stderr: '' })),
   fail: new Set<string>(),
 }));
 vi.mock('@/lib/executor', () => ({ getExecutor: () => mockExec }));
@@ -81,7 +81,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockExec.calls = [];
   mockExec.fail = new Set();
-  mockExec.execArgv.mockImplementation(async (argv: string[]) => {
+  mockExec.execSafe.mockImplementation(async (argv: string[]) => {
     mockExec.calls.push(argv);
     const key = argv.slice(0, 3).join(' ');
     if ([...mockExec.fail].some((f) => argv.join(' ').includes(f))) {

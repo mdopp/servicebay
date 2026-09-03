@@ -27,7 +27,7 @@ import path from 'path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { backupServiceToNas, type ServiceBackupResult } from './producer';
-import { getServiceManifest } from './serviceManifest';
+import { getServiceManifest } from '@servicebay/backup-manifest';
 
 const execFileAsync = promisify(execFile);
 

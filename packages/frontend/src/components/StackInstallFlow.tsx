@@ -145,7 +145,22 @@ export function StackInstallConfigureForm({
   );
 }
 
-interface ProgressProps extends CommonProps {
+/**
+ * What the progress panel reads off a controller. `useStackInstall`
+ * satisfies it; so does `/setup`, which builds one straight from the
+ * shared `InstallJobProvider` job (#2732) and has no local wizard state
+ * to reset — hence `reset` is optional and the Start-over button is
+ * only offered when it is there.
+ */
+export type InstallProgressController = Pick<
+  UseStackInstallReturn,
+  | 'items' | 'logs' | 'phase' | 'installingNow' | 'deployedNames' | 'error'
+  | 'npmCredPrompt' | 'npmCredFallback' | 'npmCredError'
+  | 'retryNpmCredentials' | 'skipNpmCredentials' | 'abortInstall'
+> & { reset?: UseStackInstallReturn['reset'] };
+
+interface ProgressProps {
+  controller: InstallProgressController;
   /** Optional content rendered above the log panel — wizard uses it for
    *  the digital-twin status strip. */
   beforeLog?: React.ReactNode;
@@ -231,7 +246,7 @@ export function StackInstallProgress({ controller, beforeLog }: ProgressProps) {
           </Button>
         </div>
       )}
-      {phase === 'error' && (
+      {phase === 'error' && reset && (
         <div className="mt-3 flex items-center justify-end">
           <Button
             type="button"
@@ -352,9 +367,11 @@ function InstallOutcomeBanner({
   );
 }
 
-interface SummaryProps extends CommonProps {
+interface SummaryProps {
+  controller: Pick<UseStackInstallReturn, 'credentialsManifest'>;
   /** Modal uses it for the DNS/SSL/access-restriction next-steps panels;
-   *  wizard uses it for the auto-run diagnose probe summary. */
+   *  wizard uses it for the auto-run diagnose probe summary; /setup for
+   *  its DNS check + self-test. */
   doneFooter?: React.ReactNode;
 }
 
@@ -418,13 +435,11 @@ export default function StackInstallFlow(props: {
       <>
         <StackInstallProgress
           controller={props.controller}
-          inputClassName={props.inputClassName}
           beforeLog={props.beforeLog}
         />
         {phase === 'done' && (
           <StackInstallSummary
             controller={props.controller}
-            inputClassName={props.inputClassName}
             doneFooter={props.doneFooter}
           />
         )}
@@ -439,8 +454,8 @@ export default function StackInstallFlow(props: {
  *
  * The fallback is *not* available at mount: this component mounts as
  * soon as the phase becomes `installing`, while the fallback only
- * arrives later on the `/api/install/status` poll that reports
- * `needs_credentials`. A bare `useState(fallback)` therefore captured
+ * arrives later on the shared install poll (`InstallJobProvider`) that
+ * reports `needs_credentials`. A bare `useState(fallback)` therefore captured
  * `''` forever and the prompt rendered blank inputs under copy that
  * promised pre-filled values (#2442).
  *

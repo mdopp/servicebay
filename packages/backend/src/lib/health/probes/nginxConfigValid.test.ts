@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Keep id→domain resolution inert by default; the parse/fail tests don't
 // depend on it, and individual tests override the NPM API fetch as needed.
-vi.mock('./npmAdmin', () => ({
-  findNpmAdminUrl: vi.fn(async () => ({ kind: 'url', url: 'http://localhost:81' })),
+vi.mock('@/lib/npm/client', () => ({
+  resolveNpmAdmin: vi.fn(async () => ({ kind: 'ok', apiUrl: 'http://localhost:81', nodeName: 'Local', nodeIp: '127.0.0.1' })),
   getNpmToken: vi.fn(async () => 'tok'),
 }));
 
@@ -77,8 +77,8 @@ describe('nginx_config_valid probe.run', () => {
     executor: {
       // Container discovery uses exec (pipe/awk needs a shell).
       exec: vi.fn(async () => ({ stdout: 'nginx-nginx-proxy-manager docker.io/jc21/nginx-proxy-manager\n', stderr: '' })),
-      // `nginx -t` runs via execArgv (no shell).
-      execArgv: vi.fn(async () => nginxResult()),
+      // `nginx -t` runs via execSafe (no shell).
+      execSafe: vi.fn(async () => nginxResult()),
     } as never,
   });
 

@@ -29,7 +29,8 @@ import { logger } from '@/lib/logger';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
 import { HealthStore } from '@/lib/health/store';
 import { registerRefreshNow } from './refreshHealthCheck';
-import { findNpmAdminUrl, npmTokenStatus, rekeyNpmAdmin } from '@/lib/reverseProxy/npmAdminRekey';
+import { npmTokenStatus, rekeyNpmAdmin } from '@/lib/reverseProxy/npmAdminRekey';
+import { findNpmAdmin } from '@/lib/npm/client';
 
 export interface NpmDataStaleResult {
   /** undefined when not applicable (no nginx-web, or NPM not reachable). */
@@ -91,8 +92,9 @@ export async function checkNpmDataStale(): Promise<NpmDataStaleResult> {
 
 // ─── Action handlers (kept in the probe file) ───────────────────────────
 //
-// `findNpmAdminUrl` / `npmTokenStatus` / `rekeyNpmAdmin` are shared with
-// the install-runner self-heal via `@/lib/reverseProxy/npmAdminRekey`.
+// `npmTokenStatus` / `rekeyNpmAdmin` are shared with the install-runner
+// self-heal via `@/lib/reverseProxy/npmAdminRekey`; NPM discovery is
+// `@/lib/npm/client` (#2730).
 
 /** Action: stop nginx-web, wipe its data volume, restart it. NPM's
  *  next start re-seeds the admin user from the
@@ -169,7 +171,10 @@ async function useExistingNpmCreds({
   if (!email || !password) {
     return { ok: false, message: 'Email and password are required.', refresh: false };
   }
-  const adminUrl = await findNpmAdminUrl(node);
+  // requireActive: false — this only POSTs a login; NPM accepting the
+  // credentials is the proof, and the twin's `active` flag lies for the
+  // kube nginx pod (#496). If NPM is really down the login reports "unreachable".
+  const adminUrl = (await findNpmAdmin({ node, requireActive: false }))?.apiUrl;
   if (!adminUrl) {
     return {
       ok: false,

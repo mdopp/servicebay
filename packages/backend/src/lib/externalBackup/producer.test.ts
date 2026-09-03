@@ -50,7 +50,7 @@ import {
   DEFAULT_BACKUP_RETENTION,
   latestServiceBackupName,
 } from './producer';
-import { getServiceManifest, type ServiceBackupManifest } from './serviceManifest';
+import { getServiceManifest, type ServiceBackupManifest } from '@servicebay/backup-manifest';
 import { logger } from '../logger';
 
 /** Match a dated slot tar `<service>-YYYYMMDD-HHMM.tar` (#1865). */

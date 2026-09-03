@@ -109,6 +109,7 @@ this page came to assert a wrong largest-file name, a wrong file count, and a
 | `as any` in `packages/backend/src` outside security paths | `BACKEND_AS_ANY_BUDGET` | 24 |
 | `: any` annotations in `packages/backend/src` (security paths included) | `BACKEND_COLON_ANY_BUDGET` | 79 |
 | `executor.exec` template-literal call sites | `EXEC_TEMPLATE_LITERAL_MAX` | 0 |
+| `executor.execArgv` call sites (deprecated alias for `execSafe`) | `EXEC_ARGV_MAX` | 0 |
 | `withApiHandler` adoption across `route.ts` files | `MIN_WITH_API_HANDLER_RATIO` | 100% |
 | `DigitalTwinStore.getInstance()` call sites | `TWIN_GETINSTANCE_MAX` | 0 |
 | Bare `fs.writeFile`/`writeFileSync` in durable-state modules | `DURABLE_STATE_BARE_WRITE_BUDGET` | 0 |
@@ -159,11 +160,14 @@ paths included, because there is no separate security budget for it.
 | `lib → dashboards` imports | `.dependency-cruiser.cjs:lib-no-import-dashboards` |
 | Circular dependency cycles | `.dependency-cruiser.cjs:no-circular` (#601 — final cycle broken by extracting `verifyNodeConnection` out of `nodes.ts`) |
 | Forks of the Mustache renderer | `.dependency-cruiser.cjs:one-renderer` (#599) |
+| NPM's admin API spoken to outside `lib/npm/` | `.dependency-cruiser.cjs:npm-api-only-from-lib-npm` + `scripts/invariants/npmApiLiterals.ts` (#2731) |
 | Bypasses of `ServiceManager` facade | `.dependency-cruiser.cjs:service-manager-single-mutation-path` |
 
 **Twin singleton fan-in.** Ratcheted to 0 — every read goes through `packages/backend/src/lib/store/repository.ts`; the store itself, the repository, and the backend `server.ts` bootstrap are the only allowed call sites.
 
 **Circular deps.** Every new cycle fails CI immediately.
+
+**One NPM client (#2731).** Nginx Proxy Manager's admin API (`/api/nginx/proxy-hosts`, `/certificates`, `/access-lists`) is spoken to from `packages/backend/src/lib/npm/` only: `http.ts` is the transport (bearer, JSON, abort budget, never throws on an HTTP status), `proxyHosts.ts` / `certs.ts` / `accessLists.ts` the typed client, `client.ts` the discovery + login (#2730). The proxy-hosts orchestration (create-or-reconcile, cert acquisition, conf-file patching, persistence, health-check sync) is the kernel in `lib/reverseProxy/proxyHostProvisioning.ts`; the HTTP route and the MCP `create_proxy_route` / `remove_proxy_route` / `get_proxy_routes` tools are thin callers of it. Two gates, because one is blind: the depcruise rule keeps `lib/npm/http.ts` import-private (only `lib/npm/` may import it), and the grep invariant fails any `/api/nginx` literal in non-test source outside `lib/npm/` — a caller that re-derives the URL with a bare `fetch` never shows up in the import graph. Before #2731 that client existed eleven times (route, migration orchestrator, two health probes, four diagnose probes, MCP tools), each with its own timeout and error text. `/api/tokens` and `/api/users` are deliberately outside this rule: they are NPM's auth surface, owned by `lib/npm/client.ts`, the auth probe and the bootstrap rekey.
 
 **Which packages depcruise walks.** `check:deps` cruises `packages/api-client/src`, `packages/backend/src`, `packages/backup-worker/src` and `packages/frontend/src`. `packages/disk-import-worker/src` is **not** covered yet: adding it surfaces a real `no-circular` violation (`cli/main.ts` ⇄ `server/index.ts`, via the deliberate lazy `import('../server/index')` in serve mode), and breaking that cycle is its own change, not a config edit. Extend the root list in `package.json` once it is broken — never add an exemption to make the package pass.
 
@@ -219,6 +223,7 @@ These are enforced as depcruise rules:
 - **One mutation path per operation** — every deploy/delete/start/stop/restart/update goes through `ServiceManager`. Direct imports of `serviceLifecycle`/`serviceListing` from outside `packages/backend/src/lib/services` are forbidden.
 - **One renderer** — all Mustache rendering goes through `packages/backend/src/lib/template/render.ts` (post-#599). No exemptions remain: the `one-renderer` depcruise rule's `pathNot` list is `render.ts` alone, and the only other file in the repo importing `mustache` is `tests/backend/template_consistency.test.ts`. (This page claimed `install/runner.ts` and `stackInstall/*` were still exempt until #2427 — they had not been for some time.)
 - **One Digital Twin store** — singleton via `DigitalTwinStore.getInstance()`. Fan-in cap enforced by `check-invariants.ts`.
+- **One NPM client** — every `/api/nginx/*` call goes through `packages/backend/src/lib/npm/` (post-#2731). `npm-api-only-from-lib-npm` keeps the transport import-private; `scripts/invariants/npmApiLiterals.ts` catches the string-literal bypass depcruise cannot see.
 
 ### One assist-catalog source (#2701, ADR 0014)
 
@@ -308,9 +313,10 @@ commits the two counts moved by exactly **zero** while violations were *moved*
 between files (a component extracted; the same eight primitives reappearing
 verbatim in the new file), so the plan above is now backed by a gate:
 
-- **`npm run check:lint-ratchet`** (`scripts/check-lint-ratchet.ts`) counts both
-  rules from ESLint's own `--format json` report over `packages/frontend/src`
-  and compares them to `.eslint-ratchet-baseline.json`. **A count may only go
+- **`npm run check:lint-ratchet`** (`scripts/check-lint-ratchet.ts`) counts every
+  rule in its `RATCHETED_RULES` list from ESLint's own `--format json` report
+  over `packages/frontend/src` and compares them to
+  `.eslint-ratchet-baseline.json`. **A count may only go
   down.** Chained from `check:arch` (so the autoloop's per-unit fast gate runs
   it) and run in CI's `invariants` job as `-- --check`.
 - **`--check` is CI mode:** never writes. An increase fails the PR; a *decrease*
@@ -324,13 +330,50 @@ verbatim in the new file), so the plan above is now backed by a gate:
   drop it from `RATCHETED_RULES` in `scripts/check-lint-ratchet.ts` and from
   `.eslint-ratchet-baseline.json` (ESLint's own 0-error gate owns it from then
   on), and delete its half of the `TODO(#2353)` ROLLOUT comment. The script
-  prints this instruction whenever a count hits 0. The two rules flip
+  prints this instruction whenever a count hits 0. The rules flip
   **independently** — `no-raw-ui-primitive` is the far smaller class and will
   clear first; it must not wait on the colour migration. (For the counts at
   HEAD run the script — they are deliberately not typed here, #2427.)
 - **The burn-down itself** is ordinary lint-sweep work (worst files first; the
   gate prints the current top ten on a failure). The ratchet's job is only to
   guarantee the direction — it does not schedule the sweeps.
+
+Rules currently under the ratchet — the counts live in
+`.eslint-ratchet-baseline.json`, not here (#2427):
+
+| Rule | Scope | Exempt | Flip target |
+|---|---|---|---|
+| `sb/no-raw-color-literal` | `packages/frontend/src/**` | `components/ui/**`, `*.test.*` | `error` at 0 (#2353) |
+| `sb/no-raw-ui-primitive` | `packages/frontend/src/**` | `components/ui/**`, `*.test.*` | `error` at 0 (#2353) |
+| `sb/no-raw-api-fetch` | `packages/frontend/src/**` | `app/api/**`, `app/napi/**`, `*.test.*` | `error` at 0 (#2736) |
+
+### A single typed API seam (#2736)
+
+`apiFetch` in `packages/api-client/src/apiFetch.ts` is **the** client-side
+401 → `/login` handler. There used to be three: a global `window.fetch`
+monkey-patch installed as an import-time side effect of
+`packages/frontend/src/providers/DigitalTwinProvider.tsx`, this wrapper (with
+zero callers), and a duplicated `ANONYMOUS_PATHS` set inside
+`packages/frontend/src/hooks/useSocket.ts`.
+
+The monkey-patch is the one that mattered, and it is **gone**. A global patch
+covers every raw `fetch('/api/...')` silently, so session-expiry handling was
+inherited by accident — which made migrating call sites look like busywork
+while their number kept growing. One explicit seam beats an invisible one:
+
+- The REST 401 path is `apiFetch` (opt-in, per call).
+- The socket `unauthorized` path in `useSocket.ts` imports
+  `isAnonymousPathname` from the same module instead of keeping a second copy
+  of the path set "in sync" by comment.
+- **Do not reintroduce a global fetch patch.** If a call site needs 401
+  handling, it calls `apiFetch`; that is the whole contract.
+
+Consequence, stated plainly: a raw `fetch('/api/...')` in the frontend no
+longer redirects on session expiry. That is the pressure — `sb/no-raw-api-fetch`
+counts those call sites and the ratchet above forbids the count from rising, so
+lint-sweep units burn them down file by file exactly like the #2353 rules. The
+Next route handlers under `app/api/**` and `app/napi/**` are exempt: they are
+the *server* side of this seam and have no browser session to bounce.
 
 ### Duplicate detection (#2354)
 

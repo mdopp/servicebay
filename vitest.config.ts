@@ -29,6 +29,7 @@ export default defineConfig({
       { find: /^@\/providers\//, replacement: path.resolve(__dirname, './packages/frontend/src/providers/') + '/' },
       { find: /^@\/lib\//, replacement: path.resolve(__dirname, './packages/backend/src/lib/') + '/' },
       { find: '@servicebay/api-client', replacement: path.resolve(__dirname, './packages/api-client/src/index.ts') },
+      { find: '@servicebay/backup-manifest', replacement: path.resolve(__dirname, './packages/backup-manifest/src/index.ts') },
       { find: '@servicebay/disk-import-worker/contract', replacement: path.resolve(__dirname, './packages/disk-import-worker/src/contract/status.ts') },
       { find: /^@servicebay\/disk-import-worker\//, replacement: path.resolve(__dirname, './packages/disk-import-worker/src/') + '/' },
       { find: '@servicebay/disk-import-worker', replacement: path.resolve(__dirname, './packages/disk-import-worker/src/index.ts') },

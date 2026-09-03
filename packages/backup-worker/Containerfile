@@ -35,16 +35,22 @@ WORKDIR /app
 # `npm ci` resolves the workspace graph (same constraint as the disk-import worker).
 COPY package.json package-lock.json* ./
 COPY packages/api-client/package.json ./packages/api-client/package.json
+COPY packages/backup-manifest/package.json ./packages/backup-manifest/package.json
 COPY packages/backend/package.json ./packages/backend/package.json
 COPY packages/frontend/package.json ./packages/frontend/package.json
 COPY packages/disk-import-worker/package.json ./packages/disk-import-worker/package.json
 COPY packages/backup-worker/package.json ./packages/backup-worker/package.json
 RUN npm ci
 
-# The worker is run via tsx (a one-shot CLI, no separate build step). Only the
-# worker's own sources are needed — it carries its own staging engine + manifest.
+# The worker is run via tsx (a one-shot CLI, no separate build step). It needs
+# its own staging engine PLUS `@servicebay/backup-manifest` — the per-service
+# include/exclude/strip spec, shared with the backend since #2733 instead of
+# being a hand-synced fork in `engine/`. The package is pure data + pure helpers
+# with no runtime dependency on the backend, so copying it in keeps the worker
+# self-contained (same shape as the disk-import worker copying api-client).
 COPY tsconfig.json ./tsconfig.json
 COPY packages/backup-worker ./packages/backup-worker
+COPY packages/backup-manifest ./packages/backup-manifest
 
 # Run as root INSIDE the container. Under rootless podman (UserNS=keep-id, as on
 # the box) container-root maps to the host `core` user, which owns the bind-mounts

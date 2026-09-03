@@ -20,7 +20,7 @@
 
 import { agentManager } from '@/lib/agent/manager';
 import { getConfig, updateConfig } from '@/lib/config';
-import { ServiceManager } from '@/lib/services/ServiceManager';
+import { findNpmAdmin } from '@/lib/npm/client';
 import { logger } from '@/lib/logger';
 import { generateRandomSecret } from '@/lib/stackInstall/randomSecret';
 import { shellQuote } from '@/lib/util/shellQuote';
@@ -32,23 +32,13 @@ const LOG = 'reverseProxy:npmRekey';
  *  shell metacharacters into the rekey exec command. */
 const CONTAINER_NAME_RE = /^[a-zA-Z0-9_.-]+$/;
 
-/** Resolve NPM's admin API base URL from the running nginx service, or
- *  null when NPM isn't deployed/active. */
-export async function findNpmAdminUrl(node: string): Promise<string | null> {
-  try {
-    const services = await ServiceManager.listServices(node);
-    const nginx = services.find(
-      s => s.name === 'nginx-web' || (s.name.includes('nginx') && !s.name.startsWith('install-')),
-    );
-    if (!nginx?.active) return null;
-    const ports = (nginx.ports ?? [])
-      .map(p => parseInt(String(p.host ?? ''), 10))
-      .filter(p => Number.isFinite(p) && p !== 80 && p !== 443);
-    const adminPort = ports[0] ?? 81;
-    return `http://localhost:${adminPort}`;
-  } catch {
-    return null;
-  }
+/** NPM's admin API base URL, or null when NPM isn't deployed/active.
+ *
+ *  requireActive: true — a re-key execs `node -` inside the NPM container
+ *  and rewrites the admin hash in its SQLite; that is only ever done
+ *  against a unit the twin reports running, never on a stale twin entry. */
+async function findActiveNpmAdminUrl(node: string): Promise<string | null> {
+  return (await findNpmAdmin({ node, requireActive: true }))?.apiUrl ?? null;
 }
 
 /** POST creds to NPM's /api/tokens. 'ok' = accepted, 'unauthorized' = 401,
@@ -94,7 +84,7 @@ export async function isInvalidAuth(res: Response): Promise<boolean> {
  *  - 'unknown'  — NPM not deployed/reachable → can't tell, skip.
  */
 export async function npmAdminCredStatus(node: string): Promise<'ok' | 'rejected' | 'no-creds' | 'unknown'> {
-  const adminUrl = await findNpmAdminUrl(node);
+  const adminUrl = await findActiveNpmAdminUrl(node);
   if (!adminUrl) return 'unknown';
   const cfg = await getConfig();
   const npm = cfg.reverseProxy?.npm;
@@ -141,7 +131,7 @@ export interface RekeyResult {
  * persists creds it can't prove against /api/tokens.
  */
 export async function rekeyNpmAdmin(node: string): Promise<RekeyResult> {
-  const adminUrl = await findNpmAdminUrl(node);
+  const adminUrl = await findActiveNpmAdminUrl(node);
   if (!adminUrl) {
     return { ok: false, message: 'Nginx Proxy Manager is not deployed/active on this node — nothing to re-key.' };
   }

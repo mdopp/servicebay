@@ -93,6 +93,9 @@ export function serverBundleOptions(overrides = {}) {
       '@/lib': path.join(repoRoot, 'packages', 'backend', 'src', 'lib'),
       '@': path.join(repoRoot, 'packages', 'frontend', 'src'),
       '@servicebay/api-client': path.join(repoRoot, 'packages', 'api-client', 'src', 'index.ts'),
+      // The shared backup manifests (#2733) — one copy for the backend and the
+      // sandboxed backup worker, so esbuild must resolve the workspace name.
+      '@servicebay/backup-manifest': path.join(repoRoot, 'packages', 'backup-manifest', 'src', 'index.ts'),
     },
     // Emit reasonable error messages from rejected promises etc.
     sourcemap: 'inline',

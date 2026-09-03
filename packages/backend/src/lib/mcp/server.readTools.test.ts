@@ -103,6 +103,7 @@ describe('read_file (#1872)', () => {
     // realpath safe_exec (or routes it through a non-allowlisted path) is caught.
     expect(execSafe).toHaveBeenCalledWith(
       expect.arrayContaining(['realpath', '-m', '--', `${JAIL_ROOT}/stacks/auth/config.yml`]),
+      { check: false },
     );
     expect(snapshotBeforeMutation).not.toHaveBeenCalled();
     await client.close();
@@ -187,7 +188,7 @@ describe('container_exec (#1872)', () => {
       arguments: { container: 'media-jellyfin', args: ['cat', '/etc/os-release'] },
     });
     expect(res.isError).toBeFalsy();
-    expect(execSafe).toHaveBeenCalledWith(['podman', 'exec', 'media-jellyfin', 'cat', '/etc/os-release']);
+    expect(execSafe).toHaveBeenCalledWith(['podman', 'exec', 'media-jellyfin', 'cat', '/etc/os-release'], { check: false });
     // NOT the broken legacy-exec path.
     expect(execArgv).not.toHaveBeenCalled();
     const text = (res.content as { text: string }[])[0].text;

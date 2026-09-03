@@ -118,7 +118,7 @@ export class NginxParser {
     try {
       if (this.executor) {
         if (this.containerId) {
-            const { stdout } = await this.executor.execArgv(['podman', 'exec', this.containerId, 'cat', filePath]);
+            const { stdout } = await this.executor.execSafe(['podman', 'exec', this.containerId, 'cat', filePath]);
             content = stdout;
         } else {
             content = await this.executor.readFile(filePath);
@@ -192,13 +192,13 @@ export class NginxParser {
                         // Use ls -1 to ensure single column output and suppress stderr, force success
                         try {
                             // `sh -c` takes a single command string. Quote `dir`
-                            // for the inner shell since it can contain spaces in
-                            // host paths. The outer execArgv keeps the
-                            // container-id + sh path quoted; only the inner
-                            // command string needs explicit single-quoting.
+                            // for the inner (in-container) shell since it can
+                            // contain spaces in host paths. The outer execSafe
+                            // sends the argv verbatim — no host shell is involved,
+                            // so only the inner command string needs quoting.
                             const { shellQuoteAll } = await import('@/lib/util/shellQuote');
                             const innerCmd = `ls -1 ${shellQuoteAll([dir])} 2>/dev/null || true`;
-                            const { stdout } = await this.executor.execArgv(['podman', 'exec', this.containerId, 'sh', '-c', innerCmd]);
+                            const { stdout } = await this.executor.execSafe(['podman', 'exec', this.containerId, 'sh', '-c', innerCmd]);
                             files = stdout.split('\n').map(f => f.trim()).filter(f => f);
                         } catch (e) {
                             logger.warn('NginxParser', `Failed to list files in ${dir} inside container ${this.containerId}`, e);

@@ -5,12 +5,14 @@ import { JAIL_ROOT } from './pathJail';
 
 // #2140/#2141/#2142 — MCP proxy/install write tools:
 //   write_file        — jailed writer (parent-dir create + core:core chown)
-//   create_proxy_route— full NPM host via the install-runner POST endpoint
+//   create_proxy_route— full NPM host via the shared provisioning kernel
 //   get_proxy_routes  — now surfaces NPM's live nginx_online/nginx_err
 //   install_template  — wraps assembleManifest→createJob→startJob
 //   get_install_progress — polls a job's phase/logs/deployed names
 // These tests assert registration + scope + behaviour, mocking the box
-// executor, the loopback fetch, and the install lib like readTools.test.ts.
+// executor, the proxy-host kernel (#2731 — the tools call
+// `@/lib/reverseProxy/proxyHostProvisioning` directly, no loopback HTTP hop),
+// and the install lib like readTools.test.ts.
 
 // server.ts pulls in systemBackup → ssh2, whose poly1305 WASM init fires an
 // async rejection under vitest ("Cannot read properties of undefined (reading
@@ -43,8 +45,16 @@ vi.mock('@/lib/nodes', () => ({
   getNodeConnection: vi.fn(),
 }));
 
-vi.mock('@/lib/auth/internalToken', () => ({
-  getInternalApiToken: vi.fn(() => 'internal-test-token'),
+// #2731 — the proxy tools call the provisioning kernel directly; the route is
+// a thin handler over the same functions, so mocking here mirrors mocking the
+// endpoint the tools used to loop back to.
+const provisionProxyHosts = vi.fn();
+const removeProxyHost = vi.fn();
+const listLiveProxyHosts = vi.fn();
+vi.mock('@/lib/reverseProxy/proxyHostProvisioning', () => ({
+  provisionProxyHosts: (...a: unknown[]) => provisionProxyHosts(...(a as [])),
+  removeProxyHost: (...a: unknown[]) => removeProxyHost(...(a as [])),
+  listLiveProxyHosts: (...a: unknown[]) => listLiveProxyHosts(...(a as [])),
 }));
 
 // #2343 — remove_proxy_route config-only path reads/writes config directly.
@@ -113,6 +123,9 @@ beforeEach(() => {
   getCurrentJob.mockResolvedValue(null);
   startJob.mockReset();
   fetchMock.mockReset();
+  provisionProxyHosts.mockReset();
+  removeProxyHost.mockReset();
+  listLiveProxyHosts.mockReset();
   getConfigMock.mockReset();
   getConfigMock.mockResolvedValue({ reverseProxy: { hosts: [{ domain: 'ws-test.dopp.cloud', service: 'ws-test', forwardPort: 19999 }] } });
   updateConfigMock.mockReset();
@@ -157,17 +170,18 @@ describe('write_file (#2142)', () => {
     // realpath escape guard ran on the target.
     expect(execSafe).toHaveBeenCalledWith(
       expect.arrayContaining(['realpath', '-m', '--', `${JAIL_ROOT}/local-templates/templates/tor/template.yml`]),
+      { check: false },
     );
     // parent-dir create (sudo) on the file's parent.
     expect(execSafe).toHaveBeenCalledWith(
       ['mkdir', '-p', '--', `${JAIL_ROOT}/local-templates/templates/tor`],
-      { sudo: true },
+      { sudo: true, check: false },
     );
     expect(writeFile).toHaveBeenCalledWith(`${JAIL_ROOT}/local-templates/templates/tor/template.yml`, 'name: tor');
     // core:core ownership (sudo).
     expect(execSafe).toHaveBeenCalledWith(
       ['chown', 'core:core', '--', `${JAIL_ROOT}/local-templates/templates/tor/template.yml`],
-      { sudo: true },
+      { sudo: true, check: false },
     );
     expect(snapshotBeforeMutation).not.toHaveBeenCalled();
     await client.close();
@@ -201,25 +215,21 @@ describe('write_file (#2142)', () => {
 });
 
 describe('create_proxy_route (#2140)', () => {
-  it('POSTs a public forward-auth host to the install-runner endpoint with the internal token', async () => {
-    fetchMock.mockImplementation(async () =>
-      new Response(JSON.stringify({ created: ['tor.dopp.cloud'], failed: [], certs: [{ domain: 'tor.dopp.cloud', issued: true }], lanRestricted: [] }), { status: 200 }),
-    );
+  it('provisions a public forward-auth host through the shared kernel (no loopback HTTP)', async () => {
+    provisionProxyHosts.mockResolvedValue({ kind: 'ok', success: true, created: ['tor.dopp.cloud'], failed: [], certs: [{ domain: 'tor.dopp.cloud', issued: true }], lanRestricted: [], nginxOffline: [], adminUrl: 'http://npm', node: 'box' });
     const { client } = await connectClient();
     const res = await client.callTool({
       name: 'create_proxy_route',
       arguments: { domain: 'tor.dopp.cloud', forwardPort: 8080, exposure: 'public', forwardAuth: true },
     });
     expect(res.isError).toBeFalsy();
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toMatch(/\/api\/system\/nginx\/proxy-hosts$/);
-    expect((init as RequestInit).method).toBe('POST');
-    const headers = new Headers((init as RequestInit).headers);
-    expect(headers.get('x-sb-internal-token')).toBe('internal-test-token');
-    const sent = JSON.parse((init as RequestInit).body as string);
-    // exposure forwarded + forward-auth expressed via the sentinel (route expands it).
+    expect(provisionProxyHosts).toHaveBeenCalledTimes(1);
+    const sent = provisionProxyHosts.mock.calls[0][0] as { hosts: { exposure: string; proxyConfig: { advanced_config: string } }[] };
+    // exposure forwarded + forward-auth expressed via the sentinel (the kernel expands it).
     expect(sent.hosts[0].exposure).toBe('public');
     expect(sent.hosts[0].proxyConfig.advanced_config).toBe('__authelia_forward_auth__');
+    // #2731 — direct call, no HTTP hop to our own API.
+    expect(fetchMock).not.toHaveBeenCalled();
     const text = (res.content as { text: string }[])[0].text;
     expect(text).toMatch(/"created": true/);
     expect(text).toMatch(/"issued": true/);
@@ -235,14 +245,12 @@ describe('create_proxy_route (#2140)', () => {
     });
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toMatch(/forwardAuth requires exposure/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(provisionProxyHosts).not.toHaveBeenCalled();
     await client.close();
   });
 
   it('surfaces an NPM per-host failure as an error', async () => {
-    fetchMock.mockImplementation(async () =>
-      new Response(JSON.stringify({ created: [], failed: [{ domain: 'tor.dopp.cloud', error: 'duplicate location' }] }), { status: 200 }),
-    );
+    provisionProxyHosts.mockResolvedValue({ kind: 'ok', success: false, created: [], failed: [{ domain: 'tor.dopp.cloud', error: 'duplicate location' }], certs: [], lanRestricted: [], nginxOffline: [], adminUrl: 'http://npm', node: 'box' });
     const { client } = await connectClient();
     const res = await client.callTool({
       name: 'create_proxy_route',
@@ -252,13 +260,23 @@ describe('create_proxy_route (#2140)', () => {
     expect(JSON.stringify(res.content)).toMatch(/duplicate location/);
     await client.close();
   });
+
+  it('surfaces a missing / unauthenticated NPM as an error', async () => {
+    provisionProxyHosts.mockResolvedValue({ kind: 'npm-not-found' });
+    const { client } = await connectClient();
+    const res = await client.callTool({
+      name: 'create_proxy_route',
+      arguments: { domain: 'tor.dopp.cloud', forwardPort: 8080, exposure: 'public' },
+    });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/Nginx Proxy Manager not found/);
+    await client.close();
+  });
 });
 
 describe('get_proxy_routes live status (#2140)', () => {
   it('folds NPM nginx_online/nginx_err into the result', async () => {
-    fetchMock.mockImplementation(async () =>
-      new Response(JSON.stringify({ node: 'box', hosts: [{ domain: 'tor.dopp.cloud', nginx_online: false, nginx_err: '[emerg] duplicate location' }] }), { status: 200 }),
-    );
+    listLiveProxyHosts.mockResolvedValue({ kind: 'ok', node: 'box', hosts: [{ domain: 'tor.dopp.cloud', nginx_online: false, nginx_err: '[emerg] duplicate location' }] });
     const { client } = await connectClient();
     const res = await client.callTool({ name: 'get_proxy_routes', arguments: {} });
     expect(res.isError).toBeFalsy();
@@ -269,7 +287,7 @@ describe('get_proxy_routes live status (#2140)', () => {
   });
 
   it('still returns proxyState when the live NPM query fails', async () => {
-    fetchMock.mockImplementation(async () => new Response('nope', { status: 502 }));
+    listLiveProxyHosts.mockResolvedValue({ kind: 'npm-error', status: 502 });
     const { client } = await connectClient();
     const res = await client.callTool({ name: 'get_proxy_routes', arguments: {} });
     expect(res.isError).toBeFalsy();
@@ -340,11 +358,11 @@ describe('get_install_progress (#2141)', () => {
 });
 
 // #2343 — remove_proxy_route can now delete the LIVE NPM host (removeNpmHost),
-// reusing the DELETE /api/system/nginx/proxy-hosts endpoint (the same path the
+// reusing the `removeProxyHost` kernel (the same path the DELETE route, the
 // diagnose delete_route remediation + uninstall use), which removes the NPM
 // host AND drops the config entry together (drift-free).
 describe('remove_proxy_route removeNpmHost (#2343)', () => {
-  it('stays config-only (backward-compatible) without the flag: no NPM fetch', async () => {
+  it('stays config-only (backward-compatible) without the flag: NPM untouched', async () => {
     const { client } = await connectClient();
     const res = await client.callTool({
       name: 'remove_proxy_route',
@@ -356,7 +374,7 @@ describe('remove_proxy_route removeNpmHost (#2343)', () => {
       expect.objectContaining({ reverseProxy: expect.objectContaining({ hosts: [] }) }),
     );
     // … and NPM was never contacted (no drift-creation attempt against a live host).
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(removeProxyHost).not.toHaveBeenCalled();
     const text = (res.content as { text: string }[])[0].text;
     expect(text).toMatch(/"npmHostRemoved": false/);
     await client.close();
@@ -371,28 +389,24 @@ describe('remove_proxy_route removeNpmHost (#2343)', () => {
     });
     expect(res.isError).toBe(true);
     expect(JSON.stringify(res.content)).toMatch(/No proxy route found/);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(removeProxyHost).not.toHaveBeenCalled();
     await client.close();
   });
 
-  it('with removeNpmHost:true, DELETEs the live NPM host via the shared endpoint (host + config both gone)', async () => {
-    fetchMock.mockImplementation(async () =>
-      new Response(JSON.stringify({ removed: true, domain: 'ws-test.dopp.cloud', id: 7 }), { status: 200 }),
-    );
+  it('with removeNpmHost:true, deletes the live NPM host via the shared kernel (host + config both gone)', async () => {
+    removeProxyHost.mockResolvedValue({ kind: 'removed', domain: 'ws-test.dopp.cloud', id: 7 });
     const { client } = await connectClient();
     const res = await client.callTool({
       name: 'remove_proxy_route',
       arguments: { domain: 'ws-test.dopp.cloud', removeNpmHost: true },
     });
     expect(res.isError).toBeFalsy();
-    const [url, init] = fetchMock.mock.calls[0];
-    // Same endpoint the diagnose delete_route remediation / uninstall use — the
-    // route deletes NPM + drops config together, so we don't re-implement it.
-    expect(String(url)).toMatch(/\/api\/system\/nginx\/proxy-hosts\?domain=ws-test\.dopp\.cloud$/);
-    expect((init as RequestInit).method).toBe('DELETE');
-    const headers = new Headers((init as RequestInit).headers);
-    expect(headers.get('x-sb-internal-token')).toBe('internal-test-token');
-    // We route the config-drop through the endpoint (drift-free), so the tool
+    // Same kernel the DELETE route / diagnose delete_route remediation /
+    // uninstall use — it deletes NPM + drops config together, so we don't
+    // re-implement it (and there is no loopback HTTP hop any more, #2731).
+    expect(removeProxyHost).toHaveBeenCalledWith('ws-test.dopp.cloud', undefined);
+    expect(fetchMock).not.toHaveBeenCalled();
+    // We route the config-drop through the kernel (drift-free), so the tool
     // itself doesn't also write config directly.
     expect(updateConfigMock).not.toHaveBeenCalled();
     const text = (res.content as { text: string }[])[0].text;
@@ -400,10 +414,8 @@ describe('remove_proxy_route removeNpmHost (#2343)', () => {
     await client.close();
   });
 
-  it('when NPM has no such host (404 not_found), still clears the config entry (no lingering drift)', async () => {
-    fetchMock.mockImplementation(async () =>
-      new Response(JSON.stringify({ removed: false, reason: 'not_found' }), { status: 404 }),
-    );
+  it('when NPM has no such host (not-found), still clears the config entry (no lingering drift)', async () => {
+    removeProxyHost.mockResolvedValue({ kind: 'not-found' });
     const { client } = await connectClient();
     const res = await client.callTool({
       name: 'remove_proxy_route',
@@ -420,9 +432,7 @@ describe('remove_proxy_route removeNpmHost (#2343)', () => {
   });
 
   it('surfaces an NPM delete failure as an error', async () => {
-    fetchMock.mockImplementation(async () =>
-      new Response(JSON.stringify({ error: 'NPM API returned 502' }), { status: 502 }),
-    );
+    removeProxyHost.mockResolvedValue({ kind: 'npm-error', status: 502 });
     const { client } = await connectClient();
     const res = await client.callTool({
       name: 'remove_proxy_route',

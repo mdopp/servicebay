@@ -1,7 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import dynamic from 'next/dynamic';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { logger } from '@servicebay/api-client';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin'; // V4 Hook
@@ -17,21 +16,19 @@ import ImageUpdatesPendingBanner from '@/components/ImageUpdatesPendingBanner';
 import ExternalLinkModal from '@/components/ExternalLinkModal';
 import FileViewerOverlay from '@/components/FileViewerOverlay';
 import RegistryDashboard from '@/dashboards/RegistryDashboard';
-import ServiceCard from '@/components/ServiceCard';
-import ServiceRow from '@/components/ServiceRow';
+import ServiceTile from '@/components/ServiceTile';
 import StackGroupHeader from '@/components/StackGroupHeader';
 import { SectionHeading, Button, Search, SEARCH_SLOT_CLASS } from '@/components/ui';
 import { useServiceActions } from '@/hooks/useServiceActions';
 import { useContainerActions } from '@/hooks/useContainerActions';
 import { buildServiceViewModel } from '@servicebay/api-client';
 import { ServiceViewModel, sortServicesByDisplayName } from '@servicebay/api-client';
-import ContainerLogsPanel, { ContainerLogsPanelData } from '@/components/ContainerLogsPanel';
-import type { TerminalRef } from '@/components/Terminal';
+import ContainerDrawer, { toContainerDrawerData } from '@/components/ContainerDrawer';
 import type { EnrichedContainer } from '@servicebay/api-client';
 // We keep Service interface but recreate it or import from shared data if it matches?
 // SharedData Service is a complex UI object. digital twin ServiceUnit is simple.
 // WE NEED TO MAP TWIN -> UI SERVICE here.
-import { Plus, RefreshCw, Trash2, Box, X, AlertCircle, FileCode, Terminal as TerminalIcon, Eraser } from 'lucide-react';
+import { Plus, Trash2, Box, X, AlertCircle, FileCode } from 'lucide-react';
 import { ServiceBundle, BundlePortSummary } from '@servicebay/api-client';
 import {
     bundleSeverityClasses,
@@ -44,7 +41,6 @@ import {
     type StackSummaryLite,
 } from './_lib/servicesDashboard';
 
-const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: false });
 
 export default function ServicesDashboard() {
     const { data: twin, isConnected, lastUpdate, isNodeSynced } = useDigitalTwin();
@@ -242,7 +238,6 @@ export default function ServicesDashboard() {
     }, [router, openMonitorDrawer]);
 
     const {
-        openActions: openContainerActions,
         closeActions: closeContainerActions,
         overlay: containerActionsOverlay,
         isOpen: containerActionsOpen,
@@ -250,7 +245,6 @@ export default function ServicesDashboard() {
 
     const [containerDrawerMode, setContainerDrawerMode] = useState<'logs' | 'terminal' | null>(null);
     const [drawerContainer, setDrawerContainer] = useState<EnrichedContainer | null>(null);
-    const terminalRef = useRef<TerminalRef>(null);
 
     const attachNodeContext = useCallback((container: EnrichedContainer, fallbackNode?: string | null) => {
         if (container.nodeName) {
@@ -266,50 +260,6 @@ export default function ServicesDashboard() {
         setContainerDrawerMode(null);
         setDrawerContainer(null);
     }, []);
-
-    const openContainerLogs = useCallback((container: EnrichedContainer) => {
-        setDrawerContainer(container);
-        setContainerDrawerMode('logs');
-    }, []);
-
-    const openContainerTerminal = useCallback((container: EnrichedContainer) => {
-        setDrawerContainer(container);
-        setContainerDrawerMode('terminal');
-    }, []);
-
-    const openAttachedContainerActions = useCallback((container: EnrichedContainer) => {
-        openContainerActions({
-            id: container.id,
-            name: container.names?.[0]?.replace(/^\//, '') || container.id.slice(0, 12),
-            nodeName: container.nodeName,
-        });
-    }, [openContainerActions]);
-
-    const drawerNode = drawerContainer?.nodeName && drawerContainer.nodeName !== 'Local'
-        ? drawerContainer.nodeName
-        : drawerContainer
-            ? 'Local'
-            : null;
-
-    const logsPanelData = useMemo<ContainerLogsPanelData | null>(() => {
-        if (!drawerContainer) return null;
-        return {
-            id: drawerContainer.id,
-            name: drawerContainer.names?.[0]?.replace(/^\//, '') || drawerContainer.id,
-            image: drawerContainer.image,
-            state: drawerContainer.state,
-            status: drawerContainer.status,
-            created: drawerContainer.created,
-            ports: drawerContainer.ports?.map(port => ({
-                hostIp: port.hostIp,
-                containerPort: port.containerPort || 0,
-                hostPort: port.hostPort,
-                protocol: port.protocol,
-            })),
-            mounts: drawerContainer.mounts as ContainerLogsPanelData['mounts'],
-            hideMeta: true,
-        };
-    }, [drawerContainer]);
 
     const services = useMemo<ServiceViewModel[]>(() => {
         if (!twin || !twin.nodes) {
@@ -753,6 +703,21 @@ export default function ServicesDashboard() {
         // their own labelled "Discovered bundles" section.
         const stackGroups = groupServicesByStack(filteredServices, stackSummaries);
 
+        // The two breakpoint layouts feed the same tile the same props — build
+        // them once so the row/card call sites differ only in `layout` (#2734).
+        const tileProps = (service: ServiceViewModel) => ({
+            service,
+            httpsDomains,
+            imageUpdateAvailable: imageUpdateServices.has(service.name.replace(/\.service$/, '')),
+            onUpdate: handleUpdateService,
+            onMonitor: openServiceDetail,
+            onEdit: openEditDrawer,
+            onActions: openActions,
+            onEditLink: handleEditLink,
+            onDelete: requestDelete,
+            onRestart: triggerRestart,
+        });
+
         return (
             <div className="space-y-8" data-testid="services-stack-groups">
                 {stackGroups.map(group => (
@@ -765,18 +730,10 @@ export default function ServicesDashboard() {
                             feedback). */}
                         <div className="hidden md:block rounded-lg border border-border bg-surface divide-y divide-border overflow-hidden">
                             {group.services.map(service => (
-                                <ServiceRow
+                                <ServiceTile
                                     key={`svc-${service.nodeName || 'local'}-${service.name}`}
-                                    service={service}
-                                    httpsDomains={httpsDomains}
-                                    imageUpdateAvailable={imageUpdateServices.has(service.name.replace(/\.service$/, ''))}
-                                    onUpdate={handleUpdateService}
-                                    onMonitor={openServiceDetail}
-                                    onEdit={openEditDrawer}
-                                    onActions={openActions}
-                                    onEditLink={handleEditLink}
-                                    onDelete={requestDelete}
-                                    onRestart={triggerRestart}
+                                    layout="row"
+                                    {...tileProps(service)}
                                 />
                             ))}
                         </div>
@@ -784,22 +741,10 @@ export default function ServicesDashboard() {
                         {/* Mobile (below md): the existing single-column card stack. */}
                         <div className="md:hidden grid grid-cols-1 gap-6">
                             {group.services.map(service => (
-                                <ServiceCard
+                                <ServiceTile
                                     key={`svc-${service.nodeName || 'local'}-${service.name}`}
-                                    service={service}
-                                    attachNodeContext={attachNodeContext}
-                                    httpsDomains={httpsDomains}
-                                    imageUpdateAvailable={imageUpdateServices.has(service.name.replace(/\.service$/, ''))}
-                                    onUpdate={handleUpdateService}
-                                    onMonitor={openServiceDetail}
-                                    onEdit={openEditDrawer}
-                                    onActions={openActions}
-                                    onEditLink={handleEditLink}
-                                    onDelete={requestDelete}
-                                    onRestart={triggerRestart}
-                                    onContainerLogs={openContainerLogs}
-                                    onContainerTerminal={openContainerTerminal}
-                                    onContainerActions={openAttachedContainerActions}
+                                    layout="card"
+                                    {...tileProps(service)}
                                 />
                             ))}
                         </div>
@@ -973,82 +918,11 @@ export default function ServicesDashboard() {
         <div className="h-full flex flex-col relative">
             {serviceActionOverlays}
             {containerActionsOverlay}
-            {containerDrawerMode && drawerContainer && (
-                <div className="fixed inset-0 z-[60] flex justify-end bg-black/70 backdrop-blur-sm">
-                    <div className="w-full max-w-5xl h-full bg-surface border-l border-border shadow-2xl">
-                        {containerDrawerMode === 'logs' && logsPanelData ? (
-                            <ContainerLogsPanel
-                                container={logsPanelData}
-                                nodeName={drawerNode ?? undefined}
-                                onClose={closeContainerDrawer}
-                            />
-                        ) : (
-                            <div className="h-full flex flex-col bg-surface">
-                                <div className="flex items-start justify-between px-6 py-4 border-b border-border bg-surface-2">
-                                    <div>
-                                        <p className="text-xs uppercase tracking-wider text-text-muted">Terminal</p>
-                                        <div className="flex items-center gap-3 text-text text-lg font-semibold">
-                                            <TerminalIcon size={18} />
-                                            <span>{drawerContainer.names?.[0]?.replace(/^\//, '') || drawerContainer.id}</span>
-                                        </div>
-                                        {drawerNode && (
-                                            <div className="mt-2 inline-flex items-center gap-2 text-xs text-text-muted">
-                                                <span className="uppercase tracking-wide">Node</span>
-                                                <span className="px-2 py-0.5 rounded-full bg-surface text-text border border-border">{drawerNode}</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <Button
-                                            onClick={() => terminalRef.current?.clear()}
-                                            variant="ghost"
-                                            size="sm"
-                                            // `!h-auto !p-2` forces out size="sm"'s h-8/px-space-3 so this
-                                            // icon button stays a square p-2 target (same cn() collision as
-                                            // #2479/#2482/#2483, issue #2484).
-                                            className="!h-auto !p-2 rounded-full"
-                                            title="Clear terminal"
-                                        >
-                                            <Eraser size={18} />
-                                        </Button>
-                                        <Button
-                                            onClick={() => terminalRef.current?.reconnect()}
-                                            variant="ghost"
-                                            size="sm"
-                                            // `!h-auto !p-2` forces out size="sm"'s h-8/px-space-3 so this
-                                            // icon button stays a square p-2 target (same cn() collision as
-                                            // #2479/#2482/#2483, issue #2484).
-                                            className="!h-auto !p-2 rounded-full"
-                                            title="Reconnect"
-                                        >
-                                            <RefreshCw size={18} />
-                                        </Button>
-                                        <Button
-                                            onClick={closeContainerDrawer}
-                                            variant="ghost"
-                                            size="sm"
-                                            // `!h-auto !p-2` forces out size="sm"'s h-8/px-space-3 so this
-                                            // icon button stays a square p-2 target (same cn() collision as
-                                            // #2479/#2482/#2483, issue #2484).
-                                            className="!h-auto !p-2 rounded-full"
-                                            title="Close"
-                                        >
-                                            <X size={18} />
-                                        </Button>
-                                    </div>
-                                </div>
-                                <div className="flex-1 overflow-hidden">
-                                    <DynamicTerminal
-                                        ref={terminalRef}
-                                        id={`container:${(drawerNode && drawerNode !== 'Local' ? drawerNode : 'local')}:${drawerContainer.id}`}
-                                        showControls={false}
-                                    />
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
+            <ContainerDrawer
+                mode={containerDrawerMode}
+                container={drawerContainer ? toContainerDrawerData(drawerContainer) : null}
+                onClose={closeContainerDrawer}
+            />
                         <ConfirmModal
                 isOpen={!!bundlePendingDelete}
                 title="Delete Unmanaged Bundle"

@@ -725,7 +725,7 @@ async function deployItem(ctx: DeployContext, item: JobInputItem): Promise<boole
   // The service plus any sibling-store services that ride its deploy (#1594 —
   // e.g. home-assistant carries `home-assistant-zwave`, the zwave-js key store
   // in a sibling dir with no template name of its own).
-  const { getSiblingBackupServices } = await import('@/lib/externalBackup/serviceManifest');
+  const { getSiblingBackupServices } = await import('@servicebay/backup-manifest');
   const backupServices = [item.name, ...getSiblingBackupServices(item.name)];
 
   {

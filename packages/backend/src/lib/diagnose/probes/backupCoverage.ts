@@ -16,7 +16,7 @@
  *     the bulk content under `/mnt/data`.
  *   - **Config backup** (`config.externalBackup`, `lib/externalBackup/`) — the
  *     nightly per-service config push to the NAS. Bulk volumes are excluded
- *     *structurally* (`EXCLUDED_BULK_VOLUMES` in `externalBackup/serviceManifest.ts`),
+ *     *structurally* (`EXCLUDED_BULK_VOLUMES` in `@servicebay/backup-manifest`),
  *     so a green run here says nothing about household data. Every detail this
  *     probe emits carries {@link CONFIG_ONLY_CAVEAT} for exactly that reason.
  *

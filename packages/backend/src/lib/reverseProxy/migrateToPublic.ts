@@ -31,7 +31,10 @@
  */
 
 import { getConfig, updateConfig } from '../config';
-import { getNodeIds, getNodeTwin } from '../store/repository';
+import { findNpmAdmin, getNpmToken, type NpmAdmin } from '../npm/client';
+import { bindCertToProxyHost, requestLetsEncryptCert } from '../npm/certs';
+import { listProxyHosts, updateProxyHost, type NpmProxyHost } from '../npm/proxyHosts';
+import { getNodeIds } from '../store/repository';
 import { ServiceManager } from '../services/ServiceManager';
 import { logger } from '../logger';
 import yaml from 'js-yaml';
@@ -109,21 +112,11 @@ export interface MigrationResult {
 
 // ─── NPM helpers (slim, migration-scoped) ───────────────────────────
 
-interface NpmTarget {
-  apiUrl: string;
-  nodeName: string;
-  nodeIp: string;
-}
+type NpmTarget = NpmAdmin;
 
-interface NpmHost {
-  id: number;
-  domain_names: string[];
-  forward_host?: string;
-  forward_port?: number;
-  forward_scheme?: string;
-  certificate_id?: number;
-  enabled?: boolean;
-}
+/** The proxy-host row as the migration reads it: `domain_names` is the
+ *  one field it rewrites, so it is required here. */
+type NpmHost = NpmProxyHost & { domain_names: string[] };
 
 interface NpmDeps {
   resolveNpm(nodeHint?: string): Promise<NpmTarget | null>;
@@ -135,144 +128,56 @@ interface NpmDeps {
 }
 
 /**
- * Find the admin port for NPM given a service record.
- */
-async function getNpmAdminPort(svc: { ports?: { containerPort?: number; hostPort?: number }[] }): Promise<string> {
-  const adminMapping = svc.ports?.find(p => p.containerPort === 81);
-  const portFromSvc = adminMapping?.hostPort?.toString();
-  if (portFromSvc) return portFromSvc;
-  const config = await getConfig();
-  return config.templateSettings?.NGINX_ADMIN_PORT || '81';
-}
-
-/**
- * Derive the API host (loopback for Local, node IP otherwise).
- */
-function getApiHost(nodeName: string, nodeIp: string): string {
-  return nodeName === 'Local' ? '127.0.0.1' : nodeIp;
-}
-
-/**
- * Pick the first non-loopback IP from node, fall back to first IP or loopback.
- */
-function selectNodeIp(t: { nodeIPs?: string[] } | undefined): string {
-  return t?.nodeIPs?.find((ip: string) => !ip.startsWith('127.')) ?? t?.nodeIPs?.[0] ?? '127.0.0.1';
-}
-
-/**
- * Find and return NPM target (API URL + node info) by trying candidate nodes.
+ * Where NPM is, for a migration. requireActive: true — this rewrites proxy
+ * hosts and binds certificates, and without a node hint the iteration must
+ * pick the node whose NPM is actually running, not the first stale entry.
  */
 async function resolveNpmTarget(nodeHint?: string): Promise<NpmTarget | null> {
-  const nodeNames = nodeHint ? [nodeHint] : getNodeIds();
-  if (nodeNames.length === 0) nodeNames.push('Local');
-  for (const nodeName of nodeNames) {
-    const services = await ServiceManager.listServices(nodeName);
-    const nginx = services.find(s => s.name === 'nginx' || (s.name.includes('nginx') && !s.name.startsWith('install-')));
-    if (!nginx?.active) continue;
-    const svc = nginx as { ports?: { containerPort?: number; hostPort?: number }[] };
-    const adminPort = await getNpmAdminPort(svc);
-    const t = getNodeTwin(nodeName);
-    const nodeIp = selectNodeIp(t);
-    const apiHost = getApiHost(nodeName, nodeIp);
-    return { apiUrl: `http://${apiHost}:${adminPort}`, nodeName, nodeIp };
-  }
-  return null;
-}
-
-/**
- * Try each credential candidate to obtain an NPM API token.
- */
-async function getNpmToken(baseUrl: string): Promise<string | null> {
-  const config = await getConfig();
-  const candidates: { identity: string; secret: string }[] = [];
-  const stored = config.reverseProxy?.npm;
-  if (stored?.email && stored?.password) candidates.push({ identity: stored.email, secret: stored.password });
-  candidates.push({ identity: 'admin@example.com', secret: 'changeme' });
-  for (const cred of candidates) {
-    try {
-      const res = await fetch(`${baseUrl}/api/tokens`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cred),
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.ok) {
-        const data = await res.json() as { token?: string };
-        if (data.token) return data.token;
-      }
-    } catch { /* try next */ }
-  }
-  return null;
+  return findNpmAdmin({ node: nodeHint, requireActive: true });
 }
 
 /**
  * Request a Let's Encrypt certificate via NPM and extract the issued cert ID.
+ * The ACME exchange blocks until LE either issues or times out; the client's
+ * default budget for it is generous for that reason.
  */
 async function npmRequestAndReturnCertId(baseUrl: string, token: string, domain: string): Promise<number> {
-  const res = await fetch(`${baseUrl}/api/nginx/certificates`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({
-      provider: 'letsencrypt',
-      domain_names: [domain],
-      meta: { dns_challenge: false },
-    }),
-    // ACME exchange blocks until LE either issues or times out; budget
-    // generously per the existing proxy-hosts/route precedent.
-    signal: AbortSignal.timeout(120_000),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`NPM cert-request HTTP ${res.status}: ${body.slice(0, 200)}`);
+  const r = await requestLetsEncryptCert(baseUrl, token, domain);
+  if (!r.ok) {
+    throw new Error(`NPM cert-request HTTP ${r.status}: ${r.body.slice(0, 200)}`);
   }
-  const data = await res.json() as { id?: number };
-  if (typeof data.id !== 'number') {
+  if (typeof r.data.id !== 'number') {
     throw new Error('NPM accepted the cert request but returned no id.');
   }
-  return data.id;
+  return r.data.id;
 }
 
 /**
  * Lazy-loaded NPM bindings — kept behind a `deps` arg so tests can pass
- * an in-memory fake without touching `fetch`. The real implementation
- * mirrors the existing patterns in
- * `src/app/api/system/nginx/proxy-hosts/route.ts`.
+ * an in-memory fake without touching the network. The real implementation
+ * is the `lib/npm` client (#2731), the same one the proxy-host
+ * provisioning kernel uses.
  */
 async function realNpmDeps(): Promise<NpmDeps> {
   return {
     resolveNpm: async (nodeHint) => resolveNpmTarget(nodeHint),
-    getToken: getNpmToken,
+    getToken: (baseUrl) => getNpmToken(baseUrl),
     listHosts: async (baseUrl, token) => {
-      const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts?expand=owner,access_list,certificate`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) throw new Error(`NPM list-hosts HTTP ${res.status}`);
-      return (await res.json()) as NpmHost[];
+      const r = await listProxyHosts(baseUrl, token, { expand: ['owner', 'access_list', 'certificate'] });
+      if (!r.ok) throw new Error(`NPM list-hosts HTTP ${r.status}`);
+      return r.data.map(h => ({ ...h, domain_names: h.domain_names ?? [] }));
     },
     updateHost: async (baseUrl, token, id, patch) => {
-      const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(patch),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`NPM update-host ${id} HTTP ${res.status}: ${body.slice(0, 200)}`);
+      const r = await updateProxyHost(baseUrl, token, id, patch);
+      if (!r.ok) {
+        throw new Error(`NPM update-host ${id} HTTP ${r.status}: ${r.body.slice(0, 200)}`);
       }
     },
     requestCert: npmRequestAndReturnCertId,
     bindCert: async (baseUrl, token, hostId, certId) => {
-      const res = await fetch(`${baseUrl}/api/nginx/proxy-hosts/${hostId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ certificate_id: certId, ssl_forced: true, http2_support: true, hsts_enabled: false }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`NPM cert-bind cert=${certId} host=${hostId} HTTP ${res.status}: ${body.slice(0, 200)}`);
+      const r = await bindCertToProxyHost(baseUrl, token, hostId, certId);
+      if (!r.ok) {
+        throw new Error(`NPM cert-bind cert=${certId} host=${hostId} HTTP ${r.status}: ${r.body.slice(0, 200)}`);
       }
     },
   };

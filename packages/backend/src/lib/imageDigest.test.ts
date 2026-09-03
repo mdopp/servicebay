@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// executor.execArgv is stubbed per test so we can drive the podman inspect /
+// executor.execSafe is stubbed per test so we can drive the podman inspect /
 // manifest inspect stdout. Keyed on the podman subcommand (inspect vs manifest).
 const mockExec = vi.hoisted(() => ({
-  execArgv: vi.fn(async (_argv: string[], _opts?: unknown) => ({ stdout: '', stderr: '' })),
+  execSafe: vi.fn(async (_argv: string[], _opts?: unknown) => ({ stdout: '', stderr: '' })),
 }));
 vi.mock('@/lib/executor', () => ({
   getExecutor: () => mockExec,
@@ -54,7 +54,7 @@ function inspectDoc(digest: string): string {
 beforeEach(() => {
   vi.clearAllMocks();
   clearImageUpdatesCache();
-  mockExec.execArgv.mockResolvedValue({ stdout: '', stderr: '' });
+  mockExec.execSafe.mockResolvedValue({ stdout: '', stderr: '' });
   mockConfig.current = { installedTemplates: {} };
   mockRegistry.yaml = null;
 });
@@ -85,36 +85,36 @@ describe('isUpdateAvailable (digest comparison)', () => {
 
 describe('getRegistryImageDigest', () => {
   it('extracts the linux/amd64 digest from a manifest list', async () => {
-    mockExec.execArgv.mockResolvedValue({ stdout: manifestList('sha256:reg'), stderr: '' });
+    mockExec.execSafe.mockResolvedValue({ stdout: manifestList('sha256:reg'), stderr: '' });
     await expect(getRegistryImageDigest('ghcr.io/x:1')).resolves.toBe('sha256:reg');
   });
 
   it('returns null when podman errors (treat as unknown)', async () => {
-    mockExec.execArgv.mockRejectedValue(new Error('registry unreachable'));
+    mockExec.execSafe.mockRejectedValue(new Error('registry unreachable'));
     await expect(getRegistryImageDigest('ghcr.io/x:1')).resolves.toBeNull();
   });
 
   it('returns null on unparseable stdout', async () => {
-    mockExec.execArgv.mockResolvedValue({ stdout: 'not json', stderr: '' });
+    mockExec.execSafe.mockResolvedValue({ stdout: 'not json', stderr: '' });
     await expect(getRegistryImageDigest('ghcr.io/x:1')).resolves.toBeNull();
   });
 });
 
 describe('getRunningImageDigest', () => {
   it('extracts the digest from a podman inspect array document', async () => {
-    mockExec.execArgv.mockResolvedValue({ stdout: inspectDoc('sha256:run'), stderr: '' });
+    mockExec.execSafe.mockResolvedValue({ stdout: inspectDoc('sha256:run'), stderr: '' });
     await expect(getRunningImageDigest('ghcr.io/x:1')).resolves.toBe('sha256:run');
   });
 
   it('returns null when the image is not present (podman error)', async () => {
-    mockExec.execArgv.mockRejectedValue(new Error('no such object'));
+    mockExec.execSafe.mockRejectedValue(new Error('no such object'));
     await expect(getRunningImageDigest('ghcr.io/x:1')).resolves.toBeNull();
   });
 });
 
 describe('getServiceImageUpdate', () => {
   it('reports updateAvailable=true when running differs from registry', async () => {
-    mockExec.execArgv.mockImplementation(async (argv: string[]) => {
+    mockExec.execSafe.mockImplementation(async (argv: string[]) => {
       if (argv.includes('manifest')) return { stdout: manifestList('sha256:reg'), stderr: '' };
       return { stdout: inspectDoc('sha256:run'), stderr: '' };
     });
@@ -129,7 +129,7 @@ describe('getServiceImageUpdate', () => {
   });
 
   it('reports updateAvailable=false when digests match', async () => {
-    mockExec.execArgv.mockImplementation(async (argv: string[]) => {
+    mockExec.execSafe.mockImplementation(async (argv: string[]) => {
       if (argv.includes('manifest')) return { stdout: manifestList('sha256:same'), stderr: '' };
       return { stdout: inspectDoc('sha256:same'), stderr: '' };
     });
@@ -138,7 +138,7 @@ describe('getServiceImageUpdate', () => {
   });
 
   it('does not crash and reports false when both lookups fail', async () => {
-    mockExec.execArgv.mockRejectedValue(new Error('podman gone'));
+    mockExec.execSafe.mockRejectedValue(new Error('podman gone'));
     const r = await getServiceImageUpdate('immich', 'ghcr.io/x:1');
     expect(r).toEqual({
       service: 'immich',
@@ -156,7 +156,7 @@ describe('getInstalledImageUpdates (fan-out)', () => {
       installedTemplates: { immich: { schemaVersion: 1 }, 'Bad Name': { schemaVersion: 1 } },
     };
     mockRegistry.yaml = 'spec:\n  containers:\n  - image: ghcr.io/x:1\n    name: x\n';
-    mockExec.execArgv.mockImplementation(async (argv: string[]) => {
+    mockExec.execSafe.mockImplementation(async (argv: string[]) => {
       if (argv.includes('manifest')) return { stdout: manifestList('sha256:reg'), stderr: '' };
       return { stdout: inspectDoc('sha256:run'), stderr: '' };
     });
@@ -185,7 +185,7 @@ describe('getInstalledImageUpdates throttle (#1952)', () => {
     installN(10);
     let inFlight = 0;
     let peak = 0;
-    mockExec.execArgv.mockImplementation(async (argv: string[]) => {
+    mockExec.execSafe.mockImplementation(async (argv: string[]) => {
       inFlight++;
       peak = Math.max(peak, inFlight);
       await new Promise((r) => setTimeout(r, 5));
@@ -204,22 +204,22 @@ describe('getInstalledImageUpdates throttle (#1952)', () => {
 
   it('serves a cached result on a second poll without re-spawning podman', async () => {
     installN(3);
-    mockExec.execArgv.mockImplementation(async (argv: string[]) => {
+    mockExec.execSafe.mockImplementation(async (argv: string[]) => {
       if (argv.includes('manifest')) return { stdout: manifestList('sha256:reg'), stderr: '' };
       return { stdout: inspectDoc('sha256:run'), stderr: '' };
     });
 
     const first = await getInstalledImageUpdates();
-    const callsAfterFirst = mockExec.execArgv.mock.calls.length;
+    const callsAfterFirst = mockExec.execSafe.mock.calls.length;
     const second = await getInstalledImageUpdates();
 
     expect(second).toEqual(first);
-    expect(mockExec.execArgv.mock.calls.length).toBe(callsAfterFirst); // no new podman
+    expect(mockExec.execSafe.mock.calls.length).toBe(callsAfterFirst); // no new podman
   });
 
   it('dedups concurrent polls onto one in-flight fan-out', async () => {
     installN(3);
-    mockExec.execArgv.mockImplementation(async (argv: string[]) => {
+    mockExec.execSafe.mockImplementation(async (argv: string[]) => {
       await new Promise((r) => setTimeout(r, 5));
       if (argv.includes('manifest')) return { stdout: manifestList('sha256:reg'), stderr: '' };
       return { stdout: inspectDoc('sha256:run'), stderr: '' };
@@ -228,6 +228,6 @@ describe('getInstalledImageUpdates throttle (#1952)', () => {
     const [a, b] = await Promise.all([getInstalledImageUpdates(), getInstalledImageUpdates()]);
     expect(a).toEqual(b);
     // 3 images × 2 podman calls = 6 — one fan-out, not two (would be 12).
-    expect(mockExec.execArgv.mock.calls.length).toBe(6);
+    expect(mockExec.execSafe.mock.calls.length).toBe(6);
   });
 });

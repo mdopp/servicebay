@@ -26,33 +26,20 @@ interface DigitalTwinContextType {
 
 const DigitalTwinContext = createContext<DigitalTwinContextType | undefined>(undefined);
 
-// Intercept 401 responses from API calls and redirect to login.
-// This handles session expiry gracefully instead of showing JSON parse errors.
+// #2736 — the global `window.fetch` monkey-patch that used to live here (an
+// import-time side effect of loading this module) is GONE. It intercepted 401s
+// for every fetch on the page, which made the 401 contract invisible: a raw
+// `fetch('/api/...')` inherited session-expiry handling by accident, so nothing
+// ever pushed call sites onto the real seam and the raw-fetch count grew.
 //
-// The pathname guard prevents an infinite reload loop on /login itself
-// (#854) AND keeps the family portal from bouncing anonymous visitors
-// to the admin login: /portal is intentionally anonymous-readable,
-// but the root layout mounts this provider unconditionally — so a 401
-// from any background fetch on /portal would silently relocate the
-// visitor to /login a few hundred ms after landing. Kept in sync with
-// the socket handler in useSocket.ts.
-const ANONYMOUS_PATHS = new Set(['/login', '/portal']);
-if (typeof window !== 'undefined') {
-    const originalFetch = window.fetch.bind(window);
-    window.fetch = async (...args: Parameters<typeof fetch>) => {
-        const response = await originalFetch(...args);
-        const pathname = window.location.pathname;
-        const isAnonymousPage = ANONYMOUS_PATHS.has(pathname) || pathname.startsWith('/portal/');
-        if (response.status === 401 && !isAnonymousPage) {
-            const url = typeof args[0] === 'string' ? args[0] : args[0] instanceof Request ? args[0].url : '';
-            // Only redirect for our own API calls, not external fetches
-            if (url.startsWith('/api/') || url.startsWith(window.location.origin + '/api/')) {
-                window.location.href = '/login';
-            }
-        }
-        return response;
-    };
-}
+// The single 401 → /login handler is now `apiFetch` in @servicebay/api-client
+// (the same pathname guard, the same own-/api/-URL check, opt-in per call). The
+// socket transport's `unauthorized` handler in hooks/useSocket.ts shares that
+// module's `isAnonymousPathname` rather than a second copy of the path set.
+//
+// Migrating the remaining raw call sites is ratchet work: the ESLint rule
+// `sb/no-raw-api-fetch` counts them and `scripts/check-lint-ratchet.ts` forbids
+// the count from rising.
 
 export function DigitalTwinProvider({ children }: { children: ReactNode }) {
     const { socket, isConnected } = useSocket();

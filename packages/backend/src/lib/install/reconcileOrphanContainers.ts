@@ -98,7 +98,7 @@ async function unitFileExists(
   executor: ReturnType<typeof getExecutor>,
 ): Promise<boolean> {
   try {
-    const { stdout } = await executor.execArgv([
+    const { stdout } = await executor.execSafe([
       'systemctl', '--user', 'show', '-p', 'LoadState', '-p', 'FragmentPath', unit,
     ]);
     const loadState = /^LoadState=(.*)$/m.exec(stdout)?.[1]?.trim() ?? '';
@@ -158,7 +158,7 @@ export async function reconcileOrphanContainers(
 
     const name = containerDisplayName(record);
     try {
-      await executor.execArgv(['podman', 'rm', '-f', record.Id]);
+      await executor.execSafe(['podman', 'rm', '-f', record.Id]);
       removed.push(name);
       logger.info('reconcileOrphans', `Removed orphan container ${name} (managing unit ${unit} is gone).`);
     } catch (e) {

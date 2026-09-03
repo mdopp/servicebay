@@ -45,7 +45,7 @@ vi.mock('../config', () => ({ getConfig: vi.fn(async () => ({ templateSettings: 
 import { stageServiceBackup } from './producer';
 import { runConfigUpload, type UploadIO } from './configUpload';
 import { importHaOsBackupToNas } from './haOsImport';
-import { getServiceManifest } from './serviceManifest';
+import { getServiceManifest } from '@servicebay/backup-manifest';
 
 let tmpDirs: string[] = [];
 async function mkTmp(prefix = 'atomreg-'): Promise<string> {

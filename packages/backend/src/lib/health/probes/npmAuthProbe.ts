@@ -7,7 +7,7 @@
 
 import { registerProbe } from './registry';
 import { getConfig } from '../../config';
-import { findNpmAdminUrl } from './npmAdmin';
+import { resolveNpmAdmin } from '@/lib/npm/client';
 import { isInvalidAuth } from '@/lib/reverseProxy/npmAdminRekey';
 
 type Payload = { status: 'ok' | 'warn' | 'fail' | 'info'; detail: string; hint?: string };
@@ -52,14 +52,19 @@ registerProbe({
       if (!npm?.email || !npm?.password) {
         return encode({ status: 'info', detail: 'No NPM admin credentials stored — skipping staleness check.' });
       }
-      const admin = await findNpmAdminUrl(node);
+      // requireActive: false — the `active` flag is unreliable for the
+      // kube-deployed nginx pod (#496); the login below is the real check.
+      const admin = await resolveNpmAdmin({ node, requireActive: false });
       if (admin.kind === 'twin-not-ready') {
         return encode({ status: 'info', detail: 'Digital twin not populated yet — check will retry on the next tick.' });
       }
       if (admin.kind === 'nginx-not-found') {
         return encode({ status: 'info', detail: 'Nginx Proxy Manager not deployed on this node — nothing to check.' });
       }
-      return checkNpmAuth(admin.url, npm.email, npm.password);
+      if (admin.kind !== 'ok') {
+        return encode({ status: 'info', detail: 'Nginx Proxy Manager is not running on this node — nothing to check.' });
+      }
+      return checkNpmAuth(admin.apiUrl, npm.email, npm.password);
     } catch (e) {
       return { status: 'fail', message: `npm_auth error: ${e instanceof Error ? e.message : String(e)}` };
     }

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { decideAdvancedConfigReconcile, patchProxyHostAdvancedConfig } from './route';
+import { decideAdvancedConfigReconcile } from './proxyHostPolicy';
+import { patchProxyHostAdvancedConfig } from './proxyHostProvisioning';
 
 vi.mock('@/lib/logger', () => ({
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

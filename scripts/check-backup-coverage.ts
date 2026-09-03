@@ -52,7 +52,7 @@ import {
   EXCLUDED_BULK_VOLUMES,
   getBackupGate,
   type ServiceBackupManifest,
-} from '../packages/backend/src/lib/externalBackup/serviceManifest.js';
+} from '../packages/backup-manifest/src/index.js';
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const TEMPLATES_DIR = path.join(REPO_ROOT, 'templates');
@@ -468,8 +468,8 @@ function reportManifestProblems(templates: readonly string[], all: readonly Temp
         'A gate that matches no template can never activate anywhere. Fix it by setting `gateOn` to the',
         'template that owns the data dir (an app of a multi-app template gates on the template, e.g.',
         "jellyfin → 'media', authelia/lldap → 'auth'), or by deleting the entry if the service is retired.",
-        'Both copies must change: packages/backend/src/lib/externalBackup/serviceManifest.ts and the',
-        'packages/backup-worker/src/engine/serviceManifest.ts mirror.',
+        'There is ONE copy since #2733: packages/backup-manifest/src/index.ts, imported by both the',
+        'backend and the sandboxed backup worker.',
       ],
     );
   }
@@ -500,7 +500,7 @@ function reportUncovered(all: readonly TemplateVolume[]): void {
       ),
       [
         'Add a SERVICE_BACKUP_MANIFESTS entry for it, or list it in EXCLUDED_BULK_VOLUMES with a reason.',
-        'Both live in packages/backend/src/lib/externalBackup/serviceManifest.ts (mirror the worker copy).',
+        'Both live in packages/backup-manifest/src/index.ts — the one copy the backend and the worker share.',
         'A PersistentVolumeClaim is covered by a manifest that sets `volume: <claimName>` (#2596) — the',
         'worker then reads it from the named volume servicebay binds in read-only.',
         'If a bare `{{VAR}}` hostPath is genuinely not stored state (a device, a socket), add a',

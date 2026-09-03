@@ -8,9 +8,9 @@
  * service is alive and only its published port moved.
  *
  * itemId is the host's primary domain (server_name from the digital
- * twin). The action handler queries NPM's GET /api/nginx/proxy-hosts
- * to map the domain back to NPM's numeric id, then DELETEs (or PUTs)
- * by id. Earlier versions tried to read the id straight from the digital
+ * twin). The action handler looks the domain up in NPM's proxy-host
+ * list (`lib/npm/proxyHosts`) to map it back to NPM's numeric id, then
+ * DELETEs (or PUTs) by id. Earlier versions tried to read the id straight from the digital
  * twin (`server._id`), but the agent doesn't actually populate that
  * field — twin proxy entries come from parsing nginx config files
  * on disk, which don't carry NPM's primary key. Looking the id up
@@ -26,8 +26,9 @@
 
 import { getConfig } from '@/lib/config';
 import { getNodeTwin } from '@/lib/store/repository';
-import { ServiceManager } from '@/lib/services/ServiceManager';
 import { logger } from '@/lib/logger';
+import { findNpmAdmin, getNpmToken } from '@/lib/npm/client';
+import { deleteProxyHost, findProxyHostByDomain, updateProxyHost } from '@/lib/npm/proxyHosts';
 import { registerProbeAction, type ProbeActionResult } from '../actions';
 import {
   classifyDanglingRoute,
@@ -37,56 +38,6 @@ import {
 } from './danglingRouteState';
 
 const PROBE_ID = 'dangling_proxy';
-
-/** Locate NPM's admin URL on the given node. Returns null when nginx
- *  isn't deployed or its admin port can't be derived. Mirrors the
- *  helper in npmDataStale.ts but kept local to avoid coupling. */
-async function findNpmAdminUrl(node: string): Promise<string | null> {
-  try {
-    const services = await ServiceManager.listServices(node);
-    const nginx = services.find(
-      s => s.name === 'nginx' || s.name === 'nginx-web' || (s.name.includes('nginx') && !s.name.startsWith('install-')),
-    );
-    if (!nginx?.active) return null;
-    const ports = (nginx.ports ?? [])
-      .map(p => parseInt(String(p.host ?? ''), 10))
-      .filter(p => Number.isFinite(p) && p !== 80 && p !== 443);
-    const adminPort = ports[0] ?? 81;
-    return `http://localhost:${adminPort}`;
-  } catch {
-    return null;
-  }
-}
-
-/** Try stored credentials first, then NPM defaults. Returns the bearer
- *  token, or null when nothing works. */
-async function getNpmToken(adminUrl: string): Promise<string | null> {
-  const config = await getConfig();
-  const candidates: { identity: string; secret: string }[] = [];
-  const stored = config.reverseProxy?.npm;
-  if (stored?.email && stored?.password) {
-    candidates.push({ identity: stored.email, secret: stored.password });
-  }
-  candidates.push({ identity: 'admin@example.com', secret: 'changeme' });
-
-  for (const cred of candidates) {
-    try {
-      const res = await fetch(`${adminUrl}/api/tokens`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cred),
-        signal: AbortSignal.timeout(4000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (typeof data.token === 'string') return data.token;
-      }
-    } catch {
-      // try next
-    }
-  }
-  return null;
-}
 
 /** The bit of an NPM proxy-host row both actions need. */
 interface NpmProxyHostRef {
@@ -101,24 +52,9 @@ interface NpmProxyHostRef {
  * request fails.
  */
 async function resolveProxyHost(adminUrl: string, token: string, domain: string): Promise<NpmProxyHostRef | null> {
-  try {
-    const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts?expand=owner`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    const hosts = await res.json() as Array<NpmProxyHostRef & { domain_names?: string[] }>;
-    if (!Array.isArray(hosts)) return null;
-    for (const h of hosts) {
-      const names = h.domain_names ?? [];
-      if (names.includes(domain) && typeof h.id === 'number') {
-        return { id: h.id, forward_host: h.forward_host, forward_port: h.forward_port };
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
+  const h = await findProxyHostByDomain(adminUrl, token, domain, { expand: ['owner'], timeoutMs: 8000 });
+  if (!h || typeof h.id !== 'number') return null;
+  return { id: h.id, forward_host: h.forward_host, forward_port: h.forward_port };
 }
 
 /**
@@ -147,7 +83,11 @@ async function currentVerdictFor(
 /** Resolve NPM admin URL + token, or the reason we couldn't. Shared by
  *  both actions so the two failure messages stay identical. */
 async function connectToNpm(node: string): Promise<{ adminUrl: string; token: string } | ProbeActionResult> {
-  const adminUrl = await findNpmAdminUrl(node);
+  // requireActive: false — the twin's `active` flag lies for the kube nginx
+  // pod (#496); if NPM is really down the API call below fails with the
+  // precise reason instead of a misleading "not deployed".
+  const npm = await findNpmAdmin({ node, requireActive: false });
+  const adminUrl = npm?.apiUrl;
   if (!adminUrl) {
     return {
       ok: false,
@@ -288,15 +228,9 @@ async function performProxyHostRepoint(
   const from = `${host.forward_host ?? '?'}:${host.forward_port ?? '?'}`;
   const to = `${patch.forward_host ?? host.forward_host ?? '?'}:${patch.forward_port}`;
   try {
-    const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts/${host.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(patch),
-      signal: AbortSignal.timeout(8000),
-    });
+    const res = await updateProxyHost(adminUrl, token, host.id, patch, { timeoutMs: 8000 });
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      logger.warn('diagnose:dangling_proxy', `PUT id=${host.id} (${domain}) returned HTTP ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn('diagnose:dangling_proxy', `PUT id=${host.id} (${domain}) returned HTTP ${res.status}: ${res.body.slice(0, 200)}`);
       return {
         ok: false,
         message: `NPM returned HTTP ${res.status} when repointing ${domain} to ${to}.`,
@@ -328,14 +262,9 @@ async function performProxyHostDelete(
   itemId: string,
 ): Promise<ProbeActionResult> {
   try {
-    const res = await fetch(`${adminUrl}/api/nginx/proxy-hosts/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(8000),
-    });
+    const res = await deleteProxyHost(adminUrl, token, id, { timeoutMs: 8000 });
     if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      logger.warn('diagnose:dangling_proxy', `DELETE id=${id} (${itemId}) returned HTTP ${res.status}: ${body.slice(0, 200)}`);
+      logger.warn('diagnose:dangling_proxy', `DELETE id=${id} (${itemId}) returned HTTP ${res.status}: ${res.body.slice(0, 200)}`);
       return {
         ok: false,
         message: `NPM returned HTTP ${res.status} when deleting ${itemId}.`,

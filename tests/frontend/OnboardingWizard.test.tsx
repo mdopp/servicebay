@@ -2,7 +2,13 @@
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import OnboardingWizard from '@/components/OnboardingWizard';
+import OnboardingWizardView from '@/components/OnboardingWizard';
+import { InstallJobProvider } from '@/providers/InstallJobProvider';
+
+/** The wizard reads the running job from `InstallJobProvider` (#2732),
+ *  which the dashboard layout mounts; mount it here so the provider's poll
+ *  hits the same `/api/install/status` mock the tests already serve. */
+const OnboardingWizard = () => <InstallJobProvider><OnboardingWizardView /></InstallJobProvider>;
 
 // 1. Mock Server Actions
 vi.mock('@/app/actions/onboarding', () => ({
