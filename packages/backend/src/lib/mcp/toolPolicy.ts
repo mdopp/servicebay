@@ -165,7 +165,7 @@ export const TOOL_SCOPES: Record<string, ApiScope> = {
  * this axis; the same shape `DESTRUCTIVE_TOOL_ACTIONS` already uses for the
  * snapshot/notify safeguards.
  */
-export const TOOL_ACTION_SCOPES: Record<string, Record<string, ApiScope>> = {
+const TOOL_ACTION_SCOPES: Record<string, Record<string, ApiScope>> = {
   manage_claude_dev_project: { delete: 'destroy' },
 };
 
@@ -247,7 +247,7 @@ export function isToolVisibleForScopes(
  * via restore_trashed_service), so it doesn't need an extra snapshot.
  * `purge_trashed_service`, by contrast, IS the irreversible step.
  */
-export const DESTRUCTIVE_TOOLS = new Set([
+const DESTRUCTIVE_TOOLS = new Set([
   'deploy_service', 'rename_service', 'update_service_yaml',
   'purge_trashed_service',
   'remove_proxy_route', 'restore_backup',
@@ -271,7 +271,7 @@ export const DESTRUCTIVE_TOOLS = new Set([
  * (lifecycle-only tokens and the companion app must keep force-update), and the
  * safeguards are what make that tier honest.
  */
-export const DESTRUCTIVE_TOOL_ACTIONS: Record<string, readonly string[]> = {
+const DESTRUCTIVE_TOOL_ACTIONS: Record<string, readonly string[]> = {
   manage_service: ['force-update'],
 };
 
@@ -303,7 +303,7 @@ export function destructiveCallLabel(
  * lockstep with the scope map — adding a tool at the `destroy` tier
  * automatically routes it through the approval gate.
  */
-export function isDestroyTierTool(toolName: string): boolean {
+function isDestroyTierTool(toolName: string): boolean {
   return TOOL_SCOPES[toolName] === 'destroy';
 }
 

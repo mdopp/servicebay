@@ -8,12 +8,12 @@ import { useEffect, useState } from 'react';
 // crash-looping-but-"active" pod counted as healthy), which contradicted
 // the banner's readiness signal.
 
-export interface CoreUnhealthyCause {
+interface CoreUnhealthyCause {
   summary: string;
   action?: { label: string; href: string };
 }
 
-export interface CoreNotReady {
+interface CoreNotReady {
   template: string;
   state: 'unhealthy' | 'unknown';
   /** Populated when a known config-side cause matches (#665 — S5). */

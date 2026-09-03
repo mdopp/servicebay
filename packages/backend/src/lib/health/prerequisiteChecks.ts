@@ -306,7 +306,7 @@ export function enumerateDownstreamFailing(rootId: string, ctx: PrerequisiteCont
 }
 
 /** A single rung of the rendered causal chain (root last). */
-export interface CausalChainRung {
+interface CausalChainRung {
   checkId: string;
   label: string;
 }
@@ -316,7 +316,7 @@ export interface CausalChainRung {
  * up to the root, following the first currently-failing prerequisite at
  * each step. Cycle-safe. Returns rungs ordered leaf → root.
  */
-export function buildCausalChain(rootCheck: CheckConfig, ctx: PrerequisiteContext): CausalChainRung[] {
+function buildCausalChain(rootCheck: CheckConfig, ctx: PrerequisiteContext): CausalChainRung[] {
   const byId = new Map(ctx.checks.map(c => [c.id, c]));
   const rungs: CausalChainRung[] = [];
   const seen = new Set<string>();

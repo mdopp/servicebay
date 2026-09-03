@@ -5,7 +5,7 @@ import { Readable } from 'stream';
 import { logger } from '@/lib/logger';
 import { currentTraceId } from '../util/traceContext';
 
-export class CommandError extends Error {
+class CommandError extends Error {
   code: number;
   stdout: string;
   stderr: string;

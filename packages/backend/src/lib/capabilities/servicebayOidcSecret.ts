@@ -114,7 +114,7 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 }
 
 /** Outcome of one reconcile pass. `secret` is deliberately NOT included. */
-export type OidcSecretOutcome = 'aligned' | 'changed' | 'skipped';
+type OidcSecretOutcome = 'aligned' | 'changed' | 'skipped';
 
 export interface OidcSecretReconcileResult {
   outcome: OidcSecretOutcome;

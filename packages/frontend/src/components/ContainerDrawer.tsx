@@ -17,7 +17,7 @@ import type { TerminalRef } from '@/components/Terminal';
 
 const DynamicTerminal = dynamic(() => import('@/components/Terminal'), { ssr: false });
 
-export type ContainerDrawerMode = 'logs' | 'terminal';
+type ContainerDrawerMode = 'logs' | 'terminal';
 
 /** What the drawer needs to render: the logs-panel payload plus the owning
  *  node (absent / `Local` = this box). */

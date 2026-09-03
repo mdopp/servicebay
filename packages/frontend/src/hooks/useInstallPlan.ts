@@ -27,7 +27,7 @@ import { useCallback, useState } from 'react';
  *  `packages/backend/src/lib/install/installPlan.ts`). Declared locally
  *  because the backend type lives behind the `@/lib` alias (which maps
  *  to the backend package, not importable from the browser bundle). */
-export interface InstallPlanChange {
+interface InstallPlanChange {
   stack: string;
   templates: string[];
 }
@@ -48,7 +48,7 @@ export interface InstallPlan {
   noop: boolean;
 }
 
-export interface UninstallResult {
+interface UninstallResult {
   ok: boolean;
   error?: string;
 }

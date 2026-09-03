@@ -106,7 +106,7 @@ export const PROBE_LABEL = 'Storage (/mnt/data, /var, /)';
 const MiB = 1024 * 1024;
 const GiB = 1024 * MiB;
 
-export type DiskProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
+type DiskProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
 
 /** Separates the `df` rows from the mount table in the probe's output. */
 export const DISK_FILL_MOUNTS_MARKER = '---mounts---';
@@ -387,7 +387,7 @@ export function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
-export interface DiskFilesystemVerdict {
+interface DiskFilesystemVerdict {
   spec: MonitoredFilesystem;
   row: DfRow | null;
   status: DiskProbeStatus;

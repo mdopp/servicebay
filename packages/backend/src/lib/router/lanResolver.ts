@@ -45,7 +45,7 @@ const DNS_TIMEOUT_MS = 3000;
  *    resolver all look like this.
  *  - `error` — the resolver failed the query (SERVFAIL, REFUSED, connection
  *    refused …). Also inconclusive about the name itself. */
-export type LanResolveOutcome = 'ok' | 'no-answer' | 'timeout' | 'error';
+type LanResolveOutcome = 'ok' | 'no-answer' | 'timeout' | 'error';
 
 export interface LanResolveResult {
   outcome: LanResolveOutcome;

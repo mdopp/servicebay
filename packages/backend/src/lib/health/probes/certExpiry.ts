@@ -42,7 +42,7 @@ export const CERT_EXPIRY_ACTION_IDS = {
   deleteOrphaned: 'delete_orphaned_cert',
 } as const;
 
-export type CertExpiryActionId = (typeof CERT_EXPIRY_ACTION_IDS)[keyof typeof CERT_EXPIRY_ACTION_IDS];
+type CertExpiryActionId = (typeof CERT_EXPIRY_ACTION_IDS)[keyof typeof CERT_EXPIRY_ACTION_IDS];
 
 type NpmCert = NpmCertificate;
 interface CertItem { id: string; label: string; detail: string; status: 'warn' | 'fail'; actionIds: CertExpiryActionId[]; }

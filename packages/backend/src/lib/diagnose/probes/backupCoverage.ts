@@ -89,7 +89,7 @@ export function formatAge(ms: number): string {
  * name rather than by matching prose — "not configured" must stay
  * distinguishable from "never checked" and from a run that errored.
  */
-export type ContentBackupState =
+type ContentBackupState =
   | 'not_configured'
   | 'switched_off'
   | 'no_sources'
@@ -194,7 +194,7 @@ export async function checkContentBackup(now: Date = new Date()): Promise<Conten
 
 // ─── Config backup (nightly NAS push) ────────────────────────────────
 
-export type ConfigBackupState =
+type ConfigBackupState =
   | 'switched_off'
   | 'never_ran'
   | 'nothing_installed'

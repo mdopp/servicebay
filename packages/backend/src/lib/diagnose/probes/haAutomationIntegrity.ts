@@ -57,7 +57,7 @@ const INCLUDES: { file: string; platform: string }[] = [
 
 /** Count entity-registry entries for a `platform`. The registry is JSON of the
  *  shape `{ data: { entities: [{ platform }, ...] } }`. Unparseable → 0. */
-export function countRegistryPlatformEntries(registryJson: string, platform: string): number {
+function countRegistryPlatformEntries(registryJson: string, platform: string): number {
   try {
     const parsed = JSON.parse(registryJson) as { data?: { entities?: Array<{ platform?: string }> } };
     const entities = parsed?.data?.entities;
@@ -71,7 +71,7 @@ export function countRegistryPlatformEntries(registryJson: string, platform: str
 /** Parse a HA include target file and return its entry count. Automations and
  *  scenes are YAML lists (`[]` → 0); scripts are a mapping (`{}` → 0). Blank →
  *  0. Unparseable → null (don't raise a false mismatch on a file we can't read). */
-export function parseHaEntryCount(content: string): number | null {
+function parseHaEntryCount(content: string): number | null {
   const trimmed = content.trim();
   if (trimmed === '') return 0;
   let doc: unknown;

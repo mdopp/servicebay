@@ -100,7 +100,7 @@ export const OS_UPDATE_COMMAND =
  */
 export const STUCK_ATTEMPTS_THRESHOLD = 3;
 
-export type OsUpdateProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
+type OsUpdateProbeStatus = 'ok' | 'warn' | 'fail' | 'info';
 
 /** What Zincati is doing right now, as parsed from `rpm-ostree status`. */
 export interface OsUpdateState {

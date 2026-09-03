@@ -49,7 +49,7 @@ function launchWorkerChild(opts: ServeOptions): void {
 }
 
 /** Build the server deps for serve mode. */
-export function serveDeps(opts: ServeOptions): ServerDeps {
+function serveDeps(opts: ServeOptions): ServerDeps {
   return {
     outDir: opts.out,
     readJson: fileReader(opts.out),

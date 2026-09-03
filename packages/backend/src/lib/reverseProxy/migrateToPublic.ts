@@ -81,7 +81,7 @@ interface CertRequestStep {
   skipReason?: string;
 }
 
-export type MigrationStep = ProxyHostStep | AutheliaStep | CertRequestStep;
+type MigrationStep = ProxyHostStep | AutheliaStep | CertRequestStep;
 
 export interface MigrationPlan {
   publicDomain: string;
@@ -91,7 +91,7 @@ export interface MigrationPlan {
   steps: MigrationStep[];
 }
 
-export interface MigrationApplyError {
+interface MigrationApplyError {
   step: MigrationStep['kind'];
   detail: string;
   /** Domain or hostId where the error happened, when applicable. */

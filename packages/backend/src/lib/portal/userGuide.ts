@@ -165,7 +165,7 @@ export interface ManualPairing {
  *     so it carries `desktop_only:true` by default and the phone UI
  *     hides/disables it.
  */
-export type PortalActionType = 'in_app' | 'external_scheme';
+type PortalActionType = 'in_app' | 'external_scheme';
 
 /**
  * Coarse grouping bucket a portal card belongs to (#1682). Lets a
@@ -246,7 +246,7 @@ const PORTAL_ICON_SET: ReadonlySet<string> = new Set(PORTAL_ICONS);
  * Single-service templates skip `cards[]` entirely — the parser
  * synthesizes a single implicit card from the top-level frontmatter.
  */
-export interface UserGuideCard {
+interface UserGuideCard {
   /** Variable name in the template's `variables.json` to use as the
    *  subdomain. e.g. `"SYNCTHING_SUBDOMAIN"` for file-share's
    *  Syncthing card. */
@@ -269,7 +269,7 @@ export interface UserGuideCard {
   actions?: PortalAction[];
 }
 
-export interface UserGuideFrontmatter {
+interface UserGuideFrontmatter {
   /** Multi-service templates (`media`) declare per-subdomain cards
    *  here. When present, top-level icon/tagline/etc. are ignored and
    *  one PortalCard is emitted per entry. */

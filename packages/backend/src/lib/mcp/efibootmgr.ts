@@ -7,7 +7,7 @@
  * testable without an agent or a real UEFI box.
  */
 
-export interface EfiBootEntry {
+interface EfiBootEntry {
   bootNum: string;
   name: string;
   active: boolean;
@@ -24,7 +24,7 @@ export interface ParsedEfibootmgr {
 }
 
 /** A boot entry that looks like it boots from removable/USB media. */
-export function isUsbBootEntry(description: string): boolean {
+function isUsbBootEntry(description: string): boolean {
   const d = description.toLowerCase();
   return d.includes('usb') ||
     d.includes('removable') ||
@@ -35,7 +35,7 @@ export function isUsbBootEntry(description: string): boolean {
 /** Tighter than `isUsbBootEntry` — removable media only, excluding the
  *  broad `disk`/`\EFI\boot\` heuristics — used for the reinstall-ready
  *  verdict so an internal disk entry doesn't read as "USB ready". */
-export function isRemovableBootEntry(description: string): boolean {
+function isRemovableBootEntry(description: string): boolean {
   const d = description.toLowerCase();
   return d.includes('usb') || d.includes('removable');
 }
@@ -96,7 +96,7 @@ export interface UsbBootReadiness {
 // via `\EFI\BOOT\BOOTX64.EFI` rather than trusting a slot description.
 
 /** A block node from `lsblk --json -O` (subset of the fields we use). */
-export interface LsblkNode {
+interface LsblkNode {
   name: string;
   path?: string;
   type?: string; // disk | part | rom | …

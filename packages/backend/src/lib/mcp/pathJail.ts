@@ -20,12 +20,12 @@ import path from 'path';
 /** The only root MCP read tools may touch on a node. */
 export const JAIL_ROOT = '/mnt/data';
 
-export interface JailOk {
+interface JailOk {
   ok: true;
   /** Absolute, normalized path guaranteed to be inside JAIL_ROOT. */
   path: string;
 }
-export interface JailErr {
+interface JailErr {
   ok: false;
   error: string;
 }

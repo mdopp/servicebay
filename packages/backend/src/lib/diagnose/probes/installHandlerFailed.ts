@@ -32,7 +32,7 @@ import {
 } from '@/lib/install/handlerFailures';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
 
-export const PROBE_ID = 'install_handler_failed';
+const PROBE_ID = 'install_handler_failed';
 
 /** What each record kind reads as in the row detail. */
 const KIND_LABEL: Record<InstallHandlerFailureRecord['kind'], string> = {

@@ -6,8 +6,8 @@
 // better-sqlite3 + node:fs (catalog.ts/hostExec.ts) and would break the browser
 // bundle. The route validates the values server-side; the UI only needs the shapes.
 
-export type Owner = string; // `shared` or a box-user id.
-export type RoutingMode = 'merge' | 'parallel';
+type Owner = string; // `shared` or a box-user id.
+type RoutingMode = 'merge' | 'parallel';
 export type Disposition =
   | 'auto'
   | 'photos_immich'
@@ -30,7 +30,7 @@ export interface Rule {
 }
 
 /** A folder's fully-resolved rule (inherited where not explicit) + the anchor. */
-export interface ResolvedRule {
+interface ResolvedRule {
   disposition: Disposition;
   mode: RoutingMode;
   owner: Owner;

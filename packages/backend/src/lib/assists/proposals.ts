@@ -31,7 +31,7 @@ import {
 import { scanForSecrets } from './secretScan';
 
 /** Persisted, namespaced id prefix for every proposal-landed assist. */
-export const PROPOSAL_ID_NAMESPACE = 'local';
+const PROPOSAL_ID_NAMESPACE = 'local';
 
 /**
  * Proposal lifecycle.
@@ -134,7 +134,7 @@ export class ProposalError extends Error {
 const STORE_PATH = () => path.join(DATA_DIR, 'learning-proposals.json');
 
 /** Cap so a runaway/hostile `propose` token can't fill the disk. */
-export const MAX_PENDING_PROPOSALS = 100;
+const MAX_PENDING_PROPOSALS = 100;
 
 /**
  * Slugify a title into a safe, single-segment id stem. Same character class as
@@ -267,7 +267,7 @@ async function resolveProposal(
  * picks it up. `gray-matter`'s stringifier is deliberately avoided to keep the
  * output minimal and stable; the fields are the same the loader reads.
  */
-export function proposalToAssistMarkdown(p: LearningProposalContent): string {
+function proposalToAssistMarkdown(p: LearningProposalContent): string {
   const fm: string[] = [
     '---',
     `title: ${JSON.stringify(p.title)}`,

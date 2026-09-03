@@ -17,7 +17,7 @@ export type PushPortFn = (
   hostIp?: string,
 ) => void;
 
-export function safeParsePort(value: unknown): number | undefined {
+function safeParsePort(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
   }

@@ -83,7 +83,7 @@ import {
 // Re-export the surface previously exposed from this module so the
 // install route handlers + tests don't have to learn the new file
 // names. The extractions in #975 are structural, not API changes.
-export { provideCredentials, skipCredentials, ensureProxyHosts, ensureOidcClients };
+export { provideCredentials, skipCredentials, ensureProxyHosts };
 
 const MAX_DEPLOY_ATTEMPTS = 3;
 const DEPLOY_BACKOFF_MS = [0, 1000, 4000];

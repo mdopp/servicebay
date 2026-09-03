@@ -111,7 +111,7 @@ export async function planLanBlockedPorts(opts: ReconcileOpts = {}): Promise<Lan
  * registry and push it to the host. Exported so the boot path can call
  * the same code (see `reconcileHostFirewallOnBoot`).
  */
-export async function reconcileFromConfig(opts: ReconcileOpts = {}): Promise<void> {
+async function reconcileFromConfig(opts: ReconcileOpts = {}): Promise<void> {
   const plan = await planLanBlockedPorts(opts);
   for (const reason of plan.skipped) {
     logger.warn('CapabilityBus', `[${HANDLER_NAME}] skipped ${reason}`);

@@ -30,7 +30,7 @@ import { X } from 'lucide-react';
  * mount, so the transition is a no-op visually.
  */
 
-export type WorkspaceDrawerWidth = 'standard' | 'wide' | 'full';
+type WorkspaceDrawerWidth = 'standard' | 'wide' | 'full';
 
 interface WorkspaceDrawerProps {
   /** Closed → unmount. The parent owns the state. */

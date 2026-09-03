@@ -26,7 +26,7 @@ const SAMPLE_BOOT_DELAY_MS = 90 * 1000;
  * every stack container (`<service>.service`); fall back to the pod
  * name. The twin's `containers` carry both.
  */
-export function containerServiceMap(node: string): Map<string, string> {
+function containerServiceMap(node: string): Map<string, string> {
   const map = new Map<string, string>();
   const twinNode = getStoreSnapshot().nodes?.[node];
   for (const c of twinNode?.containers ?? []) {
@@ -38,7 +38,7 @@ export function containerServiceMap(node: string): Map<string, string> {
 }
 
 /** Sample one node and fold its flows into the store. */
-export async function sampleNodeFlows(node: string): Promise<void> {
+async function sampleNodeFlows(node: string): Promise<void> {
   const sockets = await collectHostSockets(node);
   if (sockets.established.length === 0) return;
   const containerToService = containerServiceMap(node);

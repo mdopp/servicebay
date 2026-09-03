@@ -61,7 +61,7 @@ import { loadSavedVariables } from '@/lib/install/savedVariables';
 /** The subset of a `variables.json` entry this module reads. Structural on
  *  purpose so both the registry's `VariableMeta` and the portal's local
  *  `{type?, default?, proxyPort?}` shape satisfy it. */
-export interface EffectiveVariableMeta {
+interface EffectiveVariableMeta {
   type?: string;
   default?: string;
 }

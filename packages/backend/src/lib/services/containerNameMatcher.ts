@@ -23,14 +23,14 @@
 import type { EnrichedContainer } from '../agent/types';
 
 /** Kube container port mapping (subset we read from). */
-export interface PodLikeContainerPort {
+interface PodLikeContainerPort {
   containerPort?: number | string;
   hostPort?: number | string;
   protocol?: string;
 }
 
 /** Kube container env entry (subset). */
-export interface PodLikeEnvVar {
+interface PodLikeEnvVar {
   name?: string;
   value?: string;
 }
@@ -44,7 +44,7 @@ export interface PodLikeVolumeMount {
 
 /** Kube volume (subset — supports the two common backends ServiceBay
  *  uses: hostPath bind mounts + PVC references). */
-export interface PodLikeVolume {
+interface PodLikeVolume {
   name?: string;
   hostPath?: { path?: string };
   persistentVolumeClaim?: { claimName?: string };

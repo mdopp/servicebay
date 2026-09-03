@@ -33,7 +33,7 @@ import {
 export type SettingTier = 'essential' | 'advanced';
 
 /** A single searchable setting within a group, mapped to a rendered section. */
-export interface SettingEntry {
+interface SettingEntry {
   /** Stable id; also the in-page anchor (`#<id>`) for deep links. */
   id: string;
   /** Plain-language name surfaced in search ("type a name, jump to it"). */

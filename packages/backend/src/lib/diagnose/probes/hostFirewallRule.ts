@@ -33,7 +33,7 @@ import { inspectHostFirewall, NFT_TABLE, UNIT_NAME, type HostFirewallState } fro
 import { planLanBlockedPorts } from '@/lib/capabilities/hostFirewall';
 import { registerProbeAction, type ProbeActionResult, type ProbeItem } from '../actions';
 
-export const PROBE_ID = 'host_firewall_rule';
+const PROBE_ID = 'host_firewall_rule';
 
 /** Single row id — the rule is box-level, so there is only ever one. */
 const ITEM_ID = 'lan_block';
@@ -138,7 +138,7 @@ function portSetVerdict(want: number[], state: HostFirewallState): HostFirewallR
 
 /** Pure verdict: desired port set vs. what the host actually reported.
  *  Exported so the comparison can be tested without a host. */
-export function evaluateHostFirewall(want: number[], state: HostFirewallState): HostFirewallRuleResult {
+function evaluateHostFirewall(want: number[], state: HostFirewallState): HostFirewallRuleResult {
   return reachabilityVerdict(want, state) ?? portSetVerdict(want, state);
 }
 

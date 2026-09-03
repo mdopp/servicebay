@@ -38,7 +38,7 @@ import path from 'path';
  * `tier: core` stack is unhealthy, the wizard refuses to install any
  * `tier: feature` stack.
  */
-export type StackTier = 'core' | 'feature';
+type StackTier = 'core' | 'feature';
 const KNOWN_TIERS: ReadonlySet<StackTier> = new Set(['core', 'feature']);
 
 /**
@@ -47,7 +47,7 @@ const KNOWN_TIERS: ReadonlySet<StackTier> = new Set(['core', 'feature']);
  * `wipeable` is the default — operators can one-click wipe a feature
  * stack at any time.
  */
-export type StackLifecycle = 'atomic-wipe' | 'wipeable';
+type StackLifecycle = 'atomic-wipe' | 'wipeable';
 const KNOWN_LIFECYCLES: ReadonlySet<StackLifecycle> = new Set(['atomic-wipe', 'wipeable']);
 
 /**
@@ -62,7 +62,7 @@ const KNOWN_LIFECYCLES: ReadonlySet<StackLifecycle> = new Set(['atomic-wipe', 'w
  * - `none`: The template cannot self-heal. Wiping secrets while preserving
  *   this template's data group is unsafe and blocked by resetValidation.
  */
-export type SelfHealMode = 'env_override' | 'api_rotation' | 'recreate_on_key_wipe' | 'none';
+type SelfHealMode = 'env_override' | 'api_rotation' | 'recreate_on_key_wipe' | 'none';
 const KNOWN_SELF_HEAL_MODES: ReadonlySet<SelfHealMode> = new Set([
   'env_override', 'api_rotation', 'recreate_on_key_wipe', 'none',
 ]);

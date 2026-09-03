@@ -90,7 +90,7 @@ function scrub(value: unknown): unknown {
  * Read-path only: `update_config`'s allowlist is what governs writes, and it
  * is untouched by this.
  */
-export function sanitizeConfig(cfg: AppConfig): Record<string, unknown> {
+function sanitizeConfig(cfg: AppConfig): Record<string, unknown> {
   return scrub(cfg) as Record<string, unknown>;
 }
 

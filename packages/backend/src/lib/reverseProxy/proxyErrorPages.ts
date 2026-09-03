@@ -46,8 +46,8 @@ export const PROXY_ERROR_PAGE_CONTAINER_PATH = '/data/nginx/servicebay/proxy-err
  * root keeps every writer consistent (same as {@link ./lanDeniedPage}).
  */
 const NPM_DATA_ROOT = '/mnt/data/stacks/nginx-proxy-manager/data/nginx';
-export const UNKNOWN_HOST_PAGE_HOST_PATH = `${NPM_DATA_ROOT}/servicebay/unknown-host.html`;
-export const PROXY_ERROR_PAGE_HOST_PATH = `${NPM_DATA_ROOT}/servicebay/proxy-error.html`;
+const UNKNOWN_HOST_PAGE_HOST_PATH = `${NPM_DATA_ROOT}/servicebay/unknown-host.html`;
+const PROXY_ERROR_PAGE_HOST_PATH = `${NPM_DATA_ROOT}/servicebay/proxy-error.html`;
 
 /**
  * Host-side path of NPM's documented dead-host custom include. NPM includes
@@ -55,7 +55,7 @@ export const PROXY_ERROR_PAGE_HOST_PATH = `${NPM_DATA_ROOT}/servicebay/proxy-err
  * serves any host without a matching proxy_host), so it is the hook for the
  * default server.
  */
-export const DEAD_HOST_CUSTOM_CONF_HOST_PATH = `${NPM_DATA_ROOT}/custom/server_dead.conf`;
+const DEAD_HOST_CUSTOM_CONF_HOST_PATH = `${NPM_DATA_ROOT}/custom/server_dead.conf`;
 
 /** Internal URIs the error_pages re-route to. Kept distinct from real paths. */
 const UNKNOWN_HOST_INTERNAL_URI = '/servicebay-unknown-host';

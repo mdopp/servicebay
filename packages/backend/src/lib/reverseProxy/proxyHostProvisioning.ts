@@ -63,7 +63,7 @@ export type { ProxyHostRequest } from './proxyHostPolicy';
 const NPM_LOOKUP = { requireActive: true } as const;
 
 /** The three outcomes every verb shares before it gets to its own work. */
-export type NpmSessionFailure =
+type NpmSessionFailure =
     | { kind: 'npm-not-found' }
     | { kind: 'auth-failed'; adminUrl: string };
 
@@ -454,7 +454,7 @@ export interface ProvisionProxyHostsInput {
 }
 
 /** Per-host outcome, as the wizard / MCP tool consume it. */
-export interface ProvisionSummary {
+interface ProvisionSummary {
     success: boolean;
     created: string[];
     failed: { domain: string; error?: string }[];
@@ -821,7 +821,7 @@ export async function removeProxyHost(domain: string, node?: string): Promise<Re
 
 // ─── Live status ────────────────────────────────────────────────────────
 
-export interface LiveProxyHost {
+interface LiveProxyHost {
     id: number;
     domain: string;
     forwardHost?: string;

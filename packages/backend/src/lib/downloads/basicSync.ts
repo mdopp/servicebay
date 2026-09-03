@@ -14,7 +14,7 @@ const REPO = 'chenxiaolong/BasicSync';
 
 /** ABIs BasicSync ships an APK for. `arm64-v8a` covers effectively every
  *  phone from the last several years; the rest are for older / x86 devices. */
-export const BASICSYNC_ABIS = ['arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86'] as const;
+const BASICSYNC_ABIS = ['arm64-v8a', 'armeabi-v7a', 'x86_64', 'x86'] as const;
 export type BasicSyncAbi = (typeof BASICSYNC_ABIS)[number];
 export const DEFAULT_BASICSYNC_ABI: BasicSyncAbi = 'arm64-v8a';
 

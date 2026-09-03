@@ -30,7 +30,7 @@ import crypto from 'crypto';
 
 const SAMBA_CONTAINER_NAME = 'file-share-samba';
 
-export interface SambaUserSummary {
+interface SambaUserSummary {
   /** LLDAP user id, used as the Samba username. */
   id: string;
   displayName?: string;

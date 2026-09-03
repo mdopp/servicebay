@@ -38,7 +38,7 @@ export type CapabilityEventKind = CapabilityEvent['kind'];
  * error to abort the install. Use for pre-flight invariants (e.g. "this
  * stack needs a public domain and none is configured").
  */
-export interface FeatureInstallingEvent {
+interface FeatureInstallingEvent {
   kind: 'feature.installing';
   template: string;
   manifest: TemplateManifest;
@@ -69,7 +69,7 @@ export interface FeatureInstalledEvent {
  * `lastKnownVariables` is the snapshot from the most recent successful
  * install — handlers can't assume the live config still matches.
  */
-export interface FeatureUninstallingEvent {
+interface FeatureUninstallingEvent {
   kind: 'feature.uninstalling';
   template: string;
   lastKnownVariables: StackVariable[];

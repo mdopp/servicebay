@@ -32,7 +32,7 @@ import { logger } from '@/lib/logger';
  * `inputs[]` the UI expands a small form first and submits the values
  * as the dispatch payload.
  */
-export interface ProbeActionInput {
+interface ProbeActionInput {
   /** Form field name — passed back as `payload[name]` to the handler. */
   name: string;
   /** Short label shown above the input. */

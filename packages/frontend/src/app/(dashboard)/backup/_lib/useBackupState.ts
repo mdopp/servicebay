@@ -24,7 +24,7 @@ type RestoreSelectionState = {
 
 // One editable source row. `excludePatterns` is a newline-delimited string
 // while editing; it's split into a string[] on save.
-export type BackupSourceDraft = {
+type BackupSourceDraft = {
   path: string;
   excludePatterns: string;
 };

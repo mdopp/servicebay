@@ -89,7 +89,7 @@ export const RESTART_SETTLE_TUNING = { timeoutMs: 180_000, pollIntervalMs: 2_000
  * eight diagnose runs while deploys kept sailing through). Errors of this type
  * are re-thrown by the catch-all instead.
  */
-export class FatalPreStartHookError extends Error {
+class FatalPreStartHookError extends Error {
     constructor(message: string) {
         super(message);
         this.name = 'FatalPreStartHookError';

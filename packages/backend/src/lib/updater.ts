@@ -120,7 +120,7 @@ async function getRunningImageDigest(): Promise<string | null> {
 const UNRELEASED_CHANNELS = new Set(['dev', 'test']);
 
 /** What the box is ACTUALLY running, read off the running container. */
-export interface RunningBuild {
+interface RunningBuild {
   /** Release channel from the running image's tag (`latest` | `dev` | `test` | …). */
   channel: string | null;
   /** Git commit the running image was built from (OCI `image.revision` label). */

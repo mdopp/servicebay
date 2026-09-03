@@ -26,7 +26,7 @@ export interface UpgradeSummary {
   sectionHeaders: string[];
 }
 
-export interface PlannedMigration {
+interface PlannedMigration {
   filename: string;
   fromVersion: number;
   toVersion: number;
@@ -46,7 +46,7 @@ export interface BulkUpgradePlan {
   hasBreakingChange: boolean;
 }
 
-export type BulkUpgradeStep = 'select' | 'preview' | 'running';
+type BulkUpgradeStep = 'select' | 'preview' | 'running';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 

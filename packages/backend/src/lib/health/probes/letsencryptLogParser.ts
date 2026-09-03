@@ -28,7 +28,7 @@ export type FailureCategory =
   | 'tls-sni'
   | 'other';
 
-export interface ParsedFailure {
+interface ParsedFailure {
   domain: string;
   type: string;
   detail: string;

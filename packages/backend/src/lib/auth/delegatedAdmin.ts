@@ -69,7 +69,7 @@ export interface DelegatedAssertion {
   exp: number;
 }
 
-export type DelegationFailureReason =
+type DelegationFailureReason =
   | 'missing'          // no assertion header — the route should fall back to its other auth modes
   | 'malformed'        // header present but not a decodable/valid-shape assertion
   | 'bad_signature'

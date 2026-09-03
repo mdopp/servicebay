@@ -57,7 +57,7 @@ export interface StackVariable {
   explicit?: boolean;
 }
 
-export interface StackItemInput {
+interface StackItemInput {
   name: string;
   checked: boolean;
   alreadyInstalled?: boolean;
