@@ -362,6 +362,39 @@ export function getStacks(): Promise<{ stacks: StackSummary[] }> {
 }
 
 // ---------------------------------------------------------------------------
+// Per-stack wipe — POST /api/system/stacks/:name/wipe
+// ---------------------------------------------------------------------------
+
+const StackWipeFailureSchema = z.object({ template: z.string(), error: z.string() }).passthrough();
+
+const StackWipeCapabilityFailureSchema = z
+  .object({ template: z.string(), handler: z.string(), message: z.string() })
+  .passthrough();
+
+/** Lenient — a row shape drift in `failed`/`capabilityFailures` should not
+ *  hide the wipe outcome itself; those arrays only feed a toast count. */
+const StackWipeResultSchema = z
+  .object({
+    ok: z.boolean().optional(),
+    deleted: z.array(z.string()).optional(),
+    failed: lenientArray(StackWipeFailureSchema, 'POST /api/system/stacks/:name/wipe#failed').optional(),
+    capabilityFailures: lenientArray(
+      StackWipeCapabilityFailureSchema,
+      'POST /api/system/stacks/:name/wipe#capabilityFailures',
+    ).optional(),
+    wipedPaths: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+export type StackWipeResult = z.infer<typeof StackWipeResultSchema>;
+
+/** POST /api/system/stacks/:name/wipe — scoped, per-stack wipe (StackGroupHeader's
+ *  destructive action). `confirm` must be the literal `WIPE-<name>` token. */
+export function wipeStack(name: string, confirm: string) {
+  return mutateRawApi(`/api/system/stacks/${encodeURIComponent(name)}/wipe`, StackWipeResultSchema, { confirm });
+}
+
+// ---------------------------------------------------------------------------
 // Unmanaged-bundle discovery — POST /api/system/discovery/dismiss
 // ---------------------------------------------------------------------------
 

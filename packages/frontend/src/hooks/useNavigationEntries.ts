@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { fetchLldapUrl } from '@servicebay/api-client';
 import { useDigitalTwin } from '@/hooks/useDigitalTwin';
 import { resolveNavigationEntries, type ResolvedNavigationEntry } from '@/config/navigation';
 
@@ -27,8 +28,7 @@ export function useNavigationEntries(): ResolvedNavigationEntry[] {
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/auth/lldap-url')
-      .then(r => r.ok ? r.json() : null)
+    fetchLldapUrl()
       .then(data => { if (!cancelled && data?.url) setLldapUrl(data.url); })
       .catch(() => { /* LLDAP not deployed / offline — the entry stays hidden */ });
     return () => { cancelled = true; };

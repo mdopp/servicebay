@@ -131,7 +131,7 @@ describe('Sidebar', () => {
 
         // Wait for fetch to complete
         await waitFor(() => {
-            expect(fetchSpy).toHaveBeenCalledWith('/api/auth/lldap-url');
+            expect(fetchSpy).toHaveBeenCalledWith('/api/auth/lldap-url', undefined);
         });
 
         expect(screen.queryByText('Users & Groups')).toBeNull();

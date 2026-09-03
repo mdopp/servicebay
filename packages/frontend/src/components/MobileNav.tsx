@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Code, Wrench } from 'lucide-react';
+import { fetchSystemVersion } from '@servicebay/api-client';
 import ServiceBayLogo from './ServiceBayLogo';
 import DomainTag from './DomainTag';
 import { isNavActive } from '@/config/navigation';
@@ -28,8 +29,7 @@ export function MobileTopBar() {
   const [appVersion, setAppVersion] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/system/version')
-      .then(r => r.ok ? r.json() : null)
+    fetchSystemVersion()
       .then(d => { if (d?.version) setAppVersion(d.version); })
       .catch(() => {});
   }, []);

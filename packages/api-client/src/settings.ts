@@ -615,6 +615,20 @@ export function login(username: string, password: string) {
   return mutateRawApi('/api/auth/login', LoginResponseSchema, { username, password });
 }
 
+export const LogoutResponseSchema = z.object({ success: z.boolean().optional() }).passthrough();
+
+export type LogoutResponse = z.infer<typeof LogoutResponseSchema>;
+
+/**
+ * POST /api/auth/logout — `skipAuth: true` + idempotent (clearing a
+ * stale/already-invalid cookie must still succeed). Callers treat this as
+ * fire-and-forget best-effort — they redirect to /login regardless of
+ * outcome — so the response body is never read.
+ */
+export function logout() {
+  return mutateRawApi('/api/auth/logout', LogoutResponseSchema, undefined);
+}
+
 // ---------------------------------------------------------------------------
 // MCP Bootstrap & API Tokens Schemas
 // ---------------------------------------------------------------------------

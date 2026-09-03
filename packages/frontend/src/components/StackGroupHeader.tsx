@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { Trash2 } from 'lucide-react';
+import { wipeStack } from '@servicebay/api-client';
 
 import { SectionHeading } from '@/components/ui';
 import { Button } from '@/components/ui';
@@ -45,13 +46,7 @@ export default function StackGroupHeader({ group, onWiped }: StackGroupHeaderPro
     setRunning(true);
     try {
       // Scoped, per-stack wipe — NOT the system-wide reset.
-      const res = await fetch(`/api/system/stacks/${encodeURIComponent(stackName)}/wipe`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: confirmToken }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `Server error (${res.status})`);
+      const data = await wipeStack(stackName, confirmToken);
       const failed = (data.failed ?? []).length;
       const handlerFails = (data.capabilityFailures ?? []).length;
       addToast(
