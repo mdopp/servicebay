@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Copy, KeyRound, Loader2, RefreshCw } from 'lucide-react';
 import { useToast } from '@/providers/ToastProvider';
 import { fetchSambaUsers, setSambaUserPassword, TypedFetchError, type SambaUser } from '@servicebay/api-client';
+import { Button } from '@/components/ui';
 
 /**
  * Per-LLDAP-user Samba password management (#494).
@@ -75,16 +76,16 @@ export default function FileShareSection() {
   return (
     <>
         <div className="flex justify-end">
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={loadUsers}
             disabled={loading}
-            className="inline-flex items-center gap-1 px-2 py-1 text-xs text-text-muted hover:bg-surface-2 rounded disabled:opacity-50"
-            type="button"
             title="Re-run LLDAP → Samba sync"
           >
             {loading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
             Sync
-          </button>
+          </Button>
         </div>
 
       <div className="space-y-3">
@@ -122,13 +123,14 @@ export default function FileShareSection() {
                     <div className="mt-2 p-2 rounded bg-surface border border-status-warn text-xs">
                       <div className="flex items-center gap-2">
                         <span className="font-mono break-all">{flashed.password}</span>
-                        <button
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-status-warn"
                           onClick={() => copyPassword(flashed.password)}
-                          className="inline-flex items-center gap-1 px-2 py-1 text-status-warn hover:bg-surface-2 rounded"
-                          type="button"
                         >
                           <Copy size={12} /> Copy
-                        </button>
+                        </Button>
                       </div>
                       <div className="mt-1 text-status-warn">
                         This is the only time the password is shown — copy it now.
@@ -136,15 +138,16 @@ export default function FileShareSection() {
                     </div>
                   )}
                 </div>
-                <button
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="bg-status-ok hover:bg-status-ok/80"
                   onClick={() => setPassword(u.id)}
                   disabled={busyUser === u.id}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs bg-status-ok hover:bg-status-ok/80 text-on-accent rounded disabled:opacity-50"
-                  type="button"
                 >
                   {busyUser === u.id ? <Loader2 size={12} className="animate-spin" /> : <KeyRound size={12} />}
                   {u.presentInSamba ? 'Reset password' : 'Set password'}
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
