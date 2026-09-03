@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.26.3](https://github.com/mdopp/servicebay/compare/servicebay-v5.26.2...servicebay-v5.26.3) (2026-09-03)
+
+
+### Bug Fixes
+
+* **auth:** hold cookie sessions to their source token scopes ([a898adb](https://github.com/mdopp/servicebay/commit/a898adbc0442deaddc5262fb044c6a3c8c7161cb)), closes [#2768](https://github.com/mdopp/servicebay/issues/2768)
+* **backup:** compare the real clock, not the anchor, for the next run ([bef9ab4](https://github.com/mdopp/servicebay/commit/bef9ab4717f580afed395a3e5b29a0ab85ac50aa)), closes [#2770](https://github.com/mdopp/servicebay/issues/2770)
+* **backup:** make the SMB share password write-only in backup-sync ([062c335](https://github.com/mdopp/servicebay/commit/062c3351a5ab556533bbc338e5aa889cdc8bbb2f)), closes [#2771](https://github.com/mdopp/servicebay/issues/2771)
+* **backup:** report every source's outcome on a partial run ([6c069e4](https://github.com/mdopp/servicebay/commit/6c069e44d9698a02e51806dd105250814b15cd2b)), closes [#2773](https://github.com/mdopp/servicebay/issues/2773)
+* **frontend:** dedupe the stalled-initial-connect retry across useSocket consumers ([c7e3c14](https://github.com/mdopp/servicebay/commit/c7e3c14b5bf4f407c7c71b2f3acf62e3c3e6dbe1)), closes [#2772](https://github.com/mdopp/servicebay/issues/2772)
+* **frontend:** join ConfirmModal's Escape handler to the overlay stack ([c8a7f20](https://github.com/mdopp/servicebay/commit/c8a7f20327950b3df753a5d24e89db6f0c5bae64)), closes [#2774](https://github.com/mdopp/servicebay/issues/2774)
+* **terminal:** gate socket join/input/resize on the exec scope ([060c989](https://github.com/mdopp/servicebay/commit/060c989074f29926d4c01e71261416bccffa2c6b)), closes [#2769](https://github.com/mdopp/servicebay/issues/2769)
+
 ## [5.26.2](https://github.com/mdopp/servicebay/compare/servicebay-v5.26.1...servicebay-v5.26.2) (2026-09-03)
 
 
