@@ -66,7 +66,11 @@ async function resolveDeployView(serviceName: string): Promise<{
     host: 'localhost',
     wipeMode: 'install',
   };
-  const withDefaults = await applyVariableDefaults(input);
+  // `preview` on BOTH halves of the pair (#2716): the defaults pass mints a
+  // ServiceBay API token for a `mintApiToken` slot the manifest can't satisfy,
+  // which is the same write-and-rotate side effect `assembleManifest`'s preview
+  // flag exists to suppress.
+  const withDefaults = await applyVariableDefaults(input, undefined, { preview: true });
 
   // `deployItem`'s view, verbatim: variables reduced to name → value, plus the
   // dynamic vars the runner injects (LLDAP_FORCE_LDAP_USER_PASS_RESET on `auth`,

@@ -741,14 +741,30 @@ export async function assembleManifest(
  * the template's `variables.json` default (#1297) — both only ever fill a gap,
  * so a value the manifest already carries wins over either.
  */
+function recordMintable(
+  mintable: Map<string, VariableMeta>,
+  name: string,
+  meta: VariableMeta,
+  itemName: string,
+): void {
+  if (meta.type !== 'secret' || !meta.mintApiToken || mintable.has(name)) return;
+  // Carry the declaring template so the minted token's row in Settings → Tokens
+  // says which service would break if it were revoked.
+  mintable.set(name, { ...meta, templateName: meta.templateName ?? itemName });
+}
+
 async function collectVariableFills(
   items: JobInputItem[],
   templateSource: string | undefined,
-): Promise<Map<string, string>> {
+): Promise<{ fills: Map<string, string>; mintable: Map<string, VariableMeta> }> {
   // First template to declare a variable owns its default (mirrors
   // assembleManifest's grouping), so only record the first non-empty default.
   const defaults = new Map<string, string>();
   const declared = new Set<string>();
+  // #2716 — the same "first declarer wins" rule for the `mintApiToken` slots,
+  // carried out with their meta so the mint pass below can name the token after
+  // the template that asked for it.
+  const mintable = new Map<string, VariableMeta>();
   for (const item of items) {
     if (!item.checked || item.alreadyInstalled) continue;
     const meta = await getTemplateVariables(item.name, templateSource).catch(() => null);
@@ -758,6 +774,7 @@ async function collectVariableFills(
       if (m.default !== undefined && m.default !== '' && !defaults.has(name)) {
         defaults.set(name, m.default);
       }
+      recordMintable(mintable, name, m, item.name);
     }
   }
 
@@ -770,14 +787,27 @@ async function collectVariableFills(
   for (const [name, def] of defaults) {
     if (!fills.has(name)) fills.set(name, def);
   }
-  return fills;
+  return { fills, mintable };
+}
+
+export interface ApplyVariableDefaultsOptions {
+  /**
+   * #2537 — resolve only; never MINT credential material and never write.
+   * The service editor's read-only "Re-render from template" preview passes
+   * this, exactly as it passes `preview` to {@link assembleManifest}: minting
+   * there would write `installedSecrets` and hand back YAML that silently
+   * rotates a live credential. Defaults to false, so every DEPLOY path (the
+   * wizard, `install_template`, `napi upgrade`, the replayed reinstall) mints.
+   */
+  preview?: boolean;
 }
 
 export async function applyVariableDefaults(
   input: JobInput,
   templateSource?: string,
+  options: ApplyVariableDefaultsOptions = {},
 ): Promise<JobInput> {
-  const fills = await collectVariableFills(input.items, templateSource);
+  const { fills, mintable } = await collectVariableFills(input.items, templateSource);
 
   const next: JobInputVariable[] = input.variables.map(v => ({ ...v }));
   const indexByName = new Map(next.map((v, i) => [v.name, i]));
@@ -794,7 +824,78 @@ export async function applyVariableDefaults(
   }
 
   if (await fillDerivedBaseDn(next)) changed = true;
+  if (!options.preview && (await mintReplayedApiTokens(next, mintable))) changed = true;
   return changed ? { ...input, variables: next } : input;
+}
+
+/**
+ * #2716 — give a `mintApiToken` variable a real ServiceBay token on the paths
+ * that never run {@link assembleManifest}.
+ *
+ * #2673 mints, and #2711 re-mints a stored value that has no token shape — but
+ * both live inside `assembleManifest`, and a **jobStore replay** of a saved
+ * `JobInput` (a reinstall, the runner's post-registry-sync refill) never goes
+ * through it. The replayed manifest therefore carried whatever the install that
+ * saved it generated: for a service installed before `mintApiToken` existed,
+ * the 32-character random secret, handed back unchanged on every later deploy.
+ * Since #2711 the consumer's entry script refuses that value loudly instead of
+ * 401ing forever — visible, still broken. `applyVariableDefaults` is the one
+ * hook every deploy path shares, so the rule lands here.
+ *
+ * Same three-way decision as the assembler, in the same order, so the two paths
+ * cannot disagree: a well-formed token in the manifest is kept; otherwise a
+ * well-formed token from `installedSecrets` is adopted (which is what keeps
+ * repeated replays of the SAME stale manifest from minting a new token every
+ * time — #2673's idempotency); only then is one minted, and persisted straight
+ * away so the runner's `reuseSavedSecrets` sees the new value rather than
+ * putting the stale one back.
+ *
+ * Mutates `vars` in place; returns whether anything changed. Never runs under
+ * `preview` (#2537).
+ */
+async function mintReplayedApiTokens(
+  vars: JobInputVariable[],
+  mintable: Map<string, VariableMeta>,
+): Promise<boolean> {
+  if (mintable.size === 0) return false;
+  const cfg = await getConfig().catch(() => null);
+  const storedSecrets = cfg ? loadSavedSecrets(cfg) : {};
+  let changed = false;
+
+  for (const [name, meta] of mintable) {
+    const existing = vars.find(v => v.name === name);
+    if (existing?.value && looksLikeApiToken(existing.value)) continue;
+
+    if (existing?.value) {
+      // Length only — a credential slot's contents never reach a log line, and
+      // "it is 32 characters, not an sb_ token" is the whole diagnosis.
+      logger.warn(
+        'install:manifestAssembler',
+        `Replayed value for ${name} is not a ServiceBay API token (${existing.value.length} characters); replacing it with a minted one.`,
+      );
+    }
+
+    const stored = storedSecrets[name];
+    let value = stored && looksLikeApiToken(stored) ? stored : '';
+    if (!value) {
+      value = await mintServicebayApiToken(name, meta.templateName);
+      // A mint failure leaves the slot as it was: an unusable credential is the
+      // #1002 failure mode, and the consumer's own check (#2711) is the guard.
+      if (!value) continue;
+      await persistSingleSecret(name, value).catch(() => undefined);
+    }
+
+    if (existing) {
+      existing.value = value;
+      existing.meta = existing.meta ?? meta;
+    } else {
+      // The replayed manifest predates the variable entirely — append it with
+      // its meta so the end-of-install `persistInstalledSecrets` records it.
+      vars.push({ name, value, meta });
+    }
+    changed = true;
+  }
+  return changed;
 }
 
 /**

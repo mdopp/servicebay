@@ -213,6 +213,29 @@ describe('reconfigure-preview — no silent substitution (#2537)', () => {
     expect(body.unresolved).toEqual(['HASS_TOKEN']);
   });
 
+  /**
+   * #2716 — the mint rule moved onto `applyVariableDefaults` so a jobStore
+   * replay gets a real token too. That function is the OTHER half of the pair
+   * this route drives, so it has to be told `preview` as well; without that the
+   * read-only re-render would mint a ServiceBay API token and persist it,
+   * which is exactly the write #2537 exists to prevent.
+   */
+  it('mints no API token for a mintApiToken secret — the preview stays read-only', async () => {
+    setTemplate('claude-dev', ['SERVICEBAY_MCP_TOKEN'], {
+      SERVICEBAY_MCP_TOKEN: { type: 'secret', mintApiToken: true },
+    });
+    mocks.getConfig.mockResolvedValue({ templateSettings: {} });
+
+    const { status, body } = await call('claude-dev');
+
+    // Nothing in the store to recover, nothing minted to paper over it: the
+    // route refuses, names the variable, and writes nothing.
+    expect(status).toBe(400);
+    expect(body.unresolvedSecrets).toEqual(['SERVICEBAY_MCP_TOKEN']);
+    expect(mocks.updateConfig).not.toHaveBeenCalled();
+    expect(body.yamlContent).toBeUndefined();
+  });
+
   it('404s when the template is gone from the registry', async () => {
     mocks.getTemplateYaml.mockResolvedValue(null);
     mocks.getTemplateVariables.mockResolvedValue(null);
