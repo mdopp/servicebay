@@ -328,6 +328,29 @@ async function rsyncOneSource(
     return parseRsyncStats(stdout);
 }
 
+/**
+ * One line stating which sources actually landed on the target when a run did
+ * not sync all of them (#2773).
+ *
+ * The per-source loop below used to have no try/catch, so a throw from source 2
+ * escaped past source 1 and the history entry + failure alert carried only that
+ * one bare rsync error — the operator could not tell whether source 1's data
+ * had reached the target. Same denominator honesty as `summariseIncompleteRun`
+ * in `packages/backend/src/lib/install/runner.ts`.
+ */
+export function summariseBackupRun(
+    synced: ReadonlyArray<string>,
+    failed: ReadonlyArray<{ path: string; error: string }>,
+): string {
+    const total = synced.length + failed.length;
+    if (failed.length === 0) return `✅ ${synced.length}/${total} source(s) synced.`;
+    const failedText = failed.map(f => `${f.path} — ${f.error}`).join('; ');
+    if (synced.length === 0) {
+        return `❌ Nothing was synced: 0 of ${total} source(s) reached the target (${failedText}).`;
+    }
+    return `❌ ${synced.length}/${total} source(s) synced (${synced.join(', ')}). NOT synced: ${failedText}.`;
+}
+
 async function runBackupItems(
     config: BackupConfig,
     startedAt: Date,
@@ -356,10 +379,27 @@ async function runBackupItems(
 
         let totalBytes = 0;
         let totalFiles = 0;
+        const synced: string[] = [];
+        const failed: { path: string; error: string }[] = [];
+        // Per-source try/catch: one source's rsync failing must not discard the
+        // outcome of the sources around it (#2773).
         for (const { source, subFolder } of assigned) {
-            const stats = await rsyncOneSource(source, config.target, subFolder, sharedMountPath);
-            totalBytes += stats.bytesTransferred ?? 0;
-            totalFiles += stats.filesTransferred ?? 0;
+            try {
+                const stats = await rsyncOneSource(source, config.target, subFolder, sharedMountPath);
+                totalBytes += stats.bytesTransferred ?? 0;
+                totalFiles += stats.filesTransferred ?? 0;
+                synced.push(source.path);
+            } catch (e) {
+                const error = e instanceof Error ? e.message : String(e);
+                logger.error('Backup', `Source ${source.path} failed: ${error}`);
+                failed.push({ path: source.path, error });
+            }
+        }
+
+        if (failed.length > 0) {
+            // runBackup's catch turns this into the history entry and the
+            // failure-alert email, so the summary is what the operator sees.
+            throw new Error(summariseBackupRun(synced, failed));
         }
 
         return await recordBackupSuccess(config, startedAt, sources.length, totalBytes, totalFiles, previousStatus);
