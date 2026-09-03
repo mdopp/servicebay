@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
+import { z } from 'zod';
 import { Box, ArrowLeft, PlayCircle, Power, RotateCw, RefreshCw, Trash2, X, Loader2 } from 'lucide-react';
 import WorkspaceDrawer from '@/components/WorkspaceDrawer';
 import ServiceMonitor from '@/components/ServiceMonitor';
@@ -9,7 +10,7 @@ import ActionProgressModal from '@/components/ActionProgressModal';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast } from '@/providers/ToastProvider';
 import type { ToastType } from '@/providers/ToastProvider';
-import { ServiceViewModel } from '@servicebay/api-client';
+import { ServiceViewModel, typedFetch, mutateApi } from '@servicebay/api-client';
 import { logger } from '@servicebay/api-client';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 
@@ -18,6 +19,21 @@ interface UseServiceActionsOptions {
 }
 
 type DrawerState = { mode: 'monitor' | 'edit'; service: ServiceViewModel } | null;
+
+const ServiceFilesResponseSchema = z.object({
+  kubeContent: z.string().optional(),
+  yamlContent: z.string().optional(),
+  serviceContent: z.string().optional(),
+  kubePath: z.string().optional(),
+  yamlPath: z.string().optional(),
+  servicePath: z.string().optional(),
+});
+
+const ServiceActionResponseSchema = z.object({}).passthrough();
+
+const ServiceDeleteResponseSchema = z.object({
+  error: z.string().optional(),
+}).passthrough();
 
 export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) {
   const { addToast, updateToast } = useToast();
@@ -71,12 +87,7 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
 
     try {
       const nodeParam = service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : '';
-      const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}${nodeParam}`, { cache: 'no-store' });
-      if (!res.ok) {
-        throw new Error('Failed to load service files');
-      }
-
-      const files = await res.json();
+      const files = await typedFetch(`/api/services/${encodeURIComponent(serviceName)}${nodeParam}`, ServiceFilesResponseSchema, { cache: 'no-store' });
       const yamlFileName = service.yamlBasename || `${service.displayName}.yml`;
       const initialData: ServiceFormInitialData = {
         name: service.displayName,
@@ -140,16 +151,12 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
           ? serviceToDelete.nodeName
           : '';
       const query = nodeParam ? `?node=${nodeParam}` : '';
-      const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}${query}`, { method: 'DELETE' });
-      if (res.ok) {
-        updateToast(toastId, 'success', 'Service deleted', `Service ${serviceToDelete.name} has been removed.`);
-        onRefresh?.();
-      } else {
-        const data = await res.json();
-        updateToast(toastId, 'error', 'Delete failed', data.error);
-      }
-    } catch {
-      updateToast(toastId, 'error', 'Delete failed', 'An unexpected error occurred.');
+      await mutateApi(`/api/services/${encodeURIComponent(serviceName)}${query}`, ServiceDeleteResponseSchema, undefined, 'DELETE');
+      updateToast(toastId, 'success', 'Service deleted', `Service ${serviceToDelete.name} has been removed.`);
+      onRefresh?.();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'An unexpected error occurred.';
+      updateToast(toastId, 'error', 'Delete failed', message);
     } finally {
       setDeleteInFlight(false);
       setDeleteModalOpen(false);
@@ -174,31 +181,14 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
     const toastId = addToast('loading', 'Updating service', `Pulling the latest image for ${service.displayName || service.name}…`, 0);
 
     try {
-      const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}/action${query}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update' }),
-      });
-
-      const traceId = res.headers.get('x-trace-id');
-      const traceMsg = traceId ? ` [Trace: ${traceId}]` : '';
-
-      if (!res.ok) {
-        let detail = `HTTP ${res.status}`;
-        try {
-          const data = await res.json();
-          if (data?.error) detail = data.error;
-        } catch { /* non-JSON error body */ }
-        updateToast(toastId, 'error', 'Update failed', `${detail}${traceMsg}`);
-        return false;
-      }
-
+      await mutateApi(`/api/services/${encodeURIComponent(serviceName)}/action${query}`, ServiceActionResponseSchema, { action: 'update' }, 'POST');
       updateToast(toastId, 'success', 'Service updated', `${service.displayName || service.name} re-deployed with its latest image.`);
       onRefresh?.();
       return true;
     } catch (error) {
       logger.error('useServiceActions', 'Image update failed', error);
-      updateToast(toastId, 'error', 'Update failed', 'An unexpected connection error occurred.');
+      const message = error instanceof Error ? error.message : 'An unexpected connection error occurred.';
+      updateToast(toastId, 'error', 'Update failed', message);
       return false;
     }
   }, [addToast, onRefresh, updateToast]);
@@ -222,26 +212,14 @@ export function useServiceActions({ onRefresh }: UseServiceActionsOptions = {}) 
       const serviceName = selectedService.id || selectedService.name;
       const nodeParam = selectedService.nodeName === 'Local' ? '' : selectedService.nodeName;
       const query = nodeParam ? `?node=${nodeParam}` : '';
-      const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}/action${query}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-
-      const traceId = res.headers.get('x-trace-id');
-      const traceMsg = traceId ? ` [Trace: ${traceId}]` : '';
-
-      if (!res.ok) {
-        const data = await res.json();
-        updateToast(toastId, 'error', 'Action failed', `${data.error || 'HTTP ' + res.status}${traceMsg}`);
-      } else {
-        setShowActions(false);
-        updateToast(toastId, 'success', 'Action initiated', `${action} command sent to ${selectedService.name}`);
-        setTimeout(() => onRefresh?.(), 1000);
-      }
+      await mutateApi(`/api/services/${encodeURIComponent(serviceName)}/action${query}`, ServiceActionResponseSchema, { action }, 'POST');
+      setShowActions(false);
+      updateToast(toastId, 'success', 'Action initiated', `${action} command sent to ${selectedService.name}`);
+      setTimeout(() => onRefresh?.(), 1000);
     } catch (error) {
       logger.error('useServiceActions', 'Action failed', error);
-      updateToast(toastId, 'error', 'Action failed', 'An unexpected connection error occurred.');
+      const message = error instanceof Error ? error.message : 'An unexpected connection error occurred.';
+      updateToast(toastId, 'error', 'Action failed', message);
     } finally {
       setActionLoading(false);
       setRunningAction(null);

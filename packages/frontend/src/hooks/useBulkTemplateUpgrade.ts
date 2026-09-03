@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { fetchNodes } from '@servicebay/api-client';
+import { z } from 'zod';
+import { fetchNodes, typedFetch } from '@servicebay/api-client';
 import { useStackInstall, type UseStackInstallReturn } from '@/hooks/useStackInstall';
 
 /**
@@ -26,6 +27,18 @@ export interface UpgradeSummary {
   sectionHeaders: string[];
 }
 
+const UpgradeSummarySchema = z.object({
+  name: z.string(),
+  installedVersion: z.number(),
+  currentVersion: z.number(),
+  hasBreakingChange: z.boolean(),
+  sectionHeaders: z.array(z.string()),
+});
+
+const UpgradesPendingResponseSchema = z.object({
+  pending: z.array(UpgradeSummarySchema).optional(),
+});
+
 interface PlannedMigration {
   filename: string;
   fromVersion: number;
@@ -46,6 +59,26 @@ export interface BulkUpgradePlan {
   hasBreakingChange: boolean;
 }
 
+const PlannedMigrationSchema = z.object({
+  filename: z.string(),
+  fromVersion: z.number(),
+  toVersion: z.number(),
+});
+
+const PlanEntrySchema = UpgradeSummarySchema.extend({
+  dependencies: z.array(z.string()),
+  tier: z.string(),
+  migrations: z.array(PlannedMigrationSchema),
+  excludedReason: z.string().optional(),
+});
+
+const BulkUpgradePlanSchema = z.object({
+  order: z.array(PlanEntrySchema),
+  excluded: z.array(PlanEntrySchema),
+  satisfiers: z.array(z.string()),
+  hasBreakingChange: z.boolean(),
+});
+
 type BulkUpgradeStep = 'select' | 'preview' | 'running';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -58,9 +91,7 @@ function usePendingUpgrades(onError: (msg: string) => void) {
 
   const reload = useCallback(async () => {
     try {
-      const res = await fetch('/api/system/templates/upgrades-pending');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { pending?: UpgradeSummary[] };
+      const data = await typedFetch('/api/system/templates/upgrades-pending', UpgradesPendingResponseSchema);
       const list = data.pending ?? [];
       setPending(list);
       // Breaking upgrades start UNchecked. A bulk action must not opt anybody
@@ -92,13 +123,12 @@ function useUpgradePlan(onError: (msg: string) => void) {
   const build = useCallback(async (names: string[]): Promise<boolean> => {
     setPlanning(true);
     try {
-      const res = await fetch('/api/system/templates/bulk-upgrade-plan', {
+      const plan = await typedFetch('/api/system/templates/bulk-upgrade-plan', BulkUpgradePlanSchema, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ names }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setPlan(await res.json() as BulkUpgradePlan);
+      setPlan(plan);
       return true;
     } catch (e) {
       onError(`Could not build the upgrade plan: ${message(e)}`);

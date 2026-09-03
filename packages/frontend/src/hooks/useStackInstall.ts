@@ -19,8 +19,9 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
+import { z } from 'zod';
 import type { VariableMeta } from '@servicebay/api-client';
-import { type Credential } from '@servicebay/api-client';
+import { type Credential, apiFetch } from '@servicebay/api-client';
 import { useInstallJob } from '@/hooks/useInstallJob';
 import { isFailedPhase } from '@/providers/InstallJobProvider';
 
@@ -173,6 +174,45 @@ export interface UseStackInstallReturn {
 // Don't re-export it here — the chain client→useStackInstall→portalProvision
 // would pull AUTH_SECRET-touching code into the browser bundle.
 
+const ConfigFileSchema = z.object({
+  filename: z.string(),
+  content: z.string(),
+  targetPath: z.string().optional(),
+});
+
+const StackItemAssemblySchema = z.object({
+  name: z.string(),
+  checked: z.boolean(),
+  yaml: z.string().optional(),
+  configFiles: z.array(ConfigFileSchema).optional(),
+  alreadyInstalled: z.boolean().optional(),
+  dependencies: z.array(z.string()).optional(),
+});
+
+const VariableMetaSchema = z.object({
+  type: z.string().optional(),
+  exposure: z.string().optional(),
+}).passthrough();
+
+const StackVariableAssemblySchema = z.object({
+  name: z.string(),
+  value: z.string(),
+  global: z.boolean().optional(),
+  meta: VariableMetaSchema.optional(),
+  explicit: z.boolean().optional(),
+});
+
+const AssembleResponseSchema = z.object({
+  items: z.array(StackItemAssemblySchema).optional(),
+  variables: z.array(StackVariableAssemblySchema).optional(),
+  error: z.string().optional(),
+});
+
+const InstallStartResponseSchema = z.object({
+  jobId: z.string().optional(),
+  error: z.string().optional(),
+});
+
 const EMPTY_STRINGS: string[] = [];
 const EMPTY_CREDENTIALS: Credential[] = [];
 
@@ -292,7 +332,7 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     // headless / ISO-driven first-boot setup uses to turn baked
     // `config.json` defaults into an installable manifest.
     try {
-      const res = await fetch('/api/install/assemble', {
+      const res = await apiFetch('/api/install/assemble', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -306,12 +346,16 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
         }),
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`);
+        const errorData = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(typeof errorData.error === 'string' ? errorData.error : `HTTP ${res.status}`);
       }
-      const data = await res.json() as { items?: StackItem[]; variables?: StackVariable[] };
-      const newItems = data.items ?? [];
-      const resolvedVars = data.variables ?? [];
+      const raw = (await res.json()) as Partial<z.infer<typeof AssembleResponseSchema>>;
+      const parsed = AssembleResponseSchema.safeParse(raw);
+      if (!parsed.success) {
+        throw new Error('Invalid response format from /api/install/assemble');
+      }
+      const newItems = (parsed.data.items ?? []) as StackItem[];
+      const resolvedVars = (parsed.data.variables ?? []) as StackVariable[];
       setItems(newItems);
       setVariables(resolvedVars);
       return { items: newItems, variables: resolvedVars };
@@ -377,15 +421,14 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
     // in milliseconds; if it hangs longer something is genuinely wrong on
     // the server and we want the wizard to surface an error instead of
     // sitting on "Processing..." forever.
-    const startTimeout = AbortSignal.timeout(30_000);
     try {
-      const res = await fetch("/api/install/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const res = await apiFetch("/api/install/start", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        signal: startTimeout,
+        signal: AbortSignal.timeout(30_000),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = (await res.json().catch(() => ({}))) as z.infer<typeof InstallStartResponseSchema>;
       if (!res.ok) {
         // 409 = another install is already in progress. Attach to it
         // instead of failing — the operator probably just clicked
@@ -399,7 +442,13 @@ export function useStackInstall(options: UseStackInstallOptions): UseStackInstal
         setLocalPhase("error");
         return;
       }
-      const newJobId = data.jobId as string;
+      const newJobId = data.jobId;
+      if (!newJobId) {
+        const msg = data.error || "No job ID returned";
+        setLocalError(msg);
+        setLocalPhase("error");
+        return;
+      }
       setJobId(newJobId);
       // Fetch it now rather than on the next tick so the first log lines
       // show up as soon as the runner writes them.

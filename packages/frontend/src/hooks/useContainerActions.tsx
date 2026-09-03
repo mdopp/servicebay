@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
+import { z } from 'zod';
 import { ArrowLeft, Box, Power, RotateCw, Trash2, AlertTriangle, RefreshCw, X } from 'lucide-react';
 import ConfirmModal from '@/components/ConfirmModal';
 import { Button } from '@/components/ui';
 import { useToast } from '@/providers/ToastProvider';
-import { logger } from '@servicebay/api-client';
+import { logger, mutateApi } from '@servicebay/api-client';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 
 export interface ContainerActionTarget {
@@ -17,6 +18,10 @@ export interface ContainerActionTarget {
 interface UseContainerActionsOptions {
   onActionComplete?: () => void;
 }
+
+const ContainerActionResponseSchema = z.object({
+  // The action endpoint returns minimal response; schema is permissive
+}).passthrough();
 
 export function useContainerActions({ onActionComplete }: UseContainerActionsOptions = {}) {
   const { addToast, updateToast } = useToast();
@@ -56,23 +61,19 @@ export function useContainerActions({ onActionComplete }: UseContainerActionsOpt
       const nodeParam = selectedContainer.nodeName && selectedContainer.nodeName !== 'Local'
         ? `?node=${encodeURIComponent(selectedContainer.nodeName)}`
         : '';
-      const res = await fetch(`/api/containers/${selectedContainer.id}/action${nodeParam}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        updateToast(toastId, 'error', 'Action failed', data.error);
-      } else {
-        updateToast(toastId, 'success', 'Action initiated', `${action} command sent to container`);
-        onActionComplete?.();
-        closeActions();
-      }
+      await mutateApi(
+        `/api/containers/${selectedContainer.id}/action${nodeParam}`,
+        ContainerActionResponseSchema,
+        { action },
+        'POST',
+      );
+      updateToast(toastId, 'success', 'Action initiated', `${action} command sent to container`);
+      onActionComplete?.();
+      closeActions();
     } catch (error) {
       logger.error('useContainerActions', 'Action failed', error);
-      updateToast(toastId, 'error', 'Action failed', 'An unexpected error occurred.');
+      const message = error instanceof Error ? error.message : 'An unexpected error occurred.';
+      updateToast(toastId, 'error', 'Action failed', message);
     } finally {
       setActionLoading(false);
     }
