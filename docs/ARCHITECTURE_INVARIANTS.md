@@ -312,9 +312,10 @@ commits the two counts moved by exactly **zero** while violations were *moved*
 between files (a component extracted; the same eight primitives reappearing
 verbatim in the new file), so the plan above is now backed by a gate:
 
-- **`npm run check:lint-ratchet`** (`scripts/check-lint-ratchet.ts`) counts both
-  rules from ESLint's own `--format json` report over `packages/frontend/src`
-  and compares them to `.eslint-ratchet-baseline.json`. **A count may only go
+- **`npm run check:lint-ratchet`** (`scripts/check-lint-ratchet.ts`) counts every
+  rule in its `RATCHETED_RULES` list from ESLint's own `--format json` report
+  over `packages/frontend/src` and compares them to
+  `.eslint-ratchet-baseline.json`. **A count may only go
   down.** Chained from `check:arch` (so the autoloop's per-unit fast gate runs
   it) and run in CI's `invariants` job as `-- --check`.
 - **`--check` is CI mode:** never writes. An increase fails the PR; a *decrease*
@@ -328,13 +329,50 @@ verbatim in the new file), so the plan above is now backed by a gate:
   drop it from `RATCHETED_RULES` in `scripts/check-lint-ratchet.ts` and from
   `.eslint-ratchet-baseline.json` (ESLint's own 0-error gate owns it from then
   on), and delete its half of the `TODO(#2353)` ROLLOUT comment. The script
-  prints this instruction whenever a count hits 0. The two rules flip
+  prints this instruction whenever a count hits 0. The rules flip
   **independently** — `no-raw-ui-primitive` is the far smaller class and will
   clear first; it must not wait on the colour migration. (For the counts at
   HEAD run the script — they are deliberately not typed here, #2427.)
 - **The burn-down itself** is ordinary lint-sweep work (worst files first; the
   gate prints the current top ten on a failure). The ratchet's job is only to
   guarantee the direction — it does not schedule the sweeps.
+
+Rules currently under the ratchet — the counts live in
+`.eslint-ratchet-baseline.json`, not here (#2427):
+
+| Rule | Scope | Exempt | Flip target |
+|---|---|---|---|
+| `sb/no-raw-color-literal` | `packages/frontend/src/**` | `components/ui/**`, `*.test.*` | `error` at 0 (#2353) |
+| `sb/no-raw-ui-primitive` | `packages/frontend/src/**` | `components/ui/**`, `*.test.*` | `error` at 0 (#2353) |
+| `sb/no-raw-api-fetch` | `packages/frontend/src/**` | `app/api/**`, `app/napi/**`, `*.test.*` | `error` at 0 (#2736) |
+
+### A single typed API seam (#2736)
+
+`apiFetch` in `packages/api-client/src/apiFetch.ts` is **the** client-side
+401 → `/login` handler. There used to be three: a global `window.fetch`
+monkey-patch installed as an import-time side effect of
+`packages/frontend/src/providers/DigitalTwinProvider.tsx`, this wrapper (with
+zero callers), and a duplicated `ANONYMOUS_PATHS` set inside
+`packages/frontend/src/hooks/useSocket.ts`.
+
+The monkey-patch is the one that mattered, and it is **gone**. A global patch
+covers every raw `fetch('/api/...')` silently, so session-expiry handling was
+inherited by accident — which made migrating call sites look like busywork
+while their number kept growing. One explicit seam beats an invisible one:
+
+- The REST 401 path is `apiFetch` (opt-in, per call).
+- The socket `unauthorized` path in `useSocket.ts` imports
+  `isAnonymousPathname` from the same module instead of keeping a second copy
+  of the path set "in sync" by comment.
+- **Do not reintroduce a global fetch patch.** If a call site needs 401
+  handling, it calls `apiFetch`; that is the whole contract.
+
+Consequence, stated plainly: a raw `fetch('/api/...')` in the frontend no
+longer redirects on session expiry. That is the pressure — `sb/no-raw-api-fetch`
+counts those call sites and the ratchet above forbids the count from rising, so
+lint-sweep units burn them down file by file exactly like the #2353 rules. The
+Next route handlers under `app/api/**` and `app/napi/**` are exempt: they are
+the *server* side of this seam and have no browser session to bounce.
 
 ### Duplicate detection (#2354)
 

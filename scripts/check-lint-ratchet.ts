@@ -36,16 +36,25 @@ const REPO_ROOT = path.resolve(__dirname, '..');
 const BASELINE_FILE = path.join(REPO_ROOT, '.eslint-ratchet-baseline.json');
 
 /**
- * The rules under ratchet. Both are registered at `warn` in eslint.config.mjs;
+ * The rules under ratchet. All are registered at `warn` in eslint.config.mjs;
  * a rule leaves this list when it reaches 0 and is flipped to `error` (at which
  * point ESLint itself is the gate — see docs/ARCHITECTURE_INVARIANTS.md
- * § UI-primitive and design-token reuse).
+ * § UI-primitive and design-token reuse, § A single typed API seam).
+ *
+ * `sb/no-raw-api-fetch` joined in #2736: with the global `window.fetch`
+ * monkey-patch deleted, every raw `fetch('/api/...')` is a call site missing
+ * the 401 → /login handler, and the count was growing precisely because the
+ * patch hid that. Same mechanism, different class.
  */
-const RATCHETED_RULES = ['sb/no-raw-color-literal', 'sb/no-raw-ui-primitive'] as const;
+const RATCHETED_RULES = [
+    'sb/no-raw-color-literal',
+    'sb/no-raw-ui-primitive',
+    'sb/no-raw-api-fetch',
+] as const;
 
 /**
- * Both rules are scoped to `packages/frontend/src/**` in eslint.config.mjs, so
- * linting that tree measures every violation there is while costing ~20s
+ * All three rules are scoped to `packages/frontend/src/**` in eslint.config.mjs,
+ * so linting that tree measures every violation there is while costing ~20s
  * instead of a full-repo run. Widen this if the rules' `files:` scope widens.
  */
 const LINT_TARGETS = ['packages/frontend/src'];
@@ -159,9 +168,10 @@ function failOnIncrease(increased: string[], perFile: Map<string, number>): neve
     console.error('\nWorst files right now (ratcheted rules only):');
     for (const [file, count] of worst) console.error(`  ${String(count).padStart(4)}  ${file}`);
     console.error(
-        '\nFix the new violations (use a @/components/ui primitive / a semantic @theme token) ' +
-            'instead of raising the baseline. See docs/ARCHITECTURE_INVARIANTS.md ' +
-            '§ UI-primitive and design-token reuse.',
+        '\nFix the new violations (a @/components/ui primitive, a semantic @theme token, ' +
+            'or apiFetch from @servicebay/api-client) instead of raising the baseline. ' +
+            'See docs/ARCHITECTURE_INVARIANTS.md § UI-primitive and design-token reuse ' +
+            'and § A single typed API seam.',
     );
     process.exit(1);
 }

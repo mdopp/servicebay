@@ -84,6 +84,27 @@ describe('useSocket — connect_error handling', () => {
     }
   });
 
+  it('does NOT redirect on a /portal/* subpath (#2736 — the shared anonymous guard)', () => {
+    const originalLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      value: { href: 'http://x/portal/family', pathname: '/portal/family' },
+      writable: true,
+      configurable: true,
+    });
+
+    try {
+      renderHook(() => useSocket());
+      fire('connect_error', new Error('unauthorized'));
+      // The socket guard is `isAnonymousPathname` from @servicebay/api-client —
+      // the same function the REST 401 path uses, not a second copy of the set.
+      expect(window.location.href).toBe('http://x/portal/family');
+    } finally {
+      Object.defineProperty(window, 'location', {
+        value: originalLocation, writable: true, configurable: true,
+      });
+    }
+  });
+
   it('kicks the connect on mount when the persisted socket is disconnected (#1509)', () => {
     fakeSocket.connected = false;
     renderHook(() => useSocket());

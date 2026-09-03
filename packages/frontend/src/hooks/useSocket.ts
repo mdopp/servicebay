@@ -1,6 +1,7 @@
 // src/hooks/useSocket.ts
 import { useEffect, useState } from 'react';
 import io, { Socket } from 'socket.io-client';
+import { isAnonymousPathname } from '@servicebay/api-client';
 
 let socket: Socket;
 
@@ -8,13 +9,6 @@ let socket: Socket;
  *  consumer — `useSocket` is called from ~6 components, and per-consumer
  *  listeners would fire the same reconnect kick six times. */
 let recoveryWired = false;
-
-/** Pathnames where an `unauthorized` socket error must NOT bounce the
- *  browser to /login. /login itself (the redirect target) and /portal
- *  (anonymous-readable family surface) — every other path is admin-
- *  flavored and the bounce is desirable. Kept in sync with the REST
- *  401 handler in DigitalTwinProvider. */
-const ANONYMOUS_PATHS = new Set(['/login', '/portal']);
 
 /** How long we wait for the *initial* connect to report `connected`
  *  before forcing a fresh reconnect attempt (#1509). The dashboard's
@@ -75,9 +69,9 @@ function wireRecovery(s: Socket) {
  * dashboard then hangs forever on "Connecting to ServiceBay" because
  * `isConnected` never flips and nothing surfaces the auth failure (the loader
  * even mis-blames the agent's inventory pass). Mirror the REST-401 handler in
- * DigitalTwinProvider — bounce to /login so the operator re-authenticates.
- * Only the auth error redirects; transient network `connect_error`s must keep
- * retrying silently.
+ * `apiFetch` (@servicebay/api-client) — bounce to /login so the operator
+ * re-authenticates. Only the auth error redirects; transient network
+ * `connect_error`s must keep retrying silently.
  *
  * The path guard prevents an infinite reload loop on /login itself (#854) AND
  * prevents the family portal from bouncing anonymous visitors to the admin
@@ -86,13 +80,17 @@ function wireRecovery(s: Socket) {
  * `unauthorized` for visitors without an SB session cookie. Without the /portal
  * guard here, every anonymous /portal visit got redirected to /login a few
  * hundred ms after landing.
+ *
+ * #2736: the guard itself is `isAnonymousPathname`, imported from the same
+ * module that owns the REST 401 path. This file used to carry its own
+ * `ANONYMOUS_PATHS` copy "kept in sync" by comment — two definitions of one
+ * rule, which is how the socket and REST answers drift apart.
  */
 function onConnectError(err: Error) {
   if (
     err?.message === 'unauthorized' &&
     typeof window !== 'undefined' &&
-    !ANONYMOUS_PATHS.has(window.location.pathname) &&
-    !window.location.pathname.startsWith('/portal/')
+    !isAnonymousPathname(window.location.pathname)
   ) {
     window.location.href = '/login';
   }
