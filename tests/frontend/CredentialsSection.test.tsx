@@ -171,6 +171,21 @@ describe('CredentialsSection (#2560)', () => {
     expect(confirmCalls[0].token).toBe('tok-1');
   });
 
+  it('still renders when a long-lived box carries a legacy importance value (box-verify 2cc183de)', async () => {
+    // Real boxes can carry manifest rows written before `importance` was
+    // narrowed to 'critical' | 'system' — one row on the actual production
+    // box had 'optional'. A strict enum failed the *whole* GET's schema
+    // validation, and CredentialsSection's `.catch(() => {})` turned that
+    // into every credential silently vanishing from the page, no toast, no
+    // visible error. The fix falls an unrecognized value back to 'system'
+    // (packages/api-client/src/settings.ts CredentialViewSchema) instead of
+    // failing the whole response.
+    manifestFetch([{ ...HANDED_OVER, service: 'Honcho', importance: 'optional' }, PENDING]);
+    render(<CredentialsSection />);
+    await waitFor(() => expect(screen.getByText('Honcho')).toBeTruthy());
+    expect(screen.getByText('Immich')).toBeTruthy();
+  });
+
   it('a rejected receipt leaves the entry pending and says nothing was deleted', async () => {
     manifestFetch([PENDING], [VAULT_HOST], {
       confirmBody: { ok: false, reason: 'receipt_mismatch' },
