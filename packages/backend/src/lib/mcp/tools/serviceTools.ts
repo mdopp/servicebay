@@ -250,7 +250,7 @@ export function registerServiceTools({ server }: ToolRegistration) {
   // --- Restore From Trash ---
   server.tool(
     'restore_trashed_service',
-    'Restore a soft-deleted service from trash, re-provisioning the cross-service registrations the delete removed. Use list_trashed_services to find the id.',
+    'Restore a soft-deleted service from trash, re-provisioning the cross-service registrations the delete removed and starting its unit again. Use list_trashed_services to find the id. If the reply says the unit is still starting, poll list_services until it reports active — that is a converging pod, not a failure.',
     { id: TrashId.describe('Trash entry id'), node: nodeParam },
     async ({ id, node }) => {
       const nodeName = await resolveNode(node);
@@ -261,7 +261,16 @@ export function registerServiceTools({ server }: ToolRegistration) {
       const failed = result.capabilityFailures.length > 0
         ? ` ⚠️ Re-provisioning incomplete: ${result.capabilityFailures.map(f => `${f.handler}: ${f.message}`).join('; ')}`
         : '';
-      return textResult(`Service "${result.service}" restored from trash on ${nodeName}.${failed}`);
+      // #2756 — restore now starts the unit, so say what systemd is actually
+      // doing. `converging` is a poll-me answer, not a failure: a caller that
+      // cannot tell it apart from a dead unit reports a restored-but-dead
+      // service, which is exactly what this tool used to do.
+      const startup = result.startup.state === 'active'
+        ? ` ${result.startup.detail}`
+        : result.startup.state === 'converging'
+          ? ` ⏳ ${result.startup.detail} Poll list_services until it reports active.`
+          : ` ⚠️ ${result.startup.detail}`;
+      return textResult(`Service "${result.service}" restored from trash on ${nodeName}.${startup}${failed}`);
     },
   );
 

@@ -172,6 +172,120 @@ export async function waitForRestartSettled(
     }
 }
 
+/**
+ * Bound + cadence for the start-and-wait (#2756). Deliberately shorter than
+ * {@link RESTART_SETTLE_TUNING}: the caller here is a synchronous MCP/API
+ * request, so past this bound we would rather answer "still converging, poll
+ * me" than hold the client open for three minutes. Mutable so tests can
+ * shrink the poll without faking timers.
+ */
+export const START_SETTLE_TUNING = { timeoutMs: 30_000, pollIntervalMs: 2_000 };
+
+/** Outcome of {@link startAndWaitForActive} (#2756). */
+export interface StartSettleResult {
+    /**
+     * `active` — the unit is up (either it already was, or it came up inside
+     * the bound). `converging` — systemd accepted the start and the unit is
+     * still coming up; the caller polls rather than reporting a dead service.
+     * `failed` — systemd reports the unit failed. `error` — the start command
+     * itself was refused.
+     */
+    state: 'active' | 'converging' | 'failed' | 'error';
+    /** True when the unit was already active/running, so no start was issued. */
+    alreadyActive: boolean;
+    waitedMs: number;
+    /** Last sampled systemd run-state. */
+    runState: ServiceRunState;
+    /** One-line, caller-safe summary of what systemd reported. */
+    detail: string;
+}
+
+/**
+ * Start `<serviceName>.service` and block until it is genuinely up — or until
+ * the bound is hit, in which case we say so instead of pretending (#2756).
+ *
+ * Why this exists: `startService` uses `--no-block`, so it returns as soon as
+ * the job is queued. A caller that only issues the start (the trash restore
+ * did exactly this) hands back a service whose unit is still `inactive/dead`,
+ * and the operator has to guess whether it is booting or broken. This wraps
+ * the same readiness primitive the deploy path uses and collapses the answer
+ * into four states a caller can act on.
+ *
+ * Never throws — a refused start comes back as `state:'error'`, because the
+ * files are already restored/deployed at that point and losing that fact to an
+ * exception helps nobody.
+ */
+/** Collapse a settle result into the caller-facing startup state (#2756). */
+function describeSettle(serviceName: string, settle: RestartSettleResult): StartSettleResult {
+    const secs = (settle.waitedMs / 1000).toFixed(1);
+    const seen = `${settle.state.activeState || 'unreadable'}/${settle.state.subState || '?'}`;
+    const common = { alreadyActive: false, waitedMs: settle.waitedMs, runState: settle.state };
+    if (settle.settled) {
+        return { ...common, state: 'active', detail: `${serviceName}.service reported active/running after ${secs}s.` };
+    }
+    if (settle.reason === 'failed') {
+        logger.warn('ServiceManager', `Service ${serviceName} failed to start`, settle.state);
+        return { ...common, state: 'failed', detail: `${serviceName}.service failed to start (systemd reports ${seen} after ${secs}s).` };
+    }
+    logger.info('ServiceManager', `Service ${serviceName} still converging after ${secs}s`, settle.state);
+    return { ...common, state: 'converging', detail: `${serviceName}.service is still starting (${seen} after ${secs}s).` };
+}
+
+/**
+ * Start `<serviceName>.service` and block until it is genuinely up — or until
+ * the bound is hit, in which case we say so instead of pretending (#2756).
+ *
+ * Why this exists: `startService` uses `--no-block`, so it returns as soon as
+ * the job is queued. A caller that only issues the start (the trash restore
+ * did exactly this) hands back a service whose unit is still `inactive/dead`,
+ * and the operator has to guess whether it is booting or broken. This wraps
+ * the same readiness primitive the deploy path uses and collapses the answer
+ * into four states a caller can act on.
+ *
+ * Never throws — a refused start comes back as `state:'error'`, because the
+ * files are already restored/deployed at that point and losing that fact to an
+ * exception helps nobody.
+ */
+export async function startAndWaitForActive(
+    nodeName: string,
+    serviceName: string,
+    opts?: { timeoutMs?: number; pollIntervalMs?: number },
+): Promise<StartSettleResult> {
+    const before = await readServiceRunState(nodeName, serviceName);
+    if (before.activeState === 'active' && before.subState === 'running') {
+        // Already up: `systemctl start` would be a no-op and the settle wait
+        // would then poll out its whole bound waiting for an invocation that
+        // never changes — reporting "converging" for a healthy unit.
+        return {
+            state: 'active',
+            alreadyActive: true,
+            waitedMs: 0,
+            runState: before,
+            detail: `${serviceName}.service was already active/running.`,
+        };
+    }
+
+    const startedAt = Date.now();
+    try {
+        await startService(nodeName, serviceName);
+    } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        logger.warn('ServiceManager', `Could not start ${serviceName}:`, message);
+        return {
+            state: 'error',
+            alreadyActive: false,
+            waitedMs: Date.now() - startedAt,
+            runState: before,
+            detail: `systemctl start ${serviceName}.service was refused: ${message}`,
+        };
+    }
+
+    return describeSettle(serviceName, await waitForRestartSettled(nodeName, serviceName, before, {
+        timeoutMs: opts?.timeoutMs ?? START_SETTLE_TUNING.timeoutMs,
+        pollIntervalMs: opts?.pollIntervalMs ?? START_SETTLE_TUNING.pollIntervalMs,
+    }));
+}
+
 export async function ensurePodmanSocket(nodeName: string) {
     const agent = await agentManager.ensureAgent(nodeName);
     try {

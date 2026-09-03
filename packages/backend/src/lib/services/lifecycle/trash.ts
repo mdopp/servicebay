@@ -24,7 +24,7 @@ import {
 } from '../../capabilities/serviceLifecycleEvents';
 import type { StackVariable } from '../../stackInstall/types';
 import { ServiceListing } from '../serviceListing';
-import { reloadDaemon } from './units';
+import { reloadDaemon, startAndWaitForActive, type StartSettleResult } from './units';
 import { SYSTEMD_DIR, backupQuadlets, refreshAgent } from './quadletFiles';
 
 /**
@@ -161,6 +161,15 @@ export async function deleteService(
     logger.info('ServiceManager', `Soft-deleted ${serviceName} on ${nodeName} → ${trashDir}`);
 }
 
+/** What a restore did (#2541 re-provisioning, #2756 unit startup). */
+export interface RestoreResult {
+    service: string;
+    capabilityFailures: CapabilityFailure[];
+    /** How the restored unit is doing — `active` once it is up, `converging`
+     *  while it is still coming up, `failed`/`error` when it will not. */
+    startup: StartSettleResult;
+}
+
 /**
  * Bring one soft-deleted service back out of the trash bucket.
  *
@@ -174,8 +183,12 @@ export async function deleteService(
  *
  * Values come from durable config, not from the trashed files — see
  * `reconstructTemplateVariables` for what that can and cannot recover.
+ *
+ * Finally it starts the unit again (#2756) — the delete stopped it — and
+ * reports the startup state, so a caller never sees a "restored" service that
+ * is silently dead.
  */
-export async function restoreTrashedService(nodeName: string, trashId: string): Promise<{ service: string; capabilityFailures: CapabilityFailure[] }> {
+export async function restoreTrashedService(nodeName: string, trashId: string): Promise<RestoreResult> {
     // #2452 — `trashId` lands inside `cat`/`mv`/`rm -rf` command strings
     // below. Same strict basename check the sibling `purgeTrash` applies:
     // no separators, no traversal, no shell metacharacters.
@@ -231,8 +244,20 @@ export async function restoreTrashedService(nodeName: string, trashId: string): 
     const capabilityFailures = await emitFeatureRestored(manifest.service);
     await recordCapabilityOutcome(manifest.service, capabilityFailures, 'restoring');
 
-    logger.info('ServiceManager', `Restored ${manifest.service} from trash on ${nodeName}`);
-    return { service: manifest.service, capabilityFailures };
+    // #2756 — the delete stopped the unit, so moving the files back and
+    // reloading systemd leaves a registered-but-dead service: `list_services`
+    // shows it, nothing runs it, and the operator has to guess whether it is
+    // booting or broken. Undoing a delete means the service runs again, so
+    // start it here and wait the way the deploy path waits. `startup.state`
+    // carries the honest answer — `active`, or `converging` when the pod is
+    // still pulling/booting past the bound, which a caller polls out of.
+    const startup = await startAndWaitForActive(nodeName, manifest.service);
+
+    logger.info(
+        'ServiceManager',
+        `Restored ${manifest.service} from trash on ${nodeName} (startup: ${startup.state})`,
+    );
+    return { service: manifest.service, capabilityFailures, startup };
 }
 
 /** Permanently delete one trash entry, or all entries older than the

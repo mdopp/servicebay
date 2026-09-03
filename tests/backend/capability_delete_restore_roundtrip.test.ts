@@ -100,7 +100,23 @@ vi.mock('@/lib/config', () => ({
   updateConfig: async (patch: Partial<AppConfig>) => { config = { ...config, ...patch }; },
 }));
 
+/** #2756 — restore now starts the unit and waits for systemd to report it
+ *  back up, so the fake node has to model that: dead until the start job is
+ *  issued, active/running afterwards. Without it the restore sits out the
+ *  whole start-settle bound. */
+let unitStarted = false;
+
 const sendCommand = vi.fn(async (verb: string, payload?: { command?: string; path?: string }) => {
+  if (verb === 'exec' && payload?.command?.includes('--no-block start')) {
+    unitStarted = true;
+    return { code: 0, stdout: '', stderr: '' };
+  }
+  if (verb === 'exec' && payload?.command?.includes('systemctl --user show')) {
+    const state = unitStarted
+      ? ['ActiveState=active', 'SubState=running', 'InvocationID=NEW', 'ActiveEnterTimestampMonotonic=99']
+      : ['ActiveState=inactive', 'SubState=dead', 'InvocationID=', 'ActiveEnterTimestampMonotonic=0'];
+    return { code: 0, stdout: state.join('\n') + '\n', stderr: '' };
+  }
   if (verb === 'exec' && payload?.command?.includes('.manifest.json') && payload.command.startsWith('cat')) {
     return {
       code: 0,
@@ -195,6 +211,7 @@ const credentialTemplates = () =>
 describe('#2541 — delete → restore round trip', () => {
   beforeEach(() => {
     config = freshConfig();
+    unitStarted = false;
     fetchCalls.length = 0;
     reconciledPorts.length = 0;
     ensureRewrite.mockClear();
