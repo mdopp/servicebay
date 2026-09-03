@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [5.26.1](https://github.com/mdopp/servicebay/compare/servicebay-v5.26.0...servicebay-v5.26.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **services:** start the unit again when a service is restored from trash ([b42fb46](https://github.com/mdopp/servicebay/commit/b42fb466388f6bc61b1fe13181a4dfcc4ea1c3d5)), closes [#2756](https://github.com/mdopp/servicebay/issues/2756)
+
 ## [5.26.0](https://github.com/mdopp/servicebay/compare/servicebay-v5.25.1...servicebay-v5.26.0) (2026-09-03)
 
 
