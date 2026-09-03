@@ -18,10 +18,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import DiskImportPage from '@/app/(dashboard)/disk-import/page';
 
-const DEVICES = { devices: [{ path: '/dev/sdb1', display: 'Kingston 64 GB (/dev/sdb1)' }] };
+const DEVICES = { ok: true, devices: [{ path: '/dev/sdb1', display: 'Kingston 64 GB (/dev/sdb1)' }] };
 
 /** A running scan — the state that must survive a failed poll. */
 const SCANNING = {
+  ok: true,
   runId: 'run-1',
   running: true,
   status: {
@@ -60,8 +61,8 @@ beforeEach(() => {
       return json(statusAnswer.body ?? { ok: false, error: 'boom' }, statusAnswer.status);
     }
     if (url.includes('/disk-import/list-devices')) return json(DEVICES);
-    if (url.includes('/disk-import/profiles')) return json({ profiles: [] });
-    return json({});
+    if (url.includes('/disk-import/profiles')) return json({ ok: true, profiles: [] });
+    return json({ ok: true });
   }));
 });
 

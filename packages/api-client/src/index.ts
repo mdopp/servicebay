@@ -13,6 +13,7 @@ export * from './agent';
 export * from './assists';
 export * from './backup';
 export * from './dashboards';
+export * from './diskImport';
 export * from './install';
 export * from './nodes';
 export * from './onboarding';

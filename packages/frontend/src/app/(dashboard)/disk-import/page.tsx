@@ -12,6 +12,16 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, HardDrive, RefreshCw, Download, Save, Trash2, AlertTriangle } from 'lucide-react';
+import {
+  listImportDevices,
+  fetchDiskImportStatus,
+  abortDiskImport,
+  fetchDiskImportTree,
+  listImportProfiles,
+  saveImportProfile,
+  deleteImportProfile,
+  TypedFetchError,
+} from '@servicebay/api-client';
 import { Button } from '@/components/ui/Button';
 import { DataTable } from '@/components/ui/DataTable';
 import { Input } from '@/components/ui/Input';
@@ -70,9 +80,9 @@ function useDevices() {
   const [loading, setLoading] = useState(true);
 
   const fetchDevices = useCallback(() => {
-    fetch('/api/system/disk-import/list-devices')
-      .then(r => (r.ok ? r.json() : null))
-      .then((d: { devices?: DeviceView[] } | null) => setDevices(d?.devices ?? []))
+    listImportDevices()
+      .then(devices => setDevices(devices))
+      .catch(() => setDevices([]))
       .finally(() => setLoading(false));
   }, []);
 
@@ -119,19 +129,20 @@ function useDiskImportRun(selected: string, onAfterAbort: () => void) {
     const poll = async () => {
       let next: RunStatus | null;
       try {
-        const r = await fetch('/api/system/disk-import/status');
+        next = await fetchDiskImportStatus();
+      } catch (e) {
         // 404 is the route's real answer for "no scan has been launched" (#1949),
         // so it legitimately clears the tile. Every OTHER failure — 5xx, a 400 from
         // an unreachable node, a network drop, a truncated body — is transient:
         // discard it and keep the last-known run on screen (#2457), because
         // dropping to `null` sent the operator back to the device picker while the
         // worker was still importing.
-        if (r.status === 404) next = null;
-        else if (!r.ok) throw new Error(`status ${r.status}`);
-        else next = (await r.json()) as RunStatus;
-      } catch {
-        if (active) setStatusStale(true);
-        return;
+        if (e instanceof TypedFetchError && e.status === 404) {
+          next = null;
+        } else {
+          if (active) setStatusStale(true);
+          return;
+        }
       }
       if (!active) return;
       setStatusStale(false);
@@ -167,7 +178,7 @@ function useDiskImportRun(selected: string, onAfterAbort: () => void) {
     selected ? runAction('/api/system/disk-import/scan', { device: selected }) : setError('Pick a USB disk first');
 
   const startOver = async () => {
-    await fetch('/api/system/disk-import/abort', { method: 'POST' }).catch(() => {});
+    await abortDiskImport().catch(() => {});
     setRun(null);
     setFlowActive(false);
     setStatusStale(false);
@@ -211,14 +222,11 @@ function useRoutingTree(active: boolean) {
   const [rules, setRules] = useState<Record<string, Rule>>({});
 
   const fetchTree = useCallback(async (currentRules: Record<string, Rule>) => {
-    const hasEdits = Object.keys(currentRules).length > 0;
-    const res = await fetch('/api/system/disk-import/tree', {
-      method: hasEdits ? 'POST' : 'GET',
-      ...(hasEdits
-        ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules: currentRules }) }
-        : {}),
-    });
-    return res.ok ? ((await res.json()) as ReviewTree) : null;
+    try {
+      return (await fetchDiskImportTree(currentRules)) as ReviewTree;
+    } catch {
+      return null;
+    }
   }, []);
 
   // Load the tree when the plan becomes ready. The setState is in the async
@@ -275,20 +283,15 @@ interface RoutingProfile {
 function useRoutingProfiles() {
   const [profiles, setProfiles] = useState<RoutingProfile[]>([]);
   const reload = useCallback(() => {
-    fetch('/api/system/disk-import/profiles')
-      .then(r => (r.ok ? r.json() : null))
-      .then((d: { profiles?: RoutingProfile[] } | null) => setProfiles(d?.profiles ?? []))
+    listImportProfiles()
+      .then(profiles => setProfiles(profiles as RoutingProfile[]))
       .catch(() => {});
   }, []);
   useEffect(reload, [reload]);
 
   const save = useCallback(
     async (name: string, rules: Record<string, Rule>) => {
-      await fetch('/api/system/disk-import/profiles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, rules }),
-      }).catch(() => {});
+      await saveImportProfile(name, rules).catch(() => {});
       reload();
     },
     [reload],
@@ -296,9 +299,7 @@ function useRoutingProfiles() {
 
   const remove = useCallback(
     async (name: string) => {
-      await fetch(`/api/system/disk-import/profiles?name=${encodeURIComponent(name)}`, {
-        method: 'DELETE',
-      }).catch(() => {});
+      await deleteImportProfile(name).catch(() => {});
       reload();
     },
     [reload],

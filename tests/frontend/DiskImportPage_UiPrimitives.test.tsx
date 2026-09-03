@@ -26,7 +26,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import DiskImportPage from '@/app/(dashboard)/disk-import/page';
 
-const DEVICES = { devices: [{ path: '/dev/sdb1', display: 'Kingston 64 GB (/dev/sdb1)' }] };
+const DEVICES = { ok: true, devices: [{ path: '/dev/sdb1', display: 'Kingston 64 GB (/dev/sdb1)' }] };
 
 /** Two category rollups so the DataTable has real rows AND a computed Total row. */
 const CATEGORIES = [
@@ -38,6 +38,7 @@ const CATEGORIES = [
 
 /** A finished dry-run scan with a plan to review → the `plan-ready` tile. */
 const PLAN_READY = {
+  ok: true,
   runId: 'run-plan-1',
   running: true,
   status: {
@@ -55,6 +56,7 @@ const PLAN_READY = {
 
 /** A finished host apply → the terminal `apply-done` tile. */
 const APPLY_DONE = {
+  ok: true,
   runId: 'run-apply-1',
   running: false,
   status: {
@@ -101,6 +103,7 @@ const TREE = {
 };
 
 const PROFILES = {
+  ok: true,
   profiles: [
     { name: 'Family disk', rules: { Photos: { owner: 'alice' } }, savedAt: 1 },
     { name: 'Work disk', rules: { Photos: { owner: 'shared' } }, savedAt: 2 },
@@ -397,7 +400,7 @@ describe('disk-import no-disks — the Refresh Button', () => {
   it('Refresh is a ghost Button that re-lists the devices', async () => {
     statusBody = { ok: false, error: 'no active run' };
     statusCode = 404;
-    devicesBody = { devices: [] };
+    devicesBody = { ok: true, devices: [] };
     await renderAndSettle();
 
     expect(screen.getByText(/No USB disk detected/)).toBeTruthy();
