@@ -3,7 +3,15 @@
 import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { PlayCircle, Power, RefreshCw, Trash2, DatabaseBackup, Loader2, Download, PackageX } from 'lucide-react';
-import { logger, type ServiceViewModel } from '@servicebay/api-client';
+import {
+  logger,
+  runServiceAction,
+  runForceUpdateAction,
+  deleteServiceByName,
+  backupNowToExternal,
+  TypedFetchError,
+  type ServiceViewModel,
+} from '@servicebay/api-client';
 import ActionProgressModal from '@/components/ActionProgressModal';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useToast, type ToastType } from '@/providers/ToastProvider';
@@ -110,21 +118,12 @@ export default function OperateActionsTab({
     setRunningAction('update');
     const toastId = addToast('loading', 'Action in progress', `Updating ${service.name}…`, 0);
     try {
-      const query = nodeParam ? `?node=${nodeParam}` : '';
-      const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}/action${query}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'update' }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        updateToast(toastId, 'error', 'Action failed', data.error || `HTTP ${res.status}`);
-      } else {
-        updateToast(toastId, 'success', 'Update initiated', `update command sent to ${service.name}`);
-      }
+      await runServiceAction(serviceName, 'update', nodeParam || undefined);
+      updateToast(toastId, 'success', 'Update initiated', `update command sent to ${service.name}`);
     } catch (e) {
       logger.error('OperateActionsTab', 'update failed', e);
-      updateToast(toastId, 'error', 'Action failed', 'An unexpected error occurred.');
+      const message = e instanceof TypedFetchError ? e.message : 'An unexpected error occurred.';
+      updateToast(toastId, 'error', 'Action failed', message);
     } finally {
       setRunningAction(null);
     }
@@ -146,18 +145,7 @@ export default function OperateActionsTab({
       0,
     );
     try {
-      const query = nodeParam ? `?node=${nodeParam}` : '';
-      const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}/action${query}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'force-update', mode: fresh ? 'fresh' : 'pull' }),
-      });
-      const report: ForceUpdateReport = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        updateToast(toastId, 'error', 'Force update failed', report.error || `HTTP ${res.status}`);
-        setOfferFreshPull(true);
-        return;
-      }
+      const report = await runForceUpdateAction(serviceName, fresh ? 'fresh' : 'pull', nodeParam || undefined);
       const { type, title, message } = describeForceUpdate(report);
       updateToast(toastId, type, title, message);
       // Nothing landed → keep (or reveal) the fallback. A confirmed new image
@@ -165,7 +153,8 @@ export default function OperateActionsTab({
       setOfferFreshPull(!report.changed);
     } catch (e) {
       logger.error('OperateActionsTab', 'force update failed', e);
-      updateToast(toastId, 'error', 'Force update failed', 'An unexpected error occurred.');
+      const message = e instanceof TypedFetchError ? e.message : 'An unexpected error occurred.';
+      updateToast(toastId, 'error', 'Force update failed', message);
       setOfferFreshPull(true);
     } finally {
       setRunningAction(null);
@@ -176,19 +165,10 @@ export default function OperateActionsTab({
     setBackingUp(true);
     const toastId = addToast('loading', 'Backing up config', service.name, 0);
     try {
-      const res = await fetch('/api/system/external-backup/backup-now', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ service: baseName }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.ok === false) {
-        updateToast(toastId, 'error', 'Backup failed', data?.error || undefined);
-      } else {
-        updateToast(toastId, 'success', 'Config backed up to NAS');
-      }
+      await backupNowToExternal(baseName);
+      updateToast(toastId, 'success', 'Config backed up to NAS');
     } catch (e) {
-      updateToast(toastId, 'error', 'Backup failed', e instanceof Error ? e.message : undefined);
+      updateToast(toastId, 'error', 'Backup failed', e instanceof TypedFetchError || e instanceof Error ? e.message : undefined);
     } finally {
       setBackingUp(false);
     }
@@ -199,17 +179,12 @@ export default function OperateActionsTab({
     setDeleteInFlight(true);
     const toastId = addToast('loading', 'Deleting service…', `Removing ${service.name}`, 0);
     try {
-      const query = nodeParam ? `?node=${nodeParam}` : '';
-      const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}${query}`, { method: 'DELETE' });
-      if (res.ok) {
-        updateToast(toastId, 'success', 'Service deleted', `${service.name} has been removed.`);
-        router.push(deletedHref);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        updateToast(toastId, 'error', 'Delete failed', data.error);
-      }
-    } catch {
-      updateToast(toastId, 'error', 'Delete failed', 'An unexpected error occurred.');
+      await deleteServiceByName(serviceName, nodeParam || undefined);
+      updateToast(toastId, 'success', 'Service deleted', `${service.name} has been removed.`);
+      router.push(deletedHref);
+    } catch (e) {
+      const message = e instanceof TypedFetchError ? e.message : 'An unexpected error occurred.';
+      updateToast(toastId, 'error', 'Delete failed', message);
     } finally {
       setDeleteInFlight(false);
       setDeleteOpen(false);

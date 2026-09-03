@@ -10,6 +10,7 @@
 // definitions in-place so the package is structurally independent.
 
 export * from './agent';
+export * from './assists';
 export * from './backup';
 export * from './dashboards';
 export * from './install';

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import type { ServiceViewModel } from '@servicebay/api-client';
+import { fetchServiceFiles, type ServiceViewModel } from '@servicebay/api-client';
 import ServiceForm, { type ServiceFormInitialData } from '@/components/ServiceForm';
 import { useToast } from '@/providers/ToastProvider';
 import { Card, SectionHeading, Button } from '@/components/ui';
@@ -31,10 +31,8 @@ export default function OperateSettingsTab({ service }: { service: ServiceViewMo
     setLoading(true);
     setError(null);
     try {
-      const nodeParam = service.nodeName && service.nodeName !== 'Local' ? `?node=${service.nodeName}` : '';
-      const res = await fetch(`/api/services/${encodeURIComponent(serviceName)}${nodeParam}`, { cache: 'no-store' });
-      if (!res.ok) throw new Error('Failed to load service configuration');
-      const files = await res.json();
+      const nodeName = service.nodeName && service.nodeName !== 'Local' ? service.nodeName : undefined;
+      const files = await fetchServiceFiles(serviceName, nodeName);
       setInitialData({
         // IDENTITY, not display text. `ServiceForm` uses `name` to ADDRESS the
         // service — `/api/services/<name>/reconfigure-preview` among others —

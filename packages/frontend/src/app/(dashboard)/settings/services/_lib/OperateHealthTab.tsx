@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from 'react';
 import { Activity, Play, RefreshCw } from 'lucide-react';
-import { logger, type Check, type ServiceViewModel } from '@servicebay/api-client';
+import { logger, runHealthCheck, type Check, type ServiceViewModel } from '@servicebay/api-client';
 import { rowStatus, lastCheckedLabel, type RowStatus } from '@/components/HealthChecks';
 import { useServiceHealth } from '@/components/serviceDetail/serviceHealth';
 import { Badge, Button, Card, SectionHeading, StatusDot, type StatusState } from '@/components/ui';
@@ -28,7 +28,7 @@ export default function OperateHealthTab({ service }: { service: ServiceViewMode
   const handleRun = useCallback(async (id: string) => {
     setRunning(id);
     try {
-      await fetch(`/api/health/checks/${id}/run`, { method: 'POST' });
+      await runHealthCheck(id);
       await load();
     } catch (e) {
       logger.error('OperateHealthTab', 'Failed to run check', e);

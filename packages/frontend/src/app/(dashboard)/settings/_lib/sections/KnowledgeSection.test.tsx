@@ -28,8 +28,14 @@ const HISTORY = [
   { version: 1, author: 'admin', timestamp: '2026-07-10T10:00:00Z', message: 'first edit' },
 ];
 
+// Same shape `submitApproval` writes for an assist-edit proposal (#2228):
+// `service`/`node` are always populated server-side even though this UI
+// never reads them — kept here so the mock matches the real route body
+// (the api-client's ApprovalRequestSchema requires both).
 const APPROVAL = {
   id: 'req-1',
+  service: 'servicebay',
+  node: '',
   title: 'Assist edit: servicebay-overview',
   description: 'tweak wording',
   created_at: '2026-07-11T10:00:00Z',

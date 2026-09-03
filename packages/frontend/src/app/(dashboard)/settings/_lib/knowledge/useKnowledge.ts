@@ -7,11 +7,20 @@
 
 import { useCallback, useState } from 'react';
 import { useToast } from '@/providers/ToastProvider';
+import {
+  fetchAssistsList,
+  fetchAssistContent,
+  fetchAssistHistory,
+  proposeAssistEdit,
+  decideAssistEdit,
+  revertAssist,
+  fetchApprovals,
+  TypedFetchError,
+} from '@servicebay/api-client';
 import type { AssistApproval, AssistSummary, HistoryEntry } from './types';
 
-async function readError(res: Response): Promise<string> {
-  const data = await res.json().catch(() => ({}));
-  return (data as { error?: string }).error ?? `HTTP ${res.status}`;
+function errorMessage(e: unknown): string {
+  return e instanceof TypedFetchError || e instanceof Error ? e.message : 'Network error';
 }
 
 export function useKnowledge() {
@@ -24,23 +33,27 @@ export function useKnowledge() {
   const loadList = useCallback(async () => {
     setLoading(true);
     try {
-      const [listRes, apprRes] = await Promise.all([
-        fetch('/api/assists'),
-        fetch('/api/approvals'),
+      const [listResult, apprResult] = await Promise.allSettled([
+        fetchAssistsList(),
+        fetchApprovals(),
       ]);
-      if (listRes.ok) {
-        const data = await listRes.json();
-        setAssists(Array.isArray(data.assists) ? data.assists : []);
+      if (listResult.status === 'fulfilled') {
+        // `kind` is validated as a tolerant string (api-client), narrowed
+        // here to the closed local union — same convention as the approvals
+        // payload cast below.
+        setAssists(listResult.value.assists as AssistSummary[]);
       } else {
-        addToast('error', 'Could not load the knowledge catalog', await readError(listRes));
+        addToast('error', 'Could not load the knowledge catalog', errorMessage(listResult.reason));
       }
-      if (apprRes.ok) {
-        const data = await apprRes.json();
-        const all: AssistApproval[] = Array.isArray(data.approvals) ? data.approvals : [];
+      if (apprResult.status === 'fulfilled') {
+        // Approvals failing to load is non-fatal here (pre-existing
+        // behaviour) — only the assist-edit ones are surfaced, and this tab
+        // still works without the pending-approvals list.
+        const all = apprResult.value.approvals as unknown as AssistApproval[];
         setApprovals(all.filter(a => a.payload?.kind === 'assist-edit'));
       }
     } catch (e) {
-      addToast('error', 'Could not load the knowledge catalog', e instanceof Error ? e.message : 'Network error');
+      addToast('error', 'Could not load the knowledge catalog', errorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -49,14 +62,10 @@ export function useKnowledge() {
   /** Fetch the raw markdown (frontmatter + body) of one entry. */
   const loadContent = useCallback(async (id: string): Promise<string | null> => {
     try {
-      const res = await fetch(`/api/assists/${encodeURIComponent(id)}`);
-      if (res.ok) {
-        const data = await res.json();
-        return typeof data.content === 'string' ? data.content : '';
-      }
-      addToast('error', 'Could not load entry', await readError(res));
+      const data = await fetchAssistContent(id);
+      return data.content;
     } catch (e) {
-      addToast('error', 'Could not load entry', e instanceof Error ? e.message : 'Network error');
+      addToast('error', 'Could not load entry', errorMessage(e));
     }
     return null;
   }, [addToast]);
@@ -64,11 +73,8 @@ export function useKnowledge() {
   /** Fetch the ordered edit history for an entry. */
   const loadHistory = useCallback(async (id: string): Promise<HistoryEntry[]> => {
     try {
-      const res = await fetch(`/api/assists/${encodeURIComponent(id)}/history`);
-      if (res.ok) {
-        const data = await res.json();
-        return Array.isArray(data.history) ? data.history : [];
-      }
+      const data = await fetchAssistHistory(id);
+      return data.history;
     } catch {
       /* non-fatal — history is auxiliary */
     }
@@ -78,19 +84,12 @@ export function useKnowledge() {
   /** Submit an edit proposal. Surfaces the backend 400/422 (frontmatter/secret) cleanly. */
   const propose = useCallback(async (id: string, content: string, message: string): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/assists/${encodeURIComponent(id)}/propose`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, message }),
-      });
-      if (res.ok) {
-        addToast('success', 'Proposal submitted', 'An admin must approve it before it takes effect.');
-        await loadList();
-        return true;
-      }
-      addToast('error', 'Proposal rejected', await readError(res));
+      await proposeAssistEdit(id, content, message);
+      addToast('success', 'Proposal submitted', 'An admin must approve it before it takes effect.');
+      await loadList();
+      return true;
     } catch (e) {
-      addToast('error', 'Could not submit proposal', e instanceof Error ? e.message : 'Network error');
+      addToast('error', 'Proposal rejected', errorMessage(e));
     }
     return false;
   }, [addToast, loadList]);
@@ -102,18 +101,12 @@ export function useKnowledge() {
     decision: 'approve' | 'reject',
   ): Promise<boolean> => {
     try {
-      const res = await fetch(
-        `/api/assists/${encodeURIComponent(assistId)}/${decision}/${encodeURIComponent(requestId)}`,
-        { method: 'POST' },
-      );
-      if (res.ok) {
-        addToast('success', decision === 'approve' ? 'Approved' : 'Rejected', undefined);
-        await loadList();
-        return true;
-      }
-      addToast('error', `Could not ${decision}`, await readError(res));
+      await decideAssistEdit(assistId, requestId, decision);
+      addToast('success', decision === 'approve' ? 'Approved' : 'Rejected', undefined);
+      await loadList();
+      return true;
     } catch (e) {
-      addToast('error', `Could not ${decision}`, e instanceof Error ? e.message : 'Network error');
+      addToast('error', `Could not ${decision}`, errorMessage(e));
     }
     return false;
   }, [addToast, loadList]);
@@ -121,15 +114,12 @@ export function useKnowledge() {
   /** Request a revert to a historical version (creates an approval request). */
   const revert = useCallback(async (id: string, version: number): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/assists/${encodeURIComponent(id)}/revert/${version}`, { method: 'POST' });
-      if (res.ok) {
-        addToast('success', `Revert to v${version} requested`, 'An admin must approve it before it takes effect.');
-        await loadList();
-        return true;
-      }
-      addToast('error', 'Could not request revert', await readError(res));
+      await revertAssist(id, version);
+      addToast('success', `Revert to v${version} requested`, 'An admin must approve it before it takes effect.');
+      await loadList();
+      return true;
     } catch (e) {
-      addToast('error', 'Could not request revert', e instanceof Error ? e.message : 'Network error');
+      addToast('error', 'Could not request revert', errorMessage(e));
     }
     return false;
   }, [addToast, loadList]);

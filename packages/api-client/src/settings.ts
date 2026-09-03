@@ -10,7 +10,8 @@
 // `callApi`/`mutateApi` would fail schema validation on every call.
 
 import { z } from 'zod';
-import { rawApi, mutateRawApi } from './client';
+import { rawApi, mutateRawApi, TypedFetchError } from './client';
+import { apiFetch } from './apiFetch';
 
 // ---------------------------------------------------------------------------
 // Gateway Settings Schemas
@@ -831,4 +832,139 @@ export function fetchPortalSettings() {
 /** PUT /api/system/portal-settings */
 export function updatePortalSettings(settings: UpdatePortalSettingsRequest) {
   return mutateRawApi('/api/system/portal-settings', PortalSettingsSchema, settings, 'PUT');
+}
+
+// ---------------------------------------------------------------------------
+// Settings View (full config) Schemas — GET/POST /api/settings
+// ---------------------------------------------------------------------------
+//
+// Same route as fetchSettings/updateSettings above, but a wider slice: the
+// settings-context provider (SettingsContext.tsx) reads registries,
+// serverName, template settings/schema and email notifications, not just the
+// `mcp` toggles. A legacy install persisted `registries` as a bare array
+// before the `{ enabled, items }` shape landed — tolerate both rather than
+// blanking the whole registries section on an old config. `.passthrough()`
+// because this consumer reads only a slice of the persisted AppConfig; the
+// rest (gateway, reverseProxy, agent, mcp, auth, …) rides along unread.
+
+export const RegistryConfigSchema = z.object({
+  name: z.string(),
+  url: z.string(),
+  branch: z.string().optional(),
+});
+
+export type RegistryConfigView = z.infer<typeof RegistryConfigSchema>;
+
+export const RegistriesSettingsSchema = z.union([
+  z.array(RegistryConfigSchema),
+  z.object({ enabled: z.boolean(), items: z.array(RegistryConfigSchema) }),
+]);
+
+export const TemplateSettingsSchemaEntrySchema = z.object({
+  default: z.string(),
+  description: z.string().optional(),
+  required: z.boolean().optional(),
+});
+
+export const EmailNotificationsSchema = z.object({
+  enabled: z.boolean(),
+  host: z.string(),
+  port: z.number(),
+  secure: z.boolean(),
+  user: z.string(),
+  pass: z.string(),
+  from: z.string(),
+  to: z.array(z.string()).optional(),
+});
+
+export type EmailNotificationsView = z.infer<typeof EmailNotificationsSchema>;
+
+export const SettingsViewSchema = z
+  .object({
+    serverName: z.string().optional(),
+    registries: RegistriesSettingsSchema.optional(),
+    templateSettings: z.record(z.string(), z.string()).optional(),
+    /** GET-only — computed by the route, never persisted, so the POST echo omits it. */
+    templateSettingsSchema: z.record(z.string(), TemplateSettingsSchemaEntrySchema).optional(),
+    notifications: z
+      .object({
+        email: EmailNotificationsSchema.optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
+export type SettingsView = z.infer<typeof SettingsViewSchema>;
+
+/** The subset of AppConfig the settings-context provider writes back. */
+export interface SettingsViewUpdate {
+  serverName?: string;
+  templateSettings?: Record<string, string>;
+  registries?: { enabled: boolean; items: RegistryConfigView[] };
+  notifications?: { email?: EmailNotificationsView };
+}
+
+// ---------------------------------------------------------------------------
+// API Methods - Settings View
+// ---------------------------------------------------------------------------
+
+/** GET /api/settings — the settings-context view (see the note above). */
+export function fetchSettingsView() {
+  return rawApi('/api/settings', SettingsViewSchema);
+}
+
+/** POST /api/settings — the settings-context view (see the note above). */
+export function saveSettingsView(update: SettingsViewUpdate) {
+  return mutateRawApi('/api/settings', SettingsViewSchema, update);
+}
+
+// ---------------------------------------------------------------------------
+// Bulk Token Revoke Schemas
+// ---------------------------------------------------------------------------
+
+export const BulkRevokeResultSchema = z.object({
+  id: z.string(),
+  ok: z.boolean(),
+  error: z.string().optional(),
+});
+
+export type BulkRevokeResult = z.infer<typeof BulkRevokeResultSchema>;
+
+export const BulkRevokeReportSchema = z.object({
+  requested: z.number(),
+  revoked: z.number(),
+  results: z.array(BulkRevokeResultSchema),
+});
+
+export type BulkRevokeReport = z.infer<typeof BulkRevokeReportSchema>;
+
+// ---------------------------------------------------------------------------
+// API Methods - Bulk Token Revoke
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/system/api-tokens/revoke — encodes its outcome in the STATUS
+ * (200 all revoked, 207 partial, 422 none), with the per-token report as the
+ * body in all three cases. `rawApi`'s res.ok-means-success assumption is
+ * wrong for the 422 case — an all-failed run is still a valid report, not an
+ * error to discard. 207 happens to fall inside the 2xx range, so it slips
+ * through unnoticed; 422 does not. Goes through the bare `apiFetch` (still
+ * gets the one 401 -> /login handler) with manual parsing instead of
+ * rawApi/mutateRawApi.
+ */
+export async function bulkRevokeApiTokens(ids: string[]): Promise<BulkRevokeReport> {
+  const res = await apiFetch('/api/system/api-tokens/revoke', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  const raw: unknown = await res.json().catch(() => null);
+  const parsed = BulkRevokeReportSchema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+
+  const message =
+    raw && typeof raw === 'object' && typeof (raw as { error?: unknown }).error === 'string'
+      ? (raw as { error: string }).error
+      : `Bulk revoke failed — HTTP ${res.status}`;
+  throw new TypedFetchError(message, raw, res.status);
 }
