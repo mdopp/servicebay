@@ -369,9 +369,17 @@ export default function BackupSyncPanel({ state }: Props) {
                 )}
               </Field>
               <div className="col-span-2">
-                <Field label="Password">
+                {/* Write-only (#2771): the box never sends the stored password
+                    back, so the field starts blank and an untouched save keeps
+                    what is stored. */}
+                <Field
+                  label="Password"
+                  help={backupSync.smbHasPassword
+                    ? 'A password is stored. Leave blank to keep it, or type a new one to replace it.'
+                    : 'No password stored.'}
+                >
                   {(props) => (
-                    <Input type="password" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbPassword} onChange={e => setBackupSync(prev => ({ ...prev, smbPassword: e.target.value }))} />
+                    <Input type="password" {...props} className="w-full px-3 py-2 text-sm rounded-card border border-border bg-surface-2 text-text" value={backupSync.smbPassword} onChange={e => setBackupSync(prev => ({ ...prev, smbPassword: e.target.value }))} placeholder={backupSync.smbHasPassword ? '••••••••' : ''} />
                   )}
                 </Field>
               </div>

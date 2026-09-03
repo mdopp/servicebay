@@ -6,6 +6,19 @@ export type BackupTarget =
     | { type: 'smb'; host: string; share: string; path?: string; username?: string; password?: string; domain?: string }
     | { type: 'nfs'; host: string; export: string; path?: string };
 
+/**
+ * The read-safe view of a target: identical to `BackupTarget` except the smb
+ * share password is replaced by a `hasPassword` flag. The settings GET must
+ * never echo the live secret (#2771) — the form shows "a password is stored"
+ * and the operator overwrites it, the same write-only shape
+ * `ExternalBackupTargetView` uses for the NAS credential.
+ */
+type BackupTargetView =
+    | { type: 'local'; path: string }
+    | { type: 'ssh'; host: string; port?: number; user: string; path: string; identityFile?: string }
+    | { type: 'smb'; host: string; share: string; path?: string; username?: string; hasPassword: boolean; domain?: string }
+    | { type: 'nfs'; host: string; export: string; path?: string };
+
 export type BackupSchedule = 'hourly' | 'daily' | 'weekly' | 'monthly';
 
 /**
@@ -50,6 +63,39 @@ export function resolveBackupSources(config: BackupConfig): BackupSource[] {
         return [{ path: config.sourcePath, excludePatterns: config.excludePatterns }];
     }
     return [];
+}
+
+/** `BackupConfig` as it may be handed to a client: target secrets masked. */
+export type BackupConfigView = Omit<BackupConfig, 'target'> & { target: BackupTargetView };
+
+/** Swap an smb target's password for a `hasPassword` flag (#2771). */
+function redactBackupTarget(target: BackupTarget): BackupTargetView {
+    // `target?.` guards a legacy config blob that never got one — the GET used
+    // to return whatever was stored, and must not start throwing on it.
+    if (target?.type !== 'smb') return target;
+    const { password, ...rest } = target;
+    return { ...rest, hasPassword: Boolean(password) };
+}
+
+/** The whole config, safe to send to the browser (#2771). */
+export function redactBackupConfig(config: BackupConfig): BackupConfigView {
+    return { ...config, target: redactBackupTarget(config.target) };
+}
+
+/**
+ * Fold a stored secret back into an incoming target. The form never receives
+ * the live password, so a save that leaves the field untouched sends it blank
+ * — that means "keep what is stored", not "clear it" (#2771). Mirrors
+ * `saveExternalBackupTarget`. Switching the target away from smb drops the
+ * secret, as it should.
+ */
+export function preserveBackupTargetSecrets(
+    incoming: BackupTarget,
+    existing: BackupTarget | undefined,
+): BackupTarget {
+    if (incoming?.type !== 'smb' || incoming.password) return incoming;
+    if (existing?.type !== 'smb' || !existing.password) return incoming;
+    return { ...incoming, password: existing.password };
 }
 
 export interface BackupRunResult {
