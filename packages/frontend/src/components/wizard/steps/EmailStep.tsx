@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Mail, CheckCircle, AlertCircle, ShieldCheck, Loader2 } from 'lucide-react';
 import { Input, Button } from '../WizardUI';
 import { Card } from '@/components/ui';
-import { saveEmailConfig } from '@servicebay/api-client';
+import { saveEmailConfig, sendTestEmail } from '@servicebay/api-client';
 
 interface EmailConfig {
     host: string;
@@ -40,19 +40,14 @@ export function EmailStep({ emailConfig, setEmailConfig }: EmailStepProps) {
             }
 
             // 3. Send test POST
-            const res = await fetch('/api/system/notifications/email/test', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ to: firstRecipient }),
-            });
-            const data = await res.json().catch(() => ({}));
-            
-            if (res.ok && data.ok) {
+            const data = await sendTestEmail(firstRecipient);
+
+            if (data.ok) {
                 setTestResult({ ok: true, message: `Test email sent to ${firstRecipient}! Check your inbox.` });
             } else {
                 setTestResult({
                     ok: false,
-                    message: data.error || `SMTP error: HTTP ${res.status}`
+                    message: 'The test send did not succeed.'
                 });
             }
         } catch (e) {

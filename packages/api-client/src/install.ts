@@ -132,3 +132,30 @@ export function fetchTemplateUpgradePreview(templateName: string, source?: strin
     TemplateUpgradePreviewSchema,
   );
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/system/external-backup/orphans — NAS config backups for services
+// not currently installed (#1218 entry 2), surfaced by the wizard's Finish
+// step. Route never errors: an unreachable NAS still returns `{ orphans: [] }`
+// with a 200, so this is a plain rawApi read with no error branch to model.
+// ---------------------------------------------------------------------------
+
+export const OrphanBackupSchema = z
+  .object({
+    service: z.string(),
+    tarName: z.string(),
+    size: z.number(),
+  })
+  .passthrough();
+export type OrphanBackup = z.infer<typeof OrphanBackupSchema>;
+
+export const OrphanBackupsResponseSchema = z.object({
+  // Per-row lenient (#2784): one malformed backup entry must not hide the
+  // rest of the NAS-orphans hint.
+  orphans: lenientArray(OrphanBackupSchema, 'GET /api/system/external-backup/orphans#orphans'),
+});
+
+/** GET /api/system/external-backup/orphans */
+export function fetchOrphanBackups() {
+  return rawApi('/api/system/external-backup/orphans', OrphanBackupsResponseSchema);
+}

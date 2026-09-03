@@ -32,7 +32,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckCircle2, AlertTriangle, Loader2, KeyRound, Maximize2 } from 'lucide-react';
-import { completeStackSetup } from '@servicebay/api-client';
+import { completeStackSetup, runSystemDiagnose } from '@servicebay/api-client';
 import { Card, Button } from '@/components/ui';
 import type { Credential, JobPhase } from '@servicebay/api-client';
 import { DoneStepDnsCheck } from '@/components/DoneStepDnsCheck';
@@ -125,13 +125,9 @@ function SelfTestPanel({ job }: { job: InstallJobSnapshot }) {
   const run = async () => {
     setState(s => ({ ...s, status: 'running', error: null }));
     try {
-      const res = await fetch('/api/system/diagnose', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
-      }
-      const data = await res.json() as { node?: string; probes: DiagnoseProbe[] };
-      setState({ status: classifyProbes(data.probes), probes: data.probes, node: data.node || 'Local', error: null });
+      const data = await runSystemDiagnose();
+      const probes = data.probes as DiagnoseProbe[];
+      setState({ status: classifyProbes(probes), probes, node: data.node || 'Local', error: null });
     } catch (e) {
       setState(s => ({ ...s, status: 'error', error: e instanceof Error ? e.message : String(e) }));
     }

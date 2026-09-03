@@ -4,25 +4,25 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle, ArrowRight, DatabaseBackup } from 'lucide-react';
 import { Button } from '../WizardUI';
+import { fetchOrphanBackups, type OrphanBackup } from '@servicebay/api-client';
 
 interface FinishStepProps {
     handleFinish: () => void;
 }
 
-interface OrphanBackup { service: string; tarName: string; size: number }
-
 /**
  * #1218 entry point 2 — surface NAS config backups for services the operator
  * didn't (re)install, so they can set them up + re-seed config (entry-1 restore
- * runs on install). Silent when there are none / the NAS is unreachable.
+ * runs on install). Silent when there are none / the NAS is unreachable — the
+ * route itself never errors (see fetchOrphanBackups' doc comment), so the
+ * `.catch` below only guards a genuine network failure.
  */
 function OrphanBackupsHint() {
     const [orphans, setOrphans] = useState<OrphanBackup[]>([]);
     useEffect(() => {
         let alive = true;
-        fetch('/api/system/external-backup/orphans', { credentials: 'include' })
-            .then(r => (r.ok ? r.json() : { orphans: [] }))
-            .then(d => { if (alive) setOrphans(Array.isArray(d.orphans) ? d.orphans : []); })
+        fetchOrphanBackups()
+            .then(d => { if (alive) setOrphans(d.orphans); })
             .catch(() => { /* NAS unreachable — just don't show the hint */ });
         return () => { alive = false; };
     }, []);

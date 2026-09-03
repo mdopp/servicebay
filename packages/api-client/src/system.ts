@@ -53,6 +53,35 @@ export function runSystemDiagnose(node?: string) {
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/system/dns/verify — backs the install wizard's Done-step DNS
+// check (`DoneStepDnsCheck.tsx`). Per-domain lookup result; lenient because
+// the wizard only reads domain/resolvesTo/matches/error off each row.
+// ---------------------------------------------------------------------------
+
+export const DnsVerifyResultSchema = z
+  .object({
+    domain: z.string(),
+    resolvesTo: z.string().nullable(),
+    matches: z.boolean(),
+    error: z.string().optional(),
+  })
+  .passthrough();
+export type DnsVerifyResult = z.infer<typeof DnsVerifyResultSchema>;
+
+export const DnsVerifyResponseSchema = z.object({
+  expectedIPs: z.array(z.string()).catch([]),
+  // Per-row lenient (#2784): one odd domain result must not blank the
+  // whole DNS-check panel.
+  results: lenientArray(DnsVerifyResultSchema, 'POST /api/system/dns/verify#results'),
+});
+export type DnsVerifyResponse = z.infer<typeof DnsVerifyResponseSchema>;
+
+/** POST /api/system/dns/verify — Body: { domains: string[] } */
+export function verifyDnsRecords(domains: string[]) {
+  return mutateRawApi('/api/system/dns/verify', DnsVerifyResponseSchema, { domains });
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/system/gateway/detect
 // ---------------------------------------------------------------------------
 

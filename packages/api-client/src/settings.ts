@@ -257,13 +257,22 @@ export function fetchGatewaySettings() {
   return rawApi('/api/settings/gateway', GatewaySettingsSchema);
 }
 
-/** POST /api/settings/gateway */
+/**
+ * POST /api/settings/gateway — only `host` is required on the wire
+ * (`UpdateBody` in the route); `username`/`password`/`ssl`/`test` stay
+ * optional here too so a caller that has no `ssl` toggle of its own (the
+ * onboarding wizard's inline "Verify connection", #726) can omit it and
+ * let the backend keep the existing value instead of resetting it to
+ * `false`. `JSON.stringify` drops `undefined`-valued keys, so passing
+ * `undefined` here reproduces the old "just don't send the field" shape
+ * exactly.
+ */
 export function updateGatewaySettings(
   host: string,
-  username: string,
-  password: string,
-  ssl: boolean,
-  test: boolean,
+  username?: string,
+  password?: string,
+  ssl?: boolean,
+  test?: boolean,
 ) {
   return mutateRawApi('/api/settings/gateway', GatewayAckSchema, {
     host,
